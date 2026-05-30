@@ -1,0 +1,12 @@
+# PlatformIO
+.pio/
+ejemplos/*/.pio/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Editores
+.vscode/
+.idea/
+*.swp
