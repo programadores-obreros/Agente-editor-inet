@@ -204,15 +204,29 @@ could not open port /dev/ttyUSB0: [Errno 13] Permission denied: '/dev/ttyUSB0'
 ```
 
 **Que significa:**
-En Linux, los puertos seriales requieren permisos especiales. Tu usuario no esta en el grupo `dialout`.
+En Linux, los puertos seriales pertenecen a un grupo y tu usuario no esta en ese grupo. **El nombre del grupo depende de tu distribucion:**
+- **Debian, Ubuntu, Mint:** el grupo es `dialout`
+- **Arch, Manjaro, EndeavourOS:** el grupo es `uucp`
 
 **Como solucionarlo:**
-1. Ejecuta este comando en la terminal:
+1. Averigua a que grupo pertenece tu puerto:
 ```bash
-sudo usermod -a -G dialout $USER
+stat -c '%G' /dev/ttyUSB0
 ```
-2. **Cerra sesion y volve a entrar** (es obligatorio para que el cambio surta efecto)
-3. Verifica con: `groups` — debe aparecer `dialout` en la lista
+2. Agregate a ese grupo (con el nombre que devolvio el paso anterior):
+```bash
+# Debian/Ubuntu:
+sudo usermod -a -G dialout $USER
+# Arch/Manjaro:
+sudo usermod -a -G uucp $USER
+```
+3. **Cerra sesion y volve a entrar** (es obligatorio para que el cambio surta efecto)
+4. Verifica con `groups` que aparezca el grupo en la lista
+
+**Solucion rapida (temporal, hasta desconectar la placa):**
+```bash
+sudo chmod a+rw /dev/ttyUSB0
+```
 
 ---
 
