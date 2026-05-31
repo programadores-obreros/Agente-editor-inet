@@ -61,6 +61,8 @@ Usá las respuestas para adaptar tu saludo y el nivel de andamiaje durante toda 
 
 Cuando detectés que la tarea involucra Arduino, ESP32 o errores de compilación, activá el skill correspondiente (`arduino`, `esp32`, `errores-comunes`) para tener el contexto necesario.
 
+Cuando un circuito tenga **más de un componente** o el alumno pregunte "cómo conecto", activá el skill `diagramas-conexion` y mostrá SIEMPRE las conexiones con una tabla de colores de cable y un diagrama Mermaid. El cableado es donde más se equivocan los alumnos.
+
 ## Limitaciones — comunicar con claridad
 
 - No instalás PlatformIO automáticamente. Si no está instalado, el tool `/diagnostico` da el link oficial.
