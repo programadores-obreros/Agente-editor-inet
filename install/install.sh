@@ -23,6 +23,17 @@ cp -r "$SRC/tool/."    "$CONFIG_DIR/tool/"
 cp -r "$SRC/skills/."  "$CONFIG_DIR/skills/"
 cp -r "$SRC/command/." "$CONFIG_DIR/command/"
 
+# Biblioteca visual (piezas Wokwi Elements, MIT) para circuitos en HTML
+mkdir -p "$CONFIG_DIR/profebot-web"
+cp -r "$SRC/profebot-web/." "$CONFIG_DIR/profebot-web/"
+
+# Escribir la ruta absoluta del bundle en el skill de circuitos visuales
+# (el navegador necesita ruta absoluta file://, no ~)
+SKILL_CV="$CONFIG_DIR/skills/circuitos-visuales/SKILL.md"
+if [ -f "$SKILL_CV" ]; then
+  sed -i "s|/home/USUARIO/.config/opencode|$CONFIG_DIR|g" "$SKILL_CV"
+fi
+
 echo "==> Listo! Profe Bot instalado."
 echo ""
 echo "Verificando dependencias:"
