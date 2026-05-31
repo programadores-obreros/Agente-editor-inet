@@ -24,12 +24,12 @@ foreach ($sub in @("agent", "tool", "skills", "command")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir $sub) | Out-Null
 }
 
-Copy-Item (Join-Path $Src "agent\profe-bot.md")       (Join-Path $ConfigDir "agent\") -Force
-Copy-Item (Join-Path $Src "tool\platformio.ts")       (Join-Path $ConfigDir "tool\") -Force
-Copy-Item (Join-Path $Src "skills\arduino")           (Join-Path $ConfigDir "skills\") -Recurse -Force
-Copy-Item (Join-Path $Src "skills\esp32")             (Join-Path $ConfigDir "skills\") -Recurse -Force
-Copy-Item (Join-Path $Src "skills\errores-comunes")   (Join-Path $ConfigDir "skills\") -Recurse -Force
-Copy-Item (Join-Path $Src "command\diagnostico.md")   (Join-Path $ConfigDir "command\") -Force
+# Copiamos todo el contenido de cada carpeta (asi los archivos nuevos
+# se instalan solos, sin actualizar este script cada vez).
+Copy-Item (Join-Path $Src "agent\*")   (Join-Path $ConfigDir "agent\")   -Recurse -Force
+Copy-Item (Join-Path $Src "tool\*")    (Join-Path $ConfigDir "tool\")    -Recurse -Force
+Copy-Item (Join-Path $Src "skills\*")  (Join-Path $ConfigDir "skills\")  -Recurse -Force
+Copy-Item (Join-Path $Src "command\*") (Join-Path $ConfigDir "command\") -Recurse -Force
 
 Write-Host "==> Listo! Profe Bot instalado."
 Write-Host ""

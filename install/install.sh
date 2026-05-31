@@ -16,12 +16,12 @@ echo "==> Instalando Profe Bot en: $CONFIG_DIR"
 
 mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command}
 
-cp "$SRC/agent/profe-bot.md"        "$CONFIG_DIR/agent/"
-cp "$SRC/tool/platformio.ts"        "$CONFIG_DIR/tool/"
-cp -r "$SRC/skills/arduino"          "$CONFIG_DIR/skills/"
-cp -r "$SRC/skills/esp32"            "$CONFIG_DIR/skills/"
-cp -r "$SRC/skills/errores-comunes"  "$CONFIG_DIR/skills/"
-cp "$SRC/command/diagnostico.md"    "$CONFIG_DIR/command/"
+# Copiamos todo el contenido de cada carpeta (asi los archivos nuevos
+# se instalan solos, sin tener que actualizar este script cada vez).
+cp -r "$SRC/agent/."   "$CONFIG_DIR/agent/"
+cp -r "$SRC/tool/."    "$CONFIG_DIR/tool/"
+cp -r "$SRC/skills/."  "$CONFIG_DIR/skills/"
+cp -r "$SRC/command/." "$CONFIG_DIR/command/"
 
 echo "==> Listo! Profe Bot instalado."
 echo ""
