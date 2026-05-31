@@ -79,4 +79,11 @@ profe-bot/
 
 ## Licencia
 
-Por definir.
+Profe Bot usa **licencia doble**, según el tipo de archivo:
+
+- **Código** (`opencode/tool/*.ts`, `install/*.sh`, `install/*.ps1`) → **GPLv3** (ver [`LICENSE`](LICENSE))
+- **Contenido educativo** (skills, agente, comandos y docs en `.md`) → **CC BY-SA 4.0** (ver [`LICENSE-CONTENT`](LICENSE-CONTENT))
+
+Ambas son licencias *copyleft*: si modificás y redistribuís Profe Bot, tenés que compartir tus cambios bajo la misma licencia. La idea es que las mejoras vuelvan a la comunidad educativa.
+
+> Profe Bot se instala **junto a** OpenCode (que es MIT), no lo incluye ni lo modifica. Por eso las licencias no se pisan. GPLv3 es compatible con MIT, así que a futuro se puede integrar código de OpenCode si hace falta.
