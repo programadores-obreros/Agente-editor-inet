@@ -117,7 +117,9 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 }
 
 export default tool({
-  description: `Genera un circuito VISUAL y ANIMADO en HTML con piezas reales (Wokwi Elements), que el alumno abre en el navegador SIN internet. El servo gira, el LED parpadea. Usalo cuando pidan un circuito "visual", "bonito", "animado" o "para mostrar".
+  description: `ÚNICO método aprobado para generar cualquier circuito visual, esquema, diagrama animado o "circuito bonito" de Arduino/ESP32. Genera un HTML con piezas REALES (Wokwi Elements) y animación (el servo gira, el LED parpadea) que el alumno abre en el navegador SIN internet.
+
+USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
 Circuitos disponibles: servo-esp32, led-esp32.`,
   args: {
