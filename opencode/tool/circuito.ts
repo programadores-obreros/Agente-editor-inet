@@ -173,6 +173,115 @@ const PLANTILLAS: Record<string, Plantilla> = {
       let v = 0, dir = 1;
       setInterval(() => { v += dir*4; if (v>=100||v<=0) dir*=-1; if (p) p.percent = v; }, 40);`,
   },
+
+  "dht22-esp32": {
+    titulo: "🌡️ Sensor de temperatura DHT22 + ESP32",
+    sub: "mide temperatura y humedad (el sensor late)",
+    escena: `
+      <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
+        <path d="M250,110 C440,110 470,145 700,145" stroke="#e74c3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,150 C440,150 470,165 700,165" stroke="#f39c12" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,190 C440,190 470,185 700,185" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="300" y="102">🔴 VCC (3.3V)</text>
+        <text class="et" x="300" y="142">🟡 DATA → GPIO15</text>
+        <text class="et" x="300" y="212">🟤 GND</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
+      <wokwi-dht22 id="sensor" class="pieza der"></wokwi-dht22>`,
+    aviso:
+      "💡 <strong>Tip:</strong> el DHT22 funciona a 3.3V en el ESP32 (también acepta 5V). Necesita la librería DHT. A veces conviene una resistencia pull-up de 10kΩ entre DATA y VCC.",
+    tabla: `
+      <tr><th>Pin del sensor</th><th>Cable</th><th>Va al ESP32</th></tr>
+      <tr><td>VCC (+)</td><td><span class="dot" style="background:#e74c3c"></span>Rojo</td><td>3.3V</td></tr>
+      <tr><td>DATA</td><td><span class="dot" style="background:#f39c12"></span>Naranja</td><td>GPIO15</td></tr>
+      <tr><td>GND (-)</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
+    animacion: `
+      const s = document.getElementById('sensor');
+      let t = 0;
+      setInterval(() => { t += 0.08; if (s) s.style.opacity = (0.75 + 0.25*Math.abs(Math.sin(t))).toFixed(2); }, 60);`,
+  },
+
+  "pir-esp32": {
+    titulo: "🚶 Sensor de movimiento PIR + ESP32",
+    sub: "detecta movimiento (el sensor pulsa como si detectara)",
+    escena: `
+      <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
+        <path d="M250,110 C440,110 470,145 700,145" stroke="#e74c3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,150 C440,150 470,165 700,165" stroke="#27ae60" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,190 C440,190 470,185 700,185" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="300" y="102">🔴 VCC (5V / VIN)</text>
+        <text class="et" x="300" y="142">🟢 OUT → GPIO13</text>
+        <text class="et" x="300" y="212">🟤 GND</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
+      <wokwi-pir-motion-sensor id="sensor" class="pieza der"></wokwi-pir-motion-sensor>`,
+    aviso:
+      "💡 <strong>Tip:</strong> el PIR se alimenta de 5V (VIN). Su salida OUT da 3.3V, así que se conecta directo a un GPIO. Tarda unos 30-60 segundos en 'calibrarse' al encender.",
+    tabla: `
+      <tr><th>Pin del sensor</th><th>Cable</th><th>Va al ESP32</th></tr>
+      <tr><td>VCC</td><td><span class="dot" style="background:#e74c3c"></span>Rojo</td><td>VIN (5V)</td></tr>
+      <tr><td>OUT</td><td><span class="dot" style="background:#27ae60"></span>Verde</td><td>GPIO13</td></tr>
+      <tr><td>GND</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
+    animacion: `
+      const s = document.getElementById('sensor');
+      let on = false;
+      setInterval(() => { on = !on; if (s) s.style.filter = on ? 'drop-shadow(0 0 12px #27ae60)' : 'none'; }, 800);`,
+  },
+
+  "lcd-esp32": {
+    titulo: "📟 Display LCD 16x2 (I2C) + ESP32",
+    sub: "muestra texto en pantalla, solo 4 cables con I2C",
+    escena: `
+      <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
+        <path d="M250,100 C420,100 450,135 660,135" stroke="#e74c3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,135 C420,135 450,150 660,150" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,170 C420,170 450,165 660,165" stroke="#3498db" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,205 C420,205 450,180 660,180" stroke="#9b59b6" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="295" y="92">🔴 VCC (5V)</text>
+        <text class="et" x="295" y="128">🟤 GND</text>
+        <text class="et" x="295" y="200">🔵 SDA → GPIO21</text>
+        <text class="et" x="295" y="226">🟣 SCL → GPIO22</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
+      <wokwi-lcd1602 id="lcd" text="Hola Profe Bot!  Escuela tecnica" backlight class="pieza der" style="left:600px;"></wokwi-lcd1602>`,
+    aviso:
+      "💡 <strong>Tip:</strong> el módulo I2C reduce el LCD a solo 4 cables (sin él serían 16). En el ESP32, SDA=GPIO21 y SCL=GPIO22 por defecto. Necesita la librería LiquidCrystal_I2C.",
+    tabla: `
+      <tr><th>Pin del LCD (I2C)</th><th>Cable</th><th>Va al ESP32</th></tr>
+      <tr><td>VCC</td><td><span class="dot" style="background:#e74c3c"></span>Rojo</td><td>VIN (5V)</td></tr>
+      <tr><td>GND</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>
+      <tr><td>SDA</td><td><span class="dot" style="background:#3498db"></span>Azul</td><td>GPIO21</td></tr>
+      <tr><td>SCL</td><td><span class="dot" style="background:#9b59b6"></span>Violeta</td><td>GPIO22</td></tr>`,
+    animacion: `
+      const lcd = document.getElementById('lcd');
+      const msgs = ["Hola Profe Bot!  Escuela tecnica", "Temperatura:     25.3 grados C", "Programando con  Arduino y ESP32"];
+      let i = 0;
+      setInterval(() => { i = (i+1) % msgs.length; if (lcd) lcd.text = msgs[i]; }, 1800);`,
+  },
+
+  "boton-esp32": {
+    titulo: "🔘 Botón pulsador + ESP32",
+    sub: "el botón se aprieta solo para mostrar cómo funciona",
+    escena: `
+      <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
+        <path d="M250,140 C440,140 470,150 700,150" stroke="#27ae60" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,190 C440,190 470,180 700,180" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="320" y="132">🟢 una pata → GPIO14</text>
+        <text class="et" x="320" y="212">🟤 otra pata → GND</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
+      <wokwi-pushbutton id="boton" color="green" class="pieza der"></wokwi-pushbutton>`,
+    aviso:
+      "💡 <strong>Tip:</strong> usá <code>pinMode(14, INPUT_PULLUP)</code> y el botón a GND. Así, sin apretar lee HIGH y al apretar lee LOW — no necesitás resistencia externa.",
+    tabla: `
+      <tr><th>Pata del botón</th><th>Cable</th><th>Va al ESP32</th></tr>
+      <tr><td>Una pata</td><td><span class="dot" style="background:#27ae60"></span>Verde</td><td>GPIO14 (INPUT_PULLUP)</td></tr>
+      <tr><td>Otra pata</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
+    animacion: `
+      const b = document.getElementById('boton');
+      let on = false;
+      setInterval(() => { on = !on; if (b) b.pressed = on; }, 700);`,
+  },
 }
 
 function construirHTML(p: Plantilla, scriptSrc: string): string {
@@ -202,10 +311,10 @@ export default tool({
 
 USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
-Circuitos disponibles: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, potenciometro-esp32.`,
+Circuitos disponibles: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, potenciometro-esp32, dht22-esp32, pir-esp32, lcd-esp32, boton-esp32.`,
   args: {
     circuito: tool.schema
-      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32"])
+      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32"])
       .describe("Qué circuito generar"),
     nombre_archivo: tool.schema
       .string()
