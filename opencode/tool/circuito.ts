@@ -28,6 +28,15 @@ const ESTILO = `
   th,td { text-align:left; padding:9px 11px; border-bottom:1px solid #eef0f2; }
   th { background:#f7f9fb; color:#34495e; }
   .dot{display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:7px;vertical-align:middle;border:1px solid rgba(0,0,0,.15);}
+  /* layout del ARMADOR LIBRE: ESP32 fija a la izquierda + una fila por componente */
+  .circuito-libre{display:grid;grid-template-columns:230px 1fr;gap:0;align-items:center;margin:10px 0 6px;}
+  .esp-col{display:flex;justify-content:center;align-items:center;}
+  .filas-libre{display:flex;flex-direction:column;}
+  .fila{display:grid;grid-template-columns:240px 170px;align-items:center;gap:14px;padding:12px 0;border-bottom:1px dashed #eef0f2;}
+  .fila:last-child{border-bottom:none;}
+  .conex{font-size:13px;line-height:1.8;}
+  .conex .pin{white-space:nowrap;}
+  .pieza-cell{display:flex;align-items:center;min-height:80px;}
 `
 
 interface Plantilla {
@@ -730,27 +739,20 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
   return { js, idActuador: idAct }
 }
 
+// Escala visual por tipo de pieza para que ninguna quede gigante ni minúscula.
+const ESCALA: Record<string, number> = {
+  led: 1.3, servo: 1.0, potenciometro: 1.15, buzzer: 1.3, ultrasonico: 1.0,
+  dht22: 1.2, pir: 1.0, lcd: 0.9, boton: 1.3,
+}
+
+// LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
+// Sin coordenadas globales en SVG estirado → las piezas y sus conexiones NUNCA se desalinean.
 function armarCircuito(pedidos: Pedido[]): ResultadoArmado {
-  const n = pedidos.length
-  const alto = n <= 1 ? 300 : Math.max(300, MARGEN_SUP + MARGEN_INF + (n - 1) * 120 + 90)
-
-  const ESP_ALTO = 200
-  const espTop = n >= 3 ? Math.max(40, Math.round((alto - ESP_ALTO) / 2)) : 60
-
-  const bandaSup = MARGEN_SUP
-  const bandaInf = alto - MARGEN_INF
-  const cy = (i: number): number =>
-    n === 1 ? alto / 2 : bandaSup + (i * (bandaInf - bandaSup)) / (n - 1)
-
   const { gpios: gpiosPorComp, avisos: avisosGpio } = asignarGpios(pedidos)
-
-  // FIX auditoría #2: calcular el puente ANTES, para saber qué actuador no anima solo.
   const puente = armarPuente(pedidos)
   const gobernado = puente ? puente.idActuador : null
 
-  const paths: string[] = []
-  const labels: string[] = []
-  const piezas: string[] = []
+  const filas: string[] = []
   const filasTabla: string[] = []
   const anims: string[] = []
   const advertencias = new Set<string>()
@@ -762,44 +764,42 @@ function armarCircuito(pedidos: Pedido[]): ResultadoArmado {
     const def = COMPONENTES[tipo]
     const id = `${tipo}${i}`
     const gpios = gpiosPorComp[i]
-    const yc = cy(i)
 
     if (def.voltaje === "5V") hay5V = true
     if (def.interactivo) interactivo = true
     if (def.advertencia) advertencias.add(def.advertencia)
 
-    const left = tipo === "lcd" ? X_COMP_ANCHO : X_COMP
-    const top = Math.round(yc - 55)
+    // columna de conexiones (una línea por pin, con su dot de color)
+    const conex = def.pines
+      .map((pin) => {
+        const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
+        return `          <div class="pin"><span class="dot" style="background:${pin.color}"></span>${pin.nombre} → ${destino}</div>`
+      })
+      .join("\n")
+
+    // la pieza Wokwi, con su escala propia
+    const escala = ESCALA[tipo] ?? 1.0
     const attrs = def.attrs ? def.attrs(i) : ""
-    piezas.push(
-      `      <${def.tag} id="${id}" ${attrs} class="pieza" style="left:${left}px;top:${top}px"></${def.tag}>`,
+    const pieza = `<${def.tag} id="${id}" ${attrs} style="transform:scale(${escala});transform-origin:left center"></${def.tag}>`
+
+    filas.push(
+      `      <div class="fila">
+        <div class="conex">
+${conex}
+        </div>
+        <div class="pieza-cell">${pieza}</div>
+      </div>`,
     )
 
-    const P = def.pines.length
-    def.pines.forEach((pin, k) => {
-      const yPin = Math.round(yc + (k - (P - 1) / 2) * SEP_PIN)
-      const xFin = left + ENTRADA
-      const grosor = n <= 3 ? 5 : 4
-      paths.push(
-        `        <path d="${pathCable(X_ESP, yPin, xFin, yPin)}" stroke="${pin.color}" stroke-width="${grosor}" fill="none" stroke-linecap="round"/>`,
-      )
-      const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
-      labels.push(
-        `        <text class="et" x="295" y="${yPin - 6}">${PUNTO[pin.color]} ${pin.nombre} → ${destino}</text>`,
-      )
-    })
-
+    // fila de la tabla resumen
     const resumen = def.pines
       .map((pin) => (pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)))
       .join(" · ")
     const dots = def.pines
       .map((pin) => `<span class="dot" style="background:${pin.color}"></span>`)
       .join("")
-    filasTabla.push(
-      `      <tr><td>${def.etiqueta}</td><td>${dots}</td><td>${resumen}</td></tr>`,
-    )
+    filasTabla.push(`      <tr><td>${def.etiqueta}</td><td>${dots}</td><td>${resumen}</td></tr>`)
 
-    // FIX auditoría #2: si el puente gobierna este actuador, NO ejecutar su anim autónoma.
     if (id !== gobernado) {
       anims.push(`(() => { ${def.anim(id)} })();`)
     }
@@ -807,13 +807,14 @@ function armarCircuito(pedidos: Pedido[]): ResultadoArmado {
 
   if (puente) anims.push(puente.js)
 
+  // escena = grid [ESP32 | columna de filas]
   const escena = `
-      <svg class="cables" viewBox="0 0 ${LIENZO_W} ${alto}" preserveAspectRatio="none">
-${paths.join("\n")}
-${labels.join("\n")}
-      </svg>
-      <wokwi-esp32-devkit-v1 class="pieza" style="left:20px;top:${espTop}px"></wokwi-esp32-devkit-v1>
-${piezas.join("\n")}`
+      <div class="circuito-libre">
+        <div class="esp-col"><wokwi-esp32-devkit-v1 style="transform:scale(1.25);transform-origin:center"></wokwi-esp32-devkit-v1></div>
+        <div class="filas-libre">
+${filas.join("\n")}
+        </div>
+      </div>`
 
   const cabecera = interactivo
     ? "✋ <strong>¡Probalo con el mouse!</strong> "
@@ -826,7 +827,8 @@ ${piezas.join("\n")}`
       <tr><th>Componente</th><th>Cables</th><th>Conexiones al ESP32</th></tr>
 ${filasTabla.join("\n")}`
 
-  return { escena, tabla, aviso, alto, animacion: anims.join("\n"), interactivo }
+  // alto: no se usa para layout (las filas crecen solas), pero lo dejamos por compatibilidad
+  return { escena, tabla, aviso, alto: 0, animacion: anims.join("\n"), interactivo }
 }
 
 function parsearComponentes(raw: string): Pedido[] {
