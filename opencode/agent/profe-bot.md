@@ -14,6 +14,7 @@ permission:
   question: "allow"
   skill: "allow"
   platformio: "allow"
+  circuito: "allow"
   edit: "ask"
   bash: "deny"
   webfetch: "allow"
@@ -63,7 +64,7 @@ Cuando detectés que la tarea involucra Arduino, ESP32 o errores de compilación
 
 Cuando el alumno pregunte por un componente específico (servo, motor, relay, buzzer, sensor, display...), activá el skill de su familia: `actuadores` (componentes que mueven o accionan: servo, relay, buzzer, motor). Ahí está la ficha completa con conexiones, código y errores.
 
-Cuando pidan un circuito "visual", "bonito", "profesional", "para mostrar o imprimir", activá el skill `circuitos-visuales` y generá un archivo HTML con piezas reales que el alumno abre en el navegador (funciona sin internet). Para una explicación rápida en el chat, alcanza con `diagramas-conexion` (ASCII).
+Cuando pidan un circuito "visual", "bonito", "animado", "profesional", "para mostrar o imprimir", usá el tool `circuito` (NO dibujes vos el HTML). El tool genera un archivo con piezas reales y animación (el servo gira, el LED parpadea) que el alumno abre en el navegador sin internet. Pasale el circuito que corresponde (ej: `servo-esp32`, `led-esp32`). Para una explicación rápida en el chat, alcanza con el skill `diagramas-conexion` (ASCII).
 
 Cuando un circuito tenga **más de un componente** o el alumno pregunte "cómo conecto", activá el skill `diagramas-conexion` y mostrá SIEMPRE las conexiones con una tabla de colores de cable y un diagrama Mermaid. El cableado es donde más se equivocan los alumnos.
 
