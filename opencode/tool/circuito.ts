@@ -37,6 +37,7 @@ interface Plantilla {
   aviso: string
   tabla: string
   animacion: string
+  alto?: number // alto de la escena en px (default 300; proyectos usan más)
 }
 
 // Cada circuito es una plantilla VALIDADA a mano (piezas reales + cables + animación).
@@ -282,6 +283,110 @@ const PLANTILLAS: Record<string, Plantilla> = {
       let on = false;
       setInterval(() => { on = !on; if (b) b.pressed = on; }, 700);`,
   },
+
+  // ============ PROYECTOS INTEGRADORES (varios componentes) ============
+
+  "estacion-meteo": {
+    titulo: "🌦️ Estación meteorológica",
+    sub: "ESP32 + DHT22 + LCD — mide temperatura y humedad y las muestra en pantalla",
+    alto: 460,
+    escena: `
+      <svg class="cables" viewBox="0 0 980 460" preserveAspectRatio="none">
+        <path d="M250,120 C400,120 430,95 640,95" stroke="#e74c3c" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,155 C400,155 430,115 640,115" stroke="#f39c12" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,190 C400,190 430,135 640,135" stroke="#5d4037" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,230 C400,230 430,300 600,300" stroke="#3498db" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,265 C400,265 430,320 600,320" stroke="#9b59b6" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <text class="et" x="285" y="88">🔴🟡🟤 DHT22 → 3.3V, GPIO15, GND</text>
+        <text class="et" x="285" y="295">🔵🟣 LCD I2C → SDA=GPIO21, SCL=GPIO22</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza" style="left:20px;top:60px"></wokwi-esp32-devkit-v1>
+      <wokwi-dht22 class="pieza" style="left:640px;top:55px"></wokwi-dht22>
+      <wokwi-lcd1602 id="lcd" text="Temp: 25.3 C     Hum: 60%" backlight class="pieza" style="left:560px;top:280px"></wokwi-lcd1602>`,
+    aviso:
+      "💡 <strong>Proyecto integrador:</strong> el DHT22 mide, el LCD muestra. El DHT22 va a 3.3V; el LCD por I2C usa solo 4 cables (VCC, GND, SDA=GPIO21, SCL=GPIO22). Librerías: DHT y LiquidCrystal_I2C.",
+    tabla: `
+      <tr><th>Componente</th><th>Pin</th><th>Va al ESP32</th></tr>
+      <tr><td>DHT22</td><td>VCC / DATA / GND</td><td>3.3V / GPIO15 / GND</td></tr>
+      <tr><td>LCD I2C</td><td>VCC / GND / SDA / SCL</td><td>VIN / GND / GPIO21 / GPIO22</td></tr>`,
+    animacion: `
+      const lcd = document.getElementById('lcd');
+      const m = ["Temp: 25.3 C     Hum: 60%", "Temp: 26.1 C     Hum: 58%", "Profe Bot listo!  Estacion meteo"];
+      let i = 0;
+      setInterval(() => { i = (i+1)%m.length; if (lcd) lcd.text = m[i]; }, 1800);`,
+  },
+
+  "alarma": {
+    titulo: "🚨 Alarma de movimiento",
+    sub: "ESP32 + PIR + buzzer + LED — detecta movimiento y avisa con sonido y luz",
+    alto: 460,
+    escena: `
+      <svg class="cables" viewBox="0 0 980 460" preserveAspectRatio="none">
+        <path d="M250,110 C400,110 430,85 660,85" stroke="#27ae60" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,200 C400,200 430,250 700,250" stroke="#f39c12" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,280 C400,280 430,370 700,370" stroke="#e74c3c" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <text class="et" x="290" y="78">🟢 PIR OUT → GPIO13</text>
+        <text class="et" x="290" y="245">🟡 Buzzer → GPIO4</text>
+        <text class="et" x="290" y="365">🔴 LED → GPIO2 (con 330Ω)</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza" style="left:20px;top:60px"></wokwi-esp32-devkit-v1>
+      <wokwi-pir-motion-sensor id="pir" class="pieza" style="left:660px;top:45px"></wokwi-pir-motion-sensor>
+      <wokwi-buzzer id="buzzer" class="pieza" style="left:700px;top:210px"></wokwi-buzzer>
+      <wokwi-led id="led" color="red" class="pieza" style="left:700px;top:330px"></wokwi-led>`,
+    aviso:
+      "🚨 <strong>Proyecto integrador:</strong> cuando el PIR detecta movimiento, el ESP32 enciende el buzzer y el LED. El PIR se alimenta de 5V (VIN); el LED siempre con resistencia de 330Ω.",
+    tabla: `
+      <tr><th>Componente</th><th>Pin</th><th>Va al ESP32</th></tr>
+      <tr><td>PIR</td><td>VCC / OUT / GND</td><td>VIN / GPIO13 / GND</td></tr>
+      <tr><td>Buzzer</td><td>+ / -</td><td>GPIO4 / GND</td></tr>
+      <tr><td>LED</td><td>ánodo / cátodo</td><td>GPIO2 (330Ω) / GND</td></tr>`,
+    animacion: `
+      const pir = document.getElementById('pir'), bz = document.getElementById('buzzer'), led = document.getElementById('led');
+      let on = false;
+      setInterval(() => {
+        on = !on;
+        if (pir) pir.style.filter = on ? 'drop-shadow(0 0 12px #27ae60)' : 'none';
+        if (bz) bz.hasSignal = on;
+        if (led) led.value = on;
+      }, 900);`,
+  },
+
+  "semaforo": {
+    titulo: "🚦 Semáforo",
+    sub: "ESP32 + 3 LEDs (rojo, amarillo, verde) — el clásico, con la secuencia real",
+    alto: 460,
+    escena: `
+      <svg class="cables" viewBox="0 0 980 460" preserveAspectRatio="none">
+        <path d="M250,120 C420,120 450,100 720,100" stroke="#e74c3c" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,200 C420,200 450,220 720,220" stroke="#f1c40f" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <path d="M250,280 C420,280 450,340 720,340" stroke="#27ae60" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <text class="et" x="300" y="92">🔴 LED rojo → GPIO13</text>
+        <text class="et" x="300" y="214">🟡 LED amarillo → GPIO12</text>
+        <text class="et" x="300" y="334">🟢 LED verde → GPIO14</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza" style="left:20px;top:60px"></wokwi-esp32-devkit-v1>
+      <wokwi-led id="rojo" color="red" class="pieza" style="left:720px;top:70px"></wokwi-led>
+      <wokwi-led id="amarillo" color="yellow" class="pieza" style="left:720px;top:190px"></wokwi-led>
+      <wokwi-led id="verde" color="green" class="pieza" style="left:720px;top:310px"></wokwi-led>`,
+    aviso:
+      "🚦 <strong>Proyecto integrador:</strong> tres LEDs, cada uno a su pin, cada uno con su resistencia de 330Ω. El código enciende uno por vez siguiendo la secuencia del semáforo (rojo → verde → amarillo → rojo).",
+    tabla: `
+      <tr><th>LED</th><th>Pin</th><th>Resistencia</th></tr>
+      <tr><td>🔴 Rojo</td><td>GPIO13</td><td>330Ω</td></tr>
+      <tr><td>🟡 Amarillo</td><td>GPIO12</td><td>330Ω</td></tr>
+      <tr><td>🟢 Verde</td><td>GPIO14</td><td>330Ω</td></tr>`,
+    animacion: `
+      const r = document.getElementById('rojo'), a = document.getElementById('amarillo'), v = document.getElementById('verde');
+      const sec = [[1,0,0],[0,0,1],[0,1,0]]; // rojo / verde / amarillo
+      let i = 0;
+      setInterval(() => {
+        const s = sec[i % sec.length];
+        if (r) r.value = !!s[0];
+        if (a) a.value = !!s[1];
+        if (v) v.value = !!s[2];
+        i++;
+      }, 1200);`,
+  },
 }
 
 function construirHTML(p: Plantilla, scriptSrc: string): string {
@@ -297,7 +402,7 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 <div class="hoja">
   <h1>${p.titulo} <span class="badge">▶ animado</span></h1>
   <div class="sub">Esquema de conexión — Profe Bot · piezas reales, ${p.sub}</div>
-  <div class="escena">${p.escena}</div>
+  <div class="escena" style="height:${p.alto ?? 300}px">${p.escena}</div>
   <div class="aviso">${p.aviso}</div>
   <table>${p.tabla}</table>
 </div>
@@ -311,11 +416,12 @@ export default tool({
 
 USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
-Circuitos disponibles: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, potenciometro-esp32, dht22-esp32, pir-esp32, lcd-esp32, boton-esp32.`,
+Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, potenciometro-esp32, dht22-esp32, pir-esp32, lcd-esp32, boton-esp32.
+Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).`,
   args: {
     circuito: tool.schema
-      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32"])
-      .describe("Qué circuito generar"),
+      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo"])
+      .describe("Qué circuito o proyecto generar"),
     nombre_archivo: tool.schema
       .string()
       .optional()
