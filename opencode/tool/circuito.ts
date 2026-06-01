@@ -38,6 +38,7 @@ interface Plantilla {
   tabla: string
   animacion: string
   alto?: number // alto de la escena en px (default 300; proyectos usan más)
+  interactivo?: boolean // si el alumno controla algo con el mouse
 }
 
 // Cada circuito es una plantilla VALIDADA a mano (piezas reales + cables + animación).
@@ -149,30 +150,43 @@ const PLANTILLAS: Record<string, Plantilla> = {
   },
 
   "potenciometro-esp32": {
-    titulo: "🎛️ Potenciómetro + ESP32",
-    sub: "la perilla gira sola para mostrar cómo varía el valor",
+    titulo: "🎛️ Potenciómetro controla un LED + ESP32",
+    sub: "girá la perilla con el mouse y mirá cómo cambia el brillo del LED",
+    interactivo: true,
     escena: `
       <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
-        <path d="M250,100 C440,100 470,140 700,140" stroke="#e74c3c" stroke-width="5" fill="none" stroke-linecap="round"/>
-        <path d="M250,150 C440,150 470,165 700,165" stroke="#9b59b6" stroke-width="5" fill="none" stroke-linecap="round"/>
-        <path d="M250,200 C440,200 470,190 700,190" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
-        <text class="et" x="300" y="92">🔴 3.3V</text>
-        <text class="et" x="300" y="142">🟣 cursor → GPIO34 (entrada analógica)</text>
-        <text class="et" x="300" y="222">🟤 GND</text>
+        <path d="M250,100 C400,100 430,135 560,135" stroke="#e74c3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,150 C400,150 430,160 560,160" stroke="#9b59b6" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,200 C400,200 430,185 560,185" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="285" y="92">🔴 3.3V</text>
+        <text class="et" x="285" y="142">🟣 cursor → GPIO34 (entrada analógica)</text>
+        <text class="et" x="285" y="222">🟤 GND</text>
+        <path d="M650,150 C720,150 740,140 800,140" stroke="#f39c12" stroke-width="5" fill="none" stroke-linecap="round" stroke-dasharray="6 4"/>
+        <text class="et" x="650" y="125">el ESP32 enciende el LED según el valor</text>
       </svg>
-      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
-      <wokwi-potentiometer id="pot" class="pieza der"></wokwi-potentiometer>`,
+      <wokwi-potentiometer id="pot" class="pieza" style="left:30px;top:90px"></wokwi-potentiometer>
+      <wokwi-esp32-devkit-v1 class="pieza" style="left:380px;top:40px;transform:scale(1.0)"></wokwi-esp32-devkit-v1>
+      <wokwi-led id="led" color="red" class="pieza" style="left:800px;top:70px"></wokwi-led>
+      <div id="valor" style="position:absolute;left:30px;top:255px;font:700 16px 'Segoe UI';color:#2c3e50">Brillo: 0%</div>`,
     aviso:
-      "💡 <strong>Tip:</strong> en el ESP32 usá un pin de entrada analógica (GPIO32 a GPIO39). GPIO34 es solo entrada, ideal para esto. El valor se lee con <code>analogRead()</code> (0 a 4095 en ESP32).",
+      "✋ <strong>¡Probalo!</strong> arrastrá la perilla del potenciómetro con el mouse hacia un lado y el otro. El LED cambia de brillo en tiempo real. Así funciona <code>analogRead()</code> (lee la perilla, 0 a 4095) + <code>analogWrite()</code> (enciende el LED). En el ESP32 usá un pin analógico como GPIO34.",
     tabla: `
       <tr><th>Pin del potenciómetro</th><th>Cable</th><th>Va al ESP32</th></tr>
       <tr><td>Extremo 1</td><td><span class="dot" style="background:#e74c3c"></span>Rojo</td><td>3.3V</td></tr>
       <tr><td>Cursor (centro)</td><td><span class="dot" style="background:#9b59b6"></span>Violeta</td><td>GPIO34</td></tr>
       <tr><td>Extremo 2</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
     animacion: `
-      const p = document.getElementById('pot');
-      let v = 0, dir = 1;
-      setInterval(() => { v += dir*4; if (v>=100||v<=0) dir*=-1; if (p) p.percent = v; }, 40);`,
+      const pot = document.getElementById('pot');
+      const led = document.getElementById('led');
+      const valor = document.getElementById('valor');
+      function actualizar(){
+        const pct = pot.percent ?? 0;
+        led.brightness = pct/100;
+        led.value = pct > 2;
+        valor.textContent = 'Brillo: ' + Math.round(pct) + '%';
+      }
+      pot.addEventListener('input', actualizar);
+      pot.percent = 0; actualizar();`,
   },
 
   "dht22-esp32": {
@@ -261,27 +275,36 @@ const PLANTILLAS: Record<string, Plantilla> = {
   },
 
   "boton-esp32": {
-    titulo: "🔘 Botón pulsador + ESP32",
-    sub: "el botón se aprieta solo para mostrar cómo funciona",
+    titulo: "🔘 Botón enciende un LED + ESP32",
+    sub: "apretá el botón con el mouse y se prende el LED",
+    interactivo: true,
     escena: `
       <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
-        <path d="M250,140 C440,140 470,150 700,150" stroke="#27ae60" stroke-width="5" fill="none" stroke-linecap="round"/>
-        <path d="M250,190 C440,190 470,180 700,180" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
-        <text class="et" x="320" y="132">🟢 una pata → GPIO14</text>
-        <text class="et" x="320" y="212">🟤 otra pata → GND</text>
+        <path d="M250,150 C380,150 400,160 470,160" stroke="#27ae60" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,200 C380,200 400,185 470,185" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="270" y="142">🟢 GPIO14 (INPUT_PULLUP)</text>
+        <text class="et" x="270" y="222">🟤 GND</text>
+        <path d="M600,150 C700,150 720,140 800,140" stroke="#f39c12" stroke-width="5" fill="none" stroke-linecap="round" stroke-dasharray="6 4"/>
+        <text class="et" x="610" y="125">al apretar, el ESP32 enciende el LED</text>
       </svg>
-      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
-      <wokwi-pushbutton id="boton" color="green" class="pieza der"></wokwi-pushbutton>`,
+      <wokwi-esp32-devkit-v1 class="pieza" style="left:30px;top:40px"></wokwi-esp32-devkit-v1>
+      <wokwi-pushbutton id="boton" color="green" class="pieza" style="left:400px;top:110px"></wokwi-pushbutton>
+      <wokwi-led id="led" color="red" class="pieza" style="left:800px;top:70px"></wokwi-led>
+      <div id="estado" style="position:absolute;left:30px;top:255px;font:700 16px 'Segoe UI';color:#2c3e50">LED apagado</div>`,
     aviso:
-      "💡 <strong>Tip:</strong> usá <code>pinMode(14, INPUT_PULLUP)</code> y el botón a GND. Así, sin apretar lee HIGH y al apretar lee LOW — no necesitás resistencia externa.",
+      "✋ <strong>¡Probalo!</strong> hacé clic y mantené apretado el botón verde: el LED se prende. Soltalo y se apaga. Así funciona <code>digitalRead()</code> con <code>INPUT_PULLUP</code>: sin apretar lee HIGH, al apretar lee LOW.",
     tabla: `
       <tr><th>Pata del botón</th><th>Cable</th><th>Va al ESP32</th></tr>
       <tr><td>Una pata</td><td><span class="dot" style="background:#27ae60"></span>Verde</td><td>GPIO14 (INPUT_PULLUP)</td></tr>
       <tr><td>Otra pata</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
     animacion: `
       const b = document.getElementById('boton');
-      let on = false;
-      setInterval(() => { on = !on; if (b) b.pressed = on; }, 700);`,
+      const led = document.getElementById('led');
+      const estado = document.getElementById('estado');
+      function set(on){ if(led){ led.value = on; } if(estado){ estado.textContent = on ? '¡LED encendido!' : 'LED apagado'; } }
+      b.addEventListener('button-press', () => set(true));
+      b.addEventListener('button-release', () => set(false));
+      set(false);`,
   },
 
   // ============ PROYECTOS INTEGRADORES (varios componentes) ============
@@ -400,7 +423,7 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 </head>
 <body>
 <div class="hoja">
-  <h1>${p.titulo} <span class="badge">▶ animado</span></h1>
+  <h1>${p.titulo} <span class="badge">${p.interactivo ? "✋ interactivo" : "▶ animado"}</span></h1>
   <div class="sub">Esquema de conexión — Profe Bot · piezas reales, ${p.sub}</div>
   <div class="escena" style="height:${p.alto ?? 300}px">${p.escena}</div>
   <div class="aviso">${p.aviso}</div>
@@ -416,7 +439,8 @@ export default tool({
 
 USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
-Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, potenciometro-esp32, dht22-esp32, pir-esp32, lcd-esp32, boton-esp32.
+Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dht22-esp32, pir-esp32, lcd-esp32.
+INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).`,
   args: {
     circuito: tool.schema
