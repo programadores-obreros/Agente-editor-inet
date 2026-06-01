@@ -872,7 +872,7 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 <div class="hoja">
   <h1>${p.titulo} <span class="badge">${p.interactivo ? "✋ interactivo" : "▶ animado"}</span></h1>
   <div class="sub">Esquema de conexión — Profe Bot · piezas reales, ${p.sub}</div>
-  <div class="escena" style="height:${p.alto ?? 300}px">${p.escena}</div>
+  <div class="escena"${p.alto && p.alto > 0 ? ` style="height:${p.alto}px"` : ""}>${p.escena}</div>
   <div class="aviso">${p.aviso}</div>
   <table>${p.tabla}</table>
 </div>
