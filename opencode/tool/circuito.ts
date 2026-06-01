@@ -92,6 +92,87 @@ const PLANTILLAS: Record<string, Plantilla> = {
       let on = false;
       setInterval(() => { on = !on; if (led) led.value = on; }, 600);`,
   },
+
+  "ultrasonico-esp32": {
+    titulo: "📏 Sensor ultrasónico HC-SR04 + ESP32",
+    sub: "mide distancia, como un radar (el sensor late)",
+    escena: `
+      <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
+        <path d="M250,100 C440,100 470,140 690,140" stroke="#e74c3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,135 C440,135 470,155 690,155" stroke="#27ae60" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,170 C440,170 470,170 690,170" stroke="#2980b9" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,205 C440,205 470,185 690,185" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="300" y="92">🔴 VCC (5V / VIN)</text>
+        <text class="et" x="300" y="128">🟢 TRIG → GPIO5</text>
+        <text class="et" x="300" y="200">🔵 ECHO → GPIO18 (¡con divisor!)</text>
+        <text class="et" x="300" y="226">🟤 GND</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
+      <wokwi-hc-sr04 id="sensor" class="pieza der"></wokwi-hc-sr04>`,
+    aviso:
+      "⚠️ <strong>Atención (ESP32):</strong> el HC-SR04 funciona a 5V (alimentalo de VIN). El pin ECHO entrega 5V — conectalo al ESP32 con un <strong>divisor de tensión</strong> (dos resistencias) para bajarlo a 3.3V, o podés dañar el ESP32.",
+    tabla: `
+      <tr><th>Pin del sensor</th><th>Cable</th><th>Va al ESP32</th></tr>
+      <tr><td>VCC</td><td><span class="dot" style="background:#e74c3c"></span>Rojo</td><td>VIN (5V)</td></tr>
+      <tr><td>TRIG</td><td><span class="dot" style="background:#27ae60"></span>Verde</td><td>GPIO5</td></tr>
+      <tr><td>ECHO</td><td><span class="dot" style="background:#2980b9"></span>Azul</td><td>GPIO18 (con divisor)</td></tr>
+      <tr><td>GND</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
+    animacion: `
+      const s = document.getElementById('sensor');
+      let t = 0;
+      setInterval(() => { t += 0.1; if (s) s.style.opacity = (0.7 + 0.3*Math.abs(Math.sin(t))).toFixed(2); }, 60);`,
+  },
+
+  "buzzer-esp32": {
+    titulo: "🔊 Buzzer + ESP32",
+    sub: "suena cuando el pin se activa (el buzzer vibra)",
+    escena: `
+      <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
+        <path d="M250,140 C440,140 470,150 700,150" stroke="#f39c12" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,190 C440,190 470,180 700,180" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="320" y="132">🟡 + → GPIO4</text>
+        <text class="et" x="320" y="212">🟤 - → GND</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
+      <wokwi-buzzer id="buzzer" class="pieza der"></wokwi-buzzer>`,
+    aviso:
+      "⚠️ <strong>Atención:</strong> el buzzer tiene polaridad. La pata larga (+) va al pin, la corta (-) a GND. Para que suene se usa la función <code>tone()</code> en el código.",
+    tabla: `
+      <tr><th>Pata del buzzer</th><th>Cable</th><th>Va al ESP32</th></tr>
+      <tr><td>Positivo (+)</td><td><span class="dot" style="background:#f39c12"></span>Naranja</td><td>GPIO4</td></tr>
+      <tr><td>Negativo (-)</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
+    animacion: `
+      const b = document.getElementById('buzzer');
+      let on = false;
+      setInterval(() => { on = !on; if (b) b.hasSignal = on; }, 400);`,
+  },
+
+  "potenciometro-esp32": {
+    titulo: "🎛️ Potenciómetro + ESP32",
+    sub: "la perilla gira sola para mostrar cómo varía el valor",
+    escena: `
+      <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
+        <path d="M250,100 C440,100 470,140 700,140" stroke="#e74c3c" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,150 C440,150 470,165 700,165" stroke="#9b59b6" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <path d="M250,200 C440,200 470,190 700,190" stroke="#5d4037" stroke-width="5" fill="none" stroke-linecap="round"/>
+        <text class="et" x="300" y="92">🔴 3.3V</text>
+        <text class="et" x="300" y="142">🟣 cursor → GPIO34 (entrada analógica)</text>
+        <text class="et" x="300" y="222">🟤 GND</text>
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
+      <wokwi-potentiometer id="pot" class="pieza der"></wokwi-potentiometer>`,
+    aviso:
+      "💡 <strong>Tip:</strong> en el ESP32 usá un pin de entrada analógica (GPIO32 a GPIO39). GPIO34 es solo entrada, ideal para esto. El valor se lee con <code>analogRead()</code> (0 a 4095 en ESP32).",
+    tabla: `
+      <tr><th>Pin del potenciómetro</th><th>Cable</th><th>Va al ESP32</th></tr>
+      <tr><td>Extremo 1</td><td><span class="dot" style="background:#e74c3c"></span>Rojo</td><td>3.3V</td></tr>
+      <tr><td>Cursor (centro)</td><td><span class="dot" style="background:#9b59b6"></span>Violeta</td><td>GPIO34</td></tr>
+      <tr><td>Extremo 2</td><td><span class="dot" style="background:#5d4037"></span>Marrón</td><td>GND</td></tr>`,
+    animacion: `
+      const p = document.getElementById('pot');
+      let v = 0, dir = 1;
+      setInterval(() => { v += dir*4; if (v>=100||v<=0) dir*=-1; if (p) p.percent = v; }, 40);`,
+  },
 }
 
 function construirHTML(p: Plantilla, scriptSrc: string): string {
@@ -121,10 +202,10 @@ export default tool({
 
 USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
-Circuitos disponibles: servo-esp32, led-esp32.`,
+Circuitos disponibles: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, potenciometro-esp32.`,
   args: {
     circuito: tool.schema
-      .enum(["servo-esp32", "led-esp32"])
+      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32"])
       .describe("Qué circuito generar"),
     nombre_archivo: tool.schema
       .string()
