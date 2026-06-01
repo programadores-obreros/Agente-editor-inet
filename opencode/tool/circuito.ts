@@ -910,7 +910,9 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
     if (!existsSync(bundle)) {
       return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Profe Bot con el instalador para que copie la biblioteca visual."
     }
-    const scriptSrc = `file://${bundle}`
+    // El navegador bloquea que un file:// cargue otro file:// de otra carpeta (security origin).
+    // Por eso copiamos el bundle AL LADO del HTML y lo referenciamos con ruta relativa.
+    const scriptSrc = "wokwi-bundle.js"
 
     let plantilla: Plantilla
     let base: string
@@ -953,11 +955,18 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
     const archivo = join(ctx.directory, `${base}.html`)
     await Bun.write(archivo, html)
 
+    // Copiar la biblioteca de piezas al lado del HTML (ruta relativa = sin bloqueo de seguridad).
+    const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
+    if (!existsSync(bundleLocal)) {
+      await Bun.write(bundleLocal, Bun.file(bundle))
+    }
+
     return `Listo! Generé el circuito visual y animado.
 
 **Abrilo en tu navegador (doble clic o pegá esto):**
 file://${archivo}
 
-Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.`
+Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
+(Se copió la biblioteca de piezas al lado del archivo — no la borres.)`
   },
 })
