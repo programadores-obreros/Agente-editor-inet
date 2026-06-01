@@ -28,15 +28,25 @@ const ESTILO = `
   th,td { text-align:left; padding:9px 11px; border-bottom:1px solid #eef0f2; }
   th { background:#f7f9fb; color:#34495e; }
   .dot{display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:7px;vertical-align:middle;border:1px solid rgba(0,0,0,.15);}
-  /* layout del ARMADOR LIBRE: ESP32 fija a la izquierda + una fila por componente */
+  /* layout del ARMADOR LIBRE: ESP32 a la izquierda + una fila por componente, con cables CSS */
   .circuito-libre{display:grid;grid-template-columns:230px 1fr;gap:0;align-items:center;margin:10px 0 6px;}
   .esp-col{display:flex;justify-content:center;align-items:center;}
-  .filas-libre{display:flex;flex-direction:column;}
-  .fila{display:grid;grid-template-columns:240px 170px;align-items:center;gap:14px;padding:12px 0;border-bottom:1px dashed #eef0f2;}
+  /* bus vertical UNICO (no por fila): un carril continuo del que "nacen" los cables */
+  .filas-libre{display:flex;flex-direction:column;position:relative;}
+  .filas-libre::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:6px;border-radius:3px;background:linear-gradient(#cbd2d9,#aeb6bd);}
+  /* fila: [carril bus 22px] [conexiones+cables, elastico] [pieza, ancho segun contenido] */
+  .fila{display:grid;grid-template-columns:22px minmax(0,1fr) max-content;align-items:center;gap:0;padding:10px 0;border-bottom:1px dashed #eef0f2;}
   .fila:last-child{border-bottom:none;}
-  .conex{font-size:13px;line-height:1.8;}
-  .conex .pin{white-space:nowrap;}
-  .pieza-cell{display:flex;align-items:center;min-height:80px;}
+  /* conexiones: una linea flex por pin = nodo + etiqueta en cajita + cable que crece */
+  .conex{display:flex;flex-direction:column;justify-content:center;gap:9px;padding:4px 0;}
+  .conex .pin{display:flex;align-items:center;min-width:0;--c:#607d8b;}
+  .conex .nodo{flex:0 0 auto;width:12px;height:12px;border-radius:50%;background:var(--c);margin-right:8px;}
+  .conex .label{flex:0 0 auto;display:inline-flex;flex-direction:column;line-height:1.15;background:#fff;border:1px solid #eef0f2;border-radius:6px;padding:3px 9px;}
+  .conex .label .nom{font:600 12.5px 'Segoe UI',system-ui,sans-serif;color:#2c3e50;}
+  .conex .label .gpio{font:500 11px 'Segoe UI',system-ui,sans-serif;color:#7a8794;}
+  /* el cable: SIN coordenadas, crece con flex hasta la pieza. Imposible desalinear. */
+  .conex .cable{flex:1 1 auto;min-width:18px;height:4px;border-radius:99px;background:var(--c);margin-left:6px;}
+  .pieza-cell{display:flex;align-items:center;min-height:80px;justify-content:flex-start;padding-left:4px;}
 `
 
 interface Plantilla {
@@ -769,11 +779,16 @@ function armarCircuito(pedidos: Pedido[]): ResultadoArmado {
     if (def.interactivo) interactivo = true
     if (def.advertencia) advertencias.add(def.advertencia)
 
-    // columna de conexiones (una línea por pin, con su dot de color)
+    // columna de conexiones: cada pin = nodo + etiqueta en cajita + cable CSS (flex).
+    // El cable no tiene coordenadas: vive en la misma fila flex que su etiqueta, nunca se desalinea.
     const conex = def.pines
       .map((pin) => {
         const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
-        return `          <div class="pin"><span class="dot" style="background:${pin.color}"></span>${pin.nombre} → ${destino}</div>`
+        return `          <div class="pin" style="--c:${pin.color}">
+            <span class="nodo"></span>
+            <span class="label"><span class="nom">${pin.nombre}</span><span class="gpio">${destino}</span></span>
+            <span class="cable"></span>
+          </div>`
       })
       .join("\n")
 
@@ -784,6 +799,7 @@ function armarCircuito(pedidos: Pedido[]): ResultadoArmado {
 
     filas.push(
       `      <div class="fila">
+        <div></div>
         <div class="conex">
 ${conex}
         </div>
