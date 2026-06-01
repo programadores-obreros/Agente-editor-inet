@@ -1,9 +1,0 @@
-<circuit type="simulide_1.0" rev="2018" stepSize="1000000" stepsPS="1000000" NLsteps="100000" reaStep="1000000" animate="0" width="-704" height="-300" xpos="180" ypos="118" zoom="0.76" >
-
-<item itemtype="Arduino" CircId="Arduino-1" mainComp="false" Boudrate="115200" Show_id="false" pauseOnReadEnd="false" Show_Val="false" eM_uid="Arduino-1" objectName="" x="-256" y="-160" z="-1" rotation="0" hflip="1" vflip="1" label="Arduino-1" idLabPos="-64,-72" labelrot="0" valLabPos="-16,16" valLabRot="0" Logic_Symbol="false" Program="firmware.hex" Auto_Load="false" Mhz="16" varList="" />
-
-<item itemtype="Led" CircId="Led-2" mainComp="false" Show_id="false" Show_Val="false" eM_uid="Led-2" objectName="" x="-16" y="-112" z="-1" rotation="0" hflip="1" vflip="1" label="Led-2" idLabPos="-16,-24" labelrot="0" valLabPos="-16,16" valLabRot="0" Color="Red" Grounded="true" MaxCurrent="0.02" Resistance="1" Threshold="2" mostCurr="0" />
-
-<connector uid="Connector-3" itemtype="Connector" objectName="" pin0="Arduino-1-pinNumber13" pin1="Led-2-lPin0" pointList="-128,-144,-16,-144" />
-
-</circuit>

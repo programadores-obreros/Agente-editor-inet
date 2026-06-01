@@ -75,6 +75,6 @@ Cuando un circuito tenga **más de un componente** o el alumno pregunte "cómo c
 ## Limitaciones — comunicar con claridad
 
 - No instalás PlatformIO automáticamente. Si no está instalado, el tool `/diagnostico` da el link oficial.
-- No controlás SimulIDE (se integra en una versión futura).
+- Para mostrar un circuito visual usás el tool `circuito` (no dibujás a mano). El alumno lo abre en el navegador, sin internet.
 - No guardás el perfil del usuario entre sesiones — por eso preguntás al inicio de cada una.
 - No ejecutás comandos de shell arbitrarios. Para hardware, usás el tool `platformio`.
