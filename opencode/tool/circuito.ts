@@ -412,6 +412,435 @@ const PLANTILLAS: Record<string, Plantilla> = {
   },
 }
 
+// ============================================================================
+// ARMADOR LIBRE — motor determinista de circuitos con combinación libre.
+// El modelo de IA NO calcula nada: solo nombra componentes. El código arma todo.
+// ============================================================================
+
+const CABLE = {
+  rojo: "#e74c3c",
+  marron: "#5d4037",
+  naranja: "#f39c12",
+  verde: "#27ae60",
+  azul: "#2980b9",
+  violeta: "#9b59b6",
+  amarillo: "#f1c40f",
+} as const
+
+const PUNTO: Record<string, string> = {
+  [CABLE.rojo]: "🔴",
+  [CABLE.marron]: "🟤",
+  [CABLE.naranja]: "🟡",
+  [CABLE.verde]: "🟢",
+  [CABLE.azul]: "🔵",
+  [CABLE.violeta]: "🟣",
+  [CABLE.amarillo]: "🟡",
+}
+
+type ClasePin = "digital" | "analogico" | "fijo"
+
+interface Pin {
+  nombre: string
+  color: string
+  clase: ClasePin
+  rol: string
+  destino?: string
+}
+
+interface Componente {
+  tag: string
+  etiqueta: string
+  voltaje: "3.3V" | "5V"
+  interactivo?: boolean
+  attrs?: (i: number) => string
+  pines: Pin[]
+  advertencia: string | null
+  anim: (id: string) => string
+}
+
+const COMPONENTES: Record<string, Componente> = {
+  led: {
+    tag: "wokwi-led",
+    etiqueta: "LED",
+    voltaje: "3.3V",
+    attrs: (i) => `color="${["red", "green", "yellow", "blue"][i % 4]}"`,
+    pines: [
+      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0} (con 330Ω)" },
+      { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "cada LED siempre con su resistencia de 330Ω en serie (por los 3.3V del ESP32).",
+    anim: (id) => `const e=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(e)e.value=on;},600);`,
+  },
+
+  servo: {
+    tag: "wokwi-servo",
+    etiqueta: "Servo SG90",
+    voltaje: "5V",
+    pines: [
+      { nombre: "Alimentación", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
+      { nombre: "Señal (PWM)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "Tierra", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el servo necesita 5V: cable rojo a VIN, nunca a 3.3V.",
+    anim: (id) => `const s=document.getElementById('${id}');let a=0,d=1;setInterval(()=>{a+=d*3;if(a>=180||a<=0)d*=-1;if(s)s.hornAngle=a;},30);`,
+  },
+
+  potenciometro: {
+    tag: "wokwi-potentiometer",
+    etiqueta: "Potenciómetro",
+    voltaje: "3.3V",
+    interactivo: true,
+    pines: [
+      { nombre: "Extremo 1", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "Cursor", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+      { nombre: "Extremo 2", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el potenciómetro usa una entrada analógica. Usá GPIO34 o GPIO35 (solo-entrada, ideales para ADC). GPIO32/33 también sirven.",
+    anim: (id) => `const p=document.getElementById('${id}');if(p){p.percent=p.percent??0;p.addEventListener('input',()=>{const v=Math.round(p.percent??0);document.title='Potenciometro: '+v+'%';});}`,
+  },
+
+  buzzer: {
+    tag: "wokwi-buzzer",
+    etiqueta: "Buzzer",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "Positivo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "Negativo (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el buzzer tiene polaridad: la pata larga (+) al pin, la corta (−) a GND.",
+    anim: (id) => `const b=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(b)b.hasSignal=on;},400);`,
+  },
+
+  ultrasonico: {
+    tag: "wokwi-hc-sr04",
+    etiqueta: "HC-SR04",
+    voltaje: "5V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
+      { nombre: "TRIG", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "ECHO", color: CABLE.azul, clase: "digital", rol: "GPIO{1} (¡con divisor!)" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el HC-SR04 va a 5V (VIN); el pin ECHO entrega 5V — si lo conectás directo al ESP32 lo dañás. Divisor: R1=1kΩ entre ECHO y el GPIO, R2=2kΩ entre el GPIO y GND.",
+    anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.1;if(s)s.style.opacity=(0.7+0.3*Math.abs(Math.sin(t))).toFixed(2);},60);`,
+  },
+
+  dht22: {
+    tag: "wokwi-dht22",
+    etiqueta: "DHT22",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "DATA", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el DHT22 funciona a 3.3V; conviene un pull-up de 10kΩ entre DATA y VCC.",
+    anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.08;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
+  },
+
+  pir: {
+    tag: "wokwi-pir-motion-sensor",
+    etiqueta: "Sensor PIR",
+    voltaje: "5V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
+      { nombre: "OUT", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el PIR se alimenta de 5V (VIN). ¡OJO! Muchos módulos PIR dan 5V en la salida OUT: verificá el tuyo antes de conectarlo directo al ESP32 (tolera máx 3.6V). Si da 5V, usá un divisor de tensión como el HC-SR04.",
+    anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 12px #27ae60)':'none';},800);`,
+  },
+
+  lcd: {
+    tag: "wokwi-lcd1602",
+    etiqueta: "LCD I2C",
+    voltaje: "5V",
+    attrs: () => `text="Hola Profe Bot!" backlight`,
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+    ],
+    advertencia: "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32).",
+    anim: (id) => `const l=document.getElementById('${id}');const m=["Hola Profe Bot!","Escuela tecnica","Arduino + ESP32"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
+  },
+
+  boton: {
+    tag: "wokwi-pushbutton",
+    etiqueta: "Botón",
+    voltaje: "3.3V",
+    interactivo: true,
+    attrs: () => `color="green"`,
+    pines: [
+      { nombre: "Una pata", color: CABLE.verde, clase: "digital", rol: "GPIO{0} (INPUT_PULLUP)" },
+      { nombre: "Otra pata", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el botón usa INPUT_PULLUP: sin apretar lee HIGH, al apretar LOW. La conexión es GPIO + GND, nunca a 3.3V con esta config.",
+    anim: (id) => `const b=document.getElementById('${id}');if(b)b.addEventListener('button-press',()=>{});`,
+  },
+}
+
+const ALIAS: Record<string, string> = {
+  pot: "potenciometro", potenciometro: "potenciometro", potentiometer: "potenciometro",
+  ultrasonido: "ultrasonico", ultrasonico: "ultrasonico", "hc-sr04": "ultrasonico", hcsr04: "ultrasonico", hc_sr04: "ultrasonico",
+  movimiento: "pir", pir: "pir",
+  temperatura: "dht22", dht: "dht22", dht22: "dht22", dht11: "dht22",
+  pantalla: "lcd", display: "lcd", lcd: "lcd", lcd1602: "lcd",
+  boton: "boton", pulsador: "boton", button: "boton", pushbutton: "boton",
+  led: "led", servo: "servo", buzzer: "buzzer", zumbador: "buzzer",
+}
+
+function normalizarTipo(t: string): string {
+  const k = t.trim().toLowerCase()
+  return ALIAS[k] ?? k
+}
+
+// ---- Constantes de layout (calibradas con los presets validados) ----
+const LIENZO_W = 980
+const X_ESP = 250
+const X_COMP = 660
+const X_COMP_ANCHO = 560
+const ENTRADA = 30
+const MARGEN_SUP = 95     // FIX visual: aire arriba para que el 1er componente no toque el título
+const MARGEN_INF = 70
+const SEP_PIN = 20
+
+// FIX auditoría #1/#3/#10: GPIO seguros primero. Sin 12 (strapping peligroso),
+// sin 16/17 (PSRAM). GPIO2 (LED onboard + strapping) y 15 al final, bajo riesgo.
+const POOL_DIGITAL = [4, 5, 18, 19, 23, 25, 26, 27, 33, 13, 14, 15, 2]
+const POOL_ANALOGICO = [34, 35, 36, 39, 32, 33]
+
+interface Pedido {
+  tipo: string
+  gpio?: number
+}
+
+interface ResultadoArmado {
+  escena: string
+  tabla: string
+  aviso: string
+  alto: number
+  animacion: string
+  interactivo: boolean
+}
+
+// FIX auditoría #1: g >= 0 evita imprimir "GPIO-1" cuando se agota el pool.
+function rellenarRol(rol: string, gpios: number[]): string {
+  return rol.replace(/\{(\d+)\}/g, (_, i) => {
+    const g = gpios[Number(i)]
+    return g != null && g >= 0 ? String(g) : "GPIO?"
+  })
+}
+
+function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] } {
+  const usados = new Set<number>()
+  const avisos: string[] = []
+  const poolDig = [...POOL_DIGITAL]
+  const poolAna = [...POOL_ANALOGICO]
+  const resultado: number[][] = []
+
+  // FIX auditoría #7: sembrar los GPIO fijos (I2C del LCD) en 'usados'.
+  for (const ped of pedidos) {
+    const def = COMPONENTES[normalizarTipo(ped.tipo)]
+    if (!def) continue
+    for (const pin of def.pines) {
+      if (pin.clase === "fijo" && pin.destino) {
+        const m = pin.destino.match(/GPIO(\d+)/)
+        if (m) usados.add(parseInt(m[1], 10))
+      }
+    }
+  }
+
+  const sacar = (pool: number[]): number | null => {
+    while (pool.length) {
+      const g = pool.shift()!
+      if (!usados.has(g)) return g
+    }
+    return null
+  }
+
+  for (const ped of pedidos) {
+    const def = COMPONENTES[normalizarTipo(ped.tipo)]
+    const asignados: number[] = []
+    const pinesGpio = def.pines.filter((p) => p.clase !== "fijo")
+
+    pinesGpio.forEach((pin, idx) => {
+      // FIX auditoría #3: gpio manual del alumno para el primer pin digital O analógico
+      if (idx === 0 && pin.clase !== "fijo" && ped.gpio != null) {
+        if (!usados.has(ped.gpio)) {
+          usados.add(ped.gpio)
+          asignados.push(ped.gpio)
+          return
+        }
+        avisos.push(`No pude usar GPIO${ped.gpio} para ${def.etiqueta} (ya ocupado): le asigné otro.`)
+      }
+      const g = pin.clase === "analogico" ? sacar(poolAna) : sacar(poolDig)
+      if (g == null) {
+        avisos.push(`No quedan GPIO ${pin.clase} libres para ${def.etiqueta}: revisalo a mano.`)
+        asignados.push(-1)
+        return
+      }
+      usados.add(g)
+      asignados.push(g)
+    })
+
+    resultado.push(asignados)
+  }
+
+  return { gpios: resultado, avisos }
+}
+
+function pathCable(x0: number, y0: number, x1: number, y1: number): string {
+  const dx = x1 - x0
+  const c1x = x0 + dx * 0.45
+  const c2x = x0 + dx * 0.62
+  return `M${x0},${y0} C${c1x.toFixed(0)},${y0} ${c2x.toFixed(0)},${y1} ${x1},${y1}`
+}
+
+// FIX auditoría #2: armarPuente devuelve también el id del actuador gobernado,
+// para NO ejecutar su animación autónoma (que pelearía con el puente).
+function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | null {
+  const idx = (pred: (t: string) => boolean): number =>
+    pedidos.findIndex((p) => pred(normalizarTipo(p.tipo)))
+
+  const iInter = idx((t) => COMPONENTES[t]?.interactivo === true)
+  const iAct = idx((t) => t === "led" || t === "servo" || t === "buzzer")
+  if (iInter < 0 || iAct < 0) return null
+
+  const tInter = normalizarTipo(pedidos[iInter].tipo)
+  const tAct = normalizarTipo(pedidos[iAct].tipo)
+  const idInter = `${tInter}${iInter}`
+  const idAct = `${tAct}${iAct}`
+
+  let js = ""
+  if (tInter === "potenciometro") {
+    if (tAct === "led")
+      js = `(() => { const p=document.getElementById('${idInter}'),a=document.getElementById('${idAct}'); if(!p||!a)return; const f=()=>{const v=p.percent??0;a.brightness=v/100;a.value=v>2;}; p.addEventListener('input',f); f(); })();`
+    else if (tAct === "servo")
+      js = `(() => { const p=document.getElementById('${idInter}'),s=document.getElementById('${idAct}'); if(!p||!s)return; const f=()=>{s.hornAngle=Math.round((p.percent??0)*1.8);}; p.addEventListener('input',f); f(); })();`
+    else if (tAct === "buzzer")
+      js = `(() => { const p=document.getElementById('${idInter}'),b=document.getElementById('${idAct}'); if(!p||!b)return; const f=()=>{b.hasSignal=(p.percent??0)>50;}; p.addEventListener('input',f); f(); })();`
+  } else if (tInter === "boton") {
+    const onP = tAct === "servo" ? "a.hornAngle=180" : tAct === "buzzer" ? "a.hasSignal=true" : "a.value=true"
+    const onR = tAct === "servo" ? "a.hornAngle=0" : tAct === "buzzer" ? "a.hasSignal=false" : "a.value=false"
+    js = `(() => { const btn=document.getElementById('${idInter}'),a=document.getElementById('${idAct}'); if(!btn||!a)return; btn.addEventListener('button-press',()=>{${onP};}); btn.addEventListener('button-release',()=>{${onR};}); })();`
+  }
+  if (!js) return null
+  return { js, idActuador: idAct }
+}
+
+function armarCircuito(pedidos: Pedido[]): ResultadoArmado {
+  const n = pedidos.length
+  const alto = n <= 1 ? 300 : Math.max(300, MARGEN_SUP + MARGEN_INF + (n - 1) * 120 + 90)
+
+  const ESP_ALTO = 200
+  const espTop = n >= 3 ? Math.max(40, Math.round((alto - ESP_ALTO) / 2)) : 60
+
+  const bandaSup = MARGEN_SUP
+  const bandaInf = alto - MARGEN_INF
+  const cy = (i: number): number =>
+    n === 1 ? alto / 2 : bandaSup + (i * (bandaInf - bandaSup)) / (n - 1)
+
+  const { gpios: gpiosPorComp, avisos: avisosGpio } = asignarGpios(pedidos)
+
+  // FIX auditoría #2: calcular el puente ANTES, para saber qué actuador no anima solo.
+  const puente = armarPuente(pedidos)
+  const gobernado = puente ? puente.idActuador : null
+
+  const paths: string[] = []
+  const labels: string[] = []
+  const piezas: string[] = []
+  const filasTabla: string[] = []
+  const anims: string[] = []
+  const advertencias = new Set<string>()
+  let hay5V = false
+  let interactivo = false
+
+  pedidos.forEach((ped, i) => {
+    const tipo = normalizarTipo(ped.tipo)
+    const def = COMPONENTES[tipo]
+    const id = `${tipo}${i}`
+    const gpios = gpiosPorComp[i]
+    const yc = cy(i)
+
+    if (def.voltaje === "5V") hay5V = true
+    if (def.interactivo) interactivo = true
+    if (def.advertencia) advertencias.add(def.advertencia)
+
+    const left = tipo === "lcd" ? X_COMP_ANCHO : X_COMP
+    const top = Math.round(yc - 55)
+    const attrs = def.attrs ? def.attrs(i) : ""
+    piezas.push(
+      `      <${def.tag} id="${id}" ${attrs} class="pieza" style="left:${left}px;top:${top}px"></${def.tag}>`,
+    )
+
+    const P = def.pines.length
+    def.pines.forEach((pin, k) => {
+      const yPin = Math.round(yc + (k - (P - 1) / 2) * SEP_PIN)
+      const xFin = left + ENTRADA
+      const grosor = n <= 3 ? 5 : 4
+      paths.push(
+        `        <path d="${pathCable(X_ESP, yPin, xFin, yPin)}" stroke="${pin.color}" stroke-width="${grosor}" fill="none" stroke-linecap="round"/>`,
+      )
+      const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
+      labels.push(
+        `        <text class="et" x="295" y="${yPin - 6}">${PUNTO[pin.color]} ${pin.nombre} → ${destino}</text>`,
+      )
+    })
+
+    const resumen = def.pines
+      .map((pin) => (pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)))
+      .join(" · ")
+    const dots = def.pines
+      .map((pin) => `<span class="dot" style="background:${pin.color}"></span>`)
+      .join("")
+    filasTabla.push(
+      `      <tr><td>${def.etiqueta}</td><td>${dots}</td><td>${resumen}</td></tr>`,
+    )
+
+    // FIX auditoría #2: si el puente gobierna este actuador, NO ejecutar su anim autónoma.
+    if (id !== gobernado) {
+      anims.push(`(() => { ${def.anim(id)} })();`)
+    }
+  })
+
+  if (puente) anims.push(puente.js)
+
+  const escena = `
+      <svg class="cables" viewBox="0 0 ${LIENZO_W} ${alto}" preserveAspectRatio="none">
+${paths.join("\n")}
+${labels.join("\n")}
+      </svg>
+      <wokwi-esp32-devkit-v1 class="pieza" style="left:20px;top:${espTop}px"></wokwi-esp32-devkit-v1>
+${piezas.join("\n")}`
+
+  const cabecera = interactivo
+    ? "✋ <strong>¡Probalo con el mouse!</strong> "
+    : "💡 <strong>Atención:</strong> "
+  if (hay5V) advertencias.add("los componentes de 5V (servo, PIR, HC-SR04, LCD) van a VIN, NO a 3.3V.")
+  avisosGpio.forEach((a) => advertencias.add(a))
+  const aviso = cabecera + Array.from(advertencias).map((f) => "• " + f).join(" ")
+
+  const tabla = `
+      <tr><th>Componente</th><th>Cables</th><th>Conexiones al ESP32</th></tr>
+${filasTabla.join("\n")}`
+
+  return { escena, tabla, aviso, alto, animacion: anims.join("\n"), interactivo }
+}
+
+function parsearComponentes(raw: string): Pedido[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((tok) => {
+      const [tipo, g] = tok.split(":").map((x) => x.trim())
+      const gpio = g != null && /^\d+$/.test(g) ? parseInt(g, 10) : undefined
+      return { tipo: normalizarTipo(tipo), gpio }
+    })
+}
+
 function construirHTML(p: Plantilla, scriptSrc: string): string {
   return `<!DOCTYPE html>
 <html lang="es">
@@ -441,31 +870,68 @@ USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar"
 
 Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dht22-esp32, pir-esp32, lcd-esp32.
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
-Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).`,
+Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
+
+ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, lcd, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
   args: {
     circuito: tool.schema
       .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo"])
-      .describe("Qué circuito o proyecto generar"),
+      .optional()
+      .describe("Preset validado. Usalo si el pedido coincide con uno de la lista. Para combinaciones libres usá 'componentes'."),
+    componentes: tool.schema
+      .string()
+      .optional()
+      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, lcd, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
     nombre_archivo: tool.schema
       .string()
       .optional()
       .describe("Nombre del archivo HTML (sin extensión). Por defecto usa el nombre del circuito."),
   },
   async execute(args, ctx) {
-    const plantilla = PLANTILLAS[args.circuito]
-    if (!plantilla) {
-      return `No tengo ese circuito todavía. Disponibles: ${Object.keys(PLANTILLAS).join(", ")}.`
-    }
-
     const bundle = bundlePath()
     if (!existsSync(bundle)) {
       return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Profe Bot con el instalador para que copie la biblioteca visual."
     }
-
     const scriptSrc = `file://${bundle}`
+
+    let plantilla: Plantilla
+    let base: string
+
+    if (args.componentes && args.componentes.trim()) {
+      const pedidos = parsearComponentes(args.componentes)
+      if (pedidos.length < 1 || pedidos.length > 6) {
+        return "El armador libre maneja de 1 a 6 componentes. Si son más, dividilo en dos circuitos."
+      }
+      const desconocidos = pedidos.filter((p) => !COMPONENTES[normalizarTipo(p.tipo)])
+      if (desconocidos.length) {
+        return `No conozco: ${desconocidos.map((d) => d.tipo).join(", ")}. Tengo: ${Object.keys(COMPONENTES).join(", ")}.`
+      }
+      const r = armarCircuito(pedidos)
+      const nombres = pedidos.map((p) => COMPONENTES[normalizarTipo(p.tipo)].etiqueta).join(" + ")
+      plantilla = {
+        titulo: `🔧 ${nombres} + ESP32`,
+        sub: "armado libre — piezas reales conectadas al ESP32",
+        escena: r.escena,
+        aviso: r.aviso,
+        tabla: r.tabla,
+        animacion: r.animacion,
+        alto: r.alto,
+        interactivo: r.interactivo,
+      }
+      base = args.nombre_archivo ?? `circuito-armado-${pedidos.map((p) => normalizarTipo(p.tipo)).join("-")}`
+    } else if (args.circuito) {
+      const preset = PLANTILLAS[args.circuito]
+      if (!preset) {
+        return `No tengo ese circuito todavía. Disponibles: ${Object.keys(PLANTILLAS).join(", ")}.`
+      }
+      plantilla = preset
+      base = args.nombre_archivo ?? `circuito-${args.circuito}`
+    } else {
+      return "Decime qué circuito armar: un preset (arg 'circuito') o una lista libre (arg 'componentes', ej 'led, servo')."
+    }
+
     const html = construirHTML(plantilla, scriptSrc)
 
-    const base = args.nombre_archivo ?? `circuito-${args.circuito}`
     const archivo = join(ctx.directory, `${base}.html`)
     await Bun.write(archivo, html)
 
