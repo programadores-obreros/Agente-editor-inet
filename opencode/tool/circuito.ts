@@ -639,6 +639,46 @@ const COMPONENTES: Record<string, Componente> = {
     advertencia: "el OLED SSD1306 es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x3C). Librerías: Adafruit_SSD1306 + Adafruit_GFX.",
     anim: (id) => `const o=document.getElementById('${id}');`,
   },
+
+  "7segmentos": {
+    tag: "wokwi-7segment",
+    etiqueta: "Display 7 segmentos",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "7 pines (cada segmento con 330Ω)" },
+      { nombre: "Común", color: CABLE.marron, clase: "fijo", rol: "GND (cátodo común)", destino: "GND" },
+    ],
+    advertencia: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 330Ω. Conviene la librería SevSeg para no gastar tantos pines.",
+    anim: (id) => `const d=document.getElementById('${id}');const digs=[[1,1,1,1,1,1,0,0],[0,1,1,0,0,0,0,0],[1,1,0,1,1,0,1,0],[1,1,1,1,0,0,1,0],[0,1,1,0,0,1,1,0]];let i=0;setInterval(()=>{i=(i+1)%digs.length;if(d)d.values=digs[i];},800);`,
+  },
+
+  neopixel: {
+    tag: "wokwi-neopixel",
+    etiqueta: "NeoPixel (LED inteligente)",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
+      { nombre: "DIN (datos)", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el NeoPixel (WS2812) es un LED RGB direccionable: con UN solo pin de datos controlás muchos en cadena. Librería: Adafruit_NeoPixel. Mejor alimentarlo de 5V.",
+    anim: (id) => `const n=document.getElementById('${id}');let h=0;setInterval(()=>{h=(h+10)%360;const c=h/60,x=Math.round((1-Math.abs(c%2-1))*255);let r=0,g=0,b=0;if(c<1){r=255;g=x}else if(c<2){r=x;g=255}else if(c<3){g=255;b=x}else if(c<4){g=x;b=255}else if(c<5){r=x;b=255}else{r=255;b=x}if(n){n.r=r;n.g=g;n.b=b;}},120);`,
+  },
+
+  joystick: {
+    tag: "wokwi-analog-joystick",
+    etiqueta: "Joystick analógico",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "VRx (eje X)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+      { nombre: "VRy (eje Y)", color: CABLE.azul, clase: "analogico", rol: "GPIO{1} (analógico)" },
+      { nombre: "SW (botón)", color: CABLE.verde, clase: "digital", rol: "GPIO{2}" },
+    ],
+    advertencia: "el joystick tiene 2 ejes analógicos (X, Y) que se leen con analogRead, y un botón al apretarlo. Ideal para mover algo en 2 direcciones (un robot, un juego).",
+    anim: (id) => `const j=document.getElementById('${id}');`,
+  },
 }
 
 const ALIAS: Record<string, string> = {
@@ -652,6 +692,9 @@ const ALIAS: Record<string, string> = {
   rgb: "rgb-led", "rgb-led": "rgb-led", "led-rgb": "rgb-led", "rgbled": "rgb-led",
   ldr: "ldr", luz: "ldr", fotorresistencia: "ldr", fotorresistor: "ldr",
   oled: "oled", ssd1306: "oled", "oled-display": "oled",
+  "7segmentos": "7segmentos", "7seg": "7segmentos", "7-segmentos": "7segmentos", display7: "7segmentos", "siete-segmentos": "7segmentos",
+  neopixel: "neopixel", ws2812: "neopixel", "led-inteligente": "neopixel",
+  joystick: "joystick", "joystick-analogico": "joystick", palanca: "joystick",
 }
 
 function normalizarTipo(t: string): string {
@@ -859,6 +902,7 @@ const ESCALA: Record<string, number> = {
   led: 1.3, servo: 1.0, potenciometro: 1.15, buzzer: 1.3, ultrasonico: 1.0,
   dht22: 1.2, pir: 1.0, lcd: 0.9, boton: 1.3,
   "rgb-led": 1.3, ldr: 1.1, oled: 0.9,
+  "7segmentos": 1.0, neopixel: 1.4, joystick: 1.0,
 }
 
 // LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
