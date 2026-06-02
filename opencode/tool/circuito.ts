@@ -719,9 +719,51 @@ function pathCable(x0: number, y0: number, x1: number, y1: number): string {
 
 // FIX auditoría #2: armarPuente devuelve también el id del actuador gobernado,
 // para NO ejecutar su animación autónoma (que pelearía con el puente).
+// Sensores que se pueden "simular" con un slider de magnitud física.
+// El alumno mueve el slider = simula acercar calor/luz/un objeto → dispara el actuador.
+const SENSOR_SIM: Record<string, { magnitud: string; unidad: string; min: number; max: number; umbral: number; emoji: string }> = {
+  dht22: { magnitud: "Temperatura", unidad: "°C", min: 0, max: 60, umbral: 35, emoji: "🌡️" },
+  ultrasonico: { magnitud: "Distancia", unidad: "cm", min: 2, max: 200, umbral: 20, emoji: "📏" },
+  pir: { magnitud: "Movimiento", unidad: "", min: 0, max: 1, umbral: 1, emoji: "🚶" },
+}
+
 function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | null {
   const idx = (pred: (t: string) => boolean): number =>
     pedidos.findIndex((p) => pred(normalizarTipo(p.tipo)))
+
+  // 1) sensor (dht22/ultrasonico/pir) + actuador → slider de magnitud con umbral
+  const iSens = idx((t) => SENSOR_SIM[t] != null)
+  const iActS = idx((t) => t === "led" || t === "servo" || t === "buzzer")
+  if (iSens >= 0 && iActS >= 0) {
+    const tSens = normalizarTipo(pedidos[iSens].tipo)
+    const tActu = normalizarTipo(pedidos[iActS].tipo)
+    const idSens = `${tSens}${iSens}`, idActu = `${tActu}${iActS}`
+    const s = SENSOR_SIM[tSens]
+    const ref = tActu === "led" ? "a" : tActu === "servo" ? "sv" : "bz"
+    // qué le hace al actuador cuando supera el umbral
+    const onAct = tActu === "led" ? "a.value=disparado;a.brightness=disparado?1:0;" : tActu === "servo" ? "sv.angle=disparado?180:0;" : "bz.hasSignal=disparado;"
+    // dirección del umbral: ultrasónico dispara cuando está CERCA (menor); el resto cuando SUPERA
+    const cmp = tSens === "ultrasonico" ? `m<=${s.umbral}` : `m>=${s.umbral}`
+    const js = `(() => {
+      const sen=document.getElementById('${idSens}'), ${ref}=document.getElementById('${idActu}');
+      if(!sen||!${ref})return;
+      const ctrl=document.createElement('div');
+      ctrl.style.cssText='display:flex;flex-direction:column;align-items:center;gap:5px;background:#fff4e5;border:1px solid #f0d9b8;border-radius:10px;padding:9px 13px;margin-top:8px;max-width:220px';
+      ctrl.innerHTML='<label style="font:600 12px sans-serif;color:#b9770e">${s.emoji} Simulá ${s.magnitud.toLowerCase()} 👇</label><input type="range" min="${s.min}" max="${s.max}" value="${s.min}" style="width:170px;accent-color:#e67e22;cursor:pointer"><span style="font:700 14px sans-serif;color:#e67e22">${s.min} ${s.unidad}</span>';
+      const sl=ctrl.querySelector('input'), lbl=ctrl.querySelector('span');
+      sen.parentElement.appendChild(ctrl);
+      function aplicar(m){
+        const disparado = ${cmp};
+        ${onAct}
+        lbl.textContent = m + ' ${s.unidad}' + (disparado ? ' ⚠️' : '');
+        // resaltar el sensor cuando se dispara
+        sen.style.filter = disparado ? 'drop-shadow(0 0 10px #e67e22)' : 'none';
+      }
+      sl.addEventListener('input',()=>aplicar(+sl.value));
+      aplicar(${s.min});
+    })();`
+    return { js, idActuador: idActu }
+  }
 
   const iInter = idx((t) => COMPONENTES[t]?.interactivo === true)
   const iAct = idx((t) => t === "led" || t === "servo" || t === "buzzer")
@@ -840,7 +882,10 @@ ${conex}
     }
   })
 
-  if (puente) anims.push(puente.js)
+  if (puente) {
+    anims.push(puente.js)
+    interactivo = true // si hay puente (incluido sensor→actuador con slider), es interactivo
+  }
 
   // escena = grid [ESP32 | columna de filas]
   const escena = `
