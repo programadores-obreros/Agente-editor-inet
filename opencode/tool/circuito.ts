@@ -1104,7 +1104,7 @@ Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dh
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
 
-ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
+ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
   args: {
     circuito: tool.schema
       .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo"])
@@ -1113,7 +1113,7 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
     componentes: tool.schema
       .string()
       .optional()
-      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
+      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
     nombre_archivo: tool.schema
       .string()
       .optional()
