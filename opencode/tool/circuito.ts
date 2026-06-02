@@ -720,6 +720,70 @@ const COMPONENTES: Record<string, Componente> = {
     advertencia: "el teclado 4x4 tiene 16 teclas pero usa solo 8 pines (4 filas + 4 columnas) gracias a la lectura matricial. Para ingresar claves, menús, números. Librería: Keypad.",
     anim: (id) => `const k=document.getElementById('${id}');`,
   },
+
+  llama: {
+    tag: "wokwi-flame-sensor",
+    etiqueta: "Sensor de llama",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "DO (digital)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+    ],
+    advertencia: "el sensor de llama detecta fuego/luz infrarroja cercana. Salida digital DO (hay fuego o no) o analógica AO (nivel). Alarma de incendio, robot bombero. Tiene un potenciómetro para ajustar la sensibilidad.",
+    anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 10px #e74c3c)':'none';},700);`,
+  },
+
+  sonido: {
+    tag: "wokwi-small-sound-sensor",
+    etiqueta: "Sensor de sonido",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "DO (digital)", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
+    ],
+    advertencia: "el sensor de sonido detecta ruido (un aplauso, un golpe). Salida digital DO (umbral ajustable con el potenciómetro). Aplauso que prende la luz, alarma de ruido.",
+    anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.opacity=on?'1':'0.7';},400);`,
+  },
+
+  ntc: {
+    tag: "wokwi-ntc-temperature-sensor",
+    etiqueta: "Sensor de temperatura NTC",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "OUT (analógico)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+    ],
+    advertencia: "el NTC es un termistor: su resistencia cambia con la temperatura. Salida analógica (analogRead, 0-4095). Más simple que el DHT pero mide solo temperatura. Termómetro, control de ventilador.",
+    anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
+  },
+
+  "ir-receptor": {
+    tag: "wokwi-ir-receiver",
+    etiqueta: "Receptor infrarrojo (IR)",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "OUT (señal)", color: CABLE.amarillo, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+    ],
+    advertencia: "el receptor IR lee los códigos de un control remoto (TV, aire). Cada botón manda un código distinto. Librería: IRremote. Controlar el ESP32 con un control remoto común.",
+    anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 8px #f1c40f)':'none';},600);`,
+  },
+
+  tilt: {
+    tag: "wokwi-tilt-switch",
+    etiqueta: "Sensor de inclinación",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "Pata 1", color: CABLE.verde, clase: "digital", rol: "GPIO{0} (INPUT_PULLUP)" },
+      { nombre: "Pata 2", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el sensor de inclinación (tilt) es como un interruptor que se activa al inclinarlo (una bolita adentro cierra el contacto). Detecta si algo se volcó o se movió. Usalo con INPUT_PULLUP.",
+    anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.transform='scale(1) rotate('+(on?12:-12)+'deg)';},800);`,
+  },
 }
 
 const ALIAS: Record<string, string> = {
@@ -739,6 +803,11 @@ const ALIAS: Record<string, string> = {
   mpu6050: "mpu6050", acelerometro: "mpu6050", giroscopio: "mpu6050", mpu: "mpu6050",
   stepper: "stepper", "paso-a-paso": "stepper", "motor-paso-a-paso": "stepper", "28byj": "stepper", "28byj-48": "stepper",
   teclado: "teclado", keypad: "teclado", "teclado-matricial": "teclado", "4x4": "teclado",
+  llama: "llama", fuego: "llama", "sensor-llama": "llama", flame: "llama",
+  sonido: "sonido", ruido: "sonido", micro: "sonido", microfono: "sonido", ky038: "sonido",
+  ntc: "ntc", termistor: "ntc", "ntc-temperatura": "ntc",
+  ir: "ir-receptor", "ir-receptor": "ir-receptor", infrarrojo: "ir-receptor", "control-remoto": "ir-receptor",
+  tilt: "tilt", inclinacion: "tilt", "sensor-inclinacion": "tilt",
 }
 
 function normalizarTipo(t: string): string {
@@ -854,8 +923,11 @@ function pathCable(x0: number, y0: number, x1: number, y1: number): string {
 // El alumno mueve el slider = simula acercar calor/luz/un objeto → dispara el actuador.
 const SENSOR_SIM: Record<string, { magnitud: string; unidad: string; min: number; max: number; umbral: number; emoji: string }> = {
   dht22: { magnitud: "Temperatura", unidad: "°C", min: 0, max: 60, umbral: 35, emoji: "🌡️" },
+  ntc: { magnitud: "Temperatura", unidad: "°C", min: 0, max: 60, umbral: 35, emoji: "🌡️" },
   ultrasonico: { magnitud: "Distancia", unidad: "cm", min: 2, max: 200, umbral: 20, emoji: "📏" },
   pir: { magnitud: "Movimiento", unidad: "", min: 0, max: 1, umbral: 1, emoji: "🚶" },
+  llama: { magnitud: "Fuego cerca", unidad: "%", min: 0, max: 100, umbral: 50, emoji: "🔥" },
+  sonido: { magnitud: "Nivel de ruido", unidad: "%", min: 0, max: 100, umbral: 60, emoji: "🔊" },
 }
 
 function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | null {
@@ -964,6 +1036,7 @@ const ESCALA: Record<string, number> = {
   "rgb-led": 1.3, ldr: 1.1, oled: 0.9,
   "7segmentos": 1.0, neopixel: 1.4, joystick: 1.0,
   mpu6050: 1.2, stepper: 1.0, teclado: 0.9,
+  llama: 1.1, sonido: 1.1, ntc: 1.1, "ir-receptor": 1.2, tilt: 1.2,
 }
 
 // LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
@@ -1121,7 +1194,7 @@ Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dh
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
 
-ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
+ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
   args: {
     circuito: tool.schema
       .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo"])
@@ -1130,7 +1203,7 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
     componentes: tool.schema
       .string()
       .optional()
-      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
+      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
     nombre_archivo: tool.schema
       .string()
       .optional()
