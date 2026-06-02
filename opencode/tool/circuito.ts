@@ -199,13 +199,13 @@ const PLANTILLAS: Record<string, Plantilla> = {
       const led = document.getElementById('led');
       const valor = document.getElementById('valor');
       function actualizar(){
-        const pct = pot.percent ?? 0;
+        const pct = ((pot.value ?? 0) / 1023) * 100;
         led.brightness = pct/100;
         led.value = pct > 2;
         valor.textContent = 'Brillo: ' + Math.round(pct) + '%';
       }
       pot.addEventListener('input', actualizar);
-      pot.percent = 0; actualizar();`,
+      actualizar();`,
   },
 
   "dht22-esp32": {
@@ -515,7 +515,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "Extremo 2", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
     advertencia: "el potenciómetro usa una entrada analógica. Usá GPIO34 o GPIO35 (solo-entrada, ideales para ADC). GPIO32/33 también sirven.",
-    anim: (id) => `const p=document.getElementById('${id}');if(p){p.percent=p.percent??0;p.addEventListener('input',()=>{const v=Math.round(p.percent??0);document.title='Potenciometro: '+v+'%';});}`,
+    anim: (id) => `const p=document.getElementById('${id}');if(p){p.addEventListener('input',()=>{const v=Math.round(((p.value??0)/1023)*100);document.title='Potenciometro: '+v+'%';});}`,
   },
 
   buzzer: {
@@ -732,14 +732,16 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
   const idInter = `${tInter}${iInter}`
   const idAct = `${tAct}${iAct}`
 
+  // El potenciómetro Wokwi, al arrastrarlo con el mouse, actualiza VALUE (0-1023), NO percent.
+  // pct() normaliza a 0-100 para que el puente funcione con el mouse real.
   let js = ""
   if (tInter === "potenciometro") {
     if (tAct === "led")
-      js = `(() => { const p=document.getElementById('${idInter}'),a=document.getElementById('${idAct}'); if(!p||!a)return; const f=()=>{const v=p.percent??0;a.brightness=v/100;a.value=v>2;}; p.addEventListener('input',f); f(); })();`
+      js = `(() => { const p=document.getElementById('${idInter}'),a=document.getElementById('${idAct}'); if(!p||!a)return; const pct=()=>((p.value??0)/1023)*100; const f=()=>{const v=pct();a.brightness=v/100;a.value=v>2;}; p.addEventListener('input',f); f(); })();`
     else if (tAct === "servo")
-      js = `(() => { const p=document.getElementById('${idInter}'),s=document.getElementById('${idAct}'); if(!p||!s)return; const f=()=>{s.hornAngle=Math.round((p.percent??0)*1.8);}; p.addEventListener('input',f); f(); })();`
+      js = `(() => { const p=document.getElementById('${idInter}'),s=document.getElementById('${idAct}'); if(!p||!s)return; const f=()=>{s.hornAngle=Math.round(((p.value??0)/1023)*180);}; p.addEventListener('input',f); f(); })();`
     else if (tAct === "buzzer")
-      js = `(() => { const p=document.getElementById('${idInter}'),b=document.getElementById('${idAct}'); if(!p||!b)return; const f=()=>{b.hasSignal=(p.percent??0)>50;}; p.addEventListener('input',f); f(); })();`
+      js = `(() => { const p=document.getElementById('${idInter}'),b=document.getElementById('${idAct}'); if(!p||!b)return; const f=()=>{b.hasSignal=((p.value??0)/1023)*100>50;}; p.addEventListener('input',f); f(); })();`
   } else if (tInter === "boton") {
     const onP = tAct === "servo" ? "a.hornAngle=180" : tAct === "buzzer" ? "a.hasSignal=true" : "a.value=true"
     const onR = tAct === "servo" ? "a.hornAngle=0" : tAct === "buzzer" ? "a.hasSignal=false" : "a.value=false"
