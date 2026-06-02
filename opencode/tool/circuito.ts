@@ -669,6 +669,7 @@ const COMPONENTES: Record<string, Componente> = {
     tag: "wokwi-analog-joystick",
     etiqueta: "Joystick analógico",
     voltaje: "3.3V",
+    interactivo: true,
     pines: [
       { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
       { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
@@ -935,6 +936,22 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
     const onP = tAct === "servo" ? "a.angle=180" : tAct === "buzzer" ? "a.hasSignal=true" : "a.value=true"
     const onR = tAct === "servo" ? "a.angle=0" : tAct === "buzzer" ? "a.hasSignal=false" : "a.value=false"
     js = `(() => { const btn=document.getElementById('${idInter}'),a=document.getElementById('${idAct}'); if(!btn||!a)return; btn.addEventListener('button-press',()=>{${onP};}); btn.addEventListener('button-release',()=>{${onR};}); })();`
+  } else if (tInter === "joystick") {
+    // el joystick mueve el eje X con un slider; ese valor controla el actuador
+    const ref = tAct === "led" ? "a" : tAct === "servo" ? "sv" : "bz"
+    const efecto = tAct === "led" ? "const pc=(v/100)*100;a.brightness=v/100;a.value=v>2;" : tAct === "servo" ? "sv.angle=Math.round((v/100)*180);" : "bz.hasSignal=v>50;"
+    js = `(() => {
+      const j=document.getElementById('${idInter}'), ${ref}=document.getElementById('${idAct}');
+      if(!j||!${ref})return;
+      const ctrl=document.createElement('div');
+      ctrl.style.cssText='display:flex;flex-direction:column;align-items:center;gap:5px;background:#eef6ff;border:1px solid #bcd9f5;border-radius:10px;padding:9px 13px;margin-top:8px;max-width:200px';
+      ctrl.innerHTML='<label style="font:600 12px sans-serif;color:#2471a3">🕹️ Mové el eje X 👇</label><input type="range" min="0" max="100" value="50" style="width:160px;accent-color:#2980b9;cursor:pointer"><span style="font:700 14px sans-serif;color:#2980b9">centro</span>';
+      const sl=ctrl.querySelector('input'), lbl=ctrl.querySelector('span');
+      j.parentElement.appendChild(ctrl);
+      function aplicar(v){ if(j.xValue!==undefined)j.xValue=Math.round((v/100)*1023); ${efecto} lbl.textContent=(v<40?'◀ izq':v>60?'der ▶':'centro'); }
+      sl.addEventListener('input',()=>aplicar(+sl.value));
+      aplicar(50);
+    })();`
   }
   if (!js) return null
   return { js, idActuador: idAct }
