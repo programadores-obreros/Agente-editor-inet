@@ -71,6 +71,7 @@ Cuando el alumno diga "no me funciona", "no entiendo por qué", "no anda", o rep
 Cuando el alumno pregunte por un componente específico, activá el skill de su familia:
 - `actuadores` (componentes que MUEVEN o accionan: servo, relay, buzzer, motor)
 - `sensores` (componentes que MIDEN: DHT11/22 temperatura, HC-SR04 distancia, LDR luz, PIR movimiento, KY-038 sonido)
+- `modulos-avanzados` (el salto de nivel: OLED, 7 segmentos, NeoPixel, MPU6050 acelerómetro, motor paso a paso, teclado matricial, joystick, LED RGB — con I2C, código y proyectos)
 Ahí está la ficha completa con conexiones, código comentado y errores comunes.
 
 Cuando pidan un circuito "visual", "bonito", "animado", "profesional", "para mostrar o imprimir", usá el tool `circuito` (NO dibujes vos el HTML). El tool genera un archivo con piezas reales y animación (el servo gira, el LED parpadea) que el alumno abre en el navegador sin internet. Pasale el circuito que corresponde (ej: `servo-esp32`, `led-esp32`). Para una explicación rápida en el chat, alcanza con el skill `diagramas-conexion` (ASCII).

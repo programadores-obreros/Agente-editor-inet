@@ -679,6 +679,46 @@ const COMPONENTES: Record<string, Componente> = {
     advertencia: "el joystick tiene 2 ejes analógicos (X, Y) que se leen con analogRead, y un botón al apretarlo. Ideal para mover algo en 2 direcciones (un robot, un juego).",
     anim: (id) => `const j=document.getElementById('${id}');`,
   },
+
+  mpu6050: {
+    tag: "wokwi-mpu6050",
+    etiqueta: "Acelerómetro MPU6050",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+    ],
+    advertencia: "el MPU6050 mide aceleración (3 ejes) y giro (3 ejes) — detecta inclinación, movimiento, caídas. Es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x68; si conectás AD0 a 3.3V pasa a 0x69). Librería: Adafruit_MPU6050 + Adafruit_Sensor. Proyectos: nivel digital, dron, control por gestos.",
+    anim: (id) => `const m=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(m)m.style.transform='scale(1) rotate('+(Math.sin(t)*8)+'deg)';},60);`,
+  },
+
+  stepper: {
+    tag: "wokwi-stepper-motor",
+    etiqueta: "Motor paso a paso",
+    voltaje: "5V",
+    pines: [
+      { nombre: "IN1", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "IN2", color: CABLE.amarillo, clase: "digital", rol: "GPIO{1}" },
+      { nombre: "IN3", color: CABLE.verde, clase: "digital", rol: "GPIO{2}" },
+      { nombre: "IN4", color: CABLE.azul, clase: "digital", rol: "GPIO{3}" },
+    ],
+    advertencia: "el motor paso a paso (28BYJ-48) gira en pasos exactos, ideal para posición precisa (impresora, reloj, persiana). Se conecta por el driver ULN2003 (4 pines IN1-IN4). El motor se alimenta de 5V. Librería: Stepper o AccelStepper.",
+    anim: (id) => `const s=document.getElementById('${id}');let a=0;setInterval(()=>{a=(a+6)%360;if(s)s.angle=a;},40);`,
+  },
+
+  teclado: {
+    tag: "wokwi-membrane-keypad",
+    etiqueta: "Teclado matricial 4x4",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "Filas (R1-R4)", color: CABLE.naranja, clase: "digital", rol: "4 GPIO (filas)" },
+      { nombre: "Columnas (C1-C4)", color: CABLE.verde, clase: "digital", rol: "4 GPIO (columnas)" },
+    ],
+    advertencia: "el teclado 4x4 tiene 16 teclas pero usa solo 8 pines (4 filas + 4 columnas) gracias a la lectura matricial. Para ingresar claves, menús, números. Librería: Keypad.",
+    anim: (id) => `const k=document.getElementById('${id}');`,
+  },
 }
 
 const ALIAS: Record<string, string> = {
@@ -695,6 +735,9 @@ const ALIAS: Record<string, string> = {
   "7segmentos": "7segmentos", "7seg": "7segmentos", "7-segmentos": "7segmentos", display7: "7segmentos", "siete-segmentos": "7segmentos",
   neopixel: "neopixel", ws2812: "neopixel", "led-inteligente": "neopixel",
   joystick: "joystick", "joystick-analogico": "joystick", palanca: "joystick",
+  mpu6050: "mpu6050", acelerometro: "mpu6050", giroscopio: "mpu6050", mpu: "mpu6050",
+  stepper: "stepper", "paso-a-paso": "stepper", "motor-paso-a-paso": "stepper", "28byj": "stepper", "28byj-48": "stepper",
+  teclado: "teclado", keypad: "teclado", "teclado-matricial": "teclado", "4x4": "teclado",
 }
 
 function normalizarTipo(t: string): string {
@@ -903,6 +946,7 @@ const ESCALA: Record<string, number> = {
   dht22: 1.2, pir: 1.0, lcd: 0.9, boton: 1.3,
   "rgb-led": 1.3, ldr: 1.1, oled: 0.9,
   "7segmentos": 1.0, neopixel: 1.4, joystick: 1.0,
+  mpu6050: 1.2, stepper: 1.0, teclado: 0.9,
 }
 
 // LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
