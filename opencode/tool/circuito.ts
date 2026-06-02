@@ -732,16 +732,33 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
   const idInter = `${tInter}${iInter}`
   const idAct = `${tAct}${iAct}`
 
-  // El potenciómetro Wokwi, al arrastrarlo con el mouse, actualiza VALUE (0-1023), NO percent.
-  // pct() normaliza a 0-100 para que el puente funcione con el mouse real.
+  // El potenciómetro Wokwi detecta el giro con geometría SVG que se rompe al abrir con file://.
+  // Por eso INYECTAMOS un slider de control visible: el alumno lo mueve, y eso gira la perilla
+  // visual Y mueve el actuador. Robusto, obvio, no depende de arrastrar la perilla.
+  // efecto(v) recibe el value 0-1023 y debe actualizar el actuador.
   let js = ""
   if (tInter === "potenciometro") {
-    if (tAct === "led")
-      js = `(() => { const p=document.getElementById('${idInter}'),a=document.getElementById('${idAct}'); if(!p||!a)return; const pct=()=>((p.value??0)/1023)*100; const f=()=>{const v=pct();a.brightness=v/100;a.value=v>2;}; p.addEventListener('input',f); f(); })();`
-    else if (tAct === "servo")
-      js = `(() => { const p=document.getElementById('${idInter}'),s=document.getElementById('${idAct}'); if(!p||!s)return; const f=()=>{s.hornAngle=Math.round(((p.value??0)/1023)*180);}; p.addEventListener('input',f); f(); })();`
-    else if (tAct === "buzzer")
-      js = `(() => { const p=document.getElementById('${idInter}'),b=document.getElementById('${idAct}'); if(!p||!b)return; const f=()=>{b.hasSignal=((p.value??0)/1023)*100>50;}; p.addEventListener('input',f); f(); })();`
+    let efecto = ""
+    if (tAct === "led") efecto = `const pc=(v/1023)*100;a.brightness=pc/100;a.value=pc>2;`
+    else if (tAct === "servo") efecto = `s.hornAngle=Math.round((v/1023)*180);`
+    else if (tAct === "buzzer") efecto = `b.hasSignal=(v/1023)*100>50;`
+    if (efecto) {
+      const ref = tAct === "led" ? "a" : tAct === "servo" ? "s" : "b"
+      js = `(() => {
+        const p=document.getElementById('${idInter}'), ${ref}=document.getElementById('${idAct}');
+        if(!p||!${ref})return;
+        // slider de control inyectado bajo el potenciómetro
+        const ctrl=document.createElement('div');
+        ctrl.style.cssText='display:flex;flex-direction:column;align-items:center;gap:5px;background:#f7f9fb;border:1px solid #e3e8ee;border-radius:10px;padding:9px 13px;margin-top:8px;max-width:200px';
+        ctrl.innerHTML='<label style="font:600 12px sans-serif;color:#34495e">Mové para girar 👇</label><input type="range" min="0" max="1023" value="0" style="width:160px;accent-color:#9b59b6;cursor:pointer"><span style="font:700 14px sans-serif;color:#9b59b6">0%</span>';
+        const sl=ctrl.querySelector('input'), lbl=ctrl.querySelector('span');
+        p.parentElement.appendChild(ctrl);
+        function aplicar(v){ p.value=v; ${efecto} lbl.textContent=Math.round((v/1023)*100)+'%'; }
+        sl.addEventListener('input',()=>aplicar(+sl.value));
+        p.addEventListener('input',()=>{ sl.value=p.value; aplicar(p.value); });
+        aplicar(0);
+      })();`
+    }
   } else if (tInter === "boton") {
     const onP = tAct === "servo" ? "a.hornAngle=180" : tAct === "buzzer" ? "a.hasSignal=true" : "a.value=true"
     const onR = tAct === "servo" ? "a.hornAngle=0" : tAct === "buzzer" ? "a.hasSignal=false" : "a.value=false"
