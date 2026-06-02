@@ -598,6 +598,47 @@ const COMPONENTES: Record<string, Componente> = {
     advertencia: "el botón usa INPUT_PULLUP: sin apretar lee HIGH, al apretar LOW. La conexión es GPIO + GND, nunca a 3.3V con esta config.",
     anim: (id) => `const b=document.getElementById('${id}');if(b)b.addEventListener('button-press',()=>{});`,
   },
+
+  "rgb-led": {
+    tag: "wokwi-rgb-led",
+    etiqueta: "LED RGB",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "GPIO{0} (con 330Ω)" },
+      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "GPIO{1} (con 330Ω)" },
+      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "GPIO{2} (con 330Ω)" },
+      { nombre: "Común (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+    ],
+    advertencia: "el LED RGB combina 3 colores. Cada pin con su resistencia de 330Ω. Con analogWrite (PWM) mezclás cualquier color.",
+    anim: (id) => `const e=document.getElementById('${id}');let h=0;setInterval(()=>{h=(h+8)%360;const c=h/60,x=1-Math.abs(c%2-1);let r=0,g=0,b=0;if(c<1){r=1;g=x}else if(c<2){r=x;g=1}else if(c<3){g=1;b=x}else if(c<4){g=x;b=1}else if(c<5){r=x;b=1}else{r=1;b=x}if(e){e.ledRed=r>0.3;e.ledGreen=g>0.3;e.ledBlue=b>0.3}},120);`,
+  },
+
+  ldr: {
+    tag: "wokwi-photoresistor-sensor",
+    etiqueta: "Sensor de luz (LDR)",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "OUT / AO", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+    ],
+    advertencia: "el LDR mide luz. Su salida va a un pin analógico (GPIO34/35). analogRead da 0-4095 en ESP32 (0=oscuro, 4095=mucha luz).",
+    anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(s)s.style.opacity=(0.7+0.3*Math.abs(Math.sin(t))).toFixed(2);},60);`,
+  },
+
+  oled: {
+    tag: "wokwi-ssd1306",
+    etiqueta: "Display OLED",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+    ],
+    advertencia: "el OLED SSD1306 es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x3C). Librerías: Adafruit_SSD1306 + Adafruit_GFX.",
+    anim: (id) => `const o=document.getElementById('${id}');`,
+  },
 }
 
 const ALIAS: Record<string, string> = {
@@ -608,6 +649,9 @@ const ALIAS: Record<string, string> = {
   pantalla: "lcd", display: "lcd", lcd: "lcd", lcd1602: "lcd",
   boton: "boton", pulsador: "boton", button: "boton", pushbutton: "boton",
   led: "led", servo: "servo", buzzer: "buzzer", zumbador: "buzzer",
+  rgb: "rgb-led", "rgb-led": "rgb-led", "led-rgb": "rgb-led", "rgbled": "rgb-led",
+  ldr: "ldr", luz: "ldr", fotorresistencia: "ldr", fotorresistor: "ldr",
+  oled: "oled", ssd1306: "oled", "oled-display": "oled",
 }
 
 function normalizarTipo(t: string): string {
@@ -814,6 +858,7 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
 const ESCALA: Record<string, number> = {
   led: 1.3, servo: 1.0, potenciometro: 1.15, buzzer: 1.3, ultrasonico: 1.0,
   dht22: 1.2, pir: 1.0, lcd: 0.9, boton: 1.3,
+  "rgb-led": 1.3, ldr: 1.1, oled: 0.9,
 }
 
 // LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
@@ -971,7 +1016,7 @@ Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dh
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
 
-ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, lcd, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
+ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
   args: {
     circuito: tool.schema
       .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo"])
@@ -980,7 +1025,7 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
     componentes: tool.schema
       .string()
       .optional()
-      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, lcd, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
+      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, potenciometro, buzzer, ultrasonico, dht22, pir, ldr, lcd, oled, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
     nombre_archivo: tool.schema
       .string()
       .optional()
