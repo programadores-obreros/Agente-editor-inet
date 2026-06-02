@@ -87,7 +87,7 @@ const PLANTILLAS: Record<string, Plantilla> = {
     animacion: `
       const servo = document.getElementById('servo');
       let a = 0, dir = 1;
-      setInterval(() => { a += dir*3; if (a>=180||a<=0) dir*=-1; if (servo) servo.hornAngle = a; }, 30);`,
+      setInterval(() => { a += dir*3; if (a>=180||a<=0) dir*=-1; if (servo) servo.angle = a; }, 30);`,
   },
 
   "led-esp32": {
@@ -501,7 +501,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "Tierra", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
     advertencia: "el servo necesita 5V: cable rojo a VIN, nunca a 3.3V.",
-    anim: (id) => `const s=document.getElementById('${id}');let a=0,d=1;setInterval(()=>{a+=d*3;if(a>=180||a<=0)d*=-1;if(s)s.hornAngle=a;},30);`,
+    anim: (id) => `const s=document.getElementById('${id}');let a=0,d=1;setInterval(()=>{a+=d*3;if(a>=180||a<=0)d*=-1;if(s)s.angle=a;},30);`,
   },
 
   potenciometro: {
@@ -740,7 +740,7 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
   if (tInter === "potenciometro") {
     let efecto = ""
     if (tAct === "led") efecto = `const pc=(v/1023)*100;a.brightness=pc/100;a.value=pc>2;`
-    else if (tAct === "servo") efecto = `s.hornAngle=Math.round((v/1023)*180);`
+    else if (tAct === "servo") efecto = `s.angle=Math.round((v/1023)*180);`
     else if (tAct === "buzzer") efecto = `b.hasSignal=(v/1023)*100>50;`
     if (efecto) {
       const ref = tAct === "led" ? "a" : tAct === "servo" ? "s" : "b"
@@ -760,8 +760,8 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
       })();`
     }
   } else if (tInter === "boton") {
-    const onP = tAct === "servo" ? "a.hornAngle=180" : tAct === "buzzer" ? "a.hasSignal=true" : "a.value=true"
-    const onR = tAct === "servo" ? "a.hornAngle=0" : tAct === "buzzer" ? "a.hasSignal=false" : "a.value=false"
+    const onP = tAct === "servo" ? "a.angle=180" : tAct === "buzzer" ? "a.hasSignal=true" : "a.value=true"
+    const onR = tAct === "servo" ? "a.angle=0" : tAct === "buzzer" ? "a.hasSignal=false" : "a.value=false"
     js = `(() => { const btn=document.getElementById('${idInter}'),a=document.getElementById('${idAct}'); if(!btn||!a)return; btn.addEventListener('button-press',()=>{${onP};}); btn.addEventListener('button-release',()=>{${onR};}); })();`
   }
   if (!js) return null
