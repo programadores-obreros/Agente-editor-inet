@@ -900,6 +900,23 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 </html>`
 }
 
+// Mapeo de cada preset → lista de componentes, para generarlos con el ARMADOR
+// (layout de filas + cables CSS, prolijo) en vez del SVG viejo. Un solo sistema visual.
+const PRESET_COMPONENTES: Record<string, string[]> = {
+  "servo-esp32": ["servo"],
+  "led-esp32": ["led"],
+  "ultrasonico-esp32": ["ultrasonico"],
+  "buzzer-esp32": ["buzzer"],
+  "potenciometro-esp32": ["potenciometro", "led"], // interactivo: la perilla controla el LED
+  "dht22-esp32": ["dht22"],
+  "pir-esp32": ["pir"],
+  "lcd-esp32": ["lcd"],
+  "boton-esp32": ["boton", "led"], // interactivo: el botón enciende el LED
+  "estacion-meteo": ["dht22", "lcd"],
+  "alarma": ["pir", "buzzer", "led"],
+  "semaforo": ["led", "led", "led"],
+}
+
 export default tool({
   description: `ÚNICO método aprobado para generar cualquier circuito visual, esquema, diagrama animado o "circuito bonito" de Arduino/ESP32. Genera un HTML con piezas REALES (Wokwi Elements) y animación (el servo gira, el LED parpadea) que el alumno abre en el navegador SIN internet.
 
@@ -959,11 +976,24 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
       }
       base = args.nombre_archivo ?? `circuito-armado-${pedidos.map((p) => normalizarTipo(p.tipo)).join("-")}`
     } else if (args.circuito) {
-      const preset = PLANTILLAS[args.circuito]
-      if (!preset) {
-        return `No tengo ese circuito todavía. Disponibles: ${Object.keys(PLANTILLAS).join(", ")}.`
+      // Los presets ahora se generan con el ARMADOR (filas + cables CSS, prolijo).
+      const tipos = PRESET_COMPONENTES[args.circuito]
+      if (!tipos) {
+        return `No tengo ese circuito todavía. Disponibles: ${Object.keys(PRESET_COMPONENTES).join(", ")}.`
       }
-      plantilla = preset
+      const pedidos = tipos.map((t) => ({ tipo: t }))
+      const r = armarCircuito(pedidos)
+      const nombres = pedidos.map((p) => COMPONENTES[normalizarTipo(p.tipo)].etiqueta).join(" + ")
+      plantilla = {
+        titulo: `🔧 ${nombres} + ESP32`,
+        sub: "piezas reales conectadas al ESP32",
+        escena: r.escena,
+        aviso: r.aviso,
+        tabla: r.tabla,
+        animacion: r.animacion,
+        alto: r.alto,
+        interactivo: r.interactivo,
+      }
       base = args.nombre_archivo ?? `circuito-${args.circuito}`
     } else {
       return "Decime qué circuito armar: un preset (arg 'circuito') o una lista libre (arg 'componentes', ej 'led, servo')."
