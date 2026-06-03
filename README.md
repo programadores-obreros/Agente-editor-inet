@@ -26,23 +26,32 @@ Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda 
 
 ## Instalación
 
-### Requisitos previos
-1. **OpenCode** — https://opencode.ai
-2. **PlatformIO Core** — para compilar y cargar código a la placa (ver `docs/`)
+### ⭐ Instalación fácil (recomendada)
 
-### Instalar Profe Bot
+Un solo comando instala **todo**: OpenCode + PlatformIO + Profe Bot. No necesitás instalar nada antes, y en Windows **no hace falta permiso de administrador** (ideal para las PCs de la escuela).
 
 **Linux / macOS:**
 ```bash
-./install/install.sh
+bash install/bootstrap.sh
 ```
 
-**Windows:**
+**Windows** (clic derecho → "Ejecutar con PowerShell", o en una terminal):
 ```powershell
-powershell -ExecutionPolicy Bypass -File install\install.ps1
+powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 ```
 
-El instalador copia los archivos y te avisa si falta OpenCode o PlatformIO.
+El bootstrap detecta lo que ya tengas instalado y solo instala lo que falte.
+
+### 🔧 Instalación manual (avanzada)
+
+Si ya tenés **OpenCode** (https://opencode.ai) y **PlatformIO Core** instalados, podés copiar solo la capa de Profe Bot:
+
+```bash
+bash install/install.sh         # Linux / macOS
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File install\install.ps1   # Windows
+```
 
 ---
 

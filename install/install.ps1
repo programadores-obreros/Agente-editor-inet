@@ -31,6 +31,12 @@ Copy-Item (Join-Path $Src "tool\*")    (Join-Path $ConfigDir "tool\")    -Recurs
 Copy-Item (Join-Path $Src "skills\*")  (Join-Path $ConfigDir "skills\")  -Recurse -Force
 Copy-Item (Join-Path $Src "command\*") (Join-Path $ConfigDir "command\") -Recurse -Force
 
+# Biblioteca visual (piezas Wokwi + componentes dibujados) para los circuitos en HTML.
+# SIN esto, la herramienta de circuitos no puede dibujar nada.
+$WebDir = Join-Path $ConfigDir "profebot-web"
+New-Item -ItemType Directory -Force -Path $WebDir | Out-Null
+Copy-Item (Join-Path $Src "profebot-web\*") $WebDir -Recurse -Force
+
 Write-Host "==> Listo! Profe Bot instalado."
 Write-Host ""
 Write-Host "Verificando dependencias:"
