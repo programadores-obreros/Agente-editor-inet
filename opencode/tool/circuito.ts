@@ -1321,6 +1321,113 @@ function parsearComponentes(raw: string): Pedido[] {
     })
 }
 
+// ============================================================================
+// EXPLICADOR DE PROTOBOARD — HTML interactivo para ENTENDER la placa de pruebas.
+// No es un circuito con pines: es la placa misma. Tocás un agujero y se iluminan
+// todos los que están unidos por dentro (el momento "ajá"). Más un ejemplo armado.
+// ============================================================================
+function armarProtoboard(): Plantilla {
+  const FILAS = 8
+  const cols = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+  const hoyo = (grp: string) => `<span class="pbx-hole" data-grp="${grp}"></span>`
+  const lado = (grp: string) => `<div class="pbx-holes">${[0, 1, 2, 3, 4].map(() => hoyo(grp)).join("")}</div>`
+
+  // bus: 5 hoyos + canal + 5 hoyos, todos del MISMO grupo (riel continuo)
+  const bus = (grp: string, clase: string, simbolo: string) =>
+    `<div class="pbx-fila"><span class="pbx-rail ${clase}">${simbolo}</span>${lado(grp)}<span class="pbx-canal"></span>${lado(grp)}<span class="pbx-rail ${clase}">${simbolo}</span></div>`
+
+  // filas numeradas: lado izq (a-e) un grupo, lado der (f-j) otro grupo, separados por el canal
+  let filas = ""
+  for (let n = 1; n <= FILAS; n++) {
+    filas += `<div class="pbx-fila"><span class="pbx-num">${n}</span>${lado(`rL${n}`)}<span class="pbx-canal"></span>${lado(`rR${n}`)}<span class="pbx-num">${n}</span></div>`
+  }
+  const header = `<div class="pbx-hdr">${cols.slice(0, 5).map((c) => `<span>${c}</span>`).join("")}<span class="pbx-gap"></span>${cols.slice(5).map((c) => `<span>${c}</span>`).join("")}</div>`
+
+  const escena = `
+<style>
+  .pbx-cab{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-start;}
+  .pbx-board{background:#f3efe6;border:1px solid #d8d2c4;border-radius:12px;padding:14px 18px;box-shadow:inset 0 0 0 2px #e8e2d6;}
+  .pbx-fila{display:flex;align-items:center;gap:9px;margin:3px 0;}
+  .pbx-rail{font:700 13px monospace;width:16px;text-align:center;}
+  .pbx-rail.mas{color:#e74c3c;} .pbx-rail.menos{color:#2980b9;}
+  .pbx-num{font:600 12px monospace;color:#9a9182;width:16px;text-align:center;}
+  .pbx-holes{display:flex;gap:8px;}
+  .pbx-canal{width:24px;align-self:stretch;background:repeating-linear-gradient(90deg,#d8d0bd 0 5px,transparent 5px 10px);border-radius:2px;}
+  .pbx-gap{width:24px;display:inline-block;}
+  .pbx-hdr{display:flex;gap:8px;margin:0 0 4px 25px;font:600 11px monospace;color:#a39a89;}
+  .pbx-hdr span{width:16px;text-align:center;}
+  .pbx-hole{width:16px;height:16px;border-radius:50%;background:#c9cfd6;cursor:pointer;border:1px solid #b3bcc4;transition:transform .08s,box-shadow .08s,background .08s;}
+  .pbx-hole:hover{background:#aeb6bd;}
+  .pbx-hole.hl{background:#e67e22;box-shadow:0 0 9px #e67e22;border-color:#d35400;transform:scale(1.28);}
+  .pbx-rail-mas-bg{}
+  .pbx-msg{background:#fff4e5;border:1px solid #f0d9b8;border-radius:10px;padding:11px 15px;font-size:14px;color:#7a5c00;margin-top:14px;min-height:22px;}
+  .pbx-ley{list-style:none;padding:0;margin:0;font-size:13.5px;max-width:310px;color:#34495e;}
+  .pbx-ley li{margin:9px 0;line-height:1.4;}
+  .pbx-chip{display:inline-block;width:14px;height:14px;border-radius:4px;vertical-align:middle;margin-right:7px;}
+</style>
+<div class="pbx-cab">
+  <div>
+    ${header}
+    <div class="pbx-board" id="pbxBoard">
+      ${bus("busTopPlus", "mas", "+")}
+      ${bus("busTopMinus", "menos", "−")}
+      <div style="height:8px"></div>
+      ${filas}
+      <div style="height:8px"></div>
+      ${bus("busBotMinus", "menos", "−")}
+      ${bus("busBotPlus", "mas", "+")}
+    </div>
+  </div>
+  <ul class="pbx-ley">
+    <li><span class="pbx-chip" style="background:#e74c3c"></span><b>Buses + y −</b> (los bordes): recorren TODA la placa a lo largo. Acá llevás la alimentación (+) y la tierra (−) y las repartís a todo el circuito.</li>
+    <li><span class="pbx-chip" style="background:#27ae60"></span><b>Filas (el centro):</b> en cada fila, los 5 agujeros de un lado (a-e) están unidos entre sí. Lo mismo del otro (f-j).</li>
+    <li><span class="pbx-chip" style="background:#95a5a6"></span><b>El canal del medio:</b> separa los dos lados (a-e NO toca f-j). Ahí se montan los chips, a caballo.</li>
+    <li>👆 <b>Tocá cualquier agujero</b> y mirá qué se ilumina: eso es lo que queda conectado entre sí por dentro.</li>
+  </ul>
+</div>
+<div class="pbx-msg" id="pbxMsg">👆 Pasá el mouse (o tocá) por un agujero para ver qué agujeros están conectados entre sí por dentro.</div>`
+
+  const animacion = `(() => {
+    var board=document.getElementById('pbxBoard'), msg=document.getElementById('pbxMsg');
+    if(!board) return;
+    var holes=[].slice.call(board.querySelectorAll('.pbx-hole'));
+    var DEF='👆 Pasá el mouse (o tocá) por un agujero para ver qué agujeros están conectados entre sí por dentro.';
+    function nombre(g){
+      if(g.indexOf('rL')===0) return 'la fila '+g.slice(2)+', lado a-e';
+      if(g.indexOf('rR')===0) return 'la fila '+g.slice(2)+', lado f-j';
+      if(g==='busTopPlus'||g==='busBotPlus') return 'el bus + (positivo), de punta a punta';
+      return 'el bus − (negativo/GND), de punta a punta';
+    }
+    function pintar(g){
+      var n=0;
+      holes.forEach(function(h){ var on=h.dataset.grp===g; h.classList.toggle('hl',on); if(on)n++; });
+      msg.innerHTML='🔌 Estos <b>'+n+' agujeros</b> están unidos por dentro: <b>'+nombre(g)+'</b>. Lo que pinches en cualquiera de ellos, queda conectado a los demás.';
+    }
+    function limpiar(){ holes.forEach(function(h){h.classList.remove('hl');}); msg.innerHTML=DEF; }
+    holes.forEach(function(h){
+      h.addEventListener('mouseenter',function(){pintar(h.dataset.grp);});
+      h.addEventListener('click',function(){pintar(h.dataset.grp);});
+    });
+    board.addEventListener('mouseleave',limpiar);
+  })();`
+
+  return {
+    titulo: "🧰 La protoboard por dentro",
+    sub: "tocá un agujero y mirá qué está conectado con qué — así se entiende la placa de pruebas",
+    escena,
+    aviso:
+      "💡 <strong>La protoboard es tu mesa de trabajo:</strong> conectás componentes <strong>sin soldar</strong>, solo pinchando. El secreto es saber qué agujeros están unidos por dentro. ⚠️ El error más común: creer que toda una COLUMNA se conecta — no, lo que se une es la FILA (los 5 de un lado). Y nunca te olvides de llevar GND de tu placa al bus −.",
+    tabla: `
+      <tr><th>Zona de la protoboard</th><th>Qué agujeros se conectan</th><th>Para qué se usa</th></tr>
+      <tr><td>Buses laterales (+ y −)</td><td>Toda la línea, de punta a punta</td><td>Repartir alimentación (+) y tierra (−)</td></tr>
+      <tr><td>Filas (centro)</td><td>Los 5 de un lado (a-e) o del otro (f-j)</td><td>Conectar las patas de los componentes</td></tr>
+      <tr><td>Canal central</td><td>Nada — separa los dos lados</td><td>Montar chips (cada pata en su fila)</td></tr>`,
+    animacion,
+    alto: 0,
+    interactivo: true,
+  }
+}
+
 function construirHTML(p: Plantilla, scriptSrc: string): string {
   return `<!DOCTYPE html>
 <html lang="es">
@@ -1369,15 +1476,16 @@ USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar"
 Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dht22-esp32, pir-esp32, lcd-esp32.
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
+EXPLICADOR: circuito=protoboard genera un HTML interactivo para ENTENDER la protoboard/breadboard (tocás un agujero y se iluminan los que están conectados por dentro: filas, buses y canal central). Usalo cuando pidan ver/entender/cómo funciona el protoboard.
 
 ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, stepper (motor paso a paso), motor (motor DC, va por driver), driver (ULN2003), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton, relay, bomba, valvula (electrovalvula), higrometro, lluvia, bmp180 (presion), lampara, calefactor. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.
 
 PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humedad y se enciende el riego); tanques "ultrasonico, relay, bomba"; calefacción "dht22, relay, calefactor"; lumínico "ldr, pir, relay, lampara"; estación meteo "dht22, lluvia, bmp180, lcd". Los actuadores de potencia (bomba, válvula, lámpara, calefactor, motor) van SIEMPRE por un relé o driver, nunca directos al ESP32.`,
   args: {
     circuito: tool.schema
-      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo"])
+      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo", "protoboard"])
       .optional()
-      .describe("Preset validado. Usalo si el pedido coincide con uno de la lista. Para combinaciones libres usá 'componentes'."),
+      .describe("Preset validado. Usalo si el pedido coincide con uno de la lista. 'protoboard' genera un EXPLICADOR interactivo de la placa de pruebas (tocás un agujero y se iluminan los conectados) — usalo cuando pidan entender/ver el protoboard o breadboard. Para combinaciones libres usá 'componentes'."),
     componentes: tool.schema
       .string()
       .optional()
@@ -1421,6 +1529,24 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
         interactivo: r.interactivo,
       }
       base = args.nombre_archivo ?? `circuito-armado-${pedidos.map((p) => normalizarTipo(p.tipo)).join("-")}`
+    } else if (args.circuito === "protoboard") {
+      // Caso especial: NO es un circuito con pines, es la placa misma explicada.
+      plantilla = armarProtoboard()
+      base = args.nombre_archivo ?? "protoboard-explicador"
+      const html = construirHTML(plantilla, scriptSrc)
+      const archivo = join(ctx.directory, `${base}.html`)
+      await Bun.write(archivo, html)
+      const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
+      if (!existsSync(bundleLocal)) await Bun.write(bundleLocal, Bun.file(bundle))
+      const extra2 = extraPath()
+      const extraLocal2 = join(ctx.directory, "componentes-extra.js")
+      if (existsSync(extra2) && !existsSync(extraLocal2)) await Bun.write(extraLocal2, Bun.file(extra2))
+      return `Listo! Generé el explicador interactivo de la protoboard.
+
+**Abrilo en tu navegador (doble clic o pegá esto):**
+file://${archivo}
+
+Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los que están conectados con él por dentro. Así se entiende de una qué se une con qué: las filas, los buses y el canal del medio.`
     } else if (args.circuito) {
       // Los presets ahora se generan con el ARMADOR (filas + cables CSS, prolijo).
       const tipos = PRESET_COMPONENTES[args.circuito]
