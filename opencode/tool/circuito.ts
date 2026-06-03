@@ -10,6 +10,12 @@ function bundlePath(): string {
   return join(cfg, "opencode", "profebot-web", "wokwi-bundle.js")
 }
 
+// Componentes dibujados por nosotros (pb-relay, pb-bomba, etc.) que no existen en Wokwi.
+function extraPath(): string {
+  const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
+  return join(cfg, "opencode", "profebot-web", "componentes-extra.js")
+}
+
 // CSS común a todos los circuitos.
 const ESTILO = `
   body { font-family:'Segoe UI',system-ui,sans-serif; background:#eef2f5; margin:0; padding:24px; color:#1a2733; }
@@ -784,6 +790,149 @@ const COMPONENTES: Record<string, Componente> = {
     advertencia: "el sensor de inclinación (tilt) es como un interruptor que se activa al inclinarlo (una bolita adentro cierra el contacto). Detecta si algo se volcó o se movió. Usalo con INPUT_PULLUP.",
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.transform='scale(1) rotate('+(on?12:-12)+'deg)';},800);`,
   },
+
+  // ============ COMPONENTES DIBUJADOS POR NOSOTROS (SVG, no existen en Wokwi) ============
+  // Vienen de componentes-extra.js (tags pb-*). Cubren los proyectos del INET:
+  // riego, tanques, calefacción, invernadero, lumínico, acuapónico, estación meteo.
+
+  relay: {
+    tag: "pb-relay",
+    etiqueta: "Módulo Relé",
+    voltaje: "5V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "IN (señal)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+    ],
+    advertencia:
+      "el módulo relé es un interruptor que el ESP32 controla con un GPIO (pin IN). Sirve para prender/apagar cosas de POTENCIA (bomba, lámpara, motor). La bobina suele necesitar 5V (VCC a VIN). ⚡ El lado de 220V lo conecta SIEMPRE un adulto con todo apagado: nunca toques la red eléctrica con el ESP32.",
+    anim: (id) => `const e=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(e)e.style.filter=on?'drop-shadow(0 0 9px #16a085)':'none';},900);`,
+  },
+
+  bomba: {
+    tag: "pb-bomba",
+    etiqueta: "Bomba de agua",
+    voltaje: "5V",
+    pines: [
+      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", rol: "Relé / fuente externa", destino: "Relé / fuente externa" },
+      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", rol: "GND fuente", destino: "GND fuente" },
+    ],
+    advertencia:
+      "la bomba de agua consume mucha corriente: NO se conecta directo al ESP32 (lo quemaría). Va por un relé o un driver, con su propia fuente (5V o 12V). El ESP32 solo manda la orden al relé.",
+    anim: () => ``,
+  },
+
+  valvula: {
+    tag: "pb-valvula",
+    etiqueta: "Electroválvula",
+    voltaje: "5V",
+    pines: [
+      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", rol: "Relé / fuente 12V", destino: "Relé / fuente 12V" },
+      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", rol: "GND fuente", destino: "GND fuente" },
+    ],
+    advertencia:
+      "la electroválvula abre o cierra el paso de agua con electricidad. Suele ser de 12V: va por un relé con fuente externa, nunca directa al ESP32.",
+    anim: () => ``,
+  },
+
+  higrometro: {
+    tag: "pb-higrometro",
+    etiqueta: "Higrómetro de suelo",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+    ],
+    advertencia:
+      "el higrómetro mide la humedad de la tierra. Su salida analógica AO va a un pin ADC (GPIO34/35): suelo seco da un valor, suelo húmedo otro (analogRead 0-4095). ⚠️ La sonda se corroe si queda siempre energizada: alimentala desde un GPIO y prendela solo al medir.",
+    anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(s)s.style.opacity=(0.7+0.3*Math.abs(Math.sin(t))).toFixed(2);},60);`,
+  },
+
+  lluvia: {
+    tag: "pb-lluvia",
+    etiqueta: "Sensor de lluvia",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+    ],
+    advertencia:
+      "el sensor de lluvia detecta gotas sobre su placa. Salida analógica AO (cuánta agua hay) o digital DO (llueve / no llueve). Funciona a 3.3V. Útil en estación meteorológica.",
+    anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.07;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
+  },
+
+  bmp180: {
+    tag: "pb-bmp180",
+    etiqueta: "Sensor de presión BMP180",
+    voltaje: "3.3V",
+    pines: [
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+    ],
+    advertencia:
+      "el BMP180 mide presión atmosférica y temperatura. Es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x77). Sirve para estación meteorológica y como altímetro. Librería: Adafruit_BMP085.",
+    anim: () => ``,
+  },
+
+  motor: {
+    tag: "pb-motor",
+    etiqueta: "Motor DC",
+    voltaje: "5V",
+    pines: [
+      { nombre: "+ (vía driver)", color: CABLE.rojo, clase: "fijo", rol: "Driver (L298N/ULN2003)", destino: "Driver (L298N/ULN2003)" },
+      { nombre: "− (vía driver)", color: CABLE.marron, clase: "fijo", rol: "Driver", destino: "Driver" },
+    ],
+    advertencia:
+      "el motor DC NO se conecta directo al ESP32 (lo quemaría por la corriente). Va por un driver (L298N, ULN2003) que recibe la señal del GPIO y le da potencia desde una fuente externa.",
+    anim: () => ``,
+  },
+
+  driver: {
+    tag: "pb-driver",
+    etiqueta: "Driver ULN2003",
+    voltaje: "5V",
+    pines: [
+      { nombre: "IN1", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "IN2", color: CABLE.amarillo, clase: "digital", rol: "GPIO{1}" },
+      { nombre: "IN3", color: CABLE.verde, clase: "digital", rol: "GPIO{2}" },
+      { nombre: "IN4", color: CABLE.azul, clase: "digital", rol: "GPIO{3}" },
+    ],
+    advertencia:
+      "el driver ULN2003 amplifica las señales del ESP32 para mover lo que el GPIO no puede solo (motores DC, paso a paso, relés). IN1-IN4 van a GPIOs; la potencia sale a 5V desde su fuente.",
+    anim: (id) => `const e=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(e)e.style.filter=on?'drop-shadow(0 0 8px #27ae60)':'none';},700);`,
+  },
+
+  lampara: {
+    tag: "pb-lampara",
+    etiqueta: "Lámpara 220V",
+    voltaje: "5V",
+    attrs: () => `encendido`,
+    pines: [
+      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", rol: "Relé ← Red 220V", destino: "Relé ← Red 220V" },
+      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", rol: "Red 220V", destino: "Red 220V" },
+    ],
+    advertencia:
+      "⚡ PELIGRO 220V: la lámpara de red NUNCA se conecta al ESP32. El ESP32 manda un relé, y el relé conmuta los 220V. La parte de red la conecta un adulto/profesor con todo apagado.",
+    anim: () => ``,
+  },
+
+  calefactor: {
+    tag: "pb-calefactor",
+    etiqueta: "Radiador / Calefactor",
+    voltaje: "5V",
+    attrs: () => `encendido`,
+    pines: [
+      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", rol: "Relé ← Red 220V", destino: "Relé ← Red 220V" },
+      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", rol: "Red 220V", destino: "Red 220V" },
+    ],
+    advertencia:
+      "⚡ PELIGRO 220V: el radiador eléctrico va por un relé, igual que la lámpara. El ESP32 solo controla el relé; los 220V los maneja un adulto.",
+    anim: () => ``,
+  },
 }
 
 const ALIAS: Record<string, string> = {
@@ -808,6 +957,17 @@ const ALIAS: Record<string, string> = {
   ntc: "ntc", termistor: "ntc", "ntc-temperatura": "ntc",
   ir: "ir-receptor", "ir-receptor": "ir-receptor", infrarrojo: "ir-receptor", "control-remoto": "ir-receptor",
   tilt: "tilt", inclinacion: "tilt", "sensor-inclinacion": "tilt",
+  // --- componentes dibujados (INET) ---
+  relay: "relay", rele: "relay", "relé": "relay", "modulo-relay": "relay", "modulo-rele": "relay", "módulo-relé": "relay",
+  bomba: "bomba", "bomba-agua": "bomba", "bomba-de-agua": "bomba", pump: "bomba",
+  valvula: "valvula", "válvula": "valvula", electrovalvula: "valvula", "electroválvula": "valvula", solenoide: "valvula", "valvula-solenoide": "valvula",
+  higrometro: "higrometro", "higrómetro": "higrometro", "humedad-suelo": "higrometro", "higrometro-suelo": "higrometro", fc28: "higrometro", "fc-28": "higrometro", "sensor-humedad-suelo": "higrometro",
+  lluvia: "lluvia", "sensor-lluvia": "lluvia", rain: "lluvia",
+  bmp180: "bmp180", bmp: "bmp180", presion: "bmp180", "presión": "bmp180", "sensor-presion": "bmp180", barometro: "bmp180", "barómetro": "bmp180",
+  motor: "motor", "motor-dc": "motor", motordc: "motor", "motor-cc": "motor", motorcc: "motor",
+  driver: "driver", uln2003: "driver", "uln-2003": "driver", "driver-motor": "driver",
+  lampara: "lampara", "lámpara": "lampara", foco: "lampara", bombilla: "lampara", luz220: "lampara",
+  calefactor: "calefactor", radiador: "calefactor", calefaccion: "calefactor", "calefacción": "calefactor", estufa: "calefactor", heater: "calefactor",
 }
 
 function normalizarTipo(t: string): string {
@@ -928,28 +1088,41 @@ const SENSOR_SIM: Record<string, { magnitud: string; unidad: string; min: number
   pir: { magnitud: "Movimiento", unidad: "", min: 0, max: 1, umbral: 1, emoji: "🚶" },
   llama: { magnitud: "Fuego cerca", unidad: "%", min: 0, max: 100, umbral: 50, emoji: "🔥" },
   sonido: { magnitud: "Nivel de ruido", unidad: "%", min: 0, max: 100, umbral: 60, emoji: "🔊" },
+  higrometro: { magnitud: "Humedad del suelo", unidad: "%", min: 0, max: 100, umbral: 35, emoji: "💧" },
+  lluvia: { magnitud: "Lluvia", unidad: "%", min: 0, max: 100, umbral: 50, emoji: "🌧️" },
 }
 
 function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | null {
   const idx = (pred: (t: string) => boolean): number =>
     pedidos.findIndex((p) => pred(normalizarTipo(p.tipo)))
 
-  // 1) sensor (dht22/ultrasonico/pir) + actuador → slider de magnitud con umbral
+  // 1) sensor (dht22/ultrasonico/pir/higrometro/lluvia…) + actuador → slider de magnitud con umbral
+  // Actuadores: los lógicos (led/servo/buzzer) responden con su propiedad; los de potencia
+  // (relay/bomba/valvula/lampara/calefactor/motor) se "encienden" con un glow visual.
+  const ESACTU = (t: string) =>
+    ["led", "servo", "buzzer", "relay", "bomba", "valvula", "lampara", "calefactor", "motor"].includes(t)
   const iSens = idx((t) => SENSOR_SIM[t] != null)
-  const iActS = idx((t) => t === "led" || t === "servo" || t === "buzzer")
+  const iActS = idx(ESACTU)
   if (iSens >= 0 && iActS >= 0) {
     const tSens = normalizarTipo(pedidos[iSens].tipo)
     const tActu = normalizarTipo(pedidos[iActS].tipo)
     const idSens = `${tSens}${iSens}`, idActu = `${tActu}${iActS}`
     const s = SENSOR_SIM[tSens]
-    const ref = tActu === "led" ? "a" : tActu === "servo" ? "sv" : "bz"
-    // qué le hace al actuador cuando supera el umbral
-    const onAct = tActu === "led" ? "a.value=disparado;a.brightness=disparado?1:0;" : tActu === "servo" ? "sv.angle=disparado?180:0;" : "bz.hasSignal=disparado;"
-    // dirección del umbral: ultrasónico dispara cuando está CERCA (menor); el resto cuando SUPERA
-    const cmp = tSens === "ultrasonico" ? `m<=${s.umbral}` : `m>=${s.umbral}`
+    // qué le hace al actuador cuando se dispara
+    const onAct =
+      tActu === "led" ? "act.value=disparado;act.brightness=disparado?1:0;" :
+      tActu === "servo" ? "act.angle=disparado?180:0;" :
+      tActu === "buzzer" ? "act.hasSignal=disparado;" :
+      "act.style.filter=disparado?'drop-shadow(0 0 13px #f39c12)':'none';act.style.opacity=disparado?'1':'0.45';"
+    // dirección del umbral: ultrasónico/higrómetro disparan con valor BAJO (cerca/seco).
+    // Si hay un calefactor en el circuito, también dispara con FRÍO (temp baja). El resto, al SUPERAR.
+    // (miramos TODO el pedido, no solo el actuador gobernado, que suele ser el relé.)
+    const hayCalefactor = pedidos.some((p) => normalizarTipo(p.tipo) === "calefactor")
+    const disparaBajo = tSens === "ultrasonico" || tSens === "higrometro" || hayCalefactor
+    const cmp = disparaBajo ? `m<=${s.umbral}` : `m>=${s.umbral}`
     const js = `(() => {
-      const sen=document.getElementById('${idSens}'), ${ref}=document.getElementById('${idActu}');
-      if(!sen||!${ref})return;
+      const sen=document.getElementById('${idSens}'), act=document.getElementById('${idActu}');
+      if(!sen||!act)return;
       const ctrl=document.createElement('div');
       ctrl.style.cssText='display:flex;flex-direction:column;align-items:center;gap:5px;background:#fff4e5;border:1px solid #f0d9b8;border-radius:10px;padding:9px 13px;margin-top:8px;max-width:220px';
       ctrl.innerHTML='<label style="font:600 12px sans-serif;color:#b9770e">${s.emoji} Simulá ${s.magnitud.toLowerCase()} 👇</label><input type="range" min="${s.min}" max="${s.max}" value="${s.min}" style="width:170px;accent-color:#e67e22;cursor:pointer"><span style="font:700 14px sans-serif;color:#e67e22">${s.min} ${s.unidad}</span>';
@@ -1037,6 +1210,8 @@ const ESCALA: Record<string, number> = {
   "7segmentos": 1.0, neopixel: 1.4, joystick: 1.0,
   mpu6050: 1.2, stepper: 1.0, teclado: 0.9,
   llama: 1.1, sonido: 1.1, ntc: 1.1, "ir-receptor": 1.2, tilt: 1.2,
+  relay: 1.0, bomba: 1.0, valvula: 1.0, higrometro: 1.0, lluvia: 1.0,
+  bmp180: 1.3, motor: 1.0, driver: 1.0, lampara: 0.9, calefactor: 1.0,
 }
 
 // LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
@@ -1153,13 +1328,14 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 <meta charset="UTF-8">
 <title>Profe Bot — ${p.titulo}</title>
 <script src="${scriptSrc}"></script>
+<script src="componentes-extra.js"></script>
 <style>${ESTILO}</style>
 </head>
 <body>
 <div class="hoja">
   <h1>${p.titulo} <span class="badge">${p.interactivo ? "✋ interactivo" : "▶ animado"}</span></h1>
   <div class="sub">Esquema de conexión — Profe Bot · piezas reales, ${p.sub}</div>
-  <div class="escena"${p.alto && p.alto > 0 ? ` style="height:${p.alto}px"` : ""}>${p.escena}</div>
+  <div class="escena"${p.alto && p.alto > 0 ? ` style="height:${p.alto}px"` : ` style="height:auto"`}>${p.escena}</div>
   <div class="aviso">${p.aviso}</div>
   <table>${p.tabla}</table>
 </div>
@@ -1194,7 +1370,9 @@ Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dh
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
 
-ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.`,
+ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, stepper (motor paso a paso), motor (motor DC, va por driver), driver (ULN2003), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton, relay, bomba, valvula (electrovalvula), higrometro, lluvia, bmp180 (presion), lampara, calefactor. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.
+
+PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humedad y se enciende el riego); tanques "ultrasonico, relay, bomba"; calefacción "dht22, relay, calefactor"; lumínico "ldr, pir, relay, lampara"; estación meteo "dht22, lluvia, bmp180, lcd". Los actuadores de potencia (bomba, válvula, lámpara, calefactor, motor) van SIEMPRE por un relé o driver, nunca directos al ESP32.`,
   args: {
     circuito: tool.schema
       .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo"])
@@ -1203,7 +1381,7 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
     componentes: tool.schema
       .string()
       .optional()
-      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, motor (paso a paso), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
+      .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, stepper (motor paso a paso), motor (motor DC, va por driver), driver (ULN2003), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton, relay, bomba, valvula (electrovalvula), higrometro, lluvia, bmp180 (presion), lampara, calefactor. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
     nombre_archivo: tool.schema
       .string()
       .optional()
@@ -1276,6 +1454,13 @@ ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej
     const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
     if (!existsSync(bundleLocal)) {
       await Bun.write(bundleLocal, Bun.file(bundle))
+    }
+
+    // Copiar también los componentes dibujados (pb-relay, pb-bomba, etc.) al lado del HTML.
+    const extra = extraPath()
+    const extraLocal = join(ctx.directory, "componentes-extra.js")
+    if (existsSync(extra) && !existsSync(extraLocal)) {
+      await Bun.write(extraLocal, Bun.file(extra))
     }
 
     return `Listo! Generé el circuito visual y animado.

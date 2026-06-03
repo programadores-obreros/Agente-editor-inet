@@ -1,6 +1,6 @@
 ---
 name: arduino
-description: Programación Arduino UNO/Nano con LED, botón, analogRead, PWM, Serial y componentes básicos
+description: Programación Arduino UNO/Nano con LED, botón, analogRead, PWM, Serial y componentes básicos. Incluye cómo funciona la protoboard (placa de pruebas) por dentro.
 ---
 
 # Arduino — Guía para principiantes
@@ -29,6 +29,47 @@ void loop() {
 - **PWM (marcados con ~):** simulan voltaje variable (pines 3, 5, 6, 9, 10, 11 en UNO)
 
 **Voltaje de trabajo:** 5V. No conectes componentes de 3.3V sin un divisor de tension.
+
+---
+
+## La protoboard (placa de pruebas)
+
+Antes de cablear un solo componente, hay que entender la **protoboard** (o *breadboard*). Es la mesa de trabajo de todo circuito: te deja conectar componentes **sin soldar**, solo pinchando las patitas y los cables en sus agujeros. Por eso es ideal para aprender y probar.
+
+### ¿Cómo está conectada por dentro?
+
+La protoboard NO es un montón de agujeros sueltos: por debajo, ciertos agujeros ya están unidos entre sí con tiras de metal. Si no sabés esto, te volvés loco buscando por qué tu circuito no anda.
+
+```
+        + - - - - - - - - - - - - - - - - - +   ← BUS de alimentación (rojo = +)
+        - - - - - - - - - - - - - - - - - - -   ← BUS de tierra      (azul = GND)
+          a b c d e          f g h i j
+        ┌─────────────────────────────────┐
+      1 │ o o o o o   │ │   o o o o o      │
+      2 │ o o o o o   │ │   o o o o o      │   cada FILA numerada:
+      3 │ o o o o o   canal   o o o o o    │   a-b-c-d-e unidos entre sí,
+      4 │ o o o o o   central  o o o o o   │   f-g-h-i-j unidos entre sí,
+      5 │ o o o o o   │ │   o o o o o      │   PERO los dos lados NO se tocan
+        └─────────────────────────────────┘   (el canal del medio los separa)
+        + - - - - - - - - - - - - - - - - - +
+        - - - - - - - - - - - - - - - - - - -
+```
+
+Dos reglas que lo explican todo:
+
+1. **Filas (el centro):** en cada fila, los 5 agujeros de un lado (a-b-c-d-e) están unidos entre sí. Lo mismo del otro lado (f-g-h-i-j). Si pinchás dos patas en la misma fila y del mismo lado, **quedan conectadas**.
+2. **El canal del medio:** la ranura central separa los dos lados. Por eso los **circuitos integrados (chips)** se montan "a caballo" sobre el canal: así cada pata cae en una fila distinta y no se cortocircuitan entre sí.
+3. **Los buses (los bordes):** las dos líneas largas de arriba y de abajo (marcadas + y −, en rojo y azul) recorren TODA la placa a lo largo. Ahí llevás la **alimentación** (+, de 5V o 3.3V) y la **tierra** (−, GND). Desde ahí repartís corriente a todo el circuito con cablecitos cortos.
+
+### Cómo se usa en la práctica
+
+- Conectá **5V del Arduino → bus + (rojo)** y **GND del Arduino → bus − (azul)**. Ya tenés alimentación y tierra a mano en toda la placa.
+- Pinchá cada componente en una fila, y desde esa fila tirás un cable al pin del Arduino o al bus.
+- Los **cables dupont** (macho-macho) son los puentes entre filas, buses y la placa.
+
+> ⚠️ **Errores típicos de protoboard:** (1) creer que toda una columna está unida — NO, lo que se une es la *fila* (los 5 de un lado); (2) pinchar las dos patas de un componente en la misma fila y del mismo lado → quedan en cortocircuito; (3) olvidarse de llevar GND del Arduino al bus − (sin tierra común, nada funciona); (4) los buses de algunas protoboard chinas vienen **cortados al medio** — si la mitad de la placa no tiene corriente, puenteá los dos tramos del bus con un cablecito.
+
+> 💡 La protoboard es solo para **prototipar**. Cuando el proyecto está listo y va a quedar fijo (un robot, una estación que vive en el patio), se pasa a una **placa soldada** (perfboard o PCB), porque los cables pinchados se aflojan con el tiempo y la vibración.
 
 ---
 

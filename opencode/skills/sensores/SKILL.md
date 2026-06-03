@@ -1,6 +1,6 @@
 ---
 name: sensores
-description: Sensores para Arduino y ESP32 - DHT11/DHT22 (temperatura y humedad), HC-SR04 (distancia), LDR (luz), PIR (movimiento), KY-038 (sonido). Cómo conectarlos, código comentado en español, errores comunes.
+description: Sensores para Arduino y ESP32 - DHT11/DHT22 (temperatura y humedad), HC-SR04 (distancia), LDR (luz), PIR (movimiento), KY-038 (sonido), FC-28 (humedad de suelo / higrómetro), YL-83/FC-37 (lluvia), BMP180 (presión atmosférica / barómetro). Cómo conectarlos, código comentado en español, errores comunes.
 ---
 
 # Sensores — los que MIDEN el mundo real
@@ -231,6 +231,173 @@ void loop() {
 
 ---
 
+## FC-28 — Humedad de suelo (higrómetro)
+
+> ⚡ **Voltaje:** 3.3V o 5V · 📊 **Dificultad:** Básico · 📦 **Librería:** ninguna (`analogRead`)
+
+**¿Para qué sirve?** Mide cuánta humedad tiene la tierra. Riego automático, invernadero, "avisame cuando la planta tenga sed". Tiene dos salidas: **AO** (analógica: el nivel de humedad, de seco a mojado) y **DO** (digital: seco/húmedo, según un potenciómetro de umbral que ajustás con un destornillador).
+
+> 💡 La AO te da el valor exacto (ideal para escuela técnica, porque podés graficar y entender). La DO es solo "sí/no" pasó el umbral.
+
+**Conexiones:**
+
+| Pin | Cable | Va al ESP32 |
+|-----|-------|-------------|
+| VCC | 🔴 rojo | 3.3V (o 5V) |
+| GND | 🟤 marrón | GND |
+| AO (analógica) | 🟣 morado | GPIO34 (analógico, solo-entrada) |
+| DO (digital, opcional) | 🟢 verde | cualquier GPIO digital |
+
+```
+   TIERRA
+  ┌───────┐
+  │ ║   ║ │   ← las dos patas metálicas (sonda) van en la tierra
+  └─┼───┼─┘
+    │   │
+  ┌─┴───┴─┐
+  │ módulo│  AO ──→ GPIO34 (analógico)
+  │ compa-│  DO ──→ GPIO digital (opcional)
+  │ rador │  VCC ─→ 3.3V/5V
+  └───────┘  GND ─→ GND
+```
+
+**Código (Arduino UNO):**
+```cpp
+const int PIN_SUELO = A0;     // AO al pin analógico A0 (en ESP32: GPIO34/35)
+
+void setup() {
+  Serial.begin(9600);
+}
+
+void loop() {
+  int humedad = analogRead(PIN_SUELO);   // 0-1023 en UNO (0-4095 en ESP32)
+  // OJO: en muchos módulos, MENOS valor = MAS humedad (depende del modelo)
+  Serial.print("Humedad de suelo: "); Serial.println(humedad);
+
+  if (humedad > 700) {                    // umbral que vos calibrás (ver abajo)
+    Serial.println("La tierra esta SECA -> regar");
+  } else {
+    Serial.println("La tierra esta HUMEDA");
+  }
+  delay(1000);
+}
+```
+> **Nota ESP32:** usá un pin analógico real como **GPIO34 o GPIO35** (son solo-entrada, ideales) y `analogRead()` da **0-4095** en vez de 0-1023. Cambiá el umbral en proporción.
+
+**Errores comunes:** ⚠️ **MUY IMPORTANTE** — el FC-28 resistivo (el de las dos patas metálicas) se **CORROE rápido** si queda siempre energizado: la corriente sobre el metal en tierra húmeda lo oxida en pocas semanas. Dos soluciones: (1) alimentalo desde un **GPIO** y prendelo SOLO el instante que medís (`digitalWrite(VCC, HIGH)` → medís → `digitalWrite(VCC, LOW)`), o (2) usá el modelo **CAPACITIVO** (no tiene metal expuesto, no se corroe — es la mejor opción). Además hay que **calibrarlo**: medí el valor con la sonda en seco (al aire) y con la sonda en un vaso de agua; esos son tus dos extremos, y ajustás el umbral en el medio.
+
+---
+
+## YL-83 / FC-37 — Sensor de lluvia
+
+> ⚡ **Voltaje:** 3.3V o 5V · 📊 **Dificultad:** Básico · 📦 **Librería:** ninguna (`analogRead` / `digitalRead`)
+
+**¿Para qué sirve?** Detecta gotas de agua. Estación meteorológica, cerrar ventanas/toldos solos cuando empieza a llover, avisar para descolgar la ropa. Tiene **dos partes**: la **placa colectora** (la plaquita con las pistas donde caen las gotas) y el **módulo comparador** (la electrónica). Salida **AO** (analógica: cuánta agua hay sobre la placa) y **DO** (digital: llueve / no llueve, con umbral ajustable por potenciómetro).
+
+**Conexiones:**
+
+| Pin | Cable | Va al ESP32 |
+|-----|-------|-------------|
+| VCC | 🔴 rojo | 3.3V (o 5V) |
+| GND | 🟤 marrón | GND |
+| AO (analógica) | 🟣 morado | GPIO35 (analógico) |
+| DO (digital, opcional) | 🟢 verde | cualquier GPIO digital |
+
+```
+  💧 💧 💧
+  ┌─────────┐
+  │ ▓▓▓▓▓▓▓ │   ← placa colectora (afuera, donde cae la lluvia)
+  └────┬────┘
+       │ (2 cables)
+  ┌────┴────┐
+  │ módulo  │  AO ──→ GPIO35 (analógico)
+  │ compa-  │  DO ──→ GPIO digital (opcional)
+  │ rador   │  VCC ─→ 3.3V/5V
+  └─────────┘  GND ─→ GND
+```
+
+**Código (Arduino UNO):**
+```cpp
+const int PIN_LLUVIA = A0;    // AO al pin analógico (en ESP32: GPIO35)
+
+void setup() {
+  Serial.begin(9600);
+}
+
+void loop() {
+  int lluvia = analogRead(PIN_LLUVIA);   // 0-1023 en UNO (0-4095 en ESP32)
+  // En general: MENOS valor = MAS agua sobre la placa (mojado)
+  Serial.print("Nivel de lluvia: "); Serial.println(lluvia);
+
+  if (lluvia < 400) {                     // umbral que vos ajustás
+    Serial.println("Esta LLOVIENDO!");    // acá cerrarías la ventana
+  } else {
+    Serial.println("Seco");
+  }
+  delay(1000);
+}
+```
+> **Nota ESP32:** mandá la AO a un pin analógico como **GPIO35 o GPIO34** y recordá que `analogRead()` da **0-4095**. Si solo querés "llueve / no llueve", usá la DO con `digitalRead()` en cualquier GPIO.
+
+**Errores comunes:** la **placa colectora se oxida con el tiempo** (es normal, las pistas de cobre se gastan: es una pieza de repaso, se reemplaza). No la dejes mojada permanentemente. Mantené la **placa separada del módulo electrónico**: la placa va afuera expuesta a la lluvia, y el módulo comparador protegido (en una cajita), unidos por los dos cables.
+
+---
+
+## BMP180 — Presión atmosférica (barómetro) + temperatura
+
+> ⚡ **Voltaje:** 3.3V (los módulos GY traen regulador y toleran 5V en VCC, pero el chip es de 3.3V) · 📊 **Dificultad:** Intermedio · 📦 **Librería:** `Adafruit BMP085 Library` (sirve para el BMP180)
+
+**¿Para qué sirve?** Mide **presión atmosférica** y temperatura por bus **I2C**. Estación meteorológica, **predicción del tiempo** (si la presión baja, suele venir mal tiempo) y como **ALTÍMETRO** (la presión baja a medida que subís en altura, así que se calcula la altitud).
+
+**Conexiones (bus I2C, dirección 0x77):**
+
+| Pin | Cable | Va al ESP32 | En Arduino UNO |
+|-----|-------|-------------|----------------|
+| VCC | 🔴 rojo | 3.3V | 3.3V |
+| GND | 🟤 marrón | GND | GND |
+| SDA | 🟢 verde | GPIO21 | A4 |
+| SCL | 🔵 azul | GPIO22 | A5 |
+
+```
+  ┌──────────┐
+  │  BMP180  │  VCC ─→ 3.3V
+  │  (I2C)   │  GND ─→ GND
+  │  0x77    │  SDA ─→ A4 (UNO) / GPIO21 (ESP32)
+  │          │  SCL ─→ A5 (UNO) / GPIO22 (ESP32)
+  └──────────┘
+```
+
+**Código (Arduino UNO):**
+```cpp
+#include <Wire.h>             // Bus I2C (viene con el IDE)
+#include <Adafruit_BMP085.h> // Librería: "Adafruit BMP085 Library" (sirve para BMP180)
+
+Adafruit_BMP085 bmp;          // Creamos el objeto sensor
+
+void setup() {
+  Serial.begin(9600);
+  if (!bmp.begin()) {         // Inicia el I2C y verifica que responda
+    Serial.println("No encuentro el BMP180! Revisa SDA/SCL");
+    while (1) {}              // se queda acá si no lo encuentra
+  }
+}
+
+void loop() {
+  Serial.print("Temperatura: "); Serial.print(bmp.readTemperature()); Serial.println(" C");
+  Serial.print("Presion: ");     Serial.print(bmp.readPressure());    Serial.println(" Pa");
+  // Altitud estimada respecto al nivel del mar (presion estandar)
+  Serial.print("Altitud aprox: "); Serial.print(bmp.readAltitude()); Serial.println(" m");
+  delay(2000);
+}
+```
+`platformio.ini`: `lib_deps = adafruit/Adafruit BMP085 Library`
+
+> **Nota ESP32:** SDA → **GPIO21** y SCL → **GPIO22** (los pines I2C por defecto). Alimentá VCC desde **3.3V**: aunque el módulo con regulador acepta 5V en VCC, el bus I2C del ESP32 es de **3.3V** y no le mandes 5V a SDA/SCL.
+
+**Errores comunes:** ⚠️ **no lo confundas con el BMP280 ni el BME280** — son chips parecidos pero tienen **otra dirección I2C y otra librería** (la `Adafruit_BMP085` NO sirve para ellos). Si el bus no responde (`begin()` da error), poné **resistencias pull-up** (4.7kΩ-10kΩ) de SDA y SCL hacia VCC. Y recordá: el chip es de 3.3V; el regulador del módulo tolera 5V en VCC, pero el bus I2C del ESP32 sigue siendo de 3.3V.
+
+---
+
 ## Resumen rápido (cuál pin usar)
 
 | Sensor | Tipo de lectura | Pin sugerido ESP32 | Voltaje |
@@ -240,5 +407,8 @@ void loop() {
 | LDR | analógica | GPIO34 + resistencia 10kΩ | 3.3V |
 | PIR | digital | GPIO13 | 5V |
 | Sonido | digital | GPIO4 | 3.3V |
+| FC-28 (humedad suelo) | analógica (AO) | GPIO34 | 3.3V/5V |
+| YL-83/FC-37 (lluvia) | analógica (AO) | GPIO35 | 3.3V/5V |
+| BMP180 (presión) | I2C (0x77) | SDA 21, SCL 22 | 3.3V |
 
 Recordá: pines analógicos del ESP32 = GPIO32-39 (los 34/35 son solo-entrada, ideales). `analogRead()` da 0-4095.
