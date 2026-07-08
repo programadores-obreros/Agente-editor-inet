@@ -990,6 +990,14 @@ const SEP_PIN = 20
 const POOL_DIGITAL = [4, 5, 18, 19, 23, 25, 26, 27, 33, 13, 14, 15, 2]
 const POOL_ANALOGICO = [34, 35, 36, 39, 32, 33]
 
+// Validación de GPIO manual (el alumno puede forzar un pin con "led:5").
+// GPIOs que EXISTEN en el ESP32 DevKit.
+const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 37, 38, 39])
+// GPIO6–11 están cableados a la memoria flash SPI: usarlos CUELGA/rompe la placa.
+const GPIO_FLASH = new Set([6, 7, 8, 9, 10, 11])
+// Pines "strapping": funcionan, pero pueden complicar el arranque si tienen algo conectado.
+const GPIO_STRAPPING = new Set([0, 2, 12, 15])
+
 interface Pedido {
   tipo: string
   gpio?: number
@@ -1045,14 +1053,26 @@ function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] 
     const pinesGpio = def.pines.filter((p) => p.clase !== "fijo")
 
     pinesGpio.forEach((pin, idx) => {
-      // FIX auditoría #3: gpio manual del alumno para el primer pin digital O analógico
+      // gpio manual del alumno para el primer pin digital O analógico.
+      // Se VALIDA contra los pines reales del ESP32 antes de aceptarlo: un pin de
+      // flash (GPIO6-11) cuelga la placa; uno inexistente no sirve. En esos casos
+      // avisamos y caemos al pool seguro. Los strapping se aceptan con nota.
       if (idx === 0 && pin.clase !== "fijo" && ped.gpio != null) {
-        if (!usados.has(ped.gpio)) {
-          usados.add(ped.gpio)
-          asignados.push(ped.gpio)
+        const g = ped.gpio
+        if (GPIO_FLASH.has(g)) {
+          avisos.push(`⚠️ GPIO${g} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa. Le asigné un pin seguro.`)
+        } else if (!GPIO_VALIDOS.has(g)) {
+          avisos.push(`⚠️ GPIO${g} no existe en el ESP32. Le asigné un pin válido.`)
+        } else if (usados.has(g)) {
+          avisos.push(`No pude usar GPIO${g} para ${def.etiqueta} (ya ocupado): le asigné otro.`)
+        } else {
+          usados.add(g)
+          asignados.push(g)
+          if (GPIO_STRAPPING.has(g)) {
+            avisos.push(`Nota: GPIO${g} es un pin "strapping" del ESP32 — funciona, pero puede complicar el arranque si tiene algo conectado al encender. Si podés, elegí otro.`)
+          }
           return
         }
-        avisos.push(`No pude usar GPIO${ped.gpio} para ${def.etiqueta} (ya ocupado): le asigné otro.`)
       }
       const g = pin.clase === "analogico" ? sacar(poolAna) : sacar(poolDig)
       if (g == null) {
@@ -1309,6 +1329,19 @@ ${filasTabla.join("\n")}`
   return { escena, tabla, aviso, alto: 0, animacion: anims.join("\n"), interactivo }
 }
 
+// Sanitiza el nombre de archivo que pide el usuario: evita que un "../../.." escriba
+// FUERA de la carpeta de trabajo, y que un nombre vacío cree un archivo oculto ".html".
+// Deja solo letras, números, guión, guión bajo y punto (sin separadores de ruta).
+function nombreSeguro(raw: string | undefined, fallback: string): string {
+  if (!raw || !raw.trim()) return fallback
+  const limpio = raw
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-") // saca "/", "\", espacios y cualquier cosa rara
+    .replace(/\.{2,}/g, ".") // colapsa ".." (evita traversal aunque no haya "/")
+    .replace(/^[.\-]+|[.\-]+$/g, "") // sin punto/guión al principio o al final
+  return limpio.length > 0 ? limpio : fallback
+}
+
 function parsearComponentes(raw: string): Pedido[] {
   return raw
     .split(",")
@@ -1528,11 +1561,11 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
         alto: r.alto,
         interactivo: r.interactivo,
       }
-      base = args.nombre_archivo ?? `circuito-armado-${pedidos.map((p) => normalizarTipo(p.tipo)).join("-")}`
+      base = nombreSeguro(args.nombre_archivo, `circuito-armado-${pedidos.map((p) => normalizarTipo(p.tipo)).join("-")}`)
     } else if (args.circuito === "protoboard") {
       // Caso especial: NO es un circuito con pines, es la placa misma explicada.
       plantilla = armarProtoboard()
-      base = args.nombre_archivo ?? "protoboard-explicador"
+      base = nombreSeguro(args.nombre_archivo, "protoboard-explicador")
       const html = construirHTML(plantilla, scriptSrc)
       const archivo = join(ctx.directory, `${base}.html`)
       await Bun.write(archivo, html)
@@ -1566,7 +1599,7 @@ Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los 
         alto: r.alto,
         interactivo: r.interactivo,
       }
-      base = args.nombre_archivo ?? `circuito-${args.circuito}`
+      base = nombreSeguro(args.nombre_archivo, `circuito-${args.circuito}`)
     } else {
       return "Decime qué circuito armar: un preset (arg 'circuito') o una lista libre (arg 'componentes', ej 'led, servo')."
     }
