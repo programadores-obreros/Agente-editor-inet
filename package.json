@@ -1,0 +1,20 @@
+{
+  "name": "tecnia-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tecnia Bot — asistente educativo de IA para enseñar Arduino y ESP32 en escuelas técnicas argentinas (INET). Capa educativa sobre OpenCode.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  },
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/programadores-obreros/Agente-editor-inet.git"
+  }
+}

@@ -1,0 +1,24 @@
+name: CI
+
+# Corre los smoke tests del armador de circuitos en cada push y PR.
+# No necesita instalar dependencias: los tests corren con Node puro.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 24+ corre TypeScript nativo (type stripping), que los tests necesitan
+          # para importar el tool circuito.ts sin transpilar ni instalar nada.
+          node-version: "24"
+      - name: Correr smoke tests
+        run: node --test tests/*.test.mjs

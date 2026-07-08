@@ -2,6 +2,10 @@
 .pio/
 ejemplos/*/.pio/
 
+# Node (devDeps de test/typecheck; los smoke tests no necesitan instalarlas)
+node_modules/
+package-lock.json
+
 # Sistema
 .DS_Store
 Thumbs.db
