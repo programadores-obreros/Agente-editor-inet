@@ -1,4 +1,4 @@
-# Profe Bot 🤖⚡
+# Tecnia Bot 🤖⚡
 
 Asistente educativo de IA para enseñar **Arduino y ESP32** en escuelas técnicas argentinas (programa INET).
 
@@ -18,7 +18,7 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 
 ## ¿Cómo funciona?
 
-Profe Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`profe-bot`), una herramienta de compilación (`platformio`), tres bases de conocimiento (Arduino, ESP32, errores comunes) y un comando de diagnóstico.
+Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), una herramienta de compilación (`platformio`), tres bases de conocimiento (Arduino, ESP32, errores comunes) y un comando de diagnóstico.
 
 Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda disponible en **cualquier carpeta** donde abras OpenCode.
 
@@ -28,7 +28,7 @@ Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda 
 
 ### ⭐ Instalación fácil (recomendada)
 
-Un solo comando instala **todo**: OpenCode + PlatformIO + Profe Bot. No necesitás instalar nada antes, y en Windows **no hace falta permiso de administrador** (ideal para las PCs de la escuela).
+Un solo comando instala **todo**: OpenCode + PlatformIO + Tecnia Bot. No necesitás instalar nada antes, y en Windows **no hace falta permiso de administrador** (ideal para las PCs de la escuela).
 
 **Linux / macOS:**
 ```bash
@@ -44,7 +44,7 @@ El bootstrap detecta lo que ya tengas instalado y solo instala lo que falte.
 
 ### 🔧 Instalación manual (avanzada)
 
-Si ya tenés **OpenCode** (https://opencode.ai) y **PlatformIO Core** instalados, podés copiar solo la capa de Profe Bot:
+Si ya tenés **OpenCode** (https://opencode.ai) y **PlatformIO Core** instalados, podés copiar solo la capa de Tecnia Bot:
 
 ```bash
 bash install/install.sh         # Linux / macOS
@@ -55,11 +55,11 @@ powershell -ExecutionPolicy Bypass -File install\install.ps1   # Windows
 
 ---
 
-## Usar Profe Bot
+## Usar Tecnia Bot
 
 1. Abrí una terminal en cualquier carpeta
 2. Escribí `opencode`
-3. Apretá **`Tab`** y elegí **`profe-bot`**
+3. Apretá **`Tab`** y elegí **`tecnia-bot`**
 4. Escribí "hola" y dejate guiar
 
 Probá: *"¿cómo prendo un LED con Arduino?"* o *`/diagnostico`* para verificar tu entorno.
@@ -69,9 +69,9 @@ Probá: *"¿cómo prendo un LED con Arduino?"* o *`/diagnostico`* para verificar
 ## Estructura del repo
 
 ```
-profe-bot/
+tecnia-bot/
 ├── opencode/          # La capa educativa (esto se instala)
-│   ├── agent/         # El agente Profe Bot
+│   ├── agent/         # El agente Tecnia Bot
 │   ├── tool/          # Herramienta de compilación PlatformIO
 │   ├── skills/        # Bases de conocimiento: arduino, esp32, errores-comunes
 │   └── command/       # Comando /diagnostico
@@ -88,11 +88,11 @@ profe-bot/
 
 ## Licencia
 
-Profe Bot usa **licencia doble**, según el tipo de archivo:
+Tecnia Bot usa **licencia doble**, según el tipo de archivo:
 
 - **Código** (`opencode/tool/*.ts`, `install/*.sh`, `install/*.ps1`) → **GPLv3** (ver [`LICENSE`](LICENSE))
 - **Contenido educativo** (skills, agente, comandos y docs en `.md`) → **CC BY-SA 4.0** (ver [`LICENSE-CONTENT`](LICENSE-CONTENT))
 
-Ambas son licencias *copyleft*: si modificás y redistribuís Profe Bot, tenés que compartir tus cambios bajo la misma licencia. La idea es que las mejoras vuelvan a la comunidad educativa.
+Ambas son licencias *copyleft*: si modificás y redistribuís Tecnia Bot, tenés que compartir tus cambios bajo la misma licencia. La idea es que las mejoras vuelvan a la comunidad educativa.
 
-> Profe Bot se instala **junto a** OpenCode (que es MIT), no lo incluye ni lo modifica. Por eso las licencias no se pisan. GPLv3 es compatible con MIT, así que a futuro se puede integrar código de OpenCode si hace falta.
+> Tecnia Bot se instala **junto a** OpenCode (que es MIT), no lo incluye ni lo modifica. Por eso las licencias no se pisan. GPLv3 es compatible con MIT, así que a futuro se puede integrar código de OpenCode si hace falta.

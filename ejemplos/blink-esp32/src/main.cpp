@@ -20,6 +20,6 @@ void loop() {
   delay(500);
 
   contador++;                        // Sumamos 1
-  Serial.print("Profe Bot funcionando! Segundos: ");
+  Serial.print("Tecnia Bot funcionando! Segundos: ");
   Serial.println(contador);          // Mostramos el contador en el monitor serial
 }

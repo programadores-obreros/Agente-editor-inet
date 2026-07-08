@@ -5,7 +5,7 @@ description: Documentar conexiones de circuitos Arduino/ESP32 con dibujo ASCII, 
 
 # Diagramas de conexión — cómo cablear sin equivocarse
 
-Este skill le enseña a Profe Bot a documentar las conexiones de un circuito de forma clara y visual, usando **solo texto**. No necesita instalar nada.
+Este skill le enseña a Tecnia Bot a documentar las conexiones de un circuito de forma clara y visual, usando **solo texto**. No necesita instalar nada.
 
 El 80% de los errores de los alumnos son de **cableado**, no de código (polaridad del LED, GND sin conectar, 5V donde va 3.3V). Un buen diagrama de conexión evita esos errores ANTES de que pasen.
 
@@ -112,6 +112,6 @@ Cuando el circuito lo amerite, agregá una nota de seguridad:
 
 ## Por qué así y no con un simulador o una imagen
 
-- Todo es **texto** → viaja dentro de la respuesta de Profe Bot, sin instalar nada.
+- Todo es **texto** → viaja dentro de la respuesta de Tecnia Bot, sin instalar nada.
 - El ASCII se ve en la terminal; el Mermaid en GitHub/VS Code; la tabla en todos lados.
 - El alumno aprende a **cablear** (donde más se equivoca), no solo a simular.

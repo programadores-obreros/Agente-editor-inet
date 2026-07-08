@@ -4,16 +4,16 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync } from "node:fs"
 
-// Ruta del bundle de piezas Wokwi Elements (se instala con Profe Bot).
+// Ruta del bundle de piezas Wokwi Elements (se instala con Tecnia Bot).
 function bundlePath(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
-  return join(cfg, "opencode", "profebot-web", "wokwi-bundle.js")
+  return join(cfg, "opencode", "tecniabot-web", "wokwi-bundle.js")
 }
 
 // Componentes dibujados por nosotros (pb-relay, pb-bomba, etc.) que no existen en Wokwi.
 function extraPath(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
-  return join(cfg, "opencode", "profebot-web", "componentes-extra.js")
+  return join(cfg, "opencode", "tecniabot-web", "componentes-extra.js")
 }
 
 // CSS común a todos los circuitos.
@@ -283,7 +283,7 @@ const PLANTILLAS: Record<string, Plantilla> = {
         <text class="et" x="295" y="226">🟣 SCL → GPIO22</text>
       </svg>
       <wokwi-esp32-devkit-v1 class="pieza izq"></wokwi-esp32-devkit-v1>
-      <wokwi-lcd1602 id="lcd" text="Hola Profe Bot!  Escuela tecnica" backlight class="pieza der" style="left:600px;"></wokwi-lcd1602>`,
+      <wokwi-lcd1602 id="lcd" text="Hola Tecnia Bot!  Escuela tecnica" backlight class="pieza der" style="left:600px;"></wokwi-lcd1602>`,
     aviso:
       "💡 <strong>Tip:</strong> el módulo I2C reduce el LCD a solo 4 cables (sin él serían 16). En el ESP32, SDA=GPIO21 y SCL=GPIO22 por defecto. Necesita la librería LiquidCrystal_I2C.",
     tabla: `
@@ -294,7 +294,7 @@ const PLANTILLAS: Record<string, Plantilla> = {
       <tr><td>SCL</td><td><span class="dot" style="background:#9b59b6"></span>Violeta</td><td>GPIO22</td></tr>`,
     animacion: `
       const lcd = document.getElementById('lcd');
-      const msgs = ["Hola Profe Bot!  Escuela tecnica", "Temperatura:     25.3 grados C", "Programando con  Arduino y ESP32"];
+      const msgs = ["Hola Tecnia Bot!  Escuela tecnica", "Temperatura:     25.3 grados C", "Programando con  Arduino y ESP32"];
       let i = 0;
       setInterval(() => { i = (i+1) % msgs.length; if (lcd) lcd.text = msgs[i]; }, 1800);`,
   },
@@ -359,7 +359,7 @@ const PLANTILLAS: Record<string, Plantilla> = {
       <tr><td>LCD I2C</td><td>VCC / GND / SDA / SCL</td><td>VIN / GND / GPIO21 / GPIO22</td></tr>`,
     animacion: `
       const lcd = document.getElementById('lcd');
-      const m = ["Temp: 25.3 C     Hum: 60%", "Temp: 26.1 C     Hum: 58%", "Profe Bot listo!  Estacion meteo"];
+      const m = ["Temp: 25.3 C     Hum: 60%", "Temp: 26.1 C     Hum: 58%", "Tecnia Bot listo!  Estacion meteo"];
       let i = 0;
       setInterval(() => { i = (i+1)%m.length; if (lcd) lcd.text = m[i]; }, 1800);`,
   },
@@ -580,7 +580,7 @@ const COMPONENTES: Record<string, Componente> = {
     tag: "wokwi-lcd1602",
     etiqueta: "LCD I2C",
     voltaje: "5V",
-    attrs: () => `text="Hola Profe Bot!" backlight`,
+    attrs: () => `text="Hola Tecnia Bot!" backlight`,
     pines: [
       { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
       { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
@@ -588,7 +588,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
     ],
     advertencia: "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32).",
-    anim: (id) => `const l=document.getElementById('${id}');const m=["Hola Profe Bot!","Escuela tecnica","Arduino + ESP32"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
+    anim: (id) => `const l=document.getElementById('${id}');const m=["Hola Tecnia Bot!","Escuela tecnica","Arduino + ESP32"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
   },
 
   boton: {
@@ -1433,7 +1433,7 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Profe Bot — ${p.titulo}</title>
+<title>Tecnia Bot — ${p.titulo}</title>
 <script src="${scriptSrc}"></script>
 <script src="componentes-extra.js"></script>
 <style>${ESTILO}</style>
@@ -1441,7 +1441,7 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 <body>
 <div class="hoja">
   <h1>${p.titulo} <span class="badge">${p.interactivo ? "✋ interactivo" : "▶ animado"}</span></h1>
-  <div class="sub">Esquema de conexión — Profe Bot · piezas reales, ${p.sub}</div>
+  <div class="sub">Esquema de conexión — Tecnia Bot · piezas reales, ${p.sub}</div>
   <div class="escena"${p.alto && p.alto > 0 ? ` style="height:${p.alto}px"` : ` style="height:auto"`}>${p.escena}</div>
   <div class="aviso">${p.aviso}</div>
   <table>${p.tabla}</table>
@@ -1498,7 +1498,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
   async execute(args, ctx) {
     const bundle = bundlePath()
     if (!existsSync(bundle)) {
-      return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Profe Bot con el instalador para que copie la biblioteca visual."
+      return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Tecnia Bot con el instalador para que copie la biblioteca visual."
     }
     // El navegador bloquea que un file:// cargue otro file:// de otra carpeta (security origin).
     // Por eso copiamos el bundle AL LADO del HTML y lo referenciamos con ruta relativa.

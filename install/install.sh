@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Instalador de Profe Bot para Linux y macOS.
+# Instalador de Tecnia Bot para Linux y macOS.
 # Copia la capa educativa a la config global de OpenCode (~/.config/opencode),
-# para que Profe Bot este disponible en CUALQUIER carpeta donde abras opencode.
+# para que Tecnia Bot este disponible en CUALQUIER carpeta donde abras opencode.
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO_DIR/opencode"
 
-echo "==> Instalando Profe Bot en: $CONFIG_DIR"
+echo "==> Instalando Tecnia Bot en: $CONFIG_DIR"
 
 mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command}
 
@@ -24,8 +24,8 @@ cp -r "$SRC/skills/."  "$CONFIG_DIR/skills/"
 cp -r "$SRC/command/." "$CONFIG_DIR/command/"
 
 # Biblioteca visual (piezas Wokwi Elements, MIT) para circuitos en HTML
-mkdir -p "$CONFIG_DIR/profebot-web"
-cp -r "$SRC/profebot-web/." "$CONFIG_DIR/profebot-web/"
+mkdir -p "$CONFIG_DIR/tecniabot-web"
+cp -r "$SRC/tecniabot-web/." "$CONFIG_DIR/tecniabot-web/"
 
 # Escribir la ruta absoluta del bundle en el skill de circuitos visuales
 # (el navegador necesita ruta absoluta file://, no ~)
@@ -34,7 +34,7 @@ if [ -f "$SKILL_CV" ]; then
   sed -i "s|/home/USUARIO/.config/opencode|$CONFIG_DIR|g" "$SKILL_CV"
 fi
 
-echo "==> Listo! Profe Bot instalado."
+echo "==> Listo! Tecnia Bot instalado."
 echo ""
 echo "Verificando dependencias:"
 
@@ -49,7 +49,7 @@ fi
 if command -v pio >/dev/null 2>&1; then
   echo "  [OK] PlatformIO: $(pio --version 2>/dev/null)"
 elif [ -x "$HOME/.platformio/penv/bin/pio" ]; then
-  echo "  [OK] PlatformIO: $("$HOME/.platformio/penv/bin/pio" --version 2>/dev/null) (instalado, no en PATH; Profe Bot lo encuentra igual)"
+  echo "  [OK] PlatformIO: $("$HOME/.platformio/penv/bin/pio" --version 2>/dev/null) (instalado, no en PATH; Tecnia Bot lo encuentra igual)"
 else
   echo "  [FALTA] PlatformIO no esta instalado."
   echo "          Instalalo con: python3 <(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"
@@ -57,4 +57,4 @@ fi
 
 echo ""
 echo "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
-echo "apreta Tab y elegi 'profe-bot'."
+echo "apreta Tab y elegi 'tecnia-bot'."

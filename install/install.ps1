@@ -1,6 +1,6 @@
-# Instalador de Profe Bot para Windows (PowerShell).
+# Instalador de Tecnia Bot para Windows (PowerShell).
 # Copia la capa educativa a la config global de OpenCode,
-# para que Profe Bot este disponible en CUALQUIER carpeta donde abras opencode.
+# para que Tecnia Bot este disponible en CUALQUIER carpeta donde abras opencode.
 #
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
@@ -18,7 +18,7 @@ if ($env:XDG_CONFIG_HOME) {
 $RepoDir = Split-Path -Parent $PSScriptRoot
 $Src = Join-Path $RepoDir "opencode"
 
-Write-Host "==> Instalando Profe Bot en: $ConfigDir"
+Write-Host "==> Instalando Tecnia Bot en: $ConfigDir"
 
 foreach ($sub in @("agent", "tool", "skills", "command")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir $sub) | Out-Null
@@ -33,11 +33,11 @@ Copy-Item (Join-Path $Src "command\*") (Join-Path $ConfigDir "command\") -Recurs
 
 # Biblioteca visual (piezas Wokwi + componentes dibujados) para los circuitos en HTML.
 # SIN esto, la herramienta de circuitos no puede dibujar nada.
-$WebDir = Join-Path $ConfigDir "profebot-web"
+$WebDir = Join-Path $ConfigDir "tecniabot-web"
 New-Item -ItemType Directory -Force -Path $WebDir | Out-Null
-Copy-Item (Join-Path $Src "profebot-web\*") $WebDir -Recurse -Force
+Copy-Item (Join-Path $Src "tecniabot-web\*") $WebDir -Recurse -Force
 
-Write-Host "==> Listo! Profe Bot instalado."
+Write-Host "==> Listo! Tecnia Bot instalado."
 Write-Host ""
 Write-Host "Verificando dependencias:"
 
@@ -53,11 +53,11 @@ $pioPath = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
 if (Get-Command pio -ErrorAction SilentlyContinue) {
     Write-Host "  [OK] PlatformIO en PATH"
 } elseif (Test-Path $pioPath) {
-    Write-Host "  [OK] PlatformIO instalado (Profe Bot lo encuentra aunque no este en PATH)"
+    Write-Host "  [OK] PlatformIO instalado (Tecnia Bot lo encuentra aunque no este en PATH)"
 } else {
     Write-Host "  [FALTA] PlatformIO no esta instalado. Ver docs/instalacion-windows.md"
 }
 
 Write-Host ""
 Write-Host "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
-Write-Host "apreta Tab y elegi 'profe-bot'."
+Write-Host "apreta Tab y elegi 'tecnia-bot'."

@@ -1,6 +1,6 @@
 # Instalación en Windows
 
-Esta es la plataforma principal de Profe Bot, porque es la que más se usa en las escuelas.
+Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en las escuelas.
 
 > ⚠️ **Nota para el equipo de desarrollo:** estos pasos están pensados pero todavía
 > NO se probaron en una máquina Windows real. Validar en la prueba piloto.
@@ -22,7 +22,7 @@ PlatformIO es lo que compila y carga el código a la placa.
    ```
 3. PlatformIO queda instalado en `%USERPROFILE%\.platformio\penv\Scripts\pio.exe`
 
-> 💡 **Importante:** Profe Bot busca `pio` automáticamente en esa ruta, así que **no hace falta
+> 💡 **Importante:** Tecnia Bot busca `pio` automáticamente en esa ruta, así que **no hace falta
 > agregarlo al PATH**. Esto es clave porque PlatformIO casi nunca queda en el PATH solo.
 
 ## Paso 3 — Drivers USB (para que detecte la placa)
@@ -34,7 +34,7 @@ Muchas placas (sobre todo clones y módulos ESP32) usan chips USB que Windows no
 
 Si conectás la placa y no aparece en el Administrador de dispositivos, instalá el driver que corresponda y reiniciá.
 
-## Paso 4 — Instalar Profe Bot
+## Paso 4 — Instalar Tecnia Bot
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install\install.ps1
@@ -42,4 +42,4 @@ powershell -ExecutionPolicy Bypass -File install\install.ps1
 
 ## Paso 5 — Verificar
 
-Abrí OpenCode, elegí el agente `profe-bot` (tecla Tab) y ejecutá `/diagnostico`. Te va a decir si todo está listo.
+Abrí OpenCode, elegí el agente `tecnia-bot` (tecla Tab) y ejecutá `/diagnostico`. Te va a decir si todo está listo.

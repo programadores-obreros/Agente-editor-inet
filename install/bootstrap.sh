@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Profe Bot — instalador COMPLETO para Linux / macOS.
+# Tecnia Bot — instalador COMPLETO para Linux / macOS.
 # Instala TODO lo necesario en un solo paso:
-#   1. OpenCode (el editor de IA donde vive Profe Bot)
+#   1. OpenCode (el editor de IA donde vive Tecnia Bot)
 #   2. PlatformIO Core (para compilar y cargar a la placa) — sin permisos de admin
-#   3. Profe Bot (la capa educativa)
+#   3. Tecnia Bot (la capa educativa)
 #
 # Uso (desde la carpeta del repo):
 #   bash install/bootstrap.sh
@@ -14,7 +14,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo ""
-echo "  🤖⚡  Profe Bot — instalación completa"
+echo "  🤖⚡  Tecnia Bot — instalación completa"
 echo "  ─────────────────────────────────────"
 echo ""
 
@@ -52,15 +52,15 @@ else
     https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
   python3 "$TMP/get-platformio.py"
   rm -rf "$TMP"
-  echo "  [✓] PlatformIO instalado en ~/.platformio (Profe Bot lo encuentra solo)."
+  echo "  [✓] PlatformIO instalado en ~/.platformio (Tecnia Bot lo encuentra solo)."
 fi
 
-# --- 3. Profe Bot (capa educativa) ------------------------------------------
+# --- 3. Tecnia Bot (capa educativa) ------------------------------------------
 echo ""
-echo "  [↓] Instalando la capa de Profe Bot..."
+echo "  [↓] Instalando la capa de Tecnia Bot..."
 bash "$REPO_DIR/install/install.sh"
 
 echo ""
 echo "  ✅ ¡Todo listo! Abrí una terminal en cualquier carpeta, escribí 'opencode',"
-echo "     apretá Tab y elegí 'profe-bot'."
+echo "     apretá Tab y elegí 'tecnia-bot'."
 echo ""

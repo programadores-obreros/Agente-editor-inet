@@ -1,10 +1,10 @@
 # ============================================================================
-# Profe Bot - instalador COMPLETO para Windows (PowerShell).
+# Tecnia Bot - instalador COMPLETO para Windows (PowerShell).
 # Instala TODO en un solo paso y SIN permisos de administrador (usa Scoop):
 #   1. Scoop (gestor de paquetes en espacio de usuario)
-#   2. OpenCode (el editor de IA donde vive Profe Bot)
+#   2. OpenCode (el editor de IA donde vive Tecnia Bot)
 #   3. Python + PlatformIO Core (para compilar y cargar a la placa)
-#   4. Profe Bot (la capa educativa)
+#   4. Tecnia Bot (la capa educativa)
 #
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
 Write-Host ""
-Write-Host "  Profe Bot - instalacion completa (sin admin)"
+Write-Host "  Tecnia Bot - instalacion completa (sin admin)"
 Write-Host "  --------------------------------------------"
 Write-Host ""
 
@@ -59,15 +59,15 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
     Invoke-RestMethod -Uri "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -OutFile $Tmp
     python $Tmp
     Remove-Item $Tmp -ErrorAction SilentlyContinue
-    Write-Host "  [OK] PlatformIO instalado en ~/.platformio (Profe Bot lo encuentra solo)."
+    Write-Host "  [OK] PlatformIO instalado en ~/.platformio (Tecnia Bot lo encuentra solo)."
 }
 
-# --- 4. Profe Bot (capa educativa) ------------------------------------------
+# --- 4. Tecnia Bot (capa educativa) ------------------------------------------
 Write-Host ""
-Write-Host "  [..] Instalando la capa de Profe Bot..."
+Write-Host "  [..] Instalando la capa de Tecnia Bot..."
 powershell -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
 
 Write-Host ""
 Write-Host "  LISTO! Abri una terminal en cualquier carpeta, escribi 'opencode',"
-Write-Host "  apreta Tab y elegi 'profe-bot'."
+Write-Host "  apreta Tab y elegi 'tecnia-bot'."
 Write-Host ""

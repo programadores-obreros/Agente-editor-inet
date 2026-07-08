@@ -5,7 +5,7 @@ description: Generar un circuito VISUAL profesional en HTML con piezas reales (W
 
 # Circuitos visuales en HTML — piezas reales, offline
 
-Este skill le permite a Profe Bot generar un **archivo HTML** con un circuito profesional usando piezas fotorrealistas (Wokwi Elements, licencia MIT). El alumno lo abre con doble clic en el navegador, **sin internet**.
+Este skill le permite a Tecnia Bot generar un **archivo HTML** con un circuito profesional usando piezas fotorrealistas (Wokwi Elements, licencia MIT). El alumno lo abre con doble clic en el navegador, **sin internet**.
 
 ## Cuándo usar este skill
 
@@ -23,7 +23,7 @@ Cuando el alumno o docente pide algo "bonito", "visual", "profesional", "para mo
 
 El archivo de piezas está en:
 ```
-~/.config/opencode/profebot-web/wokwi-bundle.js
+~/.config/opencode/tecniabot-web/wokwi-bundle.js
 ```
 
 Componentes disponibles (custom elements HTML):
@@ -43,8 +43,8 @@ Generá un archivo así. Cambiá: el título, las dos piezas (`<wokwi-...>`), la
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Profe Bot — Circuito</title>
-<script src="file:///home/USUARIO/.config/opencode/profebot-web/wokwi-bundle.js"></script>
+<title>Tecnia Bot — Circuito</title>
+<script src="file:///home/USUARIO/.config/opencode/tecniabot-web/wokwi-bundle.js"></script>
 <style>
   body { font-family:'Segoe UI',system-ui,sans-serif; background:#eef2f5; margin:0; padding:24px; color:#1a2733; }
   .hoja { max-width:960px; margin:0 auto; background:#fff; border-radius:16px; box-shadow:0 6px 28px rgba(0,0,0,.10); padding:28px 34px; }
@@ -66,7 +66,7 @@ Generá un archivo así. Cambiá: el título, las dos piezas (`<wokwi-...>`), la
 <body>
 <div class="hoja">
   <h1>🔌 TITULO DEL CIRCUITO</h1>
-  <div class="sub">Esquema de conexión — Profe Bot · piezas reales, funciona sin internet</div>
+  <div class="sub">Esquema de conexión — Tecnia Bot · piezas reales, funciona sin internet</div>
 
   <div class="escena">
     <svg class="cables" viewBox="0 0 960 300" preserveAspectRatio="none">
