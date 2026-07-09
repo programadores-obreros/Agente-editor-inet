@@ -2,44 +2,61 @@
 
 Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en las escuelas.
 
-> ⚠️ **Nota para el equipo de desarrollo:** estos pasos están pensados pero todavía
-> NO se probaron en una máquina Windows real. Validar en la prueba piloto.
+> ⚠️ **Nota para el equipo de desarrollo:** el instalador está escrito pero todavía
+> NO se probó en una máquina Windows real. Validar en la prueba piloto.
 
-## Paso 1 — Instalar OpenCode
+## ⭐ Forma fácil (recomendada)
 
-Descargá OpenCode desde https://opencode.ai e instalalo siguiendo las instrucciones de Windows.
+### Paso 1 — Descargá el proyecto
 
-## Paso 2 — Instalar PlatformIO Core
+Con **git**:
+```powershell
+git clone https://github.com/programadores-obreros/Agente-editor-inet.git
+cd Agente-editor-inet
+```
 
-PlatformIO es lo que compila y carga el código a la placa.
+Sin git: entrá a [la página del proyecto](https://github.com/programadores-obreros/Agente-editor-inet),
+tocá **`Code` → `Download ZIP`**, descomprimí, y abrí PowerShell dentro de esa carpeta.
 
-**Opción recomendada (PlatformIO Core, deja `pio` disponible):**
+### Paso 2 — Corré el instalador todo-en-uno
 
-1. Instalá Python desde https://www.python.org/downloads/ (marcá "Add Python to PATH" durante la instalación)
-2. Abrí PowerShell y ejecutá:
-   ```powershell
-   python -c "$(Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py | Select-Object -ExpandProperty Content)"
-   ```
-3. PlatformIO queda instalado en `%USERPROFILE%\.platformio\penv\Scripts\pio.exe`
+```powershell
+powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
+```
 
-> 💡 **Importante:** Tecnia Bot busca `pio` automáticamente en esa ruta, así que **no hace falta
-> agregarlo al PATH**. Esto es clave porque PlatformIO casi nunca queda en el PATH solo.
+Instala **todo lo que falte** (OpenCode + PlatformIO + Tecnia Bot) usando **Scoop**, en el espacio
+del usuario: **no hace falta permiso de administrador** — ideal para las PCs de la escuela.
 
-## Paso 3 — Drivers USB (para que detecte la placa)
+### Paso 3 — Drivers USB (para que detecte la placa)
 
-Muchas placas (sobre todo clones y módulos ESP32) usan chips USB que Windows no reconoce de fábrica:
+Esto el instalador **no** lo hace. Muchas placas (sobre todo clones y módulos ESP32) usan chips USB
+que Windows no reconoce de fábrica:
 
 - **Chip CH340:** driver en https://www.wch-ic.com/downloads/CH341SER_ZIP.html
 - **Chip CP2102:** driver en https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers
 
 Si conectás la placa y no aparece en el Administrador de dispositivos, instalá el driver que corresponda y reiniciá.
 
-## Paso 4 — Instalar Tecnia Bot
+### Paso 4 — Verificá
 
-```powershell
-powershell -ExecutionPolicy Bypass -File install\install.ps1
-```
+Abrí una terminal, escribí `opencode`, apretá **Tab**, elegí `tecnia-bot` y ejecutá `/diagnostico`.
 
-## Paso 5 — Verificar
+---
 
-Abrí OpenCode, elegí el agente `tecnia-bot` (tecla Tab) y ejecutá `/diagnostico`. Te va a decir si todo está listo.
+## Instalación manual (avanzada, paso a paso)
+
+Si preferís hacerlo a mano (o el bootstrap falló), estos son los pasos que automatiza:
+
+1. **OpenCode** — descargalo de https://opencode.ai, o con Scoop: `scoop install opencode`.
+2. **PlatformIO Core** (no necesita administrador):
+   1. Instalá Python desde https://www.python.org/downloads/ (marcá "Add Python to PATH"), o `scoop install python`.
+   2. En PowerShell:
+      ```powershell
+      python -c "$(Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py | Select-Object -ExpandProperty Content)"
+      ```
+   3. Queda en `%USERPROFILE%\.platformio\penv\Scripts\pio.exe` — Tecnia Bot lo busca ahí solo, no hace falta tocar el PATH.
+3. **La capa de Tecnia Bot** (solo copia los archivos):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File install\install.ps1
+   ```
+4. Los drivers USB (paso 3 de arriba).
