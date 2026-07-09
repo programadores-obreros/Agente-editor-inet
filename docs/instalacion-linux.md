@@ -22,13 +22,19 @@ Detecta lo que ya tengas y no lo reinstala.
 
 ### Paso 3 — Permiso del puerto serial (para cargar a la placa)
 
-Esto el instalador **no** lo hace por vos (necesita tu contraseña). En Linux hace falta permiso sobre el puerto USB:
+Esto el instalador **no** lo hace por vos (necesita tu contraseña). En Linux hace falta permiso sobre el puerto USB, y **el grupo cambia según tu distribución**:
 
 ```bash
+# Debian, Ubuntu, Mint, Raspberry Pi OS:
 sudo usermod -a -G dialout $USER
+
+# Arch, Manjaro, EndeavourOS:
+sudo usermod -a -G uucp $USER
 ```
 
-**Cerrá sesión y volvé a entrar** para que tome efecto. Verificá con `groups` que aparezca `dialout`.
+> ¿No sabés cuál usar? Corré `getent group dialout` y `getent group uucp`: usá el que exista en tu sistema. Si te da "el grupo no existe", es el otro.
+
+**Cerrá sesión y volvé a entrar** para que tome efecto. Verificá con `groups` que aparezca el grupo.
 
 > Los drivers USB (CH340, CP2102) ya vienen en el kernel de Linux — no hace falta instalarlos.
 

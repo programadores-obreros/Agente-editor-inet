@@ -75,7 +75,7 @@ function traducirError(stderr: string, stdout: string): string {
     ],
     [
       /Permission denied:.*\/dev\/tty/,
-      "Sin permiso para usar el puerto serial. En Linux ejecuta: `sudo usermod -a -G dialout $USER` y despues cerra sesion y volve a entrar.",
+      "Sin permiso para usar el puerto serial. En Linux agregate al grupo del puerto (el nombre cambia segun la distro): en Debian/Ubuntu `sudo usermod -a -G dialout $USER`, en Arch/Manjaro `sudo usermod -a -G uucp $USER`. Despues cerra sesion y volve a entrar.",
     ],
     [
       /avrdude|not in sync|programmer is not responding/,
