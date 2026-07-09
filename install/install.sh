@@ -27,14 +27,28 @@ cp -r "$SRC/command/." "$CONFIG_DIR/command/"
 mkdir -p "$CONFIG_DIR/tecniabot-web"
 cp -r "$SRC/tecniabot-web/." "$CONFIG_DIR/tecniabot-web/"
 
-# Escribir la ruta absoluta del bundle en el skill de circuitos visuales
-# (el navegador necesita ruta absoluta file://, no ~)
-SKILL_CV="$CONFIG_DIR/skills/circuitos-visuales/SKILL.md"
-if [ -f "$SKILL_CV" ]; then
-  sed -i "s|/home/USUARIO/.config/opencode|$CONFIG_DIR|g" "$SKILL_CV"
+# ---- Manifest: versión + ubicación del repo + archivos instalados ----
+# Habilita actualizar limpio (borra huérfanos) y desinstalar sin tocar lo del usuario.
+MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
+VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || echo "0.0.0")"
+NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web -type f | LC_ALL=C sort)"
+
+# Borrar huérfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
+if [ -f "$MANIFEST" ]; then
+  while IFS= read -r rel; do
+    case "$rel" in ""|"#"*|version=*|repo_dir=*) continue ;; esac
+    printf '%s\n' "$NUEVOS" | grep -qxF "$rel" || rm -f "$CONFIG_DIR/$rel"
+  done < "$MANIFEST"
 fi
 
-echo "==> Listo! Tecnia Bot instalado."
+{
+  echo "# Tecnia Bot — archivos instalados. NO editar a mano."
+  echo "version=$VERSION"
+  echo "repo_dir=$REPO_DIR"
+  printf '%s\n' "$NUEVOS"
+} > "$MANIFEST"
+
+echo "==> Listo! Tecnia Bot v$VERSION instalado."
 echo ""
 echo "Verificando dependencias:"
 

@@ -37,7 +37,39 @@ $WebDir = Join-Path $ConfigDir "tecniabot-web"
 New-Item -ItemType Directory -Force -Path $WebDir | Out-Null
 Copy-Item (Join-Path $Src "tecniabot-web\*") $WebDir -Recurse -Force
 
-Write-Host "==> Listo! Tecnia Bot instalado."
+# ---- Manifest: version + ubicacion del repo + archivos instalados ----
+# Habilita actualizar limpio (borra huerfanos) y desinstalar sin tocar lo del usuario.
+$Manifest = Join-Path $ConfigDir "tecnia-bot.manifest"
+$VerFile = Join-Path $RepoDir "VERSION"
+$Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else { "0.0.0" }
+
+# Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
+# coincidan con las que escribe el instalador de Linux).
+$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web")) {
+    Get-ChildItem -Path (Join-Path $Src $sub) -Recurse -File | ForEach-Object {
+        $rel = $_.FullName.Substring($Src.Length + 1) -replace '\\', '/'
+        $rel
+    }
+}
+$Nuevos = $Nuevos | Sort-Object
+
+# Borrar huerfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
+if (Test-Path $Manifest) {
+    $NuevosSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$Nuevos)
+    Get-Content $Manifest | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith("#") -and -not $line.StartsWith("version=") -and -not $line.StartsWith("repo_dir=")) {
+            if (-not $NuevosSet.Contains($line)) {
+                Remove-Item (Join-Path $ConfigDir $line) -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+$manifestLines = @("# Tecnia Bot - archivos instalados. NO editar a mano.", "version=$Version", "repo_dir=$RepoDir") + $Nuevos
+Set-Content -Path $Manifest -Value $manifestLines -Encoding UTF8
+
+Write-Host "==> Listo! Tecnia Bot v$Version instalado."
 Write-Host ""
 Write-Host "Verificando dependencias:"
 
