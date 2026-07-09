@@ -13,6 +13,14 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Versión de OpenCode probada con esta versión de Tecnia Bot. La FIJAMOS a propósito:
+# el instalador de OpenCode, si no le pasás versión, le pregunta la última a la API de
+# GitHub, que limita a 60 pedidos/hora POR IP. En una escuela con muchas PC detrás de
+# una sola IP, a partir del pedido 60 la instalación falla ("Failed to fetch version
+# information"). Fijándola, se saltea ese pedido y nunca se rompe. OpenCode se
+# autoactualiza solo después del primer uso.
+OPENCODE_VERSION="1.17.15"
+
 echo ""
 echo "  🤖⚡  Tecnia Bot — instalación completa"
 echo "  ─────────────────────────────────────"
@@ -22,8 +30,8 @@ echo ""
 if command -v opencode >/dev/null 2>&1; then
   echo "  [✓] OpenCode ya está instalado ($(opencode --version 2>/dev/null || echo ok))"
 else
-  echo "  [↓] Instalando OpenCode..."
-  curl -fsSL https://opencode.ai/install | bash
+  echo "  [↓] Instalando OpenCode v$OPENCODE_VERSION..."
+  curl -fsSL https://opencode.ai/install | bash -s -- --version "$OPENCODE_VERSION"
   # el instalador agrega OpenCode al PATH del shell, pero esta sesión todavía
   # no lo ve: lo agregamos a mano para poder seguir.
   export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
