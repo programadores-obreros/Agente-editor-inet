@@ -2,7 +2,7 @@
 description: Verificar que el entorno de desarrollo (PlatformIO, dispositivos seriales, sistema operativo) esté listo para usar
 ---
 
-Primero, leé el archivo `~/.config/opencode/tecnia-bot.manifest` (con la herramienta de lectura) y buscá la línea `version=` para saber qué versión de Tecnia Bot está instalada. Mostrala al principio del reporte (ej: "Tecnia Bot v0.1.0"). Si el archivo no existe, decí que no pudiste determinar la versión.
+Primero, usá el tool `actualizar` con `verificar: true`. Eso te dice qué versión de Tecnia Bot tiene el usuario y si hay una más nueva disponible. Mostralo al principio del reporte (ej: "Tecnia Bot v0.1.0 — estás al día", o avisá si hay una versión nueva y que puede escribir `/actualizar`).
 
 Después, usa el tool `platformio` con `action: "diagnostico"` para verificar el estado del entorno de desarrollo.
 

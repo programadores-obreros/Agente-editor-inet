@@ -4,6 +4,8 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 
+const REPO_URL = "https://github.com/programadores-obreros/Agente-editor-inet.git"
+
 // Config global de OpenCode (donde vive la capa instalada y el manifest).
 function configDir(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
@@ -20,15 +22,68 @@ function leerManifest(): { version: string; repoDir: string } | null {
   return { version, repoDir }
 }
 
+function partes(v: string): number[] {
+  return v.split(".").map((n) => parseInt(n, 10) || 0)
+}
+
+// true si `b` es una versión MÁS NUEVA que `a` (compara X.Y.Z numéricamente).
+function esMasNueva(a: string, b: string): boolean {
+  const pa = partes(a)
+  const pb = partes(b)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0
+    const y = pb[i] ?? 0
+    if (y > x) return true
+    if (y < x) return false
+  }
+  return false
+}
+
+// Última versión publicada, vía protocolo git (NO usa la API de GitHub, así que
+// no se choca con el límite de 60 pedidos/hora por IP).
+async function ultimaVersionPublicada(): Promise<string | null> {
+  try {
+    const proc = Bun.spawn(["git", "ls-remote", "--tags", REPO_URL, "v*"], { stdout: "pipe", stderr: "pipe" })
+    await proc.exited
+    const out = await new Response(proc.stdout).text()
+    const tags = [...out.matchAll(/refs\/tags\/v([0-9]+\.[0-9]+\.[0-9]+)/g)].map((m) => m[1])
+    if (!tags.length) return null
+    let max = tags[0]!
+    for (const t of tags) if (esMasNueva(max, t)) max = t // nos quedamos con la más nueva
+    return max
+  } catch {
+    return null
+  }
+}
+
 export default tool({
   description:
-    'Actualiza Tecnia Bot a la última versión: baja lo nuevo del repositorio y reinstala la capa educativa (limpiando los archivos viejos). Usalo cuando el usuario pida "actualizar", "actualizate", "traer lo último" o "¿hay versión nueva?".',
-  args: {},
-  async execute() {
+    'Muestra la versión instalada de Tecnia Bot, verifica si hay una versión nueva, y/o actualiza a la última. Con verificar=true SOLO chequea (no instala nada) — usalo cuando pregunten "¿qué versión tengo?", "¿estoy actualizado?", "¿hay versión nueva?". Sin verificar (o false), ACTUALIZA de verdad — usalo cuando pidan "actualizar", "actualizate", "traer lo último".',
+  args: {
+    verificar: tool.schema
+      .boolean()
+      .optional()
+      .describe("true = solo revisa la versión y si hay una más nueva, sin instalar nada. false u omitido = actualiza de verdad."),
+  },
+  async execute(args) {
     const info = leerManifest()
     if (!info) {
       return "No encontré el registro de instalación (manifest). Reinstalá Tecnia Bot con el instalador (bootstrap)."
     }
+
+    // --- Modo VERIFICAR: solo compara versiones, no toca nada ---
+    if (args.verificar) {
+      const ultima = await ultimaVersionPublicada()
+      if (!ultima) {
+        return `Tenés Tecnia Bot **v${info.version}**. No pude verificar si hay una versión más nueva (revisá tu conexión a Internet).`
+      }
+      if (esMasNueva(info.version, ultima)) {
+        return `Tenés la **v${info.version}** y hay una más nueva disponible: **v${ultima}**. Escribí \`/actualizar\` (o pedime "actualizate") para ponerte al día.`
+      }
+      return `Tenés Tecnia Bot **v${info.version}** — estás al día. 🎉`
+    }
+
+    // --- Modo ACTUALIZAR: baja lo nuevo y reinstala ---
     if (!info.repoDir || !existsSync(info.repoDir)) {
       return `Tenés la versión ${info.version}. No encuentro la carpeta del proyecto${info.repoDir ? ` (${info.repoDir})` : ""} para actualizar. Volvé a descargar el proyecto desde GitHub y corré el instalador.`
     }
