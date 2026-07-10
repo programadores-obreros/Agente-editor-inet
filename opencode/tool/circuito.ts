@@ -2,7 +2,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 
 // Ruta del bundle de piezas Wokwi Elements (se instala con Tecnia Bot).
 function bundlePath(): string {
@@ -14,6 +14,12 @@ function bundlePath(): string {
 function extraPath(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
   return join(cfg, "opencode", "tecniabot-web", "componentes-extra.js")
+}
+
+// Plantillas HTML pre-armadas y validadas (ej: circuito montado sobre protoboard).
+function plantillaPath(nombre: string): string {
+  const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
+  return join(cfg, "opencode", "tecniabot-web", nombre)
 }
 
 // CSS común a todos los circuitos.
@@ -1116,13 +1122,14 @@ Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dh
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
 EXPLICADOR: circuito=protoboard genera un HTML interactivo para ENTENDER la protoboard/breadboard (tocás un agujero y se iluminan los que están conectados por dentro: filas, buses y canal central). Usalo cuando pidan ver/entender/cómo funciona el protoboard.
+CIRCUITO SOBRE PROTOBOARD: circuito=boton-led-protoboard genera un ESP32 + botón + LED + resistencia MONTADOS sobre una protoboard (componentes reales pinchados en la placa, jumpers de colores, interactivo: apretás el botón y prende el LED). Usalo cuando pidan un circuito de botón y LED "en/sobre una protoboard", "armado en la placa de pruebas" o "como se arma de verdad".
 
 ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, stepper (motor paso a paso), motor (motor DC, va por driver), driver (ULN2003), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton, relay, bomba, valvula (electrovalvula), higrometro, lluvia, bmp180 (presion), lampara, calefactor. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.
 
 PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humedad y se enciende el riego); tanques "ultrasonico, relay, bomba"; calefacción "dht22, relay, calefactor"; lumínico "ldr, pir, relay, lampara"; estación meteo "dht22, lluvia, bmp180, lcd". Los actuadores de potencia (bomba, válvula, lámpara, calefactor, motor) van SIEMPRE por un relé o driver, nunca directos al ESP32.`,
   args: {
     circuito: tool.schema
-      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo", "protoboard"])
+      .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo", "protoboard", "boton-led-protoboard"])
       .optional()
       .describe("Preset validado. Usalo si el pedido coincide con uno de la lista. 'protoboard' genera un EXPLICADOR interactivo de la placa de pruebas (tocás un agujero y se iluminan los conectados) — usalo cuando pidan entender/ver el protoboard o breadboard. Para combinaciones libres usá 'componentes'."),
     componentes: tool.schema
@@ -1186,6 +1193,24 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
 file://${archivo}
 
 Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los que están conectados con él por dentro. Así se entiende de una qué se une con qué: las filas, los buses y el canal del medio.`
+    } else if (args.circuito === "boton-led-protoboard") {
+      // Caso especial: plantilla validada de un circuito MONTADO sobre una protoboard
+      // (componentes Wokwi reales pinchados en la placa + jumpers, interactivo).
+      const plantillaFile = plantillaPath("plantilla-boton-led-protoboard.html")
+      if (!existsSync(plantillaFile)) {
+        return "No encontré la plantilla del circuito en protoboard. Reinstalá Tecnia Bot con el instalador."
+      }
+      base = nombreSeguro(args.nombre_archivo, "boton-led-protoboard")
+      const archivo = join(ctx.directory, `${base}.html`)
+      await Bun.write(archivo, readFileSync(plantillaFile, "utf8"))
+      const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
+      if (!existsSync(bundleLocal)) await Bun.write(bundleLocal, Bun.file(bundle))
+      return `Listo! Generé el circuito ESP32 + botón + LED montado sobre una protoboard.
+
+**Abrilo en tu navegador (doble clic o pegá esto):**
+file://${archivo}
+
+Vas a ver el circuito armado en la placa de pruebas, con los componentes reales y los cables de colores. Apretá el botón rojo y el LED se enciende.`
     } else if (args.circuito) {
       // Los presets ahora se generan con el ARMADOR (filas + cables CSS, prolijo).
       const tipos = PRESET_COMPONENTES[args.circuito]

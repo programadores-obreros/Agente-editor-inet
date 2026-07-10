@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1120">
+<title>ESP32 + Botón + LED en protoboard</title>
+<script src="wokwi-bundle.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#eef2f6;font-family:'Segoe UI',system-ui,Arial,sans-serif;color:#1a2733;display:flex;justify-content:center;padding:22px}
+  .card{width:1080px;background:#fff;border-radius:18px;box-shadow:0 8px 34px rgba(20,40,60,.12);padding:26px 32px 30px}
+  .head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  h1{font-size:24px;font-weight:700;letter-spacing:.2px}
+  .badge{display:inline-flex;align-items:center;gap:6px;background:#e8f7ee;color:#1e8e4e;border:1px solid #b8e6c9;font-size:12.5px;font-weight:600;padding:4px 11px;border-radius:20px}
+  .sub{color:#64757f;font-size:14.5px;margin:6px 0 6px}
+  .stage-wrap{position:relative;margin:14px auto 4px;width:1016px;height:452px;background:linear-gradient(180deg,#f4f7fa,#e9eef3);border:1px solid #dfe6ec;border-radius:14px;overflow:hidden}
+  #scene{position:absolute;inset:0}
+  .comp{position:absolute;transform-origin:top left}
+  .lab{position:absolute;background:rgba(255,255,255,.94);border:1px solid #cfd8e0;border-radius:5px;padding:2px 7px;font:600 11px/1.25 'SFMono-Regular',Consolas,monospace;color:#28394a;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.08);z-index:40}
+  .lab.pin{background:#28394a;color:#fff;border-color:#28394a}
+  .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;margin-top:16px}
+  .aviso{background:#fff6e9;border-left:4px solid #ef8c1b;padding:12px 15px;border-radius:9px;font-size:13.6px;line-height:1.5}
+  .aviso b{color:#b5670a}
+  table.conx{border-collapse:collapse;width:100%;font-size:13.4px;border:1px solid #e6ebf0;border-radius:10px;overflow:hidden}
+  table.conx th,table.conx td{padding:8px 11px;text-align:left;border-bottom:1px solid #eef2f5}
+  table.conx th{background:#f5f8fb;color:#3a4b5c;font-weight:600}
+  table.conx tr:last-child td{border-bottom:none}
+  .chip{display:inline-block;width:22px;height:6px;border-radius:3px;vertical-align:middle;margin-right:7px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px;font-size:13px}
+  .legend span{display:flex;align-items:center;gap:7px;color:#3a4b5c}
+  .legend .ln{width:26px;height:4px;border-radius:2px;display:inline-block}
+  .foot{margin-top:14px;font-size:12px;color:#8493a0}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head">
+    <h1>ESP32 + Botón + LED en protoboard</h1>
+    <span class="badge">✋ Interactivo — apretá el botón</span>
+  </div>
+  <div class="sub">Así se arma de verdad en la placa de pruebas: botón con <b>INPUT_PULLUP</b> en GPIO4 y LED con resistencia de 330&nbsp;Ω en GPIO5.</div>
+
+  <div class="stage-wrap">
+    <svg id="scene" viewBox="0 0 1016 452" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <div class="aviso">
+        <b>¿Cómo funciona?</b> El pin GPIO4 se configura como <code>INPUT_PULLUP</code>: internamente queda en ALTO (1).
+        Al apretar el botón, la pata se conecta a <b>GND</b> y el pin lee BAJO (0). Con eso el programa enciende el LED de GPIO5.
+        El LED SIEMPRE va con su resistencia de <b>330&nbsp;Ω</b> en serie para limitar la corriente y no quemarlo.
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <table class="conx">
+      <tr><th>Componente</th><th>Pin ESP32</th><th>Conexión</th></tr>
+      <tr><td><span class="chip" style="background:#22a95b"></span>Botón · pata A</td><td>GPIO4</td><td>Entrada con pull-up interno</td></tr>
+      <tr><td><span class="chip" style="background:#6b7784"></span>Botón · pata B</td><td>GND</td><td>Riel &minus; (azul)</td></tr>
+      <tr><td><span class="chip" style="background:#ef8c1b"></span>Resistencia 330&nbsp;Ω</td><td>GPIO5</td><td>En serie hacia el ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#ef8c1b"></span>LED · ánodo (+)</td><td>—</td><td>Sale de la resistencia</td></tr>
+      <tr><td><span class="chip" style="background:#2b8cd6"></span>LED · cátodo (&minus;)</td><td>GND</td><td>Riel &minus; (azul)</td></tr>
+      <tr><td><span class="chip" style="background:#2a2f36"></span>Alimentación GND</td><td>GND</td><td>ESP32 → riel &minus;</td></tr>
+    </table>
+  </div>
+  <div class="foot">Tecnia Bot · material de clase — protoboard esquemática con componentes reales (Wokwi).</div>
+</div>
+
+<script>
+(function(){
+  const SVGNS="http://www.w3.org/2000/svg";
+  const scene=document.getElementById('scene');
+  const stage=document.querySelector('.stage-wrap');
+  function mk(tag,attrs){const e=document.createElementNS(SVGNS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e;}
+
+  /* ---------- GEOMETRÍA DE LA PROTOBOARD ---------- */
+  const PITCH=19;
+  const NCOLS=30;
+  const X0=300;                         // x del primer agujero (columna 1)
+  const colX=i=>X0+i*PITCH;             // i: 0..NCOLS-1
+  const boardL=X0-34, boardR=colX(NCOLS-1)+34, boardW=boardR-boardL;
+
+  // Y de rieles y filas
+  const yTP=54, yTM=76;                 // rieles superiores  (+ , -)
+  const rowsTop={A:132,B:151,C:170,D:189,E:208};
+  const rowsBot={F:250,G:269,H:288,I:307,J:326};
+  const yBM=382, yBP=404;               // rieles inferiores  (- , +)
+  const chanTop=222, chanBot=236;
+
+  const H={};                           // mapa de centros de agujeros
+
+  /* ---------- CUERPO DE LA PLACA ---------- */
+  scene.appendChild(mk('rect',{x:boardL,y:34,width:boardW,height:390,rx:12,fill:'#f6f1e6',stroke:'#d9cbab','stroke-width':2}));
+  // canal central
+  scene.appendChild(mk('rect',{x:boardL+8,y:chanTop,width:boardW-16,height:chanBot-chanTop,rx:3,fill:'#e7ddc7'}));
+
+  function railStrip(y,color,idkey,label){
+    // línea de color guía
+    scene.appendChild(mk('line',{x1:colX(1)-6,y1:y-14,x2:colX(NCOLS-2)+6,y2:y-14,stroke:color,'stroke-width':2.5,'stroke-linecap':'round'}));
+    scene.appendChild(mk('line',{x1:colX(1)-6,y1:y+14,x2:colX(NCOLS-2)+6,y2:y+14,stroke:color,'stroke-width':2.5,'stroke-linecap':'round',opacity:.0}));
+    // etiqueta + / -
+    scene.appendChild(mk('text',{x:boardL+16,y:y+4,fill:color,'font-size':16,'font-weight':700,'font-family':'monospace'})).textContent=label;
+    scene.appendChild(mk('text',{x:boardR-24,y:y+4,fill:color,'font-size':16,'font-weight':700,'font-family':'monospace'})).textContent=label;
+    // agujeros en grupos de 5
+    let idx=0;
+    for(let c=2;c<NCOLS-2;c++){
+      if((c-2)%6===5) continue;         // pequeño espacio cada 5
+      const x=colX(c);
+      hole(x,y,'#efe8d6');
+      H[idkey+'_'+idx]={x,y}; idx++;
+    }
+    H[idkey+'_n']=idx;
+  }
+  function hole(x,y,fill){
+    scene.appendChild(mk('circle',{cx:x,cy:y,r:4.1,fill:fill||'#efe8d6',stroke:'#cbbf9f','stroke-width':1}));
+    scene.appendChild(mk('circle',{cx:x,cy:y,r:1.5,fill:'#b9ab86'}));
+  }
+
+  railStrip(yTP,'#d94141','tp','+');
+  railStrip(yTM,'#2f6fd0','tm','−');
+  railStrip(yBM,'#2f6fd0','bm','−');
+  railStrip(yBP,'#d94141','bp','+');
+
+  // filas principales a-e y f-j, columnas 1..NCOLS
+  function mainRows(rows){
+    for(const r in rows){
+      const y=rows[r];
+      for(let c=0;c<NCOLS;c++){
+        const x=colX(c);
+        hole(x,y);
+        H[r+c]={x,y};
+      }
+    }
+  }
+  mainRows(rowsTop);
+  mainRows(rowsBot);
+
+  // letras de fila (izquierda) y números de columna (arriba)
+  for(const r in rowsTop) scene.appendChild(mk('text',{x:colX(0)-18,y:rowsTop[r]+4,fill:'#a99a76','font-size':11,'font-family':'monospace','font-weight':600})).textContent=r;
+  for(const r in rowsBot) scene.appendChild(mk('text',{x:colX(0)-18,y:rowsBot[r]+4,fill:'#a99a76','font-size':11,'font-family':'monospace','font-weight':600})).textContent=r;
+  [0,4,9,14,19,24,29].forEach(c=>scene.appendChild(mk('text',{x:colX(c),y:rowsTop.A-14,fill:'#a99a76','font-size':10,'font-family':'monospace','text-anchor':'middle'})).textContent=(c+1));
+
+  /* ---------- COMPONENTES (HTML web components, absolutos) ---------- */
+  function place(html,left,top,scale,flipX){
+    const d=document.createElement('div');
+    d.className='comp';
+    d.style.left=left+'px'; d.style.top=top+'px';
+    d.style.transform=flipX?('scale('+(-scale)+','+scale+')'):('scale('+scale+')');
+    d.innerHTML=html;
+    stage.appendChild(d);
+    const px2x = flipX ? (px)=>left-px*scale : (px)=>left+px*scale;
+    return {el:d,left,top,scale,pin:(px,py)=>({x:px2x(px),y:top+py*scale})};
+  }
+  // ESP32 a la izquierda (pines D4,D5,GND.1 en el borde derecho x=101.3)
+  const esp=place('<wokwi-esp32-devkit-v1 id="esp32"></wokwi-esp32-devkit-v1>', 40, 96, 1);
+  const P_D5 =esp.pin(101.3, 91.3);   // GPIO5
+  const P_D4 =esp.pin(101.3, 120);    // GPIO4
+  const P_GND=esp.pin(101.3, 149);    // GND.1
+
+  // BOTÓN — straddle del canal (col 9). net1 arriba (E), net2 abajo (F)
+  const btnScale=1.0;
+  const btnBx=colX(8)-2, btnBy=rowsTop.E-13;   // net1 pins quedan sobre fila E
+  const btn=place('<wokwi-pushbutton id="btn" color="green"></wokwi-pushbutton>', btnBx, btnBy, btnScale);
+  const B_1l=btn.pin(0,13), B_1r=btn.pin(67,13);   // net A (GPIO4)
+  const B_2l=btn.pin(0,32), B_2r=btn.pin(67,32);   // net B (GND)
+
+  // RESISTENCIA 330Ω — apoyada en fila C, columnas 17..20
+  const resScale=1.05;
+  const resLeft=colX(17), resTop=rowsTop.C-5.65*resScale;
+  const res=place('<wokwi-resistor id="r1" value="330"></wokwi-resistor>', resLeft, resTop, resScale);
+  const R_1=res.pin(0,5.65), R_2=res.pin(58.8,5.65);
+
+  // LED — espejado: ánodo (izq) hacia la resistencia (col20), cátodo (der) col21
+  const ledScale=1.5;
+  const ledLeft=colX(20)+25*ledScale;   // flipX: pin ánodo(25) cae en left-25*scale = colX(20)
+  const led=place('<wokwi-led id="led" color="red"></wokwi-led>', ledLeft, rowsTop.A-56, ledScale, true);
+  const L_A=led.pin(25,42), L_C=led.pin(15,42);   // ánodo / cátodo (reales, ya espejados)
+  const hAnode=H['B20'], hCath=H['B21'];
+
+  /* ---------- CABLES (jumpers) + patas ---------- */
+  function wire(a,b,color,w){
+    const dx=(b.x-a.x), dy=(b.y-a.y);
+    const mx=a.x+dx*0.5, my=a.y+dy*0.5 - Math.min(34,Math.abs(dx)*0.28+8);
+    const p=mk('path',{d:`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`,fill:'none',stroke:color,'stroke-width':w||3.4,'stroke-linecap':'round'});
+    scene.appendChild(p);
+  }
+  function leg(a,b){ // pata metálica corta componente->agujero
+    scene.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#8a8f96','stroke-width':2.2,'stroke-linecap':'round'}));
+  }
+  function endcap(p,color){ scene.appendChild(mk('circle',{cx:p.x,cy:p.y,r:3.4,fill:color,stroke:'#fff','stroke-width':1})); }
+
+  // patas del botón hacia agujeros de fila E (arriba) y F (abajo)
+  leg(B_1l,H['E9']); leg(B_1r,H['E12']);
+  leg(B_2l,H['F9']); leg(B_2r,H['F12']);
+  // patas de la resistencia
+  leg(R_1,H['C17']); leg(R_2,H['C20']);
+  // patas del LED (ánodo/cátodo un poco dobladas)
+  leg(L_A,hAnode); leg(L_C,hCath);
+
+  const cGPIO4='#22a95b', cGND='#6b7784', cGPIO5='#ef8c1b', cCAT='#2b8cd6', cPWR='#2a2f36';
+
+  // 1) GPIO4 -> botón net A (fila E col9)
+  wire(P_D4,H['E9'],cGPIO4);
+  // 2) botón net B (fila F col12) -> riel inferior (-)
+  wire(H['F12'],H['bm_10'],cGND);
+  // 3) GPIO5 -> resistencia (col17 fila C)  [la resistencia continúa a col20]
+  wire(P_D5,H['C17'],cGPIO5);
+  // 3b) puente resistencia(col20) -> ánodo LED (col20 fila B): misma columna, lo dibuja la pata; nada extra
+  // 4) cátodo LED (col21) -> riel superior (-)
+  wire(H['B21'],H['tm_16'],cCAT);
+  // 5) ESP32 GND -> riel superior (-)
+  wire(P_GND,H['tm_1'],cPWR);
+  // 6) puente riel superior(-) <-> riel inferior(-)
+  wire(H['tm_20'],H['bm_20'],cPWR,2.8);
+
+  // endcaps en pines ESP32
+  endcap(P_D4,cGPIO4); endcap(P_D5,cGPIO5); endcap(P_GND,cPWR);
+
+  /* ---------- ETIQUETAS ---------- */
+  function label(text,x,y,pin){
+    const d=document.createElement('div');
+    d.className='lab'+(pin?' pin':'');
+    d.textContent=text; d.style.left=x+'px'; d.style.top=y+'px';
+    stage.appendChild(d);
+  }
+  label('GPIO4',P_D4.x-58,P_D4.y-8,true);
+  label('GPIO5',P_D5.x-58,P_D5.y-8,true);
+  label('GND',P_GND.x-46,P_GND.y-8,true);
+  label('330 Ω',resLeft+2,rowsTop.C+16);
+  label('Botón',btnBx+4,btnBy-26);
+  label('LED',colX(22)+4,rowsTop.A-40);
+
+  /* ---------- LEYENDA ---------- */
+  const legend=document.getElementById('legend');
+  [['#22a95b','GPIO4 → botón (pull-up)'],['#6b7784','botón → GND'],['#ef8c1b','GPIO5 → 330 Ω → LED'],['#2b8cd6','LED → GND'],['#2a2f36','GND → riel −']]
+    .forEach(([c,t])=>{const s=document.createElement('span');s.innerHTML='<span class="ln" style="background:'+c+'"></span>'+t;legend.appendChild(s);});
+
+  /* ---------- INTERACCIÓN ---------- */
+  const b=document.getElementById('btn'), l=document.getElementById('led');
+  function on(){ l.value=true; } function off(){ l.value=false; }
+  b.addEventListener('button-press',on);
+  b.addEventListener('button-release',off);
+  // respaldo mouse por si el evento custom no dispara en headless
+  b.addEventListener('mousedown',on); b.addEventListener('mouseup',off);
+  b.addEventListener('mouseleave',off);
+})();
+</script>
+</body>
+</html>
