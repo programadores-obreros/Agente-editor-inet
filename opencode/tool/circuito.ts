@@ -724,7 +724,7 @@ const SENSOR_SIM: Record<string, { magnitud: string; unidad: string; min: number
   lluvia: { magnitud: "Lluvia", unidad: "%", min: 0, max: 100, umbral: 50, emoji: "🌧️" },
 }
 
-function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | null {
+function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuador: string } | null {
   const idx = (pred: (t: string) => boolean): number =>
     pedidos.findIndex((p) => pred(normalizarTipo(p.tipo)))
 
@@ -751,13 +751,19 @@ function armarPuente(pedidos: Pedido[]): { js: string; idActuador: string } | nu
     // (miramos TODO el pedido, no solo el actuador gobernado, que suele ser el relé.)
     const hayCalefactor = pedidos.some((p) => normalizarTipo(p.tipo) === "calefactor")
     const disparaBajo = tSens === "ultrasonico" || tSens === "higrometro" || hayCalefactor
-    const cmp = disparaBajo ? `m<=${s.umbral}` : `m>=${s.umbral}`
+    // umbral: el que pidió el usuario (si vino), o el default del sensor. Lo acotamos al rango del slider.
+    const umbralUsado = umbral != null ? Math.max(s.min, Math.min(s.max, umbral)) : s.umbral
+    const cmp = disparaBajo ? `m<=${umbralUsado}` : `m>=${umbralUsado}`
+    // texto claro de cuándo se activa (ej: "el LED se prende con ≥ 20 °C")
+    const nombreActu = COMPONENTES[tActu]?.etiqueta ?? "el actuador"
+    const signo = disparaBajo ? "≤" : "≥"
+    const avisoDisparo = `${nombreActu} se activa con ${signo} ${umbralUsado} ${s.unidad}`.trim()
     const js = `(() => {
       const sen=document.getElementById('${idSens}'), act=document.getElementById('${idActu}');
       if(!sen||!act)return;
       const ctrl=document.createElement('div');
       ctrl.style.cssText='display:flex;flex-direction:column;align-items:center;gap:5px;background:#fff4e5;border:1px solid #f0d9b8;border-radius:10px;padding:9px 13px;margin-top:8px;max-width:220px';
-      ctrl.innerHTML='<label style="font:600 12px sans-serif;color:#b9770e">${s.emoji} Simulá ${s.magnitud.toLowerCase()} 👇</label><input type="range" min="${s.min}" max="${s.max}" value="${s.min}" style="width:170px;accent-color:#e67e22;cursor:pointer"><span style="font:700 14px sans-serif;color:#e67e22">${s.min} ${s.unidad}</span>';
+      ctrl.innerHTML='<label style="font:600 12px sans-serif;color:#b9770e">${s.emoji} Simulá ${s.magnitud.toLowerCase()} 👇</label><input type="range" min="${s.min}" max="${s.max}" value="${s.min}" style="width:170px;accent-color:#e67e22;cursor:pointer"><span style="font:700 14px sans-serif;color:#e67e22">${s.min} ${s.unidad}</span><small style="font:600 11px sans-serif;color:#b9770e">${avisoDisparo}</small>';
       const sl=ctrl.querySelector('input'), lbl=ctrl.querySelector('span');
       sen.parentElement.appendChild(ctrl);
       function aplicar(m){
@@ -848,9 +854,9 @@ const ESCALA: Record<string, number> = {
 
 // LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
 // Sin coordenadas globales en SVG estirado → las piezas y sus conexiones NUNCA se desalinean.
-function armarCircuito(pedidos: Pedido[]): ResultadoArmado {
+function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
   const { gpios: gpiosPorComp, avisos: avisosGpio } = asignarGpios(pedidos)
-  const puente = armarPuente(pedidos)
+  const puente = armarPuente(pedidos, umbral)
   const gobernado = puente ? puente.idActuador : null
 
   const filas: string[] = []
@@ -1154,6 +1160,10 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       .string()
       .optional()
       .describe("Nombre del archivo HTML (sin extensión). Por defecto usa el nombre del circuito."),
+    umbral: tool.schema
+      .number()
+      .optional()
+      .describe("SOLO para armador libre con un sensor + actuador (ej: dht22+led): el valor a partir del cual el actuador se activa. Ej: si piden 'que el LED prenda a 20 grados', pasá umbral=20. Sin esto usa el default del sensor (temperatura 35, distancia 20cm, etc.). Se muestra en pantalla ('se activa con ≥ 20 °C')."),
   },
   async execute(args, ctx) {
     const bundle = bundlePath()
@@ -1176,7 +1186,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       if (desconocidos.length) {
         return `No conozco: ${desconocidos.map((d) => d.tipo).join(", ")}. Tengo: ${Object.keys(COMPONENTES).join(", ")}.`
       }
-      const r = armarCircuito(pedidos)
+      const r = armarCircuito(pedidos, args.umbral)
       const nombres = pedidos.map((p) => COMPONENTES[normalizarTipo(p.tipo)].etiqueta).join(" + ")
       plantilla = {
         titulo: `🔧 ${nombres} + ESP32`,
