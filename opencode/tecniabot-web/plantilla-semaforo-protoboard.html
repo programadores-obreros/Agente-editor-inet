@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1120">
+<title>Semáforo en protoboard</title>
+<script src="wokwi-bundle.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#eef2f6;font-family:'Segoe UI',system-ui,Arial,sans-serif;color:#1a2733;display:flex;justify-content:center;padding:22px}
+  .card{width:1080px;background:#fff;border-radius:18px;box-shadow:0 8px 34px rgba(20,40,60,.12);padding:26px 32px 30px}
+  .head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  h1{font-size:24px;font-weight:700;letter-spacing:.2px}
+  .badge{display:inline-flex;align-items:center;gap:6px;background:#e8f7ee;color:#1e8e4e;border:1px solid #b8e6c9;font-size:12.5px;font-weight:600;padding:4px 11px;border-radius:20px}
+  .sub{color:#64757f;font-size:14.5px;margin:6px 0 6px}
+  .stage-wrap{position:relative;margin:14px auto 4px;width:1016px;height:452px;background:linear-gradient(180deg,#f4f7fa,#e9eef3);border:1px solid #dfe6ec;border-radius:14px;overflow:hidden}
+  #scene{position:absolute;inset:0}
+  .comp{position:absolute;transform-origin:top left}
+  .lab{position:absolute;background:rgba(255,255,255,.94);border:1px solid #cfd8e0;border-radius:5px;padding:2px 7px;font:600 11px/1.25 'SFMono-Regular',Consolas,monospace;color:#28394a;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.08);z-index:40}
+  .lab.pin{background:#28394a;color:#fff;border-color:#28394a}
+  .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;margin-top:16px}
+  .aviso{background:#fff6e9;border-left:4px solid #ef8c1b;padding:12px 15px;border-radius:9px;font-size:13.6px;line-height:1.5}
+  .aviso b{color:#b5670a}
+  table.conx{border-collapse:collapse;width:100%;font-size:13.4px;border:1px solid #e6ebf0;border-radius:10px;overflow:hidden}
+  table.conx th,table.conx td{padding:8px 11px;text-align:left;border-bottom:1px solid #eef2f5}
+  table.conx th{background:#f5f8fb;color:#3a4b5c;font-weight:600}
+  table.conx tr:last-child td{border-bottom:none}
+  .chip{display:inline-block;width:22px;height:6px;border-radius:3px;vertical-align:middle;margin-right:7px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px;font-size:13px}
+  .legend span{display:flex;align-items:center;gap:7px;color:#3a4b5c}
+  .legend .ln{width:26px;height:4px;border-radius:2px;display:inline-block}
+  .foot{margin-top:14px;font-size:12px;color:#8493a0}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="head">
+    <h1>Semáforo en protoboard</h1>
+    <span class="badge">▶ animado</span>
+  </div>
+  <div class="sub">Así se arma de verdad en la placa de pruebas: tres LEDs (rojo, amarillo, verde) con su resistencia de 330&nbsp;Ω, cumpliendo la secuencia de un semáforo.</div>
+
+  <div class="stage-wrap">
+    <svg id="scene" viewBox="0 0 1016 452" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <div class="aviso">
+        <b>¿Cómo funciona?</b> Cada LED se maneja desde un pin distinto del ESP32 (<b>GPIO19</b>, <b>GPIO5</b>, <b>GPIO4</b>)
+        y SIEMPRE lleva su resistencia de <b>330&nbsp;Ω</b> en serie para limitar la corriente y no quemarlo.
+        Todos los cátodos van al riel <b>&minus; (GND)</b>. El programa enciende uno por vez siguiendo la secuencia real:
+        <b>verde&nbsp;→&nbsp;amarillo&nbsp;→&nbsp;rojo</b> y vuelve a empezar.
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <table class="conx">
+      <tr><th>LED</th><th>Pin ESP32</th><th>Conexión</th></tr>
+      <tr><td><span class="chip" style="background:#22a95b"></span>Verde</td><td>GPIO19</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#e8b021"></span>Amarillo</td><td>GPIO5</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#d94141"></span>Rojo</td><td>GPIO4</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#2b8cd6"></span>Cátodos (&minus;)</td><td>GND</td><td>Riel &minus; (azul)</td></tr>
+      <tr><td><span class="chip" style="background:#2a2f36"></span>Alimentación GND</td><td>GND</td><td>ESP32 → riel &minus;</td></tr>
+    </table>
+  </div>
+  <div class="foot">Tecnia Bot · material de clase — protoboard esquemática con componentes reales (Wokwi).</div>
+</div>
+
+<script>
+(function(){
+  const SVGNS="http://www.w3.org/2000/svg";
+  const scene=document.getElementById('scene');
+  const stage=document.querySelector('.stage-wrap');
+  function mk(tag,attrs){const e=document.createElementNS(SVGNS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e;}
+
+  /* ---------- GEOMETRÍA DE LA PROTOBOARD ---------- */
+  const PITCH=19;
+  const NCOLS=30;
+  const X0=300;
+  const colX=i=>X0+i*PITCH;
+  const boardL=X0-34, boardR=colX(NCOLS-1)+34, boardW=boardR-boardL;
+
+  const yTP=54, yTM=76;
+  const rowsTop={A:132,B:151,C:170,D:189,E:208};
+  const rowsBot={F:250,G:269,H:288,I:307,J:326};
+  const yBM=382, yBP=404;
+  const chanTop=222, chanBot=236;
+
+  const H={};
+
+  /* ---------- CUERPO DE LA PLACA ---------- */
+  scene.appendChild(mk('rect',{x:boardL,y:34,width:boardW,height:390,rx:12,fill:'#f6f1e6',stroke:'#d9cbab','stroke-width':2}));
+  scene.appendChild(mk('rect',{x:boardL+8,y:chanTop,width:boardW-16,height:chanBot-chanTop,rx:3,fill:'#e7ddc7'}));
+
+  function railStrip(y,color,idkey,label){
+    scene.appendChild(mk('line',{x1:colX(1)-6,y1:y-14,x2:colX(NCOLS-2)+6,y2:y-14,stroke:color,'stroke-width':2.5,'stroke-linecap':'round'}));
+    scene.appendChild(mk('text',{x:boardL+16,y:y+4,fill:color,'font-size':16,'font-weight':700,'font-family':'monospace'})).textContent=label;
+    scene.appendChild(mk('text',{x:boardR-24,y:y+4,fill:color,'font-size':16,'font-weight':700,'font-family':'monospace'})).textContent=label;
+    let idx=0;
+    for(let c=2;c<NCOLS-2;c++){
+      if((c-2)%6===5) continue;
+      const x=colX(c);
+      hole(x,y,'#efe8d6');
+      H[idkey+'_'+idx]={x,y}; idx++;
+    }
+    H[idkey+'_n']=idx;
+  }
+  function hole(x,y,fill){
+    scene.appendChild(mk('circle',{cx:x,cy:y,r:4.1,fill:fill||'#efe8d6',stroke:'#cbbf9f','stroke-width':1}));
+    scene.appendChild(mk('circle',{cx:x,cy:y,r:1.5,fill:'#b9ab86'}));
+  }
+
+  railStrip(yTP,'#d94141','tp','+');
+  railStrip(yTM,'#2f6fd0','tm','−');
+  railStrip(yBM,'#2f6fd0','bm','−');
+  railStrip(yBP,'#d94141','bp','+');
+
+  function mainRows(rows){
+    for(const r in rows){
+      const y=rows[r];
+      for(let c=0;c<NCOLS;c++){
+        const x=colX(c);
+        hole(x,y);
+        H[r+c]={x,y};
+      }
+    }
+  }
+  mainRows(rowsTop);
+  mainRows(rowsBot);
+
+  for(const r in rowsTop) scene.appendChild(mk('text',{x:colX(0)-18,y:rowsTop[r]+4,fill:'#a99a76','font-size':11,'font-family':'monospace','font-weight':600})).textContent=r;
+  for(const r in rowsBot) scene.appendChild(mk('text',{x:colX(0)-18,y:rowsBot[r]+4,fill:'#a99a76','font-size':11,'font-family':'monospace','font-weight':600})).textContent=r;
+  [0,4,9,14,19,24,29].forEach(c=>scene.appendChild(mk('text',{x:colX(c),y:rowsTop.A-14,fill:'#a99a76','font-size':10,'font-family':'monospace','text-anchor':'middle'})).textContent=(c+1));
+
+  function nearestRail(prefix,x){
+    const n=H[prefix+'_n']; let best=null,bd=1e9;
+    for(let i=0;i<n;i++){const h=H[prefix+'_'+i];const d=Math.abs(h.x-x);if(d<bd){bd=d;best=h;}}
+    return best;
+  }
+
+  /* ---------- COMPONENTES ---------- */
+  function place(html,left,top,scale,flipX){
+    const d=document.createElement('div');
+    d.className='comp';
+    d.style.left=left+'px'; d.style.top=top+'px';
+    d.style.transform=flipX?('scale('+(-scale)+','+scale+')'):('scale('+scale+')');
+    d.innerHTML=html;
+    stage.appendChild(d);
+    const px2x = flipX ? (px)=>left-px*scale : (px)=>left+px*scale;
+    return {el:d,left,top,scale,pin:(px,py)=>({x:px2x(px),y:top+py*scale})};
+  }
+
+  // ESP32 sin espejar: usamos los pines del borde DERECHO (el que mira a la placa)
+  const esp=place('<wokwi-esp32-devkit-v1 id="esp32"></wokwi-esp32-devkit-v1>', 40, 96, 1);
+  const P_G19=esp.pin(101.3,72.2);   // GPIO19 -> verde
+  const P_G5 =esp.pin(101.3,91.3);   // GPIO5  -> amarillo
+  const P_G4 =esp.pin(101.3,120);    // GPIO4  -> rojo
+  const P_GND=esp.pin(101.3,149);    // GND.1
+
+  /* ---------- CABLES + PATAS ---------- */
+  function wire(a,b,color,w,bulge){
+    const bmax=(bulge==null)?34:bulge;
+    const dx=(b.x-a.x), dy=(b.y-a.y);
+    const mx=a.x+dx*0.5, my=a.y+dy*0.5 - Math.min(bmax,Math.abs(dx)*0.22+8);
+    const p=mk('path',{d:`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`,fill:'none',stroke:color,'stroke-width':w||3.4,'stroke-linecap':'round'});
+    scene.appendChild(p);
+  }
+  function leader(a,b){
+    scene.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#9aa4ad','stroke-width':1.3,'stroke-dasharray':'2 2'}));
+  }
+  function leg(a,b){
+    scene.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#8a8f96','stroke-width':2.2,'stroke-linecap':'round'}));
+  }
+  function endcap(p,color){ scene.appendChild(mk('circle',{cx:p.x,cy:p.y,r:3.4,fill:color,stroke:'#fff','stroke-width':1})); }
+
+  function label(text,x,y,pin){
+    const d=document.createElement('div');
+    d.className='lab'+(pin?' pin':'');
+    d.textContent=text; d.style.left=x+'px'; d.style.top=y+'px';
+    stage.appendChild(d);
+  }
+
+  const cGRN='#22a95b', cYEL='#e8b021', cRED='#d94141', cCAT='#2b8cd6', cPWR='#2a2f36';
+
+  /* ---------- GRUPO LED + RESISTENCIA ---------- */
+  // resCol..resCol+3 sostiene la resistencia (fila C); ánodo en col (resCol+3),
+  // cátodo en col (resCol+4). LED espejado apuntando a su columna de ánodo.
+  const leds={};
+  function ledGroup(resCol, color, wireColor, gpioPin){
+    const anCol=resCol+3, catCol=resCol+4;
+    // resistencia
+    const resScale=1.05;
+    const resLeft=colX(resCol), resTop=rowsTop.C-5.65*resScale;
+    const res=place('<wokwi-resistor value="330"></wokwi-resistor>', resLeft, resTop, resScale);
+    const R_1=res.pin(0,5.65), R_2=res.pin(58.8,5.65);
+    leg(R_1,H['C'+resCol]); leg(R_2,H['C'+anCol]);
+    // LED espejado
+    const ledScale=1.5;
+    const ledLeft=colX(anCol)+25*ledScale;
+    const led=place('<wokwi-led color="'+color+'"></wokwi-led>', ledLeft, rowsTop.A-56, ledScale, true);
+    const L_A=led.pin(25,42), L_C=led.pin(15,42);
+    leg(L_A,H['B'+anCol]); leg(L_C,H['B'+catCol]);
+    // cátodo -> riel superior (-)
+    const rail=nearestRail('tm',H['B'+catCol].x);
+    wire(H['B'+catCol],rail,cCAT,3);
+    // GPIO -> pata izquierda de la resistencia (fila C)
+    wire(gpioPin,H['C'+resCol],wireColor,3.4,12);
+    endcap(gpioPin,wireColor);
+    label('330 Ω',resLeft+1,rowsTop.C+15);
+    leds[color]=led.el.querySelector('wokwi-led');
+    return led;
+  }
+
+  ledGroup(4,  'green',  cGRN, P_G19);
+  ledGroup(13, 'yellow', cYEL, P_G5);
+  ledGroup(22, 'red',    cRED, P_G4);
+
+  // Etiquetas de pin sobre el ESP32 (los pines derechos quedan bien espaciados)
+  [[P_G19,'GPIO19'],[P_G5,'GPIO5'],[P_G4,'GPIO4'],[P_GND,'GND']].forEach(([pin,txt])=>{
+    label(txt,pin.x-66,pin.y-8,true);
+  });
+
+  // LED nombres
+  label('LED verde',   colX(7)-6,  rowsTop.A-42);
+  label('LED amarillo',colX(16)-14,rowsTop.A-42);
+  label('LED rojo',    colX(25)-2, rowsTop.A-42);
+
+  // ESP32 GND -> riel superior (-)
+  const gndRail=nearestRail('tm',P_GND.x);
+  wire(P_GND,gndRail,cPWR);
+  endcap(P_GND,cPWR);
+
+  /* ---------- LEYENDA ---------- */
+  const legend=document.getElementById('legend');
+  [['#22a95b','GPIO19 → 330 Ω → LED verde'],['#e8b021','GPIO5 → 330 Ω → LED amarillo'],['#d94141','GPIO4 → 330 Ω → LED rojo'],['#2b8cd6','cátodos → riel −'],['#2a2f36','GND → riel −']]
+    .forEach(([c,t])=>{const s=document.createElement('span');s.innerHTML='<span class="ln" style="background:'+c+'"></span>'+t;legend.appendChild(s);});
+
+  /* ---------- ANIMACIÓN (secuencia del semáforo) ---------- */
+  const G=leds.green, Y=leds.yellow, R=leds.red;
+  function set(g,y,r){ if(G)G.value=g; if(Y)Y.value=y; if(R)R.value=r; }
+  const phases=[
+    {s:[true,false,false], ms:2600},   // VERDE
+    {s:[false,true,false], ms:900},    // AMARILLO
+    {s:[false,false,true], ms:2600}    // ROJO
+  ];
+  let i=0;
+  function tick(){
+    const p=phases[i];
+    set(p.s[0],p.s[1],p.s[2]);
+    i=(i+1)%phases.length;
+    setTimeout(tick,p.ms);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>
