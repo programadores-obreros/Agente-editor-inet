@@ -1,6 +1,6 @@
 {
   "name": "tecnia-bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Tecnia Bot — asistente educativo de IA para enseñar Arduino y ESP32 en escuelas técnicas argentinas (INET). Capa educativa sobre OpenCode.",
   "type": "module",

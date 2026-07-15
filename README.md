@@ -93,7 +93,7 @@ Agente-editor-inet/
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
 │   ├── tool/               # Herramientas: platformio.ts (compilar/cargar) y circuito.ts (circuitos visuales)
-│   ├── skills/             # 9 bases de conocimiento (ver abajo)
+│   ├── skills/             # 10 bases de conocimiento (ver abajo)
 │   ├── command/            # Comando /diagnostico
 │   ├── tecniabot-web/      # Biblioteca visual: piezas Wokwi + componentes propios (para los circuitos)
 │   └── env.d.ts            # Tipos de ambiente (runtime Bun de OpenCode)
@@ -107,8 +107,14 @@ Agente-editor-inet/
 └── .github/workflows/      # CI: corre los tests en cada push
 ```
 
-**Los 9 skills** (bases de conocimiento del agente): `arduino`, `esp32`, `sensores`, `actuadores`,
-`modulos-avanzados`, `errores-comunes`, `gotchas-hardware`, `diagramas-conexion`, `circuitos-visuales`.
+**Los 10 skills** (bases de conocimiento del agente): `arduino`, `esp32`, `sensores`, `actuadores`,
+`modulos-avanzados`, `errores-comunes`, `gotchas-hardware`, `diagramas-conexion`, `circuitos-visuales`,
+`proyectos-inet`.
+
+El skill `proyectos-inet` es el conocimiento de los **15 proyectos INET refactorizados** (Saberes
+Digitales / INET-EDUCAR): cada proyecto con sus niveles, pinout exacto UNO/ESP32, cableado, código
+clave y gotchas verificados. Así el bot guía a un docente o alumno en cualquiera de los 15 proyectos
+sin depender de la web.
 
 ---
 
