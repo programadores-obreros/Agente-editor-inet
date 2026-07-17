@@ -1,0 +1,50 @@
+name: Instalador Windows (.exe)
+
+# Compila el instalador .exe de Tecnia Bot en un runner Windows (Inno Setup).
+# - Manual: pestaña Actions -> "Instalador Windows (.exe)" -> Run workflow.
+# - Automático: al publicar un tag vX.Y.Z, adjunta el .exe al release.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # para adjuntar el .exe al release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Leer versión de VERSION
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Versión: $v"
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Compilar el instalador
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "installer\tecnia-bot.iss"
+
+      - name: Subir el .exe como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Instalar-Tecnia-Bot
+          path: installer/dist/Instalar-Tecnia-Bot.exe
+          if-no-files-found: error
+
+      - name: Adjuntar al release (solo en tags)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/dist/Instalar-Tecnia-Bot.exe
