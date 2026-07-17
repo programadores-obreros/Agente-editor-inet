@@ -27,6 +27,8 @@ Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda 
 
 ## Instalación
 
+> 🪟 **¿Usás Windows y no sos desarrollador?** Descargá el instalador **[`Instalar-Tecnia-Bot.exe`](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)** de la última versión, doble clic, y Siguiente → Siguiente → Finalizar. Instala TODO solo (OpenCode + PlatformIO + Tecnia Bot), sin permisos de administrador. Guía con capturas: [instalación en Windows](docs/instalacion-windows.md).
+
 ### Paso 1 — Descargá el proyecto
 
 Si tenés **git**:
@@ -120,11 +122,10 @@ sin depender de la web.
 
 ## Estado
 
-🚧 **MVP (v0.1.0).** Funciona de punta a punta en **Linux** (compila y carga a hardware real, arma circuitos visuales, instalador de un comando). Con smoke tests y CI.
+🚀 **v0.2.1.** Funciona de punta a punta en **Linux** y **Windows** (compila y carga a hardware real, arma circuitos visuales, instalador de un comando y `.exe` con marca). El instalador `.exe` está **validado end-to-end en Windows 10 real**. Con smoke tests y CI.
 
 **Pendiente:**
-- Probar el instalador en una PC **Windows** real (escrito, no verificado aún)
-- Versionado + comando de actualización + desinstalador
+- Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con "Ejecutar de todas formas")
 - Prueba en aula real
 
 ## Desarrollo
