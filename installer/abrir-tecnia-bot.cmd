@@ -28,8 +28,10 @@ cd /d "%PROY%"
 
 cls
 echo.
-echo    ___         [o_o]   TECNIA BOT
+echo    ___         [o_o]   TECNIA BOT  -  un proyecto de Tecnia Lab
 echo   ^| ^|_^|        /^|_^|\   Arduino y ESP32 para escuelas tecnicas
+echo.
+echo   Primeros pasos y ayuda:  https://tecnialab.net.ar/tecnia-bot/
 echo.
 echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
 echo.

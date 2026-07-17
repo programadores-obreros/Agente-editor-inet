@@ -17,8 +17,8 @@
   #define MyAppVersion "0.2.0"
 #endif
 #define MyAppName "Tecnia Bot"
-#define MyAppPublisher "Programadores Obreros"
-#define MyAppURL "https://github.com/programadores-obreros/Agente-editor-inet"
+#define MyAppPublisher "Tecnia Lab"
+#define MyAppURL "https://tecnialab.net.ar/tecnia-bot/"
 
 [Setup]
 ; GUID propio de este producto (no reutilizar el de otro programa).
@@ -75,7 +75,10 @@ Filename: "powershell.exe"; \
   StatusMsg: "Instalando OpenCode, PlatformIO y Tecnia Bot (puede tardar varios minutos)..."; \
   Check: CorrerBootstrap; \
   Flags: waituntilterminated
-; Ofrece abrir el bot al terminar (casilla marcada en la última pantalla).
+; Al terminar (casillas marcadas en la última pantalla): abrir la web oficial de
+; Tecnia Bot (primeros pasos) y abrir el bot.
+Filename: "{#MyAppURL}"; Description: "Visitar la web de Tecnia Bot (primeros pasos)"; \
+  Flags: postinstall shellexec skipifsilent
 Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
   Flags: postinstall skipifsilent nowait
 
@@ -90,7 +93,7 @@ Filename: "powershell.exe"; \
 WelcomeLabel1=Bienvenido/a a Tecnia Bot
 WelcomeLabel2=Tecnia Bot es el asistente que te acompaña para enseñar Arduino y ESP32 en la escuela técnica: explica el porqué, da código comentado y traduce los errores.%n%nEl asistente instala TODO lo necesario y no hace falta ser administrador. Tocá Siguiente para empezar.
 FinishedHeadingLabel=¡Tecnia Bot quedó instalado!
-FinishedLabel=Ya podés abrir Tecnia Bot desde el menú inicio (o el escritorio). Recordá instalar los drivers USB de tu placa si todavía no lo hiciste (ver la guía de instalación).
+FinishedLabel=¡Listo! Arrancá por la web de Tecnia Bot (tecnialab.net.ar/tecnia-bot) para ver los primeros pasos, y abrilo desde el menú inicio o el escritorio. Recordá instalar los drivers USB de tu placa si todavía no lo hiciste.
 
 [Code]
 function CorrerBootstrap: Boolean;

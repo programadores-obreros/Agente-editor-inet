@@ -2,6 +2,14 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.2.2] — 2026-07-17
+
+Presencia institucional **Tecnia Lab** en el instalador.
+
+### Nuevo
+- **Marca Tecnia Lab** en el instalador: el banner del asistente lleva el logo oficial ("un proyecto de Tecnia Lab"), el ícono usa la paleta institucional (azul `#0071ce` + amarillo `#ffc224`) y el isotipo aparece en las pantallas del asistente.
+- **Web oficial**: al terminar la instalación se ofrece **abrir [tecnialab.net.ar/tecnia-bot](https://tecnialab.net.ar/tecnia-bot/)** (primeros pasos). Esa URL también figura como sitio del programa en "Agregar o quitar programas" y en el lanzador.
+
 ## [0.2.1] — 2026-07-17
 
 Instalador `.exe` para Windows con identidad de marca, y correcciones al bootstrap encontradas **probando en una Windows 10 real**.
@@ -36,6 +44,7 @@ Primera versión pública (MVP). Funciona de punta a punta en Linux.
 - Comando `/diagnostico` para verificar el entorno (ahora también muestra la versión).
 - Smoke tests + CI (GitHub Actions).
 
+[0.2.2]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.2
 [0.2.1]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.1
 [0.2.0]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.0
 [0.1.0]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.1.0
