@@ -36,6 +36,19 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" "installer\tecnia-bot.iss"
 
+      - name: Smoke test (instalación silenciosa, sin dependencias)
+        shell: pwsh
+        run: |
+          $exe = "installer\dist\Instalar-Tecnia-Bot.exe"
+          Write-Host "Instalando en silencio (con /skipdeps=1, saltea Scoop/OpenCode/PlatformIO)..."
+          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/skipdeps=1' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "El instalador terminó con código $($p.ExitCode)" }
+          $agent = "$env:LOCALAPPDATA\TecniaBot\opencode\agent\tecnia-bot.md"
+          $lnk   = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Tecnia Bot.lnk"
+          if (-not (Test-Path $agent)) { throw "Falta la capa instalada: $agent" }
+          if (-not (Test-Path $lnk))   { throw "Falta el acceso directo del menú inicio: $lnk" }
+          Write-Host "OK: la capa educativa y el acceso directo se instalaron correctamente."
+
       - name: Subir el .exe como artefacto
         uses: actions/upload-artifact@v4
         with:

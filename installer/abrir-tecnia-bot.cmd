@@ -26,7 +26,11 @@ set "PROY=%USERPROFILE%\Documents\Tecnia Bot"
 if not exist "%PROY%" mkdir "%PROY%"
 cd /d "%PROY%"
 
+cls
 echo.
-echo   Abriendo Tecnia Bot... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
+echo    ___         [o_o]   TECNIA BOT
+echo   ^| ^|_^|        /^|_^|\   Arduino y ESP32 para escuelas tecnicas
+echo.
+echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
 echo.
 opencode

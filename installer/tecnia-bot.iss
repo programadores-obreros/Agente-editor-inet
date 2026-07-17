@@ -40,6 +40,10 @@ OutputBaseFilename=Instalar-Tecnia-Bot
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; --- Marca Tecnia Bot ---
+SetupIconFile=branding\tecnia-bot.ico
+WizardImageFile=branding\wizard-grande.bmp
+WizardSmallImageFile=branding\wizard-chico.bmp
 
 [Languages]
 Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -54,11 +58,13 @@ Source: "..\opencode\*"; DestDir: "{app}\opencode"; Flags: recursesubdirs create
 Source: "..\install\*"; DestDir: "{app}\install"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "..\VERSION"; DestDir: "{app}"; Flags: ignoreversion
 Source: "abrir-tecnia-bot.cmd"; DestDir: "{app}"; Flags: ignoreversion
+; El ícono se instala para que los accesos directos lo usen en runtime.
+Source: "branding\tecnia-bot.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; Comment: "Abrir Tecnia Bot"
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Comment: "Abrir Tecnia Bot"
 Name: "{autoprograms}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Tasks: desktopicon
 
 [Run]
 ; Instala OpenCode + PlatformIO + la capa (sin admin, vía Scoop). Se muestra la
@@ -67,6 +73,7 @@ Filename: "powershell.exe"; \
   Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\bootstrap.ps1"""; \
   WorkingDir: "{app}"; \
   StatusMsg: "Instalando OpenCode, PlatformIO y Tecnia Bot (puede tardar varios minutos)..."; \
+  Check: CorrerBootstrap; \
   Flags: waituntilterminated
 ; Ofrece abrir el bot al terminar (casilla marcada en la última pantalla).
 Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
@@ -77,3 +84,18 @@ Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
 Filename: "powershell.exe"; \
   Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"""; \
   Flags: runhidden; RunOnceId: "quitarcapa"
+
+[Messages]
+; Textos branded del asistente.
+WelcomeLabel1=Bienvenido/a a Tecnia Bot
+WelcomeLabel2=Tecnia Bot es el asistente que te acompaña para enseñar Arduino y ESP32 en la escuela técnica: explica el porqué, da código comentado y traduce los errores.%n%nEl asistente instala TODO lo necesario y no hace falta ser administrador. Tocá Siguiente para empezar.
+FinishedHeadingLabel=¡Tecnia Bot quedó instalado!
+FinishedLabel=Ya podés abrir Tecnia Bot desde el menú inicio (o el escritorio). Recordá instalar los drivers USB de tu placa si todavía no lo hiciste (ver la guía de instalación).
+
+[Code]
+function CorrerBootstrap: Boolean;
+begin
+  { En CI se pasa /skipdeps=1 para probar el instalador sin las dependencias pesadas
+    (Scoop/OpenCode/PlatformIO). En una instalación normal, siempre corre. }
+  Result := ExpandConstant('{param:skipdeps|0}') <> '1';
+end;

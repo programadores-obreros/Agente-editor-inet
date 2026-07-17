@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="164" height="314" viewBox="0 0 164 314">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0" stop-color="#3498DB"/>
+      <stop offset="1" stop-color="#2472a8"/>
+    </linearGradient>
+  </defs>
+  <rect width="164" height="314" fill="url(#bg)"/>
+
+  <!-- líneas de circuito (motivo tenue) -->
+  <g stroke="#ffffff" stroke-width="1.4" opacity="0.16" fill="none">
+    <path d="M0 250 H40 V285 H90"/>
+    <path d="M164 232 H120 V270 H150"/>
+    <path d="M20 300 H70 V276"/>
+    <circle cx="40" cy="250" r="3" fill="#ffffff" stroke="none"/>
+    <circle cx="120" cy="232" r="3" fill="#ffffff" stroke="none"/>
+    <circle cx="90" cy="285" r="3" fill="#ffffff" stroke="none"/>
+  </g>
+
+  <!-- robot -->
+  <g transform="translate(82 74) scale(0.62)">
+    <line x1="0" y1="-38" x2="0" y2="-14" stroke="#ffffff" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="0" cy="-46" r="11" fill="#ffd23f"/>
+    <rect x="-70" y="30" width="14" height="38" rx="7" fill="#ffffff"/>
+    <rect x="56" y="30" width="14" height="38" rx="7" fill="#ffffff"/>
+    <rect x="-60" y="-14" width="120" height="100" rx="26" fill="#ffffff"/>
+    <circle cx="-24" cy="30" r="14" fill="#2b83c4"/>
+    <circle cx="24" cy="30" r="14" fill="#2b83c4"/>
+    <rect x="-28" y="60" width="56" height="10" rx="5" fill="#8fc0e8"/>
+  </g>
+
+  <!-- nombre -->
+  <text x="82" y="176" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#ffffff">Tecnia</text>
+  <text x="82" y="202" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#ffd23f">Bot</text>
+
+  <!-- tagline -->
+  <text x="82" y="228" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10.5" fill="#eaf4fc">Arduino y ESP32</text>
+  <text x="82" y="242" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10.5" fill="#eaf4fc">para escuelas técnicas</text>
+</svg>
