@@ -29,7 +29,15 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     Write-Host "  [OK] Scoop ya esta instalado"
 } else {
     Write-Host "  [..] Instalando Scoop (gestor sin admin)..."
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    # Habilita scripts para el usuario. Si ya hay una politica mas permisiva en
+    # el ambito de Proceso (el instalador lanza con -ExecutionPolicy Bypass), este
+    # cmdlet AVISA del override y, con ErrorActionPreference=Stop, abortaria todo.
+    # Lo toleramos: en ese caso los scripts ya pueden correr igual.
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+    } catch {
+        Write-Host "  [i] La politica de ejecucion ya es permisiva; continuo."
+    }
     Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
     Refresh-Path
     Write-Host "  [OK] Scoop instalado."
@@ -51,13 +59,16 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
     Write-Host "  [OK] PlatformIO ya esta instalado"
 } else {
     Write-Host "  [..] Instalando PlatformIO Core (no necesita admin)..."
-    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-        scoop install python
-        Refresh-Path
-    }
+    # Python: NO usar 'Get-Command python' — Windows 10/11 trae un stub de la
+    # Microsoft Store con ese nombre que NO es Python real y hace fallar la
+    # instalacion. Instalamos con Scoop (idempotente) y lo llamamos por ruta.
+    scoop install python
+    Refresh-Path
+    $PyExe = Join-Path $env:USERPROFILE "scoop\shims\python.exe"
+    if (-not (Test-Path $PyExe)) { $PyExe = "python" }
     $Tmp = Join-Path $env:TEMP "get-platformio.py"
     Invoke-RestMethod -Uri "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -OutFile $Tmp
-    python $Tmp
+    & $PyExe $Tmp
     Remove-Item $Tmp -ErrorAction SilentlyContinue
     Write-Host "  [OK] PlatformIO instalado en ~/.platformio (Tecnia Bot lo encuentra solo)."
 }
