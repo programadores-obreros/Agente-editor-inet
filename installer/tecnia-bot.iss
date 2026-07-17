@@ -96,6 +96,26 @@ FinishedHeadingLabel=¡Tecnia Bot quedó instalado!
 FinishedLabel=¡Listo! Arrancá por la web de Tecnia Bot (tecnialab.net.ar/tecnia-bot) para ver los primeros pasos, y abrilo desde el menú inicio o el escritorio. Recordá instalar los drivers USB de tu placa si todavía no lo hiciste.
 
 [Code]
+procedure InitializeWizard;
+begin
+  { Presencia de marca en TODAS las paginas (no solo Bienvenida/Final): el header
+    de las paginas internas va en azul Tecnia Lab con texto blanco. }
+  WizardForm.MainPanel.ParentBackground := False;
+  WizardForm.MainPanel.Color := $CE7100;  { #0071CE en formato BGR de Windows }
+  WizardForm.PageNameLabel.Font.Color := clWhite;
+  WizardForm.PageDescriptionLabel.Font.Color := clWhite;
+  { Firma institucional abajo a la izquierda, presente en todas las pantallas. }
+  with TLabel.Create(WizardForm) do
+  begin
+    Parent := WizardForm;
+    Caption := 'Tecnia Lab   •   tecnialab.net.ar/tecnia-bot';
+    Font.Color := clGray;
+    Left := ScaleX(18);
+    Top := WizardForm.CancelButton.Top + ScaleY(8);
+    Anchors := [akLeft, akBottom];
+  end;
+end;
+
 function CorrerBootstrap: Boolean;
 begin
   { En CI se pasa /skipdeps=1 para probar el instalador sin las dependencias pesadas
