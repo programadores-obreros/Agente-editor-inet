@@ -4,11 +4,13 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [0.2.2] — 2026-07-17
 
-Presencia institucional **Tecnia Lab** en el instalador.
+Presencia institucional **Tecnia Lab** en el instalador, con identidad visual violeta.
 
 ### Nuevo
-- **Marca Tecnia Lab** en el instalador: el banner del asistente lleva el logo oficial ("un proyecto de Tecnia Lab"), el ícono usa la paleta institucional (azul `#0071ce` + amarillo `#ffc224`) y el isotipo aparece en las pantallas del asistente.
-- **Web oficial**: al terminar la instalación se ofrece **abrir [tecnialab.net.ar/tecnia-bot](https://tecnialab.net.ar/tecnia-bot/)** (primeros pasos). Esa URL también figura como sitio del programa en "Agregar o quitar programas" y en el lanzador.
+- **Marca Tecnia Lab**: el banner del asistente lleva el logo oficial ("un proyecto de Tecnia Lab") y el isotipo aparece en las pantallas.
+- **Tema violeta** (`#6d28d9`) que resalta el dorado de la marca (colores complementarios): banner, ícono del robot y **header de TODAS las páginas del asistente** (no solo Bienvenida/Final).
+- **Firma institucional** al pie de cada pantalla: `Tecnia Lab • tecnialab.net.ar/tecnia-bot`.
+- **Web oficial**: al terminar se ofrece **abrir [tecnialab.net.ar/tecnia-bot](https://tecnialab.net.ar/tecnia-bot/)** (primeros pasos). También figura como sitio del programa en "Agregar o quitar programas" y en el lanzador.
 
 ## [0.2.1] — 2026-07-17
 
