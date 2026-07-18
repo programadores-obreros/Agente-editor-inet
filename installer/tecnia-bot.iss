@@ -101,7 +101,7 @@ begin
   { Presencia de marca en TODAS las paginas (no solo Bienvenida/Final): el header
     de las paginas internas va en azul Tecnia Lab con texto blanco. }
   WizardForm.MainPanel.ParentBackground := False;
-  WizardForm.MainPanel.Color := $CE7100;  { #0071CE en formato BGR de Windows }
+  WizardForm.MainPanel.Color := $D9286D;  { #6D28D9 (violeta) en formato BGR de Windows }
   WizardForm.PageNameLabel.Font.Color := clWhite;
   WizardForm.PageDescriptionLabel.Font.Color := clWhite;
   { Firma institucional abajo a la izquierda, presente en todas las pantallas. }

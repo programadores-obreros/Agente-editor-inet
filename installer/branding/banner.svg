@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="164" height="314" viewBox="0 0 164 314">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0.5" y2="1">
-      <stop offset="0" stop-color="#0d84dd"/>
-      <stop offset="1" stop-color="#0071ce"/>
+      <stop offset="0" stop-color="#7c3aed"/>
+      <stop offset="1" stop-color="#6d28d9"/>
     </linearGradient>
   </defs>
   <rect width="164" height="314" fill="url(#bg)"/>
@@ -14,9 +14,9 @@
     <rect x="-70" y="30" width="14" height="38" rx="7" fill="#ffffff"/>
     <rect x="56" y="30" width="14" height="38" rx="7" fill="#ffffff"/>
     <rect x="-60" y="-14" width="120" height="100" rx="26" fill="#ffffff"/>
-    <circle cx="-24" cy="30" r="14" fill="#0071ce"/>
-    <circle cx="24" cy="30" r="14" fill="#0071ce"/>
-    <rect x="-28" y="60" width="56" height="10" rx="5" fill="#7fb4e6"/>
+    <circle cx="-24" cy="30" r="14" fill="#6d28d9"/>
+    <circle cx="24" cy="30" r="14" fill="#6d28d9"/>
+    <rect x="-28" y="60" width="56" height="10" rx="5" fill="#b9a2f0"/>
   </g>
 
   <!-- nombre del producto -->
@@ -24,11 +24,11 @@
   <text x="82" y="174" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="23" font-weight="700" fill="#ffc224">Bot</text>
 
   <!-- tagline -->
-  <text x="82" y="197" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#eaf4fc">Arduino y ESP32</text>
-  <text x="82" y="210" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#eaf4fc">para escuelas técnicas</text>
+  <text x="82" y="197" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#efe8fc">Arduino y ESP32</text>
+  <text x="82" y="210" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="10" fill="#efe8fc">para escuelas técnicas</text>
 
   <!-- firma institucional -->
   <line x1="34" y1="232" x2="130" y2="232" stroke="#ffffff" stroke-width="1" opacity="0.35"/>
-  <text x="82" y="250" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="9" fill="#cfe6fa">Un proyecto de</text>
+  <text x="82" y="250" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="9" fill="#e4d9fb">Un proyecto de</text>
   <image xlink:href="tecnialab/tecnia-lab-horizontal-blanco.png" x="16" y="258" width="132" height="49"/>
 </svg>

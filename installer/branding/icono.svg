@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1a8fe0"/>
-      <stop offset="1" stop-color="#0071ce"/>
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#6d28d9"/>
     </linearGradient>
   </defs>
   <rect width="256" height="256" rx="58" fill="url(#bg)"/>
@@ -15,10 +15,10 @@
   <!-- cabeza -->
   <rect x="68" y="76" width="120" height="100" rx="26" fill="#ffffff"/>
   <!-- ojos -->
-  <circle cx="104" cy="120" r="14" fill="#0071ce"/>
-  <circle cx="152" cy="120" r="14" fill="#0071ce"/>
+  <circle cx="104" cy="120" r="14" fill="#6d28d9"/>
+  <circle cx="152" cy="120" r="14" fill="#6d28d9"/>
   <circle cx="108" cy="116" r="4.5" fill="#ffffff"/>
   <circle cx="156" cy="116" r="4.5" fill="#ffffff"/>
   <!-- boca -->
-  <rect x="100" y="150" width="56" height="10" rx="5" fill="#7fb4e6"/>
+  <rect x="100" y="150" width="56" height="10" rx="5" fill="#b9a2f0"/>
 </svg>
