@@ -53,9 +53,7 @@ Se abre el **instalador de Tecnia Bot**. Hacé **Siguiente → Siguiente → Ins
 
 Al terminar, se abre esta misma web con los **primeros pasos**, y Tecnia Bot te queda en el **menú inicio** y en el **escritorio** (con el ícono del robot 🤖). Abrilo y empezá a preguntarle.
 
-<!-- Nota para quien publica: sumá acá una captura de la pantalla final
-     "¡Tecnia Bot quedó instalado!" (banner violeta) o de Tecnia Bot ya abierto. -->
-> 📸 *(Captura pendiente: pantalla final "¡Tecnia Bot quedó instalado!" o el bot abierto.)*
+![Paso 5 — ¡Tecnia Bot quedó instalado!](img/06-final.png)
 
 ## Un paso más: los drivers de la placa
 
