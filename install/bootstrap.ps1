@@ -38,7 +38,19 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     } catch {
         Write-Host "  [i] La politica de ejecucion ya es permisiva; continuo."
     }
-    Invoke-RestMethod -Uri https://get.scoop.sh | Invoke-Expression
+    # Scoop RECHAZA correr como administrador por defecto. Si el instalador se
+    # ejecuto elevado (comun por la costumbre de "Ejecutar como administrador", o
+    # en PCs de escuela), sin esto falla y OpenCode no instala. Detectamos admin y
+    # le pasamos -RunAsAdmin + habilitamos instalar apps como admin.
+    $env:SCOOP_ALLOW_ADMIN_INSTALL = 'true'
+    $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    $scoopInstaller = Invoke-RestMethod -Uri https://get.scoop.sh
+    if ($esAdmin) {
+        Write-Host "  [i] Ejecutando como administrador: instalando Scoop en modo admin."
+        & ([scriptblock]::Create($scoopInstaller)) -RunAsAdmin
+    } else {
+        & ([scriptblock]::Create($scoopInstaller))
+    }
     Refresh-Path
     Write-Host "  [OK] Scoop instalado."
 }

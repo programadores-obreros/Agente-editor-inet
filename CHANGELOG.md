@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.2.3] — 2026-07-18
+
+Arreglo crítico: el instalador ahora funciona **aunque se ejecute como administrador**.
+
+### Arreglado
+- **Fallaba al ejecutar "como administrador"** (marcaba "error opencode" en rojo): Scoop se niega a correr como admin por defecto, así que OpenCode no llegaba a instalarse. Ahora el bootstrap **detecta la ejecución elevada** y le pasa `-RunAsAdmin` a Scoop (+ habilita instalar apps como admin), para que instale igual. Detectado por un docente en la primera prueba real. *(Igual, lo recomendado sigue siendo NO ejecutarlo como administrador — no hace falta.)*
+
 ## [0.2.2] — 2026-07-17
 
 Presencia institucional **Tecnia Lab** en el instalador, con identidad visual violeta.
@@ -46,6 +53,7 @@ Primera versión pública (MVP). Funciona de punta a punta en Linux.
 - Comando `/diagnostico` para verificar el entorno (ahora también muestra la versión).
 - Smoke tests + CI (GitHub Actions).
 
+[0.2.3]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.3
 [0.2.2]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.2
 [0.2.1]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.1
 [0.2.0]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.0
