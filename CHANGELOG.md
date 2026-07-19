@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.2] — 2026-07-19
+
+Tecnia Bot ahora enlaza a la web en vivo de cada proyecto.
+
+### Nuevo
+- **Link a la web en vivo**: cuando el alumno o docente quiere **VER** un proyecto andando o armar el circuito, Tecnia Bot le pasa la URL pública del proyecto (`tecnialab.net.ar/proyectos/<slug>/`), donde está la **animación** y el **simulador interactivo** con los tres niveles. El bot sigue teniendo todo el conocimiento **offline** (pinouts, cableado, código, gotchas); el link es un extra para engancharse con el proyecto y verlo en vivo.
+
 ## [0.3.1] — 2026-07-18
 
 `/actualizar` ahora trae versiones nuevas de verdad (sin re-descargar el `.exe`), y el splash avisa cuando hay una.
@@ -77,6 +84,7 @@ Primera versión pública (MVP). Funciona de punta a punta en Linux.
 - Comando `/diagnostico` para verificar el entorno (ahora también muestra la versión).
 - Smoke tests + CI (GitHub Actions).
 
+[0.3.2]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.2
 [0.3.1]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.1
 [0.3.0]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.0
 [0.2.3]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.3
