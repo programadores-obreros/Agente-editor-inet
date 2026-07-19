@@ -14,12 +14,14 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 - 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat
 - 🧰 **Dibuja circuitos visuales** (piezas reales, interactivos, funcionan sin internet) y un explicador de la protoboard
 - 🇦🇷 **Traduce los errores** de compilación del inglés a español, con la solución paso a paso
+- 🟣 **Marca propia** — al abrir, te recibe con la identidad de Tecnia Bot (no el logo genérico) y **arranca listo en el agente**, sin tener que buscarlo
+- 🔄 **Se actualiza solo** — `/actualizar` trae la última versión desde GitHub, y te **avisa al iniciar** si hay una nueva
 
 ---
 
 ## ¿Cómo funciona?
 
-Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), dos herramientas (compilar/cargar con `platformio` y armar `circuito`s visuales), nueve bases de conocimiento y un comando de diagnóstico.
+Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), tres herramientas (compilar/cargar con `platformio`, armar `circuito`s visuales y `actualizar` la capa), diez bases de conocimiento, los comandos `/diagnostico` y `/actualizar`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
 
 Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda disponible en **cualquier carpeta** donde abras OpenCode.
 
@@ -77,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File install\install.ps1   # Windows
 
 1. Abrí una terminal en cualquier carpeta
 2. Escribí `opencode`
-3. Apretá **`Tab`** y elegí **`tecnia-bot`**
+3. **Ya arranca en Tecnia Bot** (no hace falta apretar Tab) — vas a ver su logo violeta
 4. Escribí "hola" y dejate guiar
 
 Probá:
@@ -85,6 +87,7 @@ Probá:
 - *"armame el circuito de riego con higrómetro, relé y bomba"* — te dibuja un circuito visual interactivo
 - *"mostrame cómo funciona el protoboard"* — te abre el explicador interactivo de la placa
 - *`/diagnostico`* — verifica que tu entorno esté listo (OpenCode, PlatformIO, la placa)
+- *`/actualizar`* — trae la última versión de Tecnia Bot desde GitHub (o preguntale *"¿qué versión tengo?"* para solo chequear)
 
 ---
 
@@ -94,9 +97,11 @@ Probá:
 Agente-editor-inet/
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
-│   ├── tool/               # Herramientas: platformio.ts (compilar/cargar) y circuito.ts (circuitos visuales)
+│   ├── tool/               # Herramientas: platformio.ts (compilar/cargar), circuito.ts (circuitos) y actualizar.ts (auto-update)
+│   ├── plugins/            # tecnia-logo.tsx: marca en el splash (logo TECNIA BOT) + aviso de versión nueva
+│   ├── themes/             # tecnia-violet.json: tema violeta de marca
 │   ├── skills/             # 10 bases de conocimiento (ver abajo)
-│   ├── command/            # Comando /diagnostico
+│   ├── command/            # Comandos: /diagnostico y /actualizar
 │   ├── tecniabot-web/      # Biblioteca visual: piezas Wokwi + componentes propios (para los circuitos)
 │   └── env.d.ts            # Tipos de ambiente (runtime Bun de OpenCode)
 ├── install/                # Instaladores: bootstrap.{sh,ps1} (todo-en-uno) e install.{sh,ps1} (solo la capa)
@@ -122,7 +127,7 @@ sin depender de la web.
 
 ## Estado
 
-🚀 **v0.2.1.** Funciona de punta a punta en **Linux** y **Windows** (compila y carga a hardware real, arma circuitos visuales, instalador de un comando y `.exe` con marca). El instalador `.exe` está **validado end-to-end en Windows 10 real**. Con smoke tests y CI.
+🚀 **v0.3.1.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales, e instalador `.exe` de un doble clic. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
 
 **Pendiente:**
 - Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con "Ejecutar de todas formas")
