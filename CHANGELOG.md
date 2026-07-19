@@ -2,6 +2,19 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.0] — 2026-07-18
+
+Identidad **Tecnia Bot** en el splash de OpenCode, y arranque directo en el agente.
+
+### Nuevo
+- **Marca en el splash de OpenCode**: al abrir, ya no aparece el logo genérico de OpenCode sino la identidad de Tecnia Bot — un robot y el wordmark **TECNIA BOT** en violeta, con la firma "un proyecto de Tecnia Lab · tecnialab.net.ar". Es un plugin de TUI liviano: no toca el binario de OpenCode ni su auto-actualización.
+- **Tema violeta** de marca (`tecnia-violet`), aplicado a toda la interfaz.
+- **Arranca en Tecnia Bot**: el asistente abre con el agente `tecnia-bot` ya seleccionado, sin tener que apretar Tab y elegirlo.
+
+### Detalles
+- El instalador publica el plugin y el tema y configura el agente por defecto **mergeando** con la config que ya tenga el docente (no pisa el proveedor/modelo conectado con `/connect`). Detecta `.json` o `.jsonc` y es idempotente: reinstalar o `/actualizar` no duplica nada.
+- Validado de punta a punta en Windows 10 con OpenCode 1.18.3.
+
 ## [0.2.3] — 2026-07-18
 
 Arreglo crítico: el instalador ahora funciona **aunque se ejecute como administrador**.
@@ -53,6 +66,7 @@ Primera versión pública (MVP). Funciona de punta a punta en Linux.
 - Comando `/diagnostico` para verificar el entorno (ahora también muestra la versión).
 - Smoke tests + CI (GitHub Actions).
 
+[0.3.0]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.0
 [0.2.3]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.3
 [0.2.2]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.2
 [0.2.1]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.1
