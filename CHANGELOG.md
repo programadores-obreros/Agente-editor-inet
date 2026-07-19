@@ -2,6 +2,17 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.1] — 2026-07-18
+
+`/actualizar` ahora trae versiones nuevas de verdad (sin re-descargar el `.exe`), y el splash avisa cuando hay una.
+
+### Nuevo
+- **Aviso al iniciar**: si hay una versión más nueva publicada, el splash lo muestra ("Hay una versión nueva (vX.Y.Z) — escribí /actualizar"). Es un chequeo suave: no bloquea el arranque y falla en silencio si no hay internet.
+
+### Arreglado
+- **`/actualizar` no traía nada en la instalación por `.exe`**: dependía de `git pull`, que en esa instalación no existe. Ahora **baja el fuente del último release desde GitHub** y reinstala la capa — sin re-descargar el `.exe` ni reinstalar OpenCode/PlatformIO. El chequeo de versión usa `raw.githubusercontent` (sin depender de que el docente tenga `git`).
+- **El agente no podía usar el tool `actualizar`**: su lista de permisos negaba todo por defecto y no lo incluía, así que `/actualizar` "no encontraba" el tool. Agregado a los permisos.
+
 ## [0.3.0] — 2026-07-18
 
 Identidad **Tecnia Bot** en el splash de OpenCode, y arranque directo en el agente.
@@ -66,6 +77,7 @@ Primera versión pública (MVP). Funciona de punta a punta en Linux.
 - Comando `/diagnostico` para verificar el entorno (ahora también muestra la versión).
 - Smoke tests + CI (GitHub Actions).
 
+[0.3.1]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.1
 [0.3.0]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.0
 [0.2.3]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.3
 [0.2.2]: https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.2.2
