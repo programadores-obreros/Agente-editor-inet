@@ -1,4 +1,6 @@
 # Proyecto 04 — Invernadero
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/04-invernadero/
 > El alumno arma un invernadero que avisa cuándo ventilar según la temperatura, después agrega un display LCD con temperatura y humedad, y por último monitorea todo por IoT.
 
 ## De qué se trata

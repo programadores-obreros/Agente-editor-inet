@@ -1,4 +1,6 @@
 # Proyecto 10 — Dron Acuático
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/10-dron-acuatico/
 > El alumno construye e imprime en 3D un dron que navega sobre el agua: primero sigue una ruta programada, después esquiva obstáculos con ultrasónicos.
 
 ## De qué se trata

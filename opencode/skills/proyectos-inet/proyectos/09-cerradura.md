@@ -1,4 +1,6 @@
 # Proyecto 09 — Cerradura Automatizada
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/09-cerradura/
 > El alumno arma una cerradura domiciliaria sin llave: un servo la traba/destraba, un teclado matricial valida una clave y avisa por buzzer.
 
 ## De qué se trata

@@ -1,4 +1,6 @@
 # Proyecto 05 — Estación meteorológica
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/05-estacion-meteorologica/
 > El alumno arma una estación que solo mide y muestra el clima (temperatura, humedad, lluvia y presión) en un display, y en el nivel avanzado la monitorea por IoT.
 
 ## De qué se trata

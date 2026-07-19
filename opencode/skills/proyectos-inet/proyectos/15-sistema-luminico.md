@@ -1,4 +1,6 @@
 # Proyecto 15 — Sistema Lumínico
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/15-sistema-luminico/
 > El alumno automatiza una lámpara domiciliaria: primero se enciende por sensor de movimiento, después también según el nivel de luz exterior.
 
 ## De qué se trata

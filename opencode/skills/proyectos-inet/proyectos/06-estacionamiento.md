@@ -1,4 +1,6 @@
 # Proyecto 06 — Estacionamiento automatizado
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/06-estacionamiento/
 > El alumno arma un estacionamiento de 8 plazas: barreras con servomotores que cuentan autos, después un display de 7 segmentos con la cantidad exacta de lugares libres, y por último monitoreo IoT.
 
 ## De qué se trata

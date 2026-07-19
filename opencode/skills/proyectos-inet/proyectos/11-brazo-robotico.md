@@ -1,4 +1,6 @@
 # Proyecto 11 — Brazo Robótico
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/11-brazo-robotico/
 > El alumno arma un brazo de 6 grados de libertad: primero lo calibra, después lo maneja con potenciómetros como mando a distancia, y por último programa una secuencia automática de pick-and-place.
 
 ## De qué se trata

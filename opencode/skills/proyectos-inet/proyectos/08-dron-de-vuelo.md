@@ -1,4 +1,6 @@
 # Proyecto 08 — Dron de vuelo (KIT)
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/08-dron-de-vuelo/
 > El alumno pilotea y programa por bloques un dron DJI Tello usando el celular/tablet como mando: vuelo manual, recorridos programados, medición de temperatura y condicionales de altura.
 
 ## De qué se trata

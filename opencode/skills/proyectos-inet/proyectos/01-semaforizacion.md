@@ -1,4 +1,6 @@
 # Proyecto 01 — Semaforización
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/01-semaforizacion/
 > El alumno arma y programa un semáforo de intersección (2 semáforos, 6 LED), y en el nivel avanzado lo conecta a un panel de monitoreo por IoT.
 
 ## De qué se trata

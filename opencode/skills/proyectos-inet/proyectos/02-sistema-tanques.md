@@ -1,4 +1,6 @@
 # Proyecto 02 — Sistema de tanques
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/02-sistema-tanques/
 > El alumno arma un sistema de abastecimiento de agua a escala: controla el llenado de un tanque con sensor ultrasónico + electroválvula, y en niveles superiores agrega una bomba entre dos tanques y monitoreo IoT.
 
 ## De qué se trata

@@ -1,4 +1,6 @@
 # Proyecto 12 — Sistema de Calefacción Automático
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/12-calefaccion/
 > El alumno automatiza un radiador eléctrico: primero por temporizador, después como termostato real con sensor de temperatura, y por último con monitoreo remoto IoT.
 
 ## De qué se trata

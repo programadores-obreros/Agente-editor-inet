@@ -1,4 +1,6 @@
 # Proyecto 07 — Robot móvil (KIT)
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/07-robot-movil/
 > El alumno arma y programa por bloques un robot móvil con el kit Robobloq Qoopers: recorrido pautado, mensaje en display, y esquivar obstáculos.
 
 ## De qué se trata

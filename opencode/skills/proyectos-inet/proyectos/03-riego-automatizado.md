@@ -1,4 +1,6 @@
 # Proyecto 03 — Riego automatizado
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/03-riego-automatizado/
 > El alumno arma un sistema que abre y cierra una electroválvula para regar plantas: primero por tiempo, después según la humedad real del suelo, y por último con monitoreo IoT.
 
 ## De qué se trata

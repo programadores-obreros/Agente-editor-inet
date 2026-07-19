@@ -1,4 +1,6 @@
 # Proyecto 14 — Sistema Acuapónico
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/14-acuaponico/
 > El alumno automatiza por tiempo un sistema acuapónico: un aireador oxigena la pecera, una bomba recircula agua a las plantas y un dosificador impreso en 3D alimenta a los peces.
 
 ## De qué se trata

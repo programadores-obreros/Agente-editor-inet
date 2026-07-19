@@ -1,4 +1,6 @@
 # Proyecto 13 — Pulverizador Automatizado
+
+🔗 **Verlo en vivo (animación + simulador interactivo):** https://tecnialab.net.ar/proyectos/13-pulverizador/
 > El alumno arma un pulverizador de agua que primero riega por tiempo y después reacciona a un sensor de movimiento, pensado para mantener húmedas las góndolas de frutas y verduras.
 
 ## De qué se trata

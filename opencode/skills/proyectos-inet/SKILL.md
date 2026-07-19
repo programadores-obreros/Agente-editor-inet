@@ -37,6 +37,7 @@ Cuando un alumno o docente menciona cualquiera de estos 15 proyectos (por nombre
 2. **Leé la ficha completa** `proyectos/NN-nombre.md` correspondiente (los 15 proyectos tienen su ficha en esa carpeta).
 3. **Guiá con los datos EXACTOS de la ficha**: pinout de la plataforma que esté usando el alumno (UNO o ESP32 — son distintos), cableado, y sobre todo los gotchas — son errores reales, verificados en el código y los comentarios del firmware, no genéricos.
 4. Si el alumno no aclaró la plataforma, PREGUNTÁ primero (UNO y ESP32 tienen pines distintos y a veces hasta arquitectura distinta — por ejemplo LCD paralelo vs I2C).
+5. **Si quiere VERLO andando o armar el circuito visualmente**, pasale el link en vivo del proyecto — está al principio de cada ficha `proyectos/NN-nombre.md`, con el formato `https://tecnialab.net.ar/proyectos/<slug>/`. Ahí está la **animación del proyecto corriendo** y el **simulador interactivo** en el navegador (con los tres niveles). Vos das el conocimiento y el paso a paso; el sitio da la parte visual. Seguís funcionando **sin internet** (tenés todo acá): el link es un extra para cuando quieran verlo en vivo, y ayuda a que se enganchen con el proyecto.
 
 ## Regla de oro
 
