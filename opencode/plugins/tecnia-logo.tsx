@@ -14,6 +14,9 @@
 // ============================================================================
 import type { TuiPlugin, TuiPluginApi } from "@opencode-ai/plugin/tui"
 import { RGBA, TextAttributes } from "@opentui/core"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { existsSync, readFileSync } from "node:fs"
 
 // Robot en arte Unicode. Solo caracteres presentes en la fuente de consola de
 // Windows (Consolas): bloques █ y box-drawing ━┃┏┓┗┛┻╻. Nada de ◕/‿ (salen □).
@@ -43,7 +46,54 @@ function pick(api: TuiPluginApi, key: string, fallback: RGBA): RGBA {
   return (c && c[key]) || fallback
 }
 
-function Art(props: { api: TuiPluginApi }) {
+const REPO = "programadores-obreros/Agente-editor-inet"
+
+// Versión instalada, leída del manifest que dejó el instalador.
+function versionInstalada(): string | null {
+  try {
+    const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
+    const m = join(cfg, "opencode", "tecnia-bot.manifest")
+    if (!existsSync(m)) return null
+    return readFileSync(m, "utf8").match(/^version=(.*)$/m)?.[1]?.trim() ?? null
+  } catch {
+    return null
+  }
+}
+
+// true si `b` es más nueva que `a` (compara X.Y.Z numéricamente).
+function esMasNueva(a: string, b: string): boolean {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0)
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? 0
+    const y = pb[i] ?? 0
+    if (y > x) return true
+    if (y < x) return false
+  }
+  return false
+}
+
+// Chequeo suave de versión, hecho UNA vez al cargar el plugin (la función `tui`
+// es async, se espera al iniciar). Sin reactividad de solid-js (que NO resuelve
+// en un plugin externo): se calcula acá y se pasa como prop simple.
+// Timeout de 1.5s para no colgar el arranque si no hay internet.
+async function hayVersionNueva(): Promise<string | null> {
+  try {
+    const inst = versionInstalada()
+    if (!inst) return null
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 1500)
+    const res = await fetch(`https://raw.githubusercontent.com/${REPO}/main/VERSION`, { signal: ctrl.signal })
+    clearTimeout(timer)
+    if (!res.ok) return null
+    const ult = (await res.text()).trim()
+    return /^[0-9]+\.[0-9]+\.[0-9]+$/.test(ult) && esMasNueva(inst, ult) ? ult : null
+  } catch {
+    return null // sin internet / timeout: no avisamos nada
+  }
+}
+
+function Art(props: { api: TuiPluginApi; nueva: string | null }) {
   const api = props.api
   return (
     <box flexDirection="column" alignItems="center">
@@ -62,16 +112,22 @@ function Art(props: { api: TuiPluginApi }) {
       <text fg={pick(api, "textMuted", FALLBACK_GOLD)} selectable={false}>
         un proyecto de Tecnia Lab · tecnialab.net.ar
       </text>
+      {props.nueva ? (
+        <text fg={pick(api, "warning", FALLBACK_GOLD)} attributes={TextAttributes.BOLD} selectable={false}>
+          {`Hay una version nueva (v${props.nueva}) - escribi /actualizar`}
+        </text>
+      ) : null}
     </box>
   )
 }
 
 const tui: TuiPlugin = async (api) => {
+  const nueva = await hayVersionNueva()
   api.slots.register({
     order: 100,
     slots: {
       home_logo() {
-        return <Art api={api} />
+        return <Art api={api} nueva={nueva} />
       },
     },
   })

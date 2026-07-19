@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 
-const REPO_URL = "https://github.com/programadores-obreros/Agente-editor-inet.git"
+const REPO = "programadores-obreros/Agente-editor-inet"
 
 // Config global de OpenCode (donde vive la capa instalada y el manifest).
 function configDir(): string {
@@ -39,18 +39,15 @@ function esMasNueva(a: string, b: string): boolean {
   return false
 }
 
-// Última versión publicada, vía protocolo git (NO usa la API de GitHub, así que
-// no se choca con el límite de 60 pedidos/hora por IP).
+// Última versión publicada: lee el archivo VERSION de la rama main vía HTTP.
+// Usa raw.githubusercontent (sin el límite de la API de GitHub y sin depender de
+// que `git` esté instalado en la PC del docente).
 async function ultimaVersionPublicada(): Promise<string | null> {
   try {
-    const proc = Bun.spawn(["git", "ls-remote", "--tags", REPO_URL, "v*"], { stdout: "pipe", stderr: "pipe" })
-    await proc.exited
-    const out = await new Response(proc.stdout).text()
-    const tags = [...out.matchAll(/refs\/tags\/v([0-9]+\.[0-9]+\.[0-9]+)/g)].map((m) => m[1])
-    if (!tags.length) return null
-    let max = tags[0]!
-    for (const t of tags) if (esMasNueva(max, t)) max = t // nos quedamos con la más nueva
-    return max
+    const res = await fetch(`https://raw.githubusercontent.com/${REPO}/main/VERSION`)
+    if (!res.ok) return null
+    const v = (await res.text()).trim()
+    return /^[0-9]+\.[0-9]+\.[0-9]+$/.test(v) ? v : null
   } catch {
     return null
   }

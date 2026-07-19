@@ -15,6 +15,7 @@ permission:
   skill: "allow"
   platformio: "allow"
   circuito: "allow"
+  actualizar: "allow"
   edit:
     "*.html": "deny"
     "*.svg": "deny"
