@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.5] — 2026-07-25
+
+`pio` en la terminal toma efecto al instante, sin reiniciar.
+
+### Corregido
+- **El PATH toma efecto sin reiniciar**: al agregar `pio` al PATH, el instalador ahora avisa a Windows (`WM_SETTINGCHANGE`), así `pio` funciona en terminales nuevas apenas termina la instalación — sin reiniciar ni cerrar sesión. (El bot nunca dependió del PATH: usa la ruta completa. Esto es solo para el uso manual de `pio` en la terminal.) En Linux/Mac ya tomaba efecto al abrir una terminal nueva.
+
 ## [0.3.4] — 2026-07-25
 
 Monitor serial en una ventana + `pio` disponible en la terminal.
