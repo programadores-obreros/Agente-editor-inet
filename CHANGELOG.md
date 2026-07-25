@@ -2,6 +2,17 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.3] — 2026-07-19
+
+El splash ahora muestra la versión y da tips propios para docentes.
+
+### Nuevo
+- **Versión siempre visible** en el splash, bajo la marca (`un proyecto de Tecnia Lab · tecnialab.net.ar · v0.3.3`). Ayuda al docente y al soporte: la versión se ve de un vistazo, sin comandos.
+- **Tips propios en español**: al iniciar, Tecnia Bot muestra un tip pensado para docentes que recién arrancan (cómo pedir un LED, armar un circuito, ver el protoboard, `/diagnostico`, `/actualizar`).
+
+### Corregido
+- **Se quita el tip confuso de OpenCode** (`Run /connect to add an AI provider...`). Aparecía SIEMPRE porque el modelo gratis de OpenCode Zen cuenta como "sin proveedor", y le pedía al docente conectar algo que Tecnia Bot ya trae listo. Ahora se desactiva y se reemplaza por los tips propios.
+
 ## [0.3.2] — 2026-07-19
 
 Tecnia Bot ahora enlaza a la web en vivo de cada proyecto.
