@@ -73,6 +73,25 @@ if (Test-Path $Manifest) {
 $manifestLines = @("# Tecnia Bot - archivos instalados. NO editar a mano.", "version=$Version", "repo_dir=$RepoDir") + $Nuevos
 Set-Content -Path $Manifest -Value $manifestLines -Encoding UTF8
 
+# ---- Perfil del usuario: se crea VACIO solo si NO existe (nunca se pisa) ----
+# Es dato del usuario (nombre/rol/placa) y debe sobrevivir a los /actualizar, por
+# eso NO se copia del repo: lo crea el instalador la primera vez. Su ruta absoluta
+# se agrega a "instructions" de opencode (mas abajo) para cargarlo en cada sesion:
+# asi el bot recuerda el nombre sin volver a preguntar.
+$PerfilFile = Join-Path $ConfigDir "tecnia-perfil.md"
+if (-not (Test-Path $PerfilFile)) {
+    $perfilTemplate = @"
+# Perfil del usuario de Tecnia Bot
+<!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos. -->
+
+- Nombre: (sin definir)
+- Rol: (sin definir)
+- Placa preferida: (sin definir)
+"@
+    [System.IO.File]::WriteAllText($PerfilFile, $perfilTemplate, (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "  [OK] Perfil de usuario creado (vacio) en $PerfilFile"
+}
+
 # ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto ----
 # Mergeamos con la config que ya tenga el docente (ej: provider/model de /connect):
 # NO la pisamos. Usamos ConvertFrom-Json / ConvertTo-Json nativos (sin dependencias).
@@ -191,9 +210,25 @@ if ($ocHasContent -and $null -eq $oc) {
         $oc | Add-Member -NotePropertyName '$schema' -NotePropertyValue $OpencodeSchema -Force
     }
     $oc | Add-Member -NotePropertyName "default_agent" -NotePropertyValue $TecniaAgent -Force
+
+    # instructions: array de rutas que opencode carga en el contexto de cada sesion.
+    # Agregamos el perfil si no esta (idempotente, sin duplicar), preservando el resto.
+    $instrucciones = @()
+    if (($oc.PSObject.Properties.Name -contains "instructions") -and $null -ne $oc.instructions) {
+        $instrucciones = @($oc.instructions)
+    }
+    if ($instrucciones -notcontains $PerfilFile) {
+        $instrucciones += $PerfilFile
+    }
+    $oc | Add-Member -NotePropertyName "instructions" -NotePropertyValue $instrucciones -Force
+
     $ocText = $oc | ConvertTo-Json -Depth 20
+    # PS 5.1 colapsa arrays de UN solo elemento a escalar; forzamos que "instructions" quede array.
+    if ($instrucciones.Count -le 1) {
+        $ocText = [regex]::Replace($ocText, '("instructions":\s*)("(?:[^"\\]|\\.)*")', '$1[$2]')
+    }
     [System.IO.File]::WriteAllText($OpencodeJson, $ocText, (New-Object System.Text.UTF8Encoding $false))
-    Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto)."
+    Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto + perfil)."
 }
 
 Write-Host "==> Listo! Tecnia Bot v$Version instalado."

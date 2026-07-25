@@ -52,6 +52,24 @@ fi
   printf '%s\n' "$NUEVOS"
 } > "$MANIFEST"
 
+# ---- Perfil del usuario: se crea VACIO solo si NO existe (nunca se pisa) ----
+# Es dato del usuario (nombre/rol/placa) y debe sobrevivir a los /actualizar, por
+# eso NO se copia del repo: lo crea el instalador la primera vez. Su ruta absoluta
+# se agrega a "instructions" de opencode (mas abajo) para que se cargue en el
+# contexto de CADA sesion: asi el bot recuerda el nombre sin volver a preguntar.
+PERFIL_FILE="$CONFIG_DIR/tecnia-perfil.md"
+if [ ! -f "$PERFIL_FILE" ]; then
+  cat > "$PERFIL_FILE" <<'EOF'
+# Perfil del usuario de Tecnia Bot
+<!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos. -->
+
+- Nombre: (sin definir)
+- Rol: (sin definir)
+- Placa preferida: (sin definir)
+EOF
+  echo "  [OK] Perfil de usuario creado (vacío) en $PERFIL_FILE"
+fi
+
 # ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto ----
 # Mergeamos con la config que ya tenga el docente (ej: provider/model de /connect):
 # NO la pisamos. El theme y el plugin de TUI van en tui (opencode migra y borra
@@ -99,10 +117,10 @@ echo "==> Configurando OpenCode (theme + logo + agente por defecto)..."
 # Si un archivo existe pero NO se puede parsear, lo deja intacto y avisa (nunca
 # pisa la config del usuario). Idempotente.
 merge_via_python() {
-  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" <<'PYEOF'
+  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" <<'PYEOF'
 import json, sys
 
-tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema = sys.argv[1:8]
+tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path = sys.argv[1:9]
 
 def strip_jsonc(text):
     out = []
@@ -176,11 +194,17 @@ else:
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % tui_path)
     sys.stderr.write("          Agregale a mano \"theme\": \"%s\" y el plugin \"%s\".\n" % (theme, plugin))
 
-# opencode: default_agent (preserva todas las demas claves).
+# opencode: default_agent + instructions (perfil). Preserva las demas claves.
 oc, ok = load(oc_path)
 if ok:
     oc.setdefault("$schema", oc_schema)
     oc["default_agent"] = agent
+    instrucciones = oc.get("instructions")
+    if not isinstance(instrucciones, list):
+        instrucciones = []
+    if perfil_path not in instrucciones:
+        instrucciones.append(perfil_path)
+    oc["instructions"] = instrucciones
     dump(oc_path, oc)
 else:
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % oc_path)
@@ -206,9 +230,10 @@ merge_tui_jq() {
 merge_opencode_jq() {
   [ -s "$OPENCODE_JSON" ] || printf '{}\n' > "$OPENCODE_JSON"
   local tmp; tmp="$(mktemp)"
-  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" '
+  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" '
           .["$schema"] = (.["$schema"] // $schema)
         | .default_agent = $agent
+        | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$OPENCODE_JSON"; return 0
   fi
@@ -257,13 +282,15 @@ EOF
     cat > "$OPENCODE_JSON" <<EOF
 {
   "\$schema": "$OPENCODE_SCHEMA",
-  "default_agent": "$TECNIA_AGENT"
+  "default_agent": "$TECNIA_AGENT",
+  "instructions": ["$PERFIL_FILE"]
 }
 EOF
     echo "  [OK] $(basename "$OPENCODE_JSON") creado."
   else
     echo "  [AVISO] No hay jq ni python3 y $OPENCODE_JSON ya existe: no lo toco."
     echo "          Agregale a mano: \"default_agent\": \"$TECNIA_AGENT\""
+    echo "          y en \"instructions\" (array) la ruta: \"$PERFIL_FILE\""
   fi
 fi
 
