@@ -47,6 +47,8 @@ El ejemplo clásico: mover un **servo** con las teclas. Para que funcione hacen 
 
 ### El sketch (Arduino UNO)
 
+> 💡 Hay un ejemplo **listo para compilar** en [`ejemplos/servo-teclado-uno/`](../ejemplos/servo-teclado-uno) (UNO) y [`ejemplos/servo-teclado-esp32/`](../ejemplos/servo-teclado-esp32) (ESP32).
+
 Pedile al bot *"armame un sketch para mover un servo con el teclado"*, o usá este:
 
 ```cpp

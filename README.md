@@ -109,7 +109,7 @@ Agente-editor-inet/
 ├── install/                # Instaladores: bootstrap.{sh,ps1} (todo-en-uno) e install.{sh,ps1} (solo la capa)
 ├── tests/                  # Smoke tests (corren con Node puro, sin instalar nada)
 ├── docs/                   # Guías de instalación + capturas del producto
-├── ejemplos/               # Sketches de ejemplo (blink-uno, blink-esp32)
+├── ejemplos/               # Sketches de ejemplo (blink, servo-teclado — UNO y ESP32)
 ├── tecnia-bot.md           # Brief pedagógico (la visión del proyecto)
 ├── brief-web.md            # Brief para maquetar la web oficial
 ├── package.json            # Versión, scripts de test/typecheck
@@ -129,7 +129,7 @@ sin depender de la web.
 
 ## Estado
 
-🚀 **v0.3.6.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales, e instalador `.exe` de un doble clic. Ahora **abre el monitor serial en una ventana** (ver datos de la placa y comandarla con el teclado, sin escribir comandos) y deja **`pio` en el PATH** para usarlo en la terminal. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
+🚀 **v0.3.7.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales, e instalador `.exe` de un doble clic. Ahora **abre el monitor serial en una ventana** (ver datos de la placa y comandarla con el teclado, sin escribir comandos) y deja **`pio` en el PATH** para usarlo en la terminal. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
 
 **Pendiente:**
 - Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con "Ejecutar de todas formas")
