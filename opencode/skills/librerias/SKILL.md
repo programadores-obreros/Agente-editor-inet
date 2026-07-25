@@ -1,6 +1,6 @@
 ---
 name: librerias
-description: Qué librería (lib_deps) necesita cada componente en PlatformIO, para Arduino UNO (AVR) y ESP32. PlatformIO NO incluye la mayoría de las librerías solas — si el sketch usa Servo, DHT, LCD, OLED, teclado matricial, motor paso a paso, NeoPixel, MPU6050, BMP085, etc., hay que declararla en lib_deps del platformio.ini o la compilacion corta con "fatal error: X.h: No such file or directory". Da la linea EXACTA de lib_deps por componente, y aclara que SI viene incluido (Wire, SPI, EEPROM, y WiFi en ESP32). Usar SIEMPRE que se genera o corrige un platformio.ini.
+description: Qué librería (lib_deps) necesita cada componente en PlatformIO, para Arduino UNO (AVR) y ESP32. PlatformIO NO incluye la mayoría de las librerías solas — si el sketch usa Servo, DHT, LCD, OLED, teclado matricial, motor paso a paso, NeoPixel, MPU6050, BMP085, etc., hay que declararla en lib_deps del platformio.ini o la compilacion corta con "fatal error: X.h: No such file or directory". Da la linea EXACTA de lib_deps por componente, y aclara que SI viene incluido (Wire, SPI, EEPROM, y WiFi en ESP32). Tambien explica como PlatformIO resuelve las librerias (busca LOCAL primero -cache global ~/.platformio-, y si falta la baja del registro OFICIAL registry.platformio.org, quedando cacheada para andar offline) y que hay que usar siempre nombres del registro oficial, nunca URLs random. Usar SIEMPRE que se genera o corrige un platformio.ini, o cuando preguntan como/de donde se bajan las librerias.
 ---
 
 # Librerías y lib_deps en PlatformIO
@@ -76,5 +76,24 @@ lib_deps =
 Para UNO: cambiar `platform = atmelavr`, `board = uno`, `monitor_speed = 9600`, y usar `arduino-libraries/Servo` en vez de `ESP32Servo`.
 
 Se puede fijar version con `@`, ej: `adafruit/DHT sensor library@^1.4.4`.
+
+---
+
+## Cómo se resuelven las librerías (local primero, después el registro oficial)
+
+Cuando se compila (`pio run`), PlatformIO busca cada libreria de `lib_deps` en este orden:
+
+1. **Local primero**: la carpeta `lib/` del proyecto, lo ya instalado en `.pio/libdeps/`, y la **cache global** (`~/.platformio/`).
+2. **Si no esta local → la baja del registro OFICIAL** de PlatformIO (registry.platformio.org). No de sitios random.
+3. Una vez bajada, queda **cacheada** en `~/.platformio/` → los proximos proyectos la usan **sin volver a descargar** (anda **offline** despues de la primera vez).
+
+**Reglas para el bot (importantes):**
+
+- Usar SIEMPRE nombres del **registro oficial** (`owner/nombre`, ej: `adafruit/DHT sensor library`). NUNCA URLs sueltas, ZIPs de foros, ni pegar el codigo de una libreria a mano.
+- **No hace falta instalar librerias aparte**: alcanza con declararlas en `lib_deps`; PlatformIO las busca local y, si faltan, las baja solo del registro oficial.
+- Si el docente esta **sin internet** y la libreria todavia no esta cacheada, avisarle que la **primera vez** necesita conexion para bajarla; despues ya queda local y anda offline.
+- Cuando ayudes con un error tipo "X.h: No such file", primero revisá que este el `lib_deps` correcto (esta tabla), no mandes a bajar nada a mano.
+
+---
 
 La referencia completa para humanos esta en `docs/librerias.md`. Para el cableado de cada componente ver los skills `sensores`, `actuadores`, `modulos-avanzados`; para el monitor serial, `comunicacion-serial`.

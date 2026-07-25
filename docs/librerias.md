@@ -125,6 +125,18 @@ lib_deps =
 
 ---
 
+## ¿De dónde se bajan? (local primero, después el registro oficial)
+
+No hace falta instalar nada a mano: con declarar la librería en `lib_deps` alcanza. Al compilar (`pio run`), PlatformIO la busca en este orden:
+
+1. **Local primero** — el `lib/` del proyecto, lo ya instalado en `.pio/libdeps/`, y la **caché global** (`~/.platformio/`).
+2. **Si no está → la baja del registro OFICIAL** de PlatformIO ([registry.platformio.org](https://registry.platformio.org)) — no de sitios random.
+3. Una vez bajada, queda **cacheada** → los próximos proyectos la usan **sin volver a descargar** (anda **offline** después de la primera vez).
+
+> Por eso los nombres son `owner/nombre` (del registro oficial): PlatformIO sabe exactamente qué bajar y de dónde. La **primera** compilación con una librería nueva necesita internet; después ya queda local.
+
+---
+
 ## Proyecto de verificación
 
 En [`ejemplos/_test-librerias/`](../ejemplos/_test-librerias) hay un proyecto interno
