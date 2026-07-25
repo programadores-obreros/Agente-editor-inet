@@ -214,6 +214,7 @@ if (Get-Command opencode -ErrorAction SilentlyContinue) {
 # tipo de registro (REG_EXPAND_SZ) y NO expandimos las %VAR% existentes, para no romper.
 $PioScripts = Join-Path $env:USERPROFILE ".platformio\penv\Scripts"
 if (Test-Path $PioScripts) {
+    $agregado = $false
     $reg = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
     try {
         $tienePath = ($reg.GetValueNames() -contains "Path")
@@ -222,12 +223,27 @@ if (Test-Path $PioScripts) {
         $partes = @($actual -split ';' | Where-Object { $_ -ne "" })
         if (-not ($partes | Where-Object { $_.TrimEnd('\') -ieq $PioScripts.TrimEnd('\') })) {
             $reg.SetValue("Path", (($partes + $PioScripts) -join ';'), $kind)
+            $agregado = $true
         }
     } finally {
         $reg.Close()
     }
     if (-not ($env:PATH -split ';' | Where-Object { $_.TrimEnd('\') -ieq $PioScripts.TrimEnd('\') })) {
         $env:PATH = "$env:PATH;$PioScripts"
+    }
+    # Avisar a Windows del cambio (WM_SETTINGCHANGE) para que 'pio' funcione en
+    # terminales NUEVAS SIN reiniciar. El explorador reelee el PATH del registro al
+    # recibirlo. Best-effort: si falla, el PATH igual quedo y toma efecto al re-loguear.
+    if ($agregado) {
+        try {
+            if (-not ("Win32.EnvRefresh" -as [type])) {
+                Add-Type -Namespace Win32 -Name EnvRefresh -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError=true, CharSet=System.Runtime.InteropServices.CharSet.Auto)] public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);'
+            }
+            $res = [System.UIntPtr]::Zero
+            [void][Win32.EnvRefresh]::SendMessageTimeout([System.IntPtr]0xffff, 0x1a, [System.UIntPtr]::Zero, "Environment", 2, 5000, [ref]$res)
+        } catch {
+            # best-effort: el cambio ya quedo en el registro
+        }
     }
 }
 
