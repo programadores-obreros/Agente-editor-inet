@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.11] — 2026-07-25
+
+Tecnia Bot se acuerda de vos entre sesiones.
+
+### Nuevo
+- **Perfil persistente**: el bot pregunta tu nombre y rol (docente/alumno) UNA vez, los guarda, y en las próximas sesiones te **saluda por tu nombre** — sin volver a preguntar en cada arranque. Nueva tool `perfil` (`leer`/`guardar`); el perfil se carga en cada sesión vía `instructions` del `opencode.json`. El archivo (`~/.config/opencode/tecnia-perfil.md`) lo crea el instalador vacío y **sobrevive a los `/actualizar`** (nunca se pisa). El bot adapta el andamiaje según el rol y la placa preferida.
+
 ## [0.3.10] — 2026-07-25
 
 El bot entiende y explica cómo se resuelven las librerías.
