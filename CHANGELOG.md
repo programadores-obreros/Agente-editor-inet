@@ -2,6 +2,16 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.9] — 2026-07-25
+
+Auditoría de librerías de los 15 proyectos: suma el LCD por I2C.
+
+### Nuevo
+- **`LiquidCrystal_I2C`** (`marcoschwartz/LiquidCrystal_I2C`) agregada a la referencia (`docs/librerias.md` + skill `librerias` + proyecto de test): 2 proyectos (invernadero y calefacción) usan el LCD por **I2C** en ESP32 — es otra librería, distinta del LCD paralelo. **Verificada compilando** en UNO y ESP32.
+
+### Auditado
+- Revisado el código de los **15 proyectos INET**: el resto de las librerías ya estaba cubierto. El RTC (proyecto 03) se lista en insumos pero el código no lo usa (`millis()`); el ultrasónico HC-SR04 se lee con `pulseIn` (core, sin librería). **Cobertura completa.**
+
 ## [0.3.8] — 2026-07-25
 
 Referencia de librerías: qué `lib_deps` necesita cada componente.
