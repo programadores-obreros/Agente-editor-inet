@@ -102,7 +102,7 @@ Agente-editor-inet/
 │   ├── tool/               # Herramientas: platformio.ts (compilar/cargar), circuito.ts (circuitos) y actualizar.ts (auto-update)
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash (logo TECNIA BOT) + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
-│   ├── skills/             # 11 bases de conocimiento (ver abajo)
+│   ├── skills/             # 12 bases de conocimiento (ver abajo)
 │   ├── command/            # Comandos: /diagnostico y /actualizar
 │   ├── tecniabot-web/      # Biblioteca visual: piezas Wokwi + componentes propios (para los circuitos)
 │   └── env.d.ts            # Tipos de ambiente (runtime Bun de OpenCode)
@@ -116,9 +116,9 @@ Agente-editor-inet/
 └── .github/workflows/      # CI: corre los tests en cada push
 ```
 
-**Los 11 skills** (bases de conocimiento del agente): `arduino`, `esp32`, `sensores`, `actuadores`,
+**Los 12 skills** (bases de conocimiento del agente): `arduino`, `esp32`, `sensores`, `actuadores`,
 `modulos-avanzados`, `errores-comunes`, `gotchas-hardware`, `diagramas-conexion`, `circuitos-visuales`,
-`comunicacion-serial`, `proyectos-inet`.
+`comunicacion-serial`, `librerias`, `proyectos-inet`.
 
 El skill `proyectos-inet` es el conocimiento de los **15 proyectos INET refactorizados** (Saberes
 Digitales / INET-EDUCAR): cada proyecto con sus niveles, pinout exacto UNO/ESP32, cableado, código
@@ -129,7 +129,7 @@ sin depender de la web.
 
 ## Estado
 
-🚀 **v0.3.7.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales, e instalador `.exe` de un doble clic. Ahora **abre el monitor serial en una ventana** (ver datos de la placa y comandarla con el teclado, sin escribir comandos) y deja **`pio` en el PATH** para usarlo en la terminal. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
+🚀 **v0.3.8.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales, e instalador `.exe` de un doble clic. Ahora **abre el monitor serial en una ventana** (ver datos de la placa y comandarla con el teclado, sin escribir comandos) y deja **`pio` en el PATH** para usarlo en la terminal. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
 
 **Pendiente:**
 - Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con "Ejecutar de todas formas")
