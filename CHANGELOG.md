@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.7] — 2026-07-25
+
+Ejemplo listo para usar: mover un servo con el teclado.
+
+### Nuevo
+- **Ejemplos `servo-teclado-uno` y `servo-teclado-esp32`**: proyectos PlatformIO completos, **compilados y verificados** (UNO: RAM 14% / Flash 10%; ESP32: imagen creada OK), que mueven un servo con las teclas `a`/`d` desde el monitor serial. Es el caso práctico de comunicación serial de punta a punta — con README, cableado del servo y link a la [guía](docs/monitor-serial.md).
+
 ## [0.3.6] — 2026-07-25
 
 Tecnia Bot ahora sabe de comunicación serial.
