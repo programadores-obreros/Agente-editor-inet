@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.6] — 2026-07-25
+
+Tecnia Bot ahora sabe de comunicación serial.
+
+### Nuevo
+- **Skill `comunicacion-serial`**: base de conocimiento para que el bot guíe sobre comunicación serial — leer datos de la placa, mandarle teclas, los baudios, el sketch de un servo controlado por teclado, y los errores comunes (caracteres raros = baudios que no coinciden, puerto ocupado). Así el bot enseña esto aunque no tenga internet. Ya son **11 skills**.
+
 ## [0.3.5] — 2026-07-25
 
 `pio` en la terminal toma efecto al instante, sin reiniciar.
