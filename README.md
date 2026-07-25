@@ -12,6 +12,7 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 - 🧑‍🏫 **Se adapta a vos** — pregunta si sos docente o alumno y ajusta cómo te explica
 - 💡 **Explica el porqué** antes de tirar código, y el código viene comentado línea por línea
 - 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat
+- 📟 **Abre el monitor serial en una ventana** — para ver los datos que manda la placa y mandarle teclas (ej: comandar un servo desde el teclado), sin escribir comandos ni saber en qué puerto está. [Guía](docs/monitor-serial.md)
 - 🧰 **Dibuja circuitos visuales** (piezas reales, interactivos, funcionan sin internet) y un explicador de la protoboard
 - 🇦🇷 **Traduce los errores** de compilación del inglés a español, con la solución paso a paso
 - 🟣 **Marca propia** — al abrir, te recibe con la identidad de Tecnia Bot (no el logo genérico) y **arranca listo en el agente**, sin tener que buscarlo
@@ -86,6 +87,7 @@ Probá:
 - *"¿cómo prendo un LED con Arduino?"* — te explica el concepto y te da el código comentado
 - *"armame el circuito de riego con higrómetro, relé y bomba"* — te dibuja un circuito visual interactivo
 - *"mostrame cómo funciona el protoboard"* — te abre el explicador interactivo de la placa
+- *"abrí el monitor serial"* — te abre una ventana para ver los datos de la placa y comandarla con el teclado ([guía](docs/monitor-serial.md))
 - *`/diagnostico`* — verifica que tu entorno esté listo (OpenCode, PlatformIO, la placa)
 - *`/actualizar`* — trae la última versión de Tecnia Bot desde GitHub (o preguntale *"¿qué versión tengo?"* para solo chequear)
 
