@@ -72,7 +72,8 @@ en tu `platformio.ini`.
 | OLED SSD1306 | `Adafruit_SSD1306.h` + `Adafruit_GFX.h` | `adafruit/Adafruit SSD1306` | UNO y ESP32 | Arrastra `Adafruit GFX Library` + `Adafruit BusIO` |
 | Primitivas gráficas | `Adafruit_GFX.h` | `adafruit/Adafruit GFX Library` | UNO y ESP32 | Base de los displays gráficos |
 | Abstracción I2C/SPI | (interno) | `adafruit/Adafruit BusIO` | UNO y ESP32 | Dependencia de SSD1306 y MPU6050 |
-| LCD paralelo 16x2 (HD44780) | `LiquidCrystal.h` | `arduino-libraries/LiquidCrystal` | UNO y ESP32 | **NO viene bundled** (para LCD por I2C se usa otra lib) |
+| LCD paralelo 16x2 (HD44780) | `LiquidCrystal.h` | `arduino-libraries/LiquidCrystal` | UNO y ESP32 | **NO viene bundled**. Para LCD por I2C es OTRA lib (fila siguiente) |
+| LCD 16x2 por módulo I2C | `LiquidCrystal_I2C.h` | `marcoschwartz/LiquidCrystal_I2C` | UNO y ESP32 | Común en ESP32 (ahorra pines). Dirección típica `0x27` (o `0x3F`). API: `lcd.init()` + `lcd.backlight()` |
 | Teclado matricial 4x4 | `Keypad.h` | `chris--a/Keypad` | UNO y ESP32 | El owner es `chris--a` (con **doble guion**) |
 
 > **Sobre las dependencias que "arrastran":** cuando una lib depende de otra (por

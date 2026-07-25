@@ -27,6 +27,7 @@
 #include <Adafruit_MPU6050.h> // adafruit/Adafruit MPU6050
 #include <Stepper.h>          // arduino-libraries/Stepper (NO bundled)
 #include <LiquidCrystal.h>    // arduino-libraries/LiquidCrystal (NO bundled)
+#include <LiquidCrystal_I2C.h>// marcoschwartz/LiquidCrystal_I2C (LCD por I2C)
 
 // --- Especifico por placa: la libreria del Servo cambia de nombre ----------
 #if defined(ESP32)
@@ -60,6 +61,7 @@ Keypad teclado = Keypad(makeKeymap(teclas), pinFilas, pinCols, FILAS, COLS);
 
 Stepper motor(200, 9, 10, 11, 12);                   // paso a paso, 200 pasos/vuelta
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);               // LCD paralelo 16x2 (HD44780)
+LiquidCrystal_I2C lcdI2C(0x27, 16, 2);               // LCD 16x2 por modulo I2C (dir 0x27)
 
 Servo miServo;                                       // Servo (AVR) o ESP32Servo (ESP32)
 
@@ -87,6 +89,11 @@ void setup() {
   // LCD paralelo
   lcd.begin(16, 2);
   lcd.print("Tecnia Bot");
+
+  // LCD por I2C
+  lcdI2C.init();
+  lcdI2C.backlight();
+  lcdI2C.print("Tecnia Bot");
 
   // Motor paso a paso
   motor.setSpeed(15);

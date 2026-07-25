@@ -48,6 +48,7 @@ Salen directo con su `#include`, sin agregar nada:
 | OLED SSD1306 | `Adafruit_SSD1306.h` + `Adafruit_GFX.h` | `adafruit/Adafruit SSD1306` (arrastra GFX + BusIO) | UNO y ESP32 |
 | Primitivas graficas | `Adafruit_GFX.h` | `adafruit/Adafruit GFX Library` | UNO y ESP32 |
 | LCD paralelo 16x2 (HD44780) | `LiquidCrystal.h` | `arduino-libraries/LiquidCrystal` | UNO y ESP32 |
+| LCD 16x2 por modulo I2C | `LiquidCrystal_I2C.h` | `marcoschwartz/LiquidCrystal_I2C` | UNO y ESP32 (comun en ESP32, ahorra pines; dir 0x27 o 0x3F) |
 | Teclado matricial 4x4 | `Keypad.h` | `chris--a/Keypad` (owner con **doble guion**) | UNO y ESP32 |
 
 > Cuando una lib depende de otra (ej: SSD1306 necesita GFX y BusIO), PlatformIO suele bajarlas sola, pero conviene **listarlas explicitas** en lib_deps por claridad.
