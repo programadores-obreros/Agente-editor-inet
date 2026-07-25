@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.10] — 2026-07-25
+
+El bot entiende y explica cómo se resuelven las librerías.
+
+### Nuevo
+- El skill `librerias` (y `docs/librerias.md`) ahora explica que PlatformIO busca las librerías **local primero** (caché `~/.platformio/`) y, si faltan, las baja del **registro oficial** (registry.platformio.org) — quedando cacheadas para andar offline tras la primera descarga. Regla para el bot: usar SIEMPRE nombres del registro oficial (`owner/nombre`), nunca URLs random ni pegar código de librerías a mano, y saber explicárselo al docente.
+
 ## [0.3.9] — 2026-07-25
 
 Auditoría de librerías de los 15 proyectos: suma el LCD por I2C.
