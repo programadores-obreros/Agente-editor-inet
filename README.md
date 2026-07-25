@@ -127,7 +127,7 @@ sin depender de la web.
 
 ## Estado
 
-🚀 **v0.3.1.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales, e instalador `.exe` de un doble clic. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
+🚀 **v0.3.3.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales, e instalador `.exe` de un doble clic. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
 
 **Pendiente:**
 - Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con "Ejecutar de todas formas")

@@ -41,6 +41,19 @@ const FALLBACK_VIOLET = RGBA.fromInts(167, 139, 250) // #a78bfa
 const FALLBACK_VIOLET_DEEP = RGBA.fromInts(139, 92, 246) // #8b5cf6
 const FALLBACK_GOLD = RGBA.fromInts(255, 194, 36) // #ffc224
 
+// Tips propios de Tecnia Bot: en español, pensados para un docente que recién
+// arranca. Reemplazan al tip por defecto de OpenCode ("Run /connect...") que
+// confunde: aparece SIEMPRE porque el modelo gratis de OpenCode Zen cuenta como
+// "sin proveedor", y le pide al docente conectar algo que ya viene listo.
+const TIPS: string[] = [
+  'Escribí "hola" y dejate guiar paso a paso',
+  'Probá: "¿cómo prendo un LED con Arduino?"',
+  'Pedí "armame el circuito de riego" y te lo dibuja',
+  'Escribí "mostrame cómo funciona el protoboard"',
+  'Escribí /diagnostico para revisar que todo esté listo',
+  'Escribí /actualizar para traer la última versión',
+]
+
 function pick(api: TuiPluginApi, key: string, fallback: RGBA): RGBA {
   const c = api.theme?.current as Record<string, RGBA> | undefined
   return (c && c[key]) || fallback
@@ -93,8 +106,13 @@ async function hayVersionNueva(): Promise<string | null> {
   }
 }
 
-function Art(props: { api: TuiPluginApi; nueva: string | null }) {
+function Art(props: { api: TuiPluginApi; nueva: string | null; version: string | null }) {
   const api = props.api
+  // La versión va SIEMPRE presente bajo la marca: ayuda al docente y al soporte
+  // ("¿qué versión tenés?" se ve de una). Fallback a la firma sola si no se pudo leer.
+  const firma = props.version
+    ? `un proyecto de Tecnia Lab · tecnialab.net.ar · v${props.version}`
+    : "un proyecto de Tecnia Lab · tecnialab.net.ar"
   return (
     <box flexDirection="column" alignItems="center">
       {ROBOT.map((line) => (
@@ -110,7 +128,7 @@ function Art(props: { api: TuiPluginApi; nueva: string | null }) {
       ))}
       <box height={1} />
       <text fg={pick(api, "textMuted", FALLBACK_GOLD)} selectable={false}>
-        un proyecto de Tecnia Lab · tecnialab.net.ar
+        {firma}
       </text>
       {props.nueva ? (
         <text fg={pick(api, "warning", FALLBACK_GOLD)} attributes={TextAttributes.BOLD} selectable={false}>
@@ -121,13 +139,47 @@ function Art(props: { api: TuiPluginApi; nueva: string | null }) {
   )
 }
 
+// Un solo tip propio (elegido al azar al cargar), con el mismo look que el tip
+// nativo de OpenCode: viñeta en color de acento + texto legible.
+function TipLine(props: { api: TuiPluginApi; tip: string }) {
+  const api = props.api
+  return (
+    <box width="100%" maxWidth={75} alignItems="center" paddingTop={3}>
+      <box flexDirection="row" maxWidth="100%">
+        <text flexShrink={0} fg={pick(api, "warning", FALLBACK_GOLD)} selectable={false}>
+          {"● Tip "}
+        </text>
+        <text flexShrink={1} wrapMode="word" fg={pick(api, "textMuted", FALLBACK_VIOLET)} selectable={false}>
+          {props.tip}
+        </text>
+      </box>
+    </box>
+  )
+}
+
 const tui: TuiPlugin = async (api) => {
+  // Desactivamos el tip por defecto de OpenCode (`internal:home-tips`): con el
+  // modelo gratis de Zen queda clavado en "Run /connect..." y confunde al docente.
+  // Defensivo: si la API cambia entre versiones, no rompemos el arranque.
+  try {
+    await (api as { plugins?: { deactivate?: (id: string) => unknown } }).plugins?.deactivate?.("internal:home-tips")
+  } catch {
+    // sin drama: si no se pudo, en el peor caso convive el tip nativo
+  }
+
+  const version = versionInstalada()
+  // Elegimos UN tip al azar por arranque (sin reactividad de solid, igual que la versión nueva).
+  const tip = TIPS[Math.floor(Math.random() * TIPS.length)] ?? TIPS[0]
   const nueva = await hayVersionNueva()
+
   api.slots.register({
     order: 100,
     slots: {
       home_logo() {
-        return <Art api={api} nueva={nueva} />
+        return <Art api={api} nueva={nueva} version={version} />
+      },
+      home_bottom() {
+        return <TipLine api={api} tip={tip} />
       },
     },
   })
