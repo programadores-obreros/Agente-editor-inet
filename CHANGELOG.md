@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.8] — 2026-07-25
+
+Referencia de librerías: qué `lib_deps` necesita cada componente.
+
+### Nuevo
+- **Doc `docs/librerias.md` + skill `librerias`** (12° skill): la línea exacta de `lib_deps` para cada componente (servo, DHT, OLED SSD1306, teclado matricial, motor paso a paso, NeoPixel, MPU6050, LCD, BMP085…), **verificada compilando** en UNO y ESP32. Así el bot genera `platformio.ini` correctos y nadie choca con *"fatal error: X.h: No such file"*. Incluye el proyecto de verificación `ejemplos/_test-librerias/` y desmiente el mito de que `LiquidCrystal`/`Stepper` vienen incluidas (NO vienen). Los únicos bundled en ambas placas: `Wire`, `SPI`, `EEPROM` (y `WiFi` solo en ESP32).
+
 ## [0.3.7] — 2026-07-25
 
 Ejemplo listo para usar: mover un servo con el teclado.
