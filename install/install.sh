@@ -278,6 +278,31 @@ else
   echo "  [FALTA] OpenCode no esta instalado. Instalalo desde https://opencode.ai"
 fi
 
+# pio en el PATH (comodidad: que 'pio' funcione pelado en la terminal).
+# PlatformIO deja pio en su venv privado (~/.platformio/penv/bin), fuera del PATH.
+# Tecnia Bot lo encuentra por ruta completa igual; esto es para uso manual. Corre en
+# cada install/actualizar (idempotente, marcado con un comentario), asi le llega a todos.
+PIO_DIR="$HOME/.platformio/penv/bin"
+if [ -d "$PIO_DIR" ]; then
+  case "${SHELL:-}" in
+    *zsh)  RC="$HOME/.zshrc" ;;
+    *bash) RC="$HOME/.bashrc" ;;
+    *)     RC="$HOME/.profile" ;;
+  esac
+  MARCA="# Tecnia Bot: PlatformIO en el PATH"
+  if ! { [ -f "$RC" ] && grep -qF "$MARCA" "$RC" 2>/dev/null; }; then
+    {
+      echo ""
+      echo "$MARCA"
+      echo 'export PATH="$HOME/.platformio/penv/bin:$PATH"'
+    } >> "$RC"
+  fi
+  case ":$PATH:" in
+    *":$PIO_DIR:"*) ;;
+    *) export PATH="$PIO_DIR:$PATH" ;;
+  esac
+fi
+
 # Chequear PlatformIO (en PATH o en la ruta de instalacion conocida)
 if command -v pio >/dev/null 2>&1; then
   echo "  [OK] PlatformIO: $(pio --version 2>/dev/null)"

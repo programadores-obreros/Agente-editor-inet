@@ -51,6 +51,29 @@ async function run(cmd: string[], cwd: string, signal?: AbortSignal): Promise<Ru
   }
 }
 
+// Envuelve un valor entre comillas dobles solo si contiene espacios (o esta vacio).
+// Sirve tanto para cmd de Windows como para shells POSIX en rutas normales.
+function quoteIfNeeded(value: string): string {
+  return value === "" || /\s/.test(value) ? `"${value}"` : value
+}
+
+// Lanza un proceso de forma "detached": no esperamos su salida ni bloqueamos la tool.
+// Se usa para abrir una ventana de terminal aparte (Linux/Mac) sin colgar `run()`.
+function launchDetached(cmd: string[], cwd: string): boolean {
+  try {
+    const proc = Bun.spawn(cmd, {
+      cwd,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    })
+    proc.unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
 function traducirError(stderr: string, stdout: string): string {
   const texto = stderr + "\n" + stdout
   type Patron = [RegExp, string | ((m: RegExpMatchArray) => string)]
@@ -153,7 +176,7 @@ Acciones:
 - compile: compilar el proyecto actual
 - flash: cargar el codigo en el dispositivo
 - both: compilar y cargar en un solo paso
-- monitor: instrucciones para abrir el monitor serial
+- monitor: abre una ventana de terminal aparte con el monitor serial ya corriendo (puerto y baudios automaticos). NO requiere un proyecto ni codigo cargado: sirve para ver los datos que manda la placa y para mandarle teclas (ej: comandar un servo desde el teclado). Cuando el usuario pida "ver el monitor serial", "abrir la terminal serial" o similar, llama a esta accion DIRECTAMENTE, sin pedir ni crear un proyecto.
 - diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)`,
   args: {
     action: tool.schema
@@ -163,6 +186,12 @@ Acciones:
       .string()
       .optional()
       .describe("Puerto serial explicito (ej: COM3, /dev/ttyUSB0). Se detecta automaticamente si no se indica."),
+    baud: tool.schema
+      .number()
+      .optional()
+      .describe(
+        "Velocidad del monitor serial en baudios (default 9600). Debe coincidir con el valor de Serial.begin(...) del sketch (ej: 115200 para muchos ESP32).",
+      ),
     environment: tool.schema
       .string()
       .optional()
@@ -224,8 +253,72 @@ Acciones:
       }
 
       case "monitor": {
-        const portStr = args.port ? ` --port ${args.port}` : ""
-        return `Para abrir el monitor serial, ejecuta este comando en tu terminal:\n\n\`\`\`\npio device monitor${portStr} --baud 9600\n\`\`\`\n\nSi no sabes el puerto, ejecuta \`/diagnostico\` primero.`
+        const baud = args.baud ?? 9600
+
+        // Resolvemos el puerto automaticamente (el docente no tiene que saber que es COM3).
+        let puerto = args.port
+        if (!puerto) {
+          const detected = await detectPort(cwd, signal)
+          if ("error" in detected) {
+            // detected.error ya trae el mensaje completo (sin placa -> pedi conectar USB;
+            // varias placas -> elegi el puerto). No lo dupliquemos.
+            return `Para abrir el monitor serial primero necesito la placa.\n\n${detected.error}`
+          }
+          puerto = detected.port
+        }
+
+        const pioPath = pioBin()
+        // Comando "pelado" listo para copiar y pegar en una terminal (fallback / instrucciones).
+        const comandoManual = `${quoteIfNeeded(pioPath)} device monitor --port ${puerto} --baud ${baud}`
+
+        const mensajeExito = `Abri una ventana nueva (negra) con el monitor serial en ${puerto} a ${baud} baudios. Ahi vas a ver los datos de la placa y podes apretar teclas para comandarla. Para cerrarlo, apreta Ctrl+C en esa ventana.`
+
+        const mensajeManual = `No pude abrir una ventana nueva automaticamente en este equipo, pero es facil hacerlo a mano:
+
+1. Abri una terminal (en Windows busca "cmd"; en Mac/Linux busca "Terminal").
+2. Copia y pega este comando, despues apreta Enter:
+
+\`\`\`
+${comandoManual}
+\`\`\`
+
+Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, apreta Ctrl+C en esa ventana.`
+
+        // Windows: `start` abre una ventana nueva y vuelve al instante, asi que `run()` no cuelga.
+        // El primer argumento entre comillas de `start` es el TITULO de la ventana, por eso va
+        // siempre un titulo antes de la ruta de pio (que puede tener espacios, ej: "Maria Jose").
+        if (process.platform === "win32") {
+          const titulo = `Monitor Serial - ${puerto}`
+          const res = await run(
+            ["cmd", "/c", "start", titulo, "cmd", "/k", pioPath, "device", "monitor", "--port", puerto, "--baud", String(baud)],
+            cwd,
+            signal,
+          )
+          return res.code === 0 ? mensajeExito : mensajeManual
+        }
+
+        // Mac: le pedimos a Terminal.app que corra el comando en una ventana nueva via AppleScript.
+        if (process.platform === "darwin") {
+          const shellCmd = `${quoteIfNeeded(pioPath)} device monitor --port ${quoteIfNeeded(puerto)} --baud ${baud}`
+          const escapado = shellCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+          const script = `tell application "Terminal" to do script "${escapado}"`
+          return launchDetached(["osascript", "-e", script], cwd) ? mensajeExito : mensajeManual
+        }
+
+        // Linux: probamos emuladores de terminal comunes en orden hasta encontrar uno instalado.
+        const inner = [pioPath, "device", "monitor", "--port", puerto, "--baud", String(baud)]
+        const emuladores: Array<{ bin: string; args: (cmd: string[]) => string[] }> = [
+          { bin: "x-terminal-emulator", args: (c) => ["-e", ...c] },
+          { bin: "gnome-terminal", args: (c) => ["--", ...c] },
+          { bin: "konsole", args: (c) => ["-e", ...c] },
+          { bin: "xterm", args: (c) => ["-e", ...c] },
+        ]
+        for (const emu of emuladores) {
+          if (Bun.which(emu.bin) && launchDetached([emu.bin, ...emu.args(inner)], cwd)) {
+            return mensajeExito
+          }
+        }
+        return mensajeManual
       }
 
       case "diagnostico": {

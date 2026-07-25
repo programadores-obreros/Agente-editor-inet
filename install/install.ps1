@@ -207,6 +207,30 @@ if (Get-Command opencode -ErrorAction SilentlyContinue) {
     Write-Host "  [FALTA] OpenCode no esta instalado. Instalalo desde https://opencode.ai"
 }
 
+# pio en el PATH del usuario (comodidad: que 'pio' funcione pelado en la terminal).
+# PlatformIO deja pio en su venv privado (~/.platformio/penv/Scripts), fuera del PATH.
+# Tecnia Bot lo encuentra por ruta completa igual; esto es para uso manual. Corre en
+# cada install/actualizar (idempotente), asi le llega a todos. Cuidado: preservamos el
+# tipo de registro (REG_EXPAND_SZ) y NO expandimos las %VAR% existentes, para no romper.
+$PioScripts = Join-Path $env:USERPROFILE ".platformio\penv\Scripts"
+if (Test-Path $PioScripts) {
+    $reg = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+    try {
+        $tienePath = ($reg.GetValueNames() -contains "Path")
+        $actual = if ($tienePath) { $reg.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) } else { "" }
+        $kind = if ($tienePath) { $reg.GetValueKind("Path") } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
+        $partes = @($actual -split ';' | Where-Object { $_ -ne "" })
+        if (-not ($partes | Where-Object { $_.TrimEnd('\') -ieq $PioScripts.TrimEnd('\') })) {
+            $reg.SetValue("Path", (($partes + $PioScripts) -join ';'), $kind)
+        }
+    } finally {
+        $reg.Close()
+    }
+    if (-not ($env:PATH -split ';' | Where-Object { $_.TrimEnd('\') -ieq $PioScripts.TrimEnd('\') })) {
+        $env:PATH = "$env:PATH;$PioScripts"
+    }
+}
+
 # Chequear PlatformIO (en PATH o en la ruta de instalacion conocida)
 $pioPath = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
 if (Get-Command pio -ErrorAction SilentlyContinue) {
