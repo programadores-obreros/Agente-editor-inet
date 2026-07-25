@@ -2,6 +2,17 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.4] — 2026-07-25
+
+Monitor serial en una ventana + `pio` disponible en la terminal.
+
+### Nuevo
+- **Abrir el monitor serial desde el chat**: la acción `monitor` ahora ABRE una ventana de terminal aparte con `pio device monitor` ya corriendo (puerto y baudios detectados solos). El docente ve los datos de la placa y puede mandarle teclas (ej: comandar un servo con el teclado), sin escribir comandos ni saber qué es COM3. Parámetro `baud` opcional (default 9600). Windows nativo; Linux/Mac con fallback al comando listo para copiar.
+- **`pio` en el PATH**: el instalador ahora agrega PlatformIO al PATH del usuario (sin admin, preservando el tipo de registro para no romper las variables `%VAR%` existentes), así `pio` funciona escrito pelado en cualquier terminal. Llega a todos en el próximo `/actualizar`.
+
+### Corregido
+- La descripción del tool le aclara al modelo que el monitor NO necesita un proyecto abierto, para que lo llame directo cuando se lo piden (antes daba vueltas pidiendo crear un proyecto).
+
 ## [0.3.3] — 2026-07-19
 
 El splash ahora muestra la versión y da tips propios para docentes.
