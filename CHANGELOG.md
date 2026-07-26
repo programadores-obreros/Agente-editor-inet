@@ -2,6 +2,14 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.18] — 2026-07-26
+
+Modo grupo (varias personas que rotan) + el bot te habla en tu género.
+
+### Nuevo
+- **Modo grupo (tercer modo)**: para una compu que usan **pocas personas conocidas** que rotan (una familia, un docente + ayudantes). Al arrancar, el bot pregunta *"¿quién sos?"* y **recuerda a cada persona** (nombre, rol, género, placa) en su propio renglón. Distinto del `aula` (muchos anónimos, no guarda nombres) y del `personal` (una sola). Cuando se elige, el bot **aclara que este modo guarda nombres**, para usarlo solo con grupos chicos y conocidos (privacidad).
+- **Género y concordancia**: el bot pregunta cómo preferís que te hable (**varón, mujer o no binario**) y usa la **concordancia correcta** en español ("¡Bienvenida! ¿Estás lista?" / "¡Bienvenido! ¿Estás listo?" / "¡Bienvenide! ¿Estás liste?"). **No inventa el dato**: si no lo decís, usa masculino por defecto en el lenguaje, pero nunca guarda un género que no dijiste. En modo `aula` el género tampoco se persiste. Con smoke tests para los tres modos y la privacidad.
+
 ## [0.3.17] — 2026-07-26
 
 La pregunta aula/personal también aparece en las instalaciones viejas.
