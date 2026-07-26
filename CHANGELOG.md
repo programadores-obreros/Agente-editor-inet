@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.15] — 2026-07-26
+
+El bot recuerda por dónde va cada compu — sin guardar datos personales de ningún alumno.
+
+### Nuevo
+- **Memoria de progreso (de la compu/grupo, NO de una persona)**: nueva tool `memoria` que recuerda entre sesiones el **nivel**, los **proyectos hechos** (lista con tope de 8, sin duplicados) y el **último proyecto** de ESA computadora. Pensada para las PCs de escuela donde muchos alumnos comparten una cuenta: **NO guarda nombres ni nada que identifique a un menor** (Ley 25.326) — solo el avance pedagógico de la máquina. El bot la usa para retomar ("la última vez en esta compu quedó el semáforo, ¿seguimos?") y para adaptar el nivel. Todo el juicio (dedup, tope, orden) vive en **TypeScript**; el modelo solo pasa el nombre del proyecto al terminar (un único trigger de guardado). Archivo `~/.config/opencode/tecnia-memoria.md`, creado por el instalador y **sobrevive a los `/actualizar`** (nunca se pisa). Separado del perfil a propósito: lo personal y lo pedagógico no se mezclan. Con **6 smoke tests** nuevos (incluido uno que verifica que la memoria NO guarda datos personales).
+
 ## [0.3.14] — 2026-07-26
 
 La resistencia en serie ahora se DIBUJA en el cable (no solo texto).

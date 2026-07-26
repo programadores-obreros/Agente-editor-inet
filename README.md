@@ -11,6 +11,7 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 - 🗣️ **Habla en español simple** — nada de jerga innecesaria, nunca asume que ya sabés
 - 🧑‍🏫 **Se adapta a vos** — pregunta si sos docente o alumno y ajusta cómo te explica
 - 🧠 **Se acuerda de vos** — te pregunta el nombre y el rol una sola vez, los guarda, y en las próximas sesiones te saluda por tu nombre (no vuelve a preguntar en cada arranque)
+- 📈 **Recuerda el progreso de la compu** — el nivel y los proyectos ya hechos en esa máquina, para retomar donde quedaron y ajustar cómo explica. Es memoria de la **compu/grupo, no de una persona**: no guarda nombres ni datos personales de menores (pensado para las PCs compartidas de la escuela)
 - 💡 **Explica el porqué** antes de tirar código, y el código viene comentado línea por línea
 - 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat
 - 📟 **Abre el monitor serial en una ventana** — para ver los datos que manda la placa y mandarle teclas (ej: comandar un servo desde el teclado), sin escribir comandos ni saber en qué puerto está. [Guía](docs/monitor-serial.md)
@@ -130,7 +131,7 @@ sin depender de la web.
 
 ## Estado
 
-🚀 **v0.3.14.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales (con la **resistencia en serie dibujada en el cable**, no solo en texto), e instalador `.exe` de un doble clic. Ahora **abre el monitor serial en una ventana** (ver datos de la placa y comandarla con el teclado, sin escribir comandos) y deja **`pio` en el PATH** para usarlo en la terminal. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
+🚀 **v0.3.15.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales (con la **resistencia en serie dibujada en el cable**, no solo en texto), recuerda el **progreso de cada compu** (sin datos personales de menores), e instalador `.exe` de un doble clic. Ahora **abre el monitor serial en una ventana** (ver datos de la placa y comandarla con el teclado, sin escribir comandos) y deja **`pio` en el PATH** para usarlo en la terminal. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
 
 **Pendiente:**
 - Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con "Ejecutar de todas formas")
