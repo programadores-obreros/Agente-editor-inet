@@ -6,24 +6,28 @@
 <title>ESP32 + Botón + LED en protoboard</title>
 <script src="wokwi-bundle.js"></script>
 <style>
+  /* Design system Tecnia Lab — marca violeta. Solo colores/tipografia/acentos: el layout no se toca. */
+  :root{--violeta:#6d28d9;--violeta-2:#7c3aed;--violeta-soft:#f4f1fe;--violeta-line:#e3dcfb;--ink:#1e293b;--muted:#64748b;--line:#e8ecf2}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#eef2f6;font-family:'Segoe UI',system-ui,Arial,sans-serif;color:#1a2733;display:flex;justify-content:center;padding:22px}
-  .card{width:1080px;background:#fff;border-radius:18px;box-shadow:0 8px 34px rgba(20,40,60,.12);padding:26px 32px 30px}
+  body{background:#eef2f6;font-family:'Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif;color:var(--ink);display:flex;justify-content:center;padding:22px}
+  /* firma de marca: barra violeta arriba de la card */
+  .card{position:relative;overflow:hidden;width:1080px;background:#fff;border-radius:18px;box-shadow:0 8px 34px rgba(20,40,60,.12);padding:26px 32px 30px}
+  .card::before{content:"";position:absolute;top:0;left:0;right:0;height:5px;background:linear-gradient(90deg,var(--violeta),var(--violeta-2))}
   .head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  h1{font-size:24px;font-weight:700;letter-spacing:.2px}
-  .badge{display:inline-flex;align-items:center;gap:6px;background:#e8f7ee;color:#1e8e4e;border:1px solid #b8e6c9;font-size:12.5px;font-weight:600;padding:4px 11px;border-radius:20px}
-  .sub{color:#64757f;font-size:14.5px;margin:6px 0 6px}
-  .stage-wrap{position:relative;margin:14px auto 4px;width:1016px;height:452px;background:linear-gradient(180deg,#f4f7fa,#e9eef3);border:1px solid #dfe6ec;border-radius:14px;overflow:hidden}
+  h1{font-size:24px;font-weight:800;letter-spacing:.2px;color:var(--ink)}
+  .badge{display:inline-flex;align-items:center;gap:6px;background:var(--violeta-soft);color:var(--violeta);border:1px solid var(--violeta-line);font-size:12.5px;font-weight:600;padding:4px 11px;border-radius:20px}
+  .sub{color:var(--muted);font-size:14.5px;margin:6px 0 6px}
+  .stage-wrap{position:relative;margin:14px auto 4px;width:1016px;height:452px;background:linear-gradient(180deg,#faf9fe,#f2f0fb);border:1px solid var(--violeta-line);border-radius:14px;overflow:hidden}
   #scene{position:absolute;inset:0}
   .comp{position:absolute;transform-origin:top left}
   .lab{position:absolute;background:rgba(255,255,255,.94);border:1px solid #cfd8e0;border-radius:5px;padding:2px 7px;font:600 11px/1.25 'SFMono-Regular',Consolas,monospace;color:#28394a;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.08);z-index:40}
   .lab.pin{background:#28394a;color:#fff;border-color:#28394a}
   .grid2{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;margin-top:16px}
-  .aviso{background:#fff6e9;border-left:4px solid #ef8c1b;padding:12px 15px;border-radius:9px;font-size:13.6px;line-height:1.5}
-  .aviso b{color:#b5670a}
+  .aviso{background:var(--violeta-soft);border-left:4px solid var(--violeta);padding:12px 15px;border-radius:9px;font-size:13.6px;line-height:1.5}
+  .aviso b{color:var(--violeta)}
   table.conx{border-collapse:collapse;width:100%;font-size:13.4px;border:1px solid #e6ebf0;border-radius:10px;overflow:hidden}
-  table.conx th,table.conx td{padding:8px 11px;text-align:left;border-bottom:1px solid #eef2f5}
-  table.conx th{background:#f5f8fb;color:#3a4b5c;font-weight:600}
+  table.conx th,table.conx td{padding:8px 11px;text-align:left;border-bottom:1px solid var(--line)}
+  table.conx th{background:var(--violeta-soft);color:var(--violeta);text-transform:uppercase;font-size:11.5px;letter-spacing:.4px;font-weight:700}
   table.conx tr:last-child td{border-bottom:none}
   .chip{display:inline-block;width:22px;height:6px;border-radius:3px;vertical-align:middle;margin-right:7px}
   .legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px;font-size:13px}
@@ -178,11 +182,14 @@
   const hAnode=H['B20'], hCath=H['B21'];
 
   /* ---------- CABLES (jumpers) + patas ---------- */
-  function wire(a,b,color,w){
+  function wire(a,b,color,w,bulge){
+    const bmax=(bulge==null)?34:bulge;
     const dx=(b.x-a.x), dy=(b.y-a.y);
-    const mx=a.x+dx*0.5, my=a.y+dy*0.5 - Math.min(34,Math.abs(dx)*0.28+8);
-    const p=mk('path',{d:`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`,fill:'none',stroke:color,'stroke-width':w||3.4,'stroke-linecap':'round'});
-    scene.appendChild(p);
+    const mx=a.x+dx*0.5, my=a.y+dy*0.5 - Math.min(bmax,Math.abs(dx)*0.22+8);
+    const d=`M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`;
+    const gw=(w||3.4);
+    scene.appendChild(mk('path',{d,fill:'none',stroke:'#fff','stroke-width':gw+3.4,'stroke-linecap':'round'}));
+    scene.appendChild(mk('path',{d,fill:'none',stroke:color,'stroke-width':gw+0.6,'stroke-linecap':'round'}));
   }
   function leg(a,b){ // pata metálica corta componente->agujero
     scene.appendChild(mk('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#8a8f96','stroke-width':2.2,'stroke-linecap':'round'}));

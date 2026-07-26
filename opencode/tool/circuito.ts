@@ -24,21 +24,29 @@ function plantillaPath(nombre: string): string {
 
 // CSS común a todos los circuitos.
 const ESTILO = `
-  body { font-family:'Segoe UI',system-ui,sans-serif; background:#eef2f5; margin:0; padding:24px; color:#1a2733; }
-  .hoja { max-width:960px; margin:0 auto; background:#fff; border-radius:16px; box-shadow:0 6px 28px rgba(0,0,0,.10); padding:28px 34px; }
-  h1 { font-size:23px; margin:0 0 2px; color:#2c3e50; }
-  .sub { color:#7f8c8d; font-size:14px; margin-bottom:18px; }
-  .escena { position:relative; height:300px; margin:6px 0 14px; }
+  /* Design system Tecnia Lab — marca violeta. Solo colores/tipografia/acentos: el layout no se toca. */
+  :root {
+    --violeta:#6d28d9; --violeta-2:#7c3aed; --violeta-soft:#f4f1fe; --violeta-line:#e3dcfb;
+    --ink:#1e293b; --muted:#64748b; --line:#e8ecf2;
+  }
+  body { font-family:'Segoe UI',system-ui,-apple-system,Roboto,Arial,sans-serif; background:#eef2f5; margin:0; padding:24px; color:var(--ink); }
+  /* firma de marca: barra violeta arriba de la hoja */
+  .hoja { position:relative; overflow:hidden; max-width:960px; margin:0 auto; background:#fff; border-radius:16px; box-shadow:0 6px 28px rgba(0,0,0,.10); padding:28px 34px; }
+  .hoja::before { content:""; position:absolute; top:0; left:0; right:0; height:5px; background:linear-gradient(90deg,var(--violeta),var(--violeta-2)); }
+  h1 { font-size:23px; margin:0 0 2px; color:var(--ink); font-weight:800; }
+  .sub { color:var(--muted); font-size:14px; margin-bottom:18px; }
+  .escena { position:relative; height:300px; margin:6px 0 14px; background:linear-gradient(180deg,#faf9fe,#f2f0fb); border:1px solid var(--violeta-line); border-radius:12px; }
   .pieza { position:absolute; transform:scale(1.4); transform-origin:top left; }
   .izq { left:30px; top:40px; }
   .der { left:660px; top:80px; }
   svg.cables { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:5; }
   .et { font:600 12px 'Segoe UI'; fill:#2c3e50; }
-  .aviso { background:#fff4e5; border-left:4px solid #f39c12; padding:11px 15px; border-radius:8px; font-size:14px; margin:16px 0; }
-  .badge { display:inline-block; background:#27ae60; color:#fff; font-size:12px; padding:3px 10px; border-radius:20px; margin-left:8px; }
+  .aviso { background:var(--violeta-soft); border-left:4px solid var(--violeta); padding:11px 15px; border-radius:8px; font-size:14px; margin:16px 0; }
+  .aviso b { color:var(--violeta); }
+  .badge { display:inline-block; background:var(--violeta-soft); color:var(--violeta); border:1px solid var(--violeta-line); font-size:12px; padding:3px 10px; border-radius:20px; margin-left:8px; }
   table { width:100%; border-collapse:collapse; margin-top:14px; font-size:14px; }
-  th,td { text-align:left; padding:9px 11px; border-bottom:1px solid #eef0f2; }
-  th { background:#f7f9fb; color:#34495e; }
+  th,td { text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); }
+  th { background:var(--violeta-soft); color:var(--violeta); text-transform:uppercase; font-size:11.5px; letter-spacing:.4px; font-weight:700; }
   .dot{display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:7px;vertical-align:middle;border:1px solid rgba(0,0,0,.15);}
   /* layout del ARMADOR LIBRE: ESP32 a la izquierda + una fila por componente, con cables CSS */
   .circuito-libre{display:grid;grid-template-columns:230px 1fr;gap:0;align-items:center;margin:10px 0 6px;}
