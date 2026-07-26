@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.13] — 2026-07-26
+
+El bot abre los circuitos en el navegador, solo.
+
+### Nuevo
+- **Auto-open de circuitos**: cuando el bot genera un diagrama, ahora lo **ABRE en el navegador por defecto automáticamente** (Windows/Mac/Linux) — el docente no tiene que buscar el archivo ni hacer doble clic. Best-effort: si no puede, deja la ruta `file://` como fallback. Parámetro `abrir` opcional (default true).
+
 ## [0.3.12] — 2026-07-25
 
 Diagramas de circuito con identidad de marca + cables más claros.
