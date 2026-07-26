@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.17] — 2026-07-26
+
+La pregunta aula/personal también aparece en las instalaciones viejas.
+
+### Arreglado
+- El bot ahora pregunta **aula o personal** también cuando el perfil de una instalación previa **no tiene** todavía el campo `Modo` (antes solo lo hacía si el campo existía y decía "(sin definir)"). Así la migración de privacidad del nombre funciona en los installs anteriores a v0.3.16, no solo en los nuevos.
+
 ## [0.3.16] — 2026-07-26
 
 En la compu del aula, el bot ya no guarda el nombre de los chicos.
