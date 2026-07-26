@@ -92,6 +92,27 @@ if (-not (Test-Path $PerfilFile)) {
     Write-Host "  [OK] Perfil de usuario creado (vacio) en $PerfilFile"
 }
 
+# ---- Memoria de progreso de ESTA compu: se crea VACIA solo si NO existe (nunca se pisa) ----
+# Es el progreso pedagogico de la maquina/grupo (nivel, proyectos hechos) y debe
+# sobrevivir a los /actualizar, por eso NO se copia del repo: lo crea el instalador la
+# primera vez. Su ruta absoluta se agrega a "instructions" de opencode (mas abajo) para
+# cargarla en cada sesion: asi el bot recuerda el progreso sin volver a preguntar.
+$MemoriaFile = Join-Path $ConfigDir "tecnia-memoria.md"
+if (-not (Test-Path $MemoriaFile)) {
+    $memoriaTemplate = @"
+# Memoria de ESTA compu (no de una persona)
+<!-- Progreso pedagogico de esta maquina/grupo. Lo mantiene Tecnia Bot.
+     NO guarda datos personales de ningun alumno (ni nombre ni nada que identifique
+     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos. -->
+
+- Nivel: (sin definir)
+- Proyectos hechos: (sin definir)
+- Ultimo proyecto: (sin definir)
+"@
+    [System.IO.File]::WriteAllText($MemoriaFile, $memoriaTemplate, (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "  [OK] Memoria de progreso creada (vacia) en $MemoriaFile"
+}
+
 # ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto ----
 # Mergeamos con la config que ya tenga el docente (ej: provider/model de /connect):
 # NO la pisamos. Usamos ConvertFrom-Json / ConvertTo-Json nativos (sin dependencias).
@@ -220,6 +241,9 @@ if ($ocHasContent -and $null -eq $oc) {
     if ($instrucciones -notcontains $PerfilFile) {
         $instrucciones += $PerfilFile
     }
+    if ($instrucciones -notcontains $MemoriaFile) {
+        $instrucciones += $MemoriaFile
+    }
     $oc | Add-Member -NotePropertyName "instructions" -NotePropertyValue $instrucciones -Force
 
     $ocText = $oc | ConvertTo-Json -Depth 20
@@ -228,7 +252,7 @@ if ($ocHasContent -and $null -eq $oc) {
         $ocText = [regex]::Replace($ocText, '("instructions":\s*)("(?:[^"\\]|\\.)*")', '$1[$2]')
     }
     [System.IO.File]::WriteAllText($OpencodeJson, $ocText, (New-Object System.Text.UTF8Encoding $false))
-    Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto + perfil)."
+    Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto + perfil + memoria)."
 }
 
 Write-Host "==> Listo! Tecnia Bot v$Version instalado."

@@ -70,6 +70,26 @@ EOF
   echo "  [OK] Perfil de usuario creado (vacío) en $PERFIL_FILE"
 fi
 
+# ---- Memoria de progreso de ESTA compu: se crea VACIA solo si NO existe (nunca se pisa) ----
+# Es el progreso pedagogico de la maquina/grupo (nivel, proyectos hechos) y debe
+# sobrevivir a los /actualizar, por eso NO se copia del repo: lo crea el instalador la
+# primera vez. Su ruta absoluta se agrega a "instructions" de opencode (mas abajo) para
+# cargarla en cada sesion: asi el bot recuerda el progreso sin volver a preguntar.
+MEMORIA_FILE="$CONFIG_DIR/tecnia-memoria.md"
+if [ ! -f "$MEMORIA_FILE" ]; then
+  cat > "$MEMORIA_FILE" <<'EOF'
+# Memoria de ESTA compu (no de una persona)
+<!-- Progreso pedagogico de esta maquina/grupo. Lo mantiene Tecnia Bot.
+     NO guarda datos personales de ningun alumno (ni nombre ni nada que identifique
+     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos. -->
+
+- Nivel: (sin definir)
+- Proyectos hechos: (sin definir)
+- Ultimo proyecto: (sin definir)
+EOF
+  echo "  [OK] Memoria de progreso creada (vacía) en $MEMORIA_FILE"
+fi
+
 # ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto ----
 # Mergeamos con la config que ya tenga el docente (ej: provider/model de /connect):
 # NO la pisamos. El theme y el plugin de TUI van en tui (opencode migra y borra
@@ -117,10 +137,10 @@ echo "==> Configurando OpenCode (theme + logo + agente por defecto)..."
 # Si un archivo existe pero NO se puede parsear, lo deja intacto y avisa (nunca
 # pisa la config del usuario). Idempotente.
 merge_via_python() {
-  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" <<'PYEOF'
+  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" "$MEMORIA_FILE" <<'PYEOF'
 import json, sys
 
-tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path = sys.argv[1:9]
+tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path, memoria_path = sys.argv[1:10]
 
 def strip_jsonc(text):
     out = []
@@ -204,6 +224,8 @@ if ok:
         instrucciones = []
     if perfil_path not in instrucciones:
         instrucciones.append(perfil_path)
+    if memoria_path not in instrucciones:
+        instrucciones.append(memoria_path)
     oc["instructions"] = instrucciones
     dump(oc_path, oc)
 else:
@@ -230,10 +252,11 @@ merge_tui_jq() {
 merge_opencode_jq() {
   [ -s "$OPENCODE_JSON" ] || printf '{}\n' > "$OPENCODE_JSON"
   local tmp; tmp="$(mktemp)"
-  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" '
+  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" '
           .["$schema"] = (.["$schema"] // $schema)
         | .default_agent = $agent
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
+        | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$OPENCODE_JSON"; return 0
   fi
@@ -283,14 +306,14 @@ EOF
 {
   "\$schema": "$OPENCODE_SCHEMA",
   "default_agent": "$TECNIA_AGENT",
-  "instructions": ["$PERFIL_FILE"]
+  "instructions": ["$PERFIL_FILE", "$MEMORIA_FILE"]
 }
 EOF
     echo "  [OK] $(basename "$OPENCODE_JSON") creado."
   else
     echo "  [AVISO] No hay jq ni python3 y $OPENCODE_JSON ya existe: no lo toco."
     echo "          Agregale a mano: \"default_agent\": \"$TECNIA_AGENT\""
-    echo "          y en \"instructions\" (array) la ruta: \"$PERFIL_FILE\""
+    echo "          y en \"instructions\" (array) las rutas: \"$PERFIL_FILE\" y \"$MEMORIA_FILE\""
   fi
 fi
 
