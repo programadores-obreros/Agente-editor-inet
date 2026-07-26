@@ -2,6 +2,16 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.14] — 2026-07-26
+
+La resistencia en serie ahora se DIBUJA en el cable (no solo texto).
+
+### Nuevo
+- **Resistencia en serie dibujada** en el armador libre: cuando un pin va con su resistencia (`(con 330Ω)`), ahora se dibuja un **cuerpo de resistencia en el medio del cable** — el cable de color entra y sale de ella, así se **ve** que va en serie (antes era solo texto "(con 330Ω)" en la etiqueta, que un principiante no interpretaba). Sin bandas de colores a propósito: dibujar bandas incorrectas mentiría (un docente podría leerlas). Aplica al LED y al LED RGB (3 resistencias, una por canal). El display de 7 segmentos NO la dibuja (una sola R para 7 pines mentiría); mantiene el texto explicativo.
+
+### Arreglado
+- **CI en verde de nuevo** (venía rojo desde v0.3.8, 7 releases): `tests/actualizar.test.mjs` había quedado viejo — mockeaba las tags de git, pero el tool `actualizar` se refactorizó para leer la última versión con `fetch()` al archivo `VERSION`. El test ahora mockea `fetch` y la versión instalada del manifest, preservando la intención (comparación numérica de versiones) y sumando el caso "sin internet". Suite: 10/10.
+
 ## [0.3.13] — 2026-07-26
 
 El bot abre los circuitos en el navegador, solo.
