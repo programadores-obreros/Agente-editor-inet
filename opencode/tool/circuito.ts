@@ -22,6 +22,29 @@ function plantillaPath(nombre: string): string {
   return join(cfg, "opencode", "tecniabot-web", nombre)
 }
 
+// Abre el HTML generado en el navegador por defecto del sistema, sin bloquear la
+// tool (proceso detached, best-effort). Pensado para el docente NO técnico: no
+// tiene que buscar el archivo ni hacer doble clic — se le abre solo.
+// Devuelve true si lo lanzó sin excepción, false si falló (nunca rompe la tool).
+function abrirEnNavegador(archivo: string): boolean {
+  try {
+    // Windows: `start "" "<archivo>"` — el "" es el título vacío de start (si no,
+    // start toma la ruta entre comillas como título y no abre nada). El archivo va
+    // como elemento del array: Bun lo quotea solo aunque tenga espacios (Tecnia Bot\...).
+    const cmd =
+      process.platform === "win32"
+        ? ["cmd", "/c", "start", "", archivo]
+        : process.platform === "darwin"
+          ? ["open", archivo]
+          : ["xdg-open", archivo]
+    const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
+    proc.unref()
+    return true
+  } catch {
+    return false
+  }
+}
+
 // CSS común a todos los circuitos.
 const ESTILO = `
   /* Design system Tecnia Lab — marca violeta. Solo colores/tipografia/acentos: el layout no se toca. */
@@ -1172,8 +1195,14 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       .number()
       .optional()
       .describe("SOLO para armador libre con un sensor + actuador (ej: dht22+led): el valor a partir del cual el actuador se activa. Ej: si piden 'que el LED prenda a 20 grados', pasá umbral=20. Sin esto usa el default del sensor (temperatura 35, distancia 20cm, etc.). Se muestra en pantalla ('se activa con ≥ 20 °C')."),
+    abrir: tool.schema
+      .boolean()
+      .optional()
+      .describe("Si es true (default), abre el HTML generado en el navegador por defecto automáticamente. Pasá false para solo escribir el archivo sin abrirlo."),
   },
   async execute(args, ctx) {
+    // Por defecto abrimos el HTML en el navegador (default true). Solo se omite con abrir:false.
+    const abrir = args.abrir !== false
     const bundle = bundlePath()
     if (!existsSync(bundle)) {
       return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Tecnia Bot con el instalador para que copie la biblioteca visual."
@@ -1219,10 +1248,12 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       const extra2 = extraPath()
       const extraLocal2 = join(ctx.directory, "componentes-extra.js")
       if (existsSync(extra2) && !existsSync(extraLocal2)) await Bun.write(extraLocal2, Bun.file(extra2))
+      const abierto = abrir && abrirEnNavegador(archivo)
       return `Listo! Generé el explicador interactivo de la protoboard.
 
-**Abrilo en tu navegador (doble clic o pegá esto):**
-file://${archivo}
+${abierto
+  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`file://${archivo}\`)`
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\nfile://${archivo}`}
 
 Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los que están conectados con él por dentro. Así se entiende de una qué se une con qué: las filas, los buses y el canal del medio.`
     } else if (args.circuito && PLANTILLAS_PROTOBOARD[args.circuito]) {
@@ -1238,10 +1269,12 @@ Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los 
       await Bun.write(archivo, readFileSync(plantillaFile, "utf8"))
       const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
       if (!existsSync(bundleLocal)) await Bun.write(bundleLocal, Bun.file(bundle))
+      const abierto = abrir && abrirEnNavegador(archivo)
       return `Listo! Generé un circuito montado sobre una protoboard: ${def.que}.
 
-**Abrilo en tu navegador (doble clic o pegá esto):**
-file://${archivo}
+${abierto
+  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`file://${archivo}\`)`
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\nfile://${archivo}`}
 
 Vas a ver el circuito armado en la placa de pruebas, con los componentes reales (Wokwi) y los cables de colores conectados a los agujeros.`
     } else if (args.circuito) {
@@ -1286,10 +1319,12 @@ Vas a ver el circuito armado en la placa de pruebas, con los componentes reales 
       await Bun.write(extraLocal, Bun.file(extra))
     }
 
+    const abierto = abrir && abrirEnNavegador(archivo)
     return `Listo! Generé el circuito visual y animado.
 
-**Abrilo en tu navegador (doble clic o pegá esto):**
-file://${archivo}
+${abierto
+  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`file://${archivo}\`)`
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\nfile://${archivo}`}
 
 Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
 (Se copió la biblioteca de piezas al lado del archivo — no la borres.)`
