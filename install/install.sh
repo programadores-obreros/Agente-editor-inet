@@ -62,11 +62,13 @@ if [ ! -f "$PERFIL_FILE" ]; then
   cat > "$PERFIL_FILE" <<'EOF'
 # Perfil del usuario de Tecnia Bot
 <!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos.
-     Modo "aula" = compu compartida: el Nombre NO se guarda (privacidad de menores). -->
+     Modo "aula" = compu compartida por muchos: el Nombre NO se guarda (privacidad de menores).
+     Modo "grupo" = pocas personas conocidas: se guarda a cada una en "## Personas". -->
 
 - Modo: (sin definir)
 - Nombre: (sin definir)
 - Rol: (sin definir)
+- Género: (sin definir)
 - Placa preferida: (sin definir)
 EOF
   echo "  [OK] Perfil de usuario creado (vacío) en $PERFIL_FILE"

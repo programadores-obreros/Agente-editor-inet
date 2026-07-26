@@ -1,8 +1,10 @@
 // Smoke tests del tool `perfil` (opencode/tool/perfil.ts).
 // Corre con: node --test tests/*.test.mjs   (Node puro, sin instalar nada).
 //
-// El foco es la PRIVACIDAD DE MENORES: en modo "aula" (compu compartida) el
-// nombre NUNCA debe quedar persistido en disco. En "personal" si.
+// Cubre los TRES modos y la PRIVACIDAD DE MENORES:
+// - personal: guarda nombre + genero.
+// - aula (compartida por muchos): NUNCA guarda nombre ni genero.
+// - grupo (pocas personas conocidas): recuerda a cada una (nombre, rol, genero).
 
 import { test, before, beforeEach } from "node:test"
 import assert from "node:assert/strict"
@@ -18,7 +20,6 @@ const perfilFile = join(cfg, "opencode", "tecnia-perfil.md")
 
 let mod
 
-// Bun.write real: escribe al disco con fs, asi leerPerfil (fs.readFileSync) lo ve.
 globalThis.Bun = { write: async (ruta, contenido) => writeFileSync(ruta, contenido) }
 
 before(async () => {
@@ -41,32 +42,47 @@ beforeEach(() => {
   if (existsSync(perfilFile)) rmSync(perfilFile)
 })
 
-test("personal: el nombre SI se persiste", async () => {
-  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Marta", rol: "alumno" }, {})
-  const guardado = readFileSync(perfilFile, "utf8")
-  assert.match(guardado, /^-\s*Nombre:\s*Marta\s*$/m, "en personal el nombre debe quedar guardado")
+test("personal: nombre y género SI se persisten", async () => {
+  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Marta", genero: "mujer", rol: "docente" }, {})
+  const g = readFileSync(perfilFile, "utf8")
+  assert.match(g, /^-\s*Nombre:\s*Marta\s*$/m, "el nombre debe quedar guardado")
+  assert.match(g, /^-\s*Género:\s*mujer\s*$/m, "el género debe quedar guardado")
 })
 
-test("aula: el nombre NO se persiste (privacidad de menores)", async () => {
-  await mod.execute({ accion: "guardar", modo: "aula", nombre: "Juan", rol: "alumno", placa: "ESP32" }, {})
-  const guardado = readFileSync(perfilFile, "utf8")
-  assert.doesNotMatch(guardado, /Juan/, "en aula el nombre NUNCA debe quedar en disco")
-  assert.match(guardado, /^-\s*Nombre:\s*\(sin definir\)\s*$/m, "el nombre queda (sin definir)")
-  // Pero rol y placa (no identifican a nadie) si se conservan.
-  assert.match(guardado, /^-\s*Rol:\s*alumno\s*$/m, "el rol si se conserva")
-  assert.match(guardado, /^-\s*Placa preferida:\s*ESP32\s*$/m, "la placa si se conserva")
+test("aula: ni nombre ni género se persisten (privacidad de menores)", async () => {
+  await mod.execute({ accion: "guardar", modo: "aula", nombre: "Juan", genero: "varón", rol: "alumno", placa: "ESP32" }, {})
+  const g = readFileSync(perfilFile, "utf8")
+  assert.doesNotMatch(g, /Juan/, "en aula el nombre NUNCA va a disco")
+  assert.match(g, /^-\s*Nombre:\s*\(sin definir\)\s*$/m)
+  assert.match(g, /^-\s*Género:\s*\(sin definir\)\s*$/m, "en aula el género tampoco")
+  assert.match(g, /^-\s*Rol:\s*alumno\s*$/m, "el rol si se conserva")
 })
 
 test("cambiar a aula BORRA un nombre viejo ya persistido", async () => {
-  // Primero personal con nombre...
-  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Sofia" }, {})
-  assert.match(readFileSync(perfilFile, "utf8"), /Sofia/, "quedo guardado en personal")
-  // ...y despues la compu pasa a ser del aula: el nombre viejo se limpia.
+  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Sofia", genero: "mujer" }, {})
+  assert.match(readFileSync(perfilFile, "utf8"), /Sofia/)
   await mod.execute({ accion: "guardar", modo: "aula" }, {})
   assert.doesNotMatch(readFileSync(perfilFile, "utf8"), /Sofia/, "al pasar a aula, el nombre viejo se borra")
 })
 
-test("leer: perfil vacio guia a preguntar aula/personal", async () => {
+test("grupo: recuerda a VARIAS personas, cada una con su género", async () => {
+  await mod.execute({ accion: "guardar", modo: "grupo", persona: "Marta", rol: "docente", genero: "mujer" }, {})
+  await mod.execute({ accion: "guardar", modo: "grupo", persona: "Juan", rol: "alumno", genero: "varón" }, {})
+  const g = readFileSync(perfilFile, "utf8")
+  assert.match(g, /##\s*Personas/, "debe existir la sección Personas")
+  assert.match(g, /-\s*Marta\s*\|\s*docente\s*\|\s*mujer/, "Marta guardada con su género")
+  assert.match(g, /-\s*Juan\s*\|\s*alumno\s*\|\s*varón/, "Juan guardado con su género")
   const r = await mod.execute({ accion: "leer" }, {})
-  assert.match(r, /aula.*personal|personal.*aula/is, "deberia sugerir preguntar el modo")
+  assert.match(r, /Marta/)
+  assert.match(r, /Juan/)
+})
+
+test("grupo: actualizar a la misma persona NO la duplica", async () => {
+  await mod.execute({ accion: "guardar", modo: "grupo", persona: "Marta", rol: "docente", genero: "mujer" }, {})
+  await mod.execute({ accion: "guardar", modo: "grupo", persona: "marta", placa: "ESP32" }, {}) // misma persona, otro caso
+  const g = readFileSync(perfilFile, "utf8")
+  const cuenta = (g.match(/^-\s*marta\s*\|/gim) || []).length
+  assert.equal(cuenta, 1, "Marta debe aparecer una sola vez")
+  assert.match(g, /mujer/, "conserva el género del guardado anterior")
+  assert.match(g, /ESP32/, "y suma la placa nueva")
 })
