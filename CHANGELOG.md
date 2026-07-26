@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.20] — 2026-07-26
+
+Chequeo de seguridad antes de prender: que no se queme ninguna placa.
+
+### Nuevo
+- **Checklist de seguridad (nuevo skill `checklist-seguridad`)**: antes de dar corriente o cargar código, el bot te hace un chequeo **corto y a medida** de tu circuito — los **3.3V del ESP32** (el error que más quema placas), la polaridad del LED, la resistencia en serie, el GND común, cables pelados, señales de 5V entrando a un GPIO, los strapping pins. Es **preventivo** (la otra cara del skill `gotchas-hardware`, que es para cuando algo ya falló). Se activa cuando estás por prender, cargar código, o preguntás "¿puedo conectarlo?".
+
 ## [0.3.19] — 2026-07-26
 
 El bot también pregunta el género en los perfiles que ya existían.
