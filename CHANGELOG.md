@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.16] — 2026-07-26
+
+En la compu del aula, el bot ya no guarda el nombre de los chicos.
+
+### Nuevo / Cambiado
+- **Modo aula / personal (privacidad del nombre)**: en el primer arranque, el bot pregunta si la computadora es **del aula (compartida)** o **personal**. En modo **aula** el nombre es efímero — se usa con calidez en la charla pero **NUNCA se guarda a disco** (Ley 25.326: no persistimos datos personales de menores en la cuenta compartida de la escuela); el rol y la placa, que no identifican a nadie, sí se conservan. En modo **personal** funciona como antes (recuerda el nombre, no vuelve a preguntar). Si una compu pasa a ser del aula, un nombre viejo que hubiera quedado guardado **se borra**. Migración automática: los installs existentes preguntan el modo una vez en el próximo arranque. Con **4 smoke tests** nuevos (incluidos los de privacidad).
+
 ## [0.3.15] — 2026-07-26
 
 El bot recuerda por dónde va cada compu — sin guardar datos personales de ningún alumno.
