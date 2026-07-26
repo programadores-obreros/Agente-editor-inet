@@ -88,7 +88,11 @@ const ESTILO = `
   .conex .label .nom{font:600 12.5px 'Segoe UI',system-ui,sans-serif;color:#2c3e50;}
   .conex .label .gpio{font:500 11px 'Segoe UI',system-ui,sans-serif;color:#7a8794;}
   /* el cable: SIN coordenadas, crece con flex hasta la pieza. Imposible desalinear. */
-  .conex .cable{flex:1 1 auto;min-width:18px;height:4px;border-radius:99px;background:var(--c);margin-left:6px;}
+  .conex .cable{flex:1 1 auto;min-width:14px;height:4px;border-radius:99px;background:var(--c);margin-left:6px;}
+  /* resistencia en serie DIBUJADA en el medio del cable: cuerpo beige (como la real),
+     el cable de color entra y sale de ella → se ve la SERIE. Sin bandas de colores
+     (dibujar bandas incorrectas mentiria: un docente podria leerlas). */
+  .conex .res{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;height:16px;padding:0 7px;margin-left:6px;background:linear-gradient(180deg,#f0ddb6,#e2c78d);border:1px solid #bda269;border-radius:4px;font:600 9.5px 'Segoe UI',system-ui,sans-serif;color:#5a481f;letter-spacing:.2px;white-space:nowrap;box-shadow:0 1px 1.5px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.45);}
   .pieza-cell{display:flex;align-items:center;min-height:80px;justify-content:flex-start;padding-left:4px;}
 `
 
@@ -912,10 +916,18 @@ function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
     const conex = def.pines
       .map((pin) => {
         const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
+        // R en serie: solo cuando "(con XΩ)" CIERRA la etiqueta (LED, RGB). El caso
+        // "7 pines (cada segmento con 330Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
+        const conR = pin.clase !== "fijo" && destino.match(/^(.*?)\s*\(con\s*([\d.]+\s*[kKmM]?)\s*Ω\)\s*$/)
+        const etiqueta = conR ? conR[1] : destino
+        const valorR = conR ? conR[2].replace(/\s+/g, "") : null
+        const cable = valorR
+          ? `<span class="cable"></span><span class="res" title="Resistencia de ${valorR}Ω en serie">${valorR}Ω</span><span class="cable"></span>`
+          : `<span class="cable"></span>`
         return `          <div class="pin" style="--c:${pin.color}">
             <span class="nodo"></span>
-            <span class="label"><span class="nom">${pin.nombre}</span><span class="gpio">${destino}</span></span>
-            <span class="cable"></span>
+            <span class="label"><span class="nom">${pin.nombre}</span><span class="gpio">${etiqueta}</span></span>
+            ${cable}
           </div>`
       })
       .join("\n")
