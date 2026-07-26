@@ -16,13 +16,20 @@ const OUT = join(os.tmpdir(), "tecniabot-actualizar-test")
 
 let mod
 
-// Permite a cada test decidir qué "devuelve git ls-remote".
-let salidaGit = ""
-function setBun(salida) {
-  salidaGit = salida
-  globalThis.Bun = {
-    spawn: () => ({ exited: Promise.resolve(0), stdout: salidaGit, stderr: "" }),
-  }
+// La última versión publicada la lee actualizar.ts con fetch() al archivo VERSION de
+// raw.githubusercontent (ver ultimaVersionPublicada). Cada test decide qué devuelve.
+function setPublicada(v, ok = true) {
+  globalThis.fetch = async () => ({ ok, text: async () => v })
+}
+// Stub inofensivo de Bun: actualizar.ts lo usa SOLO en el modo ACTUALIZAR (no en verificar).
+globalThis.Bun = { spawn: () => ({ exited: Promise.resolve(0), stdout: "", stderr: "" }) }
+// Reescribe el manifest con la versión INSTALADA que el test quiera simular.
+let cfgDir
+function setInstalada(v) {
+  writeFileSync(
+    join(cfgDir, "opencode", "tecnia-bot.manifest"),
+    `# manifest\nversion=${v}\nrepo_dir=/tmp/x\nagent/tecnia-bot.md\n`,
+  )
 }
 
 before(async () => {
@@ -34,7 +41,7 @@ before(async () => {
     "# manifest\nversion=0.1.0\nrepo_dir=/tmp/x\nagent/tecnia-bot.md\n",
   )
   process.env.XDG_CONFIG_HOME = cfg
-  setBun("")
+  cfgDir = cfg
 
   mkdirSync(OUT, { recursive: true })
   writeFileSync(
@@ -49,20 +56,30 @@ before(async () => {
 })
 
 test("verificar: cuando la instalada es la última, dice que está al día", async () => {
-  setBun("abc\trefs/tags/v0.1.0\n")
+  setInstalada("0.1.0")
+  setPublicada("0.1.0")
   const r = await mod.execute({ verificar: true }, {})
   assert.match(r, /al día/i, "debería decir que está al día")
 })
 
 test("verificar: cuando hay una versión más nueva, la detecta", async () => {
-  setBun("a\trefs/tags/v0.1.0\nb\trefs/tags/v0.2.0\nc\trefs/tags/v0.1.5\n")
+  setInstalada("0.1.0")
+  setPublicada("0.2.0")
   const r = await mod.execute({ verificar: true }, {})
   assert.match(r, /v0\.2\.0/, "debería nombrar la versión nueva 0.2.0")
   assert.match(r, /actualizar/i, "debería sugerir actualizar")
 })
 
 test("verificar: no confunde 0.10.0 con 0.2.0 (compara numérico, no texto)", async () => {
-  setBun("a\trefs/tags/v0.2.0\nb\trefs/tags/v0.10.0\n")
+  setInstalada("0.2.0")
+  setPublicada("0.10.0")
   const r = await mod.execute({ verificar: true }, {})
   assert.match(r, /v0\.10\.0/, "0.10.0 es más nueva que 0.2.0 (comparación numérica)")
+})
+
+test("verificar: si no puede leer la versión publicada, lo dice sin romper", async () => {
+  setInstalada("0.1.0")
+  setPublicada("", false) // fetch responde !ok → ultimaVersionPublicada devuelve null
+  const r = await mod.execute({ verificar: true }, {})
+  assert.match(r, /no pude verificar/i, "debería avisar que no pudo verificar, sin romper")
 })
