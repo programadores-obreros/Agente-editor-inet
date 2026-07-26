@@ -2,6 +2,17 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.12] — 2026-07-25
+
+Diagramas de circuito con identidad de marca + cables más claros.
+
+### Nuevo
+- **Design system violeta** en TODOS los circuitos (armador libre + las 2 protoboards realistas): barra de marca, badge, caja "¿Cómo funciona?", header de tabla y tipografía, consistentes. Los colores de cable se mantienen estándar (rojo/verde/GND negro = corrección técnica).
+- **Halo en los cables** de las protoboards realistas: donde se cruzan, cada cable "corta" al de abajo (técnica de mapa de subte) → se distinguen siempre, ningún cable se pierde. Clave para principiantes.
+
+### Nuevo (skill)
+- **Principios de diseño de esquemáticos** en el skill `circuitos-visuales`: sin cruces, resistencia en serie visible, colores estándar, claridad para principiantes.
+
 ## [0.3.11] — 2026-07-25
 
 Tecnia Bot se acuerda de vos entre sesiones.
