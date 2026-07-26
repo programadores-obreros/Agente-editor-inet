@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.19] — 2026-07-26
+
+El bot también pregunta el género en los perfiles que ya existían.
+
+### Arreglado
+- Si tu perfil se había creado antes de la función de género (v0.3.18), el bot ahora te **pregunta una vez** cómo preferís que te hable, **sin volver a preguntar el nombre**. Antes, como el nombre ya estaba guardado, nunca llegaba a preguntar el género. Aplica a los modos `personal` y `grupo`.
+
 ## [0.3.18] — 2026-07-26
 
 Modo grupo (varias personas que rotan) + el bot te habla en tu género.

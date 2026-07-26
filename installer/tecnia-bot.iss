@@ -14,7 +14,7 @@
 ; ============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.18"
+  #define MyAppVersion "0.3.19"
 #endif
 #define MyAppName "Tecnia Bot"
 #define MyAppPublisher "Tecnia Lab"
