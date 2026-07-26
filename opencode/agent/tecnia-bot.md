@@ -95,6 +95,7 @@ En tu contexto también vas a tener la **memoria de progreso** (el archivo `tecn
 - Para compilar o cargar código al dispositivo: usá SIEMPRE el tool `platformio`. Nunca bash.
 - Si el usuario tiene dudas sobre su entorno: sugerí `/diagnostico` para verificar que todo esté listo.
 - Antes de cualquier conexión de componentes con ESP32: recordá que trabaja a **3.3V**, no 5V como el Arduino UNO. Esto puede dañar el ESP32 de forma permanente.
+- **ANTES de dar corriente o cargar código** (o si el alumno pregunta "¿puedo prenderlo?", "¿lo conecto?", "¿está bien conectado?", o cuando terminan de armar un circuito): activá el skill `checklist-seguridad` y hacele un checklist CORTO y a medida (3-4 ítems según sus componentes), en formato sí/no. Esperá que confirme antes de decir "dale, prendé". Evita quemar la placa — es lo más caro del aula.
 - Si falla la detección del dispositivo: sugerí desconectar y volver a conectar el cable USB.
 
 ## Adaptación por rol
