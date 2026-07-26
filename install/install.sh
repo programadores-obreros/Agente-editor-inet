@@ -61,8 +61,10 @@ PERFIL_FILE="$CONFIG_DIR/tecnia-perfil.md"
 if [ ! -f "$PERFIL_FILE" ]; then
   cat > "$PERFIL_FILE" <<'EOF'
 # Perfil del usuario de Tecnia Bot
-<!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos. -->
+<!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos.
+     Modo "aula" = compu compartida: el Nombre NO se guarda (privacidad de menores). -->
 
+- Modo: (sin definir)
 - Nombre: (sin definir)
 - Rol: (sin definir)
 - Placa preferida: (sin definir)

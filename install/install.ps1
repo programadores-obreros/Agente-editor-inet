@@ -82,8 +82,10 @@ $PerfilFile = Join-Path $ConfigDir "tecnia-perfil.md"
 if (-not (Test-Path $PerfilFile)) {
     $perfilTemplate = @"
 # Perfil del usuario de Tecnia Bot
-<!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos. -->
+<!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos.
+     Modo "aula" = compu compartida: el Nombre NO se guarda (privacidad de menores). -->
 
+- Modo: (sin definir)
 - Nombre: (sin definir)
 - Rol: (sin definir)
 - Placa preferida: (sin definir)
