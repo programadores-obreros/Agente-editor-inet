@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.31] — 2026-07-27
+
+El link al sitio oficial abre en otra pestaña.
+
+### Arreglado
+- En el micro-sitio de `/ayuda`, el link **"Sitio ↗"** (y los del sitio oficial) ahora abren en una **pestaña nueva** en vez de reemplazar el manual — así no perdés dónde estabas. Los links internos (Inicio, Proyectos) siguen navegando en la misma ventana.
+
 ## [0.3.30] — 2026-07-27
 
 Más vida en el micro-sitio: ojos que te siguen, glow y partículas.
