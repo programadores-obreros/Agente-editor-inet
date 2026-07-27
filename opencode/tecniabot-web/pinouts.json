@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "descripcion": "Fuente canonica de pinouts de los proyectos INET. Los pines son la VERDAD del firmware (.ino) que corre en la placa. TODO deriva de aca: el circuito, el codigo, el skill proyectos-inet y la web. No editar a mano sin actualizar tambien el .ino correspondiente (un test lo valida).",
+    "verdad": "proyectos_inet/src/hardware/<slug>/<placa>/nivel-<nivel>/*.ino",
+    "campos": {
+      "rol": "nombre logico del pin = la constante del .ino (ej: const int VERDE = 16). Es el pegamento codigo<->diagrama.",
+      "componente": "etiqueta humana del componente/parte",
+      "pin": "pin fisico como string: 'GPIO16' (ESP32), '11' o 'A0' (UNO)",
+      "tipo": "senal | alimentacion | gnd | potencia",
+      "nota": "opcional: info critica atada al pin (ej: '330 en serie', 'con divisor de tension')"
+    }
+  },
+  "01-semaforizacion": {
+    "titulo": "Semaforo",
+    "esp32": {
+      "inicial": [
+        { "rol": "verde",    "componente": "LED verde",    "pin": "GPIO16", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "amarillo", "componente": "LED amarillo", "pin": "GPIO17", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "rojo",     "componente": "LED rojo",     "pin": "GPIO18", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "gnd",      "componente": "catodos de los 3 LEDs", "pin": "GND", "tipo": "gnd" }
+      ]
+    },
+    "uno": {
+      "inicial": [
+        { "rol": "verde",    "componente": "LED verde",    "pin": "11", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "amarillo", "componente": "LED amarillo", "pin": "12", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "rojo",     "componente": "LED rojo",     "pin": "13", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "gnd",      "componente": "catodos de los 3 LEDs", "pin": "GND", "tipo": "gnd" }
+      ]
+    }
+  }
+}

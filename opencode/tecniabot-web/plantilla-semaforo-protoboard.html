@@ -51,7 +51,7 @@
   <div class="grid2">
     <div>
       <div class="aviso">
-        <b>¿Cómo funciona?</b> Cada LED se maneja desde un pin distinto del ESP32 (<b>GPIO19</b>, <b>GPIO5</b>, <b>GPIO4</b>)
+        <b>¿Cómo funciona?</b> Cada LED se maneja desde un pin distinto del ESP32 (<b>GPIO16</b>, <b>GPIO17</b>, <b>GPIO18</b>)
         y SIEMPRE lleva su resistencia de <b>330&nbsp;Ω</b> en serie para limitar la corriente y no quemarlo.
         Todos los cátodos van al riel <b>&minus; (GND)</b>. El programa enciende uno por vez siguiendo la secuencia real:
         <b>verde&nbsp;→&nbsp;amarillo&nbsp;→&nbsp;rojo</b> y vuelve a empezar.
@@ -60,9 +60,9 @@
     </div>
     <table class="conx">
       <tr><th>LED</th><th>Pin ESP32</th><th>Conexión</th></tr>
-      <tr><td><span class="chip" style="background:#22a95b"></span>Verde</td><td>GPIO19</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
-      <tr><td><span class="chip" style="background:#e8b021"></span>Amarillo</td><td>GPIO5</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
-      <tr><td><span class="chip" style="background:#d94141"></span>Rojo</td><td>GPIO4</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#22a95b"></span>Verde</td><td>GPIO16</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#e8b021"></span>Amarillo</td><td>GPIO17</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#d94141"></span>Rojo</td><td>GPIO18</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
       <tr><td><span class="chip" style="background:#2b8cd6"></span>Cátodos (&minus;)</td><td>GND</td><td>Riel &minus; (azul)</td></tr>
       <tr><td><span class="chip" style="background:#2a2f36"></span>Alimentación GND</td><td>GND</td><td>ESP32 → riel &minus;</td></tr>
     </table>
@@ -156,9 +156,9 @@
 
   // ESP32 sin espejar: usamos los pines del borde DERECHO (el que mira a la placa)
   const esp=place('<wokwi-esp32-devkit-v1 id="esp32"></wokwi-esp32-devkit-v1>', 40, 96, 1);
-  const P_G19=esp.pin(101.3,72.2);   // GPIO19 -> verde
-  const P_G5 =esp.pin(101.3,91.3);   // GPIO5  -> amarillo
-  const P_G4 =esp.pin(101.3,120);    // GPIO4  -> rojo
+  const P_G16=esp.pin(101.3,72.2);   // GPIO16 -> verde  (canonico: pinouts.json / .ino)
+  const P_G17=esp.pin(101.3,91.3);   // GPIO17 -> amarillo
+  const P_G18=esp.pin(101.3,120);    // GPIO18 -> rojo
   const P_GND=esp.pin(101.3,149);    // GND.1
 
   /* ---------- CABLES + PATAS ---------- */
@@ -217,12 +217,12 @@
     return led;
   }
 
-  ledGroup(4,  'green',  cGRN, P_G19);
-  ledGroup(13, 'yellow', cYEL, P_G5);
-  ledGroup(22, 'red',    cRED, P_G4);
+  ledGroup(4,  'green',  cGRN, P_G16);
+  ledGroup(13, 'yellow', cYEL, P_G17);
+  ledGroup(22, 'red',    cRED, P_G18);
 
   // Etiquetas de pin sobre el ESP32 (los pines derechos quedan bien espaciados)
-  [[P_G19,'GPIO19'],[P_G5,'GPIO5'],[P_G4,'GPIO4'],[P_GND,'GND']].forEach(([pin,txt])=>{
+  [[P_G16,'GPIO16'],[P_G17,'GPIO17'],[P_G18,'GPIO18'],[P_GND,'GND']].forEach(([pin,txt])=>{
     label(txt,pin.x-66,pin.y-8,true);
   });
 
@@ -238,7 +238,7 @@
 
   /* ---------- LEYENDA ---------- */
   const legend=document.getElementById('legend');
-  [['#22a95b','GPIO19 → 330 Ω → LED verde'],['#e8b021','GPIO5 → 330 Ω → LED amarillo'],['#d94141','GPIO4 → 330 Ω → LED rojo'],['#2b8cd6','cátodos → riel −'],['#2a2f36','GND → riel −']]
+  [['#22a95b','GPIO16 → 330 Ω → LED verde'],['#e8b021','GPIO17 → 330 Ω → LED amarillo'],['#d94141','GPIO18 → 330 Ω → LED rojo'],['#2b8cd6','cátodos → riel −'],['#2a2f36','GND → riel −']]
     .forEach(([c,t])=>{const s=document.createElement('span');s.innerHTML='<span class="ln" style="background:'+c+'"></span>'+t;legend.appendChild(s);});
 
   /* ---------- ANIMACIÓN (secuencia del semáforo) ---------- */
