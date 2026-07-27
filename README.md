@@ -1,167 +1,198 @@
+<div align="center">
+
 # Tecnia Bot 🤖⚡
 
-Asistente educativo de IA para enseñar **Arduino y ESP32** en escuelas técnicas argentinas (programa INET).
+**Asistente educativo de IA para enseñar Arduino y ESP32 en escuelas técnicas argentinas (programa INET).**
 
-Pensado para **docentes y estudiantes con poca o nula experiencia** en programación embebida. Habla en español, explica el porqué antes del código, comenta cada línea y traduce los errores técnicos a un lenguaje que se entiende.
+Habla en español, explica el *porqué* antes del código, comenta cada línea y traduce los errores técnicos a un lenguaje que se entiende. Pensado para **docentes y estudiantes con poca o nula experiencia** — offline y de un doble clic.
 
----
+[![Versión](https://img.shields.io/github/v/release/programadores-obreros/Agente-editor-inet?label=versi%C3%B3n&color=6d28d9)](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)
+[![CI](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/ci.yml/badge.svg)](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/ci.yml)
+[![Instalador .exe](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/build-installer.yml/badge.svg)](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/build-installer.yml)
+![Plataformas](https://img.shields.io/badge/plataformas-Windows%20%C2%B7%20Linux%20%C2%B7%20macOS-0b7285)
+[![Licencia](https://img.shields.io/badge/licencia-GPLv3%20%2B%20CC%20BY--SA%204.0-blue)](#-licencia)
 
-## ¿Qué hace?
-
-- 🗣️ **Habla en español simple** — nada de jerga innecesaria, nunca asume que ya sabés
-- 🧑‍🏫 **Se adapta a vos** — pregunta si sos docente o alumno y ajusta cómo te explica
-- 🧠 **Se acuerda de vos** — te pregunta el nombre y el rol y te saluda por tu nombre, y **te habla en tu género** (varón, mujer o no binario). Se adapta a quién usa la compu: **personal** (una persona), **grupo** (pocas conocidas que rotan, recuerda a cada una) o **aula** (compartida por muchos: NO guarda nombres ni género, para no dejar datos personales de menores en la cuenta común de la escuela — Ley 25.326)
-- 📈 **Recuerda el progreso de la compu** — el nivel y los proyectos ya hechos en esa máquina, para retomar donde quedaron y ajustar cómo explica. Es memoria de la **compu/grupo, no de una persona**: no guarda nombres ni datos personales de menores (pensado para las PCs compartidas de la escuela)
-- 🎯 **Te guía un proyecto paso a paso** — materiales → concepto → cableado → código → seguridad → probar, un paso a la vez, y **recuerda en qué paso quedaste** para retomar exacto la próxima sesión (usa los 15 proyectos INET)
-- 💡 **Explica el porqué** antes de tirar código, y el código viene comentado línea por línea
-- 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat
-- ⚡ **Chequeo de seguridad antes de prender** — te hace repasar lo crítico (los 3.3V del ESP32, polaridad, cortos) antes de dar corriente, para no quemar la placa
-- 📟 **Abre el monitor serial en una ventana** — para ver los datos que manda la placa y mandarle teclas (ej: comandar un servo desde el teclado), sin escribir comandos ni saber en qué puerto está. [Guía](docs/monitor-serial.md)
-- 🧰 **Dibuja circuitos visuales** (piezas reales, interactivos, funcionan sin internet) y un explicador de la protoboard
-- 🖨️ **Arma hojas para el aula** — una hoja lista para imprimir con materiales + conexiones + código comentado; la abre en el navegador y con Ctrl+P la guardás como PDF o la imprimís para repartir (sin internet, sin instalar nada)
-- 🇦🇷 **Traduce los errores** de compilación del inglés a español, con la solución paso a paso
-- 🟣 **Marca propia** — al abrir, te recibe con la identidad de Tecnia Bot (no el logo genérico) y **arranca listo en el agente**, sin tener que buscarlo
-- 🔄 **Se actualiza solo** — `/actualizar` trae la última versión desde GitHub, y te **avisa al iniciar** si hay una nueva
-- ❓ **Manual de ayuda** — `/ayuda` te muestra un resumen de cómo usarlo y te abre un manual completo en el navegador (offline), pensado para arrancar sin saber nada
+</div>
 
 ---
 
-## ¿Cómo funciona?
+## ✨ ¿Qué hace?
 
-Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), siete herramientas (`platformio` para compilar/cargar, `circuito`s visuales, `imprimible` para hojas de aula, `ayuda` (manual de uso), `actualizar` la capa, `perfil` y `memoria`), catorce bases de conocimiento, los comandos `/diagnostico`, `/actualizar` y `/ayuda`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
+- 🗣️ **Habla en español simple** — nada de jerga innecesaria, nunca asume que ya sabés.
+- 🧑‍🏫 **Se adapta a vos** — pregunta si sos docente o alumno, y **te habla en tu género** (varón, mujer o no binario) con la concordancia correcta.
+- 🎯 **Te guía un proyecto paso a paso** — materiales → concepto → cableado → código → seguridad → probar, un paso a la vez, y **recuerda en qué paso quedaste** para retomar la próxima sesión.
+- 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat.
+- 🧰 **Dibuja circuitos visuales** con piezas reales (interactivos, funcionan sin internet) y un explicador de la protoboard.
+- 🖨️ **Arma hojas para el aula** — materiales + conexiones + código comentado, listas para imprimir (Ctrl+P → PDF).
+- ⚡ **Chequeo de seguridad antes de prender** — repasa lo crítico (los 3.3 V del ESP32, polaridad, cortos) para no quemar la placa.
+- 📟 **Abre el monitor serial en una ventana** — ver los datos de la placa y mandarle teclas, sin escribir comandos. [Guía](docs/monitor-serial.md)
+- 🇦🇷 **Traduce los errores** de compilación del inglés al español, con la solución paso a paso.
+- ❓ **Manual de ayuda** — `/ayuda` abre un micro-sitio de onboarding (offline) con ejemplos y el catálogo de los 15 proyectos.
 
-Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda disponible en **cualquier carpeta** donde abras OpenCode.
+### 🔒 Privacidad de menores (Ley 25.326)
+
+En las PCs de escuela una cuenta la comparten muchos chicos. Por eso Tecnia Bot distingue **tres modos**:
+
+| Modo | Quién usa la compu | ¿Guarda el nombre? |
+|------|--------------------|--------------------|
+| **personal** | una sola persona | sí |
+| **grupo** | pocas personas conocidas que rotan | sí, a cada una |
+| **aula** | muchos alumnos anónimos | **no** — ni nombre ni género |
+
+El **progreso** (nivel, proyectos hechos) se guarda como *"lo hecho en esta compu"*, no ligado a un alumno identificado.
 
 ---
 
-## Instalación
+## 🛠️ Tecnologías
 
-> 🪟 **¿Usás Windows y no sos desarrollador?** Descargá el instalador **[`Instalar-Tecnia-Bot.exe`](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)** de la última versión, doble clic, y Siguiente → Siguiente → Finalizar. Instala TODO solo (OpenCode + PlatformIO + Tecnia Bot), sin permisos de administrador. Guía con capturas: [instalación en Windows](docs/instalacion-windows.md).
+Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuando ya existe algo bueno.
 
-### Paso 1 — Descargá el proyecto
+| Tecnología | Para qué |
+|------------|----------|
+| **[OpenCode](https://opencode.ai)** | La plataforma de agente sobre la que se monta la capa educativa (MIT). |
+| **DeepSeek V4 Flash** (gratis) | El modelo de lenguaje del agente (`opencode/deepseek-v4-flash-free`). |
+| **[Bun](https://bun.sh)** | Runtime de OpenCode: las herramientas del agente corren sobre Bun. |
+| **TypeScript** | Las 7 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ayuda`, `actualizar`, `perfil`, `memoria`). |
+| **[PlatformIO](https://platformio.org)** | Compila y carga el firmware a la placa real. |
+| **Arduino UNO / ESP32** | El hardware objetivo del programa INET. |
+| **[Wokwi Elements](https://github.com/wokwi/wokwi-elements)** (MIT) | Las piezas realistas de los circuitos visuales. |
+| **HTML · CSS · JS puro** | El micro-sitio de ayuda y los circuitos — **offline, sin framework ni CDN** (funciona con `file://`). |
+| **[Inno Setup](https://jrsoftware.org/isinfo.php)** | El instalador `.exe` de Windows (un doble clic, sin admin). |
+| **[Scoop](https://scoop.sh)** | Gestor de paquetes que usa el bootstrap en Windows para instalar todo sin permisos de administrador. |
+| **Node.js** (`node --test`) | Los smoke tests corren con Node puro, sin dependencias. |
+| **GitHub Actions** | CI (tests en cada push) + build del `.exe` en cada tag. |
 
-Si tenés **git**:
-```bash
-git clone https://github.com/programadores-obreros/Agente-editor-inet.git
-cd Agente-editor-inet
-```
+---
 
-Si no tenés git: entrá a [la página del proyecto](https://github.com/programadores-obreros/Agente-editor-inet), tocá el botón verde **`Code` → `Download ZIP`**, descomprimí, y abrí una terminal dentro de esa carpeta.
+## 🚀 Instalación
 
-### Paso 2 — Instalá
+> 🪟 **¿Usás Windows y no sos desarrollador?** Descargá **[`Instalar-Tecnia-Bot.exe`](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)** de la última versión → doble clic → Siguiente → Siguiente → Finalizar. Instala TODO solo (OpenCode + PlatformIO + Tecnia Bot), **sin permisos de administrador**. Guía con capturas: [instalación en Windows](docs/instalacion-windows.md).
 
 ### ⭐ Instalación fácil (recomendada)
 
-Un solo comando instala **todo**: OpenCode + PlatformIO + Tecnia Bot. No necesitás instalar nada antes, y en Windows **no hace falta permiso de administrador** (ideal para las PCs de la escuela).
+Un solo comando instala **todo**: OpenCode + PlatformIO + Tecnia Bot. El bootstrap detecta lo que ya tengas y solo instala lo que falte.
 
-**Linux / macOS:**
 ```bash
+# Linux / macOS
 bash install/bootstrap.sh
 ```
-
-**Windows** (clic derecho → "Ejecutar con PowerShell", o en una terminal):
 ```powershell
+# Windows (clic derecho → "Ejecutar con PowerShell", o en una terminal)
 powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 ```
 
-El bootstrap detecta lo que ya tengas instalado y solo instala lo que falte.
-
-> 📖 Guías detalladas paso a paso (incluye drivers USB y permisos del puerto serial):
-> [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md)
+> 📖 Guías paso a paso (drivers USB + permisos del puerto serial): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md)
 
 ### 🔧 Instalación manual (avanzada)
 
-Si ya tenés **OpenCode** (https://opencode.ai) y **PlatformIO Core** instalados, podés copiar solo la capa de Tecnia Bot:
+Si ya tenés **OpenCode** y **PlatformIO Core**, copiá solo la capa de Tecnia Bot:
 
 ```bash
-bash install/install.sh         # Linux / macOS
-```
-```powershell
+bash install/install.sh                                        # Linux / macOS
 powershell -ExecutionPolicy Bypass -File install\install.ps1   # Windows
 ```
 
+La capa se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda disponible en **cualquier carpeta** donde abras OpenCode.
+
 ---
 
-## Usar Tecnia Bot
+## 💻 Usar Tecnia Bot
 
-1. Abrí una terminal en cualquier carpeta
-2. Escribí `opencode`
-3. **Ya arranca en Tecnia Bot** (no hace falta apretar Tab) — vas a ver su logo violeta
-4. Escribí "hola" y dejate guiar
+1. Abrí una terminal en cualquier carpeta.
+2. Escribí `opencode`.
+3. **Ya arranca en Tecnia Bot** (no hace falta apretar Tab) — vas a ver su logo violeta.
+4. Escribí `hola` y dejate guiar.
 
 Probá:
-- *"¿cómo prendo un LED con Arduino?"* — te explica el concepto y te da el código comentado
-- *"armame el circuito de riego con higrómetro, relé y bomba"* — te dibuja un circuito visual interactivo
-- *"mostrame cómo funciona el protoboard"* — te abre el explicador interactivo de la placa
-- *"abrí el monitor serial"* — te abre una ventana para ver los datos de la placa y comandarla con el teclado ([guía](docs/monitor-serial.md))
-- *`/ayuda`* — un resumen de cómo usarlo + el manual completo en el navegador (ideal si recién arrancás)
-- *`/diagnostico`* — verifica que tu entorno esté listo (OpenCode, PlatformIO, la placa)
-- *`/actualizar`* — trae la última versión de Tecnia Bot desde GitHub (o preguntale *"¿qué versión tengo?"* para solo chequear)
+
+- *"¿cómo prendo un LED con Arduino?"* — te explica el concepto y te da el código comentado.
+- *"quiero armar el semáforo paso a paso"* — te guía el proyecto completo y recuerda dónde quedaste.
+- *"armame el circuito de riego con higrómetro, relé y bomba"* — te dibuja un circuito visual interactivo.
+- *"abrí el monitor serial"* — ventana para ver los datos de la placa y comandarla con el teclado.
+- `/ayuda` — resumen de uso + manual/onboarding en el navegador.
+- `/diagnostico` — verifica tu entorno (OpenCode, PlatformIO, la placa).
+- `/actualizar` — trae la última versión desde GitHub.
 
 ---
 
-## Estructura del repo
+## 🧩 ¿Cómo funciona?
+
+Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https://opencode.ai)** — no lo reemplaza ni lo modifica. Agrega:
+
+- **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
+- **7 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género) y `memoria` (progreso de la compu).
+- **14 bases de conocimiento** (skills) — ver abajo.
+- **3 comandos** — `/diagnostico`, `/actualizar`, `/ayuda`.
+- **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
+
+### Los 15 proyectos INET
+
+El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Digitales / INET-EDUCAR): cada uno con sus niveles, pinout exacto UNO/ESP32, cableado, código clave y *gotchas* verificados. Así el bot guía cualquiera de los 15 sin depender de internet.
+
+**Los 14 skills:** `arduino` · `esp32` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `proyectos-inet` · `proyecto-guiado`
+
+---
+
+## 📁 Estructura del repo
 
 ```
-Agente-editor-inet/
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
-│   ├── tool/               # Herramientas: platformio (compilar/cargar), circuito (visuales), imprimible (hojas de aula), perfil, memoria, actualizar
-│   ├── plugins/            # tecnia-logo.tsx: marca en el splash (logo TECNIA BOT) + aviso de versión nueva
+│   ├── tool/               # 7 herramientas .ts (platformio, circuito, imprimible, ayuda, actualizar, perfil, memoria)
+│   ├── skills/             # 14 bases de conocimiento
+│   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
+│   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
-│   ├── skills/             # 14 bases de conocimiento (ver abajo)
-│   ├── command/            # Comandos: /diagnostico y /actualizar
-│   ├── tecniabot-web/      # Biblioteca visual: piezas Wokwi + componentes propios (para los circuitos)
-│   └── env.d.ts            # Tipos de ambiente (runtime Bun de OpenCode)
-├── install/                # Instaladores: bootstrap.{sh,ps1} (todo-en-uno) e install.{sh,ps1} (solo la capa)
-├── tests/                  # Smoke tests (corren con Node puro, sin instalar nada)
-├── docs/                   # Guías de instalación + capturas del producto
+│   └── tecniabot-web/      # Biblioteca visual (piezas Wokwi), pinouts.json y el micro-sitio de /ayuda (sitio/)
+├── install/                # bootstrap.{sh,ps1} (todo-en-uno) e install.{sh,ps1} (solo la capa)
+├── installer/              # tecnia-bot.iss (Inno Setup) + branding del .exe
+├── tests/                  # Smoke tests (Node puro, sin dependencias)
+├── docs/                   # Guías de instalación + capturas
 ├── ejemplos/               # Sketches de ejemplo (blink, servo-teclado — UNO y ESP32)
-├── tecnia-bot.md           # Brief pedagógico (la visión del proyecto)
-├── brief-web.md            # Brief para maquetar la web oficial
-├── package.json            # Versión, scripts de test/typecheck
-└── .github/workflows/      # CI: corre los tests en cada push
+└── .github/workflows/      # CI (tests) + build del .exe
 ```
-
-**Los 14 skills** (bases de conocimiento del agente): `arduino`, `esp32`, `sensores`, `actuadores`,
-`modulos-avanzados`, `errores-comunes`, `gotchas-hardware`, `checklist-seguridad`, `diagramas-conexion`,
-`circuitos-visuales`, `comunicacion-serial`, `librerias`, `proyectos-inet`, `proyecto-guiado`.
-
-El skill `proyectos-inet` es el conocimiento de los **15 proyectos INET refactorizados** (Saberes
-Digitales / INET-EDUCAR): cada proyecto con sus niveles, pinout exacto UNO/ESP32, cableado, código
-clave y gotchas verificados. Así el bot guía a un docente o alumno en cualquiera de los 15 proyectos
-sin depender de la web.
 
 ---
 
-## Estado
+## 🧪 Desarrollo
 
-🚀 **v0.3.18.** Funciona de punta a punta en **Linux** y **Windows**: compila y carga a hardware real, arma circuitos visuales (con la **resistencia en serie dibujada en el cable**, no solo en texto), recuerda el **progreso de cada compu** (sin datos personales de menores), distingue **aula / grupo / personal** (en el aula no guarda nombres; en grupo recuerda a cada persona que rota) y **te habla en tu género** (varón, mujer o no binario), e instalador `.exe` de un doble clic. Ahora **abre el monitor serial en una ventana** (ver datos de la placa y comandarla con el teclado, sin escribir comandos) y deja **`pio` en el PATH** para usarlo en la terminal. Suma **identidad de marca en el splash** (logo TECNIA BOT + tema violeta) con la **versión siempre visible** y **tips propios en español** (reemplazan al tip confuso de OpenCode), **arranca en el agente** listo, y **auto-actualización**: `/actualizar` baja la última versión desde GitHub (sin re-descargar el `.exe`) y el splash **avisa al iniciar** si hay una nueva. Todo **validado end-to-end en Windows 10 real (OpenCode 1.18.3)**. Con smoke tests y CI.
-
-**Pendiente:**
-- Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con "Ejecutar de todas formas")
-- Prueba en aula real
-
-## Desarrollo
-
-Los tests corren con **Node puro** (no hace falta instalar dependencias):
+Los tests corren con **Node puro** (sin instalar dependencias) y también en cada push vía GitHub Actions:
 
 ```bash
-npm test          # o: node --test tests/*.test.mjs
+npm test        # o: node --test tests/*.test.mjs
 ```
 
-Se ejecutan también en cada push vía GitHub Actions. Para agregar un componente al armador
-o un skill nuevo, ver `opencode/tool/circuito.ts` (registro `COMPONENTES`) y `opencode/skills/`.
+Para agregar un componente al armador de circuitos o un skill nuevo: `opencode/tool/circuito.ts` (registro `COMPONENTES`) y `opencode/skills/`.
 
-## Licencia
+---
+
+## 📌 Estado
+
+🚀 **v0.3.32.** Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
+
+**Pendiente:**
+- Firmar el `.exe` (hoy sin firma → Windows muestra un aviso de SmartScreen que se saltea con *"Ejecutar de todas formas"*).
+- Prueba en aula real.
+
+---
+
+## 📄 Licencia
 
 Tecnia Bot usa **licencia doble**, según el tipo de archivo:
 
-- **Código** (`opencode/tool/*.ts`, `install/*.sh`, `install/*.ps1`) → **GPLv3** (ver [`LICENSE`](LICENSE))
-- **Contenido educativo** (skills, agente, comandos y docs en `.md`) → **CC BY-SA 4.0** (ver [`LICENSE-CONTENT`](LICENSE-CONTENT))
+- **Código** (`opencode/tool/*.ts`, `install/*.{sh,ps1}`) → **GPLv3** ([`LICENSE`](LICENSE)).
+- **Contenido educativo** (skills, agente, comandos, docs `.md`) → **CC BY-SA 4.0** ([`LICENSE-CONTENT`](LICENSE-CONTENT)).
 
-Ambas son licencias *copyleft*: si modificás y redistribuís Tecnia Bot, tenés que compartir tus cambios bajo la misma licencia. La idea es que las mejoras vuelvan a la comunidad educativa.
+Ambas son *copyleft*: si modificás y redistribuís, compartí tus cambios bajo la misma licencia — para que las mejoras vuelvan a la comunidad educativa.
 
-> Tecnia Bot se instala **junto a** OpenCode (que es MIT), no lo incluye ni lo modifica. Por eso las licencias no se pisan. GPLv3 es compatible con MIT, así que a futuro se puede integrar código de OpenCode si hace falta.
+> Tecnia Bot se instala **junto a** OpenCode (MIT), no lo incluye ni lo modifica; por eso las licencias no se pisan.
 
-**Piezas de terceros:** la biblioteca visual incluye [Wokwi Elements](https://github.com/wokwi/wokwi-elements) (licencia MIT), redistribuida en `opencode/tecniabot-web/` con su licencia original (`LICENSE-wokwi-elements`).
+**Terceros:** la biblioteca visual incluye [Wokwi Elements](https://github.com/wokwi/wokwi-elements) (MIT), redistribuida en `opencode/tecniabot-web/` con su licencia original (`LICENSE-wokwi-elements`).
+
+---
+
+<div align="center">
+
+**[Tecnia Lab](https://tecnialab.net.ar/tecnia-bot)** · Material educativo para escuelas técnicas argentinas · Programa INET
+
+</div>
