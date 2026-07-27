@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.28] — 2026-07-27
+
+Las animaciones del manual se ven aunque tengas "reducir movimiento".
+
+### Arreglado
+- **El manual se veía estático** si tu Windows o navegador tenía activado "reducir movimiento" (una opción de accesibilidad): yo apagaba TODA la animación por respetar esa preferencia. Ahora el **tipeo del terminal, el robot flotando y el cursor parpadeando siguen andando siempre** (son movimientos suaves, no invasivos); solo se suaviza la animación de entrada. Por eso no veías nada moverse.
+
 ## [0.3.27] — 2026-07-27
 
 El manual ahora tiene una consola que teclea sola.
