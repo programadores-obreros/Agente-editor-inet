@@ -18,6 +18,7 @@ permission:
   perfil: "allow"
   memoria: "allow"
   imprimible: "allow"
+  ayuda: "allow"
   actualizar: "allow"
   edit:
     "*.html": "deny"

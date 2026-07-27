@@ -22,12 +22,13 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 - 🇦🇷 **Traduce los errores** de compilación del inglés a español, con la solución paso a paso
 - 🟣 **Marca propia** — al abrir, te recibe con la identidad de Tecnia Bot (no el logo genérico) y **arranca listo en el agente**, sin tener que buscarlo
 - 🔄 **Se actualiza solo** — `/actualizar` trae la última versión desde GitHub, y te **avisa al iniciar** si hay una nueva
+- ❓ **Manual de ayuda** — `/ayuda` te muestra un resumen de cómo usarlo y te abre un manual completo en el navegador (offline), pensado para arrancar sin saber nada
 
 ---
 
 ## ¿Cómo funciona?
 
-Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), seis herramientas (`platformio` para compilar/cargar, `circuito`s visuales, `imprimible` para hojas de aula, `actualizar` la capa, `perfil` y `memoria`), catorce bases de conocimiento, los comandos `/diagnostico` y `/actualizar`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
+Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), siete herramientas (`platformio` para compilar/cargar, `circuito`s visuales, `imprimible` para hojas de aula, `ayuda` (manual de uso), `actualizar` la capa, `perfil` y `memoria`), catorce bases de conocimiento, los comandos `/diagnostico`, `/actualizar` y `/ayuda`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
 
 Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda disponible en **cualquier carpeta** donde abras OpenCode.
 
@@ -93,6 +94,7 @@ Probá:
 - *"armame el circuito de riego con higrómetro, relé y bomba"* — te dibuja un circuito visual interactivo
 - *"mostrame cómo funciona el protoboard"* — te abre el explicador interactivo de la placa
 - *"abrí el monitor serial"* — te abre una ventana para ver los datos de la placa y comandarla con el teclado ([guía](docs/monitor-serial.md))
+- *`/ayuda`* — un resumen de cómo usarlo + el manual completo en el navegador (ideal si recién arrancás)
 - *`/diagnostico`* — verifica que tu entorno esté listo (OpenCode, PlatformIO, la placa)
 - *`/actualizar`* — trae la última versión de Tecnia Bot desde GitHub (o preguntale *"¿qué versión tengo?"* para solo chequear)
 

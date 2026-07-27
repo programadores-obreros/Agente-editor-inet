@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tecnia Bot — Manual de uso</title>
+<style>
+  :root{
+    --violeta:#6d28d9; --violeta-claro:#f3effc; --tinta:#1f2430; --gris:#5b6472;
+    --linea:#e6e8ec; --fondo:#f5f4f9; --tarjeta:#ffffff;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --tinta:#e7e9ee; --gris:#a2abbb; --linea:#2a2f3a; --fondo:#14161c; --tarjeta:#1b1e26; --violeta-claro:#241d3a; }
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font:16px/1.6 'Segoe UI',system-ui,-apple-system,sans-serif; color:var(--tinta); background:var(--fondo); }
+  .wrap{ max-width:820px; margin:0 auto; padding:0 20px 60px; }
+  header{ background:linear-gradient(135deg,var(--violeta),#8b5cf6); color:#fff; padding:34px 20px 30px; text-align:center; }
+  header .logo{ font-weight:800; font-size:30px; letter-spacing:2px; }
+  header .tag{ opacity:.9; margin-top:4px; font-size:15px; }
+  header .sub{ margin-top:14px; font-size:15px; opacity:.95; }
+  h2{ color:var(--violeta); font-size:19px; margin:34px 0 12px; display:flex; align-items:center; gap:9px; }
+  h2 .n{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; background:var(--violeta); color:#fff; font-size:14px; font-weight:700; flex:0 0 auto; }
+  p{ margin:8px 0; }
+  .card{ background:var(--tarjeta); border:1px solid var(--linea); border-radius:12px; padding:16px 18px; margin:10px 0; }
+  .ej{ display:grid; grid-template-columns:1fr; gap:10px; }
+  .ej .item{ background:var(--tarjeta); border:1px solid var(--linea); border-left:4px solid var(--violeta); border-radius:8px; padding:12px 15px; }
+  .ej .item b{ color:var(--tinta); }
+  .ej .item .prompt{ display:inline-block; margin-top:5px; font:14px/1.4 'Cascadia Code',Consolas,monospace; color:var(--violeta); background:var(--violeta-claro); padding:3px 9px; border-radius:6px; }
+  code{ font:14px 'Cascadia Code',Consolas,monospace; background:var(--violeta-claro); color:var(--violeta); padding:2px 7px; border-radius:5px; }
+  ul{ margin:8px 0; padding-left:22px; } li{ margin:5px 0; }
+  .tip{ background:var(--violeta-claro); border-radius:10px; padding:14px 18px; margin:14px 0; font-size:15px; }
+  footer{ text-align:center; color:var(--gris); font-size:14px; margin-top:40px; padding-top:20px; border-top:1px solid var(--linea); }
+  footer a{ color:var(--violeta); }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">TECNIA BOT</div>
+  <div class="tag">un proyecto de Tecnia Lab</div>
+  <div class="sub">Tu asistente para enseñar y aprender Arduino y ESP32, en español.</div>
+</header>
+<div class="wrap">
+
+  <h2><span class="n">1</span> ¿Cómo empiezo?</h2>
+  <div class="card">
+    <p>Escribí <code>hola</code> y dejate guiar. Tecnia Bot habla en <b>español simple</b>: pedile lo que necesites con tus palabras, como se lo dirías a un compañero. No hace falta saber comandos ni términos técnicos.</p>
+    <p>La primera vez te va a preguntar tu nombre y si sos <b>docente o alumno</b>, para adaptarse a vos.</p>
+  </div>
+
+  <h2><span class="n">2</span> ¿Qué le puedo pedir?</h2>
+  <div class="ej">
+    <div class="item"><b>Que te explique un concepto</b><br><span class="prompt">¿cómo funciona un LED con Arduino?</span></div>
+    <div class="item"><b>Que dibuje un circuito</b> (se abre en el navegador, funciona sin internet)<br><span class="prompt">dibujame el circuito de un servo con ESP32</span></div>
+    <div class="item"><b>Que te guíe un proyecto paso a paso</b> (y se acuerda dónde quedaste)<br><span class="prompt">quiero armar el semáforo paso a paso</span></div>
+    <div class="item"><b>Que compile y cargue el código</b> a tu placa, desde el mismo chat<br><span class="prompt">cargá este código al ESP32</span></div>
+    <div class="item"><b>Que abra el monitor serial</b> para ver los datos de la placa y mandarle teclas<br><span class="prompt">abrí el monitor serial</span></div>
+    <div class="item"><b>Que arme una hoja para imprimir</b> (materiales + conexiones + código) para el aula<br><span class="prompt">dame los materiales del semáforo para imprimir</span></div>
+    <div class="item"><b>Que te chequee la seguridad antes de prender</b> (para no quemar la placa)<br><span class="prompt">¿puedo prenderlo?</span></div>
+    <div class="item"><b>Que traduzca un error</b> de compilación del inglés al español<br><span class="prompt">no compila, me da este error…</span></div>
+  </div>
+
+  <h2><span class="n">3</span> Los comandos</h2>
+  <div class="card">
+    <ul>
+      <li><code>/diagnostico</code> — revisa que todo esté listo (PlatformIO, la placa conectada).</li>
+      <li><code>/actualizar</code> — trae la última versión de Tecnia Bot desde internet. También podés preguntar <i>"¿qué versión tengo?"</i>.</li>
+      <li><code>/ayuda</code> — abre este manual.</li>
+    </ul>
+  </div>
+
+  <h2><span class="n">4</span> Si algo falla</h2>
+  <div class="card">
+    <ul>
+      <li><b>No detecta la placa:</b> desconectá y volvé a conectar el cable USB, y probá <code>/diagnostico</code>. Puede faltar el <b>driver USB</b> de tu placa.</li>
+      <li><b>Un error raro:</b> contale al bot qué pasó con tus palabras — está para ayudarte a entenderlo, no te va a retar.</li>
+      <li><b>El ESP32 se porta raro:</b> recordá que trabaja a <b>3.3V</b> (no 5V como el Arduino UNO). Antes de prender, pedile el chequeo de seguridad.</li>
+    </ul>
+  </div>
+
+  <div class="tip">💡 <b>Consejo:</b> no corras. Entender <b>por qué</b> funciona algo vale más que copiar código que anda de casualidad. Tecnia Bot te explica el porqué antes del código — aprovechalo.</div>
+
+  <footer>
+    <p><b>Tecnia Bot</b> · <a href="https://tecnialab.net.ar/tecnia-bot">tecnialab.net.ar/tecnia-bot</a></p>
+    <p>Ahí encontrás más guías (y, si tenés internet, videos) para arrancar.</p>
+  </footer>
+</div>
+</body>
+</html>
