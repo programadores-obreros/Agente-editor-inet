@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.23] — 2026-07-26
+
+Bug de aula: el código y el circuito ahora usan los MISMOS pines.
+
+### Arreglado
+- **Los pines del código ahora coinciden con el circuito**: en el flujo guiado, el bot mostraba el circuito visual con unos pines (ej: GPIO19/5/4) pero el código con otros (ej: GPIO13/12/14) → el alumno cableaba una cosa y el código apuntaba a otra, y **no prendía**. La regla ahora es explícita en el agente y en el skill `proyecto-guiado`: **el circuito es la fuente de verdad de los pines y el código los sigue exactamente, nunca inventa.** Encontrado validando el proyecto guiado en vivo en la VM.
+
 ## [0.3.22] — 2026-07-26
 
 Hojas para el aula: materiales + conexiones + código, listas para imprimir.
