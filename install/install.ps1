@@ -112,6 +112,7 @@ if (-not (Test-Path $MemoriaFile)) {
 - Nivel: (sin definir)
 - Proyectos hechos: (sin definir)
 - Ultimo proyecto: (sin definir)
+- En curso: (sin definir)
 "@
     [System.IO.File]::WriteAllText($MemoriaFile, $memoriaTemplate, (New-Object System.Text.UTF8Encoding $false))
     Write-Host "  [OK] Memoria de progreso creada (vacia) en $MemoriaFile"

@@ -90,6 +90,7 @@ if [ ! -f "$MEMORIA_FILE" ]; then
 - Nivel: (sin definir)
 - Proyectos hechos: (sin definir)
 - Ultimo proyecto: (sin definir)
+- En curso: (sin definir)
 EOF
   echo "  [OK] Memoria de progreso creada (vacía) en $MEMORIA_FILE"
 fi

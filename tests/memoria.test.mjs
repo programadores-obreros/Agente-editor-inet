@@ -83,3 +83,20 @@ test("privacidad: el archivo NO guarda nombre ni datos personales", async () => 
   assert.match(guardado, /no de una persona/i, "el encabezado deja explicito que no es personal")
   assert.doesNotMatch(guardado, /Nombre:/i, "no debe haber campo Nombre en la memoria")
 })
+
+test("guiado: guarda el proyecto en curso con su paso, y leer lo muestra para retomar", async () => {
+  await mod.execute({ accion: "guardar", en_curso: "semaforo con 3 LEDs", paso: "paso 3 de 5: cablear" }, {})
+  const g = readFileSync(memoriaFile, "utf8")
+  assert.match(g, /^-\s*En curso:\s*semaforo con 3 LEDs\s*—\s*paso 3 de 5: cablear\s*$/m, "guarda proyecto + paso")
+  const r = await mod.execute({ accion: "leer" }, {})
+  assert.match(r, /EN CURSO/i, "leer marca que hay uno para retomar")
+  assert.match(r, /paso 3 de 5/, "y dice en qué paso quedó")
+})
+
+test("guiado: al TERMINAR el proyecto pasa a la lista y se limpia el 'en curso'", async () => {
+  await mod.execute({ accion: "guardar", en_curso: "semaforo", paso: "paso 4 de 5" }, {})
+  await mod.execute({ accion: "guardar", proyecto: "semaforo" }, {}) // terminado
+  const g = readFileSync(memoriaFile, "utf8")
+  assert.match(g, /^-\s*Proyectos hechos:.*semaforo/m, "queda en la lista de hechos")
+  assert.match(g, /^-\s*En curso:\s*\(sin definir\)\s*$/m, "el 'en curso' se limpia al terminar")
+})
