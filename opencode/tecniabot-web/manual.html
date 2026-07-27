@@ -102,8 +102,11 @@
   .ej .item:nth-child(5){ animation-delay:.28s } .ej .item:nth-child(6){ animation-delay:.34s }
   .ej .item:nth-child(7){ animation-delay:.40s } .ej .item:nth-child(8){ animation-delay:.46s }
   @media (prefers-reduced-motion: reduce){
-    *{ animation:none !important; }
-    .reveal{ opacity:1; transform:none; }
+    /* Solo apagamos la ENTRADA y el smooth-scroll. El tipeo del terminal, el robot
+       flotando y el cursor siguen (movimiento suave, no invasivo) para que el manual
+       tenga vida aun con "reducir movimiento" activado. */
+    .reveal{ animation:none; opacity:1; transform:none; }
+    .hero::before{ animation:none; }
     html{ scroll-behavior:auto; }
   }
 </style>
@@ -195,7 +198,6 @@
       "¿cómo funciona un LED con Arduino?",
       "dame los materiales del semáforo para imprimir",
     ];
-    if(matchMedia('(prefers-reduced-motion: reduce)').matches){ el.textContent = frases[0]; return; }
     let fi=0, ci=0, borrando=false;
     function tick(){
       const f = frases[fi];
