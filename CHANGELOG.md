@@ -2,6 +2,15 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.24] — 2026-07-26
+
+Piloto de convergencia de pinouts: una sola fuente de verdad (semáforo).
+
+### Nuevo / Arreglado
+- **Fuente canónica de pinouts** (`opencode/tecniabot-web/pinouts.json`): arranca el trabajo de "una sola fuente de verdad" para los pines de cada proyecto, derivada del firmware `.ino` real. Piloto con el semáforo (ESP32 16/17/18, UNO 11/12/13).
+- **Semáforo convergido**: la protoboard del semáforo ahora usa los pines de la verdad (**GPIO16/17/18**, = el `.ino` y el skill), no los 19/5/4 que tenía y que no coincidían con el código generado. Se re-etiquetó el diagrama (mismo dibujo lindo, pines correctos).
+- **Test de convergencia** (`tests/pinouts.test.mjs`): valida que la plantilla del circuito y el skill coincidan con `pinouts.json`. **Si alguien vuelve a divergir, el CI falla** — el drift se caza solo. Al replicar a los 15 proyectos se agregan casos.
+
 ## [0.3.23] — 2026-07-26
 
 Bug de aula: el código y el circuito ahora usan los MISMOS pines.
