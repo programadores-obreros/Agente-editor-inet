@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.30] — 2026-07-27
+
+Más vida en el micro-sitio: ojos que te siguen, glow y partículas.
+
+### Mejorado
+- **Más animación en el sitio de `/ayuda`**: el **robot te sigue con la mirada** (los ojos siguen el mouse), las **tarjetas tienen un glow que persigue el cursor**, y hay **partículas flotando** en el hero. Todo con **CSS/JS puro** (sin frameworks ni build step), offline, y respetando "reducir movimiento". Sin cambiar de stack — un solo bundle.
+
 ## [0.3.29] — 2026-07-27
 
 El `/ayuda` ahora abre un micro-sitio: Inicio + catálogo de los 15 proyectos.
