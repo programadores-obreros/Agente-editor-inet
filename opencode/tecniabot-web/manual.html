@@ -46,6 +46,20 @@
   .hero .inet{ margin-top:16px; display:inline-flex; gap:8px; align-items:center; font-size:12.5px; letter-spacing:.4px;
     background:rgba(255,255,255,.16); padding:5px 14px; border-radius:99px; position:relative; z-index:1; }
 
+  /* ---------- TERMINAL QUE TECLEA SOLO ---------- */
+  .demo{ margin:28px 0 8px; }
+  .term{ background:#0e1017; border:1px solid #2a2f3b; border-radius:14px; overflow:hidden; box-shadow:0 16px 40px rgba(109,40,217,.22); max-width:640px; margin:0 auto; }
+  .term-bar{ background:#1a1e27; padding:10px 15px; display:flex; align-items:center; gap:7px; border-bottom:1px solid #2a2f3b; }
+  .term-bar .dot{ width:12px; height:12px; border-radius:50%; }
+  .dot.r{ background:#ff5f57 } .dot.y{ background:#febc2e } .dot.g{ background:#28c840 }
+  .term-title{ margin-left:10px; color:#8b94a7; font:12.5px 'Segoe UI',system-ui,sans-serif; }
+  .term-body{ padding:20px 20px 22px; font:16px/1.7 'Cascadia Code',Consolas,monospace; color:#e6e8ec; min-height:64px; }
+  .prompt-sign{ color:#a78bfa; font-weight:700; margin-right:9px; }
+  #typed{ color:#e6e8ec; }
+  .cursor{ color:#a78bfa; font-weight:700; animation:blink 1.05s steps(1) infinite; }
+  @keyframes blink{ 50%{ opacity:0 } }
+  .term-hint{ text-align:center; color:var(--gris); font-size:13px; margin:10px 0 0; }
+
   /* ---------- SECCIONES ---------- */
   h2{ color:var(--violeta); font-size:20px; margin:38px 0 14px; display:flex; align-items:center; gap:11px; }
   @media (prefers-color-scheme: dark){ h2{ color:var(--violeta-2); } }
@@ -115,6 +129,14 @@
 </div>
 <div class="wrap">
 
+  <div class="demo reveal">
+    <div class="term">
+      <div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">Tecnia Bot — así de fácil le hablás</span></div>
+      <div class="term-body"><span class="prompt-sign">&rsaquo;</span><span id="typed"></span><span class="cursor">&#9611;</span></div>
+    </div>
+    <p class="term-hint">Escribís en español, con tus palabras. Tecnia Bot hace el resto.</p>
+  </div>
+
   <h2 class="reveal"><span class="n">1</span> ¿Cómo empiezo?</h2>
   <div class="card reveal">
     <p>Escribí <code>hola</code> y dejate guiar. Tecnia Bot habla en <b>español simple</b>: pedile lo que necesites con tus palabras, como se lo dirías a un compañero. No hace falta saber comandos ni términos técnicos.</p>
@@ -162,6 +184,33 @@
 </div>
 
 <script>
+  // Terminal que teclea sola: cicla ejemplos, tipeando y borrando en loop.
+  (function(){
+    const el = document.getElementById('typed');
+    if(!el) return;
+    const frases = [
+      "dibujame el circuito de un servo con ESP32",
+      "quiero armar el semáforo paso a paso",
+      "abrí el monitor serial",
+      "¿cómo funciona un LED con Arduino?",
+      "dame los materiales del semáforo para imprimir",
+    ];
+    if(matchMedia('(prefers-reduced-motion: reduce)').matches){ el.textContent = frases[0]; return; }
+    let fi=0, ci=0, borrando=false;
+    function tick(){
+      const f = frases[fi];
+      if(!borrando){
+        el.textContent = f.slice(0, ++ci);
+        if(ci >= f.length){ borrando=true; return setTimeout(tick, 1700); }
+        return setTimeout(tick, 48 + (Math.floor(ci/6)%2 ? 22 : 0));
+      }
+      el.textContent = f.slice(0, --ci);
+      if(ci <= 0){ borrando=false; fi=(fi+1)%frases.length; return setTimeout(tick, 380); }
+      return setTimeout(tick, 26);
+    }
+    tick();
+  })();
+
   // Click en un ejemplo → copiar el prompt al portapapeles (con fallback para file://).
   function copiar(texto){
     if(navigator.clipboard && window.isSecureContext){
