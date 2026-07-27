@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.22] — 2026-07-26
+
+Hojas para el aula: materiales + conexiones + código, listas para imprimir.
+
+### Nuevo
+- **Hoja para imprimir (nuevo tool `imprimible`)**: pedile *"los materiales del semáforo para imprimir"* o *"una hoja para el aula"* y el bot arma una hoja limpia con **materiales + tabla de conexiones + código comentado** (y notas de seguridad), la abre en el navegador, y con **Ctrl+P** la guardás como PDF o la imprimís para repartir. Offline y sin instalar nada: **el navegador hace el PDF** (no traemos Typst ni Docker, así el `.exe` sigue siendo de un doble clic). Con smoke tests, incluido el **escape de HTML** del código (no rompe ni inyecta).
+
 ## [0.3.21] — 2026-07-26
 
 Proyecto guiado paso a paso, que se retoma donde lo dejaste.
