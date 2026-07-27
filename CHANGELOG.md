@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.25] — 2026-07-26
+
+Manual de ayuda: `/ayuda` para arrancar sin saber nada.
+
+### Nuevo
+- **Comando `/ayuda` + manual (nuevo tool `ayuda`)**: `/ayuda` muestra un **resumen rápido** de cómo usar Tecnia Bot (con ejemplos de prompts que podés copiar) y **abre un manual completo en el navegador** — offline, self-contained, con diseño de marca (light + dark). Pensado para el docente que abre Tecnia Bot y no sabe por dónde empezar: qué le puede pedir, los comandos, y qué hacer si algo falla. El video queda para más adelante; por ahora, link al sitio oficial para quien tiene internet.
+
 ## [0.3.24] — 2026-07-26
 
 Piloto de convergencia de pinouts: una sola fuente de verdad (semáforo).
