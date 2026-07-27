@@ -77,7 +77,29 @@ ul{ margin:8px 0; padding-left:22px; } li{ margin:6px 0; }
 @media (max-width:620px){ .ej{ grid-template-columns:1fr; } }
 .ej .item{ background:var(--tarjeta); border:1px solid var(--linea); border-radius:12px; padding:14px 16px; box-shadow:var(--sombra); transition:transform .18s, box-shadow .18s, border-color .18s; }
 .ej .item:hover{ transform:translateY(-4px); border-color:var(--violeta-2); box-shadow:0 14px 34px rgba(109,40,217,.18); }
-.ej .item .t{ font-weight:600; display:block; margin-bottom:8px; }
+.ej .item .t{ font-weight:600; display:flex; align-items:center; gap:9px; margin-bottom:9px; }
+
+/* ---------- ÍCONOS SVG (reemplazan a los emoji) ---------- */
+.ico{ width:20px; height:20px; flex:0 0 auto; stroke:currentColor; stroke-width:1.8; fill:none; stroke-linecap:round; stroke-linejoin:round; color:var(--chip-tinta); }
+
+/* ---------- FOCO VISIBLE (accesibilidad de teclado) ---------- */
+a:focus-visible, button:focus-visible, .prompt:focus-visible, .proj:focus-visible, .cta:focus-visible{
+  outline:none; box-shadow:0 0 0 3px var(--fondo), 0 0 0 5px var(--violeta-2); border-radius:10px;
+}
+.prompt{ cursor:pointer; } .proj{ cursor:default; }
+
+/* ---------- ACORDEÓN (patrón FAQ/documentación) ---------- */
+.acc{ border:1px solid var(--linea); border-radius:14px; overflow:hidden; box-shadow:var(--sombra); background:var(--tarjeta); }
+.acc-item + .acc-item{ border-top:1px solid var(--linea); }
+.acc-btn{ width:100%; display:flex; align-items:center; gap:11px; padding:16px 18px; background:none; border:none; color:var(--tinta); font:600 15.5px 'Segoe UI',system-ui,sans-serif; text-align:left; cursor:pointer; transition:background .18s ease; }
+.acc-btn:hover{ background:var(--chip); }
+.acc-btn .chev{ margin-left:auto; width:18px; height:18px; stroke:var(--gris); stroke-width:2.2; fill:none; stroke-linecap:round; stroke-linejoin:round; transition:transform .25s ease; flex:0 0 auto; }
+.acc-btn[aria-expanded="true"] .chev{ transform:rotate(180deg); }
+.acc-panel{ display:grid; grid-template-rows:0fr; transition:grid-template-rows .28s ease; }
+.acc-btn[aria-expanded="true"] + .acc-panel{ grid-template-rows:1fr; }
+.acc-panel > .inner{ overflow:hidden; }
+.acc-panel p{ margin:0; padding:0 18px 16px 47px; color:var(--tinta); font-weight:400; }
+@media (prefers-reduced-motion: reduce){ .acc-panel, .acc-btn .chev{ transition:none; } }
 .prompt{ display:inline-flex; align-items:center; gap:7px; cursor:pointer; font:13.5px/1.35 'Cascadia Code',Consolas,monospace; color:var(--chip-tinta); background:var(--chip); padding:6px 11px; border-radius:8px; border:1px dashed transparent; transition:border-color .15s; }
 .prompt:hover{ border-color:var(--violeta-2); }
 .prompt .cp{ opacity:.55; font-size:12px; } .prompt .cp::after{ content:"copiar"; }

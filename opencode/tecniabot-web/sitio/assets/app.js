@@ -65,11 +65,22 @@
     try{ document.execCommand('copy'); }catch(e){}
     document.body.removeChild(ta);
   }
+  function activar(p){
+    copiar(p.dataset.p || p.textContent);
+    p.classList.add('copiado');
+    setTimeout(()=>p.classList.remove('copiado'), 1400);
+  }
   document.querySelectorAll('.prompt').forEach(p=>{
-    p.addEventListener('click', ()=>{
-      copiar(p.dataset.p || p.textContent);
-      p.classList.add('copiado');
-      setTimeout(()=>p.classList.remove('copiado'), 1400);
+    p.addEventListener('click', ()=>activar(p));
+    p.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); activar(p); } });
+  });
+})();
+
+// Acordeón (FAQ): togglea aria-expanded; el CSS anima con grid-template-rows.
+(function(){
+  document.querySelectorAll('.acc-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      btn.setAttribute('aria-expanded', btn.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
     });
   });
 })();
