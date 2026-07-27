@@ -26,6 +26,31 @@
   tick();
 })();
 
+// Los ojos del robot siguen el mouse (un guiño de vida).
+(function(){
+  const ojos = document.getElementById('ojos');
+  const robot = document.querySelector('.robot');
+  if(!ojos || !robot) return;
+  const clamp = (v)=> Math.max(-1, Math.min(1, v));
+  window.addEventListener('mousemove', (e)=>{
+    const r = robot.getBoundingClientRect();
+    const dx = clamp((e.clientX - (r.left + r.width/2)) / (window.innerWidth/2));
+    const dy = clamp((e.clientY - (r.top + r.height/2)) / (window.innerHeight/2));
+    ojos.setAttribute('transform', `translate(${dx*11} ${dy*8})`);
+  }, { passive:true });
+})();
+
+// Glow que sigue al cursor dentro de cada tarjeta.
+(function(){
+  document.querySelectorAll('.ej .item, .proj').forEach(c=>{
+    c.addEventListener('mousemove', (e)=>{
+      const r = c.getBoundingClientRect();
+      c.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100) + '%');
+      c.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100) + '%');
+    }, { passive:true });
+  });
+})();
+
 // Click en un ejemplo → copiar el prompt (con fallback para file://).
 (function(){
   function copiar(texto){

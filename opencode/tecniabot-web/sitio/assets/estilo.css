@@ -100,13 +100,28 @@ footer .marca{ font-weight:700; color:var(--violeta); letter-spacing:1px; }
 :root[data-theme="dark"] footer .marca{ color:var(--violeta-2); }
 footer a{ text-decoration:none; } footer a:hover{ text-decoration:underline; }
 
+/* ---------- VIDA: glow que sigue al cursor en las tarjetas ---------- */
+.ej .item, .proj{ position:relative; }
+.ej .item::after, .proj::after{
+  content:""; position:absolute; inset:0; border-radius:inherit; opacity:0; transition:opacity .25s ease; pointer-events:none;
+  background:radial-gradient(220px circle at var(--mx,50%) var(--my,50%), rgba(139,92,246,.18), transparent 60%);
+}
+.ej .item:hover::after, .proj:hover::after{ opacity:1; }
+
+/* ---------- VIDA: partículas flotando en el hero ---------- */
+.particulas{ position:absolute; inset:0; z-index:0; overflow:hidden; pointer-events:none; }
+.particula{ position:absolute; bottom:-14px; width:7px; height:7px; border-radius:50%; background:rgba(255,255,255,.4); animation:sube linear infinite; }
+@keyframes sube{ 0%{ transform:translateY(0) scale(.6); opacity:0 } 12%{ opacity:.7 } 88%{ opacity:.7 } 100%{ transform:translateY(-360px) scale(1); opacity:0 } }
+
 /* ---------- ENTRADA (robusta, siempre termina visible) ---------- */
 @keyframes fadeUp{ from{ opacity:0; transform:translateY(16px) } to{ opacity:1; transform:none } }
 .reveal{ animation:fadeUp .6s ease both; }
 .grid-proj .proj:nth-child(2n){ animation-delay:.06s } .grid-proj .proj:nth-child(3n){ animation-delay:.12s }
 @media (prefers-reduced-motion: reduce){
-  /* Se mantiene el tipeo, el robot y el cursor (movimiento suave); solo se apaga la entrada. */
+  /* Se mantiene el tipeo, el robot y el cursor (movimiento suave); se apaga la entrada,
+     el drift del fondo y las partículas (puramente decorativas). */
   .reveal{ animation:none; opacity:1; transform:none; }
   .hero::before{ animation:none; }
+  .particula{ display:none; }
   html{ scroll-behavior:auto; }
 }
