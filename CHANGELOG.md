@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.27] — 2026-07-27
+
+El manual ahora tiene una consola que teclea sola.
+
+### Mejorado
+- **Terminal animado en el manual de `/ayuda`**: arriba de todo, una consola estilo Tecnia Bot que **teclea sola** los ejemplos de prompts, uno por uno y en loop (con el cursor parpadeando) — para que el docente vea al toque cómo hablarle. On-brand: Tecnia Bot vive en la terminal. Respeta `prefers-reduced-motion`. Sigue siendo offline, un solo archivo.
+
 ## [0.3.26] — 2026-07-26
 
 El manual de `/ayuda` ahora tiene logo, animaciones y ejemplos para copiar.
