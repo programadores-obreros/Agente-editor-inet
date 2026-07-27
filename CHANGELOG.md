@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.26] — 2026-07-26
+
+El manual de `/ayuda` ahora tiene logo, animaciones y ejemplos para copiar.
+
+### Mejorado
+- **Manual de ayuda mucho más rico**: el `/ayuda` ahora abre un manual con el **logo animado de Tecnia Bot**, marca institucional (Tecnia Lab · Programa INET), **tarjetas de ejemplo que copiás con un click** (para pegar el prompt en el chat), animaciones de entrada en cascada, y diseño pulido en **light y dark**. Sigue siendo **un solo archivo offline** (sin internet, sin Astro, sin subir nada) — funciona en cualquier PC de escuela. La animación de entrada es robusta: si el JS no corre, el contenido igual se ve.
+
 ## [0.3.25] — 2026-07-26
 
 Manual de ayuda: `/ayuda` para arrancar sin saber nada.
