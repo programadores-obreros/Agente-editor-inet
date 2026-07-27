@@ -18,6 +18,7 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 - ⚡ **Chequeo de seguridad antes de prender** — te hace repasar lo crítico (los 3.3V del ESP32, polaridad, cortos) antes de dar corriente, para no quemar la placa
 - 📟 **Abre el monitor serial en una ventana** — para ver los datos que manda la placa y mandarle teclas (ej: comandar un servo desde el teclado), sin escribir comandos ni saber en qué puerto está. [Guía](docs/monitor-serial.md)
 - 🧰 **Dibuja circuitos visuales** (piezas reales, interactivos, funcionan sin internet) y un explicador de la protoboard
+- 🖨️ **Arma hojas para el aula** — una hoja lista para imprimir con materiales + conexiones + código comentado; la abre en el navegador y con Ctrl+P la guardás como PDF o la imprimís para repartir (sin internet, sin instalar nada)
 - 🇦🇷 **Traduce los errores** de compilación del inglés a español, con la solución paso a paso
 - 🟣 **Marca propia** — al abrir, te recibe con la identidad de Tecnia Bot (no el logo genérico) y **arranca listo en el agente**, sin tener que buscarlo
 - 🔄 **Se actualiza solo** — `/actualizar` trae la última versión desde GitHub, y te **avisa al iniciar** si hay una nueva
@@ -26,7 +27,7 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 
 ## ¿Cómo funciona?
 
-Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), cinco herramientas (`platformio` para compilar/cargar, `circuito`s visuales, `actualizar` la capa, `perfil` y `memoria`), catorce bases de conocimiento, los comandos `/diagnostico` y `/actualizar`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
+Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), seis herramientas (`platformio` para compilar/cargar, `circuito`s visuales, `imprimible` para hojas de aula, `actualizar` la capa, `perfil` y `memoria`), catorce bases de conocimiento, los comandos `/diagnostico` y `/actualizar`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
 
 Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda disponible en **cualquier carpeta** donde abras OpenCode.
 
@@ -103,7 +104,7 @@ Probá:
 Agente-editor-inet/
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
-│   ├── tool/               # Herramientas: platformio.ts (compilar/cargar), circuito.ts (circuitos) y actualizar.ts (auto-update)
+│   ├── tool/               # Herramientas: platformio (compilar/cargar), circuito (visuales), imprimible (hojas de aula), perfil, memoria, actualizar
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash (logo TECNIA BOT) + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
 │   ├── skills/             # 14 bases de conocimiento (ver abajo)
