@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.29] — 2026-07-27
+
+El `/ayuda` ahora abre un micro-sitio: Inicio + catálogo de los 15 proyectos.
+
+### Nuevo
+- **Micro-sitio de onboarding** (reemplaza el manual de un solo archivo): `/ayuda` abre un **sitio multi-página** — **Inicio** (con el terminal animado y los ejemplos para copiar) + **Catálogo navegable de los 15 proyectos INET** (con badges UNO/ESP32/KIT) + navegación entre páginas y barra superior. Todo **offline y SIN servidor**: usa paths **relativos**, así funciona abriendo el `file://` directo (no depende de internet ni de un proceso corriendo). Se bundlea con la capa en `tecniabot-web/sitio/`. Probado: el mismo sitio con paths absolutos se rompe en `file://`, con relativos anda — por eso van relativos.
+
 ## [0.3.28] — 2026-07-27
 
 Las animaciones del manual se ven aunque tengas "reducir movimiento".
