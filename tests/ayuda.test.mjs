@@ -16,10 +16,10 @@ let mod
 globalThis.Bun = { spawn: () => ({ unref() {} }) }
 
 before(async () => {
-  mkdirSync(join(cfg, "opencode", "tecniabot-web"), { recursive: true })
+  mkdirSync(join(cfg, "opencode", "tecniabot-web", "sitio"), { recursive: true })
   process.env.XDG_CONFIG_HOME = cfg
-  // Simulamos el manual "instalado" con la capa.
-  writeFileSync(join(cfg, "opencode", "tecniabot-web", "manual.html"), "<html>manual</html>")
+  // Simulamos el micro-sitio "instalado" con la capa.
+  writeFileSync(join(cfg, "opencode", "tecniabot-web", "sitio", "index.html"), "<html>sitio</html>")
 
   mkdirSync(OUT, { recursive: true })
   writeFileSync(

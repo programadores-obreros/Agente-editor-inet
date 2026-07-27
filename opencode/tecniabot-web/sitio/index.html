@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tecnia Bot — Manual de uso</title>
+<link rel="stylesheet" href="./assets/estilo.css">
+</head>
+<body>
+<nav class="nav">
+  <span class="marca">
+    <svg viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" rx="58" fill="#6d28d9"/><rect x="68" y="76" width="120" height="100" rx="26" fill="#fff"/><circle cx="104" cy="120" r="14" fill="#6d28d9"/><circle cx="152" cy="120" r="14" fill="#6d28d9"/><rect x="100" y="150" width="56" height="10" rx="5" fill="#b9a2f0"/><circle cx="128" cy="44" r="10" fill="#ffc224"/><line x1="128" y1="50" x2="128" y2="76" stroke="#6d28d9" stroke-width="8"/></svg>
+    TECNIA BOT
+  </span>
+  <a href="./index.html" class="activo">Inicio</a>
+  <a href="./proyectos.html">Proyectos</a>
+  <a href="https://tecnialab.net.ar/tecnia-bot">Sitio ↗</a>
+</nav>
+
+<div class="hero">
+  <svg class="robot" viewBox="0 0 256 256" role="img" aria-label="Tecnia Bot">
+    <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#6d28d9"/></linearGradient></defs>
+    <rect width="256" height="256" rx="58" fill="url(#bg)"/>
+    <line x1="128" y1="50" x2="128" y2="76" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+    <circle class="antena-luz" cx="128" cy="44" r="10" fill="#ffc224"/>
+    <rect x="54" y="106" width="14" height="38" rx="7" fill="#fff"/><rect x="188" y="106" width="14" height="38" rx="7" fill="#fff"/>
+    <rect x="68" y="76" width="120" height="100" rx="26" fill="#fff"/>
+    <circle cx="104" cy="120" r="14" fill="#6d28d9"/><circle cx="152" cy="120" r="14" fill="#6d28d9"/>
+    <circle cx="108" cy="116" r="4.5" fill="#fff"/><circle cx="156" cy="116" r="4.5" fill="#fff"/>
+    <rect x="100" y="150" width="56" height="10" rx="5" fill="#b9a2f0"/>
+  </svg>
+  <div class="wordmark">TECNIA&nbsp;BOT</div>
+  <div class="tag">un proyecto de Tecnia Lab</div>
+  <div class="sub">Tu asistente para enseñar y aprender <b>Arduino y ESP32</b>, en español.</div>
+  <div class="inet">🏫 Material educativo para escuelas técnicas · Programa INET</div>
+</div>
+
+<div class="wrap">
+  <div class="demo reveal">
+    <div class="term">
+      <div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="term-title">Tecnia Bot — así de fácil le hablás</span></div>
+      <div class="term-body"><span class="prompt-sign">&rsaquo;</span><span id="typed"></span><span class="cursor">&#9611;</span></div>
+    </div>
+    <p class="term-hint">Escribís en español, con tus palabras. Tecnia Bot hace el resto.</p>
+  </div>
+
+  <h2 class="reveal"><span class="n">1</span> ¿Cómo empiezo?</h2>
+  <div class="card reveal">
+    <p>Escribí <code>hola</code> y dejate guiar. Tecnia Bot habla en <b>español simple</b>: pedile lo que necesites con tus palabras, como se lo dirías a un compañero. No hace falta saber comandos ni términos técnicos.</p>
+    <p>La primera vez te va a preguntar tu nombre y si sos <b>docente o alumno</b>, para adaptarse a vos.</p>
+  </div>
+
+  <h2 class="reveal"><span class="n">2</span> ¿Qué le puedo pedir?</h2>
+  <p class="reveal" style="color:var(--gris);font-size:14.5px;margin-top:-2px;">Tocá cualquier ejemplo para copiarlo y pegarlo en el chat.</p>
+  <div class="ej">
+    <div class="item reveal"><span class="t">💡 Que te explique un concepto</span><span class="prompt" data-p="¿cómo funciona un LED con Arduino?">¿cómo funciona un LED con Arduino?<span class="cp"></span></span></div>
+    <div class="item reveal"><span class="t">🔌 Que dibuje un circuito <small>(offline)</small></span><span class="prompt" data-p="dibujame el circuito de un servo con ESP32">dibujame el circuito de un servo con ESP32<span class="cp"></span></span></div>
+    <div class="item reveal"><span class="t">🎯 Que te guíe un proyecto paso a paso</span><span class="prompt" data-p="quiero armar el semáforo paso a paso">quiero armar el semáforo paso a paso<span class="cp"></span></span></div>
+    <div class="item reveal"><span class="t">⬆️ Que compile y cargue el código</span><span class="prompt" data-p="cargá este código al ESP32">cargá este código al ESP32<span class="cp"></span></span></div>
+    <div class="item reveal"><span class="t">📟 Que abra el monitor serial</span><span class="prompt" data-p="abrí el monitor serial">abrí el monitor serial<span class="cp"></span></span></div>
+    <div class="item reveal"><span class="t">🖨️ Que arme una hoja para imprimir</span><span class="prompt" data-p="dame los materiales del semáforo para imprimir">dame los materiales del semáforo para imprimir<span class="cp"></span></span></div>
+    <div class="item reveal"><span class="t">⚡ Que te chequee la seguridad antes de prender</span><span class="prompt" data-p="¿puedo prenderlo?">¿puedo prenderlo?<span class="cp"></span></span></div>
+    <div class="item reveal"><span class="t">🇦🇷 Que traduzca un error del inglés</span><span class="prompt" data-p="no compila, me da este error…">no compila, me da este error…<span class="cp"></span></span></div>
+  </div>
+
+  <div style="text-align:center;margin:30px 0 6px;" class="reveal">
+    <a class="cta" href="./proyectos.html">📚 Ver los 15 proyectos INET →</a>
+  </div>
+
+  <h2 class="reveal"><span class="n">3</span> Los comandos</h2>
+  <div class="card reveal">
+    <ul>
+      <li><code>/diagnostico</code> — revisa que todo esté listo (PlatformIO, la placa conectada).</li>
+      <li><code>/actualizar</code> — trae la última versión de Tecnia Bot desde internet.</li>
+      <li><code>/ayuda</code> — abre este manual.</li>
+    </ul>
+  </div>
+
+  <h2 class="reveal"><span class="n">4</span> Si algo falla</h2>
+  <div class="card reveal">
+    <ul>
+      <li><b>No detecta la placa:</b> desconectá y volvé a conectar el cable USB, y probá <code>/diagnostico</code>. Puede faltar el <b>driver USB</b> de tu placa.</li>
+      <li><b>Un error raro:</b> contale al bot qué pasó con tus palabras — está para ayudarte a entenderlo, no te va a retar.</li>
+      <li><b>El ESP32 se porta raro:</b> recordá que trabaja a <b>3.3V</b> (no 5V como el Arduino UNO). Antes de prender, pedile el chequeo de seguridad.</li>
+    </ul>
+  </div>
+
+  <div class="tip reveal">💡 <b>Consejo:</b> no corras. Entender <b>por qué</b> funciona algo vale más que copiar código que anda de casualidad. Tecnia Bot te explica el porqué antes del código — aprovechalo.</div>
+
+  <footer class="reveal">
+    <p><span class="marca">TECNIA BOT</span> · un proyecto de <b>Tecnia Lab</b></p>
+    <p><a href="https://tecnialab.net.ar/tecnia-bot">tecnialab.net.ar/tecnia-bot</a> — más guías (y, si tenés internet, videos).</p>
+    <p style="opacity:.7;font-size:12.5px;margin-top:10px;">Material educativo para escuelas técnicas argentinas · Programa INET</p>
+  </footer>
+</div>
+<script src="./assets/app.js"></script>
+</body>
+</html>

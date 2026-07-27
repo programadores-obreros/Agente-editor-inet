@@ -9,7 +9,8 @@ import { existsSync } from "node:fs"
 // instala con la capa (tecniabot-web/manual.html).
 function manualPath(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
-  return join(cfg, "opencode", "tecniabot-web", "manual.html")
+  // Micro-sitio de onboarding (multi-página, offline, paths relativos → anda con file://).
+  return join(cfg, "opencode", "tecniabot-web", "sitio", "index.html")
 }
 
 // Abre el manual en el navegador por defecto, sin bloquear la tool (best-effort).

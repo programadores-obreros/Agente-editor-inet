@@ -1,0 +1,112 @@
+/* Tecnia Bot — micro-sitio de onboarding. Offline, paths relativos (anda con file://). */
+:root{
+  --violeta:#6d28d9; --violeta-2:#8b5cf6; --oro:#ffc224;
+  --tinta:#1e2330; --gris:#5b6472; --linea:#e7e9ef;
+  --fondo:#f4f3f9; --tarjeta:#ffffff; --chip:#f3effc; --chip-tinta:#6d28d9;
+  --sombra:0 10px 30px rgba(109,40,217,.10);
+}
+@media (prefers-color-scheme: dark){
+  :root{ --tinta:#e8eaf1; --gris:#9aa3b4; --linea:#2a2f3b; --fondo:#0f1117; --tarjeta:#191c24; --chip:#241d3a; --chip-tinta:#c4b5fd; --sombra:0 10px 30px rgba(0,0,0,.35); }
+}
+:root[data-theme="light"]{ --tinta:#1e2330; --gris:#5b6472; --linea:#e7e9ef; --fondo:#f4f3f9; --tarjeta:#fff; --chip:#f3effc; --chip-tinta:#6d28d9; --sombra:0 10px 30px rgba(109,40,217,.10); }
+:root[data-theme="dark"]{ --tinta:#e8eaf1; --gris:#9aa3b4; --linea:#2a2f3b; --fondo:#0f1117; --tarjeta:#191c24; --chip:#241d3a; --chip-tinta:#c4b5fd; --sombra:0 10px 30px rgba(0,0,0,.35); }
+
+*{ box-sizing:border-box; }
+html{ scroll-behavior:smooth; }
+body{ margin:0; font:16px/1.6 'Segoe UI',system-ui,-apple-system,sans-serif; color:var(--tinta); background:var(--fondo); overflow-x:hidden; }
+.wrap{ max-width:860px; margin:0 auto; padding:0 22px 70px; }
+a{ color:var(--violeta-2); }
+
+/* ---------- NAV ---------- */
+.nav{ position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:6px; padding:11px 20px;
+  background:color-mix(in srgb, var(--fondo) 82%, transparent); backdrop-filter:blur(10px); border-bottom:1px solid var(--linea); }
+.nav .marca{ display:flex; align-items:center; gap:9px; font-weight:800; letter-spacing:1.5px; color:var(--violeta); margin-right:auto; }
+@media (prefers-color-scheme: dark){ .nav .marca{ color:var(--violeta-2); } }
+:root[data-theme="dark"] .nav .marca{ color:var(--violeta-2); }
+.nav .marca svg{ width:26px; height:26px; }
+.nav a{ text-decoration:none; color:var(--gris); font-size:14.5px; font-weight:600; padding:6px 12px; border-radius:8px; transition:background .15s, color .15s; }
+.nav a:hover{ background:var(--chip); color:var(--chip-tinta); }
+.nav a.activo{ background:var(--chip); color:var(--chip-tinta); }
+
+/* ---------- HERO ---------- */
+.hero{ position:relative; text-align:center; padding:48px 22px 44px; color:#fff; overflow:hidden;
+  background:linear-gradient(135deg,#6d28d9 0%,#8b5cf6 55%,#a78bfa 100%); }
+.hero::before{ content:""; position:absolute; inset:-40% -10% auto -10%; height:160%;
+  background:radial-gradient(circle at 30% 20%, rgba(255,255,255,.18), transparent 45%),
+             radial-gradient(circle at 80% 30%, rgba(255,194,36,.20), transparent 40%); animation:drift 18s ease-in-out infinite alternate; }
+@keyframes drift{ from{ transform:translate3d(0,0,0) } to{ transform:translate3d(-24px,18px,0) } }
+.robot{ width:92px; height:92px; position:relative; z-index:1; filter:drop-shadow(0 8px 18px rgba(0,0,0,.25)); animation:float 4.5s ease-in-out infinite; }
+@keyframes float{ 0%,100%{ transform:translateY(0) } 50%{ transform:translateY(-9px) } }
+.antena-luz{ animation:glow 2.2s ease-in-out infinite; transform-origin:center; }
+@keyframes glow{ 0%,100%{ opacity:1 } 50%{ opacity:.55 } }
+.wordmark{ font-weight:800; font-size:clamp(28px,7vw,44px); letter-spacing:3px; margin:12px 0 2px; position:relative; z-index:1; }
+.hero .tag{ opacity:.95; font-size:15px; position:relative; z-index:1; }
+.hero .sub{ margin-top:12px; font-size:16px; max-width:520px; margin:12px auto 0; opacity:.97; position:relative; z-index:1; }
+.hero .inet{ margin-top:15px; display:inline-flex; gap:8px; align-items:center; font-size:12.5px; letter-spacing:.4px;
+  background:rgba(255,255,255,.16); padding:5px 14px; border-radius:99px; position:relative; z-index:1; }
+
+/* ---------- SECCIONES ---------- */
+h2{ color:var(--violeta); font-size:20px; margin:34px 0 14px; display:flex; align-items:center; gap:11px; }
+@media (prefers-color-scheme: dark){ h2{ color:var(--violeta-2); } }
+:root[data-theme="dark"] h2{ color:var(--violeta-2); }
+h2 .n{ display:inline-flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:50%;
+  background:linear-gradient(135deg,var(--violeta),var(--violeta-2)); color:#fff; font-size:15px; font-weight:700; flex:0 0 auto; box-shadow:0 4px 10px rgba(109,40,217,.35); }
+p{ margin:9px 0; }
+.card{ background:var(--tarjeta); border:1px solid var(--linea); border-radius:14px; padding:18px 20px; margin:12px 0; box-shadow:var(--sombra); }
+code{ font:14px 'Cascadia Code',Consolas,monospace; background:var(--chip); color:var(--chip-tinta); padding:2px 8px; border-radius:6px; }
+ul{ margin:8px 0; padding-left:22px; } li{ margin:6px 0; }
+.tip{ background:linear-gradient(135deg,var(--chip),transparent); border:1px solid var(--linea); border-radius:12px; padding:16px 20px; margin:16px 0; font-size:15px; }
+.cta{ display:inline-flex; align-items:center; gap:8px; margin-top:6px; background:linear-gradient(135deg,var(--violeta),var(--violeta-2)); color:#fff; text-decoration:none; font-weight:700; padding:13px 22px; border-radius:12px; box-shadow:0 8px 22px rgba(109,40,217,.30); transition:transform .15s; }
+.cta:hover{ transform:translateY(-3px); color:#fff; }
+
+/* ---------- TERMINAL QUE TECLEA ---------- */
+.demo{ margin:28px 0 8px; }
+.term{ background:#0e1017; border:1px solid #2a2f3b; border-radius:14px; overflow:hidden; box-shadow:0 16px 40px rgba(109,40,217,.22); max-width:640px; margin:0 auto; }
+.term-bar{ background:#1a1e27; padding:10px 15px; display:flex; align-items:center; gap:7px; border-bottom:1px solid #2a2f3b; }
+.term-bar .dot{ width:12px; height:12px; border-radius:50%; }
+.dot.r{ background:#ff5f57 } .dot.y{ background:#febc2e } .dot.g{ background:#28c840 }
+.term-title{ margin-left:10px; color:#8b94a7; font:12.5px 'Segoe UI',system-ui,sans-serif; }
+.term-body{ padding:20px; font:16px/1.7 'Cascadia Code',Consolas,monospace; color:#e6e8ec; min-height:64px; }
+.prompt-sign{ color:#a78bfa; font-weight:700; margin-right:9px; }
+.cursor{ color:#a78bfa; font-weight:700; animation:blink 1.05s steps(1) infinite; }
+@keyframes blink{ 50%{ opacity:0 } }
+.term-hint{ text-align:center; color:var(--gris); font-size:13px; margin:10px 0 0; }
+
+/* ---------- EJEMPLOS ---------- */
+.ej{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+@media (max-width:620px){ .ej{ grid-template-columns:1fr; } }
+.ej .item{ background:var(--tarjeta); border:1px solid var(--linea); border-radius:12px; padding:14px 16px; box-shadow:var(--sombra); transition:transform .18s, box-shadow .18s, border-color .18s; }
+.ej .item:hover{ transform:translateY(-4px); border-color:var(--violeta-2); box-shadow:0 14px 34px rgba(109,40,217,.18); }
+.ej .item .t{ font-weight:600; display:block; margin-bottom:8px; }
+.prompt{ display:inline-flex; align-items:center; gap:7px; cursor:pointer; font:13.5px/1.35 'Cascadia Code',Consolas,monospace; color:var(--chip-tinta); background:var(--chip); padding:6px 11px; border-radius:8px; border:1px dashed transparent; transition:border-color .15s; }
+.prompt:hover{ border-color:var(--violeta-2); }
+.prompt .cp{ opacity:.55; font-size:12px; } .prompt .cp::after{ content:"copiar"; }
+.prompt.copiado{ color:#16a34a; } .prompt.copiado .cp{ opacity:1; } .prompt.copiado .cp::after{ content:"¡copiado!"; }
+
+/* ---------- CATÁLOGO DE PROYECTOS ---------- */
+.grid-proj{ display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; margin-top:8px; }
+.proj{ display:block; background:var(--tarjeta); border:1px solid var(--linea); border-radius:14px; padding:18px; text-decoration:none; color:var(--tinta); box-shadow:var(--sombra); transition:transform .18s, box-shadow .18s, border-color .18s; position:relative; overflow:hidden; }
+.proj::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:5px; background:linear-gradient(var(--violeta),var(--violeta-2)); }
+.proj:hover{ transform:translateY(-5px); border-color:var(--violeta-2); box-shadow:0 16px 36px rgba(109,40,217,.20); }
+.proj .num{ font:700 13px 'Cascadia Code',monospace; color:var(--chip-tinta); }
+.proj .nom{ display:block; font-weight:700; font-size:16px; margin:4px 0 8px; }
+.proj .badges{ display:flex; flex-wrap:wrap; gap:6px; }
+.badge{ font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:99px; background:var(--chip); color:var(--chip-tinta); }
+.badge.kit{ background:#fdf0dd; color:#b06f14; } @media (prefers-color-scheme: dark){ .badge.kit{ background:#3a2c14; color:#e0a43b; } }
+
+footer{ text-align:center; color:var(--gris); font-size:14px; margin-top:44px; padding-top:24px; border-top:1px solid var(--linea); }
+footer .marca{ font-weight:700; color:var(--violeta); letter-spacing:1px; }
+@media (prefers-color-scheme: dark){ footer .marca{ color:var(--violeta-2); } }
+:root[data-theme="dark"] footer .marca{ color:var(--violeta-2); }
+footer a{ text-decoration:none; } footer a:hover{ text-decoration:underline; }
+
+/* ---------- ENTRADA (robusta, siempre termina visible) ---------- */
+@keyframes fadeUp{ from{ opacity:0; transform:translateY(16px) } to{ opacity:1; transform:none } }
+.reveal{ animation:fadeUp .6s ease both; }
+.grid-proj .proj:nth-child(2n){ animation-delay:.06s } .grid-proj .proj:nth-child(3n){ animation-delay:.12s }
+@media (prefers-reduced-motion: reduce){
+  /* Se mantiene el tipeo, el robot y el cursor (movimiento suave); solo se apaga la entrada. */
+  .reveal{ animation:none; opacity:1; transform:none; }
+  .hero::before{ animation:none; }
+  html{ scroll-behavior:auto; }
+}
