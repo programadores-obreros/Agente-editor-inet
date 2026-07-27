@@ -12,6 +12,7 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 - 🧑‍🏫 **Se adapta a vos** — pregunta si sos docente o alumno y ajusta cómo te explica
 - 🧠 **Se acuerda de vos** — te pregunta el nombre y el rol y te saluda por tu nombre, y **te habla en tu género** (varón, mujer o no binario). Se adapta a quién usa la compu: **personal** (una persona), **grupo** (pocas conocidas que rotan, recuerda a cada una) o **aula** (compartida por muchos: NO guarda nombres ni género, para no dejar datos personales de menores en la cuenta común de la escuela — Ley 25.326)
 - 📈 **Recuerda el progreso de la compu** — el nivel y los proyectos ya hechos en esa máquina, para retomar donde quedaron y ajustar cómo explica. Es memoria de la **compu/grupo, no de una persona**: no guarda nombres ni datos personales de menores (pensado para las PCs compartidas de la escuela)
+- 🎯 **Te guía un proyecto paso a paso** — materiales → concepto → cableado → código → seguridad → probar, un paso a la vez, y **recuerda en qué paso quedaste** para retomar exacto la próxima sesión (usa los 15 proyectos INET)
 - 💡 **Explica el porqué** antes de tirar código, y el código viene comentado línea por línea
 - 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat
 - ⚡ **Chequeo de seguridad antes de prender** — te hace repasar lo crítico (los 3.3V del ESP32, polaridad, cortos) antes de dar corriente, para no quemar la placa
@@ -25,7 +26,7 @@ Pensado para **docentes y estudiantes con poca o nula experiencia** en programac
 
 ## ¿Cómo funciona?
 
-Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), cinco herramientas (`platformio` para compilar/cargar, `circuito`s visuales, `actualizar` la capa, `perfil` y `memoria`), trece bases de conocimiento, los comandos `/diagnostico` y `/actualizar`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
+Tecnia Bot es una **capa educativa** que se instala encima de [OpenCode](https://opencode.ai). No reemplaza nada: agrega un agente (`tecnia-bot`), cinco herramientas (`platformio` para compilar/cargar, `circuito`s visuales, `actualizar` la capa, `perfil` y `memoria`), catorce bases de conocimiento, los comandos `/diagnostico` y `/actualizar`, y su **identidad de marca** (un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta) — sin tocar el binario de OpenCode ni su auto-actualización.
 
 Se copia a la config global de OpenCode (`~/.config/opencode/`), así que queda disponible en **cualquier carpeta** donde abras OpenCode.
 
@@ -105,7 +106,7 @@ Agente-editor-inet/
 │   ├── tool/               # Herramientas: platformio.ts (compilar/cargar), circuito.ts (circuitos) y actualizar.ts (auto-update)
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash (logo TECNIA BOT) + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
-│   ├── skills/             # 13 bases de conocimiento (ver abajo)
+│   ├── skills/             # 14 bases de conocimiento (ver abajo)
 │   ├── command/            # Comandos: /diagnostico y /actualizar
 │   ├── tecniabot-web/      # Biblioteca visual: piezas Wokwi + componentes propios (para los circuitos)
 │   └── env.d.ts            # Tipos de ambiente (runtime Bun de OpenCode)
@@ -119,9 +120,9 @@ Agente-editor-inet/
 └── .github/workflows/      # CI: corre los tests en cada push
 ```
 
-**Los 13 skills** (bases de conocimiento del agente): `arduino`, `esp32`, `sensores`, `actuadores`,
+**Los 14 skills** (bases de conocimiento del agente): `arduino`, `esp32`, `sensores`, `actuadores`,
 `modulos-avanzados`, `errores-comunes`, `gotchas-hardware`, `checklist-seguridad`, `diagramas-conexion`,
-`circuitos-visuales`, `comunicacion-serial`, `librerias`, `proyectos-inet`.
+`circuitos-visuales`, `comunicacion-serial`, `librerias`, `proyectos-inet`, `proyecto-guiado`.
 
 El skill `proyectos-inet` es el conocimiento de los **15 proyectos INET refactorizados** (Saberes
 Digitales / INET-EDUCAR): cada proyecto con sus niveles, pinout exacto UNO/ESP32, cableado, código

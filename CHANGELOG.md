@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.21] — 2026-07-26
+
+Proyecto guiado paso a paso, que se retoma donde lo dejaste.
+
+### Nuevo
+- **Proyecto guiado (nuevo skill `proyecto-guiado`)**: cuando querés ARMAR un proyecto INET (no solo preguntar algo), el bot te lleva **paso a paso** — materiales → concepto → cableado (con el circuito visual) → código comentado → chequeo de seguridad → probar — **un paso a la vez**, sin abrumar. Y **recuerda en qué paso quedaste**: la memoria suma un campo "En curso", así la próxima sesión el bot ofrece retomar EXACTO donde dejaste ("quedamos armando el semáforo, en el paso de cablear, ¿seguimos?"). Al terminar, pasa a "proyectos hechos" y limpia el "en curso". Integra en un solo flujo la memoria, los 15 proyectos INET, el circuito visual y el checklist de seguridad. Con smoke tests del "en curso" (guardar avance y limpiarlo al terminar).
+
 ## [0.3.20] — 2026-07-26
 
 Chequeo de seguridad antes de prender: que no se queme ninguna placa.
