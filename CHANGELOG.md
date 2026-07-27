@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.32] — 2026-07-27
+
+Micro-sitio nivel pro: íconos SVG, acordeón y accesibilidad.
+
+### Mejorado
+- **Rediseño UX/UI del micro-sitio de `/ayuda`** siguiendo el patrón "FAQ/Documentation" (con el skill ui-ux-pro-max): los ejemplos usan **íconos SVG** en vez de emoji (consistentes, nítidos, temáticos), "Si algo falla" pasó a ser un **acordeón** (progressive disclosure), y se sumó **accesibilidad**: focus visible para teclado, los ejemplos se copian con Enter/Espacio, `aria-expanded`/`role`/`aria-controls`, cursor-pointer y transiciones. Se **mantuvo la marca violeta y las fonts del sistema** — no se adoptó el dark-slate ni las Google Fonts que sugería el skill, porque romperían la marca y el offline (las fonts van por CDN).
+
 ## [0.3.31] — 2026-07-27
 
 El link al sitio oficial abre en otra pestaña.
