@@ -22,7 +22,7 @@ Para cualquiera de los 15 proyectos INET, la estructura es esta. Sacá el conten
 1. **Elegir + materiales.** Confirmá qué proyecto y con qué placa (UNO/ESP32). Listá los materiales que necesita — que junte todo antes de empezar. (Guardá `en_curso` = proyecto, `paso` = "paso 1 de 5: materiales".)
 2. **Entender el concepto.** En 2-3 oraciones, qué hace el proyecto y por qué. Antes del cable y el código va la idea. Preguntá si se entiende.
 3. **Cablear.** Mostrá el circuito con el tool `circuito` (piezas reales, se abre en el navegador). Guialo por las conexiones leyendo la tabla del circuito. NO inventes pines.
-4. **Código.** El código comentado línea por línea (español). Explicá las partes clave antes de cargar. Usá el tool `platformio` para compilar/cargar.
+4. **Código.** El código comentado línea por línea (español). Explicá las partes clave antes de cargar. Usá el tool `platformio` para compilar/cargar. **CRÍTICO — los pines del código TIENEN que ser EXACTAMENTE los mismos que muestra el circuito que generaste en el paso 3.** El circuito es la fuente de verdad: si el diagrama dice GPIO19/GPIO5/GPIO4, el código usa 19/5/4, NUNCA inventes otros pines. Si no coinciden, el alumno cablea una cosa y el código apunta a otra → no prende y no entiende por qué. Ante la duda, leé la tabla de conexiones del propio circuito.
 5. **Chequeo de seguridad + probar.** ANTES de dar corriente, activá el skill `checklist-seguridad` (chequeo corto a medida). Recién ahí, prender y probar. Si no anda, activá `gotchas-hardware`.
 6. **Cerrar.** Celebrá el logro ("¡Buenísimo, eso funciona!"). Guardá el proyecto como TERMINADO con `memoria` (`proyecto`: el nombre). Ofrecé el siguiente paso o un proyecto nuevo.
 
