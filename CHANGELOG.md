@@ -2,6 +2,17 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.35] — 2026-08-12
+
+El instalador ahora pide la API key de Google directo, sin pasar por `/connect`.
+
+### Nuevo
+- **El instalador (`install.ps1`/`install.sh`) pregunta por la API key de Google al final de la instalación**, en vez de dejarlo como un paso manual con `/connect` dentro de OpenCode. Motivo: repartir una única key propia entre varias personas/escuelas comparte cuota y arriesga que Google la revoque si termina en un repo público — con esto, cada instalación pone la suya, en 30 segundos, sin tocar el repo para nada. Detalles:
+  - **Idempotente**: si ya hay una key de `google` guardada (de esta instalación o de un `/connect` manual previo), no se vuelve a preguntar en cada `/actualizar`.
+  - **Opcional**: si no la tenés a mano, Enter y seguís — se puede agregar después con `/connect`.
+  - **Con timeout de 60s**, pensado para que un deploy desatendido a varias PCs (con la consola visible pero nadie tipeando) no se quede colgado para siempre esperando una tecla.
+  - La key se guarda **solo en el archivo local de credenciales de OpenCode** — nunca en este repo, nunca en git.
+
 ## [0.3.34] — 2026-08-12
 
 Ajustes de prompt: reforzar "ejecutá la tool, no la describas" y prohibir `webfetch` con archivos locales.

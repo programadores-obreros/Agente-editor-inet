@@ -262,6 +262,76 @@ if ($ocHasContent -and $null -eq $oc) {
 
 Write-Host "==> Listo! Tecnia Bot v$Version instalado."
 Write-Host ""
+
+# ---- API key de Gemini: se pide UNA sola vez, solo si no hay ninguna guardada ----
+# Sin esto Tecnia Bot no puede hablar con el modelo. Se guarda directo en el archivo
+# de credenciales de OpenCode -- NUNCA en este repo, NUNCA en git, nunca se comparte
+# entre instalaciones (cada compu pone la suya). Idempotente: si ya hay una key de
+# "google" guardada (de esta instalacion o de un /connect manual), no se pregunta de
+# nuevo en cada /actualizar.
+if ($env:XDG_DATA_HOME) {
+    $DataDir = Join-Path $env:XDG_DATA_HOME "opencode"
+} else {
+    $DataDir = Join-Path $env:USERPROFILE ".local\share\opencode"
+}
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+$AuthFile = Join-Path $DataDir "auth.json"
+
+$authData = $null
+if (Test-Path $AuthFile) {
+    try { $authData = Get-Content $AuthFile -Raw | ConvertFrom-Json } catch { $authData = $null }
+}
+if (-not $authData) { $authData = [PSCustomObject]@{} }
+
+$tieneGoogle = ($authData.PSObject.Properties.Name -contains "google") -and $authData.google.key
+if (-not $tieneGoogle) {
+    Write-Host "==> Tecnia Bot necesita una API key GRATIS de Google (sin tarjeta) para hablar con el modelo."
+    Write-Host "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
+    Write-Host "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
+    # Timeout de 60s: si esto corre en modo silencioso/desatendido (deploy a varias
+    # PCs) con una consola real pero nadie tipeando, una lectura bloqueante se
+    # colgaria para siempre. Start-Job/Read-Host NO sirve (un job corre en un
+    # proceso aislado sin consola real -> deadlock detectado por PowerShell). Un
+    # Task sobre [Console]::ReadLine() tampoco -- falla si no hay consola real
+    # adjunta. La tecnica correcta: sondear [Console]::KeyAvailable con un
+    # cronometro. Si la entrada esta redirigida (pipe/automatizacion), KeyAvailable
+    # tira excepcion -- en ese caso caemos a una lectura simple, que ahi SI es
+    # segura (un pipe nunca se cuelga: devuelve al toque lo que tenga, o vacio).
+    Write-Host "    Pegala aca (o Enter para hacerlo despues con /connect dentro de OpenCode) [60s]:"
+    $key = ""
+    $recibioAlgo = $false
+    try {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.Elapsed.TotalSeconds -lt 60) {
+            if ([Console]::KeyAvailable) {
+                $charInfo = [Console]::ReadKey($true)
+                if ($charInfo.Key -eq "Enter") { $recibioAlgo = $true; Write-Host ""; break }
+                elseif ($charInfo.Key -eq "Backspace") {
+                    if ($key.Length -gt 0) { $key = $key.Substring(0, $key.Length - 1) }
+                } else {
+                    $key += $charInfo.KeyChar
+                }
+            } else {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+        if (-not $recibioAlgo) { Write-Host ""; Write-Host "  [i] Sin respuesta en 60s -- seguimos sin key por ahora." }
+    } catch [System.InvalidOperationException] {
+        # Consola redirigida (pipe/automatizacion): un pipe no se cuelga, leemos directo.
+        $key = [Console]::In.ReadLine()
+        if (-not $key) { $key = "" }
+    }
+    if ($key -and $key.Trim()) {
+        $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $key.Trim() } -Force
+        ($authData | ConvertTo-Json -Depth 10) | Set-Content -Path $AuthFile -Encoding UTF8
+        [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $key.Trim(), "User")
+        Write-Host "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."
+    } else {
+        Write-Host "  [i] Sin key por ahora -- podes agregarla despues con /connect dentro de OpenCode."
+    }
+    Write-Host ""
+}
+
 Write-Host "Verificando dependencias:"
 
 # Chequear OpenCode

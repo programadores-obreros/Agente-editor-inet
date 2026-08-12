@@ -81,7 +81,7 @@ bash install/bootstrap.sh
 powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 ```
 
-> 🔑 **Paso único post-instalación:** Tecnia Bot necesita una API key gratis de Google (sin tarjeta) para su modelo de lenguaje. Sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey), abrí OpenCode, escribí `/connect`, elegí Google/Gemini y pegala ahí — se guarda para siempre, no hace falta repetirlo.
+> 🔑 **El instalador te pide la API key gratis de Google directo** (sin tarjeta, sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — pegala cuando te la pida al final de la instalación. Si no la tenés a mano, apretá Enter y agregala después con `/connect` dentro de OpenCode. Es un paso único: se guarda para siempre.
 
 > 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md)
 

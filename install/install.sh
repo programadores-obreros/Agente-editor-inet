@@ -324,6 +324,57 @@ fi
 
 echo "==> Listo! Tecnia Bot v$VERSION instalado."
 echo ""
+
+# ---- API key de Gemini: se pide UNA sola vez, solo si no hay ninguna guardada ----
+# Sin esto Tecnia Bot no puede hablar con el modelo. Se guarda directo en el archivo
+# de credenciales de OpenCode -- NUNCA en este repo, NUNCA en git, nunca se comparte
+# entre instalaciones (cada compu pone la suya). Idempotente: si ya hay una key de
+# "google" guardada (de esta instalacion o de un /connect manual), no se pregunta de
+# nuevo en cada /actualizar.
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+mkdir -p "$DATA_DIR"
+AUTH_FILE="$DATA_DIR/auth.json"
+
+TIENE_GOOGLE=0
+if [ -f "$AUTH_FILE" ] && command -v python3 >/dev/null 2>&1; then
+  TIENE_GOOGLE="$(python3 -c "
+import json
+try:
+    d = json.load(open('$AUTH_FILE'))
+    print(1 if d.get('google', {}).get('key') else 0)
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)"
+fi
+
+if [ "$TIENE_GOOGLE" != "1" ]; then
+  echo "==> Tecnia Bot necesita una API key GRATIS de Google (sin tarjeta) para hablar con el modelo."
+  echo "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
+  echo "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
+  # Timeout de 60s: si esto corre sin terminal (pipe, deploy desatendido), read
+  # se colgaria para siempre esperando una entrada que nunca llega.
+  read -r -t 60 -p "    Pegala aca (o Enter para hacerlo despues con /connect dentro de OpenCode) [60s]: " GEMINI_KEY || true
+  if [ -n "${GEMINI_KEY:-}" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$AUTH_FILE" "$GEMINI_KEY" <<'PYEOF'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(path))
+except Exception:
+    d = {}
+d["google"] = {"type": "api", "key": key.strip()}
+json.dump(d, open(path, "w"), indent=2)
+PYEOF
+    echo "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."
+  elif [ -n "${GEMINI_KEY:-}" ]; then
+    echo "  [AVISO] No hay python3 para guardar la key automaticamente."
+    echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
+  else
+    echo "  [i] Sin key por ahora -- podes agregarla despues con /connect dentro de OpenCode."
+  fi
+  echo ""
+fi
+
 echo "Verificando dependencias:"
 
 # Chequear OpenCode

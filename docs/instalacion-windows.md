@@ -61,15 +61,15 @@ que Windows no reconoce de fábrica:
 
 Si conectás la placa y no aparece en el Administrador de dispositivos, instalá el driver que corresponda y reiniciá.
 
-### Paso 4 — Conectá la API key gratis de Google
+### Paso 4 — La API key gratis de Google
 
-Tecnia Bot usa Google Gemini como modelo de lenguaje, que tiene una cuota gratis (sin tarjeta). Es un paso único: se guarda para la próxima vez.
+Tecnia Bot usa Google Gemini como modelo de lenguaje, que tiene una cuota gratis (sin tarjeta). **El instalador ya te la pide solo**, al final de la instalación:
 
-1. Entrá a [aistudio.google.com/apikey](https://aistudio.google.com/apikey) con una cuenta de Google y generá una key gratis (copiala, la vas a necesitar en el paso siguiente).
-2. Abrí una terminal (o el mismo Tecnia Bot que ya se abrió al terminar la instalación) y escribí `opencode`.
-3. Escribí `/connect`, buscá **Google** (o **Gemini**) en la lista y pegá la key cuando te la pida.
+1. Entrá a [aistudio.google.com/apikey](https://aistudio.google.com/apikey) con una cuenta de Google y generá una key gratis (podés hacerlo antes, en otra pestaña, mientras corre el instalador).
+2. Cuando el instalador te muestre *"Tecnia Bot necesita una API key GRATIS de Google..."*, pegala ahí directo.
+3. Si no la tenés a mano en ese momento, apretá Enter sin pegar nada — podés agregarla después escribiendo `/connect` dentro de OpenCode, buscando **Google** en la lista.
 
-Listo — no hace falta repetir esto de nuevo.
+Es un paso único: se guarda en tu compu y no se vuelve a pedir en las próximas actualizaciones.
 
 ### Paso 5 — Verificá
 
