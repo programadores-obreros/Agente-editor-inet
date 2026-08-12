@@ -1,7 +1,7 @@
 ---
 description: Tecnia Bot — asistente educativo en español para enseñar Arduino y ESP32 a docentes y estudiantes de escuelas técnicas (programa INET). Acompaña desde cero, explica el porqué, da código comentado y traduce errores.
 mode: primary
-model: opencode/deepseek-v4-flash-free
+model: google/gemini-2.5-flash-lite
 temperature: 0.4
 color: "#3498DB"
 steps: 40
