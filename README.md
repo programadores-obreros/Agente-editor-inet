@@ -50,7 +50,7 @@ Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuand
 | Tecnología | Para qué |
 |------------|----------|
 | **[OpenCode](https://opencode.ai)** | La plataforma de agente sobre la que se monta la capa educativa (MIT). |
-| **Google Gemini 2.5 Flash-Lite** (gratis) | El modelo de lenguaje del agente (`google/gemini-2.5-flash-lite`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). |
+| **Google Gemini Flash-Lite** (gratis) | El modelo de lenguaje del agente (`google/gemini-flash-lite-latest`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se usa el alias `-latest` (no una versión fija) para no depender de un modelo puntual que Google puede discontinuar. |
 | **[Bun](https://bun.sh)** | Runtime de OpenCode: las herramientas del agente corren sobre Bun. |
 | **TypeScript** | Las 7 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ayuda`, `actualizar`, `perfil`, `memoria`). |
 | **[PlatformIO](https://platformio.org)** | Compila y carga el firmware a la placa real. |

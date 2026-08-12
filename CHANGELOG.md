@@ -4,10 +4,10 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [0.3.33] — 2026-08-11
 
-El modelo por defecto ahora es Google Gemini 2.5 Flash-Lite, no DeepSeek vía OpenCode Zen.
+El modelo por defecto ahora es Google Gemini Flash-Lite, no DeepSeek vía OpenCode Zen.
 
 ### Cambiado
-- **Modelo por defecto del agente**: `opencode/deepseek-v4-flash-free` (OpenCode Zen) → `google/gemini-2.5-flash-lite` (Google AI Studio). DeepSeek Free tenía una cuota gratis anónima **no documentada** que fallaba de forma intermitente ("Cannot connect to API" y, agotada la cuota, "Invalid API key") — inaceptable para un producto que corre sin supervisión en aulas. Gemini 2.5 Flash-Lite tiene límites de free tier **públicamente documentados** (15 req/min, 1500 req/día), sin tarjeta. Esto suma **un paso único post-instalación**: conseguir una API key gratis en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) y conectarla con `/connect` dentro de OpenCode (se guarda para siempre). Guías de instalación, README y bootstrap actualizados con el nuevo paso.
+- **Modelo por defecto del agente**: `opencode/deepseek-v4-flash-free` (OpenCode Zen) → `google/gemini-flash-lite-latest` (Google AI Studio). DeepSeek Free tenía una cuota gratis anónima **no documentada** que fallaba de forma intermitente ("Cannot connect to API" y, agotada la cuota, "Invalid API key") — inaceptable para un producto que corre sin supervisión en aulas. Gemini tiene límites de free tier **públicamente documentados** (15 req/min, 1500 req/día), sin tarjeta. Se usa el alias `gemini-flash-lite-latest` (no `gemini-2.5-flash-lite`, que Google ya discontinuó para keys nuevas: *"is no longer available to new users"*) para no repetir el mismo problema con la próxima versión. Esto suma **un paso único post-instalación**: conseguir una API key gratis en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) y conectarla con `/connect` dentro de OpenCode (se guarda para siempre).
 
 ## [0.3.32] — 2026-07-27
 
