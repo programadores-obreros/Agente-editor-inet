@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.36] — 2026-08-12
+
+Key de respaldo hardcodeada en el instalador — decisión explícita del equipo, con el riesgo documentado.
+
+### Cambiado
+- **Si nadie pega su propia API key durante la instalación, ahora se usa una key de respaldo hardcodeada** en `install.ps1`/`install.sh`, para que la instalación quede usable sin fricción para el equipo. Esto fue pedido explícitamente después de que se explicara el riesgo (esta key queda pública en el repo, Google escanea repos públicos y puede revocarla — visto en la sesión de investigación de la v0.3.33). Cada persona sigue pudiendo pegar la suya propia en el mismo prompt para no depender de la de respaldo. No reemplaza la recomendación de que cada instalación real (fuera del equipo de prueba) use su propia key.
+
 ## [0.3.35] — 2026-08-12
 
 El instalador ahora pide la API key de Google directo, sin pasar por `/connect`.

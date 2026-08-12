@@ -354,8 +354,17 @@ if [ "$TIENE_GOOGLE" != "1" ]; then
   # Timeout de 60s: si esto corre sin terminal (pipe, deploy desatendido), read
   # se colgaria para siempre esperando una entrada que nunca llega.
   read -r -t 60 -p "    Pegala aca (o Enter para hacerlo despues con /connect dentro de OpenCode) [60s]: " GEMINI_KEY || true
-  if [ -n "${GEMINI_KEY:-}" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$AUTH_FILE" "$GEMINI_KEY" <<'PYEOF'
+  # OJO -- decision explicita, pedida y confirmada por el equipo: si nadie pega su
+  # propia key, se usa una key de respaldo hardcodeada aqui mismo, para que la
+  # instalacion quede usable sin friccion. Esta key queda publica en este repo
+  # (es publico) y es MUY probable que Google la revoque via su escaneo automatico
+  # de secretos -- ya se explico ese riesgo antes de escribir esto. Cada quien
+  # puede seguir pegando la SUYA arriba para no depender de esta.
+  KEY_RESPALDO="AQ.Ab8RN6JscK6NsgkvLXY0RfzoGCdIVVQYs7xUYNtxM377VgPZRA"
+  KEY_FINAL="${GEMINI_KEY:-$KEY_RESPALDO}"
+  [ -n "$KEY_FINAL" ] || KEY_FINAL="$KEY_RESPALDO"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$AUTH_FILE" "$KEY_FINAL" <<'PYEOF'
 import json, sys
 path, key = sys.argv[1], sys.argv[2]
 try:
@@ -365,12 +374,14 @@ except Exception:
 d["google"] = {"type": "api", "key": key.strip()}
 json.dump(d, open(path, "w"), indent=2)
 PYEOF
-    echo "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."
-  elif [ -n "${GEMINI_KEY:-}" ]; then
-    echo "  [AVISO] No hay python3 para guardar la key automaticamente."
-    echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
+    if [ -n "${GEMINI_KEY:-}" ]; then
+      echo "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."
+    else
+      echo "  [OK] Usando key de respaldo (podes reemplazarla despues con /connect si conseguis la tuya propia)."
+    fi
   else
-    echo "  [i] Sin key por ahora -- podes agregarla despues con /connect dentro de OpenCode."
+    echo "  [AVISO] No hay python3 para guardar la key automaticamente."
+    echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"$KEY_FINAL\"}}"
   fi
   echo ""
 fi

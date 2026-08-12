@@ -321,13 +321,20 @@ if (-not $tieneGoogle) {
         $key = [Console]::In.ReadLine()
         if (-not $key) { $key = "" }
     }
+    # OJO -- decision explicita, pedida y confirmada por el equipo: si nadie pega su
+    # propia key, se usa una key de respaldo hardcodeada ahi mismo, para que la
+    # instalacion quede usable sin fricción. Esta key queda publica en este repo
+    # (es publico) y es MUY probable que Google la revoque via su escaneo automatico
+    # de secretos -- ya se explico ese riesgo antes de escribir esto. Cada quien
+    # puede seguir pegando la SUYA en el prompto de arriba para no depender de esta.
+    $keyFinal = if ($key -and $key.Trim()) { $key.Trim() } else { "AQ.Ab8RN6JscK6NsgkvLXY0RfzoGCdIVVQYs7xUYNtxM377VgPZRA" }
+    $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
+    ($authData | ConvertTo-Json -Depth 10) | Set-Content -Path $AuthFile -Encoding UTF8
+    [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
     if ($key -and $key.Trim()) {
-        $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $key.Trim() } -Force
-        ($authData | ConvertTo-Json -Depth 10) | Set-Content -Path $AuthFile -Encoding UTF8
-        [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $key.Trim(), "User")
         Write-Host "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."
     } else {
-        Write-Host "  [i] Sin key por ahora -- podes agregarla despues con /connect dentro de OpenCode."
+        Write-Host "  [OK] Usando key de respaldo (podes reemplazarla despues con /connect si conseguis la tuya propia)."
     }
     Write-Host ""
 }
