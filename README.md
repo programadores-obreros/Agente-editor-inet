@@ -4,7 +4,7 @@
 
 **Asistente educativo de IA para enseñar Arduino y ESP32 en escuelas técnicas argentinas (programa INET).**
 
-Habla en español, explica el *porqué* antes del código, comenta cada línea y traduce los errores técnicos a un lenguaje que se entiende. Pensado para **docentes y estudiantes con poca o nula experiencia** — offline y de un doble clic.
+Habla en español, explica el *porqué* antes del código, comenta cada línea y traduce los errores técnicos a un lenguaje que se entiende. Pensado para **docentes y estudiantes con poca o nula experiencia** — offline y de un doble clic (con un único paso extra la primera vez: conectar una API key gratis de Google, ver [Instalación](#-instalación)).
 
 [![Versión](https://img.shields.io/github/v/release/programadores-obreros/Agente-editor-inet?label=versi%C3%B3n&color=6d28d9)](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)
 [![CI](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/ci.yml/badge.svg)](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/ci.yml)
@@ -50,7 +50,7 @@ Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuand
 | Tecnología | Para qué |
 |------------|----------|
 | **[OpenCode](https://opencode.ai)** | La plataforma de agente sobre la que se monta la capa educativa (MIT). |
-| **DeepSeek V4 Flash** (gratis) | El modelo de lenguaje del agente (`opencode/deepseek-v4-flash-free`). |
+| **Google Gemini Flash-Lite** (gratis) | El modelo de lenguaje del agente (`google/gemini-flash-lite-latest`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se usa el alias `-latest` (no una versión fija) para no depender de un modelo puntual que Google puede discontinuar. |
 | **[Bun](https://bun.sh)** | Runtime de OpenCode: las herramientas del agente corren sobre Bun. |
 | **TypeScript** | Las 7 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ayuda`, `actualizar`, `perfil`, `memoria`). |
 | **[PlatformIO](https://platformio.org)** | Compila y carga el firmware a la placa real. |
@@ -81,7 +81,9 @@ bash install/bootstrap.sh
 powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 ```
 
-> 📖 Guías paso a paso (drivers USB + permisos del puerto serial): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md)
+> 🔑 **El instalador te pide la API key gratis de Google directo** (sin tarjeta, sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — pegala cuando te la pida al final de la instalación. Si no la tenés a mano, apretá Enter y agregala después con `/connect` dentro de OpenCode. Es un paso único: se guarda para siempre.
+
+> 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md)
 
 ### 🔧 Instalación manual (avanzada)
 

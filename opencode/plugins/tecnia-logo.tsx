@@ -157,6 +157,27 @@ function TipLine(props: { api: TuiPluginApi; tip: string }) {
   )
 }
 
+// ----------------------------------------------------------------------------
+// LIMITACIÓN CONOCIDA: no se puede traducir el diálogo de permisos ni /help.
+//
+// El truco de más abajo (`plugins.deactivate("internal:home-tips")` + slots
+// `home_logo`/`home_bottom`) funciona porque OpenCode expone esos dos ganchos
+// A PROPÓSITO para branding de la pantalla de inicio. NO generaliza: la lista
+// completa de slots (`TuiHostSlotMap`) no incluye nada para el diálogo de
+// permisos ("Allow once / Allow always / Reject") ni para la salida de /help,
+// que están hardcodeados en el core/binario y se renderizan con el subsistema
+// nativo de diálogos (`ui.dialog` / `AlertConfirm`), sin extension points.
+//
+// El único hook relacionado con permisos es `permission.ask`, y solo permite
+// cambiar la decisión (`ask`/`deny`/`allow`), no el texto mostrado.
+//
+// Ya se investigó y quedó en claro que no hay approach vía plugin API: hay un
+// patrón consistente de rechazo upstream a i18n nativo (3 issues cerrados
+// `not_planned`: opencode#32514, #21084, #15800). Ver el hallazgo completo en
+// programadores-obreros/Agente-editor-inet#1. Antes de reintentar esto, leer
+// ese hilo para no reinvestigar lo mismo.
+// ----------------------------------------------------------------------------
+
 const tui: TuiPlugin = async (api) => {
   // Desactivamos el tip por defecto de OpenCode (`internal:home-tips`): con el
   // modelo gratis de Zen queda clavado en "Run /connect..." y confunde al docente.

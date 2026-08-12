@@ -38,7 +38,17 @@ sudo usermod -a -G uucp $USER
 
 > Los drivers USB (CH340, CP2102) ya vienen en el kernel de Linux — no hace falta instalarlos.
 
-### Paso 4 — Verificá
+### Paso 4 — La API key gratis de Google
+
+Tecnia Bot usa Google Gemini como modelo de lenguaje, que tiene una cuota gratis (sin tarjeta). **El instalador ya te la pide solo**, al final de la instalación:
+
+1. Entrá a [aistudio.google.com/apikey](https://aistudio.google.com/apikey) con una cuenta de Google y generá una key gratis (podés hacerlo antes, en otra pestaña, mientras corre el instalador).
+2. Cuando el instalador te muestre *"Tecnia Bot necesita una API key GRATIS de Google..."*, pegala ahí directo.
+3. Si no la tenés a mano en ese momento, apretá Enter sin pegar nada — podés agregarla después escribiendo `/connect` dentro de OpenCode, buscando **Google** en la lista.
+
+Es un paso único: se guarda en tu compu y no se vuelve a pedir en las próximas actualizaciones.
+
+### Paso 5 — Verificá
 
 Abrí una terminal, escribí `opencode`, apretá **Tab**, elegí `tecnia-bot` y ejecutá `/diagnostico`.
 

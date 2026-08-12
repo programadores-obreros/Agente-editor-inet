@@ -2,6 +2,34 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.35] — 2026-08-12
+
+El instalador ahora pide la API key de Google directo, sin pasar por `/connect`.
+
+### Nuevo
+- **El instalador (`install.ps1`/`install.sh`) pregunta por la API key de Google al final de la instalación**, en vez de dejarlo como un paso manual con `/connect` dentro de OpenCode. Motivo: repartir una única key propia entre varias personas/escuelas comparte cuota y arriesga que Google la revoque si termina en un repo público — con esto, cada instalación pone la suya, en 30 segundos, sin tocar el repo para nada. Detalles:
+  - **Idempotente**: si ya hay una key de `google` guardada (de esta instalación o de un `/connect` manual previo), no se vuelve a preguntar en cada `/actualizar`.
+  - **Opcional**: si no la tenés a mano, Enter y seguís — se puede agregar después con `/connect`.
+  - **Con timeout de 60s**, pensado para que un deploy desatendido a varias PCs (con la consola visible pero nadie tipeando) no se quede colgado para siempre esperando una tecla.
+  - La key se guarda **solo en el archivo local de credenciales de OpenCode** — nunca en este repo, nunca en git.
+
+## [0.3.34] — 2026-08-12
+
+Ajustes de prompt: reforzar "ejecutá la tool, no la describas" y prohibir `webfetch` con archivos locales.
+
+### Cambiado
+- **Refuerzo de "EJECUTÁ la tool, nunca la describas"** en `tecnia-bot.md`: en sesiones largas el agente a veces terminaba **narrándole** al usuario cómo usaría una tool ("podés usar el tool platformio con la acción...") en vez de **llamarla**, sobre todo con `platformio` — la única mención de esa tool en todo el prompt no tenía contraejemplo ni refuerzo, y quedaba en el medio del archivo (zona de menor adherencia por "lost in the middle"). Se agregó una **regla crítica nueva al principio** del prompt (efecto primacía) que prohíbe explícitamente narrar en vez de ejecutar, con ejemplos concretos de qué NO decir; se reforzaron puntualmente `platformio`, `memoria` y `perfil` en el lugar exacto donde el modelo decide; y se reescribió la sección `## Limitaciones` (el cierre del archivo, efecto recencia) en modo imperativo — antes usaba voz descriptiva ("usás el tool circuito", "guardás el perfil con..."), que sin querer modelaba el mismo estilo de la falla.
+
+### Arreglado
+- **`webfetch` con rutas `file://` locales** (issue [#2](https://github.com/programadores-obreros/Agente-editor-inet/issues/2)): el agente a veces intentaba reabrir un `.html`/`.pdf` ya generado (circuito, imprimible) llamando a `webfetch` con la ruta local del archivo, que solo acepta `http(s)://` y fallaba. Se agregó una instrucción explícita: para reabrir un archivo ya generado, decile al usuario la **ruta exacta** y pedile que haga **doble clic** para abrirlo con el navegador del sistema — `webfetch` con rutas locales/`file://` queda **explícitamente prohibido**.
+
+## [0.3.33] — 2026-08-11
+
+El modelo por defecto ahora es Google Gemini Flash-Lite, no DeepSeek vía OpenCode Zen.
+
+### Cambiado
+- **Modelo por defecto del agente**: `opencode/deepseek-v4-flash-free` (OpenCode Zen) → `google/gemini-flash-lite-latest` (Google AI Studio). DeepSeek Free tenía una cuota gratis anónima **no documentada** que fallaba de forma intermitente ("Cannot connect to API" y, agotada la cuota, "Invalid API key") — inaceptable para un producto que corre sin supervisión en aulas. Gemini tiene límites de free tier **públicamente documentados** (15 req/min, 1500 req/día), sin tarjeta. Se usa el alias `gemini-flash-lite-latest` (no `gemini-2.5-flash-lite`, que Google ya discontinuó para keys nuevas: *"is no longer available to new users"*) para no repetir el mismo problema con la próxima versión. Esto suma **un paso único post-instalación**: conseguir una API key gratis en [aistudio.google.com/apikey](https://aistudio.google.com/apikey) y conectarla con `/connect` dentro de OpenCode (se guarda para siempre).
+
 ## [0.3.32] — 2026-07-27
 
 Micro-sitio nivel pro: íconos SVG, acordeón y accesibilidad.
