@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 
 > 🔑 **El instalador te pide la API key gratis de Google directo** (sin tarjeta, sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — pegala cuando te la pida al final de la instalación. Si no la tenés a mano, apretá Enter y agregala después con `/connect` dentro de OpenCode. Es un paso único: se guarda para siempre.
 
-> 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md)
+> 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md) · [todo sobre la API key de Google — cómo conseguirla y qué hacer si deja de andar](docs/api-key-google.md)
 
 ### 🔧 Instalación manual (avanzada)
 

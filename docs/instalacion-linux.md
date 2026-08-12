@@ -48,6 +48,8 @@ Tecnia Bot usa Google Gemini como modelo de lenguaje, que tiene una cuota gratis
 
 Es un paso único: se guarda en tu compu y no se vuelve a pedir en las próximas actualizaciones.
 
+> 📖 Guía completa (por qué hace falta, qué hacer si deja de andar, cómo reemplazarla): [docs/api-key-google.md](api-key-google.md).
+
 ### Paso 5 — Verificá
 
 Abrí una terminal, escribí `opencode`, apretá **Tab**, elegí `tecnia-bot` y ejecutá `/diagnostico`.
