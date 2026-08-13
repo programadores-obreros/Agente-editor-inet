@@ -2,6 +2,14 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.39] — 2026-08-13
+
+Nuevo skill: Diseño Curricular oficial de San Juan, como única fuente de verdad.
+
+### Nuevo
+- **Skill `diseno-curricular`**: contenido real del [Diseño Curricular Jurisdiccional oficial de San Juan](https://educacion.sanjuan.edu.ar/mesj/LinkClick.aspx?fileticket=pYa3KUrdkgo%3d&tabid=662&mid=1688) (Primer Ciclo de Educación Secundaria, Modalidad Técnico Profesional) — información pública del Ministerio de Educación. Extraído leyendo el PDF oficial completo (241 páginas), no resumido de memoria: `marco-general.md` (fundamentación, perfil del egresado, estructura curricular, carga horaria) + 45 fichas de espacios curriculares/talleres, organizadas por campo de formación (Formación General, Científico Tecnológica, Técnica Específica Industrial y Agrotécnica). Cada archivo cita la fuente oficial y define explícitamente qué es un "DC" — nada implícito. Donde el documento no aclaraba algo (ej. reparto de horas entre talleres del mismo año), se dejó anotado como nota de fidelidad en vez de inventarlo.
+- **Regla crítica nueva en el agente**: el diseño curricular de una provincia cargada es su ÚNICA fuente de verdad — nunca completa con conocimiento general ni busca en internet. Diseñada para crecer: agregar otra provincia es sumar una carpeta nueva, sin tocar código.
+
 ## [0.3.38] — 2026-08-13
 
 Arreglado: `/actualizar` podía quedarse trabado si algún archivo instalado tenía cambios locales.
