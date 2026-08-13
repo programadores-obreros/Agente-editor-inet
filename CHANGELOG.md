@@ -2,6 +2,14 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.37] — 2026-08-12
+
+Nueva página de la API key en el micro-sitio + aviso en el splash si falta o es la de respaldo.
+
+### Nuevo
+- **Página `api-key.html` en el micro-sitio de `/ayuda`**: guía completa de la API key de Google — por qué hace falta, cómo conseguirla (con botón directo a `aistudio.google.com/apikey`), cómo ponerla, y un acordeón de troubleshooting (Invalid API key, el instalador no la pidió, 429 Too Many Requests). Linkeada desde el menú de Inicio y Proyectos.
+- **Aviso inteligente en el splash de OpenCode**: el plugin `tecnia-logo.tsx` ahora detecta el estado real de la key guardada (ninguna / la de respaldo compartida de la v0.3.36 / una propia) leyendo `auth.json` directamente. Si falta o es la compartida, el tip de abajo del splash **siempre** muestra la URL directa y el aviso (con la etiqueta "Importante" en vez de "Tip") — no hace falta que el usuario sepa buscarlo, se lo dice el bot apenas abre. Con key propia ya puesta, no molesta: vuelve al tip aleatorio de siempre. Probado en real (los 3 estados) contra el opencode local: ningún crash en ninguno.
+
 ## [0.3.36] — 2026-08-12
 
 Key de respaldo hardcodeada en el instalador — decisión explícita del equipo, con el riesgo documentado.

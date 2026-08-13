@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tecnia Bot — Tu API key de Google</title>
+<link rel="stylesheet" href="./assets/estilo.css">
+</head>
+<body>
+<nav class="nav">
+  <span class="marca">
+    <svg viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" rx="58" fill="#6d28d9"/><rect x="68" y="76" width="120" height="100" rx="26" fill="#fff"/><circle cx="104" cy="120" r="14" fill="#6d28d9"/><circle cx="152" cy="120" r="14" fill="#6d28d9"/><rect x="100" y="150" width="56" height="10" rx="5" fill="#b9a2f0"/><circle cx="128" cy="44" r="10" fill="#ffc224"/><line x1="128" y1="50" x2="128" y2="76" stroke="#6d28d9" stroke-width="8"/></svg>
+    TECNIA BOT
+  </span>
+  <a href="./index.html">Inicio</a>
+  <a href="./proyectos.html">Proyectos</a>
+  <a href="./api-key.html" class="activo">API key</a>
+  <a href="https://tecnialab.net.ar/tecnia-bot" target="_blank" rel="noopener noreferrer">Sitio ↗</a>
+</nav>
+
+<div class="hero" style="padding:38px 22px 34px;">
+  <div class="wordmark" style="font-size:clamp(24px,6vw,36px);">🔑 Tu API key de Google</div>
+  <div class="sub">Gratis, sin tarjeta, 2 minutos — es lo único que Tecnia Bot no puede resolver solo.</div>
+</div>
+
+<div class="wrap">
+
+  <h2 class="reveal"><span class="n">1</span> ¿Por qué hace falta?</h2>
+  <div class="card reveal">
+    <p>Tecnia Bot usa <b>Google Gemini</b> para pensar y responderte. Google lo deja usar gratis, pero necesita saber quién sos — para eso existe la <b>API key</b>: un código que identifica tu cuenta, no una contraseña que escribís cada vez.</p>
+    <p style="color:var(--gris);font-size:14px;margin-top:8px;">No es lo mismo que tu clave de Gmail. Es un código nuevo, específico para esto, que podés borrar cuando quieras sin tocar tu cuenta de Google.</p>
+  </div>
+
+  <h2 class="reveal"><span class="n">2</span> Conseguila</h2>
+  <div class="card reveal">
+    <ol style="margin:0;padding-left:20px;line-height:1.9;">
+      <li>Entrá a <b>aistudio.google.com/apikey</b> con cualquier cuenta de Google.</li>
+      <li>Tocá <b>"Create API key"</b>.</li>
+      <li>Elegí <b>"Create key in new project"</b> si te lo pregunta — así queda con su propia cuota, sin compartir nada con nadie.</li>
+      <li>Copiá el código que te muestra.</li>
+    </ol>
+  </div>
+  <div style="text-align:center;margin:22px 0 6px;" class="reveal">
+    <a class="cta" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">🔑 Conseguir mi API key gratis →</a>
+  </div>
+
+  <h2 class="reveal"><span class="n">3</span> Ponela en Tecnia Bot</h2>
+  <div class="card reveal">
+    <p><b>Si estás instalando por primera vez:</b> el instalador te la pide solo, al final. La pegás ahí y listo.</p>
+    <p style="margin-top:10px;"><b>Si Tecnia Bot ya está instalado:</b> abrilo, escribí <code>/connect</code>, buscá <b>Google</b> en la lista, y pegá tu key cuando te la pida.</p>
+    <p style="color:var(--gris);font-size:14px;margin-top:8px;">Es un paso único: se guarda en tu compu y no se vuelve a pedir en las próximas actualizaciones.</p>
+  </div>
+
+  <h2 class="reveal"><span class="n">4</span> Si algo no anda</h2>
+  <div class="acc reveal">
+    <div class="acc-item">
+      <button class="acc-btn" aria-expanded="true" aria-controls="ak1">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.3a2.5 2.5 0 0 1 4.5 1.5c0 1.6-2 2-2 3.4"/><path d="M12 17h.01"/></svg>
+        Me dice "Invalid API key"
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="acc-panel" id="ak1" role="region"><div class="inner"><p>La key guardada no es válida — puede que nunca se puso una de verdad, o que la que había dejó de funcionar. Conseguí la tuya (paso 2 de arriba) y ponela con <code>/connect</code> — pisa la anterior sin tocar nada más de tu instalación.</p></div></div>
+    </div>
+    <div class="acc-item">
+      <button class="acc-btn" aria-expanded="false" aria-controls="ak2">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v6M8 8h8v2a4 4 0 0 1-8 0zM12 14v8"/></svg>
+        El instalador no me la pidió
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="acc-panel" id="ak2" role="region"><div class="inner"><p>Ya había una key guardada de una instalación anterior (aunque esté rota, el instalador no lo sabe, así que no vuelve a preguntar). Usá <code>/connect</code> para poner la tuya — no hace falta reinstalar nada.</p></div></div>
+    </div>
+    <div class="acc-item">
+      <button class="acc-btn" aria-expanded="false" aria-controls="ak3">
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-2 8 9-12h-7z"/></svg>
+        Tarda mucho o dice "429 Too Many Requests"
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="acc-panel" id="ak3" role="region"><div class="inner"><p>Se llegó al límite de uso por minuto de tu key (normal con pedidos grandes o si varios la usan a la vez). Esperá un minuto y probá de nuevo — se destraba solo. Si pasa seguido, es señal de que cada persona/aula debería tener su propia key en vez de compartir una.</p></div></div>
+    </div>
+  </div>
+
+  <div class="tip reveal">💡 <b>Por qué cada escuela necesita la suya:</b> la cuota gratis de Google está atada al proyecto detrás de tu key, no a la persona. Si muchos comparten la misma key, comparten la misma cuota — y con un aula activa se agota rápido, para todos a la vez. Con tu propia key (gratis, 2 minutos), tu cuota queda aislada.</div>
+
+  <footer class="reveal">
+    <p><span class="marca">TECNIA BOT</span> · un proyecto de <b>Tecnia Lab</b></p>
+    <p><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">aistudio.google.com/apikey</a> — la única página que necesitás para esto.</p>
+    <p style="opacity:.7;font-size:12.5px;margin-top:10px;">Material educativo para escuelas técnicas argentinas · Programa INET</p>
+  </footer>
+</div>
+<script src="./assets/app.js"></script>
+</body>
+</html>

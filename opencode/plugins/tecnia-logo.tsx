@@ -54,6 +54,31 @@ const TIPS: string[] = [
   'Escribí /actualizar para traer la última versión',
 ]
 
+// Key de respaldo hardcodeada en install.ps1/install.sh (v0.3.36) -- si la que
+// esta guardada coincide con esta, el usuario nunca puso la suya. Ver
+// CHANGELOG [0.3.36] e issue #4 del repo para el porque de esta decision.
+const FALLBACK_KEY = "AQ.Ab8RN6JscK6NsgkvLXY0RfzoGCdIVVQYs7xUYNtxM377VgPZRA"
+
+type EstadoKey = "sin-key" | "fallback" | "propia"
+
+// Lee ~/.local/share/opencode/auth.json (respeta XDG_DATA_HOME, igual que
+// install.sh) para saber si hay una key de Google propia, la de respaldo
+// compartida, o ninguna. Sincrono y defensivo: si algo falla, avisamos igual
+// (mejor un tip de mas que dejar a alguien sin saber que le falta la key).
+function estadoDeLaKey(): EstadoKey {
+  try {
+    const dataDir = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
+    const authFile = join(dataDir, "opencode", "auth.json")
+    if (!existsSync(authFile)) return "sin-key"
+    const data = JSON.parse(readFileSync(authFile, "utf8")) as { google?: { key?: string } }
+    const key = data?.google?.key
+    if (!key) return "sin-key"
+    return key === FALLBACK_KEY ? "fallback" : "propia"
+  } catch {
+    return "sin-key"
+  }
+}
+
 function pick(api: TuiPluginApi, key: string, fallback: RGBA): RGBA {
   const c = api.theme?.current as Record<string, RGBA> | undefined
   return (c && c[key]) || fallback
@@ -139,15 +164,17 @@ function Art(props: { api: TuiPluginApi; nueva: string | null; version: string |
   )
 }
 
-// Un solo tip propio (elegido al azar al cargar), con el mismo look que el tip
-// nativo de OpenCode: viñeta en color de acento + texto legible.
-function TipLine(props: { api: TuiPluginApi; tip: string }) {
+// Un solo tip propio (elegido al azar al cargar, o el aviso de la key si
+// corresponde), con el mismo look que el tip nativo de OpenCode: viñeta en
+// color de acento + texto legible. `label` cambia de "Tip" a algo mas
+// urgente cuando el mensaje es sobre la API key faltante/compartida.
+function TipLine(props: { api: TuiPluginApi; tip: string; label?: string }) {
   const api = props.api
   return (
     <box width="100%" maxWidth={75} alignItems="center" paddingTop={3}>
       <box flexDirection="row" maxWidth="100%">
         <text flexShrink={0} fg={pick(api, "warning", FALLBACK_GOLD)} selectable={false}>
-          {"● Tip "}
+          {`● ${props.label ?? "Tip"} `}
         </text>
         <text flexShrink={1} wrapMode="word" fg={pick(api, "textMuted", FALLBACK_VIOLET)} selectable={false}>
           {props.tip}
@@ -189,9 +216,20 @@ const tui: TuiPlugin = async (api) => {
   }
 
   const version = versionInstalada()
-  // Elegimos UN tip al azar por arranque (sin reactividad de solid, igual que la versión nueva).
-  const tip = TIPS[Math.floor(Math.random() * TIPS.length)] ?? TIPS[0]
   const nueva = await hayVersionNueva()
+
+  // Si no hay key propia (ninguna, o la de respaldo compartida), avisamos
+  // SIEMPRE con la URL directa -- pisa el tip aleatorio, porque esto importa
+  // más. Con key propia ya puesta, no molestamos: tip normal, al azar.
+  const estadoKey = estadoDeLaKey()
+  const avisoKey =
+    estadoKey === "sin-key"
+      ? "Necesitás una API key gratis de Google para hablar con el modelo: aistudio.google.com/apikey, después escribí /connect"
+      : estadoKey === "fallback"
+        ? "Estás usando una key compartida temporal -- conseguite la tuya gratis (2 min, sin tarjeta) en aistudio.google.com/apikey y ponela con /connect"
+        : null
+  const tip = avisoKey ?? (TIPS[Math.floor(Math.random() * TIPS.length)] ?? TIPS[0])
+  const label = avisoKey ? "Importante" : "Tip"
 
   api.slots.register({
     order: 100,
@@ -200,7 +238,7 @@ const tui: TuiPlugin = async (api) => {
         return <Art api={api} nueva={nueva} version={version} />
       },
       home_bottom() {
-        return <TipLine api={api} tip={tip} />
+        return <TipLine api={api} tip={tip} label={label} />
       },
     },
   })
