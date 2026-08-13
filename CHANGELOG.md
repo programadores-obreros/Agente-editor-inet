@@ -2,6 +2,14 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [0.3.38] — 2026-08-13
+
+Arreglado: `/actualizar` podía quedarse trabado si algún archivo instalado tenía cambios locales.
+
+### Arreglado
+- **`/actualizar` (instalación por `git clone`) podía fallar sin avisar bien**: si algún archivo instalado (ej. `install/install.ps1`) tenía modificaciones locales por lo que sea, `git pull --ff-only` se rompía con un error crudo en inglés que la tool no traducía — el usuario veía respuestas confusas o "ya estabas al día" incorrecto. `install/update.ps1` e `install/update.sh` ahora descartan cualquier cambio local en los archivos instalados (`git reset --hard` + `git clean`) y se aseguran de seguir la rama `main` antes de tirar del pull — así nunca se rompe por esto. No afecta a instalaciones por `.exe` (esas no usan git, siempre sobreescriben directo).
+- **Gotcha de PowerShell nuevo, mismo patrón que ya vimos con `Read-Host`/`Task.Wait`**: los mensajes puramente informativos de `git` (ej. `"Already on 'main'"`) van por stderr, y con `$ErrorActionPreference = "Stop"` (seteado en el script), PowerShell los toma como error fatal aunque el comando haya andado bien. Se baja la preferencia a `"Continue"` solo para los pasos de limpieza best-effort; el `pull` real sigue fallando fuerte si algo anda mal de verdad.
+
 ## [0.3.37] — 2026-08-12
 
 Nueva página de la API key en el micro-sitio + aviso en el splash si falta o es la de respaldo.

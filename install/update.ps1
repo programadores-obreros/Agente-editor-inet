@@ -14,6 +14,27 @@ Write-Host "==> Actualizando Tecnia Bot..."
 
 if ((Test-Path (Join-Path $RepoDir ".git")) -and (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "  [git] Bajando la ultima version (git pull)..."
+    # Estos archivos los mantiene el instalador -- nadie los deberia tocar a
+    # mano (mismo criterio que el manifest). Si igual quedaron modificados
+    # localmente por lo que sea (antivirus, un update anterior interrumpido a
+    # mitad de camino), "git pull" se rompe con un error crudo en ingles que
+    # el docente no puede leer -- lo descartamos ANTES de bajar lo nuevo.
+    # Aseguramos ademas que siga a `main` (por si alguien quedo en otra rama,
+    # ej. de una instalacion de desarrollo): sin esto, un pull limpio en la
+    # rama equivocada no trae nada nuevo y el docente ve "ya estabas al dia"
+    # sin serlo.
+    #
+    # OJO: git manda mensajes puramente informativos (ej: "Already on 'main'")
+    # por stderr -- con $ErrorActionPreference = "Stop" (seteado arriba),
+    # PowerShell los toma como error fatal aunque el comando haya andado bien.
+    # Bajamos la preferencia SOLO para estos pasos de limpieza best-effort; el
+    # pull real, mas abajo, vuelve a "Stop" y si falla, tiene que fallar fuerte.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    git -C $RepoDir reset --hard HEAD 2>&1 | Out-Null
+    git -C $RepoDir clean -fd -e "*.manifest" 2>&1 | Out-Null
+    git -C $RepoDir checkout main 2>&1 | Out-Null
+    $ErrorActionPreference = $prevEAP
     git -C $RepoDir pull --ff-only
 } else {
     Write-Host "  [web] Bajando el fuente del ultimo release desde GitHub..."

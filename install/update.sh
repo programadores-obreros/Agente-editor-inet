@@ -13,6 +13,15 @@ echo "==> Actualizando Tecnia Bot..."
 
 if [ -d "$REPO_DIR/.git" ] && command -v git >/dev/null 2>&1; then
   echo "  [git] Bajando la última versión (git pull)..."
+  # Estos archivos los mantiene el instalador -- nadie los debería tocar a
+  # mano (mismo criterio que el manifest). Si igual quedaron modificados
+  # localmente por lo que sea, "git pull" se rompe con un error crudo en
+  # inglés que el docente no puede leer -- lo descartamos antes de bajar lo
+  # nuevo, y nos aseguramos de seguir a `main` (por si alguien quedó en otra
+  # rama de una instalación de desarrollo).
+  git -C "$REPO_DIR" reset --hard HEAD >/dev/null 2>&1 || true
+  git -C "$REPO_DIR" clean -fd -e "*.manifest" >/dev/null 2>&1 || true
+  git -C "$REPO_DIR" checkout main >/dev/null 2>&1 || true
   git -C "$REPO_DIR" pull --ff-only
 else
   echo "  [web] Bajando el fuente del último release desde GitHub..."
