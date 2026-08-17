@@ -24,7 +24,7 @@ Habla en español, explica el *porqué* antes del código, comenta cada línea y
 - 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat.
 - 🧰 **Dibuja circuitos visuales** con piezas reales (interactivos, funcionan sin internet) y un explicador de la protoboard.
 - 🖨️ **Arma hojas para el aula** — materiales + conexiones + código comentado, listas para imprimir (Ctrl+P → PDF).
-- 📄 **Trae 17 fichas A4 de Tecnia Lab** — una hoja por componente o concepto (LED, servo, relé, LDR, ultrasónico, PIR, DHT11, téster…). Pedísela y **te la abre en el lector de PDF**, lista para repartir.
+- 📄 **Trae 17 fichas A4 de Tecnia Lab** — una hoja por componente o concepto (LED, servo, relé, LDR, ultrasónico, PIR, DHT11, téster…). Pedísela y **te la abre en el navegador**, lista para repartir.
 - ⚡ **Chequeo de seguridad antes de prender** — repasa lo crítico (los 3.3 V del ESP32, polaridad, cortos) para no quemar la placa.
 - 📟 **Abre el monitor serial en una ventana** — ver los datos de la placa y mandarle teclas, sin escribir comandos. [Guía](docs/monitor-serial.md)
 - 🇦🇷 **Traduce los errores** de compilación del inglés al español, con la solución paso a paso.
@@ -112,7 +112,7 @@ Probá:
 - *"quiero armar el semáforo paso a paso"* — te guía el proyecto completo y recuerda dónde quedaste.
 - *"armame el circuito de riego con higrómetro, relé y bomba"* — te dibuja un circuito visual interactivo.
 - *"abrí el monitor serial"* — ventana para ver los datos de la placa y comandarla con el teclado.
-- *"dame algo para repartir del LDR"* — te abre la ficha A4 en el lector de PDF, lista para imprimir.
+- *"dame algo para repartir del LDR"* — te abre la ficha A4 en el navegador, lista para imprimir.
 - `/ayuda` — resumen de uso + manual/onboarding en el navegador.
 - `/diagnostico` — verifica tu entorno (OpenCode, PlatformIO, la placa).
 - `/actualizar` — trae la última versión desde GitHub.
