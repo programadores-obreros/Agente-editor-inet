@@ -161,8 +161,12 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 Los tests corren con **Node puro** (sin instalar dependencias) y también en cada push vía GitHub Actions:
 
 ```bash
-npm test        # o: node --test tests/*.test.mjs
+pnpm test       # o: node --test tests/*.test.mjs
 ```
+
+> ⚖️ **El gestor de paquetes del proyecto es `pnpm`.** `npm`, `npx` y `yarn` no
+> se usan en ningún repo de Tecnia Lab. Para correr un binario suelto:
+> `pnpm dlx <paquete>`, nunca `npx`.
 
 Para agregar un componente al armador de circuitos o un skill nuevo: `opencode/tool/circuito.ts` (registro `COMPONENTES`) y `opencode/skills/`.
 
