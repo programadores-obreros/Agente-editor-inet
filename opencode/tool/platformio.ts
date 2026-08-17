@@ -133,6 +133,117 @@ interface Device {
   description?: string
 }
 
+/**
+ * Qué chip USB-serial hay del otro lado del cable, según su VID:PID.
+ *
+ * POR QUÉ IMPORTA ESTO EN UN AULA. Un docente conecta la placa y no pasa nada.
+ * El problema casi nunca es la placa: es que Windows no trae el driver del chip
+ * USB-serial que usan los clones baratos —el CH340— y sin driver no aparece
+ * ningún puerto. Decirle "no encuentro tu Arduino" no lo ayuda; decirle "es un
+ * CH340 y le falta el driver, bajalo de acá" lo desbloquea en dos minutos.
+ *
+ * Y HAY UN SEGUNDO PROBLEMA, más silencioso: `pio device list` devuelve TODOS
+ * los puertos serie, no sólo las placas. En una máquina virtual aparece un COM1
+ * emulado (`ACPI\PNP0501`) que no es nada — y el diagnóstico anterior lo contaba
+ * como "dispositivo conectado". El docente veía todo en verde y la carga fallaba.
+ *
+ * Lo que NO se puede saber por el VID:PID es QUÉ PLACA es: un CH340 puede ser un
+ * Arduino clon, un ESP32 o un ESP8266 — el chip serial es el mismo. Por eso
+ * `placa` dice lo que se sabe y nada más, sin adivinar.
+ */
+const CHIPS_USB: Array<{
+  vid: string
+  pid?: string
+  chip: string
+  placa: string
+  driverWindows?: string
+}> = [
+  {
+    vid: "1A86",
+    chip: "CH340 / CH341",
+    placa: "clon de Arduino, o un ESP32/ESP8266",
+    driverWindows: "https://www.wch-ic.com/downloads/CH341SER_EXE.html",
+  },
+  {
+    vid: "10C4",
+    pid: "EA60",
+    chip: "CP2102 (Silicon Labs)",
+    placa: "muy común en placas ESP32 DevKit",
+    driverWindows: "https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers",
+  },
+  {
+    vid: "0403",
+    chip: "FTDI",
+    placa: "Arduino Nano viejo, o una placa con FTDI",
+    driverWindows: "https://ftdichip.com/drivers/vcp-drivers/",
+  },
+  { vid: "2341", chip: "el propio de Arduino", placa: "Arduino oficial" },
+  { vid: "2A03", chip: "el propio de Arduino", placa: "Arduino (arduino.org)" },
+  { vid: "303A", chip: "USB nativo de Espressif", placa: "ESP32-S2, S3 o C3" },
+]
+
+/** Los puertos serie que NO son una placa: los trae la máquina, no el cable. */
+const NO_ES_PLACA = /ACPI\\PNP|BTHENUM|\\VIRTUAL/i
+
+/**
+ * Lee el `hwid` que devuelve PlatformIO y dice qué es.
+ *
+ * Exportada para poder probarla con hwids reales sin tener la placa enchufada.
+ */
+export function identificar(
+  hwid?: string,
+  descripcion?: string,
+): { esPlaca: boolean; chip?: string; placa?: string; driverWindows?: string; motivo?: string } {
+  const id = (hwid ?? "").toUpperCase()
+
+  if (!id) return { esPlaca: false, motivo: "el sistema no informa qué es" }
+
+  if (NO_ES_PLACA.test(id)) {
+    return {
+      esPlaca: false,
+      motivo: "es un puerto serie de la propia máquina, no una placa conectada",
+    }
+  }
+
+  /*
+   * DOS FORMATOS, y hay que aceptar los dos.
+   *
+   *   Linux / pyserial   USB VID:PID=1A86:7523 LOCATION=1-1
+   *   Windows crudo      USB\VID_1A86&PID_7523\5&1D2A3B4C&0&2
+   *
+   * El primero pone los dos números juntos después del `=`; el segundo, cada uno
+   * detrás de su etiqueta. Una regex sola no cubre los dos, y quedarse con la de
+   * Windows —que fue lo que hice primero— deja ciega a la mitad de las máquinas.
+   */
+  const junto = id.match(/VID:PID=([0-9A-F]{4}):([0-9A-F]{4})/)
+  const vid = junto?.[1] ?? id.match(/VID_([0-9A-F]{4})/)?.[1]
+  const pid = junto?.[2] ?? id.match(/PID_([0-9A-F]{4})/)?.[1]
+
+  if (!vid) {
+    return {
+      esPlaca: false,
+      motivo: "no tiene identificador USB, así que no llegó por un cable USB",
+    }
+  }
+
+  const conocido = CHIPS_USB.find((c) => c.vid === vid && (!c.pid || c.pid === pid))
+  if (conocido) {
+    return {
+      esPlaca: true,
+      chip: conocido.chip,
+      placa: conocido.placa,
+      driverWindows: conocido.driverWindows,
+    }
+  }
+
+  // USB pero de un fabricante que no está en la tabla: probablemente sirve igual.
+  return {
+    esPlaca: true,
+    chip: `USB ${vid}${pid ? ":" + pid : ""}`,
+    placa: descripcion || "no está en mi lista, pero es un dispositivo USB",
+  }
+}
+
 async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string } | { error: string }> {
   const result = await run(["pio", "device", "list", "--json-output"], cwd, signal)
 
@@ -146,12 +257,31 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
     devices = matches.map((port) => ({ port }))
   }
 
-  const usbDevices = devices.filter((d) => /USB|VID|PID/i.test(d.hwid ?? ""))
-  const candidates = usbDevices.length > 0 ? usbDevices : devices
+  /*
+   * SÓLO PLACAS, y nunca "lo que haya".
+   *
+   * Antes esto era `usbDevices.length > 0 ? usbDevices : devices`: si no había
+   * ninguna placa, caía a TODOS los puertos serie y elegía el primero. En una
+   * máquina virtual eso es el COM1 emulado (`ACPI\PNP0501`), que no es nada — y
+   * la carga fallaba con un error de PlatformIO en vez de con un "no hay ninguna
+   * placa conectada", que es la verdad y lo que el docente necesita leer.
+   */
+  const candidates = devices.filter((d) => identificar(d.hwid, d.description).esPlaca)
 
   if (candidates.length === 0) {
+    const otros = devices.filter((d) => !identificar(d.hwid, d.description).esPlaca)
+    const detalle =
+      otros.length > 0
+        ? ` Veo ${otros.length === 1 ? "un puerto serie" : `${otros.length} puertos serie`} (${otros
+            .map((d) => d.port)
+            .join(", ")}), pero ${otros.length === 1 ? "no es" : "ninguno es"} una placa: ${
+            identificar(otros[0].hwid, otros[0].description).motivo
+          }.`
+        : ""
     return {
-      error: "No encontre ningun dispositivo conectado. Conecta el Arduino/ESP32 por USB y volve a intentar.",
+      error:
+        `No encuentro ninguna placa conectada. Conectá el Arduino o el ESP32 por USB y probá de nuevo.${detalle}` +
+        ` Si la placa está enchufada y sigo sin verla, corré \`/diagnostico\`: puede faltarle el driver.`,
     }
   }
 
@@ -328,26 +458,62 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, a
 
         const os = process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux"
 
+        /*
+         * ANTES ACÁ SE PEGABA LA SALIDA CRUDA de `pio device list`, y mentía por
+         * omisión: en una máquina virtual aparece un COM1 emulado y el reporte
+         * decía "dispositivos conectados: COM1". El docente leía todo en verde,
+         * intentaba cargar, y fallaba sin entender por qué.
+         *
+         * Ahora cada puerto se clasifica: cuál es una placa, cuál es un puerto de
+         * la propia máquina, y qué driver falta cuando no aparece ninguna.
+         */
         let dispositivosText = "No disponible (PlatformIO no instalado)"
+        let placas = 0
+
         if (pioOk) {
-          const devResult = await run(["pio", "device", "list"], cwd, signal)
-          dispositivosText = devResult.stdout.trim() || "Ninguno detectado"
+          const devResult = await run(["pio", "device", "list", "--json-output"], cwd, signal)
+          let devices: Device[] = []
+          try {
+            devices = JSON.parse(devResult.stdout) as Device[]
+          } catch {
+            devices = []
+          }
+
+          if (devices.length === 0) {
+            dispositivosText = "Ninguno — no hay ni siquiera un puerto serie"
+          } else {
+            dispositivosText = devices
+              .map((d) => {
+                const q = identificar(d.hwid, d.description)
+                if (!q.esPlaca) return `- \`${d.port}\` — no es una placa (${q.motivo})`
+                placas++
+                const drv = q.driverWindows && os === "Windows" ? ` · driver: ${q.driverWindows}` : ""
+                return `- \`${d.port}\` — **placa**, chip ${q.chip} (${q.placa})${drv}`
+              })
+              .join("\n")
+          }
         }
 
-        let estado = "Listo para usar"
+        let estado = placas === 1 ? "Listo para usar" : `Listo — veo ${placas} placas conectadas`
         if (!pioOk) {
           estado = "Falta instalar PlatformIO — https://docs.platformio.org/en/latest/core/installation/"
-        } else if (dispositivosText === "Ninguno detectado") {
-          estado = "Sin dispositivos conectados — conecta el Arduino/ESP32 por USB"
+        } else if (placas === 0) {
+          const ayuda =
+            os === "Windows"
+              ? " Si está enchufada y no aparece, casi siempre falta el driver del **CH340**, el chip de los clones baratos: https://www.wch-ic.com/downloads/CH341SER_EXE.html"
+              : os === "Linux"
+                ? " Si está enchufada y no aparece, puede ser permiso del puerto: `sudo usermod -a -G dialout $USER` (o `uucp` en Arch/Manjaro), y volvé a iniciar sesión."
+                : ""
+          estado = `**Ninguna placa conectada.** Enchufá el Arduino o el ESP32 por USB.${ayuda}`
         }
 
-        return `## Diagnostico del entorno
+        return `## Diagnóstico del entorno
 
 **PlatformIO:** ${pioText}
 
 **Sistema operativo:** ${os}
 
-**Dispositivos conectados:**
+**Puertos que veo:**
 ${dispositivosText}
 
 **Estado general:** ${estado}`
