@@ -27,6 +27,23 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Versión: $v"
 
+      # El .exe se rotula con VERSION, no con el tag. Si los dos no coinciden,
+      # sale un instalador que dice una versión y un release que dice otra —y no
+      # rompe nada, así que nadie lo nota hasta que alguien reporta un bug de una
+      # versión que no existe. `tests/version.test.mjs` cuida los otros archivos;
+      # el tag sólo se puede mirar acá, cuando existe.
+      - name: El tag tiene que coincidir con VERSION
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $ver = "${{ steps.ver.outputs.version }}"
+          if ($tag -ne $ver) {
+            Write-Error "El tag dice $tag y VERSION dice $ver. Actualizá VERSION antes de taguear, o borrá el tag y volvé a crearlo."
+            exit 1
+          }
+          Write-Host "Tag y VERSION coinciden: $ver"
+
       - name: Instalar Inno Setup
         run: choco install innosetup --no-progress -y
 
