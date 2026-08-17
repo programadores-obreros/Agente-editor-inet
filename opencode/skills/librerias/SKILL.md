@@ -50,6 +50,19 @@ Salen directo con su `#include`, sin agregar nada:
 | LCD paralelo 16x2 (HD44780) | `LiquidCrystal.h` | `arduino-libraries/LiquidCrystal` | UNO y ESP32 |
 | LCD 16x2 por modulo I2C | `LiquidCrystal_I2C.h` | `marcoschwartz/LiquidCrystal_I2C` | UNO y ESP32 (comun en ESP32, ahorra pines; dir 0x27 o 0x3F) |
 | Teclado matricial 4x4 | `Keypad.h` | `chris--a/Keypad` (owner con **doble guion**) | UNO y ESP32 |
+| IoT — Adafruit IO por MQTT ⚠ | `Adafruit_MQTT.h` + `Adafruit_MQTT_Client.h` | `adafruit/Adafruit MQTT Library` | **solo ESP32** (el UNO no tiene WiFi) |
+
+> ⚠ **La fila de MQTT es la única que NO está verificada compilando**, a
+> diferencia del resto de esta tabla. Está puesta igual porque **trece de los
+> quince proyectos** tienen nivel IoT y ninguno decía qué librería hace falta.
+>
+> Sin esta línea el camino era: el alumno compila → `fatal error:
+> Adafruit_MQTT.h: No such file or directory` → el bot lo manda a esta tabla →
+> acá no hay nada. Un callejón sin salida, con el agravante de que esta misma
+> skill le dice al bot que NO mande a bajar librerías a mano.
+>
+> Si al compilarla el nombre del paquete resulta ser otro, **corregí la fila y
+> sacale el ⚠** — pero no la borres, porque el agujero vuelve.
 
 > Cuando una lib depende de otra (ej: SSD1306 necesita GFX y BusIO), PlatformIO suele bajarlas sola, pero conviene **listarlas explicitas** en lib_deps por claridad.
 

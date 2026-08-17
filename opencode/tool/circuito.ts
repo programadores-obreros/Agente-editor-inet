@@ -651,9 +651,25 @@ const ALIAS: Record<string, string> = {
   calefactor: "calefactor", radiador: "calefactor", calefaccion: "calefactor", "calefacción": "calefactor", estufa: "calefactor", heater: "calefactor",
 }
 
-function normalizarTipo(t: string): string {
+/**
+ * Lleva lo que escribió el modelo a la clave real del catálogo.
+ *
+ * SACA LAS TILDES, y no es un detalle. El ALIAS ya trae formas acentuadas para
+ * varios componentes —`lámpara`, `válvula`, `higrómetro`, `presión`— así que
+ * cubrir tildes siempre fue la intención; el problema es que había que agregar
+ * CADA variante a mano, y tres quedaron afuera: `botón`, `potenciómetro` y
+ * `ultrasónico`. Justo los tres que el prompt del agente escribe acentuados.
+ *
+ * El resultado era: el modelo pide "botón", el tool contesta "No conozco:
+ * botón", y el bot improvisa. Sacando la tilde acá, cualquier forma acentuada
+ * anda sin que nadie tenga que preverla — y las entradas acentuadas que YA
+ * están en ALIAS siguen funcionando porque se consultan primero.
+ */
+export function normalizarTipo(t: string): string {
   const k = t.trim().toLowerCase()
-  return ALIAS[k] ?? k
+  if (ALIAS[k]) return ALIAS[k]
+  const sinTildes = k.normalize("NFD").replace(/[̀-ͯ]/g, "")
+  return ALIAS[sinTildes] ?? sinTildes
 }
 
 

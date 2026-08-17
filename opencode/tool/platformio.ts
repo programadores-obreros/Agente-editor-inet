@@ -116,6 +116,45 @@ function traducirError(stderr: string, stdout: string): string {
       /invalid conversion from|undefined reference to/,
       "Problema de tipos o funcion no definida. Verifica los tipos de tus variables y que todas las funciones esten implementadas.",
     ],
+
+    /*
+     * LOS TRES DEL ESP32 QUE NO SON ERRORES DE COMPILACION.
+     *
+     * Salen por el monitor serial DESPUES de cargar, cuando el programa ya
+     * corre, y son los que un docente pega en el chat sin saber que significan.
+     * Ninguno de los tres estaba reconocido: el bot recibia el texto crudo y
+     * tenia que improvisar.
+     *
+     * El del brownout es el mas importante de todos: es lo que escupe la placa
+     * la primera vez que alguien le conecta un servo, o sea la semana dos o tres
+     * de cualquier curso.
+     */
+    [
+      /Brownout detector was triggered/,
+      "**Le falta corriente a la placa.** El ESP32 se apaga solo cuando la tension le baja, " +
+        "y eso pasa casi siempre al conectar un servo, un motor o un rele: el USB no da abasto. " +
+        "No es un problema del codigo. Solucion: fuente externa de 5V para el componente que " +
+        "consume, con el GND unido al de la placa. Si es un servo, calcula con el consumo de " +
+        "BLOQUEO (unos 700 mA en un SG90), no con el de movimiento libre.",
+    ],
+    [
+      /rst:0x[0-9a-f]+.*boot:0x/i,
+      "**La placa se esta reiniciando en bucle.** Ese `rst:0x...` es el motivo del reinicio que " +
+        "imprime el ESP32 al arrancar. Las dos causas mas comunes en el aula: (1) le falta " +
+        "corriente — ver si tambien aparece 'Brownout'; (2) hay algo conectado a un pin de " +
+        "arranque (GPIO0, GPIO2, GPIO12 o GPIO15) que lo deja en el nivel equivocado al " +
+        "encender. Probá desconectando todo del circuito y encendiendo la placa sola: si asi " +
+        "arranca bien, es el cableado y no el programa.",
+    ],
+    [
+      /Guru Meditation Error/,
+      "**El programa se cayo mientras corria** (no es un error de compilacion). Las causas " +
+        "tipicas: usar un puntero o un objeto que todavia no se inicializo, leer de una " +
+        "libreria que fallo en `begin()` sin chequear el resultado, o escribir fuera de un " +
+        "arreglo. Miralo asi: el mensaje aparece DESPUES de que el programa arranco, " +
+        "asi que fijate que hizo justo antes de caerse — un `Serial.print` antes de cada paso " +
+        "te dice hasta donde llego.",
+    ],
   ]
 
   for (const [patron, mensaje] of patrones) {
