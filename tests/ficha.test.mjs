@@ -140,3 +140,11 @@ test("el atajo de imprimir cambia según el sistema", async () => {
     "el mensaje al docente no puede tener el atajo escrito a mano",
   )
 })
+
+test("no promete que la ventana se abrió: deja la ruta por las dudas", async () => {
+  // `start` no falla aunque no abra nada (programa asociado desinstalado, por
+  // ejemplo). Prometer "te la abrí" y que no pase nada deja al docente mirando
+  // una pantalla vacía mientras el bot le asegura que está todo bien.
+  const src = readFileSync(join(REPO, "opencode/tool/ficha.ts"), "utf8")
+  assert.match(src, /Si no se te abrió ninguna ventana/i)
+})

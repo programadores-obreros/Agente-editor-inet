@@ -162,10 +162,23 @@ export default tool({
     const ruta = join(dir, elegida)
     const nombre = elegida.replace(/\.pdf$/, "")
 
+    /*
+     * "TE LA ABRÍ" ES UNA PROMESA QUE NO PODEMOS CUMPLIR DEL TODO.
+     *
+     * `start` / `open` / `xdg-open` no fallan aunque no abran nada: si el
+     * programa asociado a los PDF fue desinstalado, el comando "tiene éxito" y
+     * en pantalla no pasa nada. Verificar que la ventana apareció de verdad
+     * pediría espiar procesos —frágil, lento, y distinto en cada sistema—.
+     *
+     * Así que no se promete: se dice que se lanzó, y se deja la ruta a mano por
+     * si no apareció. Cuesta una línea más y evita que alguien se quede mirando
+     * una pantalla donde no pasó nada mientras el bot le asegura que sí.
+     */
     if (abrir(ruta)) {
       return (
-        `Abrí la ficha **${nombre}** en el navegador. ` +
-        `Para imprimirla o guardarla, apretá **${atajoImprimir()}**.`
+        `Te abrí la ficha **${nombre}** en el navegador. ` +
+        `Para imprimirla o guardarla, apretá **${atajoImprimir()}**.\n\n` +
+        `Si no se te abrió ninguna ventana, está acá: \`${ruta}\``
       )
     }
 
