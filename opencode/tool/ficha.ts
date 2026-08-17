@@ -76,6 +76,18 @@ function abrir(archivo: string): boolean {
   return false
 }
 
+/**
+ * El atajo de imprimir, que NO es el mismo en todos lados.
+ *
+ * En macOS es Cmd+P. Decirle "Ctrl+P" a alguien en una Mac es decirle mal, y
+ * quien recién empieza no sabe traducirlo solo — se queda mirando la pantalla.
+ * El tool ya sabe en qué sistema está; lo único que faltaba era usarlo también
+ * para hablar, no sólo para abrir.
+ */
+function atajoImprimir(): string {
+  return process.platform === "darwin" ? "Cmd + P" : "Ctrl + P"
+}
+
 /** Saca tildes y deja minúsculas, para que "potenciómetro" encuentre a "potenciometro". */
 function normalizar(s: string): string {
   return s
@@ -117,7 +129,7 @@ export function buscarFicha(pedido: string, archivos: string[]): string | null {
 }
 
 export default tool({
-  description: `ABRE una ficha didáctica de Tecnia Lab en el navegador, lista para imprimir (Ctrl+P). Usalo SIEMPRE que quieras entregarle una ficha al docente. NO leas el PDF con read ni con bash —es binario, tarda y no sirve— y NO le pegues la ruta del archivo para que la busque a mano: abrísela con esta herramienta. Pasá el número ("09") o el nombre ("ldr", "servo", "rele"). Las fichas que hay están listadas en la skill \`fichas\`.`,
+  description: `ABRE una ficha didáctica de Tecnia Lab en el navegador, lista para imprimir (Ctrl+P, o Cmd+P en Mac). Usalo SIEMPRE que quieras entregarle una ficha al docente. NO leas el PDF con read ni con bash —es binario, tarda y no sirve— y NO le pegues la ruta del archivo para que la busque a mano: abrísela con esta herramienta. Pasá el número ("09") o el nombre ("ldr", "servo", "rele"). Las fichas que hay están listadas en la skill \`fichas\`.`,
   args: {
     ficha: tool.schema
       .string()
@@ -153,7 +165,7 @@ export default tool({
     if (abrir(ruta)) {
       return (
         `Abrí la ficha **${nombre}** en el navegador. ` +
-        `Para imprimirla o guardarla, apretá **Ctrl + P**.`
+        `Para imprimirla o guardarla, apretá **${atajoImprimir()}**.`
       )
     }
 

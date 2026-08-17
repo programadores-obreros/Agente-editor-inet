@@ -128,3 +128,15 @@ test("la ruta se convierte a file:// con las barras dadas vuelta", async () => {
   assert.equal(comoUrl("C:\\Users\\x\\09-ldr.pdf"), "file:///C:/Users/x/09-ldr.pdf")
   assert.equal(comoUrl("/home/x/09-ldr.pdf"), "file:///home/x/09-ldr.pdf")
 })
+
+test("el atajo de imprimir cambia según el sistema", async () => {
+  // En Mac es Cmd+P. Decirle "Ctrl+P" a alguien en una Mac es decirle mal, y
+  // quien recién empieza no lo traduce solo.
+  const src = readFileSync(join(REPO, "opencode/tool/ficha.ts"), "utf8")
+  assert.match(src, /darwin.*Cmd \+ P/s, "el tool tiene que decir Cmd+P en macOS")
+  assert.doesNotMatch(
+    src,
+    /apretá \*\*Ctrl \+ P\*\*/,
+    "el mensaje al docente no puede tener el atajo escrito a mano",
+  )
+})

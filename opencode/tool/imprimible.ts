@@ -24,6 +24,15 @@ function abrirEnNavegador(archivo: string): boolean {
   }
 }
 
+/**
+ * El atajo de imprimir, que NO es el mismo en todos lados: en macOS es Cmd+P.
+ * Está duplicado en ficha.ts a propósito — una línea repetida cuesta menos que
+ * un módulo compartido para dos usos. Si aparece un tercero, se comparte.
+ */
+function atajoImprimir(): string {
+  return process.platform === "darwin" ? "Cmd + P" : "Ctrl + P"
+}
+
 // Escapa HTML para meter texto (codigo, materiales) sin romper el markup ni
 // permitir inyeccion. Imprescindible para el bloque de codigo (tiene < > &).
 function esc(s: string): string {
@@ -79,7 +88,7 @@ const CSS = `
 `
 
 export default tool({
-  description: `Genera una HOJA para IMPRIMIR o repartir en el aula (materiales + conexiones + codigo) y la abre en el navegador para que el docente haga Ctrl+P (guardar como PDF o imprimir). Usalo cuando pidan "materiales para imprimir", "hoja para el aula", "lista de materiales", "para repartir", "en PDF". El contenido lo armas vos (sacalo del skill proyectos-inet): pasas titulo, materiales, conexiones y codigo.`,
+  description: `Genera una HOJA para IMPRIMIR o repartir en el aula (materiales + conexiones + codigo) y la abre en el navegador para que el docente haga Ctrl+P —o Cmd+P en Mac— (guardar como PDF o imprimir). Usalo cuando pidan "materiales para imprimir", "hoja para el aula", "lista de materiales", "para repartir", "en PDF". El contenido lo armas vos (sacalo del skill proyectos-inet): pasas titulo, materiales, conexiones y codigo.`,
   args: {
     titulo: tool.schema.string().describe("Titulo del proyecto (ej: 'Semáforo con 3 LEDs — ESP32')."),
     placa: tool.schema.enum(["UNO", "ESP32"]).optional().describe("La placa del proyecto, para mostrarla en el encabezado."),
@@ -109,7 +118,7 @@ export default tool({
 <html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(args.titulo)} — Tecnia Bot</title><style>${CSS}</style></head>
 <body>
-  <div class="aviso-print">🖨️ Para guardar como PDF o imprimir: apretá <strong>Ctrl + P</strong> (este aviso no sale impreso).</div>
+  <div class="aviso-print">🖨️ Para guardar como PDF o imprimir: apretá <strong>${atajoImprimir()}</strong> (este aviso no sale impreso).</div>
   <div class="hoja">
     <div class="barra"></div>
     <div class="cab">
@@ -140,6 +149,6 @@ export default tool({
     const comoAbrir = abierto
       ? "**Te la abrí en el navegador.**"
       : `Abrila con doble clic: \`file://${archivo}\``
-    return `Listo, armé la hoja para imprimir de **${args.titulo}**. ${comoAbrir} Para guardarla como PDF o imprimirla, apretá **Ctrl + P**. Ideal para repartir en el aula.`
+    return `Listo, armé la hoja para imprimir de **${args.titulo}**. ${comoAbrir} Para guardarla como PDF o imprimirla, apretá **${atajoImprimir()}**. Ideal para repartir en el aula.`
   },
 })
