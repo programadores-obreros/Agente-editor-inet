@@ -30,8 +30,20 @@ Cada sensor sigue la misma estructura: voltaje, dificultad, librería, para qué
 | Pin del sensor | Cable | Va al ESP32 |
 |----------------|-------|-------------|
 | VCC (+) | 🔴 rojo | 3.3V |
-| DATA / OUT | 🟡 amarillo | GPIO15 (con pull-up 10kΩ a VCC) |
+| DATA / OUT | 🟡 amarillo | GPIO4 |
 | GND (−) | 🟤 marrón | GND |
+
+> **¿Y la resistencia de pull-up?** Depende de cuál de los dos DHT tengas, y es
+> la confusión más repetida con este sensor:
+>
+> - **Plaqueta de 3 pines** (la del kit, la que se cablea con estos tres cables):
+>   **ya trae el pull-up de 4,7 kΩ adentro.** No hay que agregar nada. Si ponés
+>   otro de 10 kΩ en paralelo tampoco se rompe, pero es una resistencia que
+>   nadie necesita y una pieza más para que algo salga mal.
+> - **Sensor pelado de 4 patas** (el celeste, sin plaquita): ahí **sí** hace
+>   falta un pull-up de 10 kΩ entre DATA y VCC, porque no lo trae nadie.
+>
+> Se distinguen a ojo: si tiene **tres** patas y una plaquita, ya está resuelto.
 
 **Código:**
 ```cpp
@@ -64,7 +76,18 @@ void loop() {
 ```
 `platformio.ini`: `lib_deps = adafruit/DHT sensor library`
 
-**Errores comunes:** lecturas "nan" → falta el pull-up de 10kΩ entre DATA y VCC, o leíste muy rápido (esperá 2 seg). El DHT11 da temperatura sin decimales (es normal).
+**Errores comunes:** lecturas `nan`. Las causas, **en orden de probabilidad**:
+
+1. **Leíste muy rápido.** El DHT11 quiere como mucho una lectura por segundo. Si
+   el `loop` lo consulta sin freno devuelve la vieja o `nan`, y parece roto.
+   Es la causa número uno, lejos.
+2. **Un cable flojo en DATA.** Es un solo hilo: si se mueve, no hay lectura.
+3. **Recién enchufado.** Dale un segundo antes de la primera lectura.
+4. **Falta el pull-up** — pero **sólo si es el sensor pelado de 4 patas**. La
+   plaqueta de 3 pines ya lo trae; ahí ésta no es la causa y buscar por acá hace
+   perder la tarde.
+
+El DHT11 da temperatura sin decimales: eso es normal, no es un error.
 
 ---
 
