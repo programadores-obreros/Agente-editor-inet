@@ -178,7 +178,7 @@ Para agregar un componente al armador de circuitos o un skill nuevo: `opencode/t
 
 ## 📌 Estado
 
-🚀 **v0.3.43.** Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, trae las 17 fichas A4 de Tecnia Lab y te las abre en el navegador, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
+🚀 **v0.3.44.** Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, trae las 17 fichas A4 de Tecnia Lab y te las abre en el navegador, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
 
 **Pendiente:**
 - Firmar el `.exe` — hoy sin firma, Windows muestra el aviso de SmartScreen (se saltea con *"Ejecutar de todas formas"*) y, en Windows 11 con **Control Inteligente de Aplicaciones** activado, directamente **bloquea la instalación sin opción de saltear** (confirmado con un caso real del equipo). Aplicación gratuita enviada a [SignPath Foundation](https://signpath.org/) el 2026-08-12, en revisión (proceso estándar: 2-4 semanas). Ver issue [#4](https://github.com/programadores-obreros/Agente-editor-inet/issues/4).
