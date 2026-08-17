@@ -112,3 +112,19 @@ test("la descripción del tool le prohíbe pegar la ruta", async () => {
   assert.match(mod.description, /no le pegues la ruta/i)
   assert.match(mod.description, /ABRE/)
 })
+
+test("la descripción también prohíbe LEER el pdf", async () => {
+  // Visto en uso real: sin el tool instalado, el modelo agarró `read` sobre el
+  // PDF y tardó 36 segundos para no obtener nada. Con el tool disponible podría
+  // volver a elegirlo si nadie se lo prohíbe.
+  const mod = (await import(join(OUT, "ficha.ts"))).default
+  assert.match(mod.description, /NO leas el PDF/i)
+})
+
+test("la ruta se convierte a file:// con las barras dadas vuelta", async () => {
+  // En Windows `C:\Users\x\f.pdf` tiene que viajar como `file:///C:/Users/x/f.pdf`
+  // o el navegador no la abre.
+  const { comoUrl } = await import(join(OUT, "ficha.ts"))
+  assert.equal(comoUrl("C:\\Users\\x\\09-ldr.pdf"), "file:///C:/Users/x/09-ldr.pdf")
+  assert.equal(comoUrl("/home/x/09-ldr.pdf"), "file:///home/x/09-ldr.pdf")
+})

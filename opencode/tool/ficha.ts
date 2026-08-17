@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync, readdirSync } from "node:fs"
 
-// Abre una ficha didáctica de Tecnia Lab en el visor de PDF del sistema.
+// Abre una ficha didáctica de Tecnia Lab en el navegador, lista para Ctrl+P.
 //
 // POR QUÉ EXISTE ESTA HERRAMIENTA. La skill `fichas` le da al agente el índice y
 // la ruta de cada hoja, pero sin una herramienta para abrirlas el modelo hace lo
@@ -22,21 +22,58 @@ function carpetaHojas(): string {
   return join(cfg, "opencode", "skills", "fichas", "hojas")
 }
 
-/** Abre con el programa por defecto del sistema, sin bloquear (best-effort). */
-function abrirConElSistema(archivo: string): boolean {
-  try {
-    const cmd =
-      process.platform === "win32"
-        ? ["cmd", "/c", "start", "", archivo]
-        : process.platform === "darwin"
-          ? ["open", archivo]
-          : ["xdg-open", archivo]
-    const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
-    proc.unref()
-    return true
-  } catch {
-    return false
+/**
+ * La ruta del archivo como URL `file://`, que es lo que manda al navegador.
+ *
+ * En Windows hay que dar vuelta las barras y anteponer una tercera: la ruta
+ * `C:\Users\x\f.pdf` tiene que viajar como `file:///C:/Users/x/f.pdf`.
+ */
+export function comoUrl(archivo: string): string {
+  const barras = archivo.replace(/\\/g, "/")
+  return "file://" + (barras.startsWith("/") ? "" : "/") + encodeURI(barras).replace(/#/g, "%23")
+}
+
+/**
+ * Abre el PDF, sin bloquear (best-effort).
+ *
+ * VA AL NAVEGADOR PRIMERO, y la razón principal no es técnica: `imprimible` ya
+ * abre sus hojas en el navegador. Si las fichas abrieran en otro lado, el
+ * docente tendría dos experiencias distintas para la misma acción —imprimir algo
+ * del aula— y el Ctrl+P que ya aprendió dejaría de servirle igual.
+ *
+ * Y ADEMÁS ES MÁS SEGURO: un navegador hay siempre, y todos traen visor de PDF.
+ * Un lector dedicado puede no estar instalado en la PC de una escuela.
+ *
+ * El segundo intento entrega el archivo al programa asociado del sistema. Sirve
+ * para quien SÍ tiene un lector dedicado y lo prefiere.
+ */
+function abrir(archivo: string): boolean {
+  const intentos =
+    process.platform === "win32"
+      ? [
+          ["cmd", "/c", "start", "", comoUrl(archivo)],
+          ["cmd", "/c", "start", "", archivo],
+        ]
+      : process.platform === "darwin"
+        ? [
+            ["open", comoUrl(archivo)],
+            ["open", archivo],
+          ]
+        : [
+            ["xdg-open", comoUrl(archivo)],
+            ["xdg-open", archivo],
+          ]
+
+  for (const cmd of intentos) {
+    try {
+      const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
+      proc.unref()
+      return true
+    } catch {
+      /* probamos el siguiente */
+    }
   }
+  return false
 }
 
 /** Saca tildes y deja minúsculas, para que "potenciómetro" encuentre a "potenciometro". */
@@ -80,7 +117,7 @@ export function buscarFicha(pedido: string, archivos: string[]): string | null {
 }
 
 export default tool({
-  description: `ABRE una ficha didáctica de Tecnia Lab en el visor de PDF, lista para imprimir (Ctrl+P). Usalo SIEMPRE que quieras entregarle una ficha al docente: no le pegues la ruta del archivo para que la busque a mano, abrísela con esta herramienta. Pasá el número ("09") o el nombre ("ldr", "servo", "rele"). Las fichas que hay están listadas en la skill \`fichas\`.`,
+  description: `ABRE una ficha didáctica de Tecnia Lab en el navegador, lista para imprimir (Ctrl+P). Usalo SIEMPRE que quieras entregarle una ficha al docente. NO leas el PDF con read ni con bash —es binario, tarda y no sirve— y NO le pegues la ruta del archivo para que la busque a mano: abrísela con esta herramienta. Pasá el número ("09") o el nombre ("ldr", "servo", "rele"). Las fichas que hay están listadas en la skill \`fichas\`.`,
   args: {
     ficha: tool.schema
       .string()
@@ -113,9 +150,9 @@ export default tool({
     const ruta = join(dir, elegida)
     const nombre = elegida.replace(/\.pdf$/, "")
 
-    if (abrirConElSistema(ruta)) {
+    if (abrir(ruta)) {
       return (
-        `Abrí la ficha **${nombre}** en tu lector de PDF. ` +
+        `Abrí la ficha **${nombre}** en el navegador. ` +
         `Para imprimirla o guardarla, apretá **Ctrl + P**.`
       )
     }
@@ -124,7 +161,7 @@ export default tool({
     // recién acá, como último recurso y no como primera respuesta.
     return (
       `No pude abrirla solo, pero está acá: \`${ruta}\`\n\n` +
-      `Hacele doble clic para abrirla con tu lector de PDF.`
+      `Hacele doble clic para abrirla.`
     )
   },
 })

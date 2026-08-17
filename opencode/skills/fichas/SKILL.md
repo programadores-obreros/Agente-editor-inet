@@ -29,13 +29,20 @@ Ofrecela cuando:
 **Usá el tool `ficha` y pasale el número o el nombre.** Se la abre en el lector
 de PDF, lista para Ctrl+P.
 
-**NUNCA le pegues la ruta del archivo para que la busque a mano.** Nadie navega
-hasta `.config\opencode\skills\fichas\hojas\`, y el docente que abandona ahí
-se queda sin la ficha. Si el tool falla, él mismo muestra la ruta como último
-recurso — no es tu trabajo adelantarla.
+### Tres cosas que NO hay que hacer
 
-**Y nunca digas que no podés abrir archivos locales**, porque sí podés: para eso
-está el tool.
+**1. No leas el PDF.** Ni con `read`, ni con `bash`, ni con nada. Es un binario de
+trescientos y pico de kilobytes: tarda, no devuelve texto útil, y no hace falta
+—el índice de esta hoja ya te dice qué trae cada ficha—. El tool `ficha` la
+**abre**, que es otra cosa.
+
+**2. No le pegues la ruta para que la busque a mano.** Nadie navega hasta
+`.config\opencode\skills\fichas\hojas\`, y el docente que abandona ahí se queda
+sin la ficha. Si el tool falla, él mismo muestra la ruta como último recurso — no
+es tu trabajo adelantarla.
+
+**3. No digas que no podés abrir archivos locales**, porque sí podés: para eso
+está el tool `ficha`.
 
 ### Abrirla o preguntar antes
 
