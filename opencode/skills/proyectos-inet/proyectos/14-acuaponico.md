@@ -31,21 +31,31 @@ Automatización (no biológica) de un sistema acuapónico que combina cría de p
 | Dosificador — IN1 del ULN2003 | 4 | GPIO 27 |
 
 ## Cableado (de la tabla de conexionado)
+**En este proyecto el bus + es UNO SOLO y es de 5 V** — no hay nada que vaya a 3,3 V. Ver la nota debajo de la tabla.
+
 | Desde | Hacia | Color |
 |---|---|---|
-| Placa · alimentación | Bus + protoboard | rojo |
+| Placa · **5V** (UNO) / **VIN** (ESP32) | **Bus +5V** protoboard | rojo |
 | Placa · GND | Bus − protoboard | negro |
-| Relé aireador · VCC / GND | Bus + / Bus − protoboard | rojo / negro |
+| Relé aireador · VCC / GND | **Bus +5V** / Bus − protoboard | rojo / negro |
 | Relé aireador · IN | Placa · pin aireador | azul |
 | Fuente de carga (+) | Relé aireador · COM | naranja |
 | Relé aireador · NO | Aireador | naranja |
-| Relé bomba · VCC / GND | Bus + / Bus − protoboard | rojo / negro |
+| Relé bomba · VCC / GND | **Bus +5V** / Bus − protoboard | rojo / negro |
 | Relé bomba · IN | Placa · pin bomba | verde |
 | Fuente de carga (+) | Relé bomba · COM | naranja |
 | Relé bomba · NO | Bomba sumergible | naranja |
 | ULN2003 · IN1 | Placa · pin dosificador | amarillo |
 | Fuente aparte del motor (+/−) | ULN2003 · alimentación de motor | naranja |
 | ULN2003 · OUT1 | Motor DC del dosificador | naranja |
+
+> **POR QUÉ EL BUS + ES DE 5 V Y NO "de alimentación" a secas.** Antes esta ficha decía "Placa · alimentación → Bus +" sin decidir cuál, y después colgaba todo de ese riel sin nombre. Acá la respuesta es una sola porque los dos módulos que cuelgan piden lo mismo: **el módulo relé necesita mínimo 4,5 V** (`electrica.ts` → `TecniaLab:Modulo_Rele_1CH`: bobina SRD-05VDC-SL-C de 5 V nominal, más el optoacoplador y el transistor de mando). Con 3,3 V no conmuta, o conmuta a veces — que es peor, porque parece que anda.
+>
+> **En este proyecto no hay bus de 3,3 V**, porque no hay ningún módulo que vaya ahí. En ESP32 el bus + sale del pin **VIN**, que en la DevKit v1 alimentada por USB trae los 5 V del cable — **nunca del 3V3**.
+>
+> Las cuentas: dos relés activados son 90 mA cada uno, o sea **180 mA** (`electrica.ts`), por debajo de los 300 mA a los que el riel de 5 V del UNO empieza a avisar. Para el VIN del ESP32 la tabla no declara presupuesto.
+>
+> **El motor del dosificador no toca ninguno de estos rieles**: su alimentación sale de la fuente aparte que va al ULN2003 (el motor con reducción de este kit pide **5 V mínimos** y se lleva unos 240 mA nominales con picos de 320 — `electrica.ts` → `TecniaLab:Modulo_Driver_Motor`). Lo único que la placa le da al ULN2003 es la **señal** en IN1, que son ~1,5 mA. Las masas sí van todas unidas.
 
 ## Código clave
 - Cronómetro no bloqueante: `unsigned long inicioCiclo = 0;` y en cada `loop()`, `unsigned long transcurrido = millis() - inicioCiclo;` — cada actuador decide su propio estado mirando ese cronómetro, sin `delay()`.
@@ -58,7 +68,8 @@ Automatización (no biológica) de un sistema acuapónico que combina cría de p
 - **La bomba NO debe funcionar en seco**: si se enciende fuera del agua, se quema. Primero llenar la pecera, recién ahí probar.
 - El aireador y la bomba de una pecera real suelen ser cargas de 220V — en el aula se usan cargas de **baja tensión**; el relé y el cableado de 220V van siempre **fuera de la protoboard**, tarea del docente.
 - Todas las conexiones eléctricas van **fuera y por encima del nivel del agua** — nada que conduzca electricidad cerca de la pecera.
-- En ESP32 el módulo relé se alimenta con 5V (VCC al 5V/VIN), pero la señal de control es de 3.3V — la mayoría de los módulos la reconocen sin problema; GND debe ser común.
+- **EL BUS + DE ESTE PROYECTO ES DE 5 V, NO "de alimentación" a secas**: los dos módulos relé piden **mínimo 4,5 V** (`electrica.ts`). En ESP32 sale del pin **VIN**, nunca del 3V3. Acá no hay bus de 3,3 V porque no hay nada que vaya ahí.
+- **En ESP32 son dos preguntas distintas, y conviene descartarlas en este orden**: (1) **el VCC del módulo relé va SIEMPRE a 5 V** (VIN) — no es opcional, lo pide la bobina; (2) **la señal de control** sale del GPIO a 3,3 V y la mayoría de los módulos con optoacoplador la reconoce sin problema, pero si el relé no conmuta con el VCC bien puesto, el problema está ahí. El GND debe ser común a todo (placa, relés y fuente del motor).
 - El motor del dosificador (vía ULN2003) toma corriente de una **fuente aparte**, no de la placa ni del regulador del relé.
 
 ## Cómo ayudar al alumno

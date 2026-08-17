@@ -31,18 +31,34 @@ Se arma una maqueta de un sistema de tanques interconectados, como el suministro
 | HC-SR04 tanque elevado · Echo | pin 11 | GPIO 21 |
 
 ## Cableado (de la tabla de conexionado)
+**En este proyecto el bus + es UNO SOLO y es de 5 V** — no hay nada que vaya a 3,3 V. Ver la nota debajo de la tabla: no es un detalle, es lo que decide si los sensores miden o no.
+
 | Desde | Hacia | Color |
 |---|---|---|
-| Placa · 5V/3V3 | Bus + protoboard | 🔴 rojo |
+| Placa · **5V** (UNO) / **VIN** (ESP32) | **Bus +5V** protoboard | 🔴 rojo |
 | Placa · GND | Bus − protoboard | ⚫ negro |
-| HC-SR04 · VCC / GND | Bus + / Bus − | 🔴⚫ |
+| HC-SR04 · VCC | **Bus +5V** | 🔴 rojo |
+| HC-SR04 · GND | Bus − | ⚫ negro |
 | HC-SR04 · Trig | placa · pin Trig | 🟡 amarillo |
 | HC-SR04 · Echo | placa · pin Echo | 🔵 azul (⚠️ ver gotcha ESP32) |
+| Relé válvula/bomba · VCC | **Bus +5V** | 🔴 rojo |
+| Relé válvula/bomba · GND | Bus − | ⚫ negro |
 | Relé válvula/bomba · IN | placa · pin correspondiente | 🟢 verde |
 | Fuente 12V (+) | Relé · COM | 🟠 naranja |
 | Relé · NO | Electroválvula/Bomba · borne 1 | 🟠 naranja |
 | Electroválvula/Bomba · borne 2 | Fuente 12V (−) | 🟠 naranja |
 
+> **POR QUÉ EL BUS + ES DE 5 V Y NO "5V/3V3".** Antes esta ficha ponía "Placa · 5V/3V3 → Bus +" sin decidir cuál, y después colgaba TODO de ese riel sin nombre. No puede ser las dos cosas, y acá la respuesta es fácil porque los cuatro módulos piden lo mismo:
+>
+> - **HC-SR04 → mínimo 4,5 V** (`electrica.ts` → `TecniaLab:HC-SR04`, hoja ElecFreaks v1.0: tensión de trabajo 5 V).
+> - **Módulo relé → mínimo 4,5 V** (`electrica.ts` → `TecniaLab:Modulo_Rele_1CH`: bobina SRD-05VDC-SL-C de 5 V nominal, más el optoacoplador y el transistor de mando).
+>
+> O sea: **acá no hay bus de 3,3 V, porque no hay ningún módulo que vaya ahí**. En ESP32 el bus + sale del pin **VIN**, que en la DevKit v1 alimentada por USB trae los 5 V del cable. El 3V3 de la placa **no alcanza para nada de este proyecto**: con 3,3 V el HC-SR04 devuelve distancias erráticas o cero, y el relé no conmuta o conmuta a veces — que es la peor de las fallas, porque parece que anda.
+>
+> Las cuentas cierran: dos relés activados (90 mA cada uno) más dos HC-SR04 (15 mA cada uno) son **210 mA**, por debajo de los 300 mA a los que el riel de 5 V del UNO empieza a avisar (`electrica.ts`). Para el VIN del ESP32 la tabla no declara presupuesto — si en algún armado se agregaran más relés, va fuente externa de 5 V con GND común.
+>
+> **Que el bus sea de 5 V no significa que le puedas meter 5 V a un GPIO**: el pin **Echo** del HC-SR04 devuelve 5 V y va con divisor antes del GPIO del ESP32 (ver el gotcha). Son dos cosas distintas: de cuánto se **alimenta** un módulo, y cuánto puede **entrar** a un pin.
+>
 > El circuito de potencia (12 V: fuente + relé + carga) va separado del circuito de control (5 V: sensor + señal del relé hacia la placa).
 
 ## Código clave
@@ -59,7 +75,8 @@ Se arma una maqueta de un sistema de tanques interconectados, como el suministro
 - **Electroválvula/bomba de baja tensión únicamente** (12 V o menos): la versión de 220 V del original queda excluida de la práctica en el aula por seguridad; solo el docente podría hacer esa instalación, supervisada y nunca sobre la protoboard.
 - **La bomba nunca debe funcionar en seco**: la arruina. Siempre sumergida.
 - **Inconsistencia del material original**: la ficha técnica de 2019 no incluía la electroválvula en los insumos, aunque el desarrollo la usa desde el paso 2 del nivel inicial — está corregido en esta reedición.
-- **Módulo relé con ESP32**: verificar que dispare con señal de 3,3 V (los módulos con optoacoplador suelen andar bien) o alimentarlo con 5 V desde el pin VIN.
+- **EL BUS + DE ESTE PROYECTO ES DE 5 V, NO "5V/3V3"**: los dos HC-SR04 y los dos módulos relé piden **mínimo 4,5 V** (`electrica.ts`). En ESP32 sale del pin **VIN**, nunca del 3V3. Acá no hay bus de 3,3 V porque no hay nada que vaya ahí.
+- **Módulo relé con ESP32 — dos preguntas distintas**: (1) **el VCC va SIEMPRE a 5 V** (VIN), porque la bobina pide 4,5 V mínimo: eso no es opcional ni depende del módulo; (2) **el IN** es lo que hay que verificar — la mayoría de los módulos con optoacoplador dispara bien con los 3,3 V de un GPIO, pero algunos no. Si el relé no conmuta con el VCC bien puesto, el problema está en el IN.
 
 ## Cómo ayudar al alumno
 - Si la válvula abre y cierra sin parar cerca del nivel de corte: revisar que la histéresis esté implementada (no comparar contra un único valor).
