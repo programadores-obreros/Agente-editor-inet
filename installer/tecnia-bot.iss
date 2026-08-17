@@ -4,8 +4,13 @@
 ; Se COMPILA en Windows con Inno Setup (o solo, vía GitHub Actions:
 ; .github/workflows/build-installer.yml). Produce: installer\dist\Instalar-Tecnia-Bot.exe
 ;
-; La versión se pasa por línea de comando y, si no, cae al valor por defecto:
-;   ISCC /DMyAppVersion=0.2.0 tecnia-bot.iss
+; La versión SE PASA POR LÍNEA DE COMANDO, y sale del archivo VERSION del repo:
+;   ISCC /DMyAppVersion=0.3.39 tecnia-bot.iss
+;
+; NO HAY VALOR POR DEFECTO, y es a propósito. Antes había uno y quedó SIETE
+; versiones atrás: un .exe compilado a mano salía rotulado 0.3.32 siendo 0.3.39.
+; Un instalador que miente su versión es una tarde perdida diagnosticando.
+; Mejor que no compile y diga qué falta.
 ;
 ; Qué hace el .exe, en orden, SIN pedir permisos de administrador:
 ;   1. Copia la capa educativa (agentes + skills + herramientas + web) a la carpeta del programa.
@@ -14,7 +19,7 @@
 ; ============================================================================
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.3.32"
+  #error Falta la version. Pasala desde el archivo VERSION del repo, por ejemplo: ISCC /DMyAppVersion=0.3.39 installer\tecnia-bot.iss
 #endif
 #define MyAppName "Tecnia Bot"
 #define MyAppPublisher "Tecnia Lab"
