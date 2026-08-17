@@ -58,6 +58,12 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 
 [Files]
 ; La capa educativa (agentes, skills, herramientas, web): el corazón del bot.
+;
+; ACÁ ADENTRO VIAJAN LAS 17 FICHAS A4 (opencode\skills\fichas\hojas\), y son la
+; razón de que el .exe haya pasado de 2,63 MB a 7,44 en la v0.3.40. Es una
+; decisión tomada a propósito, con su costo medido y su criterio de revisión
+; escrito: ver docs\decisiones.md, D-01. Si hay que sacarlas, el procedimiento
+; también está ahí — no hay que pensarlo de nuevo.
 Source: "..\opencode\*"; DestDir: "{app}\opencode"; Flags: recursesubdirs createallsubdirs ignoreversion
 ; Los scripts que instalan las dependencias y publican la capa.
 Source: "..\install\*"; DestDir: "{app}\install"; Flags: recursesubdirs createallsubdirs ignoreversion
