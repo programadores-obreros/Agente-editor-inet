@@ -24,6 +24,7 @@ Habla en español, explica el *porqué* antes del código, comenta cada línea y
 - 🔌 **Compila y carga a la placa** con PlatformIO, desde el mismo chat.
 - 🧰 **Dibuja circuitos visuales** con piezas reales (interactivos, funcionan sin internet) y un explicador de la protoboard.
 - 🖨️ **Arma hojas para el aula** — materiales + conexiones + código comentado, listas para imprimir (Ctrl+P → PDF).
+- 📄 **Trae 17 fichas A4 de Tecnia Lab** — una hoja por componente o concepto (LED, servo, relé, LDR, ultrasónico, PIR, DHT11, téster…). Pedísela y **te la abre en el lector de PDF**, lista para repartir.
 - ⚡ **Chequeo de seguridad antes de prender** — repasa lo crítico (los 3.3 V del ESP32, polaridad, cortos) para no quemar la placa.
 - 📟 **Abre el monitor serial en una ventana** — ver los datos de la placa y mandarle teclas, sin escribir comandos. [Guía](docs/monitor-serial.md)
 - 🇦🇷 **Traduce los errores** de compilación del inglés al español, con la solución paso a paso.
@@ -52,7 +53,7 @@ Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuand
 | **[OpenCode](https://opencode.ai)** | La plataforma de agente sobre la que se monta la capa educativa (MIT). |
 | **Google Gemini Flash-Lite** (gratis) | El modelo de lenguaje del agente (`google/gemini-flash-lite-latest`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se usa el alias `-latest` (no una versión fija) para no depender de un modelo puntual que Google puede discontinuar. |
 | **[Bun](https://bun.sh)** | Runtime de OpenCode: las herramientas del agente corren sobre Bun. |
-| **TypeScript** | Las 7 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ayuda`, `actualizar`, `perfil`, `memoria`). |
+| **TypeScript** | Las 8 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ficha`, `ayuda`, `actualizar`, `perfil`, `memoria`). |
 | **[PlatformIO](https://platformio.org)** | Compila y carga el firmware a la placa real. |
 | **Arduino UNO / ESP32** | El hardware objetivo del programa INET. |
 | **[Wokwi Elements](https://github.com/wokwi/wokwi-elements)** (MIT) | Las piezas realistas de los circuitos visuales. |
@@ -122,7 +123,7 @@ Probá:
 Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https://opencode.ai)** — no lo reemplaza ni lo modifica. Agrega:
 
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
-- **7 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género) y `memoria` (progreso de la compu).
+- **8 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género) y `memoria` (progreso de la compu).
 - **14 bases de conocimiento** (skills) — ver abajo.
 - **3 comandos** — `/diagnostico`, `/actualizar`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
@@ -140,7 +141,7 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 ```
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
-│   ├── tool/               # 7 herramientas .ts (platformio, circuito, imprimible, ayuda, actualizar, perfil, memoria)
+│   ├── tool/               # 8 herramientas .ts (platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria)
 │   ├── skills/             # 14 bases de conocimiento
 │   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva

@@ -24,10 +24,29 @@ Ofrecela cuando:
 
 **Ofrecé UNA, la que corresponde.** Tirar la lista entera no ayuda a nadie.
 
-## Cómo se entrega
+## Cómo se entrega: con el tool `ficha`
 
-Las hojas están en `hojas/` dentro de esta skill. Abrí el PDF que corresponde y
-decile al docente que ya puede imprimirlo. **No hace falta generar nada.**
+**Usá el tool `ficha` y pasale el número o el nombre.** Se la abre en el lector
+de PDF, lista para Ctrl+P.
+
+**NUNCA le pegues la ruta del archivo para que la busque a mano.** Nadie navega
+hasta `.config\opencode\skills\fichas\hojas\`, y el docente que abandona ahí
+se queda sin la ficha. Si el tool falla, él mismo muestra la ruta como último
+recurso — no es tu trabajo adelantarla.
+
+**Y nunca digas que no podés abrir archivos locales**, porque sí podés: para eso
+está el tool.
+
+### Abrirla o preguntar antes
+
+| Situación | Qué hacer |
+|---|---|
+| Te la pidieron («dame algo del LDR», «una hoja del relé») | **abrila**, ya te la pidieron |
+| La ofrecés vos, sin que la pidan | **preguntá primero**: «¿te la abro?» |
+| Dijeron que sí a tu ofrecimiento | abrila |
+
+Abrir un PDF no rompe nada y no manda nada a ningún lado. Lo que molesta es
+abrir algo que nadie pidió.
 
 ## Las hojas que hay
 
