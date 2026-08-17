@@ -244,6 +244,78 @@ export function identificar(
   }
 }
 
+/**
+ * Los códigos con los que Windows dice "esto está enchufado pero no anda".
+ *
+ * El 28 es EL caso que nos importa: "los controladores para este dispositivo no
+ * están instalados". Es exactamente lo que pasa con un CH340 recién enchufado en
+ * una Windows limpia.
+ */
+const ERRORES_DE_DRIVER: Record<number, string> = {
+  1: "Windows no lo configuró bien",
+  10: "el dispositivo no puede iniciarse",
+  28: "**le falta el driver** — Windows no lo trae de fábrica",
+  31: "el driver que tiene no funciona",
+  37: "el driver no pudo arrancar",
+  39: "el driver está dañado o falta",
+  43: "Windows lo detuvo porque reportó un problema",
+}
+
+/**
+ * Convierte la salida de Windows en algo que se pueda contar.
+ *
+ * Exportada para poder probarla con la salida real sin tener que enchufar una
+ * placa sin driver, que es un escenario difícil de montar a pedido.
+ */
+export function leerDispositivosConProblema(
+  json: string,
+): Array<{ nombre: string; hwid: string; problema: string; driverWindows?: string }> {
+  let filas: Array<{ Name?: string; DeviceID?: string; ConfigManagerErrorCode?: number }>
+  try {
+    const parsed = JSON.parse(json)
+    filas = Array.isArray(parsed) ? parsed : [parsed]
+  } catch {
+    return []
+  }
+
+  return filas
+    .filter((f) => f?.DeviceID && f.ConfigManagerErrorCode)
+    .map((f) => {
+      const q = identificar(f.DeviceID, f.Name)
+      return {
+        nombre: f.Name ?? "dispositivo sin nombre",
+        hwid: f.DeviceID!,
+        problema: ERRORES_DE_DRIVER[f.ConfigManagerErrorCode!] ?? `código ${f.ConfigManagerErrorCode}`,
+        driverWindows: q.driverWindows,
+      }
+    })
+    .filter((d) => identificar(d.hwid).esPlaca)
+}
+
+/**
+ * Busca placas que Windows VE pero no puede usar.
+ *
+ * POR QUÉ HACE FALTA. Sin el driver del CH340, Windows no crea ningún puerto COM
+ * — así que `pio device list` no devuelve nada y el bot dice "no hay ninguna
+ * placa conectada". El docente mira el cable, lo mueve, prueba otro puerto USB, y
+ * la placa estuvo bien todo el tiempo.
+ *
+ * Windows SÍ ve el dispositivo: lo tiene en el administrador con un código de
+ * error. Preguntarle a él convierte "no hay nada" en "está enchufada, le falta
+ * el driver, bajalo de acá".
+ *
+ * Sólo Windows: en Linux y macOS el CH340 anda sin instalar nada.
+ */
+async function placasSinDriver(cwd: string, signal?: AbortSignal) {
+  if (process.platform !== "win32") return []
+  const ps =
+    "Get-WmiObject Win32_PnPEntity -ErrorAction SilentlyContinue | " +
+    "Where-Object { $_.ConfigManagerErrorCode -ne 0 } | " +
+    "Select-Object Name, DeviceID, ConfigManagerErrorCode | ConvertTo-Json -Compress"
+  const r = await run(["powershell", "-NoProfile", "-Command", ps], cwd, signal)
+  return r.code === 0 ? leerDispositivosConProblema(r.stdout) : []
+}
+
 async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string } | { error: string }> {
   const result = await run(["pio", "device", "list", "--json-output"], cwd, signal)
 
@@ -498,13 +570,32 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, a
         if (!pioOk) {
           estado = "Falta instalar PlatformIO — https://docs.platformio.org/en/latest/core/installation/"
         } else if (placas === 0) {
-          const ayuda =
-            os === "Windows"
-              ? " Si está enchufada y no aparece, casi siempre falta el driver del **CH340**, el chip de los clones baratos: https://www.wch-ic.com/downloads/CH341SER_EXE.html"
-              : os === "Linux"
-                ? " Si está enchufada y no aparece, puede ser permiso del puerto: `sudo usermod -a -G dialout $USER` (o `uucp` en Arch/Manjaro), y volvé a iniciar sesión."
-                : ""
-          estado = `**Ninguna placa conectada.** Enchufá el Arduino o el ESP32 por USB.${ayuda}`
+          /*
+           * ANTES DE DECIR "no hay nada", PREGUNTARLE A WINDOWS.
+           *
+           * Sin el driver del CH340 no existe ningún puerto COM, así que
+           * PlatformIO no ve nada — pero Windows sí tiene el dispositivo, con un
+           * código de error. Decir "no hay ninguna placa" cuando está enchufada
+           * manda al docente a revisar el cable durante media hora.
+           */
+          const rotas = await placasSinDriver(cwd, signal)
+          if (rotas.length > 0) {
+            const d = rotas[0]
+            estado =
+              `**Hay una placa enchufada, pero Windows no la puede usar.**\n\n` +
+              `Ve un \`${d.nombre}\` y ${d.problema}.\n\n` +
+              (d.driverWindows
+                ? `Bajá el driver de acá: ${d.driverWindows}\n\nInstalalo, desenchufá la placa, volvé a enchufarla y corré \`/diagnostico\` de nuevo.`
+                : `Revisá el administrador de dispositivos de Windows para ver qué le falta.`)
+          } else {
+            const ayuda =
+              os === "Windows"
+                ? " Si está enchufada y no la veo ni acá ni en Windows, probá otro cable: hay cables USB que sólo llevan corriente y no datos."
+                : os === "Linux"
+                  ? " Si está enchufada y no aparece, puede ser permiso del puerto: `sudo usermod -a -G dialout $USER` (o `uucp` en Arch/Manjaro), y volvé a iniciar sesión."
+                  : ""
+            estado = `**Ninguna placa conectada.** Enchufá el Arduino o el ESP32 por USB.${ayuda}`
+          }
         }
 
         return `## Diagnóstico del entorno

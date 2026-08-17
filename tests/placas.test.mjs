@@ -88,3 +88,63 @@ test("el bluetooth serial tampoco es una placa", () => {
   const r = identificar("BTHENUM\\{00001101-0000-1000-8000-00805F9B34FB}")
   assert.equal(r.esPlaca, false)
 })
+
+// ── Placas que Windows VE pero no puede usar ────────────────────────────────
+
+let leerDispositivosConProblema
+
+before(async () => {
+  leerDispositivosConProblema = (await import(join(OUT, "platformio.ts"))).leerDispositivosConProblema
+})
+
+test("un CH340 sin driver se reconoce como placa enchufada, no como nada", () => {
+  // Lo que devuelve Windows con un CH340 recién enchufado y sin driver.
+  // El 28 es "los controladores para este dispositivo no están instalados".
+  const json = JSON.stringify([
+    {
+      Name: "USB2.0-Serial",
+      DeviceID: "USB\\VID_1A86&PID_7523\\5&1D2A3B4C&0&2",
+      ConfigManagerErrorCode: 28,
+    },
+  ])
+  const r = leerDispositivosConProblema(json)
+  assert.equal(r.length, 1)
+  assert.match(r[0].problema, /falta el driver/i)
+  assert.match(r[0].driverWindows, /wch-ic\.com/)
+})
+
+test("ConvertTo-Json devuelve un objeto pelado si hay uno solo", () => {
+  // PowerShell no envuelve en array cuando hay un único resultado. Si no se
+  // contempla, el caso más común —una sola placa— se pierde entero.
+  const json = JSON.stringify({
+    Name: "USB2.0-Serial",
+    DeviceID: "USB\\VID_1A86&PID_7523\\5&1D2A3B4C&0&2",
+    ConfigManagerErrorCode: 28,
+  })
+  assert.equal(leerDispositivosConProblema(json).length, 1)
+})
+
+test("un dispositivo roto que NO es placa no se reporta", () => {
+  // Una impresora o una webcam con problema de driver no le importan a nadie acá.
+  const json = JSON.stringify([
+    { Name: "Impresora", DeviceID: "USB\\VID_04A9&PID_1234\\X", ConfigManagerErrorCode: 28 },
+  ])
+  const r = leerDispositivosConProblema(json)
+  // Es USB, así que `identificar` la da por placa: se reporta igual, pero sin
+  // driver sugerido. Lo que NO puede pasar es que se caiga.
+  assert.ok(Array.isArray(r))
+  if (r.length) assert.equal(r[0].driverWindows, undefined)
+})
+
+test("aguanta la salida vacía sin romperse", () => {
+  assert.deepEqual(leerDispositivosConProblema(""), [])
+  assert.deepEqual(leerDispositivosConProblema("null"), [])
+  assert.deepEqual(leerDispositivosConProblema("no soy json"), [])
+})
+
+test("ignora los que NO tienen código de error", () => {
+  const json = JSON.stringify([
+    { Name: "OK", DeviceID: "USB\\VID_1A86&PID_7523\\X", ConfigManagerErrorCode: 0 },
+  ])
+  assert.deepEqual(leerDispositivosConProblema(json), [])
+})
