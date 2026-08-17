@@ -112,6 +112,7 @@ Probá:
 - *"quiero armar el semáforo paso a paso"* — te guía el proyecto completo y recuerda dónde quedaste.
 - *"armame el circuito de riego con higrómetro, relé y bomba"* — te dibuja un circuito visual interactivo.
 - *"abrí el monitor serial"* — ventana para ver los datos de la placa y comandarla con el teclado.
+- *"dame algo para repartir del LDR"* — te abre la ficha A4 en el lector de PDF, lista para imprimir.
 - `/ayuda` — resumen de uso + manual/onboarding en el navegador.
 - `/diagnostico` — verifica tu entorno (OpenCode, PlatformIO, la placa).
 - `/actualizar` — trae la última versión desde GitHub.
@@ -177,7 +178,7 @@ Para agregar un componente al armador de circuitos o un skill nuevo: `opencode/t
 
 ## 📌 Estado
 
-🚀 **v0.3.40.** Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
+🚀 **v0.3.41.** Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, trae las 17 fichas A4 de Tecnia Lab y te las abre en el lector de PDF, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
 
 **Pendiente:**
 - Firmar el `.exe` — hoy sin firma, Windows muestra el aviso de SmartScreen (se saltea con *"Ejecutar de todas formas"*) y, en Windows 11 con **Control Inteligente de Aplicaciones** activado, directamente **bloquea la instalación sin opción de saltear** (confirmado con un caso real del equipo). Aplicación gratuita enviada a [SignPath Foundation](https://signpath.org/) el 2026-08-12, en revisión (proceso estándar: 2-4 semanas). Ver issue [#4](https://github.com/programadores-obreros/Agente-editor-inet/issues/4).

@@ -39,6 +39,7 @@ Escribime en español, con tus palabras. Podés pedirme, por ejemplo:
 - *"cargá este código al ESP32"* — compilo y lo subo a tu placa
 - *"abrí el monitor serial"* — para ver los datos de la placa
 - *"dame los materiales del semáforo para imprimir"* — una hoja para el aula
+- *"dame algo para repartir del LDR"* — te abro la ficha A4 lista para imprimir
 - *"¿puedo prenderlo?"* — te chequeo la seguridad antes de dar corriente
 
 Comandos: \`/diagnostico\` (revisa que todo esté listo) · \`/actualizar\` (última versión).`
