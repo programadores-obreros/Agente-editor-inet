@@ -74,7 +74,7 @@ function launchDetached(cmd: string[], cwd: string): boolean {
   }
 }
 
-function traducirError(stderr: string, stdout: string): string {
+export function traducirError(stderr: string, stdout: string): string {
   const texto = stderr + "\n" + stdout
   type Patron = [RegExp, string | ((m: RegExpMatchArray) => string)]
   const patrones: Patron[] = [

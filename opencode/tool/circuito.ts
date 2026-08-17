@@ -18,7 +18,7 @@ import { existsSync, readFileSync } from "node:fs"
  * para código compartido. Cuatro copias de seis líneas es más barato que
  * inventar una capa de infraestructura para esto.
  */
-function comoUrl(archivo: string): string {
+export function comoUrl(archivo: string): string {
   const barras = archivo.replace(/\\/g, "/")
   return "file://" + (barras.startsWith("/") ? "" : "/") + encodeURI(barras).replace(/#/g, "%23")
 }
@@ -1300,7 +1300,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
 
 ${abierto
   ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n`}
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n${comoUrl(archivo)}`}
 
 Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los que están conectados con él por dentro. Así se entiende de una qué se une con qué: las filas, los buses y el canal del medio.`
     } else if (args.circuito && PLANTILLAS_PROTOBOARD[args.circuito]) {
@@ -1321,7 +1321,7 @@ Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los 
 
 ${abierto
   ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n`}
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n${comoUrl(archivo)}`}
 
 Vas a ver el circuito armado en la placa de pruebas, con los componentes reales (Wokwi) y los cables de colores conectados a los agujeros.`
     } else if (args.circuito) {
@@ -1371,7 +1371,7 @@ Vas a ver el circuito armado en la placa de pruebas, con los componentes reales 
 
 ${abierto
   ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n`}
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n${comoUrl(archivo)}`}
 
 Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
 (Se copió la biblioteca de piezas al lado del archivo — no la borres.)`

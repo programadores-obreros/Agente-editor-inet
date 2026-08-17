@@ -185,8 +185,7 @@ export default tool({
     // Si el sistema no la pudo abrir, la ruta es lo único que queda — pero
     // recién acá, como último recurso y no como primera respuesta.
     return (
-      `No pude abrirla solo, pero está acá: \`${ruta}\`\n\n` +
-      `Hacele doble clic para abrirla.`
+      `No pude abrirla solo. Hacele doble clic acá para abrirla: \`${ruta}\``
     )
   },
 })

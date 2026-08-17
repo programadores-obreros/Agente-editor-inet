@@ -38,7 +38,7 @@ function abrirEnNavegador(archivo: string): boolean {
  * para código compartido. Cuatro copias de seis líneas es más barato que
  * inventar una capa de infraestructura para esto.
  */
-function comoUrl(archivo: string): string {
+export function comoUrl(archivo: string): string {
   const barras = archivo.replace(/\\/g, "/")
   return "file://" + (barras.startsWith("/") ? "" : "/") + encodeURI(barras).replace(/#/g, "%23")
 }

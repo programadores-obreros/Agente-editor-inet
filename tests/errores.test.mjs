@@ -1,12 +1,19 @@
-// Los mensajes que un docente pega en el chat tienen que estar reconocidos.
+// Los mensajes que un docente pega en el chat tienen que estar traducidos.
 //
 // POR QUÉ ESTE ARCHIVO. `traducirError()` traducía bien los errores de
 // COMPILACIÓN, pero no los tres que el ESP32 escupe por el monitor serial
-// DESPUÉS de cargar, cuando el programa ya corre. Ninguno de los tres estaba:
-// el bot recibía el texto crudo y tenía que improvisar.
+// DESPUÉS de cargar, cuando el programa ya corre. El del brownout es el más
+// importante: aparece la primera vez que alguien conecta un servo.
 //
-// El del brownout es el más importante: es lo que aparece la primera vez que
-// alguien le conecta un servo a la placa — semana dos o tres de cualquier curso.
+// ── POR QUÉ ESTE ARCHIVO SE REESCRIBIÓ ────────────────────────────────────
+//
+// La primera versión hacía regex-scraping sobre el TEXTO FUENTE de
+// platformio.ts y probaba los literales que extraía. El QA la mató con una
+// mutación de una línea: vació el loop de despacho —la función deja de traducir
+// absolutamente todo— y los cinco tests pasaron igual.
+//
+// Un test que pasa con y sin el arreglo no prueba nada. Ahora se llama a
+// `traducirError` de verdad y se mira lo que devuelve.
 
 import { test, before } from "node:test"
 import assert from "node:assert/strict"
@@ -17,49 +24,67 @@ import os from "node:os"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = join(os.tmpdir(), "tecniabot-errores-test")
-const src = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
 
-/** Los patrones viven dentro de `traducirError`, que no está exportada. */
-function reconoce(texto) {
-  // Extraemos los regex literales del array de patrones y los probamos.
-  const bloque = src.match(/const patrones[\s\S]*?\n  \]/)
-  assert.ok(bloque, "no encontré el array de patrones en platformio.ts")
-  const regexes = [...bloque[0].matchAll(/^\s*\/(.+?)\/([gimsu]*),\s*$/gm)].map(
-    (m) => new RegExp(m[1], m[2]),
+let traducirError
+
+before(async () => {
+  if (existsSync(OUT)) rmSync(OUT, { recursive: true })
+  mkdirSync(OUT, { recursive: true })
+  writeFileSync(
+    join(OUT, "mock-plugin.ts"),
+    "const chain=new Proxy(function(){return chain},{get:()=>chain,apply:()=>chain});export const tool=(c)=>c;tool.schema=chain;",
   )
-  return regexes.some((r) => r.test(texto))
-}
-
-test("reconoce el brownout — el que aparece al conectar un servo", () => {
-  assert.ok(reconoce("Brownout detector was triggered"), "el brownout no está reconocido")
+  const src = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
+    .replace('/// <reference path="../env.d.ts" />', "")
+    .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
+  writeFileSync(join(OUT, "platformio.ts"), src)
+  traducirError = (await import(join(OUT, "platformio.ts"))).traducirError
 })
 
-test("reconoce el bootloop del ESP32", () => {
-  assert.ok(
-    reconoce("rst:0x10 (RTCWDT_RTC_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)"),
-    "el rst:0x/boot: no está reconocido",
-  )
+/** Lo que devuelve cuando NO reconoce nada, para poder distinguirlo. */
+const SIN_TRADUCIR = () => traducirError("qwerty zxcvb no soy un error conocido", "")
+
+test("el brownout se traduce, y habla de corriente y no de código", () => {
+  const r = traducirError("E (204) esp_core_dump_flash: Brownout detector was triggered", "")
+  assert.notEqual(r, SIN_TRADUCIR(), "el brownout no se reconoció")
+  assert.match(r, /corriente|tension|tensión/i)
+  assert.match(r, /no es un problema del codigo|no es.*c[oó]digo/i)
+  assert.match(r, /BLOQUEO/i, "tiene que mandar a calcular con el consumo de bloqueo")
 })
 
-test("reconoce el Guru Meditation Error", () => {
-  assert.ok(
-    reconoce("Guru Meditation Error: Core  1 panic'ed (LoadProhibited)"),
-    "el Guru Meditation no está reconocido",
-  )
+test("el bootloop se traduce y menciona los pines de arranque", () => {
+  const r = traducirError("rst:0x10 (RTCWDT_RTC_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)", "")
+  assert.notEqual(r, SIN_TRADUCIR(), "el rst:0x/boot: no se reconoció")
+  assert.match(r, /GPIO0|GPIO2|GPIO12|GPIO15/)
 })
 
-test("sigue reconociendo los errores de compilación de siempre", () => {
-  // Que agregar los nuevos no haya roto los viejos.
-  assert.ok(reconoce("error: 'foo' was not declared in this scope"))
-  assert.ok(reconoce("fatal error: DHT.h: No such file or directory"))
-  assert.ok(reconoce("Failed to connect to ESP32: Timed out waiting for packet header"))
+test("el Guru Meditation se traduce y aclara que no es de compilación", () => {
+  const r = traducirError("Guru Meditation Error: Core  1 panic'ed (LoadProhibited)", "")
+  assert.notEqual(r, SIN_TRADUCIR(), "el Guru Meditation no se reconoció")
+  assert.match(r, /no es un error de compilacion|mientras corr/i)
 })
 
-test("el mensaje del brownout habla de corriente, no de código", () => {
-  // El docente tiene que salir sabiendo que NO es su programa.
-  const i = src.indexOf("Brownout detector")
-  const mensaje = src.slice(i, i + 700)
-  assert.match(mensaje, /corriente|tension|tensión/i)
-  assert.match(mensaje, /No es un problema del codigo|no es.*codigo/i)
-  assert.match(mensaje, /BLOQUEO/i, "tiene que mandar a calcular con el consumo de bloqueo")
+test("los errores de compilación de siempre siguen traduciéndose", () => {
+  for (const [entrada, señal] of [
+    ["error: 'foo' was not declared in this scope", /declar/i],
+    ["fatal error: DHT.h: No such file or directory", /lib_deps|librer/i],
+    ["Failed to connect to ESP32: Timed out waiting for packet header", /BOOT/],
+    ["Permission denied: '/dev/ttyUSB0'", /grupo|usermod/i],
+  ]) {
+    const r = traducirError(entrada, "")
+    assert.notEqual(r, SIN_TRADUCIR(), `dejó de reconocer: ${entrada}`)
+    assert.match(r, señal)
+  }
+})
+
+test("lo que NO es un error conocido no se inventa una traducción", () => {
+  const r = SIN_TRADUCIR()
+  assert.doesNotMatch(r, /brownout|corriente/i)
+})
+
+test("el brownout le gana al rst cuando aparecen juntos", () => {
+  // La placa que se apaga por falta de corriente imprime los dos. El mensaje
+  // útil es el del brownout: dice la causa, no el síntoma.
+  const juntos = "Brownout detector was triggered\nrst:0x10 (RTCWDT_RTC_RESET),boot:0x13"
+  assert.match(traducirError(juntos, ""), /corriente/i)
 })
