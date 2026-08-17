@@ -13,6 +13,25 @@ function manualPath(): string {
   return join(cfg, "opencode", "tecniabot-web", "sitio", "index.html")
 }
 
+/**
+ * La ruta del archivo como URL `file://` bien formada.
+ *
+ * EN WINDOWS LA RUTA CRUDA NO ES UNA URL. `C:\\Users\\Maria Jose\\hoja.html`
+ * interpolado en `file://` da `file://C:\\Users\\Maria Jose\\hoja.html`: barras
+ * invertidas, falta la tercera barra, y el espacio sin escapar. Pegado en el
+ * navegador no abre nada — y esto aparece justo cuando el auto-open ya falló,
+ * o sea en el peor momento posible.
+ *
+ * Está duplicada en ficha.ts, imprimible.ts, ayuda.ts y circuito.ts: los tools
+ * de OpenCode no se importan entre sí (ninguno lo hace hoy) y no hay carpeta
+ * para código compartido. Cuatro copias de seis líneas es más barato que
+ * inventar una capa de infraestructura para esto.
+ */
+function comoUrl(archivo: string): string {
+  const barras = archivo.replace(/\\/g, "/")
+  return "file://" + (barras.startsWith("/") ? "" : "/") + encodeURI(barras).replace(/#/g, "%23")
+}
+
 // Abre el manual en el navegador por defecto, sin bloquear la tool (best-effort).
 function abrirEnNavegador(archivo: string): boolean {
   try {
@@ -52,7 +71,7 @@ export default tool({
     const abierto = existsSync(ruta) && abrirEnNavegador(ruta)
     const manual = abierto
       ? "\n\n📖 **Te abrí el manual completo en el navegador** (con más ejemplos y qué hacer si algo falla)."
-      : `\n\n📖 El manual completo está en \`file://${ruta}\` (doble clic para abrirlo).`
+      : `\n\n📖 El manual completo está en \`${comoUrl(ruta)}\` (doble clic para abrirlo).`
     return RESUMEN + manual
   },
 })

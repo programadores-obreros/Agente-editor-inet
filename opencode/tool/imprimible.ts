@@ -25,6 +25,25 @@ function abrirEnNavegador(archivo: string): boolean {
 }
 
 /**
+ * La ruta del archivo como URL `file://` bien formada.
+ *
+ * EN WINDOWS LA RUTA CRUDA NO ES UNA URL. `C:\\Users\\Maria Jose\\hoja.html`
+ * interpolado en `file://` da `file://C:\\Users\\Maria Jose\\hoja.html`: barras
+ * invertidas, falta la tercera barra, y el espacio sin escapar. Pegado en el
+ * navegador no abre nada — y esto aparece justo cuando el auto-open ya falló,
+ * o sea en el peor momento posible.
+ *
+ * Está duplicada en ficha.ts, imprimible.ts, ayuda.ts y circuito.ts: los tools
+ * de OpenCode no se importan entre sí (ninguno lo hace hoy) y no hay carpeta
+ * para código compartido. Cuatro copias de seis líneas es más barato que
+ * inventar una capa de infraestructura para esto.
+ */
+function comoUrl(archivo: string): string {
+  const barras = archivo.replace(/\\/g, "/")
+  return "file://" + (barras.startsWith("/") ? "" : "/") + encodeURI(barras).replace(/#/g, "%23")
+}
+
+/**
  * El atajo de imprimir, que NO es el mismo en todos lados: en macOS es Cmd+P.
  * Está duplicado en ficha.ts a propósito — una línea repetida cuesta menos que
  * un módulo compartido para dos usos. Si aparece un tercero, se comparte.
@@ -148,7 +167,7 @@ export default tool({
     const abierto = abrirEnNavegador(archivo)
     const comoAbrir = abierto
       ? "**Te la abrí en el navegador.**"
-      : `Abrila con doble clic: \`file://${archivo}\``
+      : `Abrila con doble clic: \`${comoUrl(archivo)}\``
     return `Listo, armé la hoja para imprimir de **${args.titulo}**. ${comoAbrir} Para guardarla como PDF o imprimirla, apretá **${atajoImprimir()}**. Ideal para repartir en el aula.`
   },
 })

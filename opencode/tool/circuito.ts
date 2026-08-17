@@ -4,6 +4,25 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 
+/**
+ * La ruta del archivo como URL `file://` bien formada.
+ *
+ * EN WINDOWS LA RUTA CRUDA NO ES UNA URL. `C:\\Users\\Maria Jose\\hoja.html`
+ * interpolado en `file://` da `file://C:\\Users\\Maria Jose\\hoja.html`: barras
+ * invertidas, falta la tercera barra, y el espacio sin escapar. Pegado en el
+ * navegador no abre nada — y esto aparece justo cuando el auto-open ya falló,
+ * o sea en el peor momento posible.
+ *
+ * Está duplicada en ficha.ts, imprimible.ts, ayuda.ts y circuito.ts: los tools
+ * de OpenCode no se importan entre sí (ninguno lo hace hoy) y no hay carpeta
+ * para código compartido. Cuatro copias de seis líneas es más barato que
+ * inventar una capa de infraestructura para esto.
+ */
+function comoUrl(archivo: string): string {
+  const barras = archivo.replace(/\\/g, "/")
+  return "file://" + (barras.startsWith("/") ? "" : "/") + encodeURI(barras).replace(/#/g, "%23")
+}
+
 // Ruta del bundle de piezas Wokwi Elements (se instala con Tecnia Bot).
 function bundlePath(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
@@ -1264,8 +1283,8 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       return `Listo! Generé el explicador interactivo de la protoboard.
 
 ${abierto
-  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`file://${archivo}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\nfile://${archivo}`}
+  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n`}
 
 Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los que están conectados con él por dentro. Así se entiende de una qué se une con qué: las filas, los buses y el canal del medio.`
     } else if (args.circuito && PLANTILLAS_PROTOBOARD[args.circuito]) {
@@ -1285,8 +1304,8 @@ Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los 
       return `Listo! Generé un circuito montado sobre una protoboard: ${def.que}.
 
 ${abierto
-  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`file://${archivo}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\nfile://${archivo}`}
+  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n`}
 
 Vas a ver el circuito armado en la placa de pruebas, con los componentes reales (Wokwi) y los cables de colores conectados a los agujeros.`
     } else if (args.circuito) {
@@ -1335,8 +1354,8 @@ Vas a ver el circuito armado en la placa de pruebas, con los componentes reales 
     return `Listo! Generé el circuito visual y animado.
 
 ${abierto
-  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`file://${archivo}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\nfile://${archivo}`}
+  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
+  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n`}
 
 Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
 (Se copió la biblioteca de piezas al lado del archivo — no la borres.)`
