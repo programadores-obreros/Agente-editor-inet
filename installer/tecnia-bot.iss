@@ -30,6 +30,19 @@
 AppId={{7F3A9C22-5B4E-4D1A-9E62-1C8B7A0F5D34}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+; AppVersion sólo se ve en "Agregar o quitar programas". Estas otras son las que
+; ponen la versión en las PROPIEDADES DEL ARCHIVO, que es donde la busca alguien
+; que tiene el .exe en Descargas y no sabe cuál bajó.
+;
+; Faltaban, y se pagó: en una sesión de soporte real hubo que identificar la
+; versión que tenía un docente CONTANDO LOS BYTES del archivo contra el asset del
+; release. Andaba, pero es una vergüenza como método.
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductName={#MyAppName}
+VersionInfoDescription={#MyAppName} {#MyAppVersion} - instalador
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoCopyright=Tecnia Lab - GPLv3
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -78,24 +91,6 @@ Name: "{autoprograms}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Tasks: desktopicon
 
 [Run]
-; ── Marca de "instalación en curso" ───────────────────────────────────────────
-;
-; El acceso directo se crea en [Icons], que corre ANTES que [Run]. Medido en una
-; VM: queda clickeable a los 0,9 segundos, cuando esto recién va a empezar a
-; bajar los 57 MB de OpenCode. El docente ve aparecer el ícono y lo abre — es lo
-; natural, y en una notebook de escuela hay varios minutos para hacerlo.
-;
-; Sin esta marca el lanzador decía "No se encontró OpenCode, volvé a correr el
-; instalador" JUSTO mientras el instalador estaba corriendo, empujándolo a
-; arrancar una segunda instalación encima de la primera.
-;
-; Se crea y se borra desde acá y no desde el bootstrap, a propósito: Inno corre
-; estas entradas en orden y con waituntilterminated, así que el borrado ocurre
-; igual si el bootstrap termina en 0, en 1, o se cae. Si la manejara el propio
-; bootstrap, un fallo dejaría la marca puesta y el lanzador esperando de gusto.
-Filename: "cmd.exe"; Parameters: "/c > ""{app}\.instalando"" echo."; \
-  StatusMsg: "Preparando la instalación..."; \
-  Flags: runhidden waituntilterminated
 ; Instala OpenCode + PlatformIO + la capa (sin admin, vía Scoop). Se muestra la
 ; consola a propósito: tarda varios minutos y así el docente ve que avanza.
 Filename: "powershell.exe"; \
@@ -104,7 +99,8 @@ Filename: "powershell.exe"; \
   StatusMsg: "Instalando OpenCode, PlatformIO y Tecnia Bot (puede tardar varios minutos)..."; \
   Check: CorrerBootstrap; \
   Flags: waituntilterminated
-; Se saca la marca pase lo que pase con el paso de arriba.
+; Se saca la marca de "instalación en curso" pase lo que pase con el paso de
+; arriba. Se pone en [Code], al empezar (ssInstall); el porqué está allá abajo.
 Filename: "cmd.exe"; Parameters: "/c del /q ""{app}\.instalando"""; \
   Flags: runhidden waituntilterminated
 ; Al terminar (casillas marcadas en la última pantalla): abrir la web oficial de
@@ -153,4 +149,40 @@ begin
   { En CI se pasa /skipdeps=1 para probar el instalador sin las dependencias pesadas
     (Scoop/OpenCode/PlatformIO). En una instalación normal, siempre corre. }
   Result := ExpandConstant('{param:skipdeps|0}') <> '1';
+end;
+
+var
+  MarcaInstalando: String;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  { ── La marca de "instalación en curso" se pone ACÁ, y es a propósito ──────────
+
+    Primero se creaba en [Run], y no alcanzaba: en una máquina que YA tenía Tecnia
+    Bot, el acceso directo de la instalación anterior está vivo desde el segundo
+    cero. Medido en una VM: el .cmd nuevo recién aparece a los 0,81 s y la marca a
+    los 0,94 s. En la VM es un segundo; en una notebook con antivirus escaneando
+    los 5,6 MB de archivos chicos son decenas de segundos.
+
+    En esa ventana el docente abría el acceso directo VIEJO, que no sabía nada de
+    marcas, y leía "No se encontró OpenCode, volvé a correr el instalador" —
+    mientras el instalador estaba corriendo. Pasó de verdad, dos veces.
+
+    ssInstall se dispara apenas se aprieta "Instalar" y ANTES de copiar un solo
+    archivo, así que cubre toda la instalación. El borrado sigue en [Run], después
+    del bootstrap. }
+  if CurStep = ssInstall then
+  begin
+    MarcaInstalando := ExpandConstant('{app}\.instalando');
+    ForceDirectories(ExpandConstant('{app}'));
+    SaveStringToFile(MarcaInstalando, '', False);
+  end;
+end;
+
+procedure DeinitializeSetup();
+begin
+  { Red de seguridad para el caso en que se cancela a mitad: sin esto la marca
+    queda puesta y el lanzador espera de gusto hasta agotar su techo. }
+  if MarcaInstalando <> '' then
+    DeleteFile(MarcaInstalando);
 end;

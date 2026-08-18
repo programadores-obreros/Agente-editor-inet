@@ -220,3 +220,51 @@ alguien que no puede hacer nada al respecto no es una opción.
   huérfana: querría decir que Inno no llegó a correr su tercera entrada.
 - Si los 20 minutos resultan cortos en alguna escuela real. Antes de subirlos:
   medir cuánto tarda de verdad ahí.
+
+---
+
+## D-04 — La marca se pone al empezar, y el instalador dice qué versión es
+
+**Fecha:** 2026-08-18 · **Versión:** v0.3.52
+
+### Por qué D-03 no alcanzó
+
+En D-03 la marca `.instalando` se creaba en `[Run]`. Eso cubre una instalación
+limpia, pero **no una actualización** — que es el caso más común.
+
+En una máquina que ya tenía Tecnia Bot, el acceso directo de la instalación
+anterior está vivo **desde el segundo cero**. Medido: el `.cmd` nuevo aparece a
+los 0,81 s y la marca a los 0,94 s. En la VM es un segundo; en una notebook con
+antivirus escaneando 5,6 MB de archivos chicos son decenas de segundos.
+
+Y hay algo peor, que es lo que realmente pasó: **el lanzador que corre durante
+una actualización es el que ya estaba en disco.** Al instalar la v0.3.51 —la que
+traía el arreglo— el lanzador en disco todavía era el de la v0.3.50, que no sabía
+nada de marcas. El arreglo no podía protegerse a sí mismo en su propia
+instalación.
+
+**Ahora la marca se crea en `[Code]`, en `CurStepChanged(ssInstall)`**: se dispara
+al apretar "Instalar" y antes de copiar un solo archivo. Verificado con el
+lanzador de la v0.3.51 en disco y el instalador de la v0.3.52: espera bien.
+
+`DeinitializeSetup` la borra si se cancela a mitad; sin eso quedaría puesta y el
+lanzador esperaría sus 20 minutos de gusto.
+
+### El versionado del `.exe`
+
+`AppVersion` sólo se ve en "Agregar o quitar programas". **No** aparece en las
+Propiedades del archivo, que es donde la busca alguien que tiene el `.exe` en
+Descargas y no sabe cuál bajó.
+
+Se pagó: en una sesión de soporte real hubo que identificar la versión que tenía
+un docente **contando los bytes** del archivo contra el asset del release.
+Funcionó, pero es una vergüenza como método.
+
+Ahora el `.exe` declara `VersionInfoVersion`, `ProductName` y `Description`, y
+**el lanzador muestra la versión en todas sus pantallas, incluida la de error**.
+Una captura de pantalla del docente ya alcanza para saber qué está corriendo.
+
+### El mensaje de error dejó de ser dañino
+
+Antes: *"Volvé a correr el instalador"* — a secas. Ahora aclara primero que si el
+instalador está corriendo hay que esperarlo, y **no correrlo dos veces**.

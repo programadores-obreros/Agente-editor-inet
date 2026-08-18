@@ -7,6 +7,13 @@ rem ============================================================================
 title Tecnia Bot
 chcp 65001 >nul
 
+rem La version se muestra en TODAS las pantallas de este lanzador, incluida la de
+rem error. En una sesion de soporte real hubo que averiguar que version tenia un
+rem docente contando los bytes del .exe contra el asset del release. Con esto,
+rem cualquier captura de pantalla que mande ya lo dice.
+set "VER=?"
+if exist "%~dp0VERSION" set /p VER=<"%~dp0VERSION"
+
 rem OpenCode se instala con Scoop, en el espacio del usuario: sus 'shims' quiza
 rem no esten en el PATH de una consola nueva. Los agregamos por las dudas.
 if exist "%USERPROFILE%\scoop\shims" set "PATH=%USERPROFILE%\scoop\shims;%PATH%"
@@ -30,7 +37,7 @@ set "MARCA=%~dp0.instalando"
 if not exist "%MARCA%" goto verificar
 
 echo.
-echo   Tecnia Bot se esta instalando en este momento.
+echo   Tecnia Bot v%VER% se esta instalando en este momento.
 echo   Baja unos 60 MB, asi que puede tardar varios minutos.
 echo.
 echo   No cierres esta ventana: el bot se abre solo cuando termine.
@@ -62,8 +69,10 @@ echo.
 where opencode >nul 2>nul
 if errorlevel 1 (
   echo.
-  echo   No se encontro OpenCode.
-  echo   Volve a correr el instalador de Tecnia Bot, o mira docs\instalacion-windows.md
+  echo   Tecnia Bot v%VER% -- no se encontro OpenCode.
+  echo.
+  echo   Si el instalador esta corriendo ahora mismo, esperalo: no lo corras dos veces.
+  echo   Si ya termino, volve a correrlo, o mira docs\instalacion-windows.md
   echo.
   pause
   exit /b 1
@@ -76,7 +85,7 @@ cd /d "%PROY%"
 
 cls
 echo.
-echo    ___         [o_o]   TECNIA BOT  -  un proyecto de Tecnia Lab
+echo    ___         [o_o]   TECNIA BOT v%VER%  -  un proyecto de Tecnia Lab
 echo   ^| ^|_^|        /^|_^|\   Arduino y ESP32 para escuelas tecnicas
 echo.
 echo   Primeros pasos y ayuda:  https://tecnialab.net.ar/tecnia-bot/
