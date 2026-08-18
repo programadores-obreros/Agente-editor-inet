@@ -89,7 +89,7 @@ if (-not (Test-Path $PerfilFile)) {
 - Modo: (sin definir)
 - Nombre: (sin definir)
 - Rol: (sin definir)
-- Género: (sin definir)
+- Genero: (sin definir)
 - Placa preferida: (sin definir)
 "@
     [System.IO.File]::WriteAllText($PerfilFile, $perfilTemplate, (New-Object System.Text.UTF8Encoding $false))
@@ -323,7 +323,7 @@ if (-not $tieneGoogle) {
     }
     # OJO -- decision explicita, pedida y confirmada por el equipo: si nadie pega su
     # propia key, se usa una key de respaldo hardcodeada ahi mismo, para que la
-    # instalacion quede usable sin fricción. Esta key queda publica en este repo
+    # instalacion quede usable sin friccion. Esta key queda publica en este repo
     # (es publico) y es MUY probable que Google la revoque via su escaneo automatico
     # de secretos -- ya se explico ese riesgo antes de escribir esto. Cada quien
     # puede seguir pegando la SUYA en el prompto de arriba para no depender de esta.

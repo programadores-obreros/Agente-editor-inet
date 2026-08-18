@@ -59,9 +59,9 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
         Write-Host ""
         Write-Host "  [X] Scoop NO quedo instalado, y sin el no se puede seguir." -ForegroundColor Red
         Write-Host ""
-        Write-Host "      Suele ser la politica de ejecucion de PowerShell. Probá:"
+        Write-Host "      Suele ser la politica de ejecucion de PowerShell. Proba:"
         Write-Host "        Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Yellow
-        Write-Host "      y volvé a correr este instalador."
+        Write-Host "      y volve a correr este instalador."
         Write-Host ""
         exit 1
     }
@@ -94,14 +94,14 @@ if (Get-Command opencode -ErrorAction SilentlyContinue) {
         Write-Host "  [X] OpenCode NO quedo instalado." -ForegroundColor Red
         Write-Host ""
         Write-Host "      Scoop no pudo completar la instalacion. Lo mas comun:"
-        Write-Host "        - una descarga cortada (probá de nuevo, suele alcanzar)"
+        Write-Host "        - una descarga cortada (proba de nuevo, suele alcanzar)"
         Write-Host "        - una instalacion anterior a medio hacer"
         Write-Host ""
-        Write-Host "      Para limpiar y reintentar, corré estas dos lineas:"
+        Write-Host "      Para limpiar y reintentar, corre estas dos lineas:"
         Write-Host "        scoop uninstall opencode" -ForegroundColor Yellow
         Write-Host "        scoop install opencode" -ForegroundColor Yellow
         Write-Host ""
-        Write-Host "      Si vuelve a fallar, copiá lo que dice scoop y pedí ayuda con eso:"
+        Write-Host "      Si vuelve a fallar, copia lo que dice scoop y pedi ayuda con eso:"
         Write-Host "      https://github.com/programadores-obreros/Agente-editor-inet/issues"
         Write-Host ""
         exit 1
@@ -115,7 +115,7 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
     Write-Host "  [OK] PlatformIO ya esta instalado"
 } else {
     Write-Host "  [..] Instalando PlatformIO Core (no necesita admin)..."
-    # Python: NO usar 'Get-Command python' — Windows 10/11 trae un stub de la
+    # Python: NO usar 'Get-Command python' - Windows 10/11 trae un stub de la
     # Microsoft Store con ese nombre que NO es Python real y hace fallar la
     # instalacion. Instalamos con Scoop (idempotente) y lo llamamos por ruta.
     scoop install python
@@ -133,7 +133,7 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
         Write-Host "  [!] PlatformIO NO quedo instalado." -ForegroundColor Yellow
         Write-Host ""
         Write-Host "      Tecnia Bot va a arrancar igual y sirve para explicar, dibujar"
-        Write-Host "      circuitos y repartir fichas — pero NO va a poder compilar ni"
+        Write-Host "      circuitos y repartir fichas - pero NO va a poder compilar ni"
         Write-Host "      cargar codigo a la placa hasta que esto se resuelva."
         Write-Host ""
         Write-Host "      Adentro del bot, /diagnostico te dice como esta."
