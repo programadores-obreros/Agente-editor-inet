@@ -52,16 +52,60 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
         & ([scriptblock]::Create($scoopInstaller))
     }
     Refresh-Path
+    # Si Scoop no quedo, NADA de lo que sigue puede funcionar: OpenCode se
+    # instala con el. Cortar aca ahorra tres errores en cascada que no dicen
+    # cual fue el primero.
+    if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+        Write-Host ""
+        Write-Host "  [X] Scoop NO quedo instalado, y sin el no se puede seguir." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "      Suele ser la politica de ejecucion de PowerShell. Probá:"
+        Write-Host "        Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Yellow
+        Write-Host "      y volvé a correr este instalador."
+        Write-Host ""
+        exit 1
+    }
     Write-Host "  [OK] Scoop instalado."
 }
 
 # --- 2. OpenCode ------------------------------------------------------------
+#
+# SE VERIFICA QUE HAYA QUEDADO INSTALADO, y no alcanza con que el comando no
+# tire excepcion. Scoop puede terminar con "ERROR 'opencode' isn't installed
+# correctly" y devolver el prompt igual: antes se imprimia "[OK] OpenCode
+# instalado" sobre ese error, el instalador seguia hasta el final diciendo que
+# todo habia salido bien, y el docente descubria el problema recien al abrir el
+# acceso directo, que le decia "No se encontro OpenCode" sin ninguna pista.
+#
+# Un instalador que dice OK sin haber mirado es peor que uno que falla: manda a
+# buscar el problema al lugar equivocado.
 if (Get-Command opencode -ErrorAction SilentlyContinue) {
     Write-Host "  [OK] OpenCode ya esta instalado"
 } else {
     Write-Host "  [..] Instalando OpenCode..."
     scoop install opencode
     Refresh-Path
+
+    # Se busca el shim directo ademas de Get-Command: el PATH de ESTA consola
+    # puede no haberse refrescado todavia aunque el binario ya este en disco.
+    $shim = Join-Path $env:USERPROFILE "scoop\shims\opencode.cmd"
+    if (-not (Get-Command opencode -ErrorAction SilentlyContinue) -and -not (Test-Path $shim)) {
+        Write-Host ""
+        Write-Host "  [X] OpenCode NO quedo instalado." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "      Scoop no pudo completar la instalacion. Lo mas comun:"
+        Write-Host "        - una descarga cortada (probá de nuevo, suele alcanzar)"
+        Write-Host "        - una instalacion anterior a medio hacer"
+        Write-Host ""
+        Write-Host "      Para limpiar y reintentar, corré estas dos lineas:"
+        Write-Host "        scoop uninstall opencode" -ForegroundColor Yellow
+        Write-Host "        scoop install opencode" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "      Si vuelve a fallar, copiá lo que dice scoop y pedí ayuda con eso:"
+        Write-Host "      https://github.com/programadores-obreros/Agente-editor-inet/issues"
+        Write-Host ""
+        exit 1
+    }
     Write-Host "  [OK] OpenCode instalado."
 }
 
@@ -82,7 +126,21 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
     Invoke-RestMethod -Uri "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -OutFile $Tmp
     & $PyExe $Tmp
     Remove-Item $Tmp -ErrorAction SilentlyContinue
-    Write-Host "  [OK] PlatformIO instalado en ~/.platformio (Tecnia Bot lo encuentra solo)."
+    # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en
+    # ~/.platformio y no agrega nada al PATH de esta consola.
+    if (-not (Test-Path $PioExe)) {
+        Write-Host ""
+        Write-Host "  [!] PlatformIO NO quedo instalado." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "      Tecnia Bot va a arrancar igual y sirve para explicar, dibujar"
+        Write-Host "      circuitos y repartir fichas — pero NO va a poder compilar ni"
+        Write-Host "      cargar codigo a la placa hasta que esto se resuelva."
+        Write-Host ""
+        Write-Host "      Adentro del bot, /diagnostico te dice como esta."
+        Write-Host ""
+    } else {
+        Write-Host "  [OK] PlatformIO instalado en ~/.platformio (Tecnia Bot lo encuentra solo)."
+    }
 }
 
 # --- 4. Tecnia Bot (capa educativa) ------------------------------------------
