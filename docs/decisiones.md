@@ -84,3 +84,76 @@ con el riesgo planteado.
 **No es la misma discusión que el peso**, pero se resuelve en el mismo lugar: si
 alguna vez hay que tocar esas tres, la salida barata es cambiarles la foto por
 los dibujos originales, que están preservados en el repo `fichas-tecnialab`.
+
+---
+
+## D-02 — El instalador se repara solo, y no le pregunta nada al docente
+
+**Fecha:** 2026-08-17 · **Versión:** v0.3.50
+
+### El problema
+
+OpenCode puede quedar **instalado a medias**: el comando está en el PATH pero no
+arranca. Lo deja una descarga cortada, un hash que no da, o un antivirus que
+manda el `.exe` a cuarentena. En una escuela con internet flojo no es un caso
+raro.
+
+Hasta acá el instalador cortaba y le mostraba al docente dos líneas de PowerShell
+para copiar y pegar:
+
+```powershell
+scoop uninstall opencode
+scoop install opencode
+```
+
+Eso ya le pasó a una persona real, en una notebook real, y estuvo un rato largo
+creyendo que el problema era su máquina.
+
+### Por qué NO se le pregunta
+
+Se evaluó preguntarle antes de reinstalar. Se descartó por tres razones, en orden
+de peso:
+
+1. **El instalador también corre en silencio.** Se lanza con `/VERYSILENT` desde
+   Inno Setup. Ahí un prompt no espera respuesta: **cuelga para siempre**, sin
+   ninguna ventana donde contestar.
+2. **El docente no tiene con qué responder.** "¿Reinstalo OpenCode?" es una
+   pregunta que necesita saber en qué estado quedó Scoop. Preguntar algo que la
+   otra persona no puede responder no es respeto: es pasarle el problema.
+3. **El que tiene la información decide.** El instalador sabe que OpenCode no
+   corre. El docente no.
+
+### Qué hace ahora
+
+Un intento de reparación, automático: `scoop uninstall` + `scoop install`, y
+vuelve a verificar. Si sigue roto, ahí sí corta con un mensaje que dice que ya se
+intentó dos veces y a dónde pedir ayuda.
+
+**Una vez, no en loop.** Un reintento sin techo no es persistencia: es colgarse
+en la máquina de alguien que no puede hacer nada al respecto.
+
+Reinstalar algo que **ya está roto** no destruye nada — si se llegó a esa rama,
+es porque OpenCode no arranca.
+
+### El cambio de fondo, que es el que importa
+
+Se dejó de preguntar **"¿el archivo existe?"** y se pasó a **"¿el programa
+corre?"** (`opencode --version`, 683 ms, exit 0).
+
+No son lo mismo, y la diferencia la pagaba el docente: un shim que apunta a una
+carpeta vacía existe igual, y el instalador imprimía `[OK]` sobre eso. El
+problema aparecía tres pasos después, al abrir el bot, sin relación visible con
+la causa.
+
+De paso apareció que la verificación anterior miraba
+`scoop\shims\opencode.cmd` — un archivo que **Scoop no crea nunca**. Siempre daba
+falso. Era una verificación que no verificaba nada, y sólo se vio midiendo la VM,
+no leyendo el código.
+
+### Cuándo revisar esto
+
+- Si alguien reporta que el instalador reinstaló OpenCode y **rompió** algo que
+  antes andaba. Sería la señal de que `Test-OpenCode` da falso negativo en alguna
+  máquina, y ahí el diagnóstico está mal, no la reparación.
+- Si aparece un caso donde un solo reintento no alcanza y dos sí. Antes de subir
+  el número: entender **por qué** falla el primero.

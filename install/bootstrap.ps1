@@ -23,6 +23,27 @@ function Refresh-Path {
     if (Test-Path $ScoopShims) { $env:PATH = "$ScoopShims;$env:PATH" }
 }
 
+# Pregunta si OpenCode CORRE, no si el archivo existe. No es lo mismo, y la
+# diferencia la pagaba el docente: un shim que apunta a una carpeta vacia existe
+# igual, y el instalador decia [OK] sobre eso. El problema aparecia recien al
+# abrir el bot, lejos de la causa y sin ninguna pista.
+#
+# Antes se miraba 'scoop\shims\opencode.cmd'. Ese archivo NO EXISTE NUNCA: Scoop
+# crea 'opencode.exe' y 'opencode.shim'. Era una verificacion que siempre daba
+# falso y no verificaba nada.
+#
+# 'opencode --version' tarda menos de un segundo y devuelve exit 0. Es barato y
+# es la unica prueba que vale: el programa arranco.
+function Test-OpenCode {
+    if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { return $false }
+    try {
+        $null = & opencode --version 2>&1
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
 # --- 1. Scoop ---------------------------------------------------------------
 Refresh-Path
 if (Get-Command scoop -ErrorAction SilentlyContinue) {
@@ -79,29 +100,40 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
 #
 # Un instalador que dice OK sin haber mirado es peor que uno que falla: manda a
 # buscar el problema al lugar equivocado.
-if (Get-Command opencode -ErrorAction SilentlyContinue) {
+if (Test-OpenCode) {
     Write-Host "  [OK] OpenCode ya esta instalado"
 } else {
     Write-Host "  [..] Instalando OpenCode..."
     scoop install opencode
     Refresh-Path
 
-    # Se busca el shim directo ademas de Get-Command: el PATH de ESTA consola
-    # puede no haberse refrescado todavia aunque el binario ya este en disco.
-    $shim = Join-Path $env:USERPROFILE "scoop\shims\opencode.cmd"
-    if (-not (Get-Command opencode -ErrorAction SilentlyContinue) -and -not (Test-Path $shim)) {
+    # UN intento de reparacion, automatico, sin preguntarle nada al docente.
+    #
+    # Scoop se auto-cura, pero solo en un caso: cuando reconoce una "previous
+    # failed installation". Una descarga cortada o un hash que no da NO los
+    # purga, y ahi OpenCode queda instalado a medias: el comando esta, no
+    # arranca. Ese es el estado que dejaba al docente copiando y pegando dos
+    # lineas de PowerShell para poder seguir.
+    #
+    # Se repara solo porque el instalador tiene la informacion y el docente no.
+    # Y reparar algo que YA esta roto no destruye nada: si llegamos aca, es
+    # porque OpenCode no corre.
+    if (-not (Test-OpenCode)) {
+        Write-Host "  [..] OpenCode quedo a medio instalar. Limpiando y reintentando..."
+        try { scoop uninstall opencode } catch { }
+        scoop install opencode
+        Refresh-Path
+    }
+
+    if (-not (Test-OpenCode)) {
         Write-Host ""
         Write-Host "  [X] OpenCode NO quedo instalado." -ForegroundColor Red
         Write-Host ""
-        Write-Host "      Scoop no pudo completar la instalacion. Lo mas comun:"
-        Write-Host "        - una descarga cortada (proba de nuevo, suele alcanzar)"
-        Write-Host "        - una instalacion anterior a medio hacer"
+        Write-Host "      Se intento instalar dos veces, la segunda limpiando antes, y"
+        Write-Host "      las dos fallaron. Lo mas comun es que la descarga se corte."
         Write-Host ""
-        Write-Host "      Para limpiar y reintentar, corre estas dos lineas:"
-        Write-Host "        scoop uninstall opencode" -ForegroundColor Yellow
-        Write-Host "        scoop install opencode" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "      Si vuelve a fallar, copia lo que dice scoop y pedi ayuda con eso:"
+        Write-Host "      Proba de nuevo con mejor conexion. Si vuelve a fallar, copia"
+        Write-Host "      lo que dice scoop mas arriba y pedi ayuda con eso:"
         Write-Host "      https://github.com/programadores-obreros/Agente-editor-inet/issues"
         Write-Host ""
         exit 1
