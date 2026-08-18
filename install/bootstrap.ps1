@@ -12,6 +12,33 @@
 $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
+# TLS 1.2 explicito. Medido en un Windows 10 22H2 con .NET 4.8: el default es
+# SystemDefault y negocia 1.2 solo, asi que NO es el problema habitual que
+# cuentan por ahi. Pero SystemDefault obedece a la configuracion del equipo, y en
+# una PC de escuela administrada eso lo toca otro. Una linea que no cuesta nada.
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+
+# Baja algo reintentando. La primera version bajaba de una sola pasada, y este
+# instalador esta pensado para escuelas con internet flojo: una descarga cortada
+# no puede ser el final del camino, tiene que ser un reintento.
+#
+# Tres intentos con pausas crecientes (2 s, 4 s). Con techo, porque colgarse
+# reintentando en la maquina de alguien es tan malo como fallar.
+function Bajar {
+    param([string]$Url, [string]$Destino)
+    for ($i = 1; $i -le 3; $i++) {
+        try {
+            if ($Destino) { Invoke-RestMethod -Uri $Url -OutFile $Destino -TimeoutSec 120 }
+            else { return Invoke-RestMethod -Uri $Url -TimeoutSec 120 }
+            return $true
+        } catch {
+            if ($i -eq 3) { throw }
+            Write-Host ("  [i] La descarga fallo (intento $i de 3). Reintento en " + (2 * $i) + " s...")
+            Start-Sleep -Seconds (2 * $i)
+        }
+    }
+}
+
 Write-Host ""
 Write-Host "  Tecnia Bot - instalacion completa (sin admin)"
 Write-Host "  --------------------------------------------"
@@ -65,7 +92,7 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     # le pasamos -RunAsAdmin + habilitamos instalar apps como admin.
     $env:SCOOP_ALLOW_ADMIN_INSTALL = 'true'
     $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    $scoopInstaller = Invoke-RestMethod -Uri https://get.scoop.sh
+    $scoopInstaller = Bajar -Url "https://get.scoop.sh"
     if ($esAdmin) {
         Write-Host "  [i] Ejecutando como administrador: instalando Scoop en modo admin."
         & ([scriptblock]::Create($scoopInstaller)) -RunAsAdmin
@@ -155,7 +182,7 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
     $PyExe = Join-Path $env:USERPROFILE "scoop\shims\python.exe"
     if (-not (Test-Path $PyExe)) { $PyExe = "python" }
     $Tmp = Join-Path $env:TEMP "get-platformio.py"
-    Invoke-RestMethod -Uri "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -OutFile $Tmp
+    Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null
     & $PyExe $Tmp
     Remove-Item $Tmp -ErrorAction SilentlyContinue
     # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en

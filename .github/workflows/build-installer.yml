@@ -66,15 +66,32 @@ jobs:
           if (-not (Test-Path $lnk))   { throw "Falta el acceso directo del menú inicio: $lnk" }
           Write-Host "OK: la capa educativa y el acceso directo se instalaron correctamente."
 
+      # Sin esto nadie puede verificar que el .exe que bajo es el que publicamos.
+      # Importa mas de lo que parece: el instalador NO ESTA FIRMADO, asi que la
+      # unica forma de comprobar que no lo tocaron en el camino es comparar el
+      # hash contra el que publica el CI, que lo calcula sobre el binario que el
+      # mismo acaba de compilar.
+      - name: Calcular SHA256
+        shell: pwsh
+        run: |
+          $exe = "installer\dist\Instalar-Tecnia-Bot.exe"
+          $h = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          "$h  Instalar-Tecnia-Bot.exe" | Set-Content "installer\dist\SHA256SUMS.txt" -Encoding ascii
+          Write-Host "SHA256: $h"
+
       - name: Subir el .exe como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: Instalar-Tecnia-Bot
-          path: installer/dist/Instalar-Tecnia-Bot.exe
+          path: |
+            installer/dist/Instalar-Tecnia-Bot.exe
+            installer/dist/SHA256SUMS.txt
           if-no-files-found: error
 
       - name: Adjuntar al release (solo en tags)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: installer/dist/Instalar-Tecnia-Bot.exe
+          files: |
+            installer/dist/Instalar-Tecnia-Bot.exe
+            installer/dist/SHA256SUMS.txt

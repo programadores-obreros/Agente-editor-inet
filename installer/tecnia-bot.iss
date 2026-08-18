@@ -46,6 +46,31 @@ VersionInfoCopyright=Tecnia Lab - GPLv3
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
+; ── Una sola instalación a la vez ────────────────────────────────────────────
+;
+; MEDIDO, no supuesto: sin esto se pueden arrancar dos instaladores con dos
+; segundos de diferencia y quedan DOS bootstrap.ps1 corriendo en paralelo, los
+; dos ejecutando `scoop install opencode` sobre los mismos archivos y los dos
+; escribiendo la misma config. De ahí sale el "ERROR 'opencode' isn't installed
+; correctly" que después aparece en TODOS los intentos siguientes.
+;
+; Y era fácil de provocar: el lanzador viejo, si lo abrías durante la
+; instalación, te decía "volvé a correr el instalador". Le hacías caso y lo
+; rompías. El instalador tiene que IMPEDIRLO, no pedir por favor.
+SetupMutex=TecniaBotSetup,Global\TecniaBotSetup
+
+; ── Sólo 64 bits ─────────────────────────────────────────────────────────────
+;
+; OpenCode se distribuye únicamente como opencode-windows-x64.zip. Sin esta
+; línea, en una notebook de 32 bits el instalador copiaba toda la capa, corría el
+; bootstrap, y recién ahí fallaba Scoop con un error que no dice "tu Windows no
+; sirve". Mejor decirlo en la primera pantalla y no hacer perder diez minutos.
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+
+; PowerShell 5.1 y las APIs que usa el bootstrap: Windows 10 para arriba.
+MinVersion=10.0
+
 ; Sin admin: se instala en el espacio del usuario (ideal para PCs de escuela).
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\TecniaBot
@@ -121,6 +146,15 @@ Filename: "{#MyAppURL}"; Description: "Visitar la web de Tecnia Bot (primeros pa
   Flags: postinstall shellexec skipifsilent
 Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
   Flags: postinstall skipifsilent nowait
+
+[UninstallDelete]
+; Inno borra sólo los archivos que él instaló. La carpeta quedaba con lo que
+; nació después: la marca .instalando, el VERSION, restos del bootstrap. Un
+; desinstalador que deja carpetas es el que hace dudar de si desinstaló.
+;
+; Es seguro barrer {app} entero: es %LOCALAPPDATA%\TecniaBot y ahí no hay nada
+; del docente. Sus proyectos viven en Documentos\Tecnia Bot, que no se toca.
+Type: filesandordirs; Name: "{app}"
 
 [UninstallRun]
 ; Quita solo la capa de la config de OpenCode (no toca OpenCode ni los proyectos del docente).
