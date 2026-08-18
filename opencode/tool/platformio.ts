@@ -118,6 +118,21 @@ export function traducirError(stderr: string, stdout: string): string {
     ],
 
     /*
+     * EL PRIMERO QUE SE CHOCA CUALQUIERA, y no estaba traducido.
+     *
+     * PlatformIO no compila un archivo suelto: quiere una carpeta con
+     * `platformio.ini` y el codigo en `src/main.cpp`. Si el docente abrio
+     * OpenCode en su escritorio y pidio codigo, `pio run` corta con este error
+     * en ingles y nadie le explica que falta armar el proyecto.
+     */
+    [
+      /Not a PlatformIO project|NotPlatformIOProjectError|platformio\.ini.*has not been found/i,
+      "**Todavia no hay un proyecto de PlatformIO en esta carpeta.** PlatformIO no compila un " +
+        "archivo suelto: necesita un `platformio.ini` que diga que placa es, y el codigo en " +
+        "`src/main.cpp`. Se arman los dos y se compila de nuevo — el `platformio.ini` cambia " +
+        "segun la placa (`board = uno` para Arduino UNO, `board = esp32dev` para ESP32).",
+    ],
+    /*
      * LOS TRES DEL ESP32 QUE NO SON ERRORES DE COMPILACION.
      *
      * Salen por el monitor serial DESPUES de cargar, cuando el programa ya

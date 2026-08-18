@@ -88,3 +88,30 @@ test("el brownout le gana al rst cuando aparecen juntos", () => {
   const juntos = "Brownout detector was triggered\nrst:0x10 (RTCWDT_RTC_RESET),boot:0x13"
   assert.match(traducirError(juntos, ""), /corriente/i)
 })
+
+test("el error de «no hay proyecto» se traduce, con el error REAL de PlatformIO", () => {
+  // Copiado literal de lo que devolvió `pio run` en una carpeta vacía de la VM
+  // de desarrollo. Es el primero que se choca cualquiera: PlatformIO no compila
+  // un archivo suelto, y hasta ahora el docente veía este texto en inglés.
+  const real =
+    "NotPlatformIOProjectError: Not a PlatformIO project. `platformio.ini` file has not been " +
+    "found in current working directory (C:\\Users\\win-vm\\AppData\\Local\\Temp\\proyecto-vacio). " +
+    "To initialize new project please use `platformio project init` command"
+  const r = traducirError(real, "")
+  assert.notEqual(r, SIN_TRADUCIR(), "no reconoció el error de proyecto faltante")
+  assert.match(r, /platformio\.ini/)
+  assert.match(r, /src\/main\.cpp/)
+  assert.match(r, /board = uno|board = esp32dev/, "tiene que decir que el ini cambia por placa")
+})
+
+test("el prompt le dice al agente que arme el proyecto antes de compilar", () => {
+  // Sin esto, la regla de "compilá siempre" manda al bot contra este error en
+  // cada pedido de código en una carpeta nueva.
+  const prompt = readFileSync(join(REPO, "opencode/agent/tecnia-bot.md"), "utf8")
+  assert.match(prompt, /antes de compilar tiene que HABER un proyecto/i)
+  assert.match(prompt, /board = uno/)
+  assert.match(prompt, /board = esp32dev/)
+  assert.match(prompt, /src\/main\.cpp/)
+  // Y que sepa que necesita saber la placa para elegir el board.
+  assert.match(prompt, /NECESIT[ÁA]S SABER QU[ÉE] PLACA/i)
+})
