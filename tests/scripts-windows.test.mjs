@@ -27,20 +27,29 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const DIR = join(REPO, "install")
+// Los .cmd tienen el MISMO problema por otra vía: cmd.exe lee los batch en la
+// codepage OEM de la consola (850/437 en Windows en español), no en UTF-8. El
+// lanzador ya estaba escrito sin tildes por esto mismo; ahora está verificado.
+const DIRS = [join(REPO, "install"), join(REPO, "installer")]
 
-const scripts = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith(".ps1")) : []
+const scripts = DIRS.flatMap((d) =>
+  existsSync(d)
+    ? readdirSync(d)
+        .filter((f) => f.endsWith(".ps1") || f.endsWith(".cmd") || f.endsWith(".bat"))
+        .map((f) => [d, f])
+    : [],
+)
 
-test("hay scripts .ps1 que verificar", () => {
-  assert.ok(scripts.length > 0, "no encontré ningún .ps1 en install/")
+test("hay scripts de Windows que verificar", () => {
+  assert.ok(scripts.length > 0, "no encontré ningún .ps1 ni .cmd")
 })
 
 test("ningún .ps1 tiene caracteres fuera de ASCII", () => {
   // La alternativa sería guardarlos con BOM, pero mantenerlos en ASCII es más
   // robusto: sobrevive a que alguien reescriba el archivo con otro editor.
   const problemas = []
-  for (const f of scripts) {
-    const texto = readFileSync(join(DIR, f), "utf8")
+  for (const [dir, f] of scripts) {
+    const texto = readFileSync(join(dir, f), "utf8")
     texto.split("\n").forEach((linea, i) => {
       const raros = [...new Set(linea.match(/[^\x00-\x7F]/g) ?? [])]
       if (raros.length) problemas.push(`${f}:${i + 1} → ${raros.join(" ")}  en: ${linea.trim().slice(0, 55)}`)
@@ -49,8 +58,8 @@ test("ningún .ps1 tiene caracteres fuera de ASCII", () => {
   assert.deepEqual(
     problemas,
     [],
-    "Windows PowerShell 5.1 lee estos archivos como cp1252 y no los va a poder " +
-      "parsear. Escribí sin tildes (así está el resto del archivo):\n" + problemas.join("\n"),
+    "Windows lee estos archivos en una codepage de un byte (cp1252 en PowerShell " +
+      "5.1, OEM en cmd.exe). Escribí sin tildes:\n" + problemas.join("\n"),
   )
 })
 

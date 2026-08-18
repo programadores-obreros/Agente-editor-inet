@@ -109,3 +109,52 @@ test("PlatformIO avisa si falta, pero NO corta", () => {
   assert.doesNotMatch(mensaje, /exit 1/, "no debería cortar por PlatformIO")
   assert.match(mensaje, /diagnostico/i, "tiene que decir cómo revisarlo después")
 })
+
+// ── El acceso directo se puede abrir ANTES de que termine la instalación ──────
+//
+// Inno Setup corre [Icons] antes que [Run]. Medido en una VM: el acceso directo
+// queda clickeable a los 0,9 segundos, cuando la instalación recién va a empezar
+// a bajar los 57 MB de OpenCode. En una notebook de escuela eso son minutos.
+//
+// Le pasó a una persona real: vio aparecer el ícono, lo abrió, y el lanzador le
+// dijo "No se encontró OpenCode, volvé a correr el instalador" — MIENTRAS el
+// instalador estaba corriendo. El consejo era peor que el error: lo empujaba a
+// arrancar una segunda instalación encima de la primera.
+
+const iss = readFileSync(join(REPO, "installer/tecnia-bot.iss"), "utf8")
+const cmd = readFileSync(join(REPO, "installer/abrir-tecnia-bot.cmd"), "utf8")
+
+test("el instalador marca que está instalando, y borra la marca al terminar", () => {
+  const run = iss.slice(iss.indexOf("[Run]"), iss.indexOf("[UninstallRun]"))
+  const crea = run.indexOf(".instalando")
+  const bootstrap = run.indexOf("bootstrap.ps1")
+  const borra = run.lastIndexOf(".instalando")
+
+  assert.ok(crea > 0, "no se crea la marca de instalación en curso")
+  assert.ok(crea < bootstrap, "la marca se crea DESPUÉS del bootstrap: no sirve")
+  assert.ok(borra > bootstrap, "la marca no se borra al terminar")
+  assert.match(run.slice(borra - 120, borra + 60), /del /, "la última mención no la borra")
+})
+
+test("la marca la maneja Inno, no el bootstrap", () => {
+  // Si la manejara el bootstrap, un fallo dejaría la marca puesta y el lanzador
+  // esperando de gusto. Inno corre sus entradas con waituntilterminated, así que
+  // el borrado pasa igual si el bootstrap termina en 0, en 1, o se cae.
+  assert.doesNotMatch(ps1, /\.instalando/, "el bootstrap no tiene que tocar la marca")
+})
+
+test("el lanzador ESPERA en vez de mandar a reinstalar", () => {
+  assert.match(cmd, /\.instalando/, "el lanzador no mira si hay una instalación en curso")
+  // Tiene que esperar en un bucle, no salir con el mensaje de error.
+  assert.match(cmd, /goto esperando/, "detecta la instalación pero no espera")
+  // Y con techo: colgarse para siempre en la máquina de un docente no es opción.
+  assert.match(cmd, /LSS \d+/, "espera sin límite; tiene que haber un techo")
+})
+
+test("el lanzador NO arranca apenas aparece opencode", () => {
+  // OpenCode se instala en el paso 2 de 4. Arrancar ahí da un OpenCode pelado,
+  // sin Tecnia Bot — que es exactamente el otro síntoma que ya se reportó.
+  // Por eso la espera mira la marca, no la presencia de opencode.
+  const espera = cmd.slice(cmd.indexOf(":esperando"), cmd.indexOf("LSS"))
+  assert.doesNotMatch(espera, /where opencode/, "sale antes de que termine la capa educativa")
+})

@@ -2,10 +2,10 @@
 # Compila el instalador .exe de Tecnia Bot EN ESTA Windows, de cero.
 # Pensado para probar en una VM sin tener nada preinstalado.
 #
-# Uso (desde la raíz del repo ya clonado):
+# Uso (desde la raiz del repo ya clonado):
 #   powershell -ExecutionPolicy Bypass -File installer\compilar-en-windows.ps1
 #
-# Qué hace:
+# Que hace:
 #   1. Instala Inno Setup 6 (si falta) con winget.
 #   2. Compila installer\tecnia-bot.iss.
 #   3. Te deja el .exe en installer\dist\Instalar-Tecnia-Bot.exe

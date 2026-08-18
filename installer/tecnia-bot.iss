@@ -78,6 +78,24 @@ Name: "{autoprograms}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Tasks: desktopicon
 
 [Run]
+; ── Marca de "instalación en curso" ───────────────────────────────────────────
+;
+; El acceso directo se crea en [Icons], que corre ANTES que [Run]. Medido en una
+; VM: queda clickeable a los 0,9 segundos, cuando esto recién va a empezar a
+; bajar los 57 MB de OpenCode. El docente ve aparecer el ícono y lo abre — es lo
+; natural, y en una notebook de escuela hay varios minutos para hacerlo.
+;
+; Sin esta marca el lanzador decía "No se encontró OpenCode, volvé a correr el
+; instalador" JUSTO mientras el instalador estaba corriendo, empujándolo a
+; arrancar una segunda instalación encima de la primera.
+;
+; Se crea y se borra desde acá y no desde el bootstrap, a propósito: Inno corre
+; estas entradas en orden y con waituntilterminated, así que el borrado ocurre
+; igual si el bootstrap termina en 0, en 1, o se cae. Si la manejara el propio
+; bootstrap, un fallo dejaría la marca puesta y el lanzador esperando de gusto.
+Filename: "cmd.exe"; Parameters: "/c > ""{app}\.instalando"" echo."; \
+  StatusMsg: "Preparando la instalación..."; \
+  Flags: runhidden waituntilterminated
 ; Instala OpenCode + PlatformIO + la capa (sin admin, vía Scoop). Se muestra la
 ; consola a propósito: tarda varios minutos y así el docente ve que avanza.
 Filename: "powershell.exe"; \
@@ -86,6 +104,9 @@ Filename: "powershell.exe"; \
   StatusMsg: "Instalando OpenCode, PlatformIO y Tecnia Bot (puede tardar varios minutos)..."; \
   Check: CorrerBootstrap; \
   Flags: waituntilterminated
+; Se saca la marca pase lo que pase con el paso de arriba.
+Filename: "cmd.exe"; Parameters: "/c del /q ""{app}\.instalando"""; \
+  Flags: runhidden waituntilterminated
 ; Al terminar (casillas marcadas en la última pantalla): abrir la web oficial de
 ; Tecnia Bot (primeros pasos) y abrir el bot.
 Filename: "{#MyAppURL}"; Description: "Visitar la web de Tecnia Bot (primeros pasos)"; \

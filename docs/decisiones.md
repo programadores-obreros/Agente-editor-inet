@@ -157,3 +157,66 @@ no leyendo el código.
   máquina, y ahí el diagnóstico está mal, no la reparación.
 - Si aparece un caso donde un solo reintento no alcanza y dos sí. Antes de subir
   el número: entender **por qué** falla el primero.
+
+---
+
+## D-03 — El acceso directo se puede abrir antes de que termine la instalación
+
+**Fecha:** 2026-08-18 · **Versión:** v0.3.51
+
+### Lo que pasaba
+
+Inno Setup corre `[Icons]` **antes** que `[Run]`. Medido en la VM: el acceso
+directo queda clickeable **a los 0,9 segundos**, cuando la instalación recién va
+a empezar a bajar los **57,7 MB** de OpenCode.
+
+En una notebook de escuela esa ventana no son segundos: son **minutos**. El
+docente ve aparecer el ícono y lo abre. Es lo natural — no es un error de él.
+
+Y lo que le decía el lanzador era peor que el error:
+
+```
+No se encontro OpenCode.
+Volve a correr el instalador de Tecnia Bot
+```
+
+**Mientras el instalador estaba corriendo.** Ese consejo empuja a arrancar una
+segunda instalación encima de la primera.
+
+Le pasó a una persona real y pensó que el problema era su máquina.
+
+### Qué hace ahora
+
+El instalador deja una marca `{app}\.instalando` mientras trabaja. El lanzador,
+si la encuentra, **espera** y abre el bot solo cuando termina:
+
+```
+Tecnia Bot se esta instalando en este momento.
+Baja unos 60 MB, asi que puede tardar varios minutos.
+
+No cierres esta ventana: el bot se abre solo cuando termine.
+....
+Listo, termino de instalarse. Abriendo...
+```
+
+### Dos decisiones adentro de esto
+
+**La marca la maneja Inno, no el bootstrap.** Inno corre sus entradas de `[Run]`
+en orden y con `waituntilterminated`, así que el borrado ocurre igual si el
+bootstrap termina en 0, en 1, o se cae. Si la manejara el propio bootstrap, un
+fallo dejaría la marca puesta y el lanzador esperando de gusto.
+
+**La espera mira la marca, no si `opencode` ya existe.** OpenCode se instala en
+el paso 2 de 4: arrancar ahí da un OpenCode pelado, sin Tecnia Bot. Ese es
+exactamente el otro síntoma que ya se había reportado ("opencode me cargó pero no
+tenía tecnia bot").
+
+**Y la espera tiene techo** (20 minutos). Colgarse para siempre en la máquina de
+alguien que no puede hacer nada al respecto no es una opción.
+
+### Cuándo revisar esto
+
+- Si alguien reporta que el lanzador esperó y **nunca** abrió. Sería marca
+  huérfana: querría decir que Inno no llegó a correr su tercera entrada.
+- Si los 20 minutos resultan cortos en alguna escuela real. Antes de subirlos:
+  medir cuánto tarda de verdad ahí.
