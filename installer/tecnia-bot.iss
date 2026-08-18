@@ -58,6 +58,12 @@ OutputBaseFilename=Instalar-Tecnia-Bot
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+; SIEMPRE deja log en %TEMP%\Setup Log*.txt, sin tener que pasar /LOG.
+;
+; Cuando una instalacion falla en una maquina real, lo que llega es una captura
+; de la ventana negra. El log dice el exit code de cada paso y en cual murio --
+; que es el dato que en esta sesion hubo que ir a buscar a mano, dos veces.
+SetupLogging=yes
 ; --- Marca Tecnia Bot ---
 SetupIconFile=branding\tecnia-bot.ico
 WizardImageFile=branding\wizard-grande.bmp
@@ -87,6 +93,12 @@ Source: "branding\tecnia-bot.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Comment: "Abrir Tecnia Bot"
+; Un diagnostico que se puede correr aunque OpenCode no arranque -- que es justo
+; cuando hace falta. Junta version, dependencias, antivirus, disco y log en una
+; sola pantalla, para no diagnosticar a partir de una foto de la consola.
+Name: "{autoprograms}\Diagnostico de {#MyAppName}"; Filename: "powershell.exe"; \
+  Parameters: "-ExecutionPolicy Bypass -NoProfile -NoExit -File ""{app}\install\diagnostico.ps1"""; \
+  WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Comment: "Ver que anda y que no"
 Name: "{autoprograms}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Tasks: desktopicon
 
