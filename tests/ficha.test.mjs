@@ -3,7 +3,7 @@
 //
 // Se prueba `buscarFicha`, que es la parte que puede equivocarse: resolver lo
 // que dijo el docente ("el LDR", "09", "potenciómetro") al archivo correcto.
-// Abrir el PDF no se prueba acá — es una llamada al sistema operativo, y la
+// Abrir la hoja no se prueba acá — es una llamada al sistema operativo, y la
 // misma que ya usan `imprimible` y `ayuda`.
 //
 // Mismo truco que memoria.test.mjs: se reescribe el import del plugin a un mock,
@@ -11,7 +11,7 @@
 
 import { test, before } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
+import { readFileSync, readdirSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
@@ -21,26 +21,37 @@ const OUT = join(os.tmpdir(), "tecniabot-ficha-test")
 
 let buscarFicha
 
-/** Los nombres reales de las 17 hojas que instala la capa. */
-const HOJAS = [
-  "01-arduino-uno.pdf",
-  "02-sensor-shield.pdf",
-  "03-led.pdf",
-  "04-servo.pdf",
-  "05-corriente-continua.pdf",
-  "06-corriente-alterna.pdf",
-  "07-entradas-y-salidas.pdf",
-  "08-tester.pdf",
-  "09-ldr.pdf",
-  "10-potenciometro.pdf",
-  "11-ultrasonico.pdf",
-  "12-pir.pdf",
-  "13-dht11.pdf",
-  "14-rele.pdf",
-  "15-zumbador.pdf",
-  "16-tecnia-bot.pdf",
-  "borrador-esp32-devkit.pdf",
-]
+/**
+ * Las hojas que instala la capa, LEÍDAS DE LA CARPETA REAL.
+ *
+ * ANTES ERA UNA LISTA ESCRITA A MANO, y no probaba nada. Cuando las fichas
+ * pasaron de PDF a HTML —el instalador ahora lleva las animadas— el tool cambió,
+ * la carpeta cambió, y esta lista siguió diciendo `.pdf`. Los 106 tests pasaron
+ * igual, en verde, describiendo un producto que ya no existía.
+ *
+ * Peor: se comprobó por mutación. Con el tool devuelto a `.pdf` —o sea, incapaz
+ * de encontrar una sola hoja de las que realmente se instalan— los tests seguían
+ * pasando. Una lista de fixtures que no se contrasta con la realidad es una
+ * segunda fuente de verdad, y las segundas fuentes se desincronizan.
+ *
+ * Leyendo la carpeta, el test no puede mentir sobre qué hay ahí.
+ */
+const HOJAS_DIR = join(REPO, "opencode", "skills", "fichas", "hojas")
+const HOJAS = readdirSync(HOJAS_DIR).sort()
+
+/**
+ * El archivo real de una ficha, sea cual sea su extensión.
+ *
+ * Las expectativas no pueden escribir ".pdf" ni ".html": lo que se prueba acá es
+ * que `buscarFicha` resuelva «el LDR» a la hoja del LDR, y eso no cambia porque
+ * cambie el formato. Atar cada assert a una extensión convierte un cambio de
+ * empaquetado en 12 tests rojos que no señalan ningún error real.
+ */
+const hoja = (base) => {
+  const f = HOJAS.find((h) => h.startsWith(base + "."))
+  if (!f) throw new Error(`No existe ninguna hoja "${base}" en ${HOJAS_DIR}`)
+  return f
+}
 
 before(async () => {
   if (existsSync(OUT)) rmSync(OUT, { recursive: true })
@@ -57,41 +68,41 @@ before(async () => {
 })
 
 test("encuentra por número con cero adelante", () => {
-  assert.equal(buscarFicha("09", HOJAS), "09-ldr.pdf")
+  assert.equal(buscarFicha("09", HOJAS), hoja("09-ldr"))
 })
 
 test("encuentra por número sin cero adelante", () => {
   // El docente dice "la 9", no "la 09".
-  assert.equal(buscarFicha("9", HOJAS), "09-ldr.pdf")
+  assert.equal(buscarFicha("9", HOJAS), hoja("09-ldr"))
 })
 
 test("encuentra por nombre del componente", () => {
-  assert.equal(buscarFicha("ldr", HOJAS), "09-ldr.pdf")
-  assert.equal(buscarFicha("servo", HOJAS), "04-servo.pdf")
-  assert.equal(buscarFicha("zumbador", HOJAS), "15-zumbador.pdf")
+  assert.equal(buscarFicha("ldr", HOJAS), hoja("09-ldr"))
+  assert.equal(buscarFicha("servo", HOJAS), hoja("04-servo"))
+  assert.equal(buscarFicha("zumbador", HOJAS), hoja("15-zumbador"))
 })
 
 test("aguanta las tildes, que el docente sí escribe", () => {
-  assert.equal(buscarFicha("potenciómetro", HOJAS), "10-potenciometro.pdf")
-  assert.equal(buscarFicha("ultrasónico", HOJAS), "11-ultrasonico.pdf")
+  assert.equal(buscarFicha("potenciómetro", HOJAS), hoja("10-potenciometro"))
+  assert.equal(buscarFicha("ultrasónico", HOJAS), hoja("11-ultrasonico"))
 })
 
 test("no le importan las mayúsculas ni los espacios de más", () => {
-  assert.equal(buscarFicha("  LDR  ", HOJAS), "09-ldr.pdf")
-  assert.equal(buscarFicha("PIR", HOJAS), "12-pir.pdf")
+  assert.equal(buscarFicha("  LDR  ", HOJAS), hoja("09-ldr"))
+  assert.equal(buscarFicha("PIR", HOJAS), hoja("12-pir"))
 })
 
 test("acepta el nombre del archivo entero", () => {
-  assert.equal(buscarFicha("09-ldr.pdf", HOJAS), "09-ldr.pdf")
-  assert.equal(buscarFicha("09-ldr", HOJAS), "09-ldr.pdf")
+  assert.equal(buscarFicha("09-ldr.pdf", HOJAS), hoja("09-ldr"))
+  assert.equal(buscarFicha("09-ldr", HOJAS), hoja("09-ldr"))
 })
 
 test("con varios candidatos gana el más corto", () => {
   // "corriente" está en dos. Que devuelva UNA es mejor que devolver nada:
   // el agente ve cuál abrió y puede corregir. Alterna es la más corta.
-  assert.equal(buscarFicha("corriente", HOJAS), "06-corriente-alterna.pdf")
+  assert.equal(buscarFicha("corriente", HOJAS), hoja("06-corriente-alterna"))
   // Y con el nombre completo no hay ambigüedad.
-  assert.equal(buscarFicha("corriente-continua", HOJAS), "05-corriente-continua.pdf")
+  assert.equal(buscarFicha("corriente-continua", HOJAS), hoja("05-corriente-continua"))
 })
 
 test("devuelve null si no existe, en vez de inventar una", () => {
@@ -101,7 +112,7 @@ test("devuelve null si no existe, en vez de inventar una", () => {
 })
 
 test("encuentra la del ESP32, que no tiene número", () => {
-  assert.equal(buscarFicha("esp32", HOJAS), "borrador-esp32-devkit.pdf")
+  assert.equal(buscarFicha("esp32", HOJAS), hoja("borrador-esp32-devkit"))
 })
 
 test("la descripción del tool le prohíbe pegar la ruta", async () => {
@@ -147,4 +158,25 @@ test("no promete que la ventana se abrió: deja la ruta por las dudas", async ()
   // una pantalla vacía mientras el bot le asegura que está todo bien.
   const src = readFileSync(join(REPO, "opencode/tool/ficha.ts"), "utf8")
   assert.match(src, /Si no se te abrió ninguna ventana/i)
+})
+
+test("el tool busca la MISMA extensión que la capa instala", () => {
+  // El test que faltaba, y que hizo falta descubrir por mutación.
+  //
+  // El tool filtra la carpeta por extensión. Si esa extensión no es la de los
+  // archivos que se instalan, no encuentra NINGUNA hoja: el docente pide la del
+  // LDR y el bot le contesta que no hay fichas. Nada tira error, nada se rompe
+  // en los tests, y el producto queda mudo.
+  //
+  // Pasó de verdad al cambiar de PDF a HTML.
+  const codigo = readFileSync(join(REPO, "opencode", "tool", "ficha.ts"), "utf8")
+  const filtro = codigo.match(/endsWith\("(\.\w+)"\)/)
+  assert.ok(filtro, "el tool ya no filtra por extensión; revisá este test")
+
+  const instaladas = [...new Set(HOJAS.map((h) => h.slice(h.lastIndexOf("."))))]
+  assert.deepEqual(
+    instaladas,
+    [filtro[1]],
+    `el tool busca "${filtro[1]}" y la capa instala ${instaladas.join(", ")}`,
+  )
 })

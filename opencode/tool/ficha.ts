@@ -26,7 +26,7 @@ function carpetaHojas(): string {
  * La ruta del archivo como URL `file://`, que es lo que manda al navegador.
  *
  * En Windows hay que dar vuelta las barras y anteponer una tercera: la ruta
- * `C:\Users\x\f.pdf` tiene que viajar como `file:///C:/Users/x/f.pdf`.
+ * `C:\Users\x\f.html` tiene que viajar como `file:///C:/Users/x/f.html`.
  */
 export function comoUrl(archivo: string): string {
   const barras = archivo.replace(/\\/g, "/")
@@ -105,11 +105,11 @@ function normalizar(s: string): string {
  * Exportada para poder probarla sin abrir nada.
  */
 export function buscarFicha(pedido: string, archivos: string[]): string | null {
-  const q = normalizar(pedido).replace(/\.pdf$/, "")
+  const q = normalizar(pedido).replace(/\.(html|pdf)$/, "")
   if (!q) return null
 
   // 1. Coincidencia exacta de nombre de archivo.
-  const exacto = archivos.find((a) => normalizar(a).replace(/\.pdf$/, "") === q)
+  const exacto = archivos.find((a) => normalizar(a).replace(/\.html$/, "") === q)
   if (exacto) return exacto
 
   // 2. Por número, con o sin cero adelante: "9" y "09" son la misma ficha.
@@ -148,19 +148,19 @@ export default tool({
       )
     }
 
-    const archivos = readdirSync(dir).filter((a) => a.toLowerCase().endsWith(".pdf"))
+    const archivos = readdirSync(dir).filter((a) => a.toLowerCase().endsWith(".html"))
     if (archivos.length === 0) {
       return `La carpeta de fichas está vacía (\`${dir}\`). Corré \`/actualizar\` y reiniciá OpenCode.`
     }
 
     const elegida = buscarFicha(args.ficha, archivos)
     if (!elegida) {
-      const lista = archivos.sort().map((a) => `- ${a.replace(/\.pdf$/, "")}`).join("\n")
+      const lista = archivos.sort().map((a) => `- ${a.replace(/\.html$/, "")}`).join("\n")
       return `No tengo una ficha de "${args.ficha}". Las que hay son:\n\n${lista}`
     }
 
     const ruta = join(dir, elegida)
-    const nombre = elegida.replace(/\.pdf$/, "")
+    const nombre = elegida.replace(/\.html$/, "")
 
     /*
      * "TE LA ABRÍ" ES UNA PROMESA QUE NO PODEMOS CUMPLIR DEL TODO.

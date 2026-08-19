@@ -59,23 +59,23 @@ abrir algo que nadie pidió.
 
 | Nº | Ficha | Familia | Qué resuelve | Archivo |
 |---|---|---|---|---|
-| 01 | Arduino UNO R3 | placas | La placa con la que se aprende. Se programa con un cable USB, sigue funcionando cuando la desenchufás de la computadora, y aguanta los errores de quien recién empieza. | `hojas/01-arduino-uno.pdf` |
-| 02 | Sensor Shield v5.0 | accesorios | Se monta encima del controlador y convierte cada pin en un conector de tres vías. Un cable por sensor — y los módulos ya tienen su lugar. | `hojas/02-sensor-shield.pdf` |
-| 03 | LED | actuadores | El actuador más simple, y el que enseña las dos cosas que después se usan siempre: que la corriente tiene un sentido, y que hay que limitarla. | `hojas/03-led.pdf` |
-| 04 | Servo | actuadores | Se le pide un ángulo y va. No hace falta contar vueltas ni saber dónde estaba: el servo se ocupa de llegar y de quedarse ahí. | `hojas/04-servo.pdf` |
-| 05 | Corriente continua | fundamentos | La que va siempre para el mismo lado. Es con la que trabaja todo lo que armamos: el controlador, los sensores y los actuadores funcionan con continua. | `hojas/05-corriente-continua.pdf` |
-| 06 | Corriente alterna | fundamentos | La que cambia de sentido cien veces por segundo. Es la que llega por el enchufe, y la única del curso que no se toca: se controla desde afuera. | `hojas/06-corriente-alterna.pdf` |
-| 07 | Entradas y salidas | fundamentos | Veinte de los treinta y dos pines del Arduino no son de entrada ni de salida hasta que el código lo decide. Lo que sí cambia de verdad es CÓMO se lee o se escribe en cada uno. | `hojas/07-entradas-y-salidas.pdf` |
-| 08 | El téster | herramientas | La herramienta que convierte «no sé qué pasa» en un número. Cuatro fichas de esta serie terminan diciendo «medilo con el téster»: acá está cómo. | `hojas/08-tester.pdf` |
-| 09 | El LDR | sensores | Una resistencia que baja cuando le da la luz. Es el sensor más barato del cajón, y el que enseña de una la regla que vale para todos los demás. | `hojas/09-ldr.pdf` |
-| 10 | El potenciómetro | sensores | El divisor de la ficha anterior, pero con perilla. Es la entrada analógica más clara que hay: la posición de la mano se convierte en un número, sin librería. | `hojas/10-potenciometro.pdf` |
-| 11 | El ultrasónico | sensores | El primero que no devuelve un número: devuelve un tiempo. Manda un pulso de sonido, cuenta cuánto tarda el eco en volver, y la distancia sale de una cuenta. | `hojas/11-ultrasonico.pdf` |
-| 12 | El PIR | sensores | No detecta gente: detecta que algo caliente se movió. Alguien quieto desaparece, y eso no es una falla del sensor — es exactamente cómo funciona. | `hojas/12-pir.pdf` |
-| 13 | El DHT11 | sensores | El primero que necesita librería, y por una razón concreta: por un solo cable pasa una conversación de cuarenta bits. Y devuelve dos medidas, no una. | `hojas/13-dht11.pdf` |
-| 14 | El relé | actuadores | Un interruptor mecánico que se maneja con un pin. Es el único de la colección que puede manejar 220 volt, y por eso el único que se enseña con un adulto al lado. | `hojas/14-rele.pdf` |
-| 15 | El zumbador | actuadores | Una palabra que nombra dos componentes distintos. Uno suena con darle tensión; el otro necesita que vos le pongas la frecuencia. Y no consumen ni parecido. | `hojas/15-zumbador.pdf` |
-| 16 | Tecnia Bot | herramientas | Un asistente de electrónica que habla en español, explica el porqué antes del código y no se cansa de que le pregunten. Gratis, abierto, y corre en la máquina del aula. | `hojas/16-tecnia-bot.pdf` |
-| — | ESP32 DevKit v1 | placas | La placa que se conecta a internet. Trae WiFi y Bluetooth adentro y corre mucho más rápido que un UNO — pero trabaja en 3,3 V, y eso cambia todo lo que se le enchufa. | `hojas/borrador-esp32-devkit.pdf` |
+| 01 | Arduino UNO R3 | placas | La placa con la que se aprende. Se programa con un cable USB, sigue funcionando cuando la desenchufás de la computadora, y aguanta los errores de quien recién empieza. | `hojas/01-arduino-uno.html` |
+| 02 | Sensor Shield v5.0 | accesorios | Se monta encima del controlador y convierte cada pin en un conector de tres vías. Un cable por sensor — y los módulos ya tienen su lugar. | `hojas/02-sensor-shield.html` |
+| 03 | LED | actuadores | El actuador más simple, y el que enseña las dos cosas que después se usan siempre: que la corriente tiene un sentido, y que hay que limitarla. | `hojas/03-led.html` |
+| 04 | Servo | actuadores | Se le pide un ángulo y va. No hace falta contar vueltas ni saber dónde estaba: el servo se ocupa de llegar y de quedarse ahí. | `hojas/04-servo.html` |
+| 05 | Corriente continua | fundamentos | La que va siempre para el mismo lado. Es con la que trabaja todo lo que armamos: el controlador, los sensores y los actuadores funcionan con continua. | `hojas/05-corriente-continua.html` |
+| 06 | Corriente alterna | fundamentos | La que cambia de sentido cien veces por segundo. Es la que llega por el enchufe, y la única del curso que no se toca: se controla desde afuera. | `hojas/06-corriente-alterna.html` |
+| 07 | Entradas y salidas | fundamentos | Veinte de los treinta y dos pines del Arduino no son de entrada ni de salida hasta que el código lo decide. Lo que sí cambia de verdad es CÓMO se lee o se escribe en cada uno. | `hojas/07-entradas-y-salidas.html` |
+| 08 | El téster | herramientas | La herramienta que convierte «no sé qué pasa» en un número. Cuatro fichas de esta serie terminan diciendo «medilo con el téster»: acá está cómo. | `hojas/08-tester.html` |
+| 09 | El LDR | sensores | Una resistencia que baja cuando le da la luz. Es el sensor más barato del cajón, y el que enseña de una la regla que vale para todos los demás. | `hojas/09-ldr.html` |
+| 10 | El potenciómetro | sensores | El divisor de la ficha anterior, pero con perilla. Es la entrada analógica más clara que hay: la posición de la mano se convierte en un número, sin librería. | `hojas/10-potenciometro.html` |
+| 11 | El ultrasónico | sensores | El primero que no devuelve un número: devuelve un tiempo. Manda un pulso de sonido, cuenta cuánto tarda el eco en volver, y la distancia sale de una cuenta. | `hojas/11-ultrasonico.html` |
+| 12 | El PIR | sensores | No detecta gente: detecta que algo caliente se movió. Alguien quieto desaparece, y eso no es una falla del sensor — es exactamente cómo funciona. | `hojas/12-pir.html` |
+| 13 | El DHT11 | sensores | El primero que necesita librería, y por una razón concreta: por un solo cable pasa una conversación de cuarenta bits. Y devuelve dos medidas, no una. | `hojas/13-dht11.html` |
+| 14 | El relé | actuadores | Un interruptor mecánico que se maneja con un pin. Es el único de la colección que puede manejar 220 volt, y por eso el único que se enseña con un adulto al lado. | `hojas/14-rele.html` |
+| 15 | El zumbador | actuadores | Una palabra que nombra dos componentes distintos. Uno suena con darle tensión; el otro necesita que vos le pongas la frecuencia. Y no consumen ni parecido. | `hojas/15-zumbador.html` |
+| 16 | Tecnia Bot | herramientas | Un asistente de electrónica que habla en español, explica el porqué antes del código y no se cansa de que le pregunten. Gratis, abierto, y corre en la máquina del aula. | `hojas/16-tecnia-bot.html` |
+| — | ESP32 DevKit v1 | placas | La placa que se conecta a internet. Trae WiFi y Bluetooth adentro y corre mucho más rápido que un UNO — pero trabaja en 3,3 V, y eso cambia todo lo que se le enchufa. | `hojas/borrador-esp32-devkit.html` |
 
 ## El tip de cada una
 
