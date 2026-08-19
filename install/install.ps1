@@ -277,6 +277,39 @@ if ($env:XDG_DATA_HOME) {
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 $AuthFile = Join-Path $DataDir "auth.json"
 
+# ---- Curar un auth.json con BOM ---------------------------------------------
+#
+# ESTO NO ES PARANOIA: es el bucle que dejaba maquinas muertas para siempre.
+#
+# Las instalaciones anteriores a la v0.3.55 escribian este archivo con
+# `Set-Content -Encoding UTF8`, que en PowerShell 5.1 mete BOM. Y el BOM crea una
+# asimetria letal entre quien escribe y quien lee:
+#
+#   PowerShell (Get-Content -Raw)  ->  SACA el BOM solo. El archivo le parece
+#                                      perfecto y ve una key valida.
+#   OpenCode   (JSON.parse)        ->  NO lo saca. Rechaza el archivo entero y se
+#                                      traga el error sin avisar.
+#
+# Entonces el instalador leia, veia una key sana, concluia "ya esta configurado" y
+# NO TOCABA NADA. Reinstalar no servia. Actualizar no servia. La maquina quedaba
+# con el bot abriendo perfecto y fallando al primer mensaje, y ninguna cantidad de
+# reinstalaciones podia arreglarlo, porque cada una confirmaba que estaba bien.
+#
+# Se detecto instalando de cero en una VM: el auth.json tenia fecha de una semana
+# antes que el resto de los archivos. La instalacion nueva lo habia respetado.
+#
+# Por eso se miran los BYTES y no el texto: es la unica forma de ver lo que ve
+# OpenCode. Y si aparece el BOM, se reescribe conservando el contenido -- la key
+# del docente no se pierde.
+if (Test-Path $AuthFile) {
+    $bytes = [System.IO.File]::ReadAllBytes($AuthFile)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        Write-Host "  [i] El archivo de credenciales tenia BOM y OpenCode no podia leerlo. Corrigiendo..."
+        $texto = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+        [System.IO.File]::WriteAllText($AuthFile, $texto, (New-Object System.Text.UTF8Encoding $false))
+    }
+}
+
 $authData = $null
 if (Test-Path $AuthFile) {
     try { $authData = Get-Content $AuthFile -Raw | ConvertFrom-Json } catch { $authData = $null }

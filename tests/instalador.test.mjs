@@ -288,3 +288,21 @@ test("el archivo de credenciales se escribe sin BOM", () => {
     assert.match(l, /WriteAllText/, `las credenciales se escriben con BOM:\n  ${l.trim()}`)
   }
 })
+
+test("el instalador CURA un auth.json que ya venía con BOM", () => {
+  // El bug que dejaba máquinas muertas para siempre.
+  //
+  // PowerShell saca el BOM al leer; JSON.parse de OpenCode no. Entonces el
+  // instalador leía un archivo envenenado, le parecía sano, y decidía no tocarlo.
+  // Reinstalar no servía. Actualizar tampoco. Cada intento confirmaba que estaba
+  // todo bien mientras el bot fallaba al primer mensaje.
+  //
+  // Arreglar la ESCRITURA no alcanzaba: las máquinas ya infectadas seguían
+  // infectadas. Hay que mirar los bytes, que es lo único que ve OpenCode.
+  const i = instalarPs1.indexOf("$AuthFile")
+  const bloque = instalarPs1.slice(0, instalarPs1.indexOf("$authData = $null"))
+  assert.match(bloque, /ReadAllBytes/, "lee el archivo como texto: así el BOM es invisible")
+  assert.match(bloque, /0xEF.*0xBB.*0xBF/s, "no busca la firma del BOM")
+  assert.match(bloque, /WriteAllText/, "detecta el BOM pero no lo saca")
+  assert.ok(i > 0)
+})
