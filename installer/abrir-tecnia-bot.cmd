@@ -36,6 +36,21 @@ rem OpenCode pelado, sin Tecnia Bot. Eso tambien ya paso.
 set "MARCA=%~dp0.instalando"
 if not exist "%MARCA%" goto verificar
 
+rem MARCA HUERFANA: si OpenCode YA anda, no hay nada que esperar.
+rem
+rem La marca la borra el instalador al terminar, pero si el Setup muere sin
+rem deinicializar -- el antivirus lo mata, se corta la luz, el docente hace
+rem Ctrl+Alt+Supr -- queda puesta para siempre. Y a partir de ahi cada doble clic
+rem eran VEINTE MINUTOS de puntitos antes de intentar nada. En un aula, la clase
+rem entera.
+rem
+rem Si opencode responde, la instalacion evidentemente termino: se sigue de largo.
+opencode --version >nul 2>nul
+if not errorlevel 1 (
+  del "%MARCA%" >nul 2>nul
+  goto verificar
+)
+
 echo.
 echo   Tecnia Bot v%VER% se esta instalando en este momento.
 echo   Baja unos 60 MB, asi que puede tardar varios minutos.
@@ -50,11 +65,13 @@ ping -n 4 127.0.0.1 >nul
 <nul set /p "=."
 set /a ESPERA+=1
 if not exist "%MARCA%" goto listo
-if %ESPERA% LSS 400 goto esperando
+rem Techo de ~5 minutos, no de 20: si tarda mas que esto, algo pasa y
+rem conviene que el docente lo sepa y no que mire puntitos.
+if %ESPERA% LSS 100 goto esperando
 
 echo.
 echo.
-echo   La instalacion esta tardando mas de lo normal (mas de 20 minutos).
+echo   La instalacion esta tardando mas de lo normal (mas de 5 minutos).
 echo   Fijate si quedo alguna ventana de PowerShell abierta esperando algo.
 echo.
 goto verificar
@@ -66,17 +83,57 @@ echo   Listo, termino de instalarse. Abriendo...
 echo.
 
 :verificar
+rem -- Se verifica que OpenCode CORRA, no que exista --------------------------
+rem
+rem El bootstrap aprendio esta leccion y la aplica bien; el lanzador se habia
+rem quedado con `where`, que solo mira si el archivo esta. Si el antivirus dejo el
+rem binario mutilado -- el caso que documenta diagnostico.ps1 -- `where` pasa, el
+rem lanzador cree que todo bien, y OpenCode revienta al final del script: la
+rem ventana se cierra sola y el docente no ve NADA.
+rem
+rem Es exactamente el sintoma que se reporto desde el aula.
 where opencode >nul 2>nul
+if errorlevel 1 goto sinopencode
+
+opencode --version >nul 2>nul
 if errorlevel 1 (
   echo.
-  echo   Tecnia Bot v%VER% -- no se encontro OpenCode.
+  echo   Tecnia Bot v%VER% -- OpenCode esta instalado pero NO ARRANCA.
   echo.
-  echo   Si el instalador esta corriendo ahora mismo, esperalo: no lo corras dos veces.
-  echo   Si ya termino, volve a correrlo, o mira docs\instalacion-windows.md
+  echo   Las dos causas habituales son el antivirus y un procesador viejo.
+  echo   Abri "Diagnostico de Tecnia Bot" en el menu inicio: te dice cual es.
   echo.
   pause
   exit /b 1
 )
+
+rem -- Y que la capa educativa este publicada --------------------------------
+rem
+rem OpenCode puede arrancar perfecto y no tener nada de Tecnia Bot: pasa cuando
+rem install.ps1 muere a mitad de copiar. El docente ve un editor pelado, sin logo
+rem ni agente, y no tiene forma de saber que le falta algo.
+if not exist "%USERPROFILE%\.config\opencode\agent\tecnia-bot.md" (
+  echo.
+  echo   Tecnia Bot v%VER% -- OpenCode anda, pero falta la capa educativa.
+  echo.
+  echo   Volve a correr el instalador: la copia de archivos quedo a medias.
+  echo.
+  pause
+  exit /b 1
+)
+goto listo2
+
+:sinopencode
+echo.
+echo   Tecnia Bot v%VER% -- no se encontro OpenCode.
+echo.
+echo   Si el instalador esta corriendo ahora mismo, esperalo: no lo corras dos veces.
+echo   Si ya termino, volve a correrlo, o mira docs\instalacion-windows.md
+echo.
+pause
+exit /b 1
+
+:listo2
 
 rem Carpeta de trabajo del docente para sus proyectos (se crea la primera vez).
 set "PROY=%USERPROFILE%\Documents\Tecnia Bot"
@@ -93,3 +150,12 @@ echo.
 echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
 echo.
 opencode
+rem Sin este pause, si OpenCode se cae la ventana desaparece y no queda rastro.
+rem En un aula eso es imposible de diagnosticar.
+if errorlevel 1 (
+  echo.
+  echo   Tecnia Bot se cerro con un error.
+  echo   Abri "Diagnostico de Tecnia Bot" en el menu inicio y mandanos lo que diga.
+  echo.
+  pause
+)

@@ -329,7 +329,19 @@ if (-not $tieneGoogle) {
     # puede seguir pegando la SUYA en el prompto de arriba para no depender de esta.
     $keyFinal = if ($key -and $key.Trim()) { $key.Trim() } else { "AQ.Ab8RN6JscK6NsgkvLXY0RfzoGCdIVVQYs7xUYNtxM377VgPZRA" }
     $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
-    ($authData | ConvertTo-Json -Depth 10) | Set-Content -Path $AuthFile -Encoding UTF8
+    # SIN BOM, y esto es un bloqueante que estuvo silencioso.
+    #
+    # `Set-Content -Encoding UTF8` en PowerShell 5.1 -- el que trae Windows 10 --
+    # escribe UTF-8 CON BOM. OpenCode lee este archivo con JSON.parse, que revienta
+    # con BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
+    #
+    # El docente ve la instalacion perfecta, el bot abre con su logo y su agente, y
+    # al primer mensaje: error de proveedor. Cero pistas.
+    #
+    # Este archivo era el unico que quedaba mal: las otras cuatro escrituras de
+    # este script ya usan WriteAllText por exactamente esta razon, y lo dicen en
+    # sus comentarios. Se sabia, y justo el de las credenciales quedo afuera.
+    [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
     [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
     if ($key -and $key.Trim()) {
         Write-Host "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."

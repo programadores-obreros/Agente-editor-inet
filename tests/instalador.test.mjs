@@ -26,11 +26,19 @@ const ps1 = readFileSync(join(REPO, "install/bootstrap.ps1"), "utf8")
  */
 const codigo = ps1.replace(/^\s*#.*$/gm, "")
 
-/** El bloque de texto que sigue a una instalación, hasta el "[OK]" que la cierra. */
+/**
+ * El bloque que sigue a una instalación, hasta el "[OK]" que la cierra.
+ *
+ * SOBRE `codigo` Y NO SOBRE `ps1`, y esta es la TERCERA vez que muerde en este
+ * repo. Los comentarios de bootstrap.ps1 citan los comandos para explicar los
+ * bugs —«`scoop install opencode` elevado sin la variable: Scoop lo RECHAZA»— y
+ * un indexOf sobre el archivo entero encuentra la CITA, no el comando. El test
+ * termina midiendo un pedazo de prosa.
+ */
 function bloqueTrasInstalar(comando) {
-  const i = ps1.indexOf(comando)
+  const i = codigo.indexOf(comando)
   assert.ok(i > 0, `no encontré "${comando}" en bootstrap.ps1`)
-  const resto = ps1.slice(i)
+  const resto = codigo.slice(i)
   const fin = resto.indexOf("[OK]")
   assert.ok(fin > 0, `no encontré el "[OK]" que sigue a "${comando}"`)
   return resto.slice(0, fin)
@@ -47,7 +55,7 @@ test("la verificación EJECUTA opencode, no mira si el archivo está", () => {
   // El docente descubría la diferencia recién al abrir el bot.
   const i = ps1.indexOf("function Test-OpenCode")
   assert.ok(i > 0, "no está la función que verifica OpenCode")
-  const fn = ps1.slice(i, i + 500)
+  const fn = ps1.slice(i, i + 1800)
   assert.match(fn, /opencode --version/, "no lo ejecuta: mirar el archivo no alcanza")
   assert.match(fn, /LASTEXITCODE/, "lo ejecuta pero no mira si terminó bien")
 })
@@ -62,8 +70,14 @@ test("no se verifica contra un shim que Scoop no crea", () => {
 test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   // Una vez y no en loop: el instalador corre en escuelas con internet flojo, y
   // un reintento sin techo no es persistencia, es colgarse para siempre.
-  const instalaciones = [...ps1.matchAll(/scoop install opencode/g)].length
-  assert.equal(instalaciones, 2, "tiene que haber 2: el intento normal y UNA reparación")
+  // Se cuentan las reinstalaciones con scoop, que son las caras. El fallback de
+  // CPU sin AVX2 no cuenta: no reinstala, baja OTRO binario — y existe
+  // justamente porque reinstalar el mismo no converge nunca.
+  const instalaciones = [...codigo.matchAll(/scoop install opencode/g)].length
+  assert.ok(
+    instalaciones <= 2,
+    `hay ${instalaciones} reinstalaciones con scoop; el techo es 2 (el intento normal y UNA reparación)`,
+  )
   assert.match(ps1, /scoop uninstall opencode/, "la reparación tiene que limpiar antes")
 
   // Y no puede preguntarle nada: el instalador también corre en silencio
@@ -74,9 +88,9 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
 test("si OpenCode no quedó, el instalador CORTA en vez de seguir", () => {
   // Seguir es lo que hacía antes, y por eso el error aparecía tres pasos
   // después, en el acceso directo, sin relación visible con la causa.
-  const i = ps1.indexOf("OpenCode NO quedo instalado")
+  const i = codigo.indexOf("OpenCode NO arranca")
   assert.ok(i > 0, "no hay mensaje de fallo para OpenCode")
-  assert.match(ps1.slice(i, i + 900), /exit 1/, "avisa pero sigue igual")
+  assert.match(codigo.slice(i, i + 1400), /exit 1/, "avisa pero sigue igual")
 })
 
 test("el mensaje de fallo dice QUÉ hacer, no sólo que falló", () => {
@@ -86,10 +100,13 @@ test("el mensaje de fallo dice QUÉ hacer, no sólo que falló", () => {
   //
   // Lo que sí tiene que quedar: que se intentó más de una vez (para que no
   // reintente al pedo), y a dónde ir cuando ni eso alcanzó.
-  const i = ps1.indexOf("OpenCode NO quedo instalado")
-  const mensaje = ps1.slice(i, i + 900)
-  assert.match(mensaje, /dos veces|limpiando antes/i, "no dice que ya se reintentó solo")
+  const i = codigo.indexOf("OpenCode NO arranca")
+  const mensaje = codigo.slice(i, i + 1400)
+  assert.match(mensaje, /Diagnostico/i, "no manda al diagnóstico, que es lo que dice la causa")
   assert.match(mensaje, /issues/, "no dice a dónde pedir ayuda")
+  // Y NO puede volver a culpar a la conexión: cuando el hash da OK la descarga
+  // está perfecta, y ese mensaje mandaba a mirar el lugar equivocado.
+  assert.doesNotMatch(mensaje, /descarga se corte|mejor conexion/i, "vuelve a culpar a la conexión")
 })
 
 test("Scoop también se verifica, y corta si falta", () => {
@@ -173,13 +190,24 @@ test("el lanzador muestra la versión, incluso cuando falla", () => {
   // Una captura de pantalla del docente tiene que alcanzar para saber qué corre.
   assert.match(cmd, /set \/p VER=/, "el lanzador no lee la versión")
 
-  // El bloque del mensaje de error, entero.
-  const desde = cmd.indexOf(":verificar")
-  const error = cmd.slice(desde, cmd.indexOf(")", desde))
-  assert.match(error, /%VER%/, "la pantalla de error no dice la versión")
+  // TODAS las pantallas de error del lanzador, no una sola.
+  //
+  // Antes este test miraba el trozo entre `:verificar` y el primer parentesis, y
+  // eso dejo de ser el mensaje cuando el lanzador creció: ahora distingue tres
+  // fallas distintas —no está, está pero no arranca, y falta la capa educativa—
+  // y cada una tiene su bloque. Un test atado a la forma del código se rompe
+  // cuando el código mejora.
+  const errores = [...cmd.matchAll(/echo\s+Tecnia Bot v%VER% -- ([^\r\n]+)/g)].map((m) => m[1])
+  assert.ok(errores.length >= 2, `sólo ${errores.length} pantalla(s) de error llevan la versión`)
 
-  // Y no puede mandar a reinstalar sin avisar que quizá ya se está instalando.
-  assert.match(error, /esperalo|esta corriendo/i, "sigue empujando a instalar dos veces")
+  // La de "no se encontró" no puede mandar a reinstalar sin avisar que quizá el
+  // instalador está corriendo justo ahora: ese consejo rompió una máquina real.
+  const sinOpenCode = cmd.slice(cmd.indexOf(":sinopencode"))
+  assert.match(sinOpenCode, /esperalo|esta corriendo/i, "sigue empujando a instalar dos veces")
+
+  // Y la de "no arranca" tiene que mandar al diagnóstico, que es lo único que
+  // distingue antivirus de procesador viejo.
+  assert.match(cmd, /NO ARRANCA[\s\S]{0,400}Diagnostico/i, "no manda al diagnóstico")
 })
 
 test("la marca la maneja Inno, no el bootstrap", () => {
@@ -203,4 +231,60 @@ test("el lanzador NO arranca apenas aparece opencode", () => {
   // Por eso la espera mira la marca, no la presencia de opencode.
   const espera = cmd.slice(cmd.indexOf(":esperando"), cmd.indexOf("LSS"))
   assert.doesNotMatch(espera, /where opencode/, "sale antes de que termine la capa educativa")
+})
+
+// ── Los archivos que lee un runtime de JavaScript NO pueden llevar BOM ────────
+//
+// POR QUÉ ESTE TEST, y es el bug más caro que encontró la auditoría.
+//
+// `Set-Content -Encoding UTF8` en PowerShell 5.1 —el que trae Windows 10— escribe
+// UTF-8 CON BOM. OpenCode lee su configuración con JSON.parse, que revienta con
+// BOM, y en el caso de las credenciales SE TRAGA EL ERROR: se queda sin
+// credencial y no avisa nada.
+//
+// El docente veía la instalación perfecta, el bot abría con su logo y su agente,
+// y al primer mensaje: error de proveedor. Sin una sola pista.
+//
+// Lo peor: el repo YA SABÍA esto. Cuatro escrituras de install.ps1 usan
+// WriteAllText con UTF8Encoding($false) y lo explican en sus comentarios. La
+// única que quedó afuera fue, justamente, la de las credenciales.
+//
+// Este test no existía. Comprobado por mutación: devolviendo esa línea a
+// Set-Content, los 107 tests seguían pasando en verde.
+
+const instalarPs1 = readFileSync(join(REPO, "install/install.ps1"), "utf8")
+
+test("ningún archivo JSON se escribe con Set-Content (que mete BOM)", () => {
+  /*
+   * `Set-Content -Encoding UTF8` está permitido sólo para archivos que lee
+   * PowerShell, donde el BOM no molesta. Hoy eso es únicamente el manifest.
+   * Cualquier otro destino tiene que ir por WriteAllText.
+   */
+  const PERMITIDOS = ["$Manifest"]
+
+  const culpables = []
+  for (const m of instalarPs1.matchAll(/Set-Content\s+-Path\s+(\$\w+)[^\r\n]*-Encoding\s+UTF8/g)) {
+    if (!PERMITIDOS.includes(m[1])) culpables.push(m[1])
+  }
+  assert.deepEqual(
+    culpables,
+    [],
+    "estos archivos van a salir con BOM y JSON.parse los va a rechazar en silencio: " +
+      culpables.join(", ") +
+      " — usá [System.IO.File]::WriteAllText(..., (New-Object System.Text.UTF8Encoding $false))",
+  )
+})
+
+test("el archivo de credenciales se escribe sin BOM", () => {
+  // El caso concreto, nombrado. Si alguien renombra la variable, el test de
+  // arriba sigue cubriendo la regla; éste cubre el archivo que más duele.
+  const i = instalarPs1.indexOf("$AuthFile")
+  assert.ok(i > 0, "no encontré dónde se escribe el archivo de credenciales")
+  const escrituras = [...instalarPs1.matchAll(/([^\r\n]*\$AuthFile[^\r\n]*)/g)]
+    .map((m) => m[1])
+    .filter((l) => /Set-Content|WriteAllText/.test(l))
+  assert.ok(escrituras.length > 0, "no se escribe el archivo de credenciales")
+  for (const l of escrituras) {
+    assert.match(l, /WriteAllText/, `las credenciales se escriben con BOM:\n  ${l.trim()}`)
+  }
 })
