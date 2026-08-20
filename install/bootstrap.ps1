@@ -12,6 +12,24 @@
 $ErrorActionPreference = "Stop"
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
+# ---- TODO LO QUE PASA ACA QUEDA ESCRITO -------------------------------------
+#
+# ESTO TENDRIA QUE HABER EXISTIDO DESDE EL PRIMER DIA, y no tenerlo costo una
+# jornada entera de deducir desde afuera.
+#
+# Inno lanza este script en su propia consola y la CIERRA al terminar. Si algo
+# falla, el mensaje --que existe, y es bueno-- aparece 200 ms y desaparece. Lo
+# unico que queda es un numero en el log de Inno: "Process exit code: 1". Con eso
+# hubo que adivinar en que paso murio, en dos maquinas distintas, con dos tiempos
+# distintos: una en 2,4 segundos y otra en 41.
+#
+# Con el transcript, la proxima vez no se adivina: se lee.
+#
+# Va al lado del programa, no a %TEMP%, para que el diagnostico lo encuentre solo
+# y el docente lo pueda mandar sin buscarlo.
+$LogInstalacion = Join-Path $RepoDir "instalacion.log"
+try { Start-Transcript -Path $LogInstalacion -Force | Out-Null } catch { }
+
 # TLS 1.2 explicito. Medido en un Windows 10 22H2 con .NET 4.8: el default es
 # SystemDefault y negocia 1.2 solo, asi que NO es el problema habitual que
 # cuentan por ahi. Pero SystemDefault obedece a la configuracion del equipo, y en
@@ -204,7 +222,8 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
         Write-Host "        Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Yellow
         Write-Host "      y volve a correr este instalador."
         Write-Host ""
-        exit 1
+        try { Stop-Transcript | Out-Null } catch { }
+    exit 1
     }
     Write-Host "  [OK] Scoop instalado."
 }
@@ -385,6 +404,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $LASTEXITCODE)." -ForegroundColor Red
     Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
     Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
     exit 1
 }
 $cfgDir = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $env:USERPROFILE ".config\opencode" }
@@ -394,6 +414,7 @@ if (-not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
     Write-Host "      El instalador dijo que termino, pero el agente no esta en:"
     Write-Host "      $cfgDir"
     Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
     exit 1
 }
 
@@ -411,8 +432,10 @@ if ($script:FalloOpenCode) {
     Write-Host "    scoop uninstall opencode" -ForegroundColor Yellow
     Write-Host "    scoop install opencode" -ForegroundColor Yellow
     Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
     exit 1
 }
 Write-Host "  LISTO! Abri una terminal en cualquier carpeta, escribi 'opencode',"
 Write-Host "  apreta Tab y elegi 'tecnia-bot'."
 Write-Host ""
+try { Stop-Transcript | Out-Null } catch { }

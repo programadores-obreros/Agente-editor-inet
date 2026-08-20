@@ -74,7 +74,18 @@ $d = Get-PSDrive C
 Dato "libre en C:" ([math]::Round($d.Free / 1GB, 1).ToString() + " GB")
 Dato "cache de Scoop" $(if (Test-Path "$U\scoop\cache") { (@(Get-ChildItem "$U\scoop\cache" -Filter "opencode*" -EA SilentlyContinue) | ForEach-Object { $_.Name + " (" + [math]::Round($_.Length/1MB,1) + " MB)" }) -join " | " } else { "no hay" })
 
-Titulo "Ultimo log del instalador"
+Titulo "El log del bootstrap -- ACA esta en que paso murio"
+$bl = "$env:LOCALAPPDATA\TecniaBot\instalacion.log"
+if (Test-Path $bl) {
+  Dato "archivo" $bl
+  Write-Host "     --- ultimas lineas ---"
+  Get-Content $bl | Where-Object { $_ -match '\[OK\]|\[X\]|\[!\]|\[\.\.\]|ERROR|WARN|Exception' } |
+    Select-Object -Last 14 | ForEach-Object { Write-Host ("     " + $_.Trim()) }
+} else {
+  Dato "archivo" "no existe -- el bootstrap no llego ni a arrancar"
+}
+
+Titulo "Ultimo log del instalador (Inno)"
 $log = Get-ChildItem $env:TEMP -Filter "Setup Log*.txt" -EA SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($log) {
   Dato "archivo" $log.FullName
