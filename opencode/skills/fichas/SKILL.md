@@ -5,9 +5,13 @@ description: Las fichas didácticas A4 de Tecnia Lab, listas para imprimir y rep
 
 # Fichas de Tecnia Lab — hojas listas para el aula
 
-**Ya están hechas.** No hay que generarlas: son PDF de una hoja A4, en `hojas/`,
-listos para abrir e imprimir. Cada una es un componente o un concepto, con foto o
-dibujo, sus partes, qué números importan y un tip con el error típico.
+**Ya están hechas.** No hay que generarlas: son páginas HTML de una hoja A4, en
+`hojas/`, listas para abrir e imprimir. Cada una es un componente o un concepto,
+con foto o dibujo, sus partes, qué números importan y un tip con el error típico.
+
+Algunas tienen el dibujo **animado** —el relé que cierra, el PIR que detecta, la
+onda que avanza—, y eso es justamente lo que un PDF no podía hacer. Al imprimir
+se congelan solas en su primer cuadro, así que la hoja de papel sale igual.
 
 ## Cuándo ofrecerlas
 
@@ -26,15 +30,18 @@ Ofrecela cuando:
 
 ## Cómo se entrega: con el tool `ficha`
 
-**Usá el tool `ficha` y pasale el número o el nombre.** Se la abre en el lector
-de PDF, lista para Ctrl+P.
+**Usá el tool `ficha` y pasale el número o el nombre.** Se la abre en el
+navegador, lista para Ctrl+P.
+
+El nombre podés decirlo como se habla: «corriente alterna» con espacios funciona
+igual que `corriente-alterna`.
 
 ### Tres cosas que NO hay que hacer
 
-**1. No leas el PDF.** Ni con `read`, ni con `bash`, ni con nada. Es un binario de
-trescientos y pico de kilobytes: tarda, no devuelve texto útil, y no hace falta
-—el índice de esta hoja ya te dice qué trae cada ficha—. El tool `ficha` la
-**abre**, que es otra cosa.
+**1. No leas la ficha.** Ni con `read`, ni con `bash`, ni con nada. Son
+doscientos y pico de kilobytes de HTML con el SVG del dibujo adentro: te llena el
+contexto de coordenadas y no hace falta —el índice de esta hoja ya te dice qué
+trae cada ficha—. El tool `ficha` la **abre**, que es otra cosa.
 
 **2. No le pegues la ruta para que la busque a mano.** Nadie navega hasta
 `.config\opencode\skills\fichas\hojas\`, y el docente que abandona ahí se queda
@@ -52,8 +59,8 @@ está el tool `ficha`.
 | La ofrecés vos, sin que la pidan | **preguntá primero**: «¿te la abro?» |
 | Dijeron que sí a tu ofrecimiento | abrila |
 
-Abrir un PDF no rompe nada y no manda nada a ningún lado. Lo que molesta es
-abrir algo que nadie pidió.
+Abrir una ficha no rompe nada y no manda nada a ningún lado: es un archivo
+local, sin internet de por medio. Lo que molesta es abrir algo que nadie pidió.
 
 ## Las hojas que hay
 

@@ -14,3 +14,30 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Salida del tool `circuito`, no fuente.
+#
+# El tool copia la biblioteca visual AL LADO del HTML que genera, a proposito:
+# el docente abre el archivo con doble clic (file://) y desde ahi no se puede
+# leer nada de ~/.config. Es la unica forma de que el circuito se vea sin
+# internet. El costo es que la carpeta de trabajo se llena de bundles de 432 KB.
+#
+# Aca aparecen porque el repo es la carpeta de trabajo cuando uno prueba el bot.
+#
+# OJO CON LA BARRA DE ADELANTE. Un patron sin `/` matchea a CUALQUIER nivel, y
+# `opencode/tecniabot-web/wokwi-bundle.js` + `componentes-extra.js` SI estan
+# versionados: son la biblioteca fuente que viaja adentro del instalador.
+#
+# Hoy no se romperia nada --git no deja de seguir un archivo ya versionado por
+# agregarlo al ignore-- pero el dia que alguien los borre y los vuelva a agregar,
+# o los mueva, no vuelven. Y nadie lo nota hasta que el instalador sale sin la
+# biblioteca y los circuitos aparecen en blanco en el aula.
+#
+# Anclados a la raiz: es donde el tool escribe cuando uno prueba el bot aca.
+/wokwi-bundle.js
+/componentes-extra.js
+/circuito-*.html
+/hoja-*.html
+
+# Cache del registro de skills (se regenera solo).
+/.atl/

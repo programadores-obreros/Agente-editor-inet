@@ -323,6 +323,11 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
 .ej-val{font-family:"Bricolage Grotesque",Georgia,serif;font-size:26px;font-weight:700;fill:#0c4a5a;letter-spacing:-.02em}
 .tit{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:14px;font-weight:600;letter-spacing:.09em;fill:#64695e}
 .pie{font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:16px;fill:#23261f}
+
+/* Lo que se mueve desaparece en papel y con prefers-reduced-motion. La hoja
+   impresa sale exactamente como salia: la animacion demuestra, no informa. */
+@media print { .anim { display: none } }
+@media (prefers-reduced-motion: reduce) { .anim { display: none } }
 </style>
 <rect width="860" height="500" fill="#ffffff"/>
 <text x="62" y="26" class="tit">TENSIÓN EN EL TIEMPO</text>

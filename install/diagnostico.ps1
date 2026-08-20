@@ -12,8 +12,45 @@
 # Uso:
 #   powershell -ExecutionPolicy Bypass -File install\diagnostico.ps1
 # ============================================================================
+# ----------------------------------------------------------------------------
+# ESTE ARCHIVO ABSORBIO A reportar.ps1, QUE ERA CODIGO MUERTO.
+#
+# Habia dos scripts de soporte haciendo casi lo mismo, y uno solo tenia boton:
+# el acceso directo del menu inicio apunta ACA. reportar.ps1 se copiaba a la
+# maquina y no lo invocaba nadie -- para correrlo habia que abrir PowerShell y
+# tipear la ruta, que es exactamente lo que un docente con un problema no hace.
+#
+# De reportar.ps1 se trajo lo que faltaba y valia:
+#   - el bloque de credenciales (auth.json, el bug del BOM)
+#   - la politica de ejecucion (una GPO de escuela bloquea todo y no avisa)
+#   - dejar el reporte EN UN ARCHIVO, que era su mejor idea: pedir "corre esto y
+#     mandame lo que salga" no alcanzo nunca. En el medio de una instalacion que
+#     falla, copiar treinta lineas de una consola es una friccion que se paga en
+#     que el dato no llega.
+#
+# Ahora sale por pantalla Y queda en un archivo. El docente lee, y manda uno solo.
+# ----------------------------------------------------------------------------
 $ErrorActionPreference = "Continue"
 $U = $env:USERPROFILE
+
+# Donde dejar el reporte. El primero que exista gana.
+#
+# La carpeta compartida va primera a proposito: si esta, el reporte se puede leer
+# del otro lado sin pedirle nada a nadie. Si no esta -que es el caso de cualquier
+# maquina fuera de la escuela- cae al Escritorio, donde el docente lo encuentra.
+$destinos = @(
+  "\\192.168.100.9\Compartido",
+  "$env:USERPROFILE\Desktop",
+  "$env:TEMP"
+)
+$dir = $destinos | Where-Object { Test-Path $_ } | Select-Object -First 1
+$Reporte = Join-Path $dir ("tecniabot-diagnostico-" + $env:COMPUTERNAME + ".txt")
+
+# Start-Transcript captura Write-Host desde PowerShell 5.0, asi que el archivo
+# sale igual que la pantalla. Si falla -carpeta de solo lectura, disco lleno- se
+# sigue igual: el diagnostico en pantalla es lo que no se puede perder.
+$GuardaOK = $false
+try { Start-Transcript -Path $Reporte -Force | Out-Null; $GuardaOK = $true } catch { }
 
 function Titulo($t) { Write-Host ""; Write-Host "  == $t ==" -ForegroundColor Cyan }
 function Dato($k, $v) { Write-Host ("     {0,-22} {1}" -f $k, $v) }
@@ -69,6 +106,33 @@ try {
   Dato "Defender" "no se pudo consultar (puede haber otro antivirus)"
 }
 
+Titulo "Las credenciales -- el bug del BOM"
+# ACA NO SE IMPRIME NADA DEL CONTENIDO DE auth.json. Nunca.
+#
+# Este reporte se manda por mail o por WhatsApp, y auth.json tiene la clave de la
+# API adentro. Lo que se informa son hechos SOBRE el archivo -esta, tiene BOM,
+# parsea- que es todo lo que hace falta para diagnosticar.
+$auth = "$U\.local\share\opencode\auth.json"
+Dato "auth.json" $(if (Test-Path $auth) { "OK" } else { "NO ESTA" })
+if (Test-Path $auth) {
+  $b = [System.IO.File]::ReadAllBytes($auth)
+  $bom = ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
+  Dato "fecha" (Get-Item $auth).LastWriteTime
+  Dato "tiene BOM" $(if ($bom) { "SI" } else { "no" })
+  if ($bom) { Write-Host "     >> El BOM deja la maquina muerta: OpenCode NO puede leer este archivo" -ForegroundColor Red }
+  # Del error se informa el TIPO, no el mensaje: el mensaje de ConvertFrom-Json
+  # suele citar el fragmento de JSON que no pudo leer, y ese fragmento sale del
+  # archivo que tiene la clave. Justo en el caso de falla, que es el unico en el
+  # que alguien manda esto.
+  try { $null = [Text.Encoding]::UTF8.GetString($b) | ConvertFrom-Json; Dato "parsea" "si" }
+  catch { Dato "parsea" ("NO (" + $_.Exception.GetType().Name + ")") }
+}
+$envKey = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
+Dato "variable con la key" $(if ($envKey) { "puesta" } else { "NO esta" })
+
+Titulo "Politica de ejecucion -- una GPO de escuela bloquea todo sin avisar"
+Get-ExecutionPolicy -List | ForEach-Object { Dato $_.Scope.ToString() $_.ExecutionPolicy }
+
 Titulo "Espacio y red"
 $d = Get-PSDrive C
 Dato "libre en C:" ([math]::Round($d.Free / 1GB, 1).ToString() + " GB")
@@ -93,5 +157,13 @@ if ($log) {
 } else { Dato "archivo" "no se encontro" }
 
 Write-Host ""
-Write-Host "  Copia TODO esto y mandalo. Con esto alcanza para saber que paso." -ForegroundColor Yellow
+if ($GuardaOK) {
+  try { Stop-Transcript | Out-Null } catch { }
+  Write-Host "  Listo. El reporte quedo en:" -ForegroundColor Yellow
+  Write-Host ("    " + $Reporte) -ForegroundColor White
+  Write-Host "  Mandanos ESE archivo. No hace falta copiar nada de esta pantalla."
+} else {
+  Write-Host "  No se pudo guardar el reporte en un archivo." -ForegroundColor Yellow
+  Write-Host "  Copia TODO esto y mandalo. Con esto alcanza para saber que paso."
+}
 Write-Host ""

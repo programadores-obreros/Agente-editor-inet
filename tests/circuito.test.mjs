@@ -149,3 +149,42 @@ test("un componente que no existe se sigue rechazando, sin inventar", async () =
   const { r } = await gen({ componentes: "transistor", placa: "uno" }, "no-existe")
   assert.match(r, /No conozco/i, "aceptó un componente inexistente")
 })
+
+test("lo que el describe() promete es lo que el código hace", () => {
+  // ESTE DEFECTO SE VIO EN USO: el bot abría una ventana del navegador en cada
+  // pedido. «Cada vez que le pido algo me abre esto, toda una desprolijidad.»
+  //
+  // El código YA estaba arreglado —`const abrir = args.abrir === true`, o sea que
+  // por defecto no abre nada— y el síntoma seguía. Porque el modelo no lee el
+  // código: lee el `.describe()`, y ahí decía «Si es true (default)».
+  //
+  // Un `.describe()` no es documentación, es LA INTERFAZ. Es lo único que el
+  // modelo ve del contrato. Cuando miente, arreglar el código no arregla nada:
+  // queda una implementación correcta que nadie invoca como corresponde.
+  //
+  // Por eso se prueban CONTRA EL CÓDIGO y no contra un texto esperado: si mañana
+  // alguien cambia el default a true, este test lo obliga a tocar las dos cosas.
+  const fuente = readFileSync(join(REPO, "opencode/tool/circuito.ts"), "utf8")
+
+  const linea = fuente.match(/const abrir = args\.abrir\s*(===|!==)\s*(true|false)/)
+  assert.ok(linea, "no encontré cómo se resuelve `abrir`; si cambió, actualizá este test")
+
+  // `args.abrir === true` significa: sin pasar nada, NO abre.
+  const abrePorDefecto = !(linea[1] === "===" && linea[2] === "true")
+
+  const descripcion = fuente.match(/abrir: tool\.schema[\s\S]{0,400}?\.describe\("([^"]+)"\)/)
+  assert.ok(descripcion, "no encontré el .describe() del parámetro `abrir`")
+  const texto = descripcion[1]
+
+  if (abrePorDefecto) {
+    assert.match(texto, /default:\s*true|true \(default\)/i,
+      "el código abre por defecto y el describe() no lo dice")
+  } else {
+    assert.match(texto, /NO SE ABRE|default:\s*false/i,
+      "El código NO abre por defecto, pero el describe() no lo dice.\n" +
+      "El modelo sólo ve el describe(): si ahí dice otra cosa, va a llamar mal a la\n" +
+      "tool y el arreglo del código no sirve de nada.")
+    assert.doesNotMatch(texto, /true \(default\)/i,
+      "el describe() sigue diciendo «true (default)» y el código dice lo contrario")
+  }
+})

@@ -90,11 +90,26 @@ function atajoImprimir(): string {
 
 /** Saca tildes y deja minúsculas, para que "potenciómetro" encuentre a "potenciometro". */
 function normalizar(s: string): string {
-  return s
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .trim()
+  return (
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      // Espacios, guiones bajos y guiones son EL MISMO separador.
+      //
+      // Los archivos se llaman `06-corriente-alterna.html`, pero el docente dice
+      // "corriente alterna", con espacio, y el agente le pasa eso tal cual. Sin
+      // esta linea el `includes` de mas abajo comparaba "corriente alterna"
+      // contra "corriente-alterna" y no daba: la ficha existia, estaba instalada,
+      // y el bot contestaba que no la encontraba.
+      //
+      // No era un caso raro. Se llevaba puestas SEIS de las diecisiete: las dos
+      // de corriente, entradas y salidas, arduino uno, sensor shield y tecnia
+      // bot. O sea, toda ficha con nombre de mas de una palabra.
+      .replace(/[\s_-]+/g, "-")
+      // Y sin separadores colgando en las puntas, para que "-ldr-" tambien entre.
+      .replace(/^-+|-+$/g, "")
+  )
 }
 
 /**

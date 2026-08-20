@@ -35,6 +35,34 @@ const codigo = ps1.replace(/^\s*#.*$/gm, "")
  * un indexOf sobre el archivo entero encuentra la CITA, no el comando. El test
  * termina midiendo un pedazo de prosa.
  */
+/**
+ * El cuerpo de una funcion de PowerShell, contando llaves.
+ *
+ * Reemplaza a `slice(i, i + 1800)`. Una ventana fija mide lo que le toca, no lo
+ * que se quiere: de más se lleva la función siguiente y da falsos verdes, de
+ * menos corta la que importa y da falsos rojos. Las dos formas enseñan a
+ * desconfiar del resultado.
+ */
+function funcion(nombre) {
+  const i = codigo.indexOf(`function ${nombre}`)
+  assert.ok(i > 0, `no está la función ${nombre} en bootstrap.ps1`)
+  const abre = codigo.indexOf("{", i)
+  assert.ok(abre > 0, `la función ${nombre} no abre llave`)
+  let nivel = 0
+  for (let j = abre; j < codigo.length; j++) {
+    if (codigo[j] === "{") nivel++
+    else if (codigo[j] === "}" && --nivel === 0) return codigo.slice(i, j + 1)
+  }
+  assert.fail(`la función ${nombre} no cierra llave`)
+}
+
+/** Desde `i` hasta el próximo corte estructural, en vez de N caracteres a ojo. */
+function hasta(texto, i, corte) {
+  const resto = texto.slice(i)
+  const m = resto.slice(1).match(corte)
+  return m ? resto.slice(0, m.index + 1) : resto
+}
+
 function bloqueTrasInstalar(comando) {
   const i = codigo.indexOf(comando)
   assert.ok(i > 0, `no encontré "${comando}" en bootstrap.ps1`)
@@ -53,11 +81,21 @@ test("la verificación EJECUTA opencode, no mira si el archivo está", () => {
   // La versión anterior de este test aceptaba un Test-Path, y ese es justo el
   // chequeo que no sirve: un shim que apunta a una carpeta vacía existe igual.
   // El docente descubría la diferencia recién al abrir el bot.
-  const i = ps1.indexOf("function Test-OpenCode")
-  assert.ok(i > 0, "no está la función que verifica OpenCode")
-  const fn = ps1.slice(i, i + 1800)
+  const fn = funcion("Test-OpenCode")
+
   assert.match(fn, /opencode --version/, "no lo ejecuta: mirar el archivo no alcanza")
-  assert.match(fn, /LASTEXITCODE/, "lo ejecuta pero no mira si terminó bien")
+
+  // Y ACÁ ESTABA EL TEATRO: pedía que apareciera `LASTEXITCODE` en algún lado de
+  // la función. Que la palabra esté no dice NADA sobre lo que la función contesta.
+  // Se podía leer el código de salida, guardarlo, y devolver $true siempre — que
+  // es exactamente el defecto original: el instalador diciendo OK sin mirar.
+  //
+  // Lo que importa es que el VALOR DE RETORNO salga del código de salida.
+  assert.match(
+    fn,
+    /return\s*\(?\s*\$LASTEXITCODE\s*-eq\s*0\s*\)?/,
+    "la función mira $LASTEXITCODE pero no devuelve eso: puede contestar que sí igual",
+  )
 })
 
 test("no se verifica contra un shim que Scoop no crea", () => {
@@ -79,9 +117,18 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   const instalaciones = codigo
     .split("\n")
     .filter((l) => /scoop install opencode/.test(l) && !/Write-Host/.test(l)).length
+  // El TECHO, que es lo que este test vino a poner.
   assert.ok(
     instalaciones <= 2,
     `hay ${instalaciones} reinstalaciones con scoop; el techo es 2 (el intento normal y UNA reparación)`,
+  )
+  // Y EL PISO, que faltaba. Sin él, `instalaciones === 0` —o sea, un instalador
+  // que no instala OpenCode en ningún lado— cumplía «<= 2» y pasaba en verde.
+  // No es hipotético: ese fue exactamente el estado de la v0.3.48, que publicó un
+  // instalador que no instalaba nada.
+  assert.ok(
+    instalaciones >= 1,
+    "el bootstrap no instala OpenCode en ningún lado",
   )
   // EL INSTALADOR NO PUEDE DESINSTALAR NADA. NUNCA.
   //
@@ -159,17 +206,21 @@ test("el mensaje de fallo dice QUÉ hacer, no sólo que falló", () => {
 test("Scoop también se verifica, y corta si falta", () => {
   // Sin scoop no se puede instalar nada de lo que sigue: cortar ahí ahorra
   // tres errores en cascada que no dicen cuál fue el primero.
-  const i = ps1.indexOf("Scoop NO quedo instalado")
+  // Sobre `codigo`: bootstrap.ps1 explica en comentarios por qué NO hay `exit 1`
+  // antes de instalar la capa, así que buscarlo en el archivo crudo lo encuentra
+  // en la explicación. Un test que se satisface con un comentario no prueba nada.
+  const i = codigo.indexOf("Scoop NO quedo instalado")
   assert.ok(i > 0, "no se verifica que Scoop haya quedado")
-  assert.match(ps1.slice(i, i + 600), /exit 1/)
+  assert.match(hasta(codigo, i, /\n\s*(?:function|if|Write-Host \[)/), /exit 1/,
+    "avisa que falta Scoop pero sigue de largo")
 })
 
 test("PlatformIO avisa si falta, pero NO corta", () => {
   // Es distinto a los otros dos: sin PlatformIO el bot igual sirve para
   // explicar, dibujar circuitos y repartir fichas. Sólo no puede compilar.
-  const i = ps1.indexOf("PlatformIO NO quedo instalado")
+  const i = codigo.indexOf("PlatformIO NO quedo instalado")
   assert.ok(i > 0, "no se verifica que PlatformIO haya quedado")
-  const mensaje = ps1.slice(i, i + 700)
+  const mensaje = hasta(codigo, i, /\n\s*(?:function|if|Write-Host \[)/)
   assert.doesNotMatch(mensaje, /exit 1/, "no debería cortar por PlatformIO")
   assert.match(mensaje, /diagnostico/i, "tiene que decir cómo revisarlo después")
 })
@@ -220,7 +271,10 @@ test("la marca se pone al EMPEZAR la instalación, no al llegar a [Run]", () => 
 })
 
 test("la marca se borra al terminar, y también si se cancela", () => {
-  const run = iss.slice(iss.indexOf("[Run]"), iss.indexOf("[UninstallRun]"))
+  // Sobre `issCodigo` y no sobre `iss`: los comentarios del .iss citan la marca
+  // para explicar por qué existe, y un indexOf sobre el archivo crudo encuentra la
+  // CITA. Es la misma trampa que ya mordió en bootstrap.ps1 y en urls.test.mjs.
+  const run = issCodigo.slice(issCodigo.indexOf("[Run]"), issCodigo.indexOf("[UninstallRun]"))
   const bootstrap = run.indexOf("bootstrap.ps1")
   const borra = run.indexOf(".instalando")
   assert.ok(borra > bootstrap, "la marca no se borra después del bootstrap")

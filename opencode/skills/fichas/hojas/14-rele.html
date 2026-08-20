@@ -355,17 +355,18 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
 <text x="285" y="156" text-anchor="middle" class="et3" fill="#c27f00">tira</text>
 <circle cx="320" cy="198" r="4.6" fill="#4f544a"/>
 
-<g>
-  <animateTransform attributeName="transform" type="rotate" class="anim"
+
+<g class="anim">
+  <animateTransform attributeName="transform" type="rotate"
     values="0 320 198;0 320 198;33 320 198;33 320 198"
     keyTimes="0;.42;.5;.92" dur="4s" repeatCount="indefinite"/>
   <line x1="320" y1="198" x2="384" y2="166" stroke="#4f544a" stroke-width="3.4" stroke-linecap="round"/>
 </g>
-<circle cx="388" cy="162" r="4.6" fill="#4f544a">
-  <animate attributeName="opacity" class="anim" values="1;1;.35;.35" keyTimes="0;.42;.5;.92" dur="4s" repeatCount="indefinite"/>
+<circle class="anim" cx="388" cy="162" r="4.6" fill="#4f544a">
+  <animate attributeName="opacity" values="1;1;.35;.35" keyTimes="0;.42;.5;.92" dur="4s" repeatCount="indefinite"/>
 </circle>
-<circle cx="388" cy="206" r="4.6" fill="#4f544a" opacity=".35">
-  <animate attributeName="opacity" class="anim" values=".35;.35;1;1" keyTimes="0;.42;.5;.92" dur="4s" repeatCount="indefinite"/>
+<circle class="anim" cx="388" cy="206" r="4.6" fill="#4f544a" opacity=".35">
+  <animate attributeName="opacity" values=".35;.35;1;1" keyTimes="0;.42;.5;.92" dur="4s" repeatCount="indefinite"/>
 </circle>
 <text x="400" y="167" class="et2">NC</text>
 <text x="400" y="211" class="et2">NO</text>

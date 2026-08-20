@@ -180,3 +180,109 @@ test("el tool busca la MISMA extensión que la capa instala", () => {
     `el tool busca "${filtro[1]}" y la capa instala ${instaladas.join(", ")}`,
   )
 })
+
+test("encuentra las fichas de nombre compuesto dichas COMO SE HABLAN", () => {
+  // El defecto: los archivos se llaman `06-corriente-alterna.html`, pero el
+  // docente dice "corriente alterna" y el agente le pasa eso tal cual. La
+  // comparación era "corriente alterna" contra "corriente-alterna", y no daba.
+  //
+  // La ficha existía, estaba instalada, y el bot decía que no la encontraba.
+  //
+  // No era un caso de borde: se llevaba puestas SEIS de las diecisiete. Todas
+  // las de nombre de más de una palabra, que son justo las de los temas que un
+  // docente nombra hablando y no por número.
+  const conEspacios = [
+    ["corriente alterna", "06"],
+    ["corriente continua", "05"],
+    ["entradas y salidas", "07"],
+    ["arduino uno", "01"],
+    ["sensor shield", "02"],
+    ["tecnia bot", "16"],
+  ]
+
+  for (const [dicho, numero] of conEspacios) {
+    const hallado = buscarFicha(dicho, HOJAS)
+    assert.ok(hallado, `«${dicho}» no encontró ninguna ficha`)
+    assert.ok(
+      hallado.startsWith(numero + "-"),
+      `«${dicho}» resolvió a ${hallado}, y la ficha es la ${numero}`,
+    )
+  }
+})
+
+test("separadores intercambiables: espacio, guion y guion bajo dan lo mismo", () => {
+  // El arreglo de arriba se puede escribir de forma estrecha —contemplando sólo
+  // el espacio— y volver a fallar con la primera variante que aparezca. El
+  // agente reformula lo que dijo el docente, y no siempre igual.
+  for (const forma of [
+    "corriente alterna",
+    "corriente-alterna",
+    "corriente_alterna",
+    "Corriente Alterna",
+    "  corriente   alterna  ",
+    "corriente alterna.html",
+  ]) {
+    assert.equal(
+      buscarFicha(forma, HOJAS),
+      buscarFicha("06", HOJAS),
+      `«${forma}» no resolvió a la misma ficha que el número`,
+    )
+  }
+})
+
+test("y no se aflojó tanto que cualquier cosa encuentre algo", () => {
+  // El contrapeso. Tratar todos los separadores como uno solo hace el matcheo
+  // más permisivo, y de ahí a que "el sensor de humo" devuelva una ficha
+  // cualquiera hay un paso. Una respuesta equivocada con seguridad es peor que
+  // "no la tengo": el docente la imprime y la reparte.
+  for (const inventado of ["sensor de humo", "acelerometro", "pantalla oled", "---", "   "]) {
+    assert.equal(
+      buscarFicha(inventado, HOJAS),
+      null,
+      `«${inventado}» devolvió una ficha, y esa ficha no existe`,
+    )
+  }
+})
+
+test("el SKILL.md describe el formato que realmente se instala", () => {
+  // Cuando las fichas pasaron de PDF a HTML —el instalador ahora lleva las
+  // animadas— el tool cambió y las hojas cambiaron. El SKILL.md no.
+  //
+  // Quedó diciéndole al modelo «son PDF de una hoja A4» y «no leas el PDF, es un
+  // binario». El modelo actúa sobre eso: es su única descripción del terreno. Y
+  // nada se pone rojo, porque un texto desactualizado no rompe ningún proceso.
+  //
+  // Se contrasta contra la CARPETA, no contra un formato escrito acá: el día que
+  // el formato vuelva a cambiar, este test lo obliga a acompañarlo.
+  const skill = readFileSync(join(REPO, "opencode/skills/fichas/SKILL.md"), "utf8")
+
+  const extensiones = new Set(
+    HOJAS.filter((h) => h.includes(".")).map((h) => h.slice(h.lastIndexOf(".") + 1).toLowerCase()),
+  )
+  assert.equal(extensiones.size, 1, `las hojas tienen extensiones mezcladas: ${[...extensiones]}`)
+  const formato = [...extensiones][0]
+
+  // Sin los bloques de código ni las rutas: ahí los nombres de archivo son
+  // legítimos y no son afirmaciones sobre el formato.
+  const prosa = skill
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/`[^`]*`/g, "")
+    .replace(/\|[^\n]*\|/g, "")
+
+  // La afirmación positiva: la prosa nombra el formato real.
+  assert.match(prosa.toLowerCase(), new RegExp(formato), `el SKILL.md nunca dice que son ${formato}`)
+
+  // Y la negativa, que es la que se pudre sola: no describe el formato viejo
+  // como si fuera el actual. «lo que un PDF no podía hacer» es historia y pasa.
+  const afirmaciones = [
+    /son (?:archivos )?PDF/i,
+    /No leas el PDF/i,
+    /lector de PDF/i,
+    /Abrir un PDF/i,
+  ]
+  for (const mala of afirmaciones) {
+    assert.doesNotMatch(prosa, mala,
+      `El SKILL.md todavía habla de las fichas como PDF, y son ${formato}.\n` +
+      `El modelo no mira la carpeta: actúa sobre lo que dice este texto.`)
+  }
+})

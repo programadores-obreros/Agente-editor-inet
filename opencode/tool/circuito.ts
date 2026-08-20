@@ -1247,7 +1247,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     abrir: tool.schema
       .boolean()
       .optional()
-      .describe("Si es true (default), abre el HTML generado en el navegador por defecto automáticamente. Pasá false para solo escribir el archivo sin abrirlo."),
+      .describe("POR DEFECTO NO SE ABRE NADA (default: false). Pasá true SOLO si el docente pidió verlo ahora —«mostrámelo», «abrilo», «quiero verlo»—. Si no lo pidió, dejalo sin pasar y ofrecéselo: abrir una ventana que nadie pidió le tapa lo que estaba haciendo."),
   },
   async execute(args, ctx) {
     /*

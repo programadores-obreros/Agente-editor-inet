@@ -18,6 +18,30 @@ before(() => {
   prompt = readFileSync(join(REPO, "opencode/agent/tecnia-bot.md"), "utf8")
 })
 
+/**
+ * El bloque de una regla: desde su texto hasta el próximo encabezado del MISMO
+ * nivel o superior.
+ *
+ * REEMPLAZA A `slice(i, i + N)`, y no es cosmético. Una auditoría midió que una
+ * de esas ventanas fijas tenía SESENTA Y CUATRO caracteres de holgura: agregar
+ * una oración de documentación —que no cambia ninguna regla— la ponía en rojo.
+ * Un test que se pone rojo sin que haya un defecto enseña a ignorar el rojo.
+ *
+ * Y corta por nivel, no por cualquier "#": las reglas tienen sub-encabezados
+ * adentro, y cortar en el primero dejaba afuera la mitad de lo que se quería
+ * medir.
+ */
+function bloqueDesde(texto, desde) {
+  const i = texto.indexOf(desde)
+  if (i < 0) return ""
+  const inicioLinea = texto.lastIndexOf("\n", i) + 1
+  const nivel = (texto.slice(inicioLinea, inicioLinea + 6).match(/^(#+)/) || ["", "##"])[1].length
+  const re = new RegExp("\\n#{1," + nivel + "} ", "g")
+  re.lastIndex = i + desde.length
+  const m = re.exec(texto)
+  return m ? texto.slice(i, m.index) : texto.slice(i)
+}
+
 test("tecnia-bot.md: tiene la regla crítica de ejecutar, no describir, la tool", () => {
   assert.match(prompt, /REGLA CRÍTICA — EJECUTÁ la tool, nunca la describas/, "título de la regla")
   assert.match(prompt, /NUNCA le expliques al usuario cómo la usarías vos/, "prohibición explícita de narrar")
@@ -136,9 +160,8 @@ test("no pega el código: lo ofrece, junto con cargarlo", () => {
   //
   // Una pared de cuarenta líneas de C++ no enseña: abruma. El docente estaba
   // pensando en el circuito y de golpe tiene una pantalla de texto que no pidió.
-  const i = prompt.indexOf("NO PEGUES EL CÓDIGO")
-  assert.ok(i > 0, "no está la regla de no pegar el código")
-  const bloque = prompt.slice(i, i + 1800)
+  const bloque = bloqueDesde(prompt, "NUNCA PEGUES EL CÓDIGO POR DEFECTO")
+  assert.ok(bloque, "no está la regla de no pegar el código")
 
   // Las DOS preguntas, y en UN solo mensaje: cada ida y vuelta de más es tiempo
   // de clase que se va.
@@ -164,9 +187,8 @@ test("el circuito no se abre solo, y avisa si la placa no es ESP32", () => {
   // navegador en CADA pedido, y además TODOS sus presets son de ESP32. Un docente
   // con Arduino UNO recibía un diagrama con pines GPIO que en su placa no
   // existen, sin ninguna advertencia.
-  const i = prompt.indexOf("lo mismo con los circuitos")
-  assert.ok(i > 0, "no está la regla de los circuitos")
-  const bloque = prompt.slice(i, i + 1400)
+  const bloque = bloqueDesde(prompt, "lo mismo con los circuitos")
+  assert.ok(bloque, "no está la regla de los circuitos")
 
   assert.match(bloque, /ya no abre el navegador solo/i, "no dice que dejó de abrirse solo")
   assert.match(bloque, /abrir:\s*true/, "no dice cómo abrirlo cuando aceptan")
@@ -189,9 +211,11 @@ test("conversa antes de trabajar, y no encadena acciones", () => {
   const reglas = [...prompt.matchAll(/^## REGLA CRÍTICA — (.+)$/gm)].map((m) => m[1])
   assert.match(reglas[0], /convers/i, `la primera regla es "${reglas[0]}", no la de conversar`)
 
-  const bloque = prompt.slice(i, i + 2400)
+  const bloque = bloqueDesde(prompt, "conversá antes de trabajar")
   assert.match(bloque, /UNA cosa por turno|una cosa por turno/i, "no limita a una acción por turno")
-  assert.match(bloque, /pelota/i, "no pide terminar el turno con la decisión del otro lado")
+  // El cierre de cada turno tiene su propia regla, más abajo y más fuerte.
+  assert.match(prompt, /TODOS tus mensajes terminan con una pregunta o una acción/,
+    "no pide terminar cada turno con una pregunta o una acción")
 
   // Y el contrapeso, sin el cual queda un bot que interroga y no ayuda.
   assert.match(bloque, /Cuándo NO preguntar/i, "no dice cuándo NO preguntar")
@@ -245,4 +269,22 @@ test("las reglas nuevas no se contradicen entre sí", () => {
   assert.ok(i4 > 0, "falta el protocolo anti-invención de hardware")
   assert.match(prompt.slice(i4, i4 + 900), /no lo afirmes|verificar/i,
     "no le dice qué hacer cuando no tiene el dato")
+})
+
+test("todos los mensajes terminan con una pregunta o una acción", () => {
+  // Pedido del usuario, repetido: "que siempre termine con una pregunta o una
+  // acción, lo hago, lo subo, etc".
+  //
+  // Es lo que hace que esto sea una conversación y no un monólogo. Un mensaje que
+  // termina y deja al docente sin saber qué sigue falló, aunque todo lo anterior
+  // esté bien.
+  const i = prompt.indexOf("TODOS tus mensajes terminan")
+  assert.ok(i > 0, "no está la regla de cerrar con pregunta o acción")
+  const bloque = bloqueDesde(prompt, "TODOS tus mensajes terminan")
+
+  // Y el matiz que la hace útil: los cierres vacíos no cuentan.
+  assert.match(bloque, /Alguna otra|cierres vacíos/i,
+    "no distingue una propuesta concreta de un «¿alguna otra duda?»")
+  assert.match(bloque, /Dos opciones/i,
+    "no sugiere ofrecer dos caminos concretos en vez de una pregunta abierta")
 })
