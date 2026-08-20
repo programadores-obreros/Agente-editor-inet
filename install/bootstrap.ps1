@@ -234,8 +234,29 @@ if (Test-OpenCode) {
                 Write-Host "  [OK] Listo, con la version para procesadores sin AVX2."
             }
         } else {
-            Write-Host "  [..] OpenCode quedo a medio instalar. Limpiando y reintentando..."
-            try { scoop uninstall opencode } catch { }
+            # NO SE DESINSTALA NADA. NUNCA.
+            #
+            # Aca habia un `scoop uninstall opencode` antes de reinstalar, y era la
+            # unica operacion de todo el instalador capaz de dejar la maquina PEOR
+            # de como estaba. Si Test-OpenCode da un falso negativo -- y ya se
+            # documentaron dos formas de que pase -- desinstala un OpenCode sano; y
+            # si la reinstalacion despues falla por red, el docente se queda sin
+            # nada. Paso: una notebook que andaba quedo sin OpenCode despues de
+            # correr el instalador.
+            #
+            # Y era ADEMAS innecesario: `scoop install` ya purga solo las
+            # instalaciones fallidas. Medido, con su salida textual:
+            #
+            #   WARN  Purging previous failed installation of opencode.
+            #   'opencode' was uninstalled.
+            #   Installing 'opencode' (1.18.18) [64bit] from 'main' bucket
+            #   'opencode' (1.18.18) was installed successfully!
+            #
+            # O sea: Scoop hace exactamente lo mismo, pero SOLO cuando de verdad
+            # hace falta. Nosotros lo haciamos siempre, a ciegas.
+            #
+            # REGLA: el instalador puede fallar, pero no puede romper.
+            Write-Host "  [..] OpenCode no arranca. Reintentando la instalacion..."
             scoop install opencode
             Refresh-Path
             # Si despues de reinstalar sigue sin arrancar Y el binario esta, es la

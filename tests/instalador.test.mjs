@@ -83,7 +83,28 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
     instalaciones <= 2,
     `hay ${instalaciones} reinstalaciones con scoop; el techo es 2 (el intento normal y UNA reparación)`,
   )
-  assert.match(ps1, /scoop uninstall opencode/, "la reparación tiene que limpiar antes")
+  // EL INSTALADOR NO PUEDE DESINSTALAR NADA. NUNCA.
+  //
+  // Había un `scoop uninstall opencode` antes de reinstalar, y era la única
+  // operación de todo el instalador capaz de dejar la máquina PEOR de como
+  // estaba. Con un falso negativo de Test-OpenCode desinstalaba un OpenCode
+  // sano, y si la reinstalación fallaba por red, el docente se quedaba sin nada.
+  //
+  // Pasó de verdad: una notebook que andaba quedó sin OpenCode DESPUÉS de correr
+  // el instalador.
+  //
+  // Y era innecesario: `scoop install` ya purga solo las instalaciones fallidas
+  // ("Purging previous failed installation"), pero sólo cuando de verdad hace
+  // falta. Nosotros lo hacíamos siempre, a ciegas.
+  //
+  // La regla: EL INSTALADOR PUEDE FALLAR, PERO NO PUEDE ROMPER.
+  const comandos = codigo.split("\n").filter((l) => !/Write-Host/.test(l))
+  const destructivos = comandos.filter((l) => /scoop uninstall|Remove-Item.*scoop|rm .*scoop/i.test(l))
+  assert.deepEqual(
+    destructivos.map((l) => l.trim()),
+    [],
+    "el instalador desinstala o borra algo: puede dejar la máquina peor de como estaba",
+  )
 
   // Y no puede preguntarle nada: el instalador también corre en silencio
   // (/VERYSILENT), donde un prompt no espera respuesta, cuelga para siempre.
