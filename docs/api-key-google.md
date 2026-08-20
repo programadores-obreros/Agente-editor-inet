@@ -67,4 +67,4 @@ La key se guarda en el archivo de credenciales de OpenCode (`~/.local/share/open
 }
 ```
 
-**Nunca** vive en este repositorio ni en ningún archivo versionado — el código de `install/install.ps1` e `install/install.sh` solo la *pide y escribe* ahí, en tu compu. El modelo usado (`google/gemini-flash-lite-latest`) está en `opencode/agent/tecnia-bot.md`.
+**Nunca** vive en este repositorio ni en ningún archivo versionado — el código de `install/install.ps1` e `install/install.sh` solo la *pide y escribe* ahí, en tu compu. El modelo usado (`google/gemini-3.5-flash-lite`) está en `opencode/agent/tecnia-bot.md`.

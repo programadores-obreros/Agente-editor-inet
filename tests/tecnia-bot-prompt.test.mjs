@@ -98,3 +98,26 @@ test("después de compilar, dice que TODAVÍA NO está en la placa", () => {
   assert.match(bloque, /parpade|funcionando|suene/i,
     "no cubre el caso de pedidos que sólo tienen sentido con la placa andando")
 })
+
+test("el modelo está FIJADO, no es un alias 'latest'", () => {
+  // La noche antes de una capacitación, un docente sacó una key nueva y el bot
+  // le contestó:
+  //
+  //   This model models/gemini-2.5-flash-lite is no longer available to NEW
+  //   USERS. Please update your code to use models/gemini-3.5-flash-lite
+  //
+  // El agente pedía `gemini-flash-lite-latest`, un alias — y ese alias resolvía a
+  // la 2.5, que las cuentas nuevas ya no pueden usar. O sea: andaba en las
+  // máquinas viejas y fallaba en TODAS las nuevas. El peor tipo de bug para el
+  // día de una capacitación: invisible para el que probó, fatal para los 20 que
+  // llegan.
+  //
+  // Un alias es una dependencia que cambia sola, sin avisar y sin quedar
+  // registrada en ningún commit. Fijar la versión hace que el día que haya que
+  // cambiarla sea una decisión, no una sorpresa.
+  const m = prompt.match(/^model:\s*(\S+)/m)
+  assert.ok(m, "el agente no declara modelo")
+  assert.doesNotMatch(m[1], /latest$/,
+    `el modelo es un alias ("${m[1]}"): puede cambiar solo y romper las cuentas nuevas`)
+  assert.match(m[1], /^google\/gemini-[\d.]+-/, `modelo inesperado: ${m[1]}`)
+})
