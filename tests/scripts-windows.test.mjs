@@ -78,3 +78,26 @@ test("ningún .ps1 tiene caracteres fuera de ASCII", () => {
  * El test de ASCII de arriba cubre la causa real del incidente. Un test que da
  * falso positivo es peor que no tenerlo: enseña a ignorar el rojo.
  */
+
+test("ningún script lleva caracteres de control invisibles", () => {
+  // Una ruta de PowerShell escrita desde un script mal escapado puede terminar
+  // con un 0x07 (campana) en vez de "\\a": `scoop\\apps` se convierte en
+  // `scoop<BEL>pps` y la ruta apunta a un lugar que no existe.
+  //
+  // No se ve. El archivo parece correcto en cualquier editor, el script parsea,
+  // y falla en silencio en tiempo de ejecución. Pasó exactamente así, al escribir
+  // el fallback de CPU sin AVX2 desde un heredoc de Python.
+  const problemas = []
+  for (const [dir, f] of scripts) {
+    const texto = readFileSync(join(dir, f), "latin1")
+    texto.split("\n").forEach((linea, i) => {
+      const raros = linea.match(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g)
+      if (raros) {
+        problemas.push(
+          `${f}:${i + 1} → ${raros.map((c) => "0x" + c.charCodeAt(0).toString(16)).join(" ")} en: ${linea.trim().slice(0, 55)}`,
+        )
+      }
+    })
+  }
+  assert.deepEqual(problemas, [], "caracteres de control invisibles:\n" + problemas.join("\n"))
+})

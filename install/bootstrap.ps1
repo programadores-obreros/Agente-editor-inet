@@ -103,7 +103,7 @@ function Test-OpenCode {
 # shim de Scoop siguen apuntando al mismo lugar, asi que no hace falta admin ni
 # tocar nada de Scoop.
 function Install-OpenCodeBaseline {
-    $appDir = Join-Path $env:USERPROFILE "scooppps\opencode"
+    $appDir = Join-Path $env:USERPROFILE "scoop\apps\opencode"
     if (-not (Test-Path $appDir)) { return $false }
     $ver = (Get-ChildItem $appDir -Directory -EA SilentlyContinue |
             Where-Object { $_.Name -ne 'current' } |
@@ -248,26 +248,35 @@ if (Test-OpenCode) {
     }
 
     if (-not (Test-OpenCode)) {
+        # NO SE CORTA ACA, Y ESTA DECISION SE TOMO ROMPIENDO UNA QUE FUNCIONABA.
+        #
+        # Hasta la v0.3.19 este script no tenia un solo `exit`: si OpenCode
+        # fallaba, seguia igual y llegaba a instalar la capa educativa. Se agrego
+        # el corte con un argumento razonable -- "un instalador que dice OK sin
+        # verificar es peor que uno que falla" -- y estaba bien para AVISAR. Pero
+        # se aplico mal: se convirtio "avisar" en "abandonar".
+        #
+        # Y la capa NO DEPENDE de OpenCode para instalarse: es copia de archivos,
+        # sin red, sin Scoop, sin nada que pueda fallar. Cortar antes la tiraba por
+        # la borda y dejaba la maquina con DOS problemas en vez de uno.
+        #
+        # Se vio en una notebook real: opencode extraido pero sin shim, y ademas
+        # sin agente, sin skills y sin fichas. Con la v0.3.19 esa misma maquina
+        # habria quedado con la capa puesta, esperando que se arregle OpenCode.
+        #
+        # Ahora se anota y se sigue. El aviso va al final, junto con el resto.
+        $script:FalloOpenCode = $true
         Write-Host ""
-        Write-Host "  [X] OpenCode NO arranca en esta maquina." -ForegroundColor Red
-        Write-Host ""
-        # SE MUESTRA EL ERROR REAL, no una suposicion. La version anterior decia
-        # "lo mas comun es que la descarga se corte" -- y cuando el hash da OK, la
-        # descarga esta perfecta. Ese mensaje mandaba a culpar a la conexion
-        # mientras el problema era el antivirus o el procesador.
+        Write-Host "  [!] OpenCode no arranca en esta maquina." -ForegroundColor Yellow
         if ($script:SalidaOpenCode) {
-            Write-Host "      Esto es lo que contesto OpenCode:" -ForegroundColor Yellow
-            Write-Host ("      " + ($script:SalidaOpenCode -split "`n" | Select-Object -First 4 | ForEach-Object { $_.Trim() }) -join "`n      ")
-            Write-Host ""
+            Write-Host "      Esto contesto:" -ForegroundColor Yellow
+            Write-Host ("      " + (($script:SalidaOpenCode -split "`n" | Select-Object -First 3 | ForEach-Object { $_.Trim() }) -join "`n      "))
         }
-        Write-Host "      Corre el 'Diagnostico de Tecnia Bot' del menu inicio: dice si"
-        Write-Host "      fue el antivirus, el procesador, el disco o la red."
+        Write-Host "      Sigo instalando el resto: la capa educativa no depende de el."
         Write-Host ""
-        Write-Host "      https://github.com/programadores-obreros/Agente-editor-inet/issues"
-        Write-Host ""
-        exit 1
+    } else {
+        Write-Host "  [OK] OpenCode instalado."
     }
-    Write-Host "  [OK] OpenCode instalado."
 }
 
 # --- 3. Python + PlatformIO -------------------------------------------------
@@ -336,6 +345,21 @@ if (-not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
 }
 
 Write-Host ""
+# EL AVISO VA AL FINAL, DONDE SE LEE. Si OpenCode fallo, la capa igual quedo
+# instalada -- y eso importa: el dia que OpenCode se arregle, el bot ya esta ahi.
+# Cortar antes dejaba la maquina con dos problemas en vez de uno.
+if ($script:FalloOpenCode) {
+    Write-Host "  La capa de Tecnia Bot quedo instalada, pero OPENCODE NO ARRANCA." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Sin OpenCode el bot no se puede abrir todavia. Para saber por que:"
+    Write-Host "    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Lo que suele resolverlo, en una terminal:"
+    Write-Host "    scoop uninstall opencode" -ForegroundColor Yellow
+    Write-Host "    scoop install opencode" -ForegroundColor Yellow
+    Write-Host ""
+    exit 1
+}
 Write-Host "  LISTO! Abri una terminal en cualquier carpeta, escribi 'opencode',"
 Write-Host "  apreta Tab y elegi 'tecnia-bot'."
 Write-Host ""

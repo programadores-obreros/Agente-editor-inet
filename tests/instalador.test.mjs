@@ -73,7 +73,12 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   // Se cuentan las reinstalaciones con scoop, que son las caras. El fallback de
   // CPU sin AVX2 no cuenta: no reinstala, baja OTRO binario — y existe
   // justamente porque reinstalar el mismo no converge nunca.
-  const instalaciones = [...codigo.matchAll(/scoop install opencode/g)].length
+  // Se cuentan COMANDOS, no las líneas que le IMPRIMEN la instrucción al docente:
+  // el aviso final le sugiere correr `scoop install opencode` a mano, y eso es
+  // texto, no una tercera reinstalación.
+  const instalaciones = codigo
+    .split("\n")
+    .filter((l) => /scoop install opencode/.test(l) && !/Write-Host/.test(l)).length
   assert.ok(
     instalaciones <= 2,
     `hay ${instalaciones} reinstalaciones con scoop; el techo es 2 (el intento normal y UNA reparación)`,
@@ -85,12 +90,30 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   assert.doesNotMatch(codigo, /Read-Host|\[Console\]::ReadKey|Pause\b/, "no puede preguntar nada")
 })
 
-test("si OpenCode no quedó, el instalador CORTA en vez de seguir", () => {
-  // Seguir es lo que hacía antes, y por eso el error aparecía tres pasos
-  // después, en el acceso directo, sin relación visible con la causa.
-  const i = codigo.indexOf("OpenCode NO arranca")
-  assert.ok(i > 0, "no hay mensaje de fallo para OpenCode")
-  assert.match(codigo.slice(i, i + 1400), /exit 1/, "avisa pero sigue igual")
+test("si OpenCode falla, la capa educativa SE INSTALA IGUAL", () => {
+  // ESTE TEST ESTABA AL REVES, Y PROTEGIA UNA REGRESION.
+  //
+  // Exigia que el instalador CORTARA cuando OpenCode fallaba. El argumento era
+  // bueno —"decir OK sin verificar es peor que fallar"— pero se aplico mal:
+  // convirtio "avisar" en "abandonar".
+  //
+  // Hasta la v0.3.19 este script no tenia un solo `exit`, y esa version se
+  // instalaba sin problemas. Con el corte, una notebook real quedo con OpenCode
+  // a medias Y SIN agente, sin skills y sin fichas: dos problemas en vez de uno.
+  //
+  // La capa NO depende de OpenCode para instalarse: es copia de archivos, sin
+  // red. El dia que OpenCode se arregle, el bot ya tiene que estar ahi.
+  const paso2 = codigo.indexOf("scoop install opencode")
+  const paso4 = codigo.indexOf("install.ps1")
+  assert.ok(paso2 > 0 && paso4 > paso2, "no encontré los pasos en orden")
+
+  // Entre que falla OpenCode y que se instala la capa NO puede haber un exit.
+  const entre = codigo.slice(paso2, paso4)
+  assert.doesNotMatch(
+    entre,
+    /exit 1/,
+    "el instalador aborta antes de instalar la capa: es la regresión de la v0.3.19",
+  )
 })
 
 test("el mensaje de fallo dice QUÉ hacer, no sólo que falló", () => {
@@ -100,12 +123,15 @@ test("el mensaje de fallo dice QUÉ hacer, no sólo que falló", () => {
   //
   // Lo que sí tiene que quedar: que se intentó más de una vez (para que no
   // reintente al pedo), y a dónde ir cuando ni eso alcanzó.
-  const i = codigo.indexOf("OpenCode NO arranca")
-  const mensaje = codigo.slice(i, i + 1400)
+  const i = codigo.indexOf("OPENCODE NO ARRANCA")
+  assert.ok(i > 0, "no hay aviso final para el caso de OpenCode caído")
+  // Alrededor y no sólo hacia adelante: "la capa quedó instalada" está en la
+  // MISMA línea, antes de "OPENCODE NO ARRANCA". Cortar hacia adelante lo perdía.
+  const mensaje = codigo.slice(Math.max(0, i - 300), i + 900)
   assert.match(mensaje, /Diagnostico/i, "no manda al diagnóstico, que es lo que dice la causa")
-  assert.match(mensaje, /issues/, "no dice a dónde pedir ayuda")
-  // Y NO puede volver a culpar a la conexión: cuando el hash da OK la descarga
-  // está perfecta, y ese mensaje mandaba a mirar el lugar equivocado.
+  assert.match(mensaje, /quedo instalada|capa/i, "no aclara que la capa SÍ quedó puesta")
+  // Y NO puede culpar a la conexión: cuando el hash da OK la descarga está
+  // perfecta, y ese mensaje mandaba a mirar el lugar equivocado.
   assert.doesNotMatch(mensaje, /descarga se corte|mejor conexion/i, "vuelve a culpar a la conexión")
 })
 
