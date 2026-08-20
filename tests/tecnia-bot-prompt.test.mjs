@@ -288,3 +288,45 @@ test("todos los mensajes terminan con una pregunta o una acción", () => {
   assert.match(bloque, /Dos opciones/i,
     "no sugiere ofrecer dos caminos concretos en vez de una pregunta abierta")
 })
+
+test("/diagnostico no inventa cómo instalar PlatformIO", () => {
+  // Pasó en la capacitación del 20/08: una máquina de decenas se quedó sin
+  // PlatformIO, y el bot le dijo a la docente que instalara Visual Studio Code
+  // y la extensión PlatformIO IDE. Cientos de megas de otro producto, para
+  // seguir sin poder compilar.
+  //
+  // La causa no fue el modelo: el comando decía «explicá brevemente los pasos
+  // para instalar en Windows» sin decir cuáles. Una instrucción que pide
+  // improvisar recibe una improvisación, y la más difundida en internet es la
+  // de VS Code.
+  //
+  // Acá hay una sola forma: volver a correr el instalador.
+  const cmd = readFileSync(join(REPO, "opencode/command/diagnostico.md"), "utf8")
+
+  assert.match(cmd, /volver a correr el instalador|correr el instalador de Tecnia Bot/i,
+    "no dice cuál es la reparación real")
+  assert.match(cmd, /pypi\.org/i,
+    "no contempla que la causa sea la red, que es lo más común en una escuela")
+
+  // Y la prohibición explícita, sin la cual la instrucción positiva no alcanza:
+  // el modelo puede dar la correcta Y ADEMÁS la de VS Code, «por las dudas».
+  assert.match(cmd, /Nunca menciones VS Code|no inventes/i,
+    "no le prohíbe explícitamente ofrecer otra forma de instalar")
+
+  // Y el contrapeso: que no quede un bot que sólo enumera lo que falta.
+  assert.match(cmd, /lo que SÍ puede hacer|sirve igual/i,
+    "no le dice al docente qué puede hacer mientras tanto")
+})
+
+test("el tool platformio no manda a la documentación oficial", () => {
+  // El tool es lo que el modelo lee. Si ahí adentro va el link a una página con
+  // cinco métodos de instalación, el modelo elige uno — y el que elige es el que
+  // no sirve acá.
+  const tool = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
+  const codigo = tool.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+
+  assert.doesNotMatch(codigo, /docs\.platformio\.org/,
+    "el tool devuelve el link de la doc oficial: es una página con cinco métodos y el modelo va a elegir el de VS Code")
+  assert.match(codigo, /instalador de Tecnia Bot|correr el instalador/i,
+    "el tool no dice cuál es la reparación que corresponde acá")
+})

@@ -106,6 +106,62 @@ try {
   Dato "Defender" "no se pudo consultar (puede haber otro antivirus)"
 }
 
+Titulo "PlatformIO: en cual de los cuatro pasos se corto"
+# UNA SOLA MAQUINA DE VEINTE se quedo sin PlatformIO en la capacitacion del
+# 20/08. Antes esto decia "FALTA" y se terminaba ahi, que no alcanza para nada:
+# instalarlo es una CADENA y hay que saber que eslabon se rompio.
+#
+#   1. scoop install python          <- si falla, falla todo lo demas
+#   2. bajar get-platformio.py       <- una red de escuela con proxy lo bloquea
+#   3. correr ese script (arma un venv en ~/.platformio)
+#   4. el script hace pip install platformio, contra pypi.org
+#
+# El paso 4 es el sospechoso numero uno en una escuela: pypi.org sale por
+# HTTPS a un dominio que ningun filtro de contenido conoce, y cuando lo bloquea
+# no dice "bloqueado", dice "timeout". Se distingue mirando si quedo la carpeta
+# a medias: si hay `.platformio\penv` pero no hay `pio.exe`, el venv se armo y
+# lo que fallo fue bajar el paquete. O sea, red, no permisos.
+$P = "$U\.platformio"
+Dato "1. python (scoop)" $(if (Test-Path "$U\scoop\shims\python.exe") { "OK" } elseif (Get-Command python -EA SilentlyContinue) { "OK (otro python)" } else { "FALTA <- se corto aca" })
+Dato "2. carpeta .platformio" $(if (Test-Path $P) { "existe" } else { "NO existe" })
+Dato "3. entorno (penv)" $(if (Test-Path "$P\penv") { "armado" } else { "NO se armo" })
+Dato "4. pio.exe" $(if (Test-Path "$P\penv\Scripts\pio.exe") { "OK" } else { "FALTA" })
+if ((Test-Path "$P\penv") -and -not (Test-Path "$P\penv\Scripts\pio.exe")) {
+  Write-Host "     >> El entorno se armo pero el paquete no bajo: mira la RED, no los permisos" -ForegroundColor Yellow
+}
+# Que la maquina llegue a pypi.org. Es la pregunta que decide todo lo demas, y
+# se contesta en dos segundos.
+try {
+  $r = Invoke-WebRequest -Uri "https://pypi.org/simple/platformio/" -UseBasicParsing -TimeoutSec 8 -Method Head
+  Dato "llega a pypi.org" ("SI (HTTP " + $r.StatusCode + ")")
+} catch {
+  # El TIPO de excepcion, no el mensaje. Un error de red trae adentro la URL del
+  # proxy, y en una escuela el proxy se configura como
+  # http://usuario:clave@proxy:8080 -- o sea que el mensaje puede llevarse una
+  # credencial de red en un archivo que despues se manda por WhatsApp.
+  #
+  # Este archivo lo agarro el propio test que prohibe Exception.Message. Estaba
+  # puesto por auth.json y sirvio para otra cosa: es una regla que vale para TODO
+  # lo que se imprima aca, no para un archivo en particular.
+  $codigo = ""
+  try { if ($_.Exception.Response) { $codigo = " (HTTP " + [int]$_.Exception.Response.StatusCode + ")" } } catch { }
+  Dato "llega a pypi.org" ("NO - " + $_.Exception.GetType().Name + $codigo)
+  Write-Host "     >> Sin pypi.org no hay PlatformIO. Es la red de la escuela, no la maquina." -ForegroundColor Red
+}
+$proxy = [Environment]::GetEnvironmentVariable("HTTPS_PROXY", "User")
+if (-not $proxy) { $proxy = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -EA SilentlyContinue).ProxyServer }
+# Se tapa el usuario:clave si el proxy lo trae embebido. Saber que HAY proxy y
+# a que host apunta es lo que sirve para diagnosticar; la credencial no agrega
+# nada y no puede viajar.
+if ($proxy) { $proxy = [regex]::Replace($proxy, "//[^/@]+@", "//USUARIO:CLAVE@") }
+Dato "proxy configurado" $(if ($proxy) { $proxy } else { "ninguno" })
+# El log de PlatformIO, que dice la causa con todas las letras.
+$plog = Get-ChildItem "$P" -Filter "*.log" -EA SilentlyContinue | Sort-Object LastWriteTime -Desc | Select-Object -First 1
+if ($plog) {
+  Dato "log de PlatformIO" $plog.FullName
+  Get-Content $plog.FullName -EA SilentlyContinue | Select-Object -Last 8 | ForEach-Object { Write-Host ("     " + $_.Trim()) }
+}
+
 Titulo "Las credenciales -- el bug del BOM"
 # ACA NO SE IMPRIME NADA DEL CONTENIDO DE auth.json. Nunca.
 #

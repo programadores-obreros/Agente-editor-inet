@@ -91,11 +91,27 @@ test("la verificación EJECUTA opencode, no mira si el archivo está", () => {
   // es exactamente el defecto original: el instalador diciendo OK sin mirar.
   //
   // Lo que importa es que el VALOR DE RETORNO salga del código de salida.
+  // Acepta las dos formas de escribirlo: `return ($LASTEXITCODE -eq 0)` y el
+  // `if ($LASTEXITCODE -eq 0) { return $true }` del reintento. La primera versión
+  // pedía la forma literal y se puso roja cuando la función pasó a intentar dos
+  // veces — sin que cambiara en nada lo que se quería medir.
+  //
+  // Lo que se mide es que el SÍ salga del código de salida, no que aparezca la
+  // palabra `LASTEXITCODE` en algún lado.
   assert.match(
     fn,
-    /return\s*\(?\s*\$LASTEXITCODE\s*-eq\s*0\s*\)?/,
+    /return\s*\(?\s*\$LASTEXITCODE\s*-eq\s*0\s*\)?|if\s*\(\s*\$LASTEXITCODE\s*-eq\s*0\s*\)\s*\{\s*return\s+\$true/,
     "la función mira $LASTEXITCODE pero no devuelve eso: puede contestar que sí igual",
   )
+
+  // Y que no haya un `return $true` suelto, sin el código de salida delante:
+  // eso es el defecto original —el instalador diciendo OK sin mirar— escrito de
+  // otra manera.
+  for (const linea of fn.split("\n")) {
+    if (!/return\s+\$true/.test(linea)) continue
+    assert.match(linea, /LASTEXITCODE/,
+      `hay un \`return $true\` que no depende del código de salida: ${linea.trim()}`)
+  }
 })
 
 test("no se verifica contra un shim que Scoop no crea", () => {
@@ -481,4 +497,73 @@ test("el lanzador NO repara mientras hay una instalación en curso", () => {
     "entra a reparar sin mirar si hay una instalación corriendo")
   assert.match(antesDeLanzar, /exit \/b/,
     "detecta la instalación en curso pero no se detiene")
+})
+
+test("no se acepta el python falso de la Microsoft Store", () => {
+  // ASÍ FALLÓ EN UNA MÁQUINA REAL (capacitación del 20/08, equipo de Dirección).
+  //
+  // Windows deja un `python.exe` en %LOCALAPPDATA%\Microsoft\WindowsApps que no
+  // es Python: abre la tienda. Y esa carpeta suele ir ANTES que los shims de
+  // Scoop en el PATH, así que `python` a secas se lo lleva puesto.
+  //
+  // El código tenía `if (-not (Test-Path $shim)) { $PyExe = "python" }`. Ese
+  // fallback no era una red de seguridad: GARANTIZABA el modo de falla, porque
+  // si se llegaba ahí era justamente cuando no había otro python en el PATH.
+  //
+  // El log de esa máquina lo dice con todas las letras: "no se encontro Python;
+  // ejecutar sin argumentos para instalar desde el Microsoft Store".
+  const fn = funcion("Buscar-Python")
+
+  assert.match(fn, /WindowsApps/, "no descarta el señuelo de la Microsoft Store")
+  assert.match(fn, /Python\\s\*\+?3|Python\\\\s\+3|Python/, "no verifica que el candidato sea Python de verdad")
+
+  // Y que le PREGUNTE, en vez de suponerlo por dónde vive el archivo: un
+  // `Test-Path` pasa contra el señuelo igual que contra el bueno.
+  assert.match(fn, /--version/, "no ejecuta el candidato: mirar que el archivo esté no alcanza")
+  assert.match(fn, /LASTEXITCODE/, "lo ejecuta pero no mira si terminó bien")
+
+  // El fallback venenoso no puede volver.
+  assert.doesNotMatch(codigo, /\$PyExe\s*=\s*"python"/,
+    'volvió el fallback a `python` pelado, que en Windows moderno es el señuelo de la Store')
+})
+
+test("si no hay Python, se dice cómo apagar el alias -- no sólo que falta", () => {
+  // El mensaje de Windows ya explica el arreglo, pero aparece en medio de
+  // cincuenta líneas de instalación y nadie lo lee. Se lo repite donde se ve.
+  const i = codigo.indexOf("No hay un Python usable")
+  assert.ok(i > 0, "no avisa cuando no encuentra Python")
+  const bloque = hasta(codigo, i, /\n\s*\} else \{/)
+
+  // SE MIDE EL TEXTO COMO LO LEE LA DOCENTE, no como está escrito.
+  //
+  // La primera versión buscaba "Alias de ejecucion" en el código y daba rojo:
+  // la frase estaba, pero partida entre dos `Write-Host` —"Alias de" cerraba una
+  // línea y "ejecucion de aplicaciones" abría la siguiente—. En pantalla se lee
+  // igual; en el archivo hay comillas y un `Write-Host` en el medio.
+  //
+  // Un mensaje se prueba por lo que dice, no por en cuántas líneas se escribió.
+  const enPantalla = [...bloque.matchAll(/Write-Host\s+"([^"]*)"/g)]
+    .map((m) => m[1])
+    .join(" ")
+    .replace(/\s+/g, " ")
+
+  assert.match(enPantalla, /Alias de ejecucion de aplicaciones/i,
+    "no dice dónde se apaga el señuelo, que es el único paso que arregla esto")
+  assert.match(enPantalla, /volve a correr este instalador/i,
+    "dice cuál es el problema pero no qué hacer después de arreglarlo")
+  assert.doesNotMatch(bloque, /exit 1/,
+    "sin PlatformIO el bot sirve igual para explicar y repartir fichas: no puede cortar acá")
+})
+
+test("OpenCode no se declara muerto en el primer intento", () => {
+  // El antivirus escanea los 200 MB recién bajados y el shim de Scoop no puede
+  // leer el encabezado del ejecutable. Eso dio "OpenCode no arranca" en una
+  // máquina donde el bot ANDA -- lo usó la docente ese mismo día.
+  //
+  // Es, muy probablemente, el misterio del bootstrap que moría a los 2,4
+  // segundos y andaba corrido a mano dos minutos después: lo único distinto
+  // entre las dos corridas era el tiempo.
+  const fn = funcion("Test-OpenCode")
+  assert.match(fn, /foreach|for\s*\(|do\s*\{/, "no reintenta: un falso negativo cuesta una reinstalación entera")
+  assert.match(fn, /Start-Sleep/, "reintenta sin esperar, así que reintenta contra el mismo instante")
 })

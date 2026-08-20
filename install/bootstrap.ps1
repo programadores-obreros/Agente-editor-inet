@@ -117,12 +117,38 @@ function Test-OpenCode {
     # El costo del falso negativo no es cosmetico: dispara uninstall + install
     # sobre algo que funcionaba, y si la red esta mal en ese momento, lo rompe. Es
     # literalmente el mecanismo de "andaba y ahora no".
+    # SE INTENTA DOS VECES, CON UNA ESPERA EN EL MEDIO.
+    #
+    # Esto salio del log de una maquina real (capacitacion del 20/08). El chequeo
+    # dijo "OpenCode no arranca" y contesto esto:
+    #
+    #     opencode.exe : Shim: Could not determine if target is a GUI app.
+    #
+    # Ese mensaje lo escribe el shim de Scoop cuando no puede leer el encabezado
+    # del ejecutable al que apunta. Y el binario de OpenCode pesa casi 200 MB y
+    # acaba de aterrizar en el disco: el antivirus lo esta escaneando y lo tiene
+    # tomado. Unos segundos despues se lee perfecto.
+    #
+    # La prueba de que era un FALSO NEGATIVO: en esa misma maquina el bot abrio y
+    # funciono. Declaramos muerto algo que andaba, y por eso el instalador se puso
+    # a reinstalar OpenCode al pedo y le mostro una pantalla de error a la docente.
+    #
+    # Y esto es, muy probablemente, el misterio que arrastrabamos: un bootstrap que
+    # moria a los 2,4 segundos y andaba perfecto corrido a mano dos minutos
+    # despues. Lo unico que cambiaba entre las dos corridas era el tiempo.
+    #
+    # Reintentar sale una espera de tres segundos EN EL PEOR CASO. No reintentar
+    # salia una reinstalacion entera y un susto.
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $global:LASTEXITCODE = 0
-        $script:SalidaOpenCode = (& opencode --version 2>&1 | Out-String)
-        return ($LASTEXITCODE -eq 0)
+        foreach ($intento in 1, 2) {
+            $global:LASTEXITCODE = 0
+            $script:SalidaOpenCode = (& opencode --version 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0) { return $true }
+            if ($intento -eq 1) { Start-Sleep -Seconds 3 }
+        }
+        return $false
     } catch {
         $script:SalidaOpenCode = $_.Exception.Message
         return $false
@@ -351,6 +377,56 @@ if (Test-OpenCode) {
     }
 }
 
+# --- Encontrar un Python DE VERDAD ------------------------------------------
+#
+# EL SENUELO DE LA MICROSOFT STORE. Windows 10 y 11 dejan un `python.exe` falso
+# en %LOCALAPPDATA%\Microsoft\WindowsApps que no es Python: es un acceso directo
+# que abre la tienda. Y esa carpeta suele ir ANTES que los shims de Scoop en el
+# PATH del usuario, asi que `python` a secas se lo lleva puesto.
+#
+# ASI FALLO EN UNA MAQUINA REAL (capacitacion del 20/08, equipo de Direccion).
+# El codigo hacia:
+#
+#     $PyExe = "...\scoop\shims\python.exe"
+#     if (-not (Test-Path $PyExe)) { $PyExe = "python" }   # <- el fallback
+#
+# El shim de Scoop no estaba -aunque `scoop install python` dijera "already
+# installed (3.14.7)"-, cayo al fallback, y el log quedo con esto:
+#
+#     no se encontro Python; ejecutar sin argumentos para instalar desde el
+#     Microsoft Store o deshabilitar este acceso directo desde Configuracion >
+#     Aplicaciones > Alias de ejecucion de aplicaciones.
+#
+# Ese mensaje no lo escribe Python. Lo escribe el senuelo. El fallback a `python`
+# no era una red de seguridad: GARANTIZABA el modo de falla.
+#
+# Ahora se prueban varios lugares, se descarta WindowsApps de entrada, y a cada
+# candidato SE LE PREGUNTA si es Python en vez de suponerlo por donde vive. Es la
+# misma leccion que el lanzador ya aprendio buscando OpenCode en tres lados; este
+# bloque nunca la recibio.
+function Buscar-Python {
+    $candidatos = @(
+        (Join-Path $env:USERPROFILE "scoop\shims\python.exe"),
+        (Join-Path $env:USERPROFILE "scoop\apps\python\current\python.exe")
+    )
+    foreach ($c in (Get-Command -Name python, python3 -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($c.Source) { $candidatos += $c.Source }
+    }
+    foreach ($ruta in $candidatos) {
+        if (-not $ruta) { continue }
+        if ($ruta -like "*\WindowsApps\*") { continue }
+        if (-not (Test-Path $ruta)) { continue }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $global:LASTEXITCODE = 0
+            $v = (& $ruta --version 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -and $v -match "Python\s+3") { return $ruta }
+        } catch { } finally { $ErrorActionPreference = $prev }
+    }
+    return $null
+}
+
 # --- 3. Python + PlatformIO -------------------------------------------------
 $PioExe = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
 if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
@@ -362,12 +438,25 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
     # instalacion. Instalamos con Scoop (idempotente) y lo llamamos por ruta.
     scoop install python
     Refresh-Path
-    $PyExe = Join-Path $env:USERPROFILE "scoop\shims\python.exe"
-    if (-not (Test-Path $PyExe)) { $PyExe = "python" }
-    $Tmp = Join-Path $env:TEMP "get-platformio.py"
-    Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null
-    & $PyExe $Tmp
-    Remove-Item $Tmp -ErrorAction SilentlyContinue
+    $PyExe = Buscar-Python
+    if (-not $PyExe) {
+        Write-Host ""
+        Write-Host "  [!] No hay un Python usable en esta maquina." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "      Si Windows te ofrece instalar Python desde la Microsoft Store, es"
+        Write-Host "      un senuelo: hay un python.exe falso en WindowsApps que solo abre"
+        Write-Host "      la tienda. Se apaga en Configuracion > Aplicaciones > Alias de"
+        Write-Host "      ejecucion de aplicaciones, destildando python.exe y python3.exe."
+        Write-Host ""
+        Write-Host "      Despues volve a correr este instalador."
+        Write-Host ""
+    } else {
+        Write-Host "      Python: $PyExe"
+        $Tmp = Join-Path $env:TEMP "get-platformio.py"
+        Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null
+        & $PyExe $Tmp
+        Remove-Item $Tmp -ErrorAction SilentlyContinue
+    }
     # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en
     # ~/.platformio y no agrega nada al PATH de esta consola.
     if (-not (Test-Path $PioExe)) {

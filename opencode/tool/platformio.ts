@@ -421,8 +421,35 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
   }
 }
 
+/**
+ * ESTE MENSAJE NO DA EL LINK DE LA DOCUMENTACION OFICIAL, Y ES A PROPOSITO.
+ *
+ * Paso en una capacitacion: de decenas de maquinas, UNA se quedo sin PlatformIO.
+ * La docente corrio `/diagnostico` y el bot le contesto que instalara Visual
+ * Studio Code y la extension PlatformIO IDE.
+ *
+ * Eso no arregla nada aca. Tecnia Bot usa PlatformIO CORE, que lo instala su
+ * propio instalador. El consejo mandaba a la directora de una escuela a bajar
+ * cientos de megas de otro producto para seguir sin poder compilar.
+ *
+ * Y el modelo no invento de la nada: la pagina oficial ofrece cinco metodos, y
+ * el mas difundido en internet es el de VS Code. Le dimos un link con opciones
+ * y le pedimos que eligiera. Eligio la que cualquiera hubiera elegido.
+ *
+ * Aca hay UNA sola forma de arreglarlo, y ya esta instalada en la maquina.
+ */
 function pioNoEncontrado() {
-  return "PlatformIO no esta instalado o no se encuentra en el PATH.\n\nPara instalarlo: https://docs.platformio.org/en/latest/core/installation/"
+  return (
+    "PlatformIO no esta instalado.\n\n" +
+    "COMO SE ARREGLA (no hay que instalar nada aparte, ni VS Code, ni Python a mano):\n" +
+    "  1. Menu inicio -> volve a correr el instalador de Tecnia Bot.\n" +
+    "     Instala PlatformIO Core solo, sin preguntar nada.\n" +
+    "  2. Si despues de eso sigue faltando, es la RED y no la maquina:\n" +
+    "     menu inicio -> 'Diagnostico de Tecnia Bot'. Deja un .txt que dice si\n" +
+    "     esta maquina llega a pypi.org, que es de donde se baja.\n\n" +
+    "Mientras tanto Tecnia Bot sirve igual para explicar, dibujar circuitos y\n" +
+    "repartir fichas. Lo unico que no puede es compilar y cargar a la placa."
+  )
 }
 
 export default tool({
@@ -622,7 +649,12 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, a
 
         let estado = placas === 1 ? "Listo para usar" : `Listo — veo ${placas} placas conectadas`
         if (!pioOk) {
-          estado = "Falta instalar PlatformIO — https://docs.platformio.org/en/latest/core/installation/"
+          // Sin link a la documentacion oficial: ver pioNoEncontrado(). La
+          // reparacion de Tecnia Bot es volver a correr SU instalador.
+          estado =
+            "Falta instalar PlatformIO. Se arregla volviendo a correr el instalador de " +
+            "Tecnia Bot (menu inicio), que lo instala solo. NO hay que instalar VS Code " +
+            "ni nada aparte. Si aun asi falta, es la red: correr 'Diagnostico de Tecnia Bot'."
         } else if (placas === 0) {
           /*
            * ANTES DE DECIR "no hay nada", PREGUNTARLE A WINDOWS.

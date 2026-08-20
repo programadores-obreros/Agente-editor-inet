@@ -128,3 +128,28 @@ test("el reporte se puede encontrar: dice dónde lo dejó", () => {
   assert.match(codigo, /No se pudo guardar/i,
     "si falla el guardado no avisa, y el docente cree que mandó algo que no existe")
 })
+
+test("el proxy se informa sin la credencial que puede traer adentro", () => {
+  // Encontrado agregando el diagnóstico de PlatformIO, y no lo vi venir.
+  //
+  // En una escuela el proxy se configura como `http://usuario:clave@proxy:8080`.
+  // Imprimir esa variable tal cual mete una credencial de RED en un archivo que
+  // el docente después manda por WhatsApp. No es la clave de la API —la regla de
+  // arriba no lo cubría— pero es una credencial igual.
+  //
+  // Saber que hay proxy y a qué host apunta es lo que sirve para diagnosticar.
+  // El usuario y la clave no agregan nada.
+  const codigo = sinComentarios(leer("install/diagnostico.ps1"))
+
+  const usaProxy = /\$proxy/.test(codigo)
+  if (!usaProxy) return // si un día deja de informarlo, no hay nada que tapar
+
+  assert.match(codigo, /regex\]::Replace\(\$proxy|-replace/,
+    "informa el proxy sin taparle el usuario:clave que puede traer embebido")
+
+  // Y que el tapado ocurra ANTES de imprimirlo, no después.
+  const tapa = codigo.search(/regex\]::Replace\(\$proxy|\$proxy\s*-replace/)
+  const imprime = codigo.search(/Dato "proxy/)
+  assert.ok(tapa > 0 && tapa < imprime,
+    "se tapa la credencial del proxy DESPUÉS de imprimirla, que es igual a no taparla")
+})
