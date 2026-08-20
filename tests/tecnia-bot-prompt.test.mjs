@@ -47,3 +47,54 @@ test("tecnia-bot.md: prohíbe explícitamente webfetch con rutas locales/file://
   assert.match(prompt, /ruta exacta/, "indica dar la ruta exacta al usuario")
   assert.match(prompt, /doble clic/, "indica pedir doble clic para abrir el archivo")
 })
+
+test("la placa se resuelve ANTES de responder de hardware", () => {
+  // Lo pidió el usuario probando el bot: "quiero que piense, siempre, qué placa
+  // tiene, o que pregunte".
+  //
+  // La regla existía pero estaba enterrada en la sección de PlatformIO y sólo
+  // aplicaba a compilar. Y la placa cambia MUCHO más que eso: 5 V contra 3,3, el
+  // LED en el pin 13 contra GPIO 2, el ADC de 1023 contra 4095. Un código que
+  // prende un LED en el 13 no hace nada visible en un ESP32.
+  //
+  // Peor: un divisor colgado de 5 V leído por un ESP32 le mete 5 V a una entrada
+  // de 3,3. Asumir la placa no es impreciso, es peligroso.
+  const i = prompt.indexOf("QUÉ PLACA es")
+  assert.ok(i > 0, "no está la regla de resolver la placa")
+
+  // Tiene que estar ARRIBA, entre las reglas críticas — no enterrada.
+  const inicio = prompt.indexOf("## Inicio de sesión")
+  assert.ok(i < inicio, "la regla quedó después del inicio de sesión: nadie la va a aplicar")
+
+  const regla = prompt.slice(i, i + 2600)
+  assert.match(regla, /perfil/, "no dice que primero mire el perfil")
+  assert.match(regla, /diagnostico/i, "no ofrece detectar lo que hay conectado")
+  assert.match(regla, /pregunt/i, "no dice que pregunte cuando no sabe")
+  assert.match(regla, /3,3|3\.3/, "no explica por qué importa (la tensión)")
+
+  // Y el equilibrio: preguntar cuando cambia la respuesta, no por reflejo.
+  assert.match(regla, /no depend|reflejo/i, "va a preguntar la placa para todo, y molesta")
+})
+
+test("después de compilar, dice que TODAVÍA NO está en la placa", () => {
+  // El usuario probando el bot: "le dije que haga un código que encienda un LED,
+  // dice que lo hace, y nada. ¿Tiene algún mockup?".
+  //
+  // No había mock: el bot hacía exactamente lo que el prompt le pide — compilar
+  // y NO cargar, porque cargar es una acción física que decide el docente. Esa
+  // decisión está bien y se mantiene.
+  //
+  // El problema era cómo lo comunicaba. "Listo" se lee como "está en la placa".
+  // El docente mira el LED, no pasa nada, y concluye que el bot no sirve.
+  const i = prompt.indexOf("Cargarlo a la placa es OTRA cosa")
+  assert.ok(i > 0, "no está la regla de no cargar por su cuenta")
+  const bloque = prompt.slice(i, i + 2200)
+
+  assert.match(bloque, /Todavía no está en la placa|todavia no esta en la placa/i,
+    "no obliga a aclarar que el código no está cargado")
+  assert.match(bloque, /listo/i, "no prohíbe cerrar con «listo» a secas")
+
+  // Y que pregunte antes, cuando lo que piden sólo tiene sentido andando.
+  assert.match(bloque, /parpade|funcionando|suene/i,
+    "no cubre el caso de pedidos que sólo tienen sentido con la placa andando")
+})
