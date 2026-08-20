@@ -1216,6 +1216,8 @@ export default tool({
 
 USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
+⚠️ TODOS LOS PRESETS SON PARA ESP32. No hay ninguno de Arduino UNO todavía. Los pines que dibuja (GPIO 2, 4, 18...) NO existen en un UNO, y su tensión es 3,3 V contra los 5 V del UNO. Si el docente trabaja con un Arduino UNO, DECÍSELO antes de mostrarle el diagrama: "el esquema que te puedo dibujar es para ESP32; en el UNO los pines son otros". Nunca se lo muestres como si fuera el suyo.
+
 Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dht22-esp32, pir-esp32, lcd-esp32.
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
 Proyectos integradores (varios componentes): estacion-meteo (DHT22+LCD), alarma (PIR+buzzer+LED), semaforo (3 LEDs).
@@ -1248,8 +1250,19 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       .describe("Si es true (default), abre el HTML generado en el navegador por defecto automáticamente. Pasá false para solo escribir el archivo sin abrirlo."),
   },
   async execute(args, ctx) {
-    // Por defecto abrimos el HTML en el navegador (default true). Solo se omite con abrir:false.
-    const abrir = args.abrir !== false
+    /*
+     * POR DEFECTO NO SE ABRE, y esto cambió después de verlo en uso.
+     *
+     * Antes abría el navegador en CADA pedido. La idea era buena --el docente no
+     * técnico no tiene que buscar el archivo ni hacer doble clic-- pero en la
+     * práctica una ventana que salta sola cada vez que preguntás algo interrumpe
+     * lo que estabas haciendo. El reporte fue textual: "cada vez que le pido algo
+     * me abre esto, toda una desprolijidad".
+     *
+     * Ahora el bot genera, cuenta en una línea qué se ve, y OFRECE abrirlo. Es la
+     * misma regla que ya rige para el código: hacer y ofrecer, no imponer.
+     */
+    const abrir = args.abrir === true
     const bundle = bundlePath()
     if (!existsSync(bundle)) {
       return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Tecnia Bot con el instalador para que copie la biblioteca visual."

@@ -154,3 +154,22 @@ test("no pega el código: lo ofrece, junto con cargarlo", () => {
   assert.match(bloque, /No compila/i,
     "si no compila tiene que mostrarlo entero, con el error")
 })
+
+test("el circuito no se abre solo, y avisa si la placa no es ESP32", () => {
+  // Reporte del usuario: "cada vez que le pido algo me abre esto, toda una
+  // desprolijidad. O que no lo abra, o que me pregunte en base al equipo que voy
+  // a trabajar, arduino, esp".
+  //
+  // Dos problemas, y el segundo era más grave que el reportado: el tool abría el
+  // navegador en CADA pedido, y además TODOS sus presets son de ESP32. Un docente
+  // con Arduino UNO recibía un diagrama con pines GPIO que en su placa no
+  // existen, sin ninguna advertencia.
+  const i = prompt.indexOf("lo mismo con los circuitos")
+  assert.ok(i > 0, "no está la regla de los circuitos")
+  const bloque = prompt.slice(i, i + 1400)
+
+  assert.match(bloque, /ya no abre el navegador solo/i, "no dice que dejó de abrirse solo")
+  assert.match(bloque, /abrir:\s*true/, "no dice cómo abrirlo cuando aceptan")
+  assert.match(bloque, /ESP32/, "no advierte que los presets son de ESP32")
+  assert.match(bloque, /UNO/, "no contempla al docente que tiene un Arduino UNO")
+})
