@@ -61,6 +61,30 @@ function Refresh-Path {
 #
 # 'opencode --version' tarda menos de un segundo y devuelve exit 0. Es barato y
 # es la unica prueba que vale: el programa arranco.
+# Donde vive el binario de verdad, mas alla del shim.
+$BinOpenCode = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\opencode.exe"
+
+# Repara el shim cuando el programa ESTA pero le falta su lanzador de 20 KB.
+#
+# Scoop instala en dos tiempos: extrae el programa y arma el enlace 'current', y
+# DESPUES crea el shim. Si aborta en el medio -- pasa, y esta documentado -- queda
+# todo menos esa pieza chiquita. El comando `opencode` no existe, pero el programa
+# esta entero, a 180 MB, mirando.
+#
+# Antes se reinstalaba de cero por eso: 57 MB de descarga para recuperar 20 KB que
+# se pueden escribir en el momento. En un aula con la red saturada, esa diferencia
+# es la clase entera.
+function Reparar-Shim {
+    if (-not (Test-Path $BinOpenCode)) { return $false }
+    try {
+        $shims = Join-Path $env:USERPROFILE "scoop\shims"
+        New-Item -ItemType Directory -Force -Path $shims | Out-Null
+        Copy-Item $BinOpenCode (Join-Path $shims "opencode.exe") -Force
+        Refresh-Path
+        return $true
+    } catch { return $false }
+}
+
 function Test-OpenCode {
     if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { return $false }
     # DOS TRAMPAS DE POWERSHELL, y las dos daban FALSO NEGATIVO sobre una
@@ -256,8 +280,16 @@ if (Test-OpenCode) {
             # hace falta. Nosotros lo haciamos siempre, a ciegas.
             #
             # REGLA: el instalador puede fallar, pero no puede romper.
-            Write-Host "  [..] OpenCode no arranca. Reintentando la instalacion..."
-            scoop install opencode
+            # PRIMERO LO BARATO: si el programa esta y solo falta el shim, se
+            # escribe y listo. Recien si eso no alcanza se vuelve a la red.
+            if (Test-Path $BinOpenCode) {
+                Write-Host "  [..] El programa esta pero falta su lanzador. Reparandolo..."
+                if (Reparar-Shim) { Write-Host "  [OK] Reparado sin volver a descargar nada." }
+            }
+            if (-not (Test-OpenCode)) {
+                Write-Host "  [..] OpenCode no arranca. Reintentando la instalacion..."
+                scoop install opencode
+            }
             Refresh-Path
             # Si despues de reinstalar sigue sin arrancar Y el binario esta, es la
             # CPU: no tiene sentido un tercer intento identico.

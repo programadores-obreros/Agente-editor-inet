@@ -92,10 +92,31 @@ rem lanzador cree que todo bien, y OpenCode revienta al final del script: la
 rem ventana se cierra sola y el docente no ve NADA.
 rem
 rem Es exactamente el sintoma que se reporto desde el aula.
+rem -- TRES LUGARES DONDE BUSCAR, no uno --------------------------------------
+rem
+rem Esto salio de una notebook real donde el binario ESTABA y el bot no abria.
+rem Scoop deja dos cosas distintas:
+rem
+rem   scoop\apps\opencode\current\opencode.exe   el programa de verdad, ~180 MB
+rem   scoop\shims\opencode.exe                    un lanzador de 20 KB
+rem
+rem Y hay un caso -- documentado en Scoop -- donde la instalacion extrae el
+rem programa, arma el enlace 'current', y ABORTA justo antes de crear el shim.
+rem Queda todo menos esa pieza de 20 KB.
+rem
+rem El lanzador buscaba SOLO por el shim. Le estabamos pidiendo la llave a alguien
+rem que tenia la puerta abierta al lado.
+rem
+rem Se prueba en orden: el PATH, el shim, y el binario directo. Con que ande uno,
+rem el docente entra.
+set "OC="
 where opencode >nul 2>nul
-if errorlevel 1 goto sinopencode
+if not errorlevel 1 set "OC=opencode"
+if not defined OC if exist "%USERPROFILE%\scoop\shims\opencode.exe" set "OC=%USERPROFILE%\scoop\shims\opencode.exe"
+if not defined OC if exist "%USERPROFILE%\scoop\apps\opencode\current\opencode.exe" set "OC=%USERPROFILE%\scoop\apps\opencode\current\opencode.exe"
+if not defined OC goto sinopencode
 
-opencode --version >nul 2>nul
+"%OC%" --version >nul 2>nul
 if errorlevel 1 (
   echo.
   echo   Tecnia Bot v%VER% -- OpenCode esta instalado pero NO ARRANCA.
@@ -149,7 +170,7 @@ echo   Primeros pasos y ayuda:  https://tecnialab.net.ar/tecnia-bot/
 echo.
 echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
 echo.
-opencode
+"%OC%"
 rem Sin este pause, si OpenCode se cae la ventana desaparece y no queda rastro.
 rem En un aula eso es imposible de diagnosticar.
 if errorlevel 1 (
