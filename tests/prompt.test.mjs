@@ -28,7 +28,45 @@ function accionesDelTool() {
 
 test("el tool declara las acciones que esperamos", () => {
   const acciones = accionesDelTool()
-  assert.deepEqual(acciones.sort(), ["both", "compile", "diagnostico", "flash", "monitor"])
+  assert.deepEqual(acciones.sort(), ["both", "compile", "diagnostico", "flash", "monitor", "reparar"])
+})
+
+test("el bot puede INSTALAR PlatformIO, no sólo avisar que falta", () => {
+  // «Vos tenés platformio, hacelo.» Lo escribió una docente mirando un reporte
+  // que la mandaba al menú inicio a buscar un acceso directo, para correr un
+  // script que el bot puede correr solo.
+  //
+  // Tenía razón, y el prompt le prohibía explícitamente hacerlo: «no instalás
+  // PlatformIO automáticamente». Cada paso que le pedís a alguien que ya te está
+  // hablando es un paso donde se pierde.
+  //
+  // Y hay un segundo motivo: el bootstrap escribe POR QUÉ falla. Si lo corre el
+  // bot, ese texto aparece en la conversación. Estuvimos tres rondas pidiendo un
+  // log por foto de pantalla.
+  assert.ok(accionesDelTool().includes("reparar"), "el tool no puede reparar nada")
+
+  // SIN LAS CITAS. El prompt explica cada regla contando qué decía antes, y esas
+  // citas van entre «comillas angulares» por convención de este repo. Una
+  // prohibición que mira el texto entero se dispara contra su propia explicación.
+  //
+  // Es la SÉPTIMA vez que esta trampa muerde acá. La primera vez fue en
+  // urls.test.mjs, después en bootstrap.ps1, después en el .iss. Cada vez cuesta
+  // el mismo rato de creer que el arreglo no entró.
+  const sinCitas = prompt.replace(/«[^»]*»/g, "")
+  assert.doesNotMatch(sinCitas, /No instalás PlatformIO autom/i,
+    "el prompt sigue prohibiéndole instalar PlatformIO")
+  assert.match(prompt, /accion:\s*"reparar"|acción\s*`?reparar/i,
+    "el prompt no le dice que puede repararlo él")
+
+  // Y el aviso previo, que no es cortesía: son 60 MB y varios minutos. Arrancar
+  // sin decir nada deja al docente mirando una pantalla quieta.
+  const tool = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
+  const desc = tool.match(/enum\(\[[^\]]*"reparar"[^\]]*\]\)[\s\S]{0,900}?\)/)
+  assert.ok(desc, "no encontré el describe() de las acciones")
+  assert.match(desc[0], /avisale|pregunt/i,
+    "el describe() no le dice que avise antes: son 60 MB y varios minutos")
+  assert.match(desc[0], /reparar:/,
+    "el describe() no explica qué hace 'reparar': un enum sin explicar es un enum que el modelo no usa")
 })
 
 test("el prompt no nombra acciones de platformio que no existen", () => {

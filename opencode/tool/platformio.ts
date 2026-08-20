@@ -463,8 +463,15 @@ Acciones:
 - diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)`,
   args: {
     action: tool.schema
-      .enum(["compile", "flash", "both", "monitor", "diagnostico"])
-      .describe("Accion a realizar"),
+      .enum(["compile", "flash", "both", "monitor", "diagnostico", "reparar"])
+      .describe(
+        "compile: compila el proyecto. flash: lo carga a la placa. both: las dos. " +
+        "monitor: abre el monitor serie. diagnostico: informa que hay y que falta. " +
+        "reparar: INSTALA PlatformIO cuando falta, corriendo el instalador de Tecnia Bot. " +
+        "Usa 'reparar' apenas veas que falta PlatformIO y el usuario quiera compilar o " +
+        "cargar codigo — no lo mandes a buscar nada al menu inicio, hacelo vos. Tarda " +
+        "unos minutos y baja unos 60 MB, asi que avisale antes de arrancar."
+      ),
     port: tool.schema
       .string()
       .optional()
@@ -497,6 +504,72 @@ Acciones:
     }
 
     switch (args.action) {
+      case "reparar": {
+        /*
+         * POR QUE EXISTE ESTA ACCION.
+         *
+         * Una docente miro el reporte que le decia "anda al menu inicio y busca
+         * Reparar Tecnia Bot", y contesto: "vos tenes platformio, hacelo".
+         *
+         * Tenia razon. Le estabamos pidiendo que fuera a buscar un acceso directo
+         * para correr un script que el bot puede correr solo. Cada paso que le
+         * pedimos a alguien que ya nos esta hablando es un paso donde se pierde.
+         *
+         * Y hay un segundo motivo, que para nosotros vale igual: el bootstrap
+         * escribe POR QUE fallo, y si lo corre el bot ese texto aparece en la
+         * conversacion. Estuvimos tres rondas pidiendo un log por foto.
+         */
+        if (process.platform !== "win32") {
+          return "La reparacion automatica es solo para Windows. En Linux o Mac, instala PlatformIO Core con el instalador oficial de tu sistema."
+        }
+
+        const appDir = join(process.env.LOCALAPPDATA ?? "", "TecniaBot")
+        const bootstrap = join(appDir, "install", "bootstrap.ps1")
+        if (!existsSync(bootstrap)) {
+          return (
+            "No encuentro el instalador en esta maquina (`" + bootstrap + "`).\n\n" +
+            "Suele pasar cuando Tecnia Bot se instalo a mano o con una version muy vieja. " +
+            "Baja el instalador de https://tecnialab.net.ar/tecnia-bot/ y corrilo una vez."
+          )
+        }
+
+        const result = await run(
+          ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", bootstrap],
+          appDir,
+          signal,
+        )
+
+        const pioAhora = existsSync(pioBin()) || Bun.which("pio") !== null
+        // Las ultimas lineas, que es donde el bootstrap dice como le fue. El log
+        // entero son cientos de lineas de descarga que no le sirven a nadie.
+        const salida = (result.stdout + "\n" + result.stderr)
+          .split("\n")
+          .map((l) => l.trimEnd())
+          .filter((l) => l.length > 0)
+          .slice(-25)
+          .join("\n")
+
+        if (pioAhora) {
+          return (
+            "Listo: PlatformIO quedo instalado. Ya se puede compilar y cargar codigo a la placa.\n\n" +
+            "```\n" + salida + "\n```"
+          )
+        }
+
+        return (
+          "La reparacion corrio pero PlatformIO sigue sin instalarse.\n\n" +
+          "Esto es lo que dijo el instalador — leelo y contale al usuario que dice, con sus palabras:\n\n" +
+          "```\n" + salida + "\n```\n\n" +
+          "Las dos causas habituales:\n" +
+          "- **El senuelo de la Microsoft Store**: si aparece 'No hay un Python usable' o " +
+          "'instalar desde el Microsoft Store', se apaga en Configuracion > Aplicaciones > " +
+          "Alias de ejecucion de aplicaciones, destildando python.exe y python3.exe.\n" +
+          "- **La red de la escuela**: PlatformIO se baja de pypi.org, un dominio que los " +
+          "filtros de contenido bloquean sin avisar. Se confirma con 'Diagnostico de Tecnia Bot' " +
+          "en el menu inicio."
+        )
+      }
+
       case "compile": {
         const result = await run(["pio", "run", ...envFlag], cwd, signal)
         if (result.code === 0) return "Compilacion exitosa. El codigo esta listo para cargar al dispositivo."
