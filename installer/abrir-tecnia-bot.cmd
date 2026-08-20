@@ -114,7 +114,7 @@ where opencode >nul 2>nul
 if not errorlevel 1 set "OC=opencode"
 if not defined OC if exist "%USERPROFILE%\scoop\shims\opencode.exe" set "OC=%USERPROFILE%\scoop\shims\opencode.exe"
 if not defined OC if exist "%USERPROFILE%\scoop\apps\opencode\current\opencode.exe" set "OC=%USERPROFILE%\scoop\apps\opencode\current\opencode.exe"
-if not defined OC goto sinopencode
+if not defined OC goto reparar
 
 "%OC%" --version >nul 2>nul
 if errorlevel 1 (
@@ -128,6 +128,41 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem -- Si falta la capa, tambien se repara -----------------------------------
+if not exist "%USERPROFILE%\.config\opencode\agent\tecnia-bot.md" goto reparar
+goto completo
+
+:reparar
+rem -- COMPLETAR LA INSTALACION, SIN QUE EL DOCENTE TIPEE NADA ----------------
+rem
+rem POR QUE EXISTE ESTO. En una notebook real el instalador termino, mostro su
+rem pantalla verde, y no habia instalado nada: el paso automatico murio en 2,4
+rem segundos. El MISMO script, corrido a mano dos minutos despues, instalo todo
+rem perfecto en dos minutos.
+rem
+rem O sea que el script esta bien y lo que falla es el contexto en que Inno lo
+rem lanza -- probablemente el antivirus escaneando el archivo recien escrito. No
+rem se pudo confirmar, y para el aula da igual: el remedio es el mismo.
+rem
+rem Entonces el lanzador lo hace solo. Una vez. Si despues de eso sigue faltando
+rem algo, ahi si avisa y para -- reintentar en bucle en la maquina de alguien es
+rem peor que fallar.
+if defined YAREPARE goto sinopencode
+set "YAREPARE=1"
+cls
+echo.
+echo   Tecnia Bot no quedo instalado del todo.
+echo.
+echo   Lo completo ahora. Tarda un par de minutos y no hay que hacer nada.
+echo   No cierres esta ventana.
+echo.
+powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0install\bootstrap.ps1"
+echo.
+echo   Listo, verificando...
+echo.
+goto verificar
+
+:completo
 rem -- Y que la capa educativa este publicada --------------------------------
 rem
 rem OpenCode puede arrancar perfecto y no tener nada de Tecnia Bot: pasa cuando

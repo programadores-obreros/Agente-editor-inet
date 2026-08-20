@@ -196,6 +196,14 @@ const iss = readFileSync(join(REPO, "installer/tecnia-bot.iss"), "utf8")
 const issCodigo = iss.replace(/^\s*;.*$/gm, "").replace(/\{[^}]*\}/g, "")
 const cmd = readFileSync(join(REPO, "installer/abrir-tecnia-bot.cmd"), "utf8")
 
+/**
+ * El .cmd sin comentarios. CUARTA vez que esto muerde en el repo: los comentarios
+ * citan rutas y comandos para explicar los bugs, y un indexOf sobre el archivo
+ * entero encuentra la CITA, no el código. Ya pasó con `opencode.cmd`, con
+ * `ssInstall`, con `scoop install opencode`, y ahora con la ruta del binario.
+ */
+const cmdCodigo = cmd.replace(/^\s*rem\b.*$/gim, "")
+
 test("la marca se pone al EMPEZAR la instalación, no al llegar a [Run]", () => {
   // Ponerla en [Run] no alcanzaba, y se pagó dos veces: en una máquina que YA
   // tenía Tecnia Bot, el acceso directo anterior está vivo desde el segundo cero.
@@ -352,4 +360,35 @@ test("el instalador CURA un auth.json que ya venía con BOM", () => {
   assert.match(bloque, /0xEF.*0xBB.*0xBF/s, "no busca la firma del BOM")
   assert.match(bloque, /WriteAllText/, "detecta el BOM pero no lo saca")
   assert.ok(i > 0)
+})
+
+test("el lanzador COMPLETA la instalación si quedó a medias", () => {
+  // Una notebook real quedó así: el instalador mostró su pantalla verde y no
+  // había instalado nada — el paso automático murió en 2,4 segundos. El MISMO
+  // script, corrido a mano dos minutos después, instaló todo perfecto.
+  //
+  // O sea que el script está bien y falla el contexto en que Inno lo lanza. El
+  // docente no tiene por qué saber eso ni tipear un comando de PowerShell: el
+  // lanzador lo hace solo en el primer doble clic.
+  assert.match(cmd, /:reparar/, "no hay camino de reparación")
+  const rep = cmd.slice(cmd.indexOf(":reparar"), cmd.indexOf(":completo"))
+  assert.match(rep, /bootstrap\.ps1/, "no completa la instalación")
+
+  // UNA vez, no en bucle: reintentar para siempre en la máquina de alguien es
+  // peor que fallar.
+  assert.match(rep, /YAREPARE/, "puede quedar reintentando en bucle")
+})
+
+test("el lanzador encuentra OpenCode aunque falte el shim", () => {
+  // El binario pesa 180 MB y el shim 20 KB. Scoop puede dejar el primero y
+  // abortar antes del segundo: quedaba todo menos esa pieza, y el lanzador —que
+  // buscaba sólo por el shim— decía "No se encontró OpenCode".
+  assert.match(cmdCodigo, /apps\\opencode\\current\\opencode\.exe/, "no busca el binario directo")
+  const orden = ["where opencode", "shims\\opencode.exe", "current\\opencode.exe"]
+  let pos = -1
+  for (const o of orden) {
+    const i = cmdCodigo.indexOf(o)
+    assert.ok(i > pos, `"${o}" no está, o está fuera de orden`)
+    pos = i
+  }
 })
