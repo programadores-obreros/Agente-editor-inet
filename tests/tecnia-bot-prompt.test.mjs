@@ -209,3 +209,40 @@ test("ejecutar la tool no contradice conversar primero", () => {
   assert.match(bloque, /NO contradice/i, "no aclara cómo conviven las dos reglas")
   assert.match(bloque, /decidido|acuerda/i, "no dice que se conversa para decidir y después se hace")
 })
+
+test("las reglas nuevas no se contradicen entre sí", () => {
+  // Cuatro contradicciones GRAVES que encontró una auditoría del prompt, todas
+  // introducidas en una sola noche al agregar tres reglas críticas apuradas.
+  //
+  // El riesgo no es teórico: un modelo que ve dos instrucciones opuestas resuelve
+  // inventando, y ahí se pierden las dos intenciones. Y corre sobre un modelo
+  // "lite", que es donde el seguimiento de instrucciones largas se degrada más.
+
+  // 1 · "una cosa por turno" NO puede impedir compilar antes de mostrar código.
+  const i1 = prompt.indexOf("UNA cosa por turno")
+  const b1 = prompt.slice(i1, i1 + 700)
+  assert.match(b1, /única excepción|UN solo paso/i,
+    "«una cosa por turno» choca con «nunca des código sin compilar»: el bot va a entregar código sin compilar")
+  assert.doesNotMatch(b1, /no escribas el código Y lo compiles/,
+    "sigue prohibiendo justo el encadenamiento que otra regla exige")
+
+  // 2 · Una respuesta ambigua no puede significar "cargá a la placa".
+  const i2 = prompt.indexOf("pedido de cargar")
+  const b2 = prompt.slice(Math.max(0, i2 - 400), i2 + 700)
+  assert.match(b2, /NO adivines|ambigua/i,
+    "«dale» o «sí» se interpretan como cargar, y es la única acción irreversible sobre hardware")
+
+  // 3 · En una compu compartida, la placa NO se hereda.
+  const i3 = prompt.indexOf("Modo `aula`")
+  const b3 = prompt.slice(i3, i3 + 700)
+  assert.match(b3, /placa NO se guarda|no guarda placa/i,
+    "en modo aula se guarda la placa: el segundo docente hereda la del primero y recibe pines que no existen")
+
+  // 4 · El freno anti-invención tiene que cubrir el hardware, no sólo el currículum.
+  assert.match(prompt, /I²C|I2C/,
+    "no hay regla anti-invención para datos de hardware (pines, direcciones, librerías)")
+  const i4 = prompt.indexOf("vale para el hardware")
+  assert.ok(i4 > 0, "falta el protocolo anti-invención de hardware")
+  assert.match(prompt.slice(i4, i4 + 900), /no lo afirmes|verificar/i,
+    "no le dice qué hacer cuando no tiene el dato")
+})
