@@ -27,8 +27,12 @@ difundido en internet es el de VS Code. Se le pidió que eligiera, y eligió.
 
 Acá hay **una sola** forma, y ya está instalada en la máquina:
 
-1. **Volver a correr el instalador de Tecnia Bot** (menú inicio). Instala
-   PlatformIO Core solo, sin preguntar nada.
+1. **Menú inicio → «Reparar Tecnia Bot».** Instala PlatformIO Core solo, sin
+   preguntar nada, y no toca lo que ya está.
+
+   Nombralo así, tal cual. Antes esto decía «volvé a correr el instalador» y una
+   docente fue a buscarlo al menú inicio: no existía. Un consejo que no se puede
+   seguir deja a la persona igual de trabada, pero convencida de que hizo algo mal.
 2. Si después de eso sigue faltando, **es la red, no la máquina**: menú inicio →
    «Diagnostico de Tecnia Bot», que deja un `.txt` diciendo si esa máquina llega
    a `pypi.org`. En una escuela con filtro de contenido, ese dominio es de los

@@ -442,7 +442,7 @@ function pioNoEncontrado() {
   return (
     "PlatformIO no esta instalado.\n\n" +
     "COMO SE ARREGLA (no hay que instalar nada aparte, ni VS Code, ni Python a mano):\n" +
-    "  1. Menu inicio -> volve a correr el instalador de Tecnia Bot.\n" +
+    "  1. Menu inicio -> 'Reparar Tecnia Bot'.\n" +
     "     Instala PlatformIO Core solo, sin preguntar nada.\n" +
     "  2. Si despues de eso sigue faltando, es la RED y no la maquina:\n" +
     "     menu inicio -> 'Diagnostico de Tecnia Bot'. Deja un .txt que dice si\n" +
@@ -652,8 +652,8 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, a
           // Sin link a la documentacion oficial: ver pioNoEncontrado(). La
           // reparacion de Tecnia Bot es volver a correr SU instalador.
           estado =
-            "Falta instalar PlatformIO. Se arregla volviendo a correr el instalador de " +
-            "Tecnia Bot (menu inicio), que lo instala solo. NO hay que instalar VS Code " +
+            "Falta instalar PlatformIO. Se arregla con 'Reparar Tecnia Bot', en el menu " +
+            "inicio: lo instala solo. NO hay que instalar VS Code " +
             "ni nada aparte. Si aun asi falta, es la red: correr 'Diagnostico de Tecnia Bot'."
         } else if (placas === 0) {
           /*

@@ -303,8 +303,8 @@ test("/diagnostico no inventa cómo instalar PlatformIO", () => {
   // Acá hay una sola forma: volver a correr el instalador.
   const cmd = readFileSync(join(REPO, "opencode/command/diagnostico.md"), "utf8")
 
-  assert.match(cmd, /volver a correr el instalador|correr el instalador de Tecnia Bot/i,
-    "no dice cuál es la reparación real")
+  assert.match(cmd, /Reparar Tecnia Bot/i,
+    "no nombra el acceso directo exacto que tiene que buscar el docente")
   assert.match(cmd, /pypi\.org/i,
     "no contempla que la causa sea la red, que es lo más común en una escuela")
 
@@ -327,6 +327,6 @@ test("el tool platformio no manda a la documentación oficial", () => {
 
   assert.doesNotMatch(codigo, /docs\.platformio\.org/,
     "el tool devuelve el link de la doc oficial: es una página con cinco métodos y el modelo va a elegir el de VS Code")
-  assert.match(codigo, /instalador de Tecnia Bot|correr el instalador/i,
-    "el tool no dice cuál es la reparación que corresponde acá")
+  assert.match(codigo, /Reparar Tecnia Bot/i,
+    "el tool no nombra el acceso directo exacto: 'volvé a correr el instalador' mandó a una docente a buscar algo que no existía")
 })

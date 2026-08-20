@@ -124,6 +124,25 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; Wor
 Name: "{autoprograms}\Diagnostico de {#MyAppName}"; Filename: "powershell.exe"; \
   Parameters: "-ExecutionPolicy Bypass -NoProfile -NoExit -File ""{app}\install\diagnostico.ps1"""; \
   WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Comment: "Ver que anda y que no"
+; REPARAR: vuelve a correr el bootstrap, que instala lo que falte y no toca lo
+; que ya esta.
+;
+; ESTE ACCESO DIRECTO FALTABA, y se noto de la peor manera. En una maquina de la
+; capacitacion del 20/08 falto PlatformIO, y el bot le dijo a la docente "volve a
+; correr el instalador de Tecnia Bot desde el menu inicio". Fue a buscarlo y no
+; existia: los unicos accesos eran abrir, diagnosticar y desinstalar.
+;
+; O sea que le dimos una instruccion imposible. La unica salida real era volver a
+; bajar el .exe del sitio, que nadie adivina.
+;
+; El bootstrap ya sabia repararse -es lo que corre el lanzador cuando detecta que
+; falta algo-, pero no habia forma de pedirselo a proposito. Ahora la hay, y la
+; reparacion es un clic para cualquier docente.
+;
+; -NoExit a proposito: si algo falla, la ventana queda con el motivo a la vista.
+Name: "{autoprograms}\Reparar {#MyAppName}"; Filename: "powershell.exe"; \
+  Parameters: "-ExecutionPolicy Bypass -NoProfile -NoExit -File ""{app}\install\bootstrap.ps1"""; \
+  WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Comment: "Instalar lo que haya quedado faltando"
 Name: "{autoprograms}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Tasks: desktopicon
 

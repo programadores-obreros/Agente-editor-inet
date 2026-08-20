@@ -261,6 +261,16 @@ const iss = readFileSync(join(REPO, "installer/tecnia-bot.iss"), "utf8")
  * diga otra cosa. Se sacan los `;` de línea y los `{ }` de Pascal Script.
  */
 const issCodigo = iss.replace(/^\s*;.*$/gm, "").replace(/\{[^}]*\}/g, "")
+
+/**
+ * El .iss sin comentarios PERO CON las llaves.
+ *
+ * `issCodigo` borra los `{...}` para que las constantes de Inno no ensucien las
+ * comparaciones, y eso se lleva puesto `{autoprograms}` — que es justo lo que
+ * identifica un acceso directo del menú inicio. Un test que buscara eso ahí
+ * encontraba cero, siempre, dijera lo que dijera el archivo.
+ */
+const issAtajos = iss.replace(/^\s*;.*$/gm, "")
 const cmd = readFileSync(join(REPO, "installer/abrir-tecnia-bot.cmd"), "utf8")
 
 /**
@@ -566,4 +576,56 @@ test("OpenCode no se declara muerto en el primer intento", () => {
   const fn = funcion("Test-OpenCode")
   assert.match(fn, /foreach|for\s*\(|do\s*\{/, "no reintenta: un falso negativo cuesta una reinstalación entera")
   assert.match(fn, /Start-Sleep/, "reintenta sin esperar, así que reintenta contra el mismo instante")
+})
+
+test("todo acceso directo que el bot menciona EXISTE de verdad", () => {
+  // ESTE TEST NACIÓ DE UN CONSEJO IMPOSIBLE.
+  //
+  // En una máquina de la capacitación faltó PlatformIO, y el bot le dijo a la
+  // docente: «volvé a correr el instalador de Tecnia Bot desde el menú inicio».
+  // Fue a buscarlo y no existía. Los accesos eran abrir, diagnosticar y
+  // desinstalar — ninguno reinstala.
+  //
+  // Eso es peor que no decir nada: la persona busca, no encuentra, y concluye
+  // que el error es suyo.
+  //
+  // Se contrasta el TEXTO QUE LEE EL DOCENTE contra los [Icons] del instalador.
+  // Si mañana alguien renombra un acceso directo, este test lo agarra antes que
+  // un aula.
+  const atajos = [...issAtajos.matchAll(/Name:\s*"\{autoprograms\}\\([^"]+)"/g)]
+    .map((m) => m[1].replace(/\{#MyAppName\}/g, "Tecnia Bot"))
+
+  assert.ok(atajos.length >= 3, `sólo encontré ${atajos.length} accesos directos`)
+
+  const fuentes = [
+    "opencode/tool/platformio.ts",
+    "opencode/command/diagnostico.md",
+    "installer/abrir-tecnia-bot.cmd",
+  ].map((f) => readFileSync(join(REPO, f), "utf8"))
+
+  // Todo lo que el producto nombra entre comillas como «algo de Tecnia Bot» en
+  // el menú inicio tiene que estar en esa lista.
+  for (const texto of fuentes) {
+    for (const m of texto.matchAll(/[«'"]((?:Reparar|Diagnostico|Diagnóstico|Desinstalar)[^«»'"]{0,30}Tecnia Bot)[»'"]/g)) {
+      const mencionado = m[1].normalize("NFD").replace(/[̀-ͯ]/g, "")
+      const existe = atajos.some(
+        (a) => a.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase() === mencionado.toLowerCase(),
+      )
+      assert.ok(existe,
+        `se le dice al docente que busque «${m[1]}» en el menú inicio, y ese acceso directo no existe.\n` +
+        `Los que hay son: ${atajos.join(", ")}`)
+    }
+  }
+})
+
+test("existe una forma de REPARAR sin volver a bajar el .exe", () => {
+  // El bootstrap siempre supo repararse —es lo que corre el lanzador cuando
+  // detecta que falta algo— pero no había manera de pedírselo a propósito. La
+  // única salida real era volver a bajar el instalador del sitio, que nadie
+  // adivina.
+  const atajos = [...issAtajos.matchAll(/Name:\s*"\{autoprograms\}\\[^"]+"[\s\S]{0,400}?Comment:[^\n]*/g)].map((m) => m[0])
+  const reparar = atajos.find((a) => /Reparar/i.test(a))
+  assert.ok(reparar, "no hay acceso directo para reparar la instalación")
+  assert.match(reparar, /bootstrap\.ps1/, "el acceso 'Reparar' no corre el bootstrap, que es el que instala lo que falta")
+  assert.match(reparar, /-NoExit/, "sin -NoExit la ventana se cierra sola y el docente no ve por qué falló")
 })

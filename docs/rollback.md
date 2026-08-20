@@ -8,7 +8,7 @@ se tarda en volver, no de quién fue la culpa.
 
 | | |
 |---|---|
-| **Último release confirmado en máquina real** | **v0.3.62** — anduvo en la PC del usuario y en la de un colega |
+| **Último release confirmado en máquina real** | **v0.3.69** — la instalaron decenas de docentes en la capacitación del 20/08, con un solo problema parcial (PlatformIO en una máquina) |
 | Último release publicado antes de esta | v0.3.68 |
 | Base de esta versión | commit `f1036d8` |
 
