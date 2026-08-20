@@ -173,3 +173,39 @@ test("el circuito no se abre solo, y avisa si la placa no es ESP32", () => {
   assert.match(bloque, /ESP32/, "no advierte que los presets son de ESP32")
   assert.match(bloque, /UNO/, "no contempla al docente que tiene un Arduino UNO")
 })
+
+test("conversa antes de trabajar, y no encadena acciones", () => {
+  // El hallazgo más importante que reportó el usuario, y está DEBAJO de los
+  // otros tres: "no me gusta que se ponga a trabajar sin preguntar, se lanza
+  // solo... como que no interactúa y trabaja".
+  //
+  // No era el código, ni la ventana que se abría, ni la placa asumida. Era el
+  // carácter: un compañero que acompaña pregunta antes de ponerse a hacer; una
+  // máquina ejecuta. El producto se propone ser lo primero.
+  const i = prompt.indexOf("conversá antes de trabajar")
+  assert.ok(i > 0, "no está la regla de conversar antes de trabajar")
+
+  // Tiene que ser la PRIMERA regla crítica: es de carácter, no de detalle.
+  const reglas = [...prompt.matchAll(/^## REGLA CRÍTICA — (.+)$/gm)].map((m) => m[1])
+  assert.match(reglas[0], /convers/i, `la primera regla es "${reglas[0]}", no la de conversar`)
+
+  const bloque = prompt.slice(i, i + 2400)
+  assert.match(bloque, /UNA cosa por turno|una cosa por turno/i, "no limita a una acción por turno")
+  assert.match(bloque, /pelota/i, "no pide terminar el turno con la decisión del otro lado")
+
+  // Y el contrapeso, sin el cual queda un bot que interroga y no ayuda.
+  assert.match(bloque, /Cuándo NO preguntar/i, "no dice cuándo NO preguntar")
+  assert.match(bloque, /no necesita|devolver la pregunta/i,
+    "va a repreguntar lo que ya le pidieron")
+  assert.match(bloque, /sorprender/i, "no da un criterio simple para decidir")
+})
+
+test("ejecutar la tool no contradice conversar primero", () => {
+  // Las dos reglas podían leerse como opuestas: una dice "ejecutá, no describas"
+  // y la otra "preguntá antes de hacer". Un modelo que ve una contradicción
+  // resuelve inventando, y ahí se pierde la intención de las dos.
+  const i = prompt.indexOf("EJECUTÁ la tool, nunca la describas")
+  const bloque = prompt.slice(i, i + 600)
+  assert.match(bloque, /NO contradice/i, "no aclara cómo conviven las dos reglas")
+  assert.match(bloque, /decidido|acuerda/i, "no dice que se conversa para decidir y después se hace")
+})
