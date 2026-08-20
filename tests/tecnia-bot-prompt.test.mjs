@@ -92,11 +92,18 @@ test("después de compilar, dice que TODAVÍA NO está en la placa", () => {
 
   assert.match(bloque, /Todavía no está en la placa|todavia no esta en la placa/i,
     "no obliga a aclarar que el código no está cargado")
-  assert.match(bloque, /listo/i, "no prohíbe cerrar con «listo» a secas")
 
-  // Y que pregunte antes, cuando lo que piden sólo tiene sentido andando.
-  assert.match(bloque, /parpade|funcionando|suene/i,
-    "no cubre el caso de pedidos que sólo tienen sentido con la placa andando")
+  // La regla se simplificó, y quedó MÁS fuerte: antes preguntaba sólo cuando el
+  // pedido tenía sentido nada más andando («hacé que el LED parpadee»); ahora
+  // pregunta SIEMPRE, apenas el código está listo. El docente no tiene por qué
+  // saber que compilar y cargar son dos cosas distintas.
+  assert.match(bloque, /PREGUNTÁ SIEMPRE|pregunt[áa] siempre/i,
+    "no pregunta siempre si lo carga")
+  assert.match(bloque, /No esperes a que\s*\n?\s*te lo pidan|no esperes/i,
+    "espera a que se lo pidan, y el docente no sabe que tiene que pedirlo")
+
+  // Y el límite: preguntar sí, cargar por su cuenta no.
+  assert.match(bloque, /sin preguntar/i, "no prohíbe cargar sin preguntar")
 })
 
 test("el modelo está FIJADO, no es un alias 'latest'", () => {
@@ -120,4 +127,30 @@ test("el modelo está FIJADO, no es un alias 'latest'", () => {
   assert.doesNotMatch(m[1], /latest$/,
     `el modelo es un alias ("${m[1]}"): puede cambiar solo y romper las cuentas nuevas`)
   assert.match(m[1], /^google\/gemini-[\d.]+-/, `modelo inesperado: ${m[1]}`)
+})
+
+test("no pega el código: lo ofrece, junto con cargarlo", () => {
+  // Pedido del usuario probando el bot con un alumno en la cabeza: "no quiero
+  // que siempre muestre el código, eso confunde. Que lo haga y ofrezca
+  // mostrarlo. Y que siempre pregunte si lo sube. Nos ahorramos un prompt."
+  //
+  // Una pared de cuarenta líneas de C++ no enseña: abruma. El docente estaba
+  // pensando en el circuito y de golpe tiene una pantalla de texto que no pidió.
+  const i = prompt.indexOf("NO PEGUES EL CÓDIGO")
+  assert.ok(i > 0, "no está la regla de no pegar el código")
+  const bloque = prompt.slice(i, i + 1800)
+
+  // Las DOS preguntas, y en UN solo mensaje: cada ida y vuelta de más es tiempo
+  // de clase que se va.
+  assert.match(bloque, /¿Te lo muestro\?\s*¿Lo cargo\?/,
+    "las dos preguntas tienen que ir juntas, en el mismo mensaje")
+  assert.match(bloque, /UN solo mensaje|mismo mensaje/i, "no dice que van juntas")
+
+  // Y las excepciones, para que no quede mudo cuando el código ES la respuesta.
+  assert.match(bloque, /mostrame el c[oó]digo|te lo pidieron/i,
+    "no contempla que se lo pidan explícitamente")
+  assert.match(bloque, /pinMode|for/,
+    "no contempla que la pregunta sea SOBRE el código")
+  assert.match(bloque, /No compila/i,
+    "si no compila tiene que mostrarlo entero, con el error")
 })
