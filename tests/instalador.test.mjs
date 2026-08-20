@@ -392,3 +392,39 @@ test("el lanzador encuentra OpenCode aunque falte el shim", () => {
     pos = i
   }
 })
+
+test("tampoco se le SUGIERE al docente un comando destructivo", () => {
+  // La regla "el instalador puede fallar, pero no puede romper" se aplicó al
+  // código y se olvidó en la pantalla: `scoop uninstall opencode` se sacó del
+  // script y quedó impreso en amarillo, como recomendación.
+  //
+  // Un docente que lo copia con la red del aula saturada se queda sin OpenCode:
+  // el uninstall siempre funciona, la descarga de 57 MB no. Y se mostraba también
+  // cuando la causa es una CPU sin AVX2, donde reinstalar no converge nunca.
+  const impresos = ps1
+    .split("\n")
+    .filter((l) => /Write-Host/.test(l) && /scoop uninstall|Remove-Item/i.test(l))
+  assert.deepEqual(
+    impresos.map((l) => l.trim()),
+    [],
+    "le imprime al docente un comando que puede dejarlo peor:\n" + impresos.join("\n"),
+  )
+})
+
+test("el lanzador NO repara mientras hay una instalación en curso", () => {
+  // La regresión más peligrosa de la noche, y sólo aparece con muchas máquinas.
+  //
+  // El techo de la espera desembocaba en :reparar, que lanzaba un SEGUNDO
+  // bootstrap EN PARALELO con el que corre Inno: dos `scoop install opencode`
+  // sobre los mismos archivos. Es el bug de las instalaciones simultáneas que el
+  // SetupMutex arregla — pero el mutex sólo bloquea un segundo Setup.exe, no un
+  // bootstrap lanzado desde el .cmd.
+  //
+  // Con 20 máquinas compartiendo la red, pasar el techo no es raro: es lo normal.
+  const rep = cmdCodigo.slice(cmdCodigo.indexOf(":reparar"))
+  const antesDeLanzar = rep.slice(0, rep.indexOf("bootstrap.ps1"))
+  assert.match(antesDeLanzar, /if exist "%MARCA%"/,
+    "entra a reparar sin mirar si hay una instalación corriendo")
+  assert.match(antesDeLanzar, /exit \/b/,
+    "detecta la instalación en curso pero no se detiene")
+})

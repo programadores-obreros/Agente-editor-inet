@@ -428,9 +428,20 @@ if ($script:FalloOpenCode) {
     Write-Host "  Sin OpenCode el bot no se puede abrir todavia. Para saber por que:"
     Write-Host "    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "  Lo que suele resolverlo, en una terminal:"
-    Write-Host "    scoop uninstall opencode" -ForegroundColor Yellow
-    Write-Host "    scoop install opencode" -ForegroundColor Yellow
+    # NO SE LE SUGIERE `scoop uninstall`, y es la misma regla que rige el codigo.
+    #
+    # Se saco del script porque era lo unico capaz de dejar la maquina PEOR de
+    # como estaba... y quedo impreso en pantalla, en amarillo, como consejo. Un
+    # docente que lo copia con la red del aula saturada se queda sin OpenCode: el
+    # uninstall siempre funciona, la descarga de 57 MB no.
+    #
+    # Peor: se mostraba tambien cuando la causa es una CPU sin AVX2, donde
+    # reinstalar no converge NUNCA -- es un bucle determinista.
+    #
+    # El diagnostico si distingue antivirus de procesador viejo. Eso es lo que
+    # sirve, y es lo unico que se ofrece.
+    Write-Host "  El diagnostico te dice cual de las causas es:"
+    Write-Host "    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
     exit 1

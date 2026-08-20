@@ -45,11 +45,16 @@ rem eran VEINTE MINUTOS de puntitos antes de intentar nada. En un aula, la clase
 rem entera.
 rem
 rem Si opencode responde, la instalacion evidentemente termino: se sigue de largo.
+rem OJO: se exige TAMBIEN la capa educativa, no solo que opencode ande.
+rem
+rem OpenCode se instala en el paso 2 de 4. Mirar solo si arranca daba positivo en
+rem mitad de una instalacion normal, borraba la marca --que es el estado
+rem compartido que le avisa a los demas-- y se metia a reparar encima. Es lo mismo
+rem que este archivo advierte doce lineas mas arriba y hacia igual.
+rem
+rem La capa es lo ULTIMO que se instala: si esta, la instalacion termino de verdad.
 opencode --version >nul 2>nul
-if not errorlevel 1 (
-  del "%MARCA%" >nul 2>nul
-  goto verificar
-)
+if not errorlevel 1 if exist "%USERPROFILE%\.config\opencode\agent\tecnia-bot.md" goto verificar
 
 echo.
 echo   Tecnia Bot v%VER% se esta instalando en este momento.
@@ -65,13 +70,15 @@ ping -n 4 127.0.0.1 >nul
 <nul set /p "=."
 set /a ESPERA+=1
 if not exist "%MARCA%" goto listo
-rem Techo de ~5 minutos, no de 20: si tarda mas que esto, algo pasa y
-rem conviene que el docente lo sepa y no que mire puntitos.
-if %ESPERA% LSS 100 goto esperando
+rem Techo de ~20 minutos. Estaba en 5, y era poco: con 20 maquinas de un aula
+rem bajando 57 MB de OpenCode mas Python mas PlatformIO por el mismo enlace, cinco
+rem minutos no alcanzan ni cerca. Rendirse antes de tiempo era lo que mandaba al
+rem lanzador a "reparar" una instalacion que estaba andando perfecto.
+if %ESPERA% LSS 400 goto esperando
 
 echo.
 echo.
-echo   La instalacion esta tardando mas de lo normal (mas de 5 minutos).
+echo   La instalacion esta tardando mas de lo normal (mas de 20 minutos).
 echo   Fijate si quedo alguna ventana de PowerShell abierta esperando algo.
 echo.
 goto verificar
@@ -147,6 +154,27 @@ rem
 rem Entonces el lanzador lo hace solo. Una vez. Si despues de eso sigue faltando
 rem algo, ahi si avisa y para -- reintentar en bucle en la maquina de alguien es
 rem peor que fallar.
+rem LO PRIMERO: si TODAVIA hay una instalacion corriendo, no se toca nada.
+rem
+rem Sin esto, el techo de la espera desembocaba aca y lanzaba un SEGUNDO
+rem bootstrap EN PARALELO con el que corre Inno: dos `scoop install opencode`
+rem sobre los mismos archivos y dos `install.ps1` copiando sobre la misma config.
+rem Es el mismo bug de las instalaciones simultaneas que el SetupMutex arregla --
+rem pero el mutex solo bloquea un segundo Setup.exe, no un bootstrap lanzado
+rem desde aca.
+rem
+rem Y con 20 maquinas compartiendo la red del aula, pasar los 5 minutos no es un
+rem caso raro: es el caso normal.
+if exist "%MARCA%" (
+  echo.
+  echo   La instalacion sigue en curso en esta maquina.
+  echo.
+  echo   Esperala a que termine y volve a abrir Tecnia Bot. No la corras dos
+  echo   veces: se pisan entre si y rompen la instalacion.
+  echo.
+  pause
+  exit /b 0
+)
 if defined YAREPARE goto sinopencode
 set "YAREPARE=1"
 cls
