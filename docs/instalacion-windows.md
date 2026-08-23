@@ -2,8 +2,13 @@
 
 Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en las escuelas.
 
-> ⚠️ **Nota para el equipo de desarrollo:** el instalador está escrito pero todavía
-> NO se probó en una máquina Windows real. Validar en la prueba piloto.
+> ✅ **Probado en el aula.** El 20 de agosto de 2026 se instaló en decenas de
+> máquinas en una capacitación docente. Entró en todas; en una sola quedó afuera
+> PlatformIO, y por eso existe `/reparar`.
+>
+> La nota anterior decía que el instalador «todavía NO se probó en una máquina
+> Windows real». Quedó ahí seis meses después de dejar de ser cierta — que es
+> justo lo que le pasa a las advertencias: envejecen sin que nadie las mire.
 
 ## 🟢 Súper fácil — instalador `.exe` (recomendado para docentes)
 
