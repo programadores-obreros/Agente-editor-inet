@@ -330,3 +330,66 @@ test("el tool platformio no manda a la documentación oficial", () => {
   assert.match(codigo, /Reparar Tecnia Bot/i,
     "el tool no nombra el acceso directo exacto: 'volvé a correr el instalador' mandó a una docente a buscar algo que no existía")
 })
+
+test("no confunde REPARAR con ACTUALIZAR, y no afirma sobre lo que no miró", () => {
+  // Pasó en uso: un docente escribió «reparar tecnia bot», el modelo llamó al
+  // tool `actualizar`, y contestó «ya estabas en la última versión, con
+  // PlatformIO y todo al día».
+  //
+  // PlatformIO NO estaba: se instaló recién en el mensaje siguiente.
+  //
+  // La tool nunca dijo eso — devuelve la versión y nada más. El modelo tenía que
+  // resumir «estás al día» y lo estiró a «todo al día», que suena igual y es otra
+  // cosa. Es lo mismo que pasó con Visual Studio Code: donde dejamos un hueco, lo
+  // llena con lo que suena bien.
+  //
+  // Un OK falso es peor que un error. El docente se va tranquilo con el problema
+  // intacto, y cuando vuelve ya no confía en lo que el bot le dice.
+  const bloque = bloqueDesde(prompt, "«Reparar» y «actualizar» NO son lo mismo")
+  assert.ok(bloque, "el prompt no distingue reparar de actualizar")
+  assert.match(bloque, /accion:\s*"reparar"|`reparar`/i, "no dice qué llamar cuando piden reparar")
+  assert.match(bloque, /sólo sabe de versiones|no mira PlatformIO/i,
+    "no acota lo que la tool `actualizar` puede afirmar")
+})
+
+test("la tool actualizar declara su alcance EN LA RESPUESTA", () => {
+  // Y no sólo en el prompt. El prompt se puede editar, resumir o quedar atrás; la
+  // respuesta de la tool le llega al modelo siempre, en el mismo turno en que
+  // tiene que decidir qué afirmar.
+  //
+  // Es la diferencia entre pedirle que se acuerde y decírselo en el momento.
+  const tool = readFileSync(join(REPO, "opencode/tool/actualizar.ts"), "utf8")
+  const codigo = tool.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+
+  assert.match(codigo, /No dice nada sobre PlatformIO/i,
+    "la respuesta de `actualizar` no aclara que no mira PlatformIO")
+
+  // Y que ese límite viaje en TODAS las respuestas, no sólo en la del caso feliz:
+  // la que más se presta al malentendido es justamente «estás al día».
+  const returns = [...codigo.matchAll(/return `Tenés[^`]*`[^\n]*/g)].map((m) => m[0])
+  assert.ok(returns.length >= 3, `esperaba al menos 3 respuestas, encontré ${returns.length}`)
+  for (const r of returns) {
+    assert.match(r, /LIMITE_ALCANCE/,
+      `esta respuesta de \`actualizar\` no declara su alcance: ${r.slice(0, 70)}...`)
+  }
+})
+
+test("existe el comando /reparar", () => {
+  // Lo pidió el usuario después de ver que «reparar tecnia bot» en lenguaje
+  // natural se iba a `actualizar`. Un comando explícito saca la ambigüedad: no
+  // depende de que el modelo interprete bien la intención.
+  const cmd = readFileSync(join(REPO, "opencode/command/reparar.md"), "utf8")
+  assert.match(cmd, /^---[\s\S]*?description:/m, "no tiene frontmatter con description")
+  assert.match(cmd, /accion:\s*"reparar"|action:\s*"reparar"/i, "no ejecuta la reparación")
+
+  // Repara TODO lo que falte, no sólo PlatformIO: es lo que pidió el usuario
+  // —«que repare platformio, python, lo que haga falta»— y es lo que el
+  // bootstrap hace igual.
+  for (const pieza of [/Python/i, /PlatformIO/i, /Scoop/i, /OpenCode/i]) {
+    assert.match(cmd, pieza, `no menciona ${pieza} entre lo que repara`)
+  }
+
+  // Y la prohibición de mentir, que es de dónde salió todo esto.
+  assert.match(cmd, /Nunca digas que algo quedó instalado si el tool no lo dijo/i,
+    "no le prohíbe informar un OK que la tool no dio")
+})

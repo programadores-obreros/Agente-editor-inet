@@ -4,6 +4,28 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 
+/**
+ * EL LIMITE DE LO QUE ESTA TOOL SABE, ESCRITO PARA QUE EL MODELO NO LO INVENTE.
+ *
+ * Un docente escribio "reparar tecnia bot", el modelo llamo a esta tool, y
+ * contesto: "Revise la instalacion y ya estabas en la ultima version (v0.3.73),
+ * CON PLATFORMIO Y TODO AL DIA".
+ *
+ * PlatformIO no estaba. Se instalo recien en el mensaje siguiente.
+ *
+ * La tool nunca dijo eso: devuelve la version y nada mas. El modelo tenia que
+ * resumir "estas al dia" y lo estiro a "todo al dia", que suena igual y es otra
+ * cosa. Donde dejamos un hueco lo llena con lo que suena bien -- es lo mismo que
+ * paso con Visual Studio Code.
+ *
+ * Un OK falso es peor que un error: el docente se va tranquilo con el problema
+ * intacto. Asi que el alcance viaja EN LA RESPUESTA, no en el prompt: el modelo
+ * no puede afirmar sobre algo que la tool acaba de decirle que no miro.
+ */
+const LIMITE_ALCANCE =
+  "\n\n_Esto mira SOLO la version de Tecnia Bot. No dice nada sobre PlatformIO, " +
+  "Python ni las dependencias: para eso esta `/diagnostico`, y para instalarlas `/reparar`._"
+
 const REPO = "programadores-obreros/Agente-editor-inet"
 
 // Config global de OpenCode (donde vive la capa instalada y el manifest).
@@ -72,17 +94,17 @@ export default tool({
     if (args.verificar) {
       const ultima = await ultimaVersionPublicada()
       if (!ultima) {
-        return `Tenés Tecnia Bot **v${info.version}**. No pude verificar si hay una versión más nueva (revisá tu conexión a Internet).`
+        return `Tenés Tecnia Bot **v${info.version}**. No pude verificar si hay una versión más nueva (revisá tu conexión a Internet).` + LIMITE_ALCANCE
       }
       if (esMasNueva(info.version, ultima)) {
-        return `Tenés la **v${info.version}** y hay una más nueva disponible: **v${ultima}**. Escribí \`/actualizar\` (o pedime "actualizate") para ponerte al día.`
+        return `Tenés la **v${info.version}** y hay una más nueva disponible: **v${ultima}**. Escribí \`/actualizar\` (o pedime "actualizate") para ponerte al día.` + LIMITE_ALCANCE
       }
-      return `Tenés Tecnia Bot **v${info.version}** — estás al día. 🎉`
+      return `Tenés Tecnia Bot **v${info.version}** — estás al día. 🎉` + LIMITE_ALCANCE
     }
 
     // --- Modo ACTUALIZAR: baja lo nuevo y reinstala ---
     if (!info.repoDir || !existsSync(info.repoDir)) {
-      return `Tenés la versión ${info.version}. No encuentro la carpeta del proyecto${info.repoDir ? ` (${info.repoDir})` : ""} para actualizar. Volvé a descargar el proyecto desde GitHub y corré el instalador.`
+      return `Tenés la versión ${info.version}. No encuentro la carpeta del proyecto${info.repoDir ? ` (${info.repoDir})` : ""} para actualizar. Volvé a descargar el proyecto desde GitHub y corré el instalador.` + LIMITE_ALCANCE
     }
 
     const win = process.platform === "win32"
