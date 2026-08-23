@@ -153,3 +153,36 @@ test("el proxy se informa sin la credencial que puede traer adentro", () => {
   assert.ok(tapa > 0 && tapa < imprime,
     "se tapa la credencial del proxy DESPUÉS de imprimirla, que es igual a no taparla")
 })
+
+test("el diagnóstico junta los TRES logs, no dos", () => {
+  // Faltaba el de OpenCode, y se notó cuando hizo falta: el bot contestó
+  // «Failed to send prompt — Unexpected server error. Check server logs for
+  // details» y no había forma de ver esos logs.
+  //
+  // El diagnóstico juntaba el del instalador y el del .exe de Inno — los dos
+  // cuentan cómo fue la INSTALACIÓN. Ninguno sabe nada de lo que pasa después,
+  // con todo ya instalado, que es justo cuando el docente está usando el bot.
+  //
+  // Se probó cambiar la API key y dio lo mismo. Sin este bloque, el paso
+  // siguiente era adivinar.
+  const codigo = sinComentarios(leer("install/diagnostico.ps1"))
+
+  const logs = [
+    [/instalacion\.log/, "el log del bootstrap: en qué paso murió la instalación"],
+    [/Setup Log/, "el log de Inno: qué hizo el .exe"],
+    [/opencode\.log/, "el log de OpenCode: por qué falló un mensaje YA instalado"],
+  ]
+  for (const [patron, para] of logs) {
+    assert.match(codigo, patron, `no junta ${para}`)
+  }
+
+  // Y que filtre: el log de OpenCode son cientos de miles de líneas de tráfico
+  // normal. Volcarlo entero en un reporte que alguien manda por mail es lo mismo
+  // que no mandarlo — nadie lo lee.
+  const i = codigo.indexOf("opencode.log")
+  const bloque = codigo.slice(i, i + 1200)
+  assert.match(bloque, /ERROR\|WARN|level=\(ERROR/,
+    "vuelca el log de OpenCode entero en vez de filtrar los errores")
+  assert.match(bloque, /Select-Object -Last/,
+    "no acota a las últimas líneas")
+})

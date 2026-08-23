@@ -194,6 +194,43 @@ $d = Get-PSDrive C
 Dato "libre en C:" ([math]::Round($d.Free / 1GB, 1).ToString() + " GB")
 Dato "cache de Scoop" $(if (Test-Path "$U\scoop\cache") { (@(Get-ChildItem "$U\scoop\cache" -Filter "opencode*" -EA SilentlyContinue) | ForEach-Object { $_.Name + " (" + [math]::Round($_.Length/1MB,1) + " MB)" }) -join " | " } else { "no hay" })
 
+Titulo "El log de OpenCode -- por que fallo un mensaje"
+# ESTE BLOQUE FALTABA, y se noto cuando hizo falta.
+#
+# El bot contesto "Failed to send prompt -- Unexpected server error. Check server
+# logs for details" y no habia forma de ver esos logs: el diagnostico juntaba el
+# log del INSTALADOR y el del .exe de Inno, pero nunca el de OpenCode, que es el
+# unico que sabe por que fallo un mensaje YA con todo instalado.
+#
+# Se probo cambiar la API key y dio lo mismo, o sea que no era la key. Sin este
+# bloque, el paso siguiente era adivinar.
+$oclog = "$U\.local\share\opencode\log\opencode.log"
+if ($env:XDG_DATA_HOME) { $oclog = "$env:XDG_DATA_HOME\opencode\log\opencode.log" }
+if (Test-Path $oclog) {
+  $f = Get-Item $oclog
+  Dato "archivo" $f.FullName
+  Dato "tamano" ([math]::Round($f.Length / 1KB, 0).ToString() + " KB   ultimo: " + $f.LastWriteTime)
+  Write-Host "     --- ultimos errores ---"
+  # Solo ERROR y WARN: el log entero son cientos de miles de lineas de trafico
+  # normal, y en un reporte que alguien manda por mail eso no lo lee nadie.
+  $malas = Get-Content $oclog -EA SilentlyContinue |
+    Where-Object { $_ -match "level=(ERROR|WARN)" } |
+    Select-Object -Last 12
+  if ($malas) {
+    # Las lineas traen la sesion y el modelo, no credenciales. Aun asi se corta a
+    # 300 caracteres: un stack largo tapa el resto del reporte.
+    $malas | ForEach-Object {
+      $l = $_.Trim()
+      if ($l.Length -gt 300) { $l = $l.Substring(0, 300) + " ..." }
+      Write-Host ("     " + $l)
+    }
+  } else {
+    Write-Host "     (ningun ERROR ni WARN registrado)"
+  }
+} else {
+  Dato "archivo" "no existe -- OpenCode todavia no escribio ningun log"
+}
+
 Titulo "El log del bootstrap -- ACA esta en que paso murio"
 $bl = "$env:LOCALAPPDATA\TecniaBot\instalacion.log"
 if (Test-Path $bl) {
