@@ -533,11 +533,40 @@ Acciones:
           )
         }
 
+        /*
+         * SE MIRA ANTES Y DESPUES, y no sirve mirar solo despues.
+         *
+         * La primera version de esto contestaba "Listo: PlatformIO quedo
+         * instalado" con solo encontrarlo al final. Si el bootstrap NO llegaba a
+         * arrancar -powershell fuera del PATH del proceso, una politica que lo
+         * bloquea, el antivirus- y PlatformIO ya estaba de antes, el tool
+         * informaba un exito por una reparacion QUE NUNCA CORRIO.
+         *
+         * Es exactamente el OK falso que este mismo archivo le prohibe al modelo,
+         * cometido por el codigo que se lo prohibe. Un dia despues de escribir la
+         * regla.
+         *
+         * La diferencia importa: si algo mas seguia roto, el docente se iba
+         * convencido de que la reparacion se hizo.
+         */
+        const pioAntes = existsSync(pioBin()) || Bun.which("pio") !== null
+
         const result = await run(
           ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", bootstrap],
           appDir,
           signal,
         )
+
+        // 127 es lo que devuelve run() cuando ni siquiera pudo lanzar el proceso.
+        if (result.code === 127) {
+          return (
+            "NO PUDE CORRER LA REPARACION: no se pudo lanzar PowerShell desde aca.\n\n" +
+            (pioAntes
+              ? "Ojo: PlatformIO YA estaba instalado de antes, asi que si algo anda es por eso y no por esta reparacion.\n\n"
+              : "") +
+            "Se arregla igual desde afuera: menu inicio -> 'Reparar Tecnia Bot'. Hace lo mismo que esto."
+          )
+        }
 
         const pioAhora = existsSync(pioBin()) || Bun.which("pio") !== null
         // Las ultimas lineas, que es donde el bootstrap dice como le fue. El log
@@ -550,10 +579,13 @@ Acciones:
           .join("\n")
 
         if (pioAhora) {
-          return (
-            "Listo: PlatformIO quedo instalado. Ya se puede compilar y cargar codigo a la placa.\n\n" +
-            "```\n" + salida + "\n```"
-          )
+          // Se distingue "lo instale" de "ya estaba", porque no son lo mismo para
+          // el que pregunta. Decir "listo, lo instale" cuando no se instalo nada
+          // hace que la proxima vez que algo falle, la reparacion parezca hecha.
+          const encabezado = pioAntes
+            ? "La reparacion corrio. PlatformIO ya estaba instalado, asi que no hizo falta bajarlo de nuevo."
+            : "Listo: PlatformIO quedo instalado. Ya se puede compilar y cargar codigo a la placa."
+          return encabezado + "\n\n```\n" + salida + "\n```"
         }
 
         return (

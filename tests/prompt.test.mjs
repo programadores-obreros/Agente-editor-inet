@@ -98,3 +98,42 @@ test("el prompt NO encadena la carga a la compilación", () => {
   assert.match(prompt, /No encadenes el\s+`?flash`? al `?compile`?/i)
   assert.match(prompt, /No cargues/i)
 })
+
+test("la reparación no puede informar un éxito que no ocurrió", () => {
+  // EL DEFECTO QUE ESTE TEST EVITA LO COMETÍ YO, un día después de escribir la
+  // regla que lo prohíbe.
+  //
+  // La primera versión contestaba «Listo: PlatformIO quedó instalado» con sólo
+  // encontrarlo AL FINAL. Si el bootstrap no llegaba a arrancar —PowerShell
+  // fuera del PATH del proceso, una política que lo bloquea, el antivirus— y
+  // PlatformIO ya estaba de antes, el tool informaba un éxito por una reparación
+  // que NUNCA CORRIÓ.
+  //
+  // Y si algo más seguía roto, el docente se iba convencido de que la reparación
+  // se hizo. Que es justo lo que hace daño: no el error, sino la falsa calma.
+  const tool = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
+  const codigo = tool.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+
+  const i = codigo.indexOf('case "reparar"')
+  assert.ok(i > 0, "no está la acción reparar")
+  const bloque = codigo.slice(i, codigo.indexOf('case "compile"', i))
+
+  // 1. Mira ANTES, no sólo después.
+  assert.match(bloque, /pioAntes/,
+    "sólo mira si PlatformIO está al final: no distingue haberlo instalado de que ya estuviera")
+
+  // 2. Detecta que el proceso no se pudo ni lanzar.
+  assert.match(bloque, /result\.code === 127|code === 127/,
+    "no detecta que la reparación no llegó a correr")
+
+  // 3. Y en ese caso NO dice que quedó listo.
+  const spawnFallado = bloque.slice(bloque.indexOf("127"), bloque.indexOf("127") + 700)
+  assert.doesNotMatch(spawnFallado, /Listo: PlatformIO quedo instalado/,
+    "informa éxito aunque la reparación no haya corrido")
+  assert.match(spawnFallado, /NO PUDE CORRER|no se pudo lanzar/i,
+    "no dice claramente que no pudo repararse")
+
+  // 4. El camino de afuera sigue ofreciéndose: fallar no puede ser un callejón.
+  assert.match(spawnFallado, /Reparar Tecnia Bot/,
+    "no ofrece el acceso directo, que hace lo mismo sin depender de esto")
+})
