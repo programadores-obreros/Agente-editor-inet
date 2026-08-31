@@ -314,7 +314,7 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
   <div class="escena">
     <figure class="retrato">
       <div class="foto">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 341" role="img" aria-label="Tres paneles sobre el LDR. Primero la pastilla con su serpentín recibiendo luz: más luz, menos ohm. Después el divisor de tensión que hace falta para poder leerla, con una resistencia de 10 k arriba, el LDR abajo, y el pin conectado al punto del medio. Por último qué número sale según haya oscuridad, sombra o sol: cerca de 1023, por el medio, o cerca de 0.">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 341" role="img" aria-label="Tres paneles sobre el LDR. Primero la pastilla con su serpentín recibiendo luz: más luz, menos ohm. Después el divisor de tensión que hace falta para poder leerla, con el LDR arriba, una resistencia de 10 k abajo, y el pin conectado al punto del medio. Por último qué número sale según haya oscuridad, sombra o sol: cerca de 0, por el medio, o cerca de 1023.">
 <style>
 .tit{font-family:"Bricolage Grotesque",Georgia,serif;font-size:20px;font-weight:700;fill:#23261f;letter-spacing:-.01em}
 .baj{font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px;fill:#4f544a}
@@ -349,23 +349,23 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
 <line x1="300" y1="62" x2="300" y2="80" stroke="#0c4a5a" stroke-width="2.6"/>
 <text x="310" y="72" class="et2">5 V</text>
 <rect x="292.5" y="80" width="15" height="44" rx="2" fill="#c9dee3" stroke="#0c4a5a" stroke-width="2"/>
-<text x="285" y="107" text-anchor="end" class="et3">10 k</text>
+<text x="285" y="107" text-anchor="end" class="et3">LDR</text>
 <line x1="300" y1="124" x2="300" y2="146" stroke="#0c4a5a" stroke-width="2.6"/>
 <rect x="292.5" y="146" width="15" height="44" rx="2" fill="#c9dee3" stroke="#0c4a5a" stroke-width="2"/>
-<text x="285" y="173" text-anchor="end" class="et3">LDR</text>
+<text x="285" y="173" text-anchor="end" class="et3">10 k</text>
 <line x1="300" y1="190" x2="300" y2="204" stroke="#0c4a5a" stroke-width="2.6"/>
 <path d="M 287 204 h 26 M 292 210 h 16 M 296.5 216 h 7" stroke="#0c4a5a" stroke-width="2.6" stroke-linecap="round"/>
 <line x1="300" y1="135" x2="352" y2="135" stroke="#c27f00" stroke-width="3"/>
 <circle cx="300" cy="135" r="4.6" fill="#c27f00"/>
 <text x="358" y="140" class="et3" fill="#c27f00">al pin</text>
 <g class="anim">
-  <text x="358" y="160" class="et2" fill="#c27f00" opacity="0">4,9 V
+  <text x="358" y="160" class="et2" fill="#c27f00" opacity="0">0,3 V
     <animate attributeName="opacity" values="1;0;0" keyTimes="0;.3333;.6667" calcMode="discrete" dur="9s" repeatCount="indefinite"/>
   </text>
-  <text x="358" y="160" class="et2" fill="#c27f00" opacity="0">3,0 V
+  <text x="358" y="160" class="et2" fill="#c27f00" opacity="0">2,0 V
     <animate attributeName="opacity" values="0;1;0" keyTimes="0;.3333;.6667" calcMode="discrete" dur="9s" repeatCount="indefinite"/>
   </text>
-  <text x="358" y="160" class="et2" fill="#c27f00" opacity="0">0,4 V
+  <text x="358" y="160" class="et2" fill="#c27f00" opacity="0">4,5 V
     <animate attributeName="opacity" values="0;0;1" keyTimes="0;.3333;.6667" calcMode="discrete" dur="9s" repeatCount="indefinite"/>
   </text></g>
 <text x="424" y="24" class="tit">Y qué se lee</text>
@@ -376,7 +376,7 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
 </rect>
 <circle cx="435" cy="79" r="10" fill="#fdd835" opacity="0.12" stroke="#c27f00" stroke-width="1.6"/>
 <text x="454" y="84" class="et3">a oscuras</text>
-<text x="454" y="101" class="baj">cerca de 1023</text>
+<text x="454" y="101" class="baj">cerca de 0</text>
 <rect class="anim" x="420" y="112" width="184" height="40" rx="6" fill="#fdd835" opacity="0">
   <animate attributeName="opacity" values="0;.28;0" keyTimes="0;.3333;.6667" calcMode="discrete" dur="9s" repeatCount="indefinite"/>
 </rect>
@@ -388,7 +388,7 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
 </rect>
 <circle cx="435" cy="175" r="10" fill="#fdd835" opacity="1" stroke="#c27f00" stroke-width="1.6"/>
 <text x="454" y="180" class="et3">al sol</text>
-<text x="454" y="197" class="baj">cerca de 0</text>
+<text x="454" y="197" class="baj">cerca de 1023</text>
 <text x="424" y="234" class="et">no dice cuántos lux</text></g>
 </svg>
         <b class="chapa" style="left:22.9%;top:48.4%">1</b>

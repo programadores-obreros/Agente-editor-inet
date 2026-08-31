@@ -1054,6 +1054,22 @@ function parsearComponentes(raw: string): Pedido[] {
 // EXPLICADOR DE PROTOBOARD — HTML interactivo para ENTENDER la placa de pruebas.
 // No es un circuito con pines: es la placa misma. Tocás un agujero y se iluminan
 // todos los que están unidos por dentro (el momento "ajá"). Más un ejemplo armado.
+//
+// NOTA TERMINOLOGICA: las descripciones de conectividad de mas abajo (leyenda,
+// tooltip, aviso, tabla) NO usan "fila" ni "columna". El material de catedra
+// usa esos dos terminos al reves entre si (lo que un texto llama fila el otro
+// lo llama columna, y cada uno marca al otro como "el error tipico"), asi que
+// cualquiera de las dos palabras termina contradiciendo a alguien. Ademas la
+// orientacion de ESTE dibujo (el grupo de 5 conectados sale en horizontal, via
+// la clase .pbx-fila de abajo) es arbitraria y no coincide con como el alumno
+// ve la placa fisica en la mano. Por eso se describe por marcas fijas, que no
+// dependen de como este girado el dibujo: "grupo de 5" (los agujeros unidos de
+// un mismo lado del canal), "canal" (separa las dos mitades) y "buses" (los
+// bordes, recorren toda la placa a lo largo).
+// Los nombres internos (variable "filas", clase CSS "pbx-fila") se dejaron
+// como estaban: son de layout puro (describen una fila visual del grid, cosa
+// que es cierta) y no aparecen en ningun texto visible, asi que renombrarlos
+// no corrige nada y solo suma riesgo en un archivo con 79 versiones publicadas.
 // ============================================================================
 function armarProtoboard(): Plantilla {
   const FILAS = 8
@@ -1109,7 +1125,7 @@ function armarProtoboard(): Plantilla {
   </div>
   <ul class="pbx-ley">
     <li><span class="pbx-chip" style="background:#e74c3c"></span><b>Buses + y −</b> (los bordes): recorren TODA la placa a lo largo. Acá llevás la alimentación (+) y la tierra (−) y las repartís a todo el circuito.</li>
-    <li><span class="pbx-chip" style="background:#27ae60"></span><b>Filas (el centro):</b> en cada fila, los 5 agujeros de un lado (a-e) están unidos entre sí. Lo mismo del otro (f-j).</li>
+    <li><span class="pbx-chip" style="background:#27ae60"></span><b>Grupos de 5 (a cada lado del canal):</b> los 5 agujeros de un mismo lado están unidos entre sí: los de a-e por un lado, los de f-j por el otro.</li>
     <li><span class="pbx-chip" style="background:#95a5a6"></span><b>El canal del medio:</b> separa los dos lados (a-e NO toca f-j). Ahí se montan los chips, a caballo.</li>
     <li>👆 <b>Tocá cualquier agujero</b> y mirá qué se ilumina: eso es lo que queda conectado entre sí por dentro.</li>
   </ul>
@@ -1122,8 +1138,8 @@ function armarProtoboard(): Plantilla {
     var holes=[].slice.call(board.querySelectorAll('.pbx-hole'));
     var DEF='👆 Pasá el mouse (o tocá) por un agujero para ver qué agujeros están conectados entre sí por dentro.';
     function nombre(g){
-      if(g.indexOf('rL')===0) return 'la fila '+g.slice(2)+', lado a-e';
-      if(g.indexOf('rR')===0) return 'la fila '+g.slice(2)+', lado f-j';
+      if(g.indexOf('rL')===0) return 'el grupo marcado '+g.slice(2)+', lado a-e (a un lado del canal)';
+      if(g.indexOf('rR')===0) return 'el grupo marcado '+g.slice(2)+', lado f-j (al otro lado del canal)';
       if(g==='busTopPlus'||g==='busBotPlus') return 'el bus + (positivo), de punta a punta';
       return 'el bus − (negativo/GND), de punta a punta';
     }
@@ -1145,12 +1161,12 @@ function armarProtoboard(): Plantilla {
     sub: "tocá un agujero y mirá qué está conectado con qué — así se entiende la placa de pruebas",
     escena,
     aviso:
-      "💡 <strong>La protoboard es tu mesa de trabajo:</strong> conectás componentes <strong>sin soldar</strong>, solo pinchando. El secreto es saber qué agujeros están unidos por dentro. ⚠️ El error más común: creer que toda una COLUMNA se conecta — no, lo que se une es la FILA (los 5 de un lado). Y nunca te olvides de llevar GND de tu placa al bus −.",
+      "💡 <strong>La protoboard es tu mesa de trabajo:</strong> conectás componentes <strong>sin soldar</strong>, solo pinchando. El secreto es saber qué agujeros están unidos por dentro. ⚠️ El error más común: pensar que se conecta todo lo que queda ENFRENTADO a los dos lados del canal — no, lo que se une es el GRUPO DE 5 que está del MISMO lado del canal. Y nunca te olvides de llevar GND de tu placa al bus −.",
     tabla: `
       <tr><th>Zona de la protoboard</th><th>Qué agujeros se conectan</th><th>Para qué se usa</th></tr>
       <tr><td>Buses laterales (+ y −)</td><td>Toda la línea, de punta a punta</td><td>Repartir alimentación (+) y tierra (−)</td></tr>
-      <tr><td>Filas (centro)</td><td>Los 5 de un lado (a-e) o del otro (f-j)</td><td>Conectar las patas de los componentes</td></tr>
-      <tr><td>Canal central</td><td>Nada — separa los dos lados</td><td>Montar chips (cada pata en su fila)</td></tr>`,
+      <tr><td>Grupos de 5 (centro)</td><td>Los 5 de un mismo lado del canal (a-e) o del otro (f-j)</td><td>Conectar las patas de los componentes</td></tr>
+      <tr><td>Canal central</td><td>Nada — separa los dos lados</td><td>Montar chips (cada pata en su grupo)</td></tr>`,
     animacion,
     alto: 0,
     interactivo: true,

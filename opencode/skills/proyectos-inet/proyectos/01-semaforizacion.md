@@ -56,10 +56,10 @@ Hay que fabricar el semáforo de una calle transitada: decidir el orden de las l
 - **UNO no tiene WiFi**: el nivel avanzado IoT solo se practica con ESP32 (el módulo OBLOQ del original está discontinuado). Con UNO, el nivel se sigue de forma conceptual.
 - **Convención de valores IoT simplificada**: 1=verde, 2=amarillo, 3=rojo (el original tenía un 4º valor para rojo+amarillo que el panel nunca mostraba; se simplificó a 3 porque la luz roja sigue encendida en esa fase).
 - **Polaridad del LED**: pata larga = positivo (ánodo, va al pin), pata corta = negativo (cátodo, va a la resistencia → GND). Invertida no rompe el LED pero no enciende.
-- Error de protoboard más común: conexiones que no comparten fila (quedan en columnas no unidas eléctricamente).
+- Error de protoboard más común: conexiones que no comparten grupo (los cinco agujeros de un mismo lado del canal). Si caen en grupos distintos, no están unidas eléctricamente.
 
 ## Cómo ayudar al alumno
-- Si el LED no enciende: revisar polaridad (pata larga al pin) y que la fila de la protoboard sea la correcta.
+- Si el LED no enciende: revisar polaridad (pata larga al pin) y que las dos patas caigan en los grupos que corresponden.
 - Si el orden de las luces está mal: revisar qué pin quedó asignado a cada color en el código, no el cableado.
 - Si en el nivel intermedio dos luces del mismo semáforo quedan prendidas juntas fuera de lo esperado: revisar el orden de las instrucciones dentro de esa "viñeta".
 - Si en el nivel avanzado alguna luz queda "pegada": revisar que cada estado "Poner en…" cambie correctamente al estado de "Esperando en…" correspondiente, y que cada espera compare contra el tiempo correcto.
