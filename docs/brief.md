@@ -19,8 +19,8 @@ escuela, nadie tiene permisos de administrador sobre las máquinas del aula.
 | | |
 | --- | --- |
 | Primer commit | 30 de mayo de 2026 |
-| Commits | 202 |
-| Versiones publicadas | 40 |
+| Commits | 201, hasta v0.3.75 |
+| Versiones publicadas | 79 |
 | Tests | 152, en 19 archivos |
 | Líneas de test | 3.014 — más que las de los tools (3.180), casi 1:1 |
 | Instalado en aula | Decenas de máquinas, 20 de agosto de 2026 |
