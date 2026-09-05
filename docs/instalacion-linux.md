@@ -65,7 +65,7 @@ Abrí una terminal, escribí `opencode`, apretá **Tab**, elegí `tecnia-bot` y 
 
 Si preferís instalar cada cosa por separado (o el bootstrap falló), estos son los pasos que automatiza:
 
-1. **OpenCode** — seguí https://opencode.ai para tu distribución (o `curl -fsSL https://opencode.ai/install | bash`).
+1. **OpenCode** — **la versión que dice `install/OPENCODE_VERSION`** (la única probada con esta versión de Tecnia Bot; es el mismo archivo que usa el instalador de Windows): `curl -fsSL https://opencode.ai/install | bash -s -- --version "$(cat install/OPENCODE_VERSION)"`.
 2. **PlatformIO Core** (no necesita permisos de administrador):
    ```bash
    python3 -c "$(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"

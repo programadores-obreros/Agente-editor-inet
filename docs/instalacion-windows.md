@@ -93,7 +93,12 @@ Abrí una terminal, escribí `opencode`, apretá **Tab**, elegí `tecnia-bot` y 
 
 Si preferís hacerlo a mano (o el bootstrap falló), estos son los pasos que automatiza:
 
-1. **OpenCode** — descargalo de https://opencode.ai, o con Scoop: `scoop install opencode`.
+1. **OpenCode** — con Scoop, **la versión que dice `install\OPENCODE_VERSION`** (la única probada con esta versión de Tecnia Bot), y fijala para que `scoop update` no la cambie:
+   ```powershell
+   scoop install opencode@1.18.18   # reemplazá por lo que diga install\OPENCODE_VERSION
+   scoop hold opencode
+   ```
+   Scoop avisa "Given version ... does not match manifest" y "Attempting to generate manifest": es normal, no es un error. El bootstrap hace exactamente esto.
 2. **PlatformIO Core** (no necesita administrador):
    1. Instalá Python desde https://www.python.org/downloads/ (marcá "Add Python to PATH"), o `scoop install python`.
    2. En PowerShell:

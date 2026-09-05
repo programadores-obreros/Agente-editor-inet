@@ -67,9 +67,39 @@ Dato "Usuario es admin" (([Security.Principal.WindowsPrincipal][Security.Princip
 Titulo "Lo que tiene que estar"
 Dato "Scoop" $(if (Get-Command scoop -EA SilentlyContinue) { "OK" } else { "FALTA" })
 $shim = "$U\scoop\shims\opencode.exe"
-Dato "shim de OpenCode" $(if (Test-Path $shim) { "OK" } else { "FALTA" })
+# El shim de Scoop pesa unos 20 KB. Si pesa MEGAS es el programa entero copiado a
+# mano ahi (lo hacia una version vieja del instalador): Scoop no lo administra, no
+# lo actualiza ni lo borra al desinstalar, y sigue corriendo la version vieja.
+Dato "shim de OpenCode" $(if (-not (Test-Path $shim)) { "FALTA" } elseif ((Get-Item $shim).Length -gt 1MB) { "binario copiado a mano (" + [math]::Round((Get-Item $shim).Length / 1MB, 1) + " MB), no administrado por Scoop" } else { "OK" })
 Dato "PlatformIO" $(if (Test-Path "$U\.platformio\penv\Scripts\pio.exe") { "OK" } else { "FALTA" })
 Dato "capa Tecnia Bot" $(if (Test-Path "$U\.config\opencode\agent\tecnia-bot.md") { "OK" } else { "FALTA" })
+
+Titulo "OpenCode: la version que HAY vs la que se PROBO"
+# El instalador fija la version de OpenCode (install\OPENCODE_VERSION, un solo
+# archivo para Windows y Linux) y la deja fijada con `scoop hold`. Aca se mira si
+# esta maquina cumple las dos cosas, porque "OpenCode anda pero el bot hace algo
+# raro" casi siempre es una version que no es la probada.
+#
+# Lo que Scoop tiene ACTIVO se lee de scoop\apps\opencode\current\manifest.json.
+# El hold se lee de current\install.json, clave "hold": true -- es lo que escribe
+# `scoop hold` (libexec/scoop-hold.ps1). `scoop hold` sin argumentos NO lista
+# nada, imprime el uso: no sirve para detectarlo.
+$pinArchivo = Join-Path $PSScriptRoot "OPENCODE_VERSION"
+$pin = if (Test-Path $pinArchivo) { (Get-Content $pinArchivo -Raw).Trim() } else { "" }
+Dato "fijada (OPENCODE_VERSION)" $(if ($pin) { $pin } else { "NO ESTA el archivo install\OPENCODE_VERSION" })
+$ocActual = "$U\scoop\apps\opencode\current"
+$ocInstalada = ""
+try { if (Test-Path "$ocActual\manifest.json") { $ocInstalada = ("" + (Get-Content "$ocActual\manifest.json" -Raw | ConvertFrom-Json).version).Trim() } } catch { }
+Dato "instalada (Scoop)" $(if ($ocInstalada) { $ocInstalada } else { "no se pudo leer current\manifest.json" })
+if ($pin -and $ocInstalada -and $pin -ne $ocInstalada) {
+  Write-Host "     >> NO COINCIDEN: el bot se probo con la $pin. Reparar Tecnia Bot la activa si esta en el disco;" -ForegroundColor Yellow
+  Write-Host "        si no, en PowerShell: scoop install opencode@$pin" -ForegroundColor Yellow
+}
+$ocHold = $false
+try { if (Test-Path "$ocActual\install.json") { $ocHold = [bool]((Get-Content "$ocActual\install.json" -Raw | ConvertFrom-Json).hold) } } catch { }
+Dato "scoop hold" $(if ($ocHold) { "OK (no se actualiza sola)" } elseif (Test-Path "$ocActual\install.json") { "NO: 'scoop update' la puede cambiar. Reparar Tecnia Bot lo pone." } else { "no se pudo leer current\install.json" })
+$ocDirs = @(Get-ChildItem "$U\scoop\apps\opencode" -Directory -EA SilentlyContinue | Where-Object { $_.Name -ne "current" } | ForEach-Object { $_.Name })
+Dato "versiones en disco" $(if ($ocDirs.Count) { $ocDirs -join ", " } else { "ninguna" })
 
 Titulo "OpenCode: existe es una cosa, CORRE es otra"
 if (Get-Command opencode -EA SilentlyContinue) {

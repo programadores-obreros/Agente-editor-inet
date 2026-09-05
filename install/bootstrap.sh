@@ -13,13 +13,37 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Versión de OpenCode probada con esta versión de Tecnia Bot. La FIJAMOS a propósito:
-# el instalador de OpenCode, si no le pasás versión, le pregunta la última a la API de
-# GitHub, que limita a 60 pedidos/hora POR IP. En una escuela con muchas PC detrás de
-# una sola IP, a partir del pedido 60 la instalación falla ("Failed to fetch version
-# information"). Fijándola, se saltea ese pedido y nunca se rompe. OpenCode se
-# autoactualiza solo después del primer uso.
-OPENCODE_VERSION="1.17.15"
+# Versión de OpenCode probada con esta versión de Tecnia Bot. La FIJAMOS a propósito,
+# por dos motivos:
+#   1. El instalador de OpenCode, si no le pasás versión, le pregunta la última a la
+#      API de GitHub, que limita a 60 pedidos/hora POR IP. En una escuela con muchas
+#      PC detrás de una sola IP, a partir del pedido 60 la instalación falla
+#      ("Failed to fetch version information"). Fijándola, se saltea ese pedido.
+#   2. La capa educativa depende de detalles que OpenCode cambia entre versiones
+#      (default_agent, instructions, agent.<nombre>.model, tui.json, plugins). Todas
+#      las máquinas tienen que tener LA MISMA, la que se probó.
+#
+# La versión vive en install/OPENCODE_VERSION, UN solo archivo que también lee el
+# instalador de Windows. Acá estaba escrita a mano y era distinta (y más vieja) que
+# la que se llevaba Windows: dos plataformas, dos OpenCode. Si el archivo falta o
+# está vacío se corta con un mensaje claro: instalar "la que sea" es justo lo que
+# esto evita.
+ARCHIVO_VERSION="$(dirname "${BASH_SOURCE[0]}")/OPENCODE_VERSION"
+OPENCODE_VERSION=""
+if [ -f "$ARCHIVO_VERSION" ]; then
+  OPENCODE_VERSION="$(tr -d '[:space:]' < "$ARCHIVO_VERSION")"
+fi
+if ! [[ "$OPENCODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo ""
+  echo "  [✗] No se pudo leer la versión de OpenCode a instalar." >&2
+  echo "      Tiene que estar en: $ARCHIVO_VERSION" >&2
+  if [ -n "$OPENCODE_VERSION" ]; then
+    echo "      Dice '$OPENCODE_VERSION' y se esperaba algo como 1.18.18." >&2
+  else
+    echo "      El archivo falta o está vacío. Volvé a descargar el proyecto." >&2
+  fi
+  exit 1
+fi
 
 echo ""
 echo "  🤖⚡  Tecnia Bot — instalación completa"
@@ -28,7 +52,13 @@ echo ""
 
 # --- 1. OpenCode ------------------------------------------------------------
 if command -v opencode >/dev/null 2>&1; then
-  echo "  [✓] OpenCode ya está instalado ($(opencode --version 2>/dev/null || echo ok))"
+  INSTALADA="$(opencode --version 2>/dev/null || echo ok)"
+  echo "  [✓] OpenCode ya está instalado ($INSTALADA)"
+  # Se avisa, no se toca: este instalador no desinstala ni reemplaza nada que ande.
+  if [ "$INSTALADA" != "ok" ] && [ "${INSTALADA#*$OPENCODE_VERSION}" = "$INSTALADA" ]; then
+    echo "  [i] Esta versión de Tecnia Bot se probó con OpenCode $OPENCODE_VERSION. Se deja la que hay;"
+    echo "      si algo no anda, reinstalá con: curl -fsSL https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION"
+  fi
 else
   echo "  [↓] Instalando OpenCode v$OPENCODE_VERSION..."
   curl -fsSL https://opencode.ai/install | bash -s -- --version "$OPENCODE_VERSION"

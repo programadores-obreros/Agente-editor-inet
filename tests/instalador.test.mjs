@@ -44,7 +44,10 @@ const codigo = ps1.replace(/^\s*#.*$/gm, "")
  * desconfiar del resultado.
  */
 function funcion(nombre) {
-  const i = codigo.indexOf(`function ${nombre}`)
+  // Con la llave: `function Test-OpenCode` es PREFIJO de `function Test-OpenCodeScoop`,
+  // que se define antes, y sin la llave este helper devolvía la función equivocada
+  // y dos tests de acá se pusieron rojos midiendo otra cosa.
+  const i = codigo.indexOf(`function ${nombre} {`)
   assert.ok(i > 0, `no está la función ${nombre} en bootstrap.ps1`)
   const abre = codigo.indexOf("{", i)
   assert.ok(abre > 0, `la función ${nombre} no abre llave`)
