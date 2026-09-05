@@ -127,22 +127,12 @@ Las fichas se leen juntas. Si ofreciste una y hay otra que la continúa, decilo:
 - **placas**
 - **sensores**
 
-## Tres hojas con foto de terceros
+## Se pueden publicar
 
-Están acá y se reparten como todas. Pero **su foto no es propia**:
-
-| Nº | Ficha | De dónde salió la imagen |
-|---|---|---|
-| 02 | Sensor Shield v5.0 | foto de catálogo comercial del Sensor Shield |
-| 04 | Servo | foto de catálogo comercial del servo |
-| 08 | El téster | fotos de catálogo comercial de los tésteres |
-
-**Qué cambia en la práctica:** imprimirlas y repartirlas en el aula está bien.
-Subirlas al sitio de la escuela, a un repositorio público o a redes sociales, no
-—esa foto no es de Tecnia Lab—.
-
-Si alguien pregunta si puede publicarlas, decile esto. Para las otras catorce no
-hay ninguna restricción: son dibujo propio o capturas del propio producto.
+Las 17 son dibujo propio, capturas del propio producto o fotos de
+dominio público (CC0), y el crédito está impreso al pie de cada hoja. Imprimirlas,
+repartirlas, subirlas al sitio de la escuela o a un repositorio público: todo está
+bien. Si alguien pregunta, decile eso.
 
 ---
 

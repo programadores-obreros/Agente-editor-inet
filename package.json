@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
+    "fichas:manifest": "node scripts/fichas-manifest.mjs",
+    "fichas:check": "node scripts/fichas-manifest.mjs --check",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

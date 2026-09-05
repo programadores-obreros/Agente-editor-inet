@@ -314,7 +314,7 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
   <div class="escena">
     <figure class="retrato">
       <div class="foto">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1341.6000000000001 780" role="img" aria-label="Un téster de mano dibujado de frente: la pantalla arriba, el dial en el medio con sus zonas de tensión continua, tensión alterna, resistencia y corriente, y abajo las tres bocas para las puntas, con la de corriente alta destacada.">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1341.6000000000001 780" role="img" aria-label="Un téster de mano dibujado de frente: la pantalla arriba, el dial en el medio con sus zonas de tensión continua, tensión alterna, resistencia y corriente, y abajo tres bocas para las puntas —hay modelos con cuatro—, con la de corriente alta destacada en ámbar. La punta negra está enchufada en COM y la roja en la de volt, ohm y miliamperios.">
 <style>
 .zon{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:16px;font-weight:600;fill:#64695e}
 .boc{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:16px;font-weight:600;fill:#23261f}
@@ -356,7 +356,7 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
 <line x1="254.8" y1="364.0" x2="235.5" y2="333.1" stroke="#c62828" stroke-width="7.3" stroke-linecap="round"/>
 <circle cx="254.8" cy="364.0" r="8.3" fill="#1a1e24"/>
 
-<!-- las tres bocas -->
+<!-- las bocas: tres acá, que es lo mínimo que muestra el criterio; hay modelos con cuatro -->
 
 <circle cx="150.8" cy="572.0" r="21.8" fill="#c27f00" stroke="#000" stroke-width="1"/>
 <circle cx="150.8" cy="572.0" r="11.4" fill="#000"/>
@@ -376,40 +376,43 @@ dd em { font-style: normal; font-weight: 600; color: var(--tinta-honda); }
 
 <!-- la explicación, a la derecha -->
 <g transform="translate(540.8, 104.0)">
-  <text x="0" y="0" class="tit">Las tres bocas</text>
-  <circle cx="15.6" cy="46.8" r="15.6" fill="#1a1c16"/>
-  <text x="46.8" y="54.6" class="boc">COM</text>
-  <text x="46.8" y="80.6" class="nota">la punta negra, siempre</text>
-  <circle cx="15.6" cy="130.0" r="15.6" fill="#1a1c16"/>
-  <text x="46.8" y="137.8" class="boc">V ohm mA</text>
-  <text x="46.8" y="163.8" class="nota">la roja, para casi todo</text>
-  <circle cx="15.6" cy="213.2" r="15.6" fill="#c27f00"/>
-  <text x="46.8" y="221.0" class="boc" fill="#c27f00">10 A</text>
-  <text x="46.8" y="247.0" class="nota">sólo para corriente alta</text>
+  <!-- El título dice lo que vale para todos; la nota, lo que cambia por modelo.
+       Toda la leyenda baja 5 mm para hacerle lugar: hay sobra hasta el borde. -->
+  <text x="0" y="0" class="tit">Las bocas</text>
+  <text x="0" y="28.6" class="nota">tres o cuatro, según el modelo. COM está siempre</text>
+  <circle cx="15.6" cy="72.8" r="15.6" fill="#1a1c16"/>
+  <text x="46.8" y="80.6" class="boc">COM</text>
+  <text x="46.8" y="106.6" class="nota">la punta negra, siempre</text>
+  <circle cx="15.6" cy="156.0" r="15.6" fill="#1a1c16"/>
+  <text x="46.8" y="163.8" class="boc">V ohm mA</text>
+  <text x="46.8" y="189.8" class="nota">la roja, para casi todo</text>
+  <circle cx="15.6" cy="239.2" r="15.6" fill="#c27f00"/>
+  <text x="46.8" y="247.0" class="boc" fill="#c27f00">10 A</text>
+  <text x="46.8" y="273.0" class="nota">sólo para corriente alta</text>
 
-  <text x="0" y="332.8" class="tit">Y el error de siempre</text>
-  <text x="0" y="374.4" class="nota">dejar la punta roja en la boca de</text>
-  <text x="0" y="405.6" class="nota">amperios y medir tensión: eso es</text>
-  <text x="0" y="436.8" class="avi">un cortocircuito</text>
-  <text x="0" y="478.4" class="nota">y ahí es donde se queman los fusibles</text>
+  <text x="0" y="358.8" class="tit">Y el error de siempre</text>
+  <text x="0" y="400.4" class="nota">dejar la punta roja en la boca de</text>
+  <text x="0" y="431.6" class="nota">amperios y medir tensión: eso es</text>
+  <text x="0" y="462.8" class="avi">un cortocircuito</text>
+  <text x="0" y="504.4" class="nota">y ahí es donde se queman los fusibles</text>
 </g>
 </svg>
         <b class="chapa" style="left:12%;top:18%">1</b>
-        <b class="chapa" style="left:12%;top:50%">2</b>
-        <b class="chapa" style="left:19%;top:83%">3</b>
-        <b class="chapa" style="left:6%;top:83%">4</b>
-        <b class="chapa" style="left:32%;top:55%">5</b>
-        <b class="chapa" style="left:78%;top:48%">6</b>
+        <b class="chapa" style="left:13%;top:50%">2</b>
+        <b class="chapa" style="left:19%;top:64.5%">3</b>
+        <b class="chapa" style="left:11%;top:64.5%">4</b>
+        <b class="chapa" style="left:33%;top:92%">5</b>
+        <b class="chapa" style="left:36.5%;top:13.5%">6</b>
       </div>
-      <figcaption>Fotografías del producto. Procedencia comercial: falta documentar su licencia antes de distribuir la ficha.</figcaption>
+      <figcaption>Dibujo propio. Muestra lo que comparten todos los modelos —COM, y la boca de amperios en ámbar— y no los rótulos de una marca.</figcaption>
     </figure>
     <ol class="llamadas">
       <li><b>La pantalla</b><span>El número y la unidad. DC es continua; AC, alterna.</span></li>
       <li><b>El dial</b><span>Elige QUÉ se mide. Ponerlo mal no rompe nada: no mide.</span></li>
       <li><b>COM</b><span>La punta negra va acá siempre. Esta boca no falta nunca.</span></li>
-      <li><b>La de corriente</b><span>La boca de riesgo. Sólo para medir amperios.</span></li>
-      <li><b>Las puntas</b><span>Vienen sueltas. Se enchufan según lo que se vaya a medir.</span></li>
-      <li><b>No hay dos iguales</b><span>Cambian las bocas, el dial y los rótulos. El criterio no.</span></li>
+      <li><b>La de corriente</b><span>En ámbar en el dibujo: la boca de riesgo. Sólo para amperios.</span></li>
+      <li><b>Las puntas</b><span>La negra en COM; la roja se muda según lo que se mida.</span></li>
+      <li><b>Tres, o cuatro</b><span>El dibujo trae tres bocas; hay modelos con cuatro. COM está siempre.</span></li>
     </ol>
   </div>
 
