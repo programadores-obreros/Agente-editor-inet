@@ -12,22 +12,40 @@ interface RunResult {
 
 // PlatformIO casi nunca queda en el PATH tras instalarse (ni en Linux ni en Windows).
 // Buscamos el binario en las rutas de instalación conocidas antes de caer al PATH.
+//
+// Solo se cachea una ruta REAL. La primera version cacheaba tambien el fallback
+// "pio": si el tool arrancaba sin PlatformIO, se quedaba con "pio" para siempre y
+// despues de que `reparar` lo instalara seguia sin encontrarlo (y `compile`
+// fallaba hasta reiniciar OpenCode).
 let pioPathCache: string | null = null
-function pioBin(): string {
-  if (pioPathCache) return pioPathCache
+
+function pioCandidatos(): string[] {
   const home = homedir()
-  const candidates =
-    process.platform === "win32"
-      ? [join(home, ".platformio", "penv", "Scripts", "pio.exe")]
-      : [join(home, ".platformio", "penv", "bin", "pio")]
-  for (const candidate of candidates) {
+  return process.platform === "win32"
+    ? [join(home, ".platformio", "penv", "Scripts", "pio.exe")]
+    : [join(home, ".platformio", "penv", "bin", "pio")]
+}
+
+export function resetPioCache(): void {
+  pioPathCache = null
+}
+
+export function pioBin(): string {
+  if (pioPathCache) return pioPathCache
+  for (const candidate of pioCandidatos()) {
     if (existsSync(candidate)) {
       pioPathCache = candidate
       return candidate
     }
   }
-  pioPathCache = "pio" // fallback: confiar en el PATH del sistema
-  return "pio"
+  return "pio" // fallback: confiar en el PATH del sistema (sin cachear)
+}
+
+// Resuelve de nuevo, sin cache: hay binario en las rutas conocidas o en el PATH.
+// Nunca hace existsSync("pio"): eso mira un archivo relativo al cwd, no el PATH.
+export function pioDisponible(): boolean {
+  resetPioCache()
+  return pioCandidatos().some((c) => existsSync(c)) || Bun.which("pio") !== null
 }
 
 async function run(cmd: string[], cwd: string, signal?: AbortSignal): Promise<RunResult> {
@@ -496,7 +514,11 @@ Acciones:
     const signal = ctx.abort
     const envFlag = args.environment ? ["-e", args.environment] : []
 
-    if (args.action !== "diagnostico") {
+    // `diagnostico` informa que falta, y `reparar` existe PARA cuando falta: si
+    // el pre-chequeo corriera tambien para `reparar`, devolveria "anda al menu
+    // inicio" y la rama de reparacion seria inalcanzable justo en el unico caso
+    // para el que se escribio. Paso en la VM: /reparar no instalaba nada.
+    if (args.action !== "diagnostico" && args.action !== "reparar") {
       const check = await run(["pio", "--version"], cwd, signal)
       if (check.code === 127 || check.stderr.includes("command not found") || check.stderr.includes("is not recognized")) {
         return pioNoEncontrado()
@@ -549,7 +571,7 @@ Acciones:
          * La diferencia importa: si algo mas seguia roto, el docente se iba
          * convencido de que la reparacion se hizo.
          */
-        const pioAntes = existsSync(pioBin()) || Bun.which("pio") !== null
+        const pioAntes = pioDisponible()
 
         const result = await run(
           ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", bootstrap],
@@ -568,7 +590,9 @@ Acciones:
           )
         }
 
-        const pioAhora = existsSync(pioBin()) || Bun.which("pio") !== null
+        // Se vuelve a resolver sin cache: el chequeo inicial de `pio --version`
+        // corrio cuando todavia no estaba instalado.
+        const pioAhora = pioDisponible()
         // Las ultimas lineas, que es donde el bootstrap dice como le fue. El log
         // entero son cientos de lineas de descarga que no le sirven a nadie.
         const salida = (result.stdout + "\n" + result.stderr)
