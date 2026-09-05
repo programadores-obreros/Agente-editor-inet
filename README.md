@@ -121,7 +121,7 @@ Probá:
 - *"dame algo para repartir del LDR"* — te abre la ficha A4 en el navegador, lista para imprimir.
 - `/ayuda` — resumen de uso + manual/onboarding en el navegador.
 - `/diagnostico` — verifica tu entorno (OpenCode, PlatformIO, la placa).
-- `/actualizar` — trae la última versión desde GitHub.
+- `/actualizar` — trae el último release publicado desde GitHub (verifica lo que bajó antes de instalarlo).
 
 ---
 

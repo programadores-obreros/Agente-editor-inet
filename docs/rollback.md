@@ -40,6 +40,12 @@ gh release edit v0.3.62 --latest
 Esto **no borra** la v0.3.69: la saca de la vidriera. Borrar un release es
 irreversible y no hace falta.
 
+Y cubre también a los que actualizan desde el bot: `/actualizar` instala lo que
+GitHub marca como **Latest** (nunca `main` ni prereleases) y compara la versión
+instalada con ese tag, no con "mayor o menor". Después de este paso, quien corra
+`/actualizar` —tenga la v0.3.68 o la v0.3.69 rota— queda en la v0.3.62. Es la
+misma salida que el paso 1, sin bajar el `.exe`.
+
 ### 3. Recién ahí, revertir el código
 
 ```bash

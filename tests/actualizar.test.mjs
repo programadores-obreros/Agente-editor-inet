@@ -16,10 +16,11 @@ const OUT = join(os.tmpdir(), "tecniabot-actualizar-test")
 
 let mod
 
-// La última versión publicada la lee actualizar.ts con fetch() al archivo VERSION de
-// raw.githubusercontent (ver ultimaVersionPublicada). Cada test decide qué devuelve.
+// La última versión publicada la lee actualizar.ts con fetch() a la API de
+// releases de GitHub (`releases/latest`, campo tag_name, ver ultimaVersionPublicada).
+// Cada test decide qué devuelve; el tag lleva la "v" adelante como en GitHub.
 function setPublicada(v, ok = true) {
-  globalThis.fetch = async () => ({ ok, text: async () => v })
+  globalThis.fetch = async () => ({ ok, json: async () => ({ tag_name: v ? `v${v}` : "" }) })
 }
 // Stub inofensivo de Bun: actualizar.ts lo usa SOLO en el modo ACTUALIZAR (no en verificar).
 globalThis.Bun = { spawn: () => ({ exited: Promise.resolve(0), stdout: "", stderr: "" }) }

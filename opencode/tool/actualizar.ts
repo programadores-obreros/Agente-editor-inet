@@ -61,14 +61,19 @@ function esMasNueva(a: string, b: string): boolean {
   return false
 }
 
-// Última versión publicada: lee el archivo VERSION de la rama main vía HTTP.
-// Usa raw.githubusercontent (sin el límite de la API de GitHub y sin depender de
-// que `git` esté instalado en la PC del docente).
+// Última versión PUBLICADA: el release que GitHub marca como "Latest" (ni draft
+// ni prerelease), por la API. Es la MISMA fuente que usa install/update.{ps1,sh}
+// para elegir qué bajar: si acá dijéramos "hay una nueva" leyendo el VERSION de
+// la rama main (código sin publicar todavía), /actualizar contestaría "ya estás
+// en la última" y el docente vería al bot contradecirse.
 async function ultimaVersionPublicada(): Promise<string | null> {
   try {
-    const res = await fetch(`https://raw.githubusercontent.com/${REPO}/main/VERSION`)
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "tecnia-bot-actualizar" },
+    })
     if (!res.ok) return null
-    const v = (await res.text()).trim()
+    const tag = String((await res.json())?.tag_name ?? "").trim()
+    const v = tag.replace(/^v/, "")
     return /^[0-9]+\.[0-9]+\.[0-9]+$/.test(v) ? v : null
   } catch {
     return null
@@ -77,7 +82,7 @@ async function ultimaVersionPublicada(): Promise<string | null> {
 
 export default tool({
   description:
-    'Muestra la versión instalada de Tecnia Bot, verifica si hay una versión nueva, y/o actualiza a la última. Con verificar=true SOLO chequea (no instala nada) — usalo cuando pregunten "¿qué versión tengo?", "¿estoy actualizado?", "¿hay versión nueva?". Sin verificar (o false), ACTUALIZA de verdad — usalo cuando pidan "actualizar", "actualizate", "traer lo último".',
+    'Muestra la versión instalada de Tecnia Bot, verifica si hay una versión nueva, y/o actualiza al último release PUBLICADO (nunca código sin publicar). Con verificar=true SOLO chequea (no instala nada) — usalo cuando pregunten "¿qué versión tengo?", "¿estoy actualizado?", "¿hay versión nueva?". Sin verificar (o false), ACTUALIZA de verdad — usalo cuando pidan "actualizar", "actualizate", "traer lo último".',
   args: {
     verificar: tool.schema
       .boolean()
@@ -102,14 +107,16 @@ export default tool({
       return `Tenés Tecnia Bot **v${info.version}** — estás al día. 🎉` + LIMITE_ALCANCE
     }
 
-    // --- Modo ACTUALIZAR: baja lo nuevo y reinstala ---
+    // --- Modo ACTUALIZAR: install/update.{ps1,sh} baja el último release publicado,
+    // verifica que lo bajado sea esa versión, y recién ahí reinstala. Si algo falla,
+    // deja la copia instalada como estaba. ---
     if (!info.repoDir || !existsSync(info.repoDir)) {
       return `Tenés la versión ${info.version}. No encuentro la carpeta del proyecto${info.repoDir ? ` (${info.repoDir})` : ""} para actualizar. Volvé a descargar el proyecto desde GitHub y corré el instalador.` + LIMITE_ALCANCE
     }
 
     const win = process.platform === "win32"
     const cmd = win
-      ? ["powershell", "-ExecutionPolicy", "Bypass", "-File", join(info.repoDir, "install", "update.ps1")]
+      ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(info.repoDir, "install", "update.ps1")]
       : ["bash", join(info.repoDir, "install", "update.sh")]
 
     const proc = Bun.spawn(cmd, { cwd: info.repoDir, stdout: "pipe", stderr: "pipe" })
@@ -125,7 +132,7 @@ export default tool({
     const cambio =
       nueva === info.version
         ? `Ya estabas al día: versión ${nueva}.`
-        : `¡Actualizado! De la versión ${info.version} a la ${nueva}.`
+        : `¡Actualizado! De la versión ${info.version} a la ${nueva} (último release publicado).`
     return `${cambio}\n\n⚠️ Reiniciá OpenCode para que los cambios tomen efecto.\n\n${out.slice(-400)}`
   },
 })
