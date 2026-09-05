@@ -51,7 +51,8 @@ Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuand
 | Tecnología | Para qué |
 |------------|----------|
 | **[OpenCode](https://opencode.ai)** | La plataforma de agente sobre la que se monta la capa educativa (MIT). |
-| **Google Gemini Flash-Lite** (gratis) | El modelo de lenguaje del agente (`google/gemini-flash-lite-latest`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se usa el alias `-latest` (no una versión fija) para no depender de un modelo puntual que Google puede discontinuar. |
+| **Big Pickle** (gratis, sin cuenta) | El modelo de lenguaje por defecto cuando no hay API key (`opencode/big-pickle`), servido por [OpenCode Zen](https://opencode.ai/zen). Gratis **por tiempo limitado**; mientras dure esa etapa, OpenCode puede usar las conversaciones para mejorar el modelo — ver [Instalación](#-instalación). |
+| **Google Gemini 3.5 Flash-Lite** (gratis) | El modelo del agente cuando hay una API key de Google (`google/gemini-3.5-flash-lite`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se fija la versión explícita (no un alias `-latest`): un alias cambia solo, sin quedar registrado en ningún commit (ver CHANGELOG 0.3.63). El modelo **no** vive en el frontmatter del agente sino en `opencode.json` → `agent.tecnia-bot.model`, que escribe el instalador: OpenCode mezcla los agentes `.md` **encima** del JSON, así que un `model:` en el `.md` pisaría la elección. Detalle en [docs/api-key-google.md](docs/api-key-google.md). |
 | **[Bun](https://bun.sh)** | Runtime de OpenCode: las herramientas del agente corren sobre Bun. |
 | **TypeScript** | Las 8 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ficha`, `ayuda`, `actualizar`, `perfil`, `memoria`). |
 | **[PlatformIO](https://platformio.org)** | Compila y carga el firmware a la placa real. |
@@ -82,7 +83,12 @@ bash install/bootstrap.sh
 powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 ```
 
-> 🔑 **El instalador te pide la API key gratis de Google directo** (sin tarjeta, sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — pegala cuando te la pida al final de la instalación. Si no la tenés a mano, apretá Enter y agregala después con `/connect` dentro de OpenCode. Es un paso único: se guarda para siempre.
+> 🔑 **La API key es opcional.** El instalador te la pide una vez y decide el modelo según lo que hagas:
+>
+> - **Sin API key** (Enter): Tecnia Bot usa **Big Pickle** (`opencode/big-pickle`), el modelo gratuito de OpenCode. No hace falta cuenta ni login. Es gratis **por tiempo limitado**, y ⚠️ mientras dure esa etapa **OpenCode puede usar lo que se escribe en el chat para mejorar el modelo**: no pongas datos personales ni nombres de alumnos en la conversación.
+> - **Con API key de Google** (gratis, sin tarjeta, sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)): usa **Gemini 3.5 Flash-Lite**, con cuota propia y sin esa cláusula. Pegala cuando el instalador te la pida; se guarda en tu compu para siempre.
+>
+> Podés cambiar después: conseguí la key y corré **"Reparar Tecnia Bot"** (menú inicio en Windows) o `bash install/install.sh`; o pegala con `/connect` dentro de OpenCode y corré `/actualizar`. El instalador vuelve a elegir el modelo en cada corrida.
 
 > 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md) · [todo sobre la API key de Google — cómo conseguirla y qué hacer si deja de andar](docs/api-key-google.md)
 

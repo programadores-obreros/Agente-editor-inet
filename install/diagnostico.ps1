@@ -186,6 +186,68 @@ if (Test-Path $auth) {
 $envKey = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
 Dato "variable con la key" $(if ($envKey) { "puesta" } else { "NO esta" })
 
+Titulo "El modelo -- Gemini con key de Google, Big Pickle sin"
+# La key de Google es OPCIONAL. Sin key, el instalador deja al agente en
+# opencode/big-pickle (el modelo gratuito de OpenCode, sin cuenta); con key, en
+# Gemini. Lo decide en cada corrida y lo escribe como override del agente en
+# opencode.json ("agent" -> "tecnia-bot" -> "model"). Aca se informa que quedo
+# escrito y si es coherente con la key que hay: son las dos cosas que explican un
+# "configured model ... is not valid" o un "Invalid API key" con todo instalado.
+#
+# De auth.json se informa SOLO si hay una entrada "google" con key, nunca su valor.
+$ocDir = "$U\.config\opencode"
+if ($env:XDG_CONFIG_HOME) { $ocDir = "$env:XDG_CONFIG_HOME\opencode" }
+$ocCfg = @("$ocDir\opencode.json", "$ocDir\opencode.jsonc") | Where-Object { Test-Path $_ } | Select-Object -First 1
+$modelo = $null
+$cfgParsea = $false
+if ($ocCfg) {
+  Dato "config de OpenCode" $ocCfg
+  # Sin sacar comentarios: si es un .jsonc comentado no va a parsear y se informa
+  # eso, que ya es un dato (el instalador si los tolera).
+  try {
+    $cfg = Get-Content $ocCfg -Raw -EA Stop | ConvertFrom-Json -EA Stop
+    $cfgParsea = $true
+    if ($cfg.agent -and $cfg.agent.'tecnia-bot' -and $cfg.agent.'tecnia-bot'.model) { $modelo = [string]$cfg.agent.'tecnia-bot'.model }
+  } catch { }
+  if (-not $cfgParsea) { Dato "modelo de tecnia-bot" "no se pudo leer la config (no parsea como JSON)" }
+  elseif ($modelo) { Dato "modelo de tecnia-bot" $modelo }
+  else { Dato "modelo de tecnia-bot" "sin override en la config: usa el del archivo del agente (Gemini)" }
+} else {
+  Dato "config de OpenCode" "NO ESTA (ni opencode.json ni opencode.jsonc)"
+}
+# La key compartida que traian las versiones hasta la 0.3.75 se roto: una
+# instalacion vieja la tiene guardada y MUERTA. Se la reconoce por su SHA-256
+# (el literal no esta en ningun lado); de la key nunca se imprime nada.
+$HashKeyVieja = "121163b85b0396edcfcc4840981d823c4f1e9c23aadc72b39c9723fef70cf3b4"
+function Test-KeyVieja($k) {
+  if (-not $k) { return $false }
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { $h = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$k)) } finally { $sha.Dispose() }
+  return ((($h | ForEach-Object { $_.ToString("x2") }) -join "") -eq $HashKeyVieja)
+}
+$hayKey = $false
+$keyVieja = $false
+if (Test-Path $auth) {
+  try {
+    $authObj = [Text.Encoding]::UTF8.GetString($b) | ConvertFrom-Json
+    $hayKey = [bool](($authObj.PSObject.Properties.Name -contains "google") -and $authObj.google.key)
+    if ($hayKey) { $keyVieja = Test-KeyVieja $authObj.google.key }
+  } catch { }
+}
+if (Test-KeyVieja $envKey) { $keyVieja = $true }
+Dato "key de Google guardada" $(if ($hayKey) { "si" } else { "no" })
+if ($keyVieja) {
+  Write-Host "     >> Es la key de respaldo vieja (auth.json o la variable), ya invalida: corre 'Reparar Tecnia Bot' (menu inicio) para quitarla" -ForegroundColor Red
+}
+if ($hayKey -and $modelo -eq "opencode/big-pickle") {
+  Write-Host "     >> Hay key de Google pero el agente sigue en Big Pickle: corre 'Reparar Tecnia Bot' (menu inicio) y pasa a Gemini" -ForegroundColor Yellow
+}
+if (-not $hayKey -and ($modelo -like "google/*" -or ($cfgParsea -and -not $modelo))) {
+  Write-Host "     >> El agente apunta a Gemini y NO hay key de Google: falla al primer mensaje. Corre 'Reparar Tecnia Bot' (menu inicio)" -ForegroundColor Red
+}
+Write-Host "     Para cambiar: pega una key de Google (en Reparar, o con /connect y despues Reparar) y usa Gemini;"
+Write-Host "     sin key usa Big Pickle (gratis por tiempo limitado; OpenCode puede usar el chat para mejorar el modelo)."
+
 Titulo "Politica de ejecucion -- una GPO de escuela bloquea todo sin avisar"
 Get-ExecutionPolicy -List | ForEach-Object { Dato $_.Scope.ToString() $_.ExecutionPolicy }
 

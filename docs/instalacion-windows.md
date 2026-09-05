@@ -24,9 +24,9 @@ pegar comandos.
    pedir contraseña de administrador**. Tarda unos minutos y se ve una ventana negra
    con texto corriendo: es normal, está trabajando.
 4. Al terminar, abrí **Tecnia Bot** desde el **menú inicio** (o el escritorio).
-5. Faltan dos pasos que ningún instalador puede hacer solo: los **drivers USB** de
-   la placa (**Paso 3** de más abajo) y conectar una **API key gratis de Google**
-   para el modelo de lenguaje (**Paso 4** de más abajo). Ambos son pasos únicos.
+5. Falta un paso que ningún instalador puede hacer solo: los **drivers USB** de
+   la placa (**Paso 3** de más abajo). La **API key de Google** es opcional
+   (**Paso 4**): sin key Tecnia Bot usa Big Pickle, el modelo gratuito de OpenCode.
 
 > El `.exe` lo compila GitHub Actions en cada versión (no se sube a mano). Si no ves
 > el archivo en Releases, corré el workflow **"Instalador Windows (.exe)"** desde la
@@ -66,15 +66,20 @@ que Windows no reconoce de fábrica:
 
 Si conectás la placa y no aparece en el Administrador de dispositivos, instalá el driver que corresponda y reiniciá.
 
-### Paso 4 — La API key gratis de Google
+### Paso 4 — La API key de Google (opcional)
 
-Tecnia Bot usa Google Gemini como modelo de lenguaje, que tiene una cuota gratis (sin tarjeta). **El instalador ya te la pide solo**, al final de la instalación:
+La API key es **opcional**. El instalador te la pide una vez y elige el modelo según lo que hagas:
+
+- **Sin key** (Enter): Tecnia Bot usa **Big Pickle**, el modelo gratuito de OpenCode. No hace falta cuenta. Es gratis **por tiempo limitado**, y mientras dure esa etapa **OpenCode puede usar el chat para mejorar el modelo**: no pongas datos personales ni nombres de alumnos en la conversación.
+- **Con key** (gratis, sin tarjeta): usa **Gemini**, con cuota propia y sin esa cláusula.
+
+Para usar Gemini:
 
 1. Entrá a [aistudio.google.com/apikey](https://aistudio.google.com/apikey) con una cuenta de Google y generá una key gratis (podés hacerlo antes, en otra pestaña, mientras corre el instalador).
-2. Cuando el instalador te muestre *"Tecnia Bot necesita una API key GRATIS de Google..."*, pegala ahí directo.
-3. Si no la tenés a mano en ese momento, apretá Enter sin pegar nada — podés agregarla después escribiendo `/connect` dentro de OpenCode, buscando **Google** en la lista.
+2. Cuando el instalador te muestre *"API key de Google (OPCIONAL)..."*, pegala ahí directo.
+3. Si no la tenés a mano en ese momento, apretá Enter: el bot queda en Big Pickle. Para pasar a Gemini después, conseguí la key y corré **Menú inicio → "Reparar Tecnia Bot"** (te la pide), o pegala con `/connect` dentro de OpenCode y corré `/actualizar`.
 
-Es un paso único: se guarda en tu compu y no se vuelve a pedir en las próximas actualizaciones.
+Se guarda en tu compu y no se vuelve a pedir en las próximas actualizaciones. Más detalle: [docs/api-key-google.md](api-key-google.md).
 
 > 📖 Guía completa (por qué hace falta, qué hacer si deja de andar, cómo reemplazarla): [docs/api-key-google.md](api-key-google.md).
 

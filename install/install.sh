@@ -95,10 +95,176 @@ EOF
   echo "  [OK] Memoria de progreso creada (vacía) en $MEMORIA_FILE"
 fi
 
-# ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto ----
+# ---- API key de Google (OPCIONAL): decide que modelo usa el agente ----
+# Con una key de Google (gratis, sin tarjeta) Tecnia Bot usa Gemini. Sin key, usa
+# Big Pickle, el modelo gratuito de OpenCode (provider "opencode": sin cuenta ni
+# login, OpenCode lo sirve con apiKey "public"). La eleccion se escribe mas abajo
+# como override del agente en opencode.json ("agent" -> "tecnia-bot" -> "model")
+# y se RE-EVALUA en cada corrida (instalar, update, /actualizar): si el docente
+# agrega una key despues con /connect, la corrida siguiente lo pasa a Gemini.
+#
+# Hasta la v0.3.75 aca habia una key de Google fija, embebida en el script, que se
+# usaba cuando nadie pegaba la suya. Se elimino y se roto: no queda ninguna key en
+# este repo. La key que pegue el docente se guarda SOLO en el archivo de
+# credenciales de OpenCode de esta compu -- nunca en el repo, nunca en git. Es
+# idempotente: si ya hay una key de "google" guardada (de esta instalacion o de un
+# /connect manual), no se pregunta de nuevo.
+MODELO_CON_KEY="google/gemini-3.5-flash-lite"
+MODELO_SIN_KEY="opencode/big-pickle"
+
+# ---- La key compartida de versiones anteriores se reconoce por su SHA-256 ----
+# Las instalaciones hechas con la v0.3.75 o anteriores tienen esa key en auth.json.
+# Como se roto, quedo una credencial MUERTA que hace fallar el primer mensaje, y el
+# instalador -- que solo miraba "hay key de google" -- la daba por buena. Se la
+# reconoce por el hash (el literal no vuelve a este repo) y se la quita antes de
+# decidir el modelo; si el docente la pega en el prompt, se rechaza por el mismo motivo.
+HASH_KEY_VIEJA="121163b85b0396edcfcc4840981d823c4f1e9c23aadc72b39c9723fef70cf3b4"
+sha256_de() {
+  # $1 = texto exacto (sin newline). sha256sum en Linux, shasum en macOS, openssl de ultimo.
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$1" | shasum -a 256 | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    printf '%s' "$1" | openssl dgst -sha256 | awk '{print $NF}'
+  fi
+}
+es_key_vieja() {
+  [ -n "${1:-}" ] && [ "$(sha256_de "$1")" = "$HASH_KEY_VIEJA" ]
+}
+
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+mkdir -p "$DATA_DIR"
+AUTH_FILE="$DATA_DIR/auth.json"
+
+# Lee la key de "google" guardada (o nada). Con python3 o jq, el que haya: sin
+# ninguno de los dos no se puede leer el JSON y se asume que no hay.
+auth_leer_key_google() {
+  [ -f "$AUTH_FILE" ] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$AUTH_FILE" <<'PYEOF' 2>/dev/null || true
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    k = d.get("google", {}).get("key", "")
+    print(k if isinstance(k, str) else "")
+except Exception:
+    print("")
+PYEOF
+  elif command -v jq >/dev/null 2>&1; then
+    jq -r '.google.key // ""' "$AUTH_FILE" 2>/dev/null || true
+  fi
+}
+
+# Quita la entrada "google" de auth.json preservando los otros providers.
+auth_quitar_google() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$AUTH_FILE" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+try:
+    d = json.load(open(path))
+except Exception:
+    d = {}
+d.pop("google", None)
+json.dump(d, open(path, "w"), indent=2)
+PYEOF
+  elif command -v jq >/dev/null 2>&1; then
+    local tmp; tmp="$(mktemp)"
+    if jq 'del(.google)' "$AUTH_FILE" > "$tmp" 2>/dev/null; then mv "$tmp" "$AUTH_FILE"; else rm -f "$tmp"; fi
+  fi
+}
+
+GOOGLE_KEY_ACTUAL="$(auth_leer_key_google)"
+if es_key_vieja "$GOOGLE_KEY_ACTUAL"; then
+  auth_quitar_google
+  GOOGLE_KEY_ACTUAL=""
+  echo "  [i] Se quitó la key de respaldo compartida que traían las versiones anteriores (ya no es válida)."
+fi
+# En Linux/macOS el instalador nunca escribio la variable de entorno; si alguien la
+# puso a mano con la key vieja, solo se puede avisar (vive en su .bashrc/.zshrc).
+if es_key_vieja "${GOOGLE_GENERATIVE_AI_API_KEY:-}"; then
+  echo "  [AVISO] La variable GOOGLE_GENERATIVE_AI_API_KEY tiene la key de respaldo vieja (ya inválida):"
+  echo "          sacala de tu ~/.bashrc, ~/.zshrc o ~/.profile."
+fi
+TIENE_GOOGLE=0
+[ -n "$GOOGLE_KEY_ACTUAL" ] && TIENE_GOOGLE=1
+
+if [ "$TIENE_GOOGLE" != "1" ]; then
+  echo ""
+  echo "==> API key de Google (OPCIONAL). Con una key gratis (sin tarjeta) Tecnia Bot usa Gemini."
+  echo "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
+  echo "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
+  # Timeout de 60s: si esto corre sin terminal (pipe, deploy desatendido), read
+  # se colgaria para siempre esperando una entrada que nunca llega.
+  GEMINI_KEY=""
+  read -r -t 60 -p "    Pegala aca, o Enter para seguir sin key: Tecnia Bot va a usar el modelo gratuito Big Pickle de OpenCode [60s]: " GEMINI_KEY || true
+  # Una key no tiene espacios: se saca cualquier blanco que haya entrado al pegar.
+  GEMINI_KEY="$(printf '%s' "${GEMINI_KEY:-}" | tr -d ' \t\r\n')"
+  if es_key_vieja "$GEMINI_KEY"; then
+    # La pego de algun apunte viejo: es la key compartida rotada. No se guarda.
+    echo "  [X] Esa es la key de respaldo compartida de versiones anteriores: ya no es válida y no se guarda."
+    echo "      Conseguí la tuya en https://aistudio.google.com/apikey (seguimos sin key por ahora)."
+  elif [ -n "$GEMINI_KEY" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$AUTH_FILE" "$GEMINI_KEY" <<'PYEOF'
+import json, sys
+path, key = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(path))
+except Exception:
+    d = {}
+d["google"] = {"type": "api", "key": key}
+json.dump(d, open(path, "w"), indent=2)
+PYEOF
+      TIENE_GOOGLE=1
+      echo "  [OK] Key guardada en esta compu."
+    elif command -v jq >/dev/null 2>&1; then
+      [ -s "$AUTH_FILE" ] || printf '{}\n' > "$AUTH_FILE"
+      tmp_auth="$(mktemp)"
+      if jq --arg k "$GEMINI_KEY" '.google = {type: "api", key: $k}' "$AUTH_FILE" > "$tmp_auth" 2>/dev/null; then
+        mv "$tmp_auth" "$AUTH_FILE"
+        TIENE_GOOGLE=1
+        echo "  [OK] Key guardada en esta compu."
+      else
+        rm -f "$tmp_auth"
+        echo "  [AVISO] No pude escribir $AUTH_FILE (no parsea como JSON). Agregala a mano:"
+        echo "          {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}} y volve a correr este instalador."
+      fi
+    else
+      echo "  [AVISO] No hay python3 ni jq para guardar la key automaticamente."
+      echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
+      echo "          y volve a correr este instalador para que el agente pase a Gemini."
+    fi
+  else
+    # Sin key NO se toca auth.json: no hay nada que guardar.
+    echo "  [i] Seguimos sin key de Google."
+  fi
+fi
+
+# Modelo del agente segun la decision de arriba. Se imprime SIEMPRE (tambien cuando
+# la key ya estaba guardada), para que quede claro con que modelo quedo esta compu y
+# como cambiarlo despues.
+if [ "$TIENE_GOOGLE" = "1" ]; then
+  MODELO_ELEGIDO="$MODELO_CON_KEY"
+  echo "==> Modelo configurado: $MODELO_ELEGIDO (Gemini, con tu key de Google)."
+else
+  MODELO_ELEGIDO="$MODELO_SIN_KEY"
+  echo "==> Modelo configurado: $MODELO_ELEGIDO (Big Pickle, el modelo gratuito de OpenCode)."
+  echo "    Es gratis por tiempo limitado y no pide cuenta. OJO: mientras dure la etapa gratuita,"
+  echo "    OpenCode puede usar lo que se escribe en el chat para mejorar el modelo."
+  echo "    No pongas datos personales (ni nombres de alumnos) en la conversacion."
+  echo "    Para pasar a Gemini: consegui una key en https://aistudio.google.com/apikey y volve a"
+  echo "    correr install/install.sh (te la va a pedir), o pegala con /connect dentro de OpenCode"
+  echo "    y despues corre /actualizar para aplicar el cambio."
+fi
+echo ""
+
+# ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto + modelo ----
 # Mergeamos con la config que ya tenga el docente (ej: provider/model de /connect):
 # NO la pisamos. El theme y el plugin de TUI van en tui (opencode migra y borra
-# esas claves de opencode). El agente por defecto va en opencode.
+# esas claves de opencode). El agente por defecto y el modelo del agente
+# ("agent" -> "tecnia-bot" -> "model", elegido arriba segun haya key) van en opencode.
 #
 # OpenCode acepta AMBAS extensiones para cada config: fileInDirectory prueba
 # [dir/name.json, dir/name.jsonc] en ese orden. Detectamos cual existe y mergeamos
@@ -135,17 +301,17 @@ elif command -v python3 >/dev/null 2>&1; then
 fi
 
 echo ""
-echo "==> Configurando OpenCode (theme + logo + agente por defecto)..."
+echo "==> Configurando OpenCode (theme + logo + agente por defecto + modelo)..."
 
 # Merge robusto en python: tolera .jsonc con comentarios (los saca respetando
 # strings, para no romper URLs como el $schema) y re-serializa como JSON valido.
 # Si un archivo existe pero NO se puede parsear, lo deja intacto y avisa (nunca
 # pisa la config del usuario). Idempotente.
 merge_via_python() {
-  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" "$MEMORIA_FILE" <<'PYEOF'
+  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" "$MEMORIA_FILE" "$MODELO_ELEGIDO" <<'PYEOF'
 import json, sys
 
-tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path, memoria_path = sys.argv[1:10]
+tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path, memoria_path, modelo = sys.argv[1:11]
 
 def strip_jsonc(text):
     out = []
@@ -219,11 +385,25 @@ else:
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % tui_path)
     sys.stderr.write("          Agregale a mano \"theme\": \"%s\" y el plugin \"%s\".\n" % (theme, plugin))
 
-# opencode: default_agent + instructions (perfil). Preserva las demas claves.
+# opencode: default_agent + modelo del agente + instructions (perfil). Preserva las
+# demas claves. El modelo va POR AGENTE ("agent" -> tecnia-bot -> "model") y ESTA ES
+# SU UNICA FUENTE: NO va en el frontmatter de opencode/agent/tecnia-bot.md porque el
+# .md gana sobre opencode.json (OpenCode hace mergeDeep(config.agent, agentes .md) en
+# config.ts), o sea que un "model:" ahi pisaria esto y Big Pickle nunca correria. Lo
+# escribe el instalador; otros agentes u opciones se preservan.
 oc, ok = load(oc_path)
 if ok:
     oc.setdefault("$schema", oc_schema)
     oc["default_agent"] = agent
+    agentes = oc.get("agent")
+    if not isinstance(agentes, dict):
+        agentes = {}
+    agente_tecnia = agentes.get(agent)
+    if not isinstance(agente_tecnia, dict):
+        agente_tecnia = {}
+    agente_tecnia["model"] = modelo
+    agentes[agent] = agente_tecnia
+    oc["agent"] = agentes
     instrucciones = oc.get("instructions")
     if not isinstance(instrucciones, list):
         instrucciones = []
@@ -235,7 +415,8 @@ if ok:
     dump(oc_path, oc)
 else:
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % oc_path)
-    sys.stderr.write("          Agregale a mano \"default_agent\": \"%s\".\n" % agent)
+    sys.stderr.write("          Agregale a mano \"default_agent\": \"%s\" y el modelo del agente:\n" % agent)
+    sys.stderr.write("          \"agent\": { \"%s\": { \"model\": \"%s\" } }\n" % (agent, modelo))
 PYEOF
 }
 
@@ -257,9 +438,10 @@ merge_tui_jq() {
 merge_opencode_jq() {
   [ -s "$OPENCODE_JSON" ] || printf '{}\n' > "$OPENCODE_JSON"
   local tmp; tmp="$(mktemp)"
-  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" '
+  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" --arg modelo "$MODELO_ELEGIDO" '
           .["$schema"] = (.["$schema"] // $schema)
         | .default_agent = $agent
+        | .agent = ((.agent // {}) | .[$agent] = ((.[$agent] // {}) | .model = $modelo))
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
         | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
@@ -283,6 +465,7 @@ if [ "$JSON_TOOL" = "jq" ]; then
     echo "          Revisá y agregá a mano lo que falte:"
     echo "            $(basename "$TUI_JSON"): \"theme\": \"$TECNIA_THEME\" + plugin \"$TECNIA_PLUGIN\""
     echo "            $(basename "$OPENCODE_JSON"): \"default_agent\": \"$TECNIA_AGENT\""
+    echo "            $(basename "$OPENCODE_JSON"): \"agent\": { \"$TECNIA_AGENT\": { \"model\": \"$MODELO_ELEGIDO\" } }"
   fi
 elif [ "$JSON_TOOL" = "python3" ]; then
   merge_via_python
@@ -311,80 +494,21 @@ EOF
 {
   "\$schema": "$OPENCODE_SCHEMA",
   "default_agent": "$TECNIA_AGENT",
+  "agent": { "$TECNIA_AGENT": { "model": "$MODELO_ELEGIDO" } },
   "instructions": ["$PERFIL_FILE", "$MEMORIA_FILE"]
 }
 EOF
     echo "  [OK] $(basename "$OPENCODE_JSON") creado."
   else
     echo "  [AVISO] No hay jq ni python3 y $OPENCODE_JSON ya existe: no lo toco."
-    echo "          Agregale a mano: \"default_agent\": \"$TECNIA_AGENT\""
+    echo "          Agregale a mano: \"default_agent\": \"$TECNIA_AGENT\","
+    echo "          el modelo: \"agent\": { \"$TECNIA_AGENT\": { \"model\": \"$MODELO_ELEGIDO\" } }"
     echo "          y en \"instructions\" (array) las rutas: \"$PERFIL_FILE\" y \"$MEMORIA_FILE\""
   fi
 fi
 
 echo "==> Listo! Tecnia Bot v$VERSION instalado."
 echo ""
-
-# ---- API key de Gemini: se pide UNA sola vez, solo si no hay ninguna guardada ----
-# Sin esto Tecnia Bot no puede hablar con el modelo. Se guarda directo en el archivo
-# de credenciales de OpenCode -- NUNCA en este repo, NUNCA en git, nunca se comparte
-# entre instalaciones (cada compu pone la suya). Idempotente: si ya hay una key de
-# "google" guardada (de esta instalacion o de un /connect manual), no se pregunta de
-# nuevo en cada /actualizar.
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
-mkdir -p "$DATA_DIR"
-AUTH_FILE="$DATA_DIR/auth.json"
-
-TIENE_GOOGLE=0
-if [ -f "$AUTH_FILE" ] && command -v python3 >/dev/null 2>&1; then
-  TIENE_GOOGLE="$(python3 -c "
-import json
-try:
-    d = json.load(open('$AUTH_FILE'))
-    print(1 if d.get('google', {}).get('key') else 0)
-except Exception:
-    print(0)
-" 2>/dev/null || echo 0)"
-fi
-
-if [ "$TIENE_GOOGLE" != "1" ]; then
-  echo "==> Tecnia Bot necesita una API key GRATIS de Google (sin tarjeta) para hablar con el modelo."
-  echo "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
-  echo "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
-  # Timeout de 60s: si esto corre sin terminal (pipe, deploy desatendido), read
-  # se colgaria para siempre esperando una entrada que nunca llega.
-  read -r -t 60 -p "    Pegala aca (o Enter para hacerlo despues con /connect dentro de OpenCode) [60s]: " GEMINI_KEY || true
-  # OJO -- decision explicita, pedida y confirmada por el equipo: si nadie pega su
-  # propia key, se usa una key de respaldo hardcodeada aqui mismo, para que la
-  # instalacion quede usable sin friccion. Esta key queda publica en este repo
-  # (es publico) y es MUY probable que Google la revoque via su escaneo automatico
-  # de secretos -- ya se explico ese riesgo antes de escribir esto. Cada quien
-  # puede seguir pegando la SUYA arriba para no depender de esta.
-  KEY_RESPALDO="AQ.Ab8RN6JscK6NsgkvLXY0RfzoGCdIVVQYs7xUYNtxM377VgPZRA"
-  KEY_FINAL="${GEMINI_KEY:-$KEY_RESPALDO}"
-  [ -n "$KEY_FINAL" ] || KEY_FINAL="$KEY_RESPALDO"
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - "$AUTH_FILE" "$KEY_FINAL" <<'PYEOF'
-import json, sys
-path, key = sys.argv[1], sys.argv[2]
-try:
-    d = json.load(open(path))
-except Exception:
-    d = {}
-d["google"] = {"type": "api", "key": key.strip()}
-json.dump(d, open(path, "w"), indent=2)
-PYEOF
-    if [ -n "${GEMINI_KEY:-}" ]; then
-      echo "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."
-    else
-      echo "  [OK] Usando key de respaldo (podes reemplazarla despues con /connect si conseguis la tuya propia)."
-    fi
-  else
-    echo "  [AVISO] No hay python3 para guardar la key automaticamente."
-    echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"$KEY_FINAL\"}}"
-  fi
-  echo ""
-fi
 
 echo "Verificando dependencias:"
 
