@@ -41,3 +41,7 @@ Thumbs.db
 
 # Cache del registro de skills (se regenera solo).
 /.atl/
+
+# Logs rotados del bootstrap (instalacion-<fecha>.log) cuando se corre desde un clon
+instalacion-*.log
+instalacion.log

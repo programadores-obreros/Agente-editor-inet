@@ -1,20 +1,22 @@
 # Volver atrás una versión
 
-Escrito **antes** de publicar la v0.3.69, no después de que algo salga mal.
-Mañana hay veinte máquinas: si la versión nueva falla, lo que importa es cuánto
-se tarda en volver, no de quién fue la culpa.
+Escrito **antes** de que algo salga mal (la primera vez, la víspera de la
+v0.3.69), no después. Mañana hay veinte máquinas: si la versión nueva falla, lo
+que importa es cuánto se tarda en volver, no de quién fue la culpa.
 
 ## La versión a la que se vuelve
 
 | | |
 |---|---|
-| **Último release confirmado en máquina real** | **v0.3.69** — la instalaron decenas de docentes en la capacitación del 20/08, con un solo problema parcial (PlatformIO en una máquina) |
-| Último release publicado antes de esta | v0.3.68 |
-| Base de esta versión | commit `f1036d8` |
+| **Punto seguro: último release confirmado en máquina real** | **v0.3.69** — la instalaron decenas de docentes en la capacitación del 20/08, con un solo problema parcial (PlatformIO en una máquina) |
+| Releases posteriores (v0.3.70 en adelante) | validados en la VM de Windows 10, **no** en una notebook de aula |
 
-Ojo con la diferencia: entre la v0.3.63 y la v0.3.68 se publicaron seis
-versiones en una madrugada y **ninguna se probó en una notebook de verdad**. Si
-hay que volver corriendo, el punto seguro es la **v0.3.62**, no la anterior.
+Ojo con la diferencia: "la anterior" no es lo mismo que "la segura". Todo lo
+publicado después de la v0.3.69 se probó en una VM, no en una notebook de
+verdad. Si hay que volver corriendo, el punto seguro es la **v0.3.69**, no
+simplemente la versión anterior a la rota. (Hasta la v0.3.70 este documento
+decía v0.3.62: era el punto seguro de antes de la capacitación del 20/08, y el
+CHANGELOG de la v0.3.71 registra el cambio.)
 
 ## Qué hacer, en orden
 
@@ -23,28 +25,29 @@ hay que volver corriendo, el punto seguro es la **v0.3.62**, no la anterior.
 Es lo primero y casi siempre alcanza. Los releases viejos **no se borran**:
 
 ```
-https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.62
+https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.69
 ```
 
 Bajar el `.exe` de ahí e instalarlo encima. No hace falta desinstalar nada.
 
 ### 2. Sacar la versión rota de "Latest" (2 minutos)
 
-Así el que entra a la página de releases no se lleva la mala:
+Así el que entra a la página de releases no se lleva la mala (`vX.Y.Z` es la
+que falló):
 
 ```bash
-gh release edit v0.3.69 --prerelease --latest=false
-gh release edit v0.3.62 --latest
+gh release edit vX.Y.Z --prerelease --latest=false
+gh release edit v0.3.69 --latest
 ```
 
-Esto **no borra** la v0.3.69: la saca de la vidriera. Borrar un release es
+Esto **no borra** la vX.Y.Z: la saca de la vidriera. Borrar un release es
 irreversible y no hace falta.
 
 Y cubre también a los que actualizan desde el bot: `/actualizar` instala lo que
 GitHub marca como **Latest** (nunca `main` ni prereleases) y compara la versión
 instalada con ese tag, no con "mayor o menor". Después de este paso, quien corra
-`/actualizar` —tenga la v0.3.68 o la v0.3.69 rota— queda en la v0.3.62. Es la
-misma salida que el paso 1, sin bajar el `.exe`.
+`/actualizar` —tenga la rota o una intermedia— queda en la v0.3.69. Es la misma
+salida que el paso 1, sin bajar el `.exe`.
 
 ### 3. Recién ahí, revertir el código
 

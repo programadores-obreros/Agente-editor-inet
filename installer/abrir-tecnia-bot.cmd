@@ -18,6 +18,13 @@ rem OpenCode se instala con Scoop, en el espacio del usuario: sus 'shims' quiza
 rem no esten en el PATH de una consola nueva. Los agregamos por las dudas.
 if exist "%USERPROFILE%\scoop\shims" set "PATH=%USERPROFILE%\scoop\shims;%PATH%"
 
+rem La config de OpenCode honra XDG_CONFIG_HOME, igual que install.ps1 y
+rem bootstrap.ps1. Si aca se mirara siempre %USERPROFILE%\.config, en una maquina
+rem con esa variable puesta la capa se instalaria en un lado y se buscaria en
+rem otro: "falta la capa, volve a correr el instalador", en loop, con todo bien.
+set "OCCFG=%USERPROFILE%\.config\opencode"
+if defined XDG_CONFIG_HOME set "OCCFG=%XDG_CONFIG_HOME%\opencode"
+
 rem -- Si la instalacion todavia esta corriendo, se espera ---------------------
 rem
 rem El acceso directo se crea en [Icons], que en Inno corre ANTES que [Run].
@@ -54,7 +61,7 @@ rem que este archivo advierte doce lineas mas arriba y hacia igual.
 rem
 rem La capa es lo ULTIMO que se instala: si esta, la instalacion termino de verdad.
 opencode --version >nul 2>nul
-if not errorlevel 1 if exist "%USERPROFILE%\.config\opencode\agent\tecnia-bot.md" goto verificar
+if not errorlevel 1 if exist "%OCCFG%\agent\tecnia-bot.md" goto verificar
 
 echo.
 echo   Tecnia Bot v%VER% se esta instalando en este momento.
@@ -136,7 +143,7 @@ if errorlevel 1 (
 )
 
 rem -- Si falta la capa, tambien se repara -----------------------------------
-if not exist "%USERPROFILE%\.config\opencode\agent\tecnia-bot.md" goto reparar
+if not exist "%OCCFG%\agent\tecnia-bot.md" goto reparar
 goto completo
 
 :reparar
@@ -196,7 +203,7 @@ rem
 rem OpenCode puede arrancar perfecto y no tener nada de Tecnia Bot: pasa cuando
 rem install.ps1 muere a mitad de copiar. El docente ve un editor pelado, sin logo
 rem ni agente, y no tiene forma de saber que le falta algo.
-if not exist "%USERPROFILE%\.config\opencode\agent\tecnia-bot.md" (
+if not exist "%OCCFG%\agent\tecnia-bot.md" (
   echo.
   echo   Tecnia Bot v%VER% -- OpenCode anda, pero falta la capa educativa.
   echo.

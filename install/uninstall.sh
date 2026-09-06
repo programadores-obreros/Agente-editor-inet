@@ -2,10 +2,29 @@
 # Desinstala Tecnia Bot de forma prolija: borra SOLO los archivos que instaló
 # (según el manifest), sin tocar la config personal del usuario ni OpenCode/PlatformIO.
 
+#
+# Los datos PERSONALES (perfil/memoria del aula, key de Google) se PREGUNTAN, con
+# 20 s de espera y "No" por defecto. Para no preguntar:
+#   --conservar   los deja (lo que pasa si nadie contesta)
+#   --borrar      los quita sin preguntar
+
 set -euo pipefail
+
+MODO_DATOS="preguntar"
+for arg in "$@"; do
+  case "$arg" in
+    --conservar) MODO_DATOS="conservar" ;;
+    --borrar) MODO_DATOS="borrar" ;;
+    *) echo "Opción desconocida: $arg (uso: uninstall.sh [--conservar|--borrar])"; exit 2 ;;
+  esac
+done
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
+PERFIL_FILE="$CONFIG_DIR/tecnia-perfil.md"
+MEMORIA_FILE="$CONFIG_DIR/tecnia-memoria.md"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
+AUTH_FILE="$DATA_DIR/auth.json"
 
 if [ ! -f "$MANIFEST" ]; then
   echo "No encontré Tecnia Bot instalado (no hay manifest en $CONFIG_DIR)."
@@ -24,7 +43,10 @@ rm -f "$MANIFEST"
 
 # ---- Sacar NUESTRAS claves de la config de OpenCode (sin tocar el resto) ----
 # tui (json/jsonc): quitar el plugin del logo y el theme si es el nuestro.
-# opencode (json/jsonc): quitar default_agent si es tecnia-bot.
+# opencode (json/jsonc): quitar default_agent si es tecnia-bot, el override
+#   agent.tecnia-bot (el modelo) y las dos rutas de instructions al perfil y la
+#   memoria. Antes quedaban: OpenCode avisaba en cada arranque por dos archivos
+#   que ya no existían.
 # Preservamos provider/model y cualquier otra cosa del docente.
 #
 # OpenCode acepta .json o .jsonc para cada config; operamos sobre el que EXISTA
@@ -57,10 +79,10 @@ fi
 # Unmerge en python: tolera .jsonc con comentarios (los saca respetando strings).
 # Si solo queda "$schema" (el archivo era nuestro), borra el archivo entero.
 unmerge_via_python() {
-  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" <<'PYEOF'
+  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$PERFIL_FILE" "$MEMORIA_FILE" <<'PYEOF'
 import json, os, sys
 
-tui_path, oc_path, theme, plugin, agent = sys.argv[1:6]
+tui_path, oc_path, theme, plugin, agent, perfil, memoria = sys.argv[1:8]
 
 def strip_jsonc(text):
     out = []
@@ -137,6 +159,18 @@ oc = load(oc_path)
 if oc is not None:
     if oc.get("default_agent") == agent:
         del oc["default_agent"]
+    agentes = oc.get("agent")
+    if isinstance(agentes, dict):
+        agentes.pop(agent, None)
+        if not agentes:
+            del oc["agent"]
+    instrucciones = oc.get("instructions")
+    if isinstance(instrucciones, list):
+        instrucciones = [p for p in instrucciones if p not in (perfil, memoria)]
+        if instrucciones:
+            oc["instructions"] = instrucciones
+        else:
+            del oc["instructions"]
     finish(oc_path, oc)
 PYEOF
 }
@@ -163,8 +197,12 @@ unmerge_tui_jq() {
 unmerge_opencode_jq() {
   [ -n "$OPENCODE_JSON" ] && [ -s "$OPENCODE_JSON" ] || return 0
   local tmp; tmp="$(mktemp)"
-  if jq --arg agent "$TECNIA_AGENT" '
-        if (.default_agent == $agent) then del(.default_agent) else . end
+  if jq --arg agent "$TECNIA_AGENT" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" '
+          (if (.default_agent == $agent) then del(.default_agent) else . end)
+        | (if (.agent | type) == "object" then (.agent |= del(.[$agent])) else . end)
+        | (if ((.agent | type) == "object" and (.agent | length) == 0) then del(.agent) else . end)
+        | (if (.instructions | type) == "array" then (.instructions |= map(select(. != $perfil and . != $memoria))) else . end)
+        | (if ((.instructions | type) == "array" and (.instructions | length) == 0) then del(.instructions) else . end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
     if [ "$(jq '(keys - ["$schema"]) | length' "$tmp" 2>/dev/null)" = "0" ]; then
       rm -f "$OPENCODE_JSON"
@@ -191,8 +229,90 @@ elif [ "$JSON_TOOL" = "python3" ]; then
   unmerge_via_python
 else
   echo "  [AVISO] No hay jq ni python3: no toco la config de OpenCode."
-  echo "          Sacá a mano \"theme\": \"$TECNIA_THEME\", el plugin \"$TECNIA_PLUGIN\""
-  echo "          y \"default_agent\": \"$TECNIA_AGENT\" si querés limpiarlos."
+  echo "          Sacá a mano \"theme\": \"$TECNIA_THEME\", el plugin \"$TECNIA_PLUGIN\","
+  echo "          \"default_agent\": \"$TECNIA_AGENT\", \"agent\" -> \"$TECNIA_AGENT\" y las dos"
+  echo "          rutas de \"instructions\" (tecnia-perfil.md, tecnia-memoria.md) si querés limpiarlos."
+fi
+
+# ---- Datos PERSONALES: se preguntan, no se borran solos ----------------------
+#
+# El perfil y la memoria del aula son lo que el bot aprendió de quien usa esta
+# compu; la key de Google es una credencial del docente. Ni se borran solos ni
+# se dejan sin avisar. 20 s de espera y "No" por defecto: sin terminal (pipe,
+# desinstalación desatendida) `read` no espera y se conserva todo.
+preguntar_si_no() {
+  echo ""
+  echo "$1"
+  printf '    [s/N] (si no respondés en 20 s, se conserva) '
+  local r=""
+  if [ -t 0 ]; then read -r -t 20 r || true; fi
+  echo ""
+  case "$r" in s|S|y|Y) return 0 ;; *) return 1 ;; esac
+}
+decidir() {  # 0 = quitar, 1 = conservar
+  case "$MODO_DATOS" in
+    borrar) return 0 ;;
+    conservar) return 1 ;;
+    *) preguntar_si_no "$1" ;;
+  esac
+}
+
+if [ -f "$PERFIL_FILE" ] || [ -f "$MEMORIA_FILE" ]; then
+  if decidir "==> El perfil y la memoria del aula (tecnia-perfil.md, tecnia-memoria.md) son datos PERSONALES: lo que el bot aprendió de quien usa esta compu. ¿Borrarlos también?"; then
+    rm -f "$PERFIL_FILE" "$MEMORIA_FILE"
+    echo "    Perfil y memoria borrados."
+  else
+    echo "    Se conservan en $CONFIG_DIR: tecnia-perfil.md y tecnia-memoria.md (borralos a mano si querés)."
+  fi
+fi
+
+# Key de Google en auth.json (se quita SOLO la entrada "google", el resto queda).
+auth_tiene_google() {
+  [ -f "$AUTH_FILE" ] || return 1
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$AUTH_FILE" <<'PYEOF'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    sys.exit(0 if isinstance(d, dict) and d.get("google", {}).get("key") else 1)
+except Exception:
+    sys.exit(1)
+PYEOF
+  elif command -v jq >/dev/null 2>&1; then
+    [ "$(jq -r '.google.key // ""' "$AUTH_FILE" 2>/dev/null)" != "" ]
+  else
+    return 1
+  fi
+}
+auth_quitar_google() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$AUTH_FILE" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+d.pop("google", None)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(d, f, indent=2)
+PYEOF
+  elif command -v jq >/dev/null 2>&1; then
+    local tmp; tmp="$(mktemp)"
+    if jq 'del(.google)' "$AUTH_FILE" > "$tmp" 2>/dev/null; then mv "$tmp" "$AUTH_FILE"; else rm -f "$tmp"; fi
+  fi
+}
+
+if auth_tiene_google; then
+  if decidir "==> Hay una API key de Google guardada en auth.json. Es TU credencial, no del programa: si esta compu pasa a otra persona conviene quitarla. ¿Quitarla también?"; then
+    auth_quitar_google
+    echo "    Key de Google quitada (las otras credenciales de auth.json se preservan)."
+  else
+    echo "    La key de Google se conserva: OpenCode la sigue usando si lo abrís sin Tecnia Bot."
+  fi
+fi
+# En Linux/macOS el instalador nunca escribió la variable de entorno; si está,
+# la puso alguien a mano en su shell y solo se puede avisar.
+if [ -n "${GOOGLE_GENERATIVE_AI_API_KEY:-}" ]; then
+  echo "  [AVISO] La variable GOOGLE_GENERATIVE_AI_API_KEY está definida en tu shell (~/.bashrc, ~/.zshrc o ~/.profile):"
+  echo "          sacala a mano si ya no la querés."
 fi
 
 # Borra los directorios que hayan quedado vacíos (tecniabot-web, skills, plugins, themes...).

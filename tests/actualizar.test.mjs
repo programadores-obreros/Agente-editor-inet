@@ -84,3 +84,86 @@ test("verificar: si no puede leer la versión publicada, lo dice sin romper", as
   const r = await mod.execute({ verificar: true }, {})
   assert.match(r, /no pude verificar/i, "debería avisar que no pudo verificar, sin romper")
 })
+
+// ── Robustez: red bloqueada y actualizador que no arranca ────────────────────
+//
+// En una escuela GitHub no "falla": se queda colgado. Y PowerShell puede estar
+// fuera del PATH o bloqueado por política. Ninguna de las dos cosas puede dejar
+// al bot "pensando" para siempre ni tirar una excepción a la cara del docente.
+
+const SPAWN_ORIGINAL = globalThis.Bun.spawn
+const enc = new TextEncoder()
+
+// Manifest con un repo_dir que EXISTE, para llegar al modo actualizar.
+function setInstaladaConRepo(v) {
+  writeFileSync(
+    join(cfgDir, "opencode", "tecnia-bot.manifest"),
+    `# manifest\nversion=${v}\nrepo_dir=${OUT}\nagent/tecnia-bot.md\n`,
+  )
+}
+
+test("verificar: un fetch que nunca responde termina en el timeout con el mensaje de red", { timeout: 5000 }, async () => {
+  setInstalada("0.1.0")
+  // fetch real: se cuelga hasta que el AbortSignal lo corta. Si el tool no pasa
+  // signal, esta promesa no se resuelve nunca y el test muere por timeout.
+  globalThis.fetch = (_url, opts = {}) =>
+    new Promise((_, reject) => {
+      const s = opts.signal
+      assert.ok(s, "el tool tiene que pasar un AbortSignal al fetch")
+      s.addEventListener("abort", () => reject(s.reason ?? new Error("abort")))
+    })
+  process.env.TECNIA_ACTUALIZAR_TIMEOUT_MS = "150"
+  const t0 = Date.now()
+  let r
+  try {
+    r = await mod.execute({ verificar: true }, {})
+  } finally {
+    delete process.env.TECNIA_ACTUALIZAR_TIMEOUT_MS
+  }
+  assert.ok(Date.now() - t0 < 3000, "no cortó a tiempo: se quedó esperando a GitHub")
+  assert.match(r, /escuela[^.]*bloque/i, "tiene que decir que la escuela puede bloquear GitHub")
+  assert.match(r, /v0\.1\.0/, "igual dice qué versión tiene instalada")
+  assert.match(r, /SOLO la version de Tecnia Bot/, "conserva el aviso de alcance")
+})
+
+test("actualizar: si PowerShell/bash no arranca, avisa claro y no tira excepción", async () => {
+  setInstaladaConRepo("0.1.0")
+  globalThis.Bun.spawn = () => {
+    throw new Error("spawn powershell ENOENT")
+  }
+  try {
+    const r = await mod.execute({ verificar: false }, {})
+    assert.match(r, /no pude lanzar/i, "tiene que decir que no pudo lanzar el actualizador")
+    assert.match(r, /correr a mano/i, "y dejar el comando para correrlo a mano")
+    assert.match(r, /0\.1\.0/, "y decir que la versión quedó como estaba")
+  } finally {
+    globalThis.Bun.spawn = SPAWN_ORIGINAL
+  }
+})
+
+test("actualizar: lee la salida ANTES de esperar que termine (si no, se traba con el pipe lleno)", { timeout: 3000 }, async () => {
+  setInstaladaConRepo("0.1.0")
+  // Simula un pipe: el proceso "termina" recién cuando ALGUIEN lee su salida.
+  // Es lo que pasa con un buffer de 64 KB lleno: el hijo se bloquea escribiendo
+  // hasta que el padre lea. Con `await exited` primero, esto no termina nunca.
+  let terminar
+  const exited = new Promise((r) => (terminar = r))
+  const pipe = (texto) =>
+    new ReadableStream(
+      {
+        pull(c) {
+          c.enqueue(enc.encode(texto))
+          c.close()
+          terminar(0)
+        },
+      },
+      { highWaterMark: 0 },
+    )
+  globalThis.Bun.spawn = () => ({ exited, stdout: pipe("[OK] actualizado\n"), stderr: pipe("") })
+  try {
+    const r = await mod.execute({ verificar: false }, {})
+    assert.match(r, /al día|Actualizado/i, "tiene que terminar y contar el resultado")
+  } finally {
+    globalThis.Bun.spawn = SPAWN_ORIGINAL
+  }
+})

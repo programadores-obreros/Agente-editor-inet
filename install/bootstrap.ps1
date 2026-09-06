@@ -27,7 +27,21 @@ $RepoDir = Split-Path -Parent $PSScriptRoot
 #
 # Va al lado del programa, no a %TEMP%, para que el diagnostico lo encuentre solo
 # y el docente lo pueda mandar sin buscarlo.
+#
+# Y NO SE PISA. Cada "Reparar Tecnia Bot" volvia a escribir el mismo archivo con
+# -Force y se llevaba la corrida anterior: justo la que fallo, la unica que hacia
+# falta leer. Ahora la anterior se renombra con su fecha antes de empezar y se
+# guardan las ultimas 5. instalacion.log sigue siendo siempre la corrida mas
+# reciente, asi diagnostico.ps1 la encuentra igual que antes.
 $LogInstalacion = Join-Path $RepoDir "instalacion.log"
+try {
+    if (Test-Path $LogInstalacion) {
+        $marca = (Get-Item $LogInstalacion).LastWriteTime.ToString("yyyyMMdd-HHmmss")
+        Move-Item $LogInstalacion (Join-Path $RepoDir ("instalacion-" + $marca + ".log")) -Force
+    }
+    Get-ChildItem $RepoDir -Filter "instalacion-*.log" | Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip 5 | Remove-Item -Force -ErrorAction SilentlyContinue
+} catch { }
 try { Start-Transcript -Path $LogInstalacion -Force | Out-Null } catch { }
 
 # ---- LA VERSION DE OPENCODE ESTA FIJADA, Y EN UN SOLO LUGAR -------------------
@@ -642,7 +656,38 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
         Write-Host "      Python: $PyExe"
         $Tmp = Join-Path $env:TEMP "get-platformio.py"
         Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null
-        & $PyExe $Tmp
+        # get-platformio.py (pioinstaller) arma el venv y, ANTES de instalar
+        # PlatformIO, intenta actualizar pip adentro del venv (penv.update_pip).
+        # En Windows eso falla a veces con "[WinError 1921]", y el propio
+        # instalador de PlatformIO lo TRAGA a proposito: update_pip captura la
+        # excepcion, la manda a log.debug, devuelve False y sigue; PlatformIO se
+        # instala igual. Pero pip ya escribio su ERROR en rojo en la consola, y el
+        # docente ve un error gordo seguido de "Listo".
+        #
+        # No hay opcion para saltear ese paso: el CLI de pioinstaller acepta
+        # --verbose, --dev, --ignore-python, --pypi-index-url y
+        # --no-shutdown-piohome, nada sobre pip (verificado decodificando el
+        # script embebido). Asi que se filtra ACA: esas lineas no se muestran y al
+        # final va UN aviso calmo. Lo que decide si PlatformIO quedo es pio.exe en
+        # el disco, que se mira mas abajo, no lo que pip haya dicho.
+        #
+        # 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta
+        # en PowerShell 5.1 (misma trampa que en Buscar-Python): se baja a
+        # Continue solo para este paso.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $avisoPip = $false
+        try {
+            & $PyExe $Tmp 2>&1 | ForEach-Object {
+                $linea = "$_"
+                if ($linea -match "WinError 1921|Could not install packages due to an OSError|pip install --upgrade pip|A new release of pip") {
+                    $avisoPip = $true
+                } else {
+                    Write-Host $linea
+                }
+            }
+        } finally { $ErrorActionPreference = $prevEAP }
+        if ($avisoPip) { Write-Host "  [i] Aviso de pip (no pudo actualizarse a si mismo): no afecta a PlatformIO." }
         Remove-Item $Tmp -ErrorAction SilentlyContinue
     }
     # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en
@@ -665,7 +710,14 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
 # --- 4. Tecnia Bot (capa educativa) ------------------------------------------
 Write-Host ""
 Write-Host "  [..] Instalando la capa de Tecnia Bot..."
-powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
+# powershell.exe POR RUTA, no por nombre. "powershell" a secas depende del PATH del
+# docente, y ya paso que no estuviera (CHANGELOG 0.3.75: el reparar del tool no
+# podia ni lanzarlo). $PSHOME es la carpeta del PowerShell que esta corriendo ESTE
+# script, asi que existe siempre; si es pwsh 7 (que no trae powershell.exe ahi) se
+# cae al nombre, como antes.
+$PsExe = Join-Path $PSHOME "powershell.exe"
+if (-not (Test-Path $PsExe)) { $PsExe = "powershell" }
+& $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
 
 # SE VERIFICA QUE LA CAPA HAYA QUEDADO, y por dos vias.
 #

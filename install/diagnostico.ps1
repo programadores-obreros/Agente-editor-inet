@@ -30,19 +30,35 @@
 #
 # Ahora sale por pantalla Y queda en un archivo. El docente lee, y manda uno solo.
 # ----------------------------------------------------------------------------
+param(
+  # OPCIONAL: una carpeta compartida (p. ej. \\servidor\Compartido) donde dejar el
+  # reporte si esta al alcance. Antes iba FIJA la IP de una escuela, primera en la
+  # lista: en cualquier otra red, Test-Path contra una UNC inalcanzable se cuelga
+  # decenas de segundos antes de imprimir una sola linea -- justo en el script que
+  # se corre cuando algo ya no anda. Y el reporte trae datos de la maquina: a una
+  # carpeta ajena va solo si alguien lo pide.
+  #   powershell -ExecutionPolicy Bypass -File install\diagnostico.ps1 -Compartido \\servidor\Compartido
+  [string]$Compartido = ""
+)
 $ErrorActionPreference = "Continue"
 $U = $env:USERPROFILE
 
-# Donde dejar el reporte. El primero que exista gana.
-#
-# La carpeta compartida va primera a proposito: si esta, el reporte se puede leer
-# del otro lado sin pedirle nada a nadie. Si no esta -que es el caso de cualquier
-# maquina fuera de la escuela- cae al Escritorio, donde el docente lo encuentra.
+# Config de OpenCode: honra XDG_CONFIG_HOME, igual que install.ps1 y bootstrap.ps1.
+# Si aca se mirara siempre %USERPROFILE%\.config, en una maquina con esa variable
+# puesta el diagnostico diria "capa: FALTA" con la capa instalada, y el docente
+# volveria a correr el instalador en loop.
+$ocDir = "$U\.config\opencode"
+if ($env:XDG_CONFIG_HOME) { $ocDir = "$env:XDG_CONFIG_HOME\opencode" }
+
+# Donde dejar el reporte. El primero que exista gana: el Escritorio, donde el
+# docente lo encuentra; si no (perfil movido a OneDrive, escritorio redirigido),
+# al lado del programa; si no, TEMP. La carpeta compartida solo si se pidio.
 $destinos = @(
-  "\\192.168.100.9\Compartido",
   "$env:USERPROFILE\Desktop",
+  "$env:LOCALAPPDATA\TecniaBot",
   "$env:TEMP"
 )
+if ($Compartido) { $destinos = @($Compartido) + $destinos }
 $dir = $destinos | Where-Object { Test-Path $_ } | Select-Object -First 1
 $Reporte = Join-Path $dir ("tecniabot-diagnostico-" + $env:COMPUTERNAME + ".txt")
 
@@ -72,7 +88,7 @@ $shim = "$U\scoop\shims\opencode.exe"
 # lo actualiza ni lo borra al desinstalar, y sigue corriendo la version vieja.
 Dato "shim de OpenCode" $(if (-not (Test-Path $shim)) { "FALTA" } elseif ((Get-Item $shim).Length -gt 1MB) { "binario copiado a mano (" + [math]::Round((Get-Item $shim).Length / 1MB, 1) + " MB), no administrado por Scoop" } else { "OK" })
 Dato "PlatformIO" $(if (Test-Path "$U\.platformio\penv\Scripts\pio.exe") { "OK" } else { "FALTA" })
-Dato "capa Tecnia Bot" $(if (Test-Path "$U\.config\opencode\agent\tecnia-bot.md") { "OK" } else { "FALTA" })
+Dato "capa Tecnia Bot" $(if (Test-Path "$ocDir\agent\tecnia-bot.md") { "OK" } else { "FALTA" })
 
 Titulo "OpenCode: la version que HAY vs la que se PROBO"
 # El instalador fija la version de OpenCode (install\OPENCODE_VERSION, un solo
@@ -225,8 +241,6 @@ Titulo "El modelo -- Gemini con key de Google, Big Pickle sin"
 # "configured model ... is not valid" o un "Invalid API key" con todo instalado.
 #
 # De auth.json se informa SOLO si hay una entrada "google" con key, nunca su valor.
-$ocDir = "$U\.config\opencode"
-if ($env:XDG_CONFIG_HOME) { $ocDir = "$env:XDG_CONFIG_HOME\opencode" }
 $ocCfg = @("$ocDir\opencode.json", "$ocDir\opencode.jsonc") | Where-Object { Test-Path $_ } | Select-Object -First 1
 $modelo = $null
 $cfgParsea = $false
@@ -324,9 +338,14 @@ if (Test-Path $oclog) {
 }
 
 Titulo "El log del bootstrap -- ACA esta en que paso murio"
+# instalacion.log es SIEMPRE la ultima corrida. Las anteriores quedan al lado como
+# instalacion-<fecha>.log: el bootstrap las rota y guarda hasta 5. Antes cada
+# "Reparar" pisaba el unico log, y se perdia justo la corrida que habia fallado.
 $bl = "$env:LOCALAPPDATA\TecniaBot\instalacion.log"
+$blViejos = @(Get-ChildItem "$env:LOCALAPPDATA\TecniaBot" -Filter "instalacion-*.log" -EA SilentlyContinue)
 if (Test-Path $bl) {
   Dato "archivo" $bl
+  Dato "corridas anteriores" $(if ($blViejos.Count) { "" + $blViejos.Count + " (instalacion-<fecha>.log, en la misma carpeta)" } else { "ninguna" })
   Write-Host "     --- ultimas lineas ---"
   Get-Content $bl | Where-Object { $_ -match '\[OK\]|\[X\]|\[!\]|\[\.\.\]|ERROR|WARN|Exception' } |
     Select-Object -Last 14 | ForEach-Object { Write-Host ("     " + $_.Trim()) }
