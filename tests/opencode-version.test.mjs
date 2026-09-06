@@ -156,3 +156,36 @@ test("Reparar-Shim rehace el lanzador con `scoop reset opencode`, no copiando 17
     assert.match(lineas.slice(copia).join("\n"), /FUERA de Scoop/, "copia el binario entero sin avisar que queda fuera de Scoop")
   }
 })
+
+// OpenCode se auto-actualiza ante cualquier version "patch" nueva (cli/upgrade.ts) y, en
+// Scoop, lo hace con `scoop install opencode@<nueva>`: instalacion explicita que NO respeta
+// `scoop hold`. En la VM, una hora despues de fijar 1.18.18 corria 1.18.29. La unica llave
+// es `autoupdate: false` en opencode.json, y la tienen que escribir LOS DOS instaladores.
+test("install.ps1 e install.sh escriben autoupdate=false en opencode.json (si no, el pin no sirve)", () => {
+  const instPs1 = sinComentarios(leer("install", "install.ps1"))
+  const instSh = leer("install", "install.sh")
+  assert.match(instPs1, /Add-Member -NotePropertyName "autoupdate" -NotePropertyValue \$false/, "install.ps1 no apaga autoupdate")
+  assert.match(instSh, /oc\["autoupdate"\] = False/, "install.sh (python3) no apaga autoupdate")
+  assert.match(instSh, /\.autoupdate = false/, "install.sh (jq) no apaga autoupdate")
+})
+
+// `scoop reset` imprime "ERROR ... still running" y sale con 0 si OpenCode esta abierto. En la
+// VM el bootstrap decia "[OK] fijado" con la version vieja activa. Lo unico que vale es releer
+// la version activa despues del reset y avisar como cerrar Tecnia Bot si no cambio.
+test("bootstrap.ps1 relee la version activa despues de scoop reset y avisa si OpenCode esta abierto", () => {
+  const i = ps1.indexOf("scoop reset opencode@")
+  assert.ok(i > 0, "no hay scoop reset")
+  const despues = ps1.slice(i, i + 2500)
+  assert.match(despues, /Get-OpenCodeVersionInstalada/, "no relee la version tras el reset")
+  assert.match(despues, /still running/, "no reconoce el caso 'OpenCode abierto'")
+  assert.match(despues, /\[X\] No pude volver a la version/, "no avisa el fracaso del reset")
+})
+
+// Scoop escribe "ERROR ..." con Write-Host (stream 6). En PowerShell 5.1, `2>&1` no lo
+// captura: en la VM, "scoop hold" y "scoop reset" fallaron y el bootstrap no vio la linea.
+// Solo `*>&1` trae todos los streams.
+test("bootstrap.ps1 captura TODOS los streams de scoop hold/reset (*>&1), no solo stderr", () => {
+  const capturas = [...ps1.matchAll(/scoop (hold|reset) opencode[^\n]*?\|\s*Out-String/g)].map((m) => m[0])
+  assert.ok(capturas.length >= 2, `esperaba capturar hold y reset, encontre ${capturas.length}`)
+  for (const c of capturas) assert.match(c, /\*>&1/, `sin *>&1 Scoop habla y nadie escucha: ${c}`)
+})

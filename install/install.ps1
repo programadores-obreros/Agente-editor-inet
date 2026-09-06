@@ -424,7 +424,7 @@ $ocHasContent = Test-HasContent $OpencodeJson
 $oc = Read-JsonObject $OpencodeJson
 if ($ocHasContent -and $null -eq $oc) {
     Write-Host "  [AVISO] No pude parsear ${OpencodeJson}: lo dejo intacto."
-    Write-Host "          Agregale a mano `"default_agent`": `"$TecniaAgent`" y el modelo del agente:"
+    Write-Host "          Agregale a mano `"default_agent`": `"$TecniaAgent`", `"autoupdate`": false y el modelo del agente:"
     Write-Host "          `"agent`": { `"$TecniaAgent`": { `"model`": `"$ModeloElegido`" } }"
 } else {
     if (-not $oc) { $oc = [PSCustomObject]@{} }
@@ -432,6 +432,12 @@ if ($ocHasContent -and $null -eq $oc) {
         $oc | Add-Member -NotePropertyName '$schema' -NotePropertyValue $OpencodeSchema -Force
     }
     $oc | Add-Member -NotePropertyName "default_agent" -NotePropertyValue $TecniaAgent -Force
+    # autoupdate = false: OpenCode se actualiza SOLO ante cualquier version "patch" nueva
+    # (cli/upgrade.ts) y para Scoop lo hace con `scoop install opencode@<nueva>`, que es
+    # una instalacion explicita y NO respeta `scoop hold` (el hold solo frena `scoop update`).
+    # Visto en la VM: una hora despues de fijar 1.18.18 corria 1.18.29 y el install.json
+    # habia perdido el hold. La version la decide install/OPENCODE_VERSION, no OpenCode.
+    $oc | Add-Member -NotePropertyName "autoupdate" -NotePropertyValue $false -Force
 
     # agent.tecnia-bot.model: el modelo elegido arriba (Gemini con key, Big Pickle sin).
     # ESTA ES LA UNICA FUENTE DEL MODELO. El modelo NO va en el frontmatter de

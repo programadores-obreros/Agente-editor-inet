@@ -167,7 +167,7 @@ function Reparar-Shim {
     $ErrorActionPreference = "Continue"
     try {
         $global:LASTEXITCODE = 0
-        $salida = scoop reset opencode 2>&1 | Out-String
+        $salida = scoop reset opencode *>&1 | Out-String
         Refresh-Path
         if (($LASTEXITCODE -eq 0) -and ($salida -notmatch '(?m)^\s*ERROR') -and (Test-Path $ShimOpenCode)) {
             return $true
@@ -412,7 +412,7 @@ function Fijar-OpenCode {
     $ErrorActionPreference = "Continue"
     try {
         $global:LASTEXITCODE = 0
-        $salidaHold = scoop hold opencode 2>&1 | Out-String
+        $salidaHold = scoop hold opencode *>&1 | Out-String
         $lineas = @($salidaHold -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         $errores = @($lineas | Where-Object { $_ -match '^ERROR' })
         if (($LASTEXITCODE -ne 0) -or ($errores.Count -gt 0)) {
@@ -440,13 +440,31 @@ if (Test-OpenCodeInstalado) {
             Write-Host "  [..] La $OpenCodeVersion ya esta en el disco: la vuelvo a activar (scoop reset)..."
             $prev = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
+            $salidaReset = ""
             try {
-                scoop reset opencode@$OpenCodeVersion
+                $salidaReset = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String
             } catch {
-                Write-Host "  [i] No se pudo cambiar de version. Se deja la $instalada."
+                $salidaReset = "ERROR " + $_.Exception.Message
             }
             $ErrorActionPreference = $prev
             Refresh-Path
+            # Scoop escribe sus errores con Write-Host (stream de informacion): 2>&1 NO los
+            # captura en PowerShell 5.1, por eso se usa *>&1 (todos los streams).
+            # scoop reset imprime "ERROR ..." y sale con 0 si no pudo (por ejemplo, con OpenCode
+            # abierto: "instances of opencode are still running"). Antes se decia [OK] igual.
+            # Lo unico que vale es releer que version quedo activa.
+            $quedo = Get-OpenCodeVersionInstalada
+            if ($quedo -eq $OpenCodeVersion) {
+                Write-Host "  [OK] OpenCode vuelve a la version $OpenCodeVersion."
+            } else {
+                Write-Host "  [X] No pude volver a la version ${OpenCodeVersion}: sigue activa la $quedo."
+                if ($salidaReset -match "still running") {
+                    Write-Host "      Tecnia Bot (OpenCode) esta abierto. Cerralo y volve a correr 'Reparar Tecnia Bot'."
+                } else {
+                    foreach ($l in ($salidaReset -split "`n")) { if ($l -match "^\s*ERROR") { Write-Host ("      " + $l.Trim()) } }
+                    Write-Host "      Volve a correr 'Reparar Tecnia Bot'; si sigue, en PowerShell: scoop reset opencode@$OpenCodeVersion"
+                }
+            }
         } else {
             Write-Host "      Se deja como esta: este instalador no desinstala nada."
             Write-Host "      Si el bot no anda bien, en PowerShell: scoop install opencode@$OpenCodeVersion"

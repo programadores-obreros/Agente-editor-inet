@@ -395,6 +395,9 @@ oc, ok = load(oc_path)
 if ok:
     oc.setdefault("$schema", oc_schema)
     oc["default_agent"] = agent
+    # autoupdate=false: OpenCode se auto-actualiza ante cualquier patch nueva y eso pisa
+    # la version fijada en install/OPENCODE_VERSION (en Scoop hasta saltea el hold).
+    oc["autoupdate"] = False
     agentes = oc.get("agent")
     if not isinstance(agentes, dict):
         agentes = {}
@@ -441,6 +444,7 @@ merge_opencode_jq() {
   if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" --arg modelo "$MODELO_ELEGIDO" '
           .["$schema"] = (.["$schema"] // $schema)
         | .default_agent = $agent
+        | .autoupdate = false
         | .agent = ((.agent // {}) | .[$agent] = ((.[$agent] // {}) | .model = $modelo))
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
         | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
