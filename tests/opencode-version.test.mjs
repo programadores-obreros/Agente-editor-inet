@@ -209,3 +209,24 @@ test("el lanzador reintenta una vez antes de decir que OpenCode no arranca", () 
   assert.ok(pruebas >= 2, `el lanzador prueba opencode --version ${pruebas} vez; un solo intento dio falso negativo en una notebook real`)
   assert.match(cmd, /ping -n 4 127\.0\.0\.1 >nul/, "no espera entre los dos intentos")
 })
+
+// VM + notebook (2026-09-06): en la rama de INSTALAR, Scoop contestaba "already installed"
+// (la carpeta fijada estaba en disco pero current apuntaba a otra) y el bootstrap
+// reintentaba la misma instalacion. Hay que ACTIVARLA con scoop reset.
+test("bootstrap.ps1: si Scoop dice 'already installed' al instalar la fijada, la activa con scoop reset", () => {
+  const i = ps1.indexOf("Instalando OpenCode $OpenCodeVersion")
+  assert.ok(i > 0)
+  const rama = ps1.slice(i, i + 2500)
+  assert.match(rama, /already installed/, "no reconoce la respuesta de Scoop")
+  assert.match(rama, /scoop reset opencode@\$OpenCodeVersion/, "no activa la version fijada")
+})
+
+// El shim de Scoop fallo dos veces con el binario sano. Antes de declarar "no arranca",
+// Test-OpenCode le pregunta al binario real y, si contesta, repara el shim.
+test("Test-OpenCode prueba el binario real si el shim falla, y repara el shim", () => {
+  const i = ps1.indexOf("function Test-OpenCode {")
+  const fn = ps1.slice(i, i + 3000)
+  assert.match(fn, /& \$BinOpenCode --version/, "no prueba el binario real")
+  assert.match(fn, /Reparar-Shim/, "no repara el shim cuando el binario anda")
+  assert.doesNotMatch(fn.slice(0, fn.indexOf("return $false")), /Test-Path \$BinOpenCode/, "decide por 'el archivo esta' en vez de ejecutarlo")
+})

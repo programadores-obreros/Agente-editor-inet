@@ -103,7 +103,7 @@ test("la verificación EJECUTA opencode, no mira si el archivo está", () => {
   // palabra `LASTEXITCODE` en algún lado.
   assert.match(
     fn,
-    /return\s*\(?\s*\$LASTEXITCODE\s*-eq\s*0\s*\)?|if\s*\(\s*\$LASTEXITCODE\s*-eq\s*0\s*\)\s*\{\s*return\s+\$true/,
+    /return\s*\(?\s*\$LASTEXITCODE\s*-eq\s*0\s*\)?|if\s*\(\s*\$LASTEXITCODE\s*-eq\s*0[^{]*\)\s*\{\s*return\s+\$true/,
     "la función mira $LASTEXITCODE pero no devuelve eso: puede contestar que sí igual",
   )
 
@@ -470,7 +470,10 @@ test("el lanzador encuentra OpenCode aunque falte el shim", () => {
   // abortar antes del segundo: quedaba todo menos esa pieza, y el lanzador —que
   // buscaba sólo por el shim— decía "No se encontró OpenCode".
   assert.match(cmdCodigo, /apps\\opencode\\current\\opencode\.exe/, "no busca el binario directo")
-  const orden = ["where opencode", "shims\\opencode.exe", "current\\opencode.exe"]
+  // Orden nuevo (2026-09-06): el binario real primero. El shim de Scoop fallo en la VM y en
+  // una notebook ("Shim: Could not determine if target is a GUI app") con opencode.exe sano;
+  // current\ es el enlace que Scoop mantiene. Despues el shim, y el PATH al final.
+  const orden = ["current\\opencode.exe", "shims\\opencode.exe", "if not errorlevel 1 set \"OC=opencode\""]
   let pos = -1
   for (const o of orden) {
     const i = cmdCodigo.indexOf(o)

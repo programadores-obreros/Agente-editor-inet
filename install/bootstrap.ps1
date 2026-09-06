@@ -230,9 +230,18 @@ function Test-OpenCode {
         foreach ($intento in 1, 2) {
             $global:LASTEXITCODE = 0
             $script:SalidaOpenCode = (& opencode --version 2>&1 | Out-String)
-            if ($LASTEXITCODE -eq 0) { return $true }
+            if ($LASTEXITCODE -eq 0 -and $script:SalidaOpenCode -match '\d+\.\d+\.\d+') { return $true }
             if ($intento -eq 1) { Start-Sleep -Seconds 3 }
         }
+        # El shim de Scoop (20 KB) fallo dos veces. Antes de decir "OpenCode no arranca" se
+        # pregunta al BINARIO REAL: en la VM y en una notebook, el shim tiro "Shim: Could not
+        # determine if target is a GUI app" justo despues de que Scoop se actualizo a si
+        # mismo, mientras opencode.exe andaba perfecto. Si el binario contesta, OpenCode
+        # arranca; lo roto es el shim, y eso lo rehace `scoop reset` sin bajar nada.
+        $global:LASTEXITCODE = 1
+        $directo = ""
+        try { $directo = (& $BinOpenCode --version 2>&1 | Out-String) } catch { $directo = "" }
+        if ($LASTEXITCODE -eq 0 -and $directo -match '\d+\.\d+\.\d+') { Write-Host "  [i] El binario de OpenCode arranca pero su shim de Scoop fallo. Rehago el shim (scoop reset)..."; Reparar-Shim | Out-Null; $script:SalidaOpenCode = $directo; return $true }
         return $false
     } catch {
         $script:SalidaOpenCode = $_.Exception.Message
@@ -504,8 +513,24 @@ if (Test-OpenCodeInstalado) {
         Write-Host "  [i] Hay un opencode.exe suelto que Scoop no administra; instalo la version fijada con Scoop."
     }
     Write-Host "  [..] Instalando OpenCode $OpenCodeVersion..."
-    scoop install opencode@$OpenCodeVersion
+    $prevInst = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $salidaInstalar = ""
+    try { $salidaInstalar = scoop install opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaInstalar = "ERROR " + $_.Exception.Message }
+    $ErrorActionPreference = $prevInst
+    foreach ($l in ($salidaInstalar -split "`n")) { if ($l.Trim() -and $l -notmatch "^\s*(Downloading|Extracting|Checking hash|Loading|Linking|Creating shim)") { Write-Host ("      " + $l.Trim()) } }
     Refresh-Path
+    # Notebook real (2026-09-06): la carpeta 1.18.18 estaba en el disco desde agosto pero
+    # 'current' apuntaba a 1.18.29 (auto-update). Scoop contesto "already installed" y no
+    # activo nada; el bootstrap reintentaba la MISMA instalacion. Lo que corresponde es
+    # activarla: `scoop reset opencode@<ver>` mueve 'current' y rehace el shim, sin bajar nada.
+    if (($salidaInstalar -match "already installed") -or ((Get-OpenCodeVersionInstalada) -ne $OpenCodeVersion -and (Test-Path (Join-Path $OpenCodeAppDir $OpenCodeVersion)))) {
+        Write-Host "  [..] La $OpenCodeVersion ya esta en el disco: la activo (scoop reset)..."
+        $ErrorActionPreference = "Continue"
+        try { $null = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String } catch { }
+        $ErrorActionPreference = $prevInst
+        Refresh-Path
+    }
 
     # UN intento de reparacion, automatico, sin preguntarle nada al docente.
     #
