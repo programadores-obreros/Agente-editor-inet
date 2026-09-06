@@ -125,9 +125,9 @@ export default tool({
     const materiales = (args.materiales || []).map((m) => `<li>${esc(m)}</li>`).join("\n")
     const conexiones = (args.conexiones || [])
       .map((c) => {
-        const partes = c.split(/\s*(?:→|->|:)\s*/, 2)
-        return partes.length === 2
-          ? `<tr><td>${esc(partes[0])}</td><td>${esc(partes[1])}</td></tr>`
+        const [izq, der] = c.split(/\s*(?:→|->|:)\s*/, 2)
+        return izq != null && der != null
+          ? `<tr><td>${esc(izq)}</td><td>${esc(der)}</td></tr>`
           : `<tr><td colspan="2">${esc(c)}</td></tr>`
       })
       .join("\n")

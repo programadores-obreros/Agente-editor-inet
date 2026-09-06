@@ -1,0 +1,9 @@
+# Configuracion de pnpm (pnpm 10+ la lee de aca, no del campo "pnpm" de package.json).
+#
+# msgpackr-extract es una dependencia nativa OPCIONAL (effect, via @opencode-ai/plugin)
+# que trae un build script. pnpm no corre scripts de dependencias sin permiso y desde
+# pnpm 11 eso hace FALLAR `pnpm install` (ERR_PNPM_IGNORED_BUILDS) hasta que alguien
+# decida. La decision: no se compila. No hace falta, msgpackr cae a JS puro sin ella,
+# y en la CI no queremos compilar binarios de terceros.
+allowBuilds:
+  msgpackr-extract: false

@@ -66,6 +66,35 @@ jobs:
           if (-not (Test-Path $lnk))   { throw "Falta el acceso directo del menú inicio: $lnk" }
           Write-Host "OK: la capa educativa y el acceso directo se instalaron correctamente."
 
+      # El .exe copia install\ entero al lado del programa y bootstrap.ps1 lee de AHI
+      # OPENCODE_VERSION (sin ese archivo se corta, a proposito). Las fichas viajan con
+      # su manifiesto. Se verifica sobre la COPIA INSTALADA, no sobre el repo: lo que
+      # se distribuye es esto, y con el parser de Windows PowerShell 5.1, que es el
+      # que lo va a ejecutar en la escuela (ci.yml hace lo mismo sobre el repo).
+      - name: La copia instalada parsea en PowerShell 5.1 y trae OPENCODE_VERSION + manifiesto
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($PSVersionTable.PSVersion.Major -ne 5) { Write-Host "::error::Este paso tiene que correr en Windows PowerShell 5.1"; exit 1 }
+          $app = "$env:LOCALAPPDATA\TecniaBot"
+          $total = 0
+          foreach ($f in Get-ChildItem "$app\install\*.ps1") {
+            $tokens = $null
+            $errores = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errores) | Out-Null
+            if ($errores.Count -eq 0) { Write-Host "  OK   install\$($f.Name)"; continue }
+            $total += $errores.Count
+            foreach ($e in $errores) { Write-Host "::error file=install/$($f.Name),line=$($e.Extent.StartLineNumber)::$($e.Message)" }
+          }
+          if ($total -gt 0) { Write-Host "::error::$total error(es) de parseo en la copia instalada"; exit 1 }
+          foreach ($rel in @("install\OPENCODE_VERSION", "opencode\skills\fichas\MANIFEST.sha256")) {
+            if (-not (Test-Path "$app\$rel")) { Write-Host "::error::Falta en la instalacion: $app\$rel"; exit 1 }
+            Write-Host "  OK   $rel"
+          }
+          $ver = (Get-Content "$app\install\OPENCODE_VERSION" -Raw).Trim()
+          if ($ver -notmatch '^\d+\.\d+\.\d+$') { Write-Host "::error::install\OPENCODE_VERSION instalado dice '$ver'"; exit 1 }
+          Write-Host "  OK   OpenCode fijado en $ver"
+
       # Sin esto nadie puede verificar que el .exe que bajo es el que publicamos.
       # Importa mas de lo que parece: el instalador NO ESTA FIRMADO, asi que la
       # unica forma de comprobar que no lo tocaron en el camino es comparar el

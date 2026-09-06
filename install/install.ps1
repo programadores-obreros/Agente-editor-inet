@@ -220,7 +220,15 @@ if ($purgada) {
     Write-Host "  [i] Se quito la key de respaldo compartida que traian las versiones anteriores (ya no es valida)."
 }
 
-if (-not $tieneGoogle) {
+# TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para que
+# este script no pregunte nada y siga sin key, con el modelo gratuito Big Pickle.
+# Sin esto, el sondeo de teclado de abajo espera 60 s en una consola sin nadie, y si
+# la entrada esta redirigida lee una linea de ahi. La pregunta sigue existiendo para
+# el docente: solo se saltea cuando la variable esta definida.
+if (-not $tieneGoogle -and $env:TECNIA_SIN_PROMPT) {
+    Write-Host ""
+    Write-Host "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key."
+} elseif (-not $tieneGoogle) {
     Write-Host ""
     Write-Host "==> API key de Google (OPCIONAL). Con una key gratis (sin tarjeta) Tecnia Bot usa Gemini."
     Write-Host "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"

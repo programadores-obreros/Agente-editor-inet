@@ -665,6 +665,16 @@ const ALIAS: Record<string, string> = {
  * anda sin que nadie tenga que preverla — y las entradas acentuadas que YA
  * están en ALIAS siguen funcionando porque se consultan primero.
  */
+// Busca la definición de un componente ya validado. Los desconocidos se filtran
+// antes (el tool contesta "No conozco: ..."), así que llegar acá con uno que no
+// existe es un bug: se corta con un mensaje claro en vez de un TypeError sobre
+// undefined. Con `noUncheckedIndexedAccess`, COMPONENTES[x] es `Componente | undefined`.
+function componenteDe(tipo: string): Componente {
+  const def = COMPONENTES[normalizarTipo(tipo)]
+  if (!def) throw new Error(`Componente desconocido: ${tipo}`)
+  return def
+}
+
 export function normalizarTipo(t: string): string {
   const k = t.trim().toLowerCase()
   if (ALIAS[k]) return ALIAS[k]
@@ -722,7 +732,8 @@ function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] 
     for (const pin of def.pines) {
       if (pin.clase === "fijo" && pin.destino) {
         const m = pin.destino.match(/GPIO(\d+)/)
-        if (m) usados.add(parseInt(m[1], 10))
+        const nro = m?.[1]
+        if (nro != null) usados.add(parseInt(nro, 10))
       }
     }
   }
@@ -736,7 +747,7 @@ function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] 
   }
 
   for (const ped of pedidos) {
-    const def = COMPONENTES[normalizarTipo(ped.tipo)]
+    const def = componenteDe(ped.tipo)
     const asignados: number[] = []
     const pinesGpio = def.pines.filter((p) => p.clase !== "fijo")
 
@@ -805,11 +816,12 @@ function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuad
     ["led", "servo", "buzzer", "relay", "bomba", "valvula", "lampara", "calefactor", "motor"].includes(t)
   const iSens = idx((t) => SENSOR_SIM[t] != null)
   const iActS = idx(ESACTU)
-  if (iSens >= 0 && iActS >= 0) {
-    const tSens = normalizarTipo(pedidos[iSens].tipo)
-    const tActu = normalizarTipo(pedidos[iActS].tipo)
+  const pSens = pedidos[iSens], pActS = pedidos[iActS]
+  const s = pSens ? SENSOR_SIM[normalizarTipo(pSens.tipo)] : undefined
+  if (pSens && pActS && s) {
+    const tSens = normalizarTipo(pSens.tipo)
+    const tActu = normalizarTipo(pActS.tipo)
     const idSens = `${tSens}${iSens}`, idActu = `${tActu}${iActS}`
-    const s = SENSOR_SIM[tSens]
     // qué le hace al actuador cuando se dispara
     const onAct =
       tActu === "led" ? "act.value=disparado;act.brightness=disparado?1:0;" :
@@ -853,8 +865,10 @@ function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuad
   const iAct = idx((t) => t === "led" || t === "servo" || t === "buzzer")
   if (iInter < 0 || iAct < 0) return null
 
-  const tInter = normalizarTipo(pedidos[iInter].tipo)
-  const tAct = normalizarTipo(pedidos[iAct].tipo)
+  const pInter = pedidos[iInter], pAct = pedidos[iAct]
+  if (!pInter || !pAct) return null
+  const tInter = normalizarTipo(pInter.tipo)
+  const tAct = normalizarTipo(pAct.tipo)
   const idInter = `${tInter}${iInter}`
   const idAct = `${tAct}${iAct}`
 
@@ -938,9 +952,9 @@ function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
 
   pedidos.forEach((ped, i) => {
     const tipo = normalizarTipo(ped.tipo)
-    const def = COMPONENTES[tipo]
+    const def = componenteDe(tipo)
     const id = `${tipo}${i}`
-    const gpios = gpiosPorComp[i]
+    const gpios = gpiosPorComp[i] ?? []
 
     if (def.voltaje === "5V") hay5V = true
     if (def.interactivo) interactivo = true
@@ -955,7 +969,7 @@ function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
         // "7 pines (cada segmento con 220Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
         const conR = pin.clase !== "fijo" && destino.match(/^(.*?)\s*\(con\s*([\d.]+\s*[kKmM]?)\s*Ω\)\s*$/)
         const etiqueta = conR ? conR[1] : destino
-        const valorR = conR ? conR[2].replace(/\s+/g, "") : null
+        const valorR = conR ? (conR[2] ?? "").replace(/\s+/g, "") : null
         const cable = valorR
           ? `<span class="cable"></span><span class="res" title="Resistencia de ${valorR}Ω en serie">${valorR}Ω</span><span class="cable"></span>`
           : `<span class="cable"></span>`
@@ -1046,7 +1060,7 @@ function parsearComponentes(raw: string): Pedido[] {
     .map((tok) => {
       const [tipo, g] = tok.split(":").map((x) => x.trim())
       const gpio = g != null && /^\d+$/.test(g) ? parseInt(g, 10) : undefined
-      return { tipo: normalizarTipo(tipo), gpio }
+      return { tipo: normalizarTipo(tipo ?? tok), gpio }
     })
 }
 
@@ -1300,7 +1314,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
         return `No conozco: ${desconocidos.map((d) => d.tipo).join(", ")}. Tengo: ${Object.keys(COMPONENTES).join(", ")}.`
       }
       const r = armarCircuito(pedidos, args.umbral)
-      const nombres = pedidos.map((p) => COMPONENTES[normalizarTipo(p.tipo)].etiqueta).join(" + ")
+      const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
       plantilla = {
         titulo: `🔧 ${nombres} + ESP32`,
         sub: "armado libre — piezas reales conectadas al ESP32",
@@ -1336,8 +1350,8 @@ Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los 
       // Circuito MONTADO sobre una protoboard: plantilla validada (componentes Wokwi
       // reales pinchados en la placa + jumpers). Se lee del asset instalado.
       const def = PLANTILLAS_PROTOBOARD[args.circuito]
-      const plantillaFile = plantillaPath(def.archivo)
-      if (!existsSync(plantillaFile)) {
+      const plantillaFile = def ? plantillaPath(def.archivo) : ""
+      if (!def || !existsSync(plantillaFile)) {
         return "No encontré la plantilla del circuito en protoboard. Reinstalá Tecnia Bot con el instalador."
       }
       base = nombreSeguro(args.nombre_archivo, args.circuito)
@@ -1361,7 +1375,7 @@ Vas a ver el circuito armado en la placa de pruebas, con los componentes reales 
       }
       const pedidos = tipos.map((t) => ({ tipo: t }))
       const r = armarCircuito(pedidos)
-      const nombres = pedidos.map((p) => COMPONENTES[normalizarTipo(p.tipo)].etiqueta).join(" + ")
+      const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
       plantilla = {
         titulo: `🔧 ${nombres} + ESP32`,
         sub: "piezas reales conectadas al ESP32",

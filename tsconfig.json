@@ -8,9 +8,9 @@
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": ["node", "bun"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["opencode/tool/**/*.ts", "opencode/env.d.ts"]
+  "include": ["opencode/tool/**/*.ts"]
 }

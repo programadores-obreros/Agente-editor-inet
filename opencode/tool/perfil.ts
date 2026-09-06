@@ -48,7 +48,10 @@ function parsearPersonas(texto: string): Persona[] {
   const personas: Persona[] = []
   for (const linea of bloque.split("\n")) {
     const m = linea.match(/^-\s*(.+?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*$/)
-    if (m) personas.push({ nombre: m[1].trim(), rol: m[2].trim(), genero: m[3].trim(), placa: m[4].trim() })
+    if (!m) continue
+    // Los cuatro grupos son obligatorios en la regex; el default vacío es sólo para el tipo.
+    const [, nombre = "", rol = "", genero = "", placa = ""] = m
+    personas.push({ nombre: nombre.trim(), rol: rol.trim(), genero: genero.trim(), placa: placa.trim() })
   }
   return personas
 }
@@ -90,7 +93,7 @@ function leerPerfil(): Perfil {
 // campos que no vengan se conservan del que ya estaba.
 function upsertPersona(personas: Persona[], nombre: string, datos: Partial<Persona>): void {
   const i = personas.findIndex((p) => p.nombre.toLowerCase() === nombre.toLowerCase())
-  const base: Persona = i >= 0 ? personas[i] : { nombre, rol: SIN_DEFINIR, genero: SIN_DEFINIR, placa: SIN_DEFINIR }
+  const base: Persona = personas[i] ?? { nombre, rol: SIN_DEFINIR, genero: SIN_DEFINIR, placa: SIN_DEFINIR }
   const actualizada: Persona = {
     nombre,
     rol: datos.rol ?? base.rol,
