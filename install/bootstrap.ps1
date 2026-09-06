@@ -161,13 +161,35 @@ function Test-OpenCodeScoop {
 # la version instalada, sin bajar nada). La version anterior copiaba el programa
 # entero (178 MB) como lanzador, y eso creaba el fantasma que se describe arriba.
 # Se conserva esa copia SOLO como ultimo recurso, avisando que queda fuera de Scoop.
+function Quitar-ShimRoto {
+    # Un shim que existe pero no contesta `--version` esta roto (un exe ajeno copiado encima,
+    # un enlace a una carpeta que ya no esta). Si se lo deja, `scoop reset` entra en
+    # warn_on_overwrite (core.ps1) y con un shim ajeno arma la ruta "opencode.shim." con
+    # un punto final, que Test-Path acepta y Remove-Item no: excepcion, shim sin rehacer.
+    # Visto con el .exe real en la VM. Sin shim previo, esa funcion vuelve enseguida.
+    $shimExe = Join-Path $env:USERPROFILE "scoop\shims\opencode.exe"
+    if (-not (Test-Path $shimExe)) { return }
+    $global:LASTEXITCODE = 1
+    $r = ""
+    try { $r = (& $shimExe --version 2>&1 | Out-String) } catch { $r = "" }
+    if ($LASTEXITCODE -eq 0 -and $r -match '\d+\.\d+\.\d+') { return }
+    # No se borra: se APARTA con otro nombre (regla: puede fallar, no puede romper). Scoop no
+    # lo ve mas y crea el suyo limpio; el apartado queda para mirarlo si hace falta.
+    Write-Host "  [i] El shim de OpenCode no contesta: lo aparto (opencode.exe.roto) para que Scoop lo rehaga limpio."
+    Move-Item $shimExe ($shimExe + ".roto") -Force -ErrorAction SilentlyContinue
+    $shimTxt = Join-Path $env:USERPROFILE "scoop\shims\opencode.shim"
+    if (Test-Path $shimTxt) { Move-Item $shimTxt ($shimTxt + ".roto") -Force -ErrorAction SilentlyContinue }
+}
+
 function Reparar-Shim {
+    Quitar-ShimRoto
     if (-not (Test-Path $BinOpenCode)) { return $false }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
         $global:LASTEXITCODE = 0
         $salida = scoop reset opencode *>&1 | Out-String
+        foreach ($l in ($salida -split "`n")) { if ($l -match "ERROR|Exception|Terminaci") { Write-Host ("      " + $l.Trim()) } }
         Refresh-Path
         if (($LASTEXITCODE -eq 0) -and ($salida -notmatch '(?m)^\s*ERROR') -and (Test-Path $ShimOpenCode)) {
             return $true
@@ -189,7 +211,10 @@ function Reparar-Shim {
 }
 
 function Test-OpenCode {
-    if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { return $false }
+    # Si el comando `opencode` no esta en el PATH de ESTE proceso, NO es "no arranca":
+    # lanzado desde el instalador (Inno), el proceso hereda un PATH sin scoop\shims y
+    # Get-Command falla aunque todo este bien. Se salta el shim y se prueba el binario real.
+    $hayShim = [bool](Get-Command opencode -ErrorAction SilentlyContinue)
     # DOS TRAMPAS DE POWERSHELL, y las dos daban FALSO NEGATIVO sobre una
     # instalacion sana -- que despues esta rutina "reparaba" desinstalandola.
     #
@@ -228,11 +253,52 @@ function Test-OpenCode {
     $ErrorActionPreference = "Continue"
     try {
         foreach ($intento in 1, 2) {
+            if (-not $hayShim) { break }
             $global:LASTEXITCODE = 0
             $script:SalidaOpenCode = (& opencode --version 2>&1 | Out-String)
-            if ($LASTEXITCODE -eq 0) { return $true }
+            if ($LASTEXITCODE -eq 0 -and $script:SalidaOpenCode -match '\d+\.\d+\.\d+') { return $true }
             if ($intento -eq 1) { Start-Sleep -Seconds 3 }
         }
+        # El shim de Scoop (20 KB) fallo dos veces. Antes de decir "OpenCode no arranca" se
+        # pregunta al BINARIO REAL: en la VM y en una notebook, el shim tiro "Shim: Could not
+        # determine if target is a GUI app" justo despues de que Scoop se actualizo a si
+        # mismo, mientras opencode.exe andaba perfecto. Si el binario contesta, OpenCode
+        # arranca; lo roto es el shim, y eso lo rehace `scoop reset` sin bajar nada.
+        # Hasta tres intentos espaciados: recien instalado, el antivirus suele estar leyendo
+        # el binario (180 MB) y el proceso no llega a arrancar (exit 1, sin salida). Se vio
+        # en la VM con el .exe real: a mano, el mismo binario contestaba al instante.
+        $global:LASTEXITCODE = 1
+        $directo = ""
+        foreach ($intentoBin in 1, 2, 3) {
+            $global:LASTEXITCODE = 1
+            try { $directo = (& $BinOpenCode --version 2>&1 | Out-String) } catch { $directo = "" }
+            if ($LASTEXITCODE -eq 0 -and $directo -match '\d+\.\d+\.\d+') { break }
+            Write-Host ("  [i] El binario de OpenCode no contesto (intento " + $intentoBin + ": exit=" + $LASTEXITCODE + "). Espero 5 s...")
+            Start-Sleep -Seconds 5
+        }
+        if ($LASTEXITCODE -eq 0 -and $directo -match '\d+\.\d+\.\d+') { Write-Host "  [i] El binario de OpenCode arranca pero su shim de Scoop fallo. Rehago el shim (scoop reset)..."; Reparar-Shim | Out-Null; $script:SalidaOpenCode = $directo; return $true }
+        # Queda escrito POR QUE se decidio que no arranca: sin esto, en una notebook real se
+        # discutio media hora sobre un "no arranca" que nadie podia explicar.
+        $bits = if ([Environment]::Is64BitProcess) { "64" } else { "32" }
+        Write-Host ("  [i] Chequeo de OpenCode: shim en PATH=" + $hayShim + ", PowerShell de " + $bits + " bits, binario '" + $BinOpenCode + "' exit=" + $LASTEXITCODE + ", salida: " + (($directo -replace "\s+", " ").Trim()).Substring(0, [Math]::Min(120, (($directo -replace "\s+", " ").Trim()).Length)))
+        $dirCurrent = Split-Path $BinOpenCode -Parent
+        $infoCurrent = try { $it = Get-Item $dirCurrent -Force -ErrorAction Stop; "attr=" + $it.Attributes + " target=" + $it.Target } catch { "Get-Item fallo: " + $_.Exception.Message }
+        $versiones = try { (Get-ChildItem (Split-Path $dirCurrent -Parent) -Name -ErrorAction Stop) -join "," } catch { "?" }
+        Write-Host ("      entorno: cwd=" + (Get-Location).Path + " | TEMP=" + $env:TEMP + " | __COMPAT_LAYER=" + $env:__COMPAT_LAYER + " | stdin redirigido=" + [Console]::IsInputRedirected + " | stdout redirigido=" + [Console]::IsOutputRedirected + " | procesos opencode=" + @(Get-Process opencode -ErrorAction SilentlyContinue).Count)
+        Write-Host ("      binario: File.Exists=" + [System.IO.File]::Exists($BinOpenCode) + " | Directory.Exists(current)=" + [System.IO.Directory]::Exists($dirCurrent) + " | current: " + $infoCurrent + " | versiones en apps\opencode: " + $versiones)
+        $dirReal = try { (Get-Item $dirCurrent -Force).Target } catch { $dirCurrent }
+        $archivos = try { (Get-ChildItem $dirReal -Force -ErrorAction Stop | ForEach-Object { $_.Name + "(" + $_.Length + ")" }) -join "," } catch { "Get-ChildItem fallo: " + $_.Exception.Message }
+        $cmdDir = try { (& cmd /c "dir /b `"$dirReal`"" 2>&1 | Out-String) -replace "\s+", "," } catch { "?" }
+        $ident = try { (& whoami /groups 2>&1 | Out-String) -split "`n" | Where-Object { $_ -match "Mandatory|Nivel" } | ForEach-Object { $_.Trim() -replace "\s+", " " } } catch { "?" }
+        $padre = try { (Get-Process -Id (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId -ErrorAction Stop).Name } catch { "?" }
+        Write-Host ("      carpeta real: " + $dirReal + " | archivos: " + $archivos + " | dir: " + $cmdDir)
+        $etiqueta = ($ident | Where-Object { $_ -match "Mandatory Level|Nivel" } | Select-Object -First 1)
+        if (-not $etiqueta) { $etiqueta = ($ident | Select-Object -First 1) }
+        Write-Host ("      proceso: integridad=" + ([string]$etiqueta).Substring(0, [Math]::Min(60, ([string]$etiqueta).Length)) + " | padre=" + $padre + " | 64bitOS=" + [Environment]::Is64BitOperatingSystem + " | usuario=" + $env:USERNAME)
+        $exeReal = Join-Path $dirReal "opencode.exe"
+        $global:LASTEXITCODE = 1
+        $vReal = try { (& $exeReal --version 2>&1 | Out-String).Trim() } catch { "excepcion: " + $_.Exception.Message }
+        Write-Host ("      DISCRIMINA: File.Exists(real exe)=" + [System.IO.File]::Exists($exeReal) + " | File.Exists(current\manifest.json)=" + [System.IO.File]::Exists((Join-Path $dirCurrent "manifest.json")) + " | real exe --version exit=" + $LASTEXITCODE + " salida=" + ($vReal -replace "\s+", " ").Substring(0, [Math]::Min(60, ($vReal -replace "\s+", " ").Length)))
         return $false
     } catch {
         $script:SalidaOpenCode = $_.Exception.Message
@@ -466,8 +532,34 @@ if (Test-OpenCodeInstalado) {
                 }
             }
         } else {
-            Write-Host "      Se deja como esta: este instalador no desinstala nada."
-            Write-Host "      Si el bot no anda bien, en PowerShell: scoop install opencode@$OpenCodeVersion"
+            # La fijada no esta en el disco. Instalarla con Scoop a version explicita la pone AL LADO
+            # de la que hay y cambia el enlace 'current': no desinstala nada (verificado en
+            # libexec/scoop-install.ps1: solo se salta si ESA version ya esta instalada).
+            # Visto en una notebook real: tenia 1.18.19 -> 1.18.29 (auto-update) y nunca la
+            # fijada; antes se dejaba como estaba y el pin no servia para nada.
+            Write-Host "  [..] La $OpenCodeVersion no esta en el disco: la instalo al lado (no se borra la $instalada)..."
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $salidaInst = ""
+            try {
+                $salidaInst = scoop install opencode@$OpenCodeVersion *>&1 | Out-String
+            } catch {
+                $salidaInst = "ERROR " + $_.Exception.Message
+            }
+            $ErrorActionPreference = $prev
+            Refresh-Path
+            $quedo = Get-OpenCodeVersionInstalada
+            if ($quedo -eq $OpenCodeVersion -and (Test-OpenCode)) {
+                Write-Host "  [OK] OpenCode queda en la version $OpenCodeVersion y arranca."
+            } else {
+                Write-Host "  [X] No pude dejar la version ${OpenCodeVersion} andando: activa la $quedo."
+                if ($salidaInst -match "still running") {
+                    Write-Host "      Tecnia Bot (OpenCode) esta abierto. Cerralo y volve a correr 'Reparar Tecnia Bot'."
+                } else {
+                    foreach ($l in ($salidaInst -split "`n")) { if ($l -match "^\s*ERROR") { Write-Host ("      " + $l.Trim()) } }
+                    Write-Host "      Volve a correr 'Reparar Tecnia Bot'; si sigue, en PowerShell: scoop install opencode@$OpenCodeVersion"
+                }
+            }
         }
     }
     Fijar-OpenCode | Out-Null
@@ -478,8 +570,29 @@ if (Test-OpenCodeInstalado) {
         Write-Host "  [i] Hay un opencode.exe suelto que Scoop no administra; instalo la version fijada con Scoop."
     }
     Write-Host "  [..] Instalando OpenCode $OpenCodeVersion..."
-    scoop install opencode@$OpenCodeVersion
+    $prevInst = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $salidaInstalar = ""
+    try { $salidaInstalar = scoop install opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaInstalar = "ERROR " + $_.Exception.Message }
+    $ErrorActionPreference = $prevInst
+    foreach ($l in ($salidaInstalar -split "`n")) { if ($l.Trim() -and $l -notmatch "^\s*(Downloading|Extracting|Checking hash|Loading|Linking|Creating shim)") { Write-Host ("      " + $l.Trim()) } }
     Refresh-Path
+    # Notebook real (2026-09-06): la carpeta 1.18.18 estaba en el disco desde agosto pero
+    # 'current' apuntaba a 1.18.29 (auto-update). Scoop contesto "already installed" y no
+    # activo nada; el bootstrap reintentaba la MISMA instalacion. Lo que corresponde es
+    # activarla: `scoop reset opencode@<ver>` mueve 'current' y rehace el shim, sin bajar nada.
+    if (($salidaInstalar -match "already installed") -or ((Get-OpenCodeVersionInstalada) -ne $OpenCodeVersion -and (Test-Path (Join-Path $OpenCodeAppDir $OpenCodeVersion)))) {
+        Write-Host "  [..] La $OpenCodeVersion ya esta en el disco: la activo (scoop reset)..."
+        $ErrorActionPreference = "Continue"
+        Quitar-ShimRoto
+        $salidaResetInst = ""
+        try { $salidaResetInst = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaResetInst = "ERROR " + $_.Exception.Message + " | en: " + (($_.ScriptStackTrace -split "`n" | Select-Object -First 3) -join " <- ") }
+        $ErrorActionPreference = $prevInst
+        # Se muestra lo que dijo Scoop (sin el ruido de descarga): si el reset falla al rehacer
+        # el shim, la causa tiene que quedar en el log, no tragada.
+        foreach ($l in ($salidaResetInst -split "`n")) { if ($l -match "ERROR|Removing|Creating|Linking|Exception|Terminaci") { Write-Host ("      " + $l.Trim()) } }
+        Refresh-Path
+    }
 
     # UN intento de reparacion, automatico, sin preguntarle nada al docente.
     #

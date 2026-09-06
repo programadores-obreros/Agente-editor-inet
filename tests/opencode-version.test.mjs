@@ -189,3 +189,53 @@ test("bootstrap.ps1 captura TODOS los streams de scoop hold/reset (*>&1), no sol
   assert.ok(capturas.length >= 2, `esperaba capturar hold y reset, encontre ${capturas.length}`)
   for (const c of capturas) assert.match(c, /\*>&1/, `sin *>&1 Scoop habla y nadie escucha: ${c}`)
 })
+
+// Notebook real (2026-09-06): tenia 1.18.19 -> 1.18.29 por auto-update y NUNCA la fijada.
+// El bootstrap decia "se deja como esta" y el pin no servia para nada. `scoop install
+// opencode@<ver>` con otra version instalada la pone AL LADO y cambia current: no borra nada.
+test("bootstrap.ps1 instala la version fijada al lado cuando no esta en el disco, y verifica que arranca", () => {
+  const i = ps1.indexOf("no esta en el disco: la instalo al lado")
+  assert.ok(i > 0, "no existe la rama 'la fijada no esta en el disco'")
+  const rama = ps1.slice(i, i + 2500)
+  assert.match(rama, /scoop install opencode@\$OpenCodeVersion \*>&1/, "no instala la fijada (o no captura todos los streams)")
+  assert.match(rama, /Get-OpenCodeVersionInstalada/, "no relee la version tras instalar")
+  assert.match(rama, /Test-OpenCode\)/, "no comprueba que OpenCode CORRA despues de instalar")
+  assert.doesNotMatch(rama, /Se deja como esta/, "sigue dejando la version que haya")
+})
+
+test("el lanzador reintenta una vez antes de decir que OpenCode no arranca", () => {
+  const cmd = leer("installer", "abrir-tecnia-bot.cmd")
+  const pruebas = (cmd.match(/"%OC%" --version >nul 2>nul/g) || []).length
+  assert.ok(pruebas >= 2, `el lanzador prueba opencode --version ${pruebas} vez; un solo intento dio falso negativo en una notebook real`)
+  assert.match(cmd, /ping -n 4 127\.0\.0\.1 >nul/, "no espera entre los dos intentos")
+})
+
+// VM + notebook (2026-09-06): en la rama de INSTALAR, Scoop contestaba "already installed"
+// (la carpeta fijada estaba en disco pero current apuntaba a otra) y el bootstrap
+// reintentaba la misma instalacion. Hay que ACTIVARLA con scoop reset.
+test("bootstrap.ps1: si Scoop dice 'already installed' al instalar la fijada, la activa con scoop reset", () => {
+  const i = ps1.indexOf("Instalando OpenCode $OpenCodeVersion")
+  assert.ok(i > 0)
+  const rama = ps1.slice(i, i + 2500)
+  assert.match(rama, /already installed/, "no reconoce la respuesta de Scoop")
+  assert.match(rama, /scoop reset opencode@\$OpenCodeVersion/, "no activa la version fijada")
+})
+
+// El shim de Scoop fallo dos veces con el binario sano. Antes de declarar "no arranca",
+// Test-OpenCode le pregunta al binario real y, si contesta, repara el shim.
+test("Test-OpenCode prueba el binario real si el shim falla, y repara el shim", () => {
+  const i = ps1.indexOf("function Test-OpenCode {")
+  const fn = ps1.slice(i, i + 3000)
+  assert.match(fn, /& \$BinOpenCode --version/, "no prueba el binario real")
+  assert.match(fn, /Reparar-Shim/, "no repara el shim cuando el binario anda")
+  assert.doesNotMatch(fn.slice(0, fn.indexOf("return $false")), /Test-Path \$BinOpenCode/, "decide por 'el archivo esta' en vez de ejecutarlo")
+})
+
+// Inno Setup 6.7.0 activa RedirectionGuard por defecto y la heredan los hijos: el bootstrap
+// no podia atravesar los junctions `current` de Scoop (opencode.exe "no existia", Scoop no
+// podia rehacer shims). Causa raiz del "OpenCode no arranca en esta maquina" desde agosto.
+test("el .iss apaga RedirectionGuard: Tecnia Bot vive sobre junctions de Scoop", () => {
+  const iss = leer("installer", "tecnia-bot.iss")
+  assert.match(iss, /^\s*RedirectionGuard=no\s*$/m, "sin RedirectionGuard=no el instalador no puede atravesar apps\\<app>\\current")
+  assert.match(iss, /PrivilegesRequired=lowest/, "la justificacion depende de que el instalador nunca eleve")
+})

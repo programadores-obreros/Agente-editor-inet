@@ -73,6 +73,18 @@ MinVersion=10.0
 
 ; Sin admin: se instala en el espacio del usuario (ideal para PCs de escuela).
 PrivilegesRequired=lowest
+; RedirectionGuard=no, a PROPÓSITO y con pruebas detrás. Inno Setup 6.7.0 (enero 2026)
+; activa por defecto la mitigación RedirectionGuard de Windows: el instalador y TODOS
+; sus procesos hijos (bootstrap.ps1, y el lanzador cuando se abre desde la última
+; pantalla) dejan de poder atravesar junctions creados sin privilegios. Scoop enlaza
+; cada app por el junction `apps\<app>\current`: bajo el instalador, opencode.exe
+; "no existía", el shim decía "Could not determine if target is a GUI app", Scoop no
+; podía rehacer shims ("Can't shim: File doesn't exist") y el bootstrap concluía
+; "OpenCode no arranca en esta máquina". Reproducido en la VM: el mismo binario por su
+; ruta real contestaba al instante. La mitigación protege contra escaladas de
+; privilegios por redirección de rutas; este instalador nunca eleva (lowest) e
+; instala en el perfil del usuario, así que no hay privilegio que escalar.
+RedirectionGuard=no
 DefaultDirName={localappdata}\TecniaBot
 DisableProgramGroupPage=yes
 DisableDirPage=yes

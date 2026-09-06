@@ -121,16 +121,26 @@ rem
 rem El lanzador buscaba SOLO por el shim. Le estabamos pidiendo la llave a alguien
 rem que tenia la puerta abierta al lado.
 rem
-rem Se prueba en orden: el PATH, el shim, y el binario directo. Con que ande uno,
+rem Se prueba en orden: el binario directo, el shim, y el PATH. Con que ande uno,
 rem el docente entra.
 set "OC="
 where opencode >nul 2>nul
-if not errorlevel 1 set "OC=opencode"
+rem El binario real PRIMERO: el shim de Scoop (20 KB) a veces falla con "Shim: Could not
+rem determine if target is a GUI app" (visto en la VM y en una notebook) mientras
+rem opencode.exe anda perfecto. current\ es el enlace que Scoop mantiene: siempre vigente.
+if exist "%USERPROFILE%\scoop\apps\opencode\current\opencode.exe" set "OC=%USERPROFILE%\scoop\apps\opencode\current\opencode.exe"
 if not defined OC if exist "%USERPROFILE%\scoop\shims\opencode.exe" set "OC=%USERPROFILE%\scoop\shims\opencode.exe"
-if not defined OC if exist "%USERPROFILE%\scoop\apps\opencode\current\opencode.exe" set "OC=%USERPROFILE%\scoop\apps\opencode\current\opencode.exe"
+if not defined OC if not errorlevel 1 set "OC=opencode"
 if not defined OC goto reparar
 
 "%OC%" --version >nul 2>nul
+if errorlevel 1 (
+  rem Un solo intento daba falsos negativos: en una notebook real dijo "NO ARRANCA" y
+  rem OpenCode abrio un segundo despues (Scoop terminando de enlazar, antivirus leyendo
+  rem el binario). Se espera 3 s y se prueba otra vez, como hace el bootstrap.
+  ping -n 4 127.0.0.1 >nul
+  "%OC%" --version >nul 2>nul
+)
 if errorlevel 1 (
   echo.
   echo   Tecnia Bot v%VER% -- OpenCode esta instalado pero NO ARRANCA.
