@@ -168,6 +168,7 @@ function Reparar-Shim {
     try {
         $global:LASTEXITCODE = 0
         $salida = scoop reset opencode *>&1 | Out-String
+        foreach ($l in ($salida -split "`n")) { if ($l -match "ERROR|Exception|Terminaci") { Write-Host ("      " + $l.Trim()) } }
         Refresh-Path
         if (($LASTEXITCODE -eq 0) -and ($salida -notmatch '(?m)^\s*ERROR') -and (Test-Path $ShimOpenCode)) {
             return $true
@@ -189,7 +190,10 @@ function Reparar-Shim {
 }
 
 function Test-OpenCode {
-    if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { return $false }
+    # Si el comando `opencode` no esta en el PATH de ESTE proceso, NO es "no arranca":
+    # lanzado desde el instalador (Inno), el proceso hereda un PATH sin scoop\shims y
+    # Get-Command falla aunque todo este bien. Se salta el shim y se prueba el binario real.
+    $hayShim = [bool](Get-Command opencode -ErrorAction SilentlyContinue)
     # DOS TRAMPAS DE POWERSHELL, y las dos daban FALSO NEGATIVO sobre una
     # instalacion sana -- que despues esta rutina "reparaba" desinstalandola.
     #
@@ -228,6 +232,7 @@ function Test-OpenCode {
     $ErrorActionPreference = "Continue"
     try {
         foreach ($intento in 1, 2) {
+            if (-not $hayShim) { break }
             $global:LASTEXITCODE = 0
             $script:SalidaOpenCode = (& opencode --version 2>&1 | Out-String)
             if ($LASTEXITCODE -eq 0 -and $script:SalidaOpenCode -match '\d+\.\d+\.\d+') { return $true }
@@ -527,8 +532,12 @@ if (Test-OpenCodeInstalado) {
     if (($salidaInstalar -match "already installed") -or ((Get-OpenCodeVersionInstalada) -ne $OpenCodeVersion -and (Test-Path (Join-Path $OpenCodeAppDir $OpenCodeVersion)))) {
         Write-Host "  [..] La $OpenCodeVersion ya esta en el disco: la activo (scoop reset)..."
         $ErrorActionPreference = "Continue"
-        try { $null = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String } catch { }
+        $salidaResetInst = ""
+        try { $salidaResetInst = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaResetInst = "ERROR " + $_.Exception.Message }
         $ErrorActionPreference = $prevInst
+        # Se muestra lo que dijo Scoop (sin el ruido de descarga): si el reset falla al rehacer
+        # el shim, la causa tiene que quedar en el log, no tragada.
+        foreach ($l in ($salidaResetInst -split "`n")) { if ($l -match "ERROR|Removing|Creating|Linking|Exception|Terminaci") { Write-Host ("      " + $l.Trim()) } }
         Refresh-Path
     }
 
