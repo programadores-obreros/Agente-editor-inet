@@ -132,6 +132,13 @@ if not defined OC goto reparar
 
 "%OC%" --version >nul 2>nul
 if errorlevel 1 (
+  rem Un solo intento daba falsos negativos: en una notebook real dijo "NO ARRANCA" y
+  rem OpenCode abrio un segundo despues (Scoop terminando de enlazar, antivirus leyendo
+  rem el binario). Se espera 3 s y se prueba otra vez, como hace el bootstrap.
+  ping -n 4 127.0.0.1 >nul
+  "%OC%" --version >nul 2>nul
+)
+if errorlevel 1 (
   echo.
   echo   Tecnia Bot v%VER% -- OpenCode esta instalado pero NO ARRANCA.
   echo.

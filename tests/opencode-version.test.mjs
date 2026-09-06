@@ -189,3 +189,23 @@ test("bootstrap.ps1 captura TODOS los streams de scoop hold/reset (*>&1), no sol
   assert.ok(capturas.length >= 2, `esperaba capturar hold y reset, encontre ${capturas.length}`)
   for (const c of capturas) assert.match(c, /\*>&1/, `sin *>&1 Scoop habla y nadie escucha: ${c}`)
 })
+
+// Notebook real (2026-09-06): tenia 1.18.19 -> 1.18.29 por auto-update y NUNCA la fijada.
+// El bootstrap decia "se deja como esta" y el pin no servia para nada. `scoop install
+// opencode@<ver>` con otra version instalada la pone AL LADO y cambia current: no borra nada.
+test("bootstrap.ps1 instala la version fijada al lado cuando no esta en el disco, y verifica que arranca", () => {
+  const i = ps1.indexOf("no esta en el disco: la instalo al lado")
+  assert.ok(i > 0, "no existe la rama 'la fijada no esta en el disco'")
+  const rama = ps1.slice(i, i + 2500)
+  assert.match(rama, /scoop install opencode@\$OpenCodeVersion \*>&1/, "no instala la fijada (o no captura todos los streams)")
+  assert.match(rama, /Get-OpenCodeVersionInstalada/, "no relee la version tras instalar")
+  assert.match(rama, /Test-OpenCode\)/, "no comprueba que OpenCode CORRA despues de instalar")
+  assert.doesNotMatch(rama, /Se deja como esta/, "sigue dejando la version que haya")
+})
+
+test("el lanzador reintenta una vez antes de decir que OpenCode no arranca", () => {
+  const cmd = leer("installer", "abrir-tecnia-bot.cmd")
+  const pruebas = (cmd.match(/"%OC%" --version >nul 2>nul/g) || []).length
+  assert.ok(pruebas >= 2, `el lanzador prueba opencode --version ${pruebas} vez; un solo intento dio falso negativo en una notebook real`)
+  assert.match(cmd, /ping -n 4 127\.0\.0\.1 >nul/, "no espera entre los dos intentos")
+})

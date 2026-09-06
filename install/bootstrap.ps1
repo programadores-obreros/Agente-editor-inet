@@ -466,8 +466,34 @@ if (Test-OpenCodeInstalado) {
                 }
             }
         } else {
-            Write-Host "      Se deja como esta: este instalador no desinstala nada."
-            Write-Host "      Si el bot no anda bien, en PowerShell: scoop install opencode@$OpenCodeVersion"
+            # La fijada no esta en el disco. `scoop install opencode@<ver>` la instala AL LADO
+            # de la que hay y cambia el enlace 'current': no desinstala nada (verificado en
+            # libexec/scoop-install.ps1: solo se salta si ESA version ya esta instalada).
+            # Visto en una notebook real: tenia 1.18.19 -> 1.18.29 (auto-update) y nunca la
+            # fijada; antes se dejaba como estaba y el pin no servia para nada.
+            Write-Host "  [..] La $OpenCodeVersion no esta en el disco: la instalo al lado (no se borra la $instalada)..."
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $salidaInst = ""
+            try {
+                $salidaInst = scoop install opencode@$OpenCodeVersion *>&1 | Out-String
+            } catch {
+                $salidaInst = "ERROR " + $_.Exception.Message
+            }
+            $ErrorActionPreference = $prev
+            Refresh-Path
+            $quedo = Get-OpenCodeVersionInstalada
+            if ($quedo -eq $OpenCodeVersion -and (Test-OpenCode)) {
+                Write-Host "  [OK] OpenCode queda en la version $OpenCodeVersion y arranca."
+            } else {
+                Write-Host "  [X] No pude dejar la version ${OpenCodeVersion} andando: activa la $quedo."
+                if ($salidaInst -match "still running") {
+                    Write-Host "      Tecnia Bot (OpenCode) esta abierto. Cerralo y volve a correr 'Reparar Tecnia Bot'."
+                } else {
+                    foreach ($l in ($salidaInst -split "`n")) { if ($l -match "^\s*ERROR") { Write-Host ("      " + $l.Trim()) } }
+                    Write-Host "      Volve a correr 'Reparar Tecnia Bot'; si sigue, en PowerShell: scoop install opencode@$OpenCodeVersion"
+                }
+            }
         }
     }
     Fijar-OpenCode | Out-Null

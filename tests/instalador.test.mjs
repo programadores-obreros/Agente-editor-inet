@@ -137,9 +137,12 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
     .split("\n")
     .filter((l) => /scoop install opencode/.test(l) && !/Write-Host/.test(l)).length
   // El TECHO, que es lo que este test vino a poner.
+  // Tres ramas, cada una corre a lo sumo UNA vez por corrida: el intento normal, UNA
+  // reparación, y el cambio a la versión fijada cuando en el disco hay otra (Scoop la
+  // instala al lado, no reinstala la misma). Ninguna se llama a sí misma.
   assert.ok(
-    instalaciones <= 2,
-    `hay ${instalaciones} reinstalaciones con scoop; el techo es 2 (el intento normal y UNA reparación)`,
+    instalaciones <= 3,
+    `hay ${instalaciones} instalaciones con scoop; el techo es 3 (intento normal, UNA reparación, UN cambio a la versión fijada)`,
   )
   // Y EL PISO, que faltaba. Sin él, `instalaciones === 0` —o sea, un instalador
   // que no instala OpenCode en ningún lado— cumplía «<= 2» y pasaba en verde.
