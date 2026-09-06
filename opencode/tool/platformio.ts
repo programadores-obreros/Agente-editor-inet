@@ -48,25 +48,185 @@ export function pioDisponible(): boolean {
   return pioCandidatos().some((c) => existsSync(c)) || Bun.which("pio") !== null
 }
 
-async function run(cmd: string[], cwd: string, signal?: AbortSignal): Promise<RunResult> {
+/*
+ * CUANTO SE ESPERA A CADA COMANDO, y por que dos numeros distintos.
+ *
+ * La primera vez que se compila para una placa nueva, `pio run` baja el
+ * toolchain entero (cientos de MB) con una barra de progreso que por el pipe no
+ * se ve: minutos de silencio total. En el aula eso se leia como "se colgo", y
+ * sin timeout la unica salida era cerrar OpenCode. Con 15 minutos alcanza para
+ * cualquier red que anda; si no termina, se lo decimos en vez de esperar para
+ * siempre. Lo mismo vale para la carga: `tool-avrdude`/`esptool` se bajan en
+ * el PRIMER upload, no en el compile.
+ *
+ * Los comandos de consulta (`pio --version`, `pio device list`, PowerShell)
+ * tardan segundos: si a los 60 s no contestaron, algo esta roto.
+ *
+ * Se puede acortar por variable de entorno (la usan los tests para probar el
+ * camino del timeout sin esperar 15 minutos).
+ */
+const TIMEOUT_CORTO_MS = 60_000
+export function timeoutLargoMs(): number {
+  const n = Number(process.env.TECNIA_PIO_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 15 * 60_000
+}
+
+/** Lo que devuelve `run()` cuando el comando no termino a tiempo (mismo codigo que `timeout(1)`). */
+export const CODIGO_TIMEOUT = 124
+/** Lo que devuelve `run()` cuando el usuario corto la accion desde OpenCode (Ctrl+C: 128+SIGINT). */
+export const CODIGO_CANCELADO = 130
+
+/**
+ * Una sola senal que se dispara si CUALQUIERA de las dos se dispara. Bun trae
+ * `AbortSignal.any` en las versiones nuevas; si no esta, se compone a mano.
+ */
+function combinarSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
+  const lista = signals.filter((s): s is AbortSignal => s !== undefined)
+  const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any
+  if (typeof anyFn === "function") return anyFn.call(AbortSignal, lista)
+  const ctrl = new AbortController()
+  for (const s of lista) {
+    if (s.aborted) {
+      ctrl.abort(s.reason)
+      break
+    }
+    s.addEventListener("abort", () => ctrl.abort(s.reason), { once: true })
+  }
+  return ctrl.signal
+}
+
+/**
+ * Corre un comando y devuelve codigo + salida, sin colgarse.
+ *
+ * El ORDEN importa: stdout y stderr se leen ANTES de esperar `exited`. Al reves,
+ * el proceso se bloquea al llenar el buffer del pipe y el tool espera a un
+ * proceso que espera al tool.
+ *
+ * El timeout y el `ctx.abort` de OpenCode se combinan en una sola senal: se le
+ * pasa a Bun (que mata el proceso) Y se corre una carrera contra la lectura,
+ * porque si el proceso ignora la senal —o quedo colgado en una descarga— los
+ * pipes no se cierran nunca y `await` no vuelve.
+ */
+export async function run(
+  cmd: string[],
+  cwd: string,
+  signal?: AbortSignal,
+  timeoutMs: number = TIMEOUT_CORTO_MS,
+): Promise<RunResult> {
   // Resolvemos "pio" a la ruta real del binario (PATH-independiente)
   if (cmd[0] === "pio") cmd = [pioBin(), ...cmd.slice(1)]
+  const porTiempo = AbortSignal.timeout(timeoutMs)
+  const corte = combinarSignals(signal, porTiempo)
+  const resultadoCorte = (): RunResult =>
+    porTiempo.aborted
+      ? {
+          code: CODIGO_TIMEOUT,
+          stdout: "",
+          stderr: `El comando no termino en ${describirDuracion(timeoutMs)} y se corto: ${cmd.join(" ")}`,
+        }
+      : { code: CODIGO_CANCELADO, stdout: "", stderr: "Cancelado por el usuario." }
+
+  if (corte.aborted) return resultadoCorte()
+
+  const lanzar = () => Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", signal: corte })
+  let proc: ReturnType<typeof lanzar>
   try {
-    const proc = Bun.spawn(cmd, {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      ...(signal ? { signal } : {}),
-    })
+    proc = lanzar()
+  } catch {
+    return { code: 127, stdout: "", stderr: "command not found" }
+  }
+
+  const lectura = (async (): Promise<RunResult> => {
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ])
     const code = await proc.exited
     return { code, stdout, stderr }
+  })()
+  // Nunca rechaza: si gana la carrera, el resultado se arma abajo.
+  const cortado = new Promise<"cortado">((resolve) => corte.addEventListener("abort", () => resolve("cortado"), { once: true }))
+
+  const ganador = await Promise.race([lectura, cortado])
+  if (ganador !== "cortado") return ganador
+
+  // Por si Bun no lo mato solo (o el mock de los tests no lo hace).
+  try {
+    proc.kill()
   } catch {
-    return { code: 127, stdout: "", stderr: "command not found" }
+    /* ya estaba muerto */
   }
+  // Que la lectura pendiente no quede como rechazo sin atender si el pipe revienta al matarlo.
+  lectura.catch(() => {})
+  return resultadoCorte()
+}
+
+function describirDuracion(ms: number): string {
+  if (ms >= 60_000) {
+    const min = Math.round(ms / 60_000)
+    return `${min} minuto${min === 1 ? "" : "s"}`
+  }
+  return `${Math.max(1, Math.round(ms / 1000))} segundo${ms >= 1500 ? "s" : ""}`
+}
+
+/**
+ * Lo que se le dice al docente cuando compilar o cargar no termino a tiempo.
+ * La causa casi siempre es la descarga inicial del toolchain, que por el pipe
+ * no muestra progreso: el segundo intento arranca con todo bajado.
+ */
+function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number): string {
+  return (
+    `No termine de ${que} en ${describirDuracion(timeoutMs)}. ` +
+    "PlatformIO sigue descargando herramientas o se colgó; probá de nuevo, la segunda vez es rápido " +
+    "(lo que ya se bajo queda guardado). Si vuelve a pasar, corré `/diagnostico`: puede ser la red " +
+    "de la escuela bloqueando las descargas."
+  )
+}
+
+/**
+ * Recorta una salida larga para que llegue al modelo lo que sirve.
+ *
+ * POR QUE. Un `pio run` con warnings tira 3000 lineas por stderr. Todo eso iba
+ * al chat, y `traducirError()` solo mira la primera linea con `error:`. El
+ * modelo recibia una pared de texto para encontrar una linea.
+ *
+ * Que se conserva: las 15 lineas antes y despues del PRIMER `error:` (o
+ * `Error`), que es donde esta el contexto del error de compilacion, y las
+ * ultimas 10, que es donde PlatformIO dice como termino (`*** [upload] Error 1`,
+ * `[FAILED] Took 3.21 seconds`). Lo demas se marca como omitido, con el numero,
+ * para que se sepa que falta algo y cuanto.
+ *
+ * Es una funcion pura para poder probarla sin compilar nada. Y hay que llamar a
+ * `traducirError()` con el texto COMPLETO, antes de recortar.
+ */
+export function recortarSalida(texto: string, maxLineas = 40): string {
+  const lineas = texto.replace(/\r\n?/g, "\n").trimEnd().split("\n")
+  if (lineas.length <= maxLineas) return lineas.join("\n")
+
+  const CONTEXTO = 15
+  const COLA = 10
+  const n = lineas.length
+  const marcar = (omitidas: number) => `… (${omitidas} línea${omitidas === 1 ? "" : "s"} omitida${omitidas === 1 ? "" : "s"})`
+
+  const iError = lineas.findIndex((l) => /error:|Error/.test(l))
+  // Rangos [desde, hasta) a conservar, en orden, sin solaparse.
+  const rangos: Array<[number, number]> = []
+  if (iError >= 0) rangos.push([Math.max(0, iError - CONTEXTO), Math.min(n, iError + CONTEXTO + 1)])
+  else rangos.push([0, CONTEXTO])
+  const cola: [number, number] = [Math.max(0, n - COLA), n]
+  const ultimo = rangos[rangos.length - 1]!
+  if (cola[0] <= ultimo[1]) ultimo[1] = n
+  else rangos.push(cola)
+
+  const salida: string[] = []
+  let cursor = 0
+  for (const [desde, hasta] of rangos) {
+    if (desde > cursor) salida.push(marcar(desde - cursor))
+    salida.push(...lineas.slice(desde, hasta))
+    cursor = hasta
+  }
+  if (cursor < n) salida.push(marcar(n - cursor))
+  return salida.join("\n")
 }
 
 // Envuelve un valor entre comillas dobles solo si contiene espacios (o esta vacio).
@@ -380,8 +540,19 @@ export function leerDispositivosConProblema(
  */
 async function placasSinDriver(cwd: string, signal?: AbortSignal) {
   if (process.platform !== "win32") return []
+  /*
+   * `Get-CimInstance` y no `Get-WmiObject`: la misma clase y las mismas
+   * propiedades, pero el cmdlet viejo no existe en PowerShell 7 —y en algunas
+   * maquinas `powershell` resuelve a pwsh 7—, con lo que la consulta fallaba en
+   * silencio y el diagnostico decia "ninguna placa" con la placa enchufada.
+   *
+   * Y la salida se pide en UTF-8: por defecto PowerShell escribe al pipe en la
+   * pagina de codigos OEM, `run()` la decodifica como UTF-8, y un "Puerto de
+   * comunicaciones" con tilde llegaba roto al chat.
+   */
   const ps =
-    "Get-WmiObject Win32_PnPEntity -ErrorAction SilentlyContinue | " +
+    "[Console]::OutputEncoding=[Text.Encoding]::UTF8; " +
+    "Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue | " +
     "Where-Object { $_.ConfigManagerErrorCode -ne 0 } | " +
     "Select-Object Name, DeviceID, ConfigManagerErrorCode | ConvertTo-Json -Compress"
   const r = await run(["powershell", "-NoProfile", "-Command", ps], cwd, signal)
@@ -414,14 +585,14 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
 
   if (candidates.length === 0) {
     const otros = devices.filter((d) => !identificar(d.hwid, d.description).esPlaca)
-    const detalle =
-      otros.length > 0
-        ? ` Veo ${otros.length === 1 ? "un puerto serie" : `${otros.length} puertos serie`} (${otros
-            .map((d) => d.port)
-            .join(", ")}), pero ${otros.length === 1 ? "no es" : "ninguno es"} una placa: ${
-            identificar(otros[0].hwid, otros[0].description).motivo
-          }.`
-        : ""
+    const primero = otros[0]
+    const detalle = primero
+      ? ` Veo ${otros.length === 1 ? "un puerto serie" : `${otros.length} puertos serie`} (${otros
+          .map((d) => d.port)
+          .join(", ")}), pero ${otros.length === 1 ? "no es" : "ninguno es"} una placa: ${
+          identificar(primero.hwid, primero.description).motivo
+        }.`
+      : ""
     return {
       error:
         `No encuentro ninguna placa conectada. Conectá el Arduino o el ESP32 por USB y probá de nuevo.${detalle}` +
@@ -429,8 +600,9 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
     }
   }
 
-  if (candidates.length === 1) {
-    return { port: candidates[0].port }
+  const unica = candidates[0]
+  if (unica && candidates.length === 1) {
+    return { port: unica.port }
   }
 
   const lista = candidates.map((d, i) => `${i + 1}. ${d.port}${d.description ? ` (${d.description})` : ""}`).join("\n")
@@ -575,6 +747,29 @@ Acciones:
     const signal = ctx.abort
     const envFlag = args.environment ? ["-e", args.environment] : []
 
+    // Compilar y cargar son los dos comandos largos (descargan toolchain la primera vez).
+    const compilar = () => run(["pio", "run", ...envFlag], cwd, signal, timeoutLargoMs())
+    const cargar = (puerto: string) =>
+      run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal, timeoutLargoMs())
+
+    /*
+     * Primero se traduce sobre el texto COMPLETO (el patron puede estar en
+     * cualquier linea) y recien despues se recorta lo que se muestra: si fuera
+     * al reves, un error que quedo fuera de la ventana perderia su traduccion.
+     */
+    const explicarFalla = (r: RunResult) => {
+      const traduccion = traducirError(r.stderr, r.stdout)
+      const original = recortarSalida(r.stderr.trim() ? r.stderr : r.stdout)
+      return `**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${original}\n\`\`\``
+    }
+    // Timeout o cancelacion no son errores de compilacion: no se traducen, se explican.
+    const noTermino = (r: RunResult, que: "compilar" | "cargar el codigo"): string | null =>
+      r.code === CODIGO_TIMEOUT
+        ? mensajeTimeout(que, timeoutLargoMs())
+        : r.code === CODIGO_CANCELADO
+          ? `Se cancelo la accion antes de terminar de ${que}.`
+          : null
+
     // `diagnostico` informa que falta, y `reparar` existe PARA cuando falta: si
     // el pre-chequeo corriera tambien para `reparar`, devolveria "anda al menu
     // inicio" y la rama de reparacion seria inalcanzable justo en el unico caso
@@ -641,10 +836,12 @@ Acciones:
          */
         const pioAntes = pioDisponible()
 
+        // El bootstrap baja e instala PlatformIO: son minutos, como una compilacion.
         const result = await run(
           ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", bootstrap],
           appDir,
           signal,
+          timeoutLargoMs(),
         )
 
         // 127 es lo que devuelve run() cuando ni siquiera pudo lanzar el proceso.
@@ -695,10 +892,9 @@ Acciones:
       }
 
       case "compile": {
-        const result = await run(["pio", "run", ...envFlag], cwd, signal)
+        const result = await compilar()
         if (result.code === 0) return "Compilacion exitosa. El codigo esta listo para cargar al dispositivo."
-        const traduccion = traducirError(result.stderr, result.stdout)
-        return `Hubo un error al compilar:\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${result.stderr.trim()}\n\`\`\``
+        return noTermino(result, "compilar") ?? `Hubo un error al compilar:\n\n${explicarFalla(result)}`
       }
 
       case "flash": {
@@ -708,17 +904,15 @@ Acciones:
           if ("error" in detected) return detected.error
           puerto = detected.port
         }
-        const result = await run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal)
+        const result = await cargar(puerto)
         if (result.code === 0) return `Codigo cargado exitosamente en ${puerto}.`
-        const traduccion = traducirError(result.stderr, result.stdout)
-        return `Error al cargar el codigo:\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${result.stderr.trim()}\n\`\`\``
+        return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
       }
 
       case "both": {
-        const compile = await run(["pio", "run", ...envFlag], cwd, signal)
+        const compile = await compilar()
         if (compile.code !== 0) {
-          const traduccion = traducirError(compile.stderr, compile.stdout)
-          return `Error al compilar (no se intento cargar):\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${compile.stderr.trim()}\n\`\`\``
+          return noTermino(compile, "compilar") ?? `Error al compilar (no se intento cargar):\n\n${explicarFalla(compile)}`
         }
         let puerto = args.port
         if (!puerto) {
@@ -726,10 +920,12 @@ Acciones:
           if ("error" in detected) return detected.error
           puerto = detected.port
         }
-        const flash = await run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal)
+        const flash = await cargar(puerto)
         if (flash.code === 0) return `Compilacion y carga exitosa en ${puerto}.`
-        const traduccion = traducirError(flash.stderr, flash.stdout)
-        return `La compilacion fue bien pero hubo un error al cargar:\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${flash.stderr.trim()}\n\`\`\``
+        return (
+          noTermino(flash, "cargar el codigo") ??
+          `La compilacion fue bien pero hubo un error al cargar:\n\n${explicarFalla(flash)}`
+        )
       }
 
       case "monitor": {
@@ -867,9 +1063,8 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
            * código de error. Decir "no hay ninguna placa" cuando está enchufada
            * manda al docente a revisar el cable durante media hora.
            */
-          const rotas = await placasSinDriver(cwd, signal)
-          if (rotas.length > 0) {
-            const d = rotas[0]
+          const d = (await placasSinDriver(cwd, signal))[0]
+          if (d) {
             estado =
               `**Hay una placa enchufada, pero Windows no la puede usar.**\n\n` +
               `Ve un \`${d.nombre}\` y ${d.problema}.\n\n` +
