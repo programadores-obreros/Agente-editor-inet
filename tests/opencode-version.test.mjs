@@ -230,3 +230,12 @@ test("Test-OpenCode prueba el binario real si el shim falla, y repara el shim", 
   assert.match(fn, /Reparar-Shim/, "no repara el shim cuando el binario anda")
   assert.doesNotMatch(fn.slice(0, fn.indexOf("return $false")), /Test-Path \$BinOpenCode/, "decide por 'el archivo esta' en vez de ejecutarlo")
 })
+
+// Inno Setup 6.7.0 activa RedirectionGuard por defecto y la heredan los hijos: el bootstrap
+// no podia atravesar los junctions `current` de Scoop (opencode.exe "no existia", Scoop no
+// podia rehacer shims). Causa raiz del "OpenCode no arranca en esta maquina" desde agosto.
+test("el .iss apaga RedirectionGuard: Tecnia Bot vive sobre junctions de Scoop", () => {
+  const iss = leer("installer", "tecnia-bot.iss")
+  assert.match(iss, /^\s*RedirectionGuard=no\s*$/m, "sin RedirectionGuard=no el instalador no puede atravesar apps\\<app>\\current")
+  assert.match(iss, /PrivilegesRequired=lowest/, "la justificacion depende de que el instalador nunca eleve")
+})
