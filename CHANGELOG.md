@@ -4,6 +4,8 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.3.76] — 2026-09-06
+
 La API key de Google pasa a ser opcional: sin key, el agente usa Big Pickle, el modelo gratuito de OpenCode. Y se va la key embebida en el instalador.
 
 ### Cambiado
