@@ -118,13 +118,208 @@ if (-not (Test-Path $MemoriaFile)) {
     Write-Host "  [OK] Memoria de progreso creada (vacia) en $MemoriaFile"
 }
 
-# ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto ----
+# ---- API key de Google (OPCIONAL): decide que modelo usa el agente ----
+# Con una key de Google (gratis, sin tarjeta) Tecnia Bot usa Gemini. Sin key, usa
+# Big Pickle, el modelo gratuito de OpenCode (provider "opencode": sin cuenta ni
+# login, OpenCode lo sirve con apiKey "public"). La eleccion se escribe mas abajo
+# como override del agente en opencode.json ("agent" -> "tecnia-bot" -> "model")
+# y se RE-EVALUA en cada corrida (instalar, Reparar, /actualizar): si el docente
+# agrega una key despues con /connect, la corrida siguiente lo pasa a Gemini.
+#
+# Hasta la v0.3.75 aca habia una key de Google fija, embebida en el script, que se
+# usaba cuando nadie pegaba la suya. Se elimino y se roto: no queda ninguna key en
+# este repo. La key que pegue el docente se guarda SOLO en el archivo de
+# credenciales de OpenCode de esta compu -- nunca en el repo, nunca en git. Es
+# idempotente: si ya hay una key de "google" guardada (de esta instalacion o de un
+# /connect manual), no se pregunta de nuevo.
+$ModeloConKey = "google/gemini-3.5-flash-lite"
+$ModeloSinKey = "opencode/big-pickle"
+
+# ---- La key compartida de versiones anteriores se reconoce por su SHA-256 ----
+# Las instalaciones hechas con la v0.3.75 o anteriores tienen esa key en auth.json Y
+# en la variable de usuario GOOGLE_GENERATIVE_AI_API_KEY. Como se roto, quedo una
+# credencial MUERTA que hace fallar el primer mensaje, y el instalador -- que solo
+# miraba "hay key de google" -- la daba por buena. Se la reconoce por el hash (el
+# literal no vuelve a este repo) y se la quita de los dos lugares antes de decidir
+# el modelo; si el docente la pega en el prompt, se rechaza por el mismo motivo.
+$HashKeyVieja = "121163b85b0396edcfcc4840981d823c4f1e9c23aadc72b39c9723fef70cf3b4"
+function Get-Sha256Hex($texto) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes([string]$texto)) } finally { $sha.Dispose() }
+    return (($hash | ForEach-Object { $_.ToString("x2") }) -join "")
+}
+function Test-KeyVieja($k) {
+    if (-not $k) { return $false }
+    return ((Get-Sha256Hex ([string]$k)) -eq $HashKeyVieja)
+}
+
+if ($env:XDG_DATA_HOME) {
+    $DataDir = Join-Path $env:XDG_DATA_HOME "opencode"
+} else {
+    $DataDir = Join-Path $env:USERPROFILE ".local\share\opencode"
+}
+New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+$AuthFile = Join-Path $DataDir "auth.json"
+
+# ---- Curar un auth.json con BOM ---------------------------------------------
+#
+# ESTO NO ES PARANOIA: es el bucle que dejaba maquinas muertas para siempre.
+#
+# Las instalaciones anteriores a la v0.3.55 escribian este archivo con
+# `Set-Content -Encoding UTF8`, que en PowerShell 5.1 mete BOM. Y el BOM crea una
+# asimetria letal entre quien escribe y quien lee:
+#
+#   PowerShell (Get-Content -Raw)  ->  SACA el BOM solo. El archivo le parece
+#                                      perfecto y ve una key valida.
+#   OpenCode   (JSON.parse)        ->  NO lo saca. Rechaza el archivo entero y se
+#                                      traga el error sin avisar.
+#
+# Entonces el instalador leia, veia una key sana, concluia "ya esta configurado" y
+# NO TOCABA NADA. Reinstalar no servia. Actualizar no servia. La maquina quedaba
+# con el bot abriendo perfecto y fallando al primer mensaje, y ninguna cantidad de
+# reinstalaciones podia arreglarlo, porque cada una confirmaba que estaba bien.
+#
+# Se detecto instalando de cero en una VM: el auth.json tenia fecha de una semana
+# antes que el resto de los archivos. La instalacion nueva lo habia respetado.
+#
+# Por eso se miran los BYTES y no el texto: es la unica forma de ver lo que ve
+# OpenCode. Y si aparece el BOM, se reescribe conservando el contenido -- la key
+# del docente no se pierde.
+if (Test-Path $AuthFile) {
+    $bytes = [System.IO.File]::ReadAllBytes($AuthFile)
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        Write-Host "  [i] El archivo de credenciales tenia BOM y OpenCode no podia leerlo. Corrigiendo..."
+        $texto = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
+        [System.IO.File]::WriteAllText($AuthFile, $texto, (New-Object System.Text.UTF8Encoding $false))
+    }
+}
+
+$authData = $null
+if (Test-Path $AuthFile) {
+    try { $authData = Get-Content $AuthFile -Raw | ConvertFrom-Json } catch { $authData = $null }
+}
+if (-not $authData) { $authData = [PSCustomObject]@{} }
+
+$tieneGoogle = [bool](($authData.PSObject.Properties.Name -contains "google") -and $authData.google.key)
+
+# Purga de la key compartida vieja (ver arriba): auth.json y variable de usuario.
+$purgada = $false
+if ($tieneGoogle -and (Test-KeyVieja $authData.google.key)) {
+    $authData.PSObject.Properties.Remove("google")
+    # Se reescribe SIN BOM y preservando los otros providers que tenga el archivo.
+    [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+    $tieneGoogle = $false
+    $purgada = $true
+}
+$envKeyActual = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
+if (Test-KeyVieja $envKeyActual) {
+    [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $null, "User")
+    $purgada = $true
+}
+if ($purgada) {
+    Write-Host "  [i] Se quito la key de respaldo compartida que traian las versiones anteriores (ya no es valida)."
+}
+
+# TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para que
+# este script no pregunte nada y siga sin key, con el modelo gratuito Big Pickle.
+# Sin esto, el sondeo de teclado de abajo espera 60 s en una consola sin nadie, y si
+# la entrada esta redirigida lee una linea de ahi. La pregunta sigue existiendo para
+# el docente: solo se saltea cuando la variable esta definida.
+if (-not $tieneGoogle -and $env:TECNIA_SIN_PROMPT) {
+    Write-Host ""
+    Write-Host "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key."
+} elseif (-not $tieneGoogle) {
+    Write-Host ""
+    Write-Host "==> API key de Google (OPCIONAL). Con una key gratis (sin tarjeta) Tecnia Bot usa Gemini."
+    Write-Host "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
+    Write-Host "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
+    # Timeout de 60s: si esto corre en modo silencioso/desatendido (deploy a varias
+    # PCs) con una consola real pero nadie tipeando, una lectura bloqueante se
+    # colgaria para siempre. Start-Job/Read-Host NO sirve (un job corre en un
+    # proceso aislado sin consola real -> deadlock detectado por PowerShell). Un
+    # Task sobre [Console]::ReadLine() tampoco -- falla si no hay consola real
+    # adjunta. La tecnica correcta: sondear [Console]::KeyAvailable con un
+    # cronometro. Si la entrada esta redirigida (pipe/automatizacion), KeyAvailable
+    # tira excepcion -- en ese caso caemos a una lectura simple, que ahi SI es
+    # segura (un pipe nunca se cuelga: devuelve al toque lo que tenga, o vacio).
+    Write-Host "    Pegala aca, o Enter para seguir sin key: Tecnia Bot va a usar el modelo gratuito Big Pickle de OpenCode [60s]:"
+    $key = ""
+    $recibioAlgo = $false
+    try {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.Elapsed.TotalSeconds -lt 60) {
+            if ([Console]::KeyAvailable) {
+                $charInfo = [Console]::ReadKey($true)
+                if ($charInfo.Key -eq "Enter") { $recibioAlgo = $true; Write-Host ""; break }
+                elseif ($charInfo.Key -eq "Backspace") {
+                    if ($key.Length -gt 0) { $key = $key.Substring(0, $key.Length - 1) }
+                } else {
+                    $key += $charInfo.KeyChar
+                }
+            } else {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+        if (-not $recibioAlgo) { Write-Host ""; Write-Host "  [i] Sin respuesta en 60s -- seguimos sin key." }
+    } catch [System.InvalidOperationException] {
+        # Consola redirigida (pipe/automatizacion): un pipe no se cuelga, leemos directo.
+        $key = [Console]::In.ReadLine()
+        if (-not $key) { $key = "" }
+    }
+    $keyFinal = if ($key) { $key.Trim() } else { "" }
+    if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
+        # La pego de algun apunte viejo: es la key compartida rotada. No se guarda.
+        Write-Host "  [X] Esa es la key de respaldo compartida de versiones anteriores: ya no es valida y no se guarda."
+        Write-Host "      Consegui la tuya en https://aistudio.google.com/apikey (seguimos sin key por ahora)."
+    } elseif ($keyFinal) {
+        $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
+        # SIN BOM, y esto es un bloqueante que estuvo silencioso.
+        #
+        # `Set-Content -Encoding UTF8` en PowerShell 5.1 -- el que trae Windows 10 --
+        # escribe UTF-8 CON BOM. OpenCode lee este archivo con JSON.parse, que revienta
+        # con BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
+        #
+        # El docente ve la instalacion perfecta, el bot abre con su logo y su agente, y
+        # al primer mensaje: error de proveedor. Cero pistas.
+        #
+        # Este archivo era el unico que quedaba mal: las otras cuatro escrituras de
+        # este script ya usan WriteAllText por exactamente esta razon, y lo dicen en
+        # sus comentarios. Se sabia, y justo el de las credenciales quedo afuera.
+        [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+        [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
+        $tieneGoogle = $true
+        Write-Host "  [OK] Key guardada en esta compu."
+    } else {
+        # Sin key NO se toca auth.json ni la variable de entorno: no hay nada que guardar.
+        Write-Host "  [i] Seguimos sin key de Google."
+    }
+}
+
+# Modelo del agente segun la decision de arriba. Se imprime SIEMPRE (tambien cuando
+# la key ya estaba guardada), para que quede claro con que modelo quedo esta compu y
+# como cambiarlo despues.
+if ($tieneGoogle) {
+    $ModeloElegido = $ModeloConKey
+    Write-Host "==> Modelo configurado: $ModeloElegido (Gemini, con tu key de Google)."
+} else {
+    $ModeloElegido = $ModeloSinKey
+    Write-Host "==> Modelo configurado: $ModeloElegido (Big Pickle, el modelo gratuito de OpenCode)."
+    Write-Host "    Es gratis por tiempo limitado y no pide cuenta. OJO: mientras dure la etapa gratuita,"
+    Write-Host "    OpenCode puede usar lo que se escribe en el chat para mejorar el modelo."
+    Write-Host "    No pongas datos personales (ni nombres de alumnos) en la conversacion."
+    Write-Host "    Para pasar a Gemini: consegui una key en https://aistudio.google.com/apikey y corre"
+    Write-Host "    'Reparar Tecnia Bot' desde el menu inicio (te la va a pedir), o pegala con /connect"
+    Write-Host "    dentro de OpenCode y despues corre /actualizar (o Reparar) para aplicar el cambio."
+}
+Write-Host ""
+
+# ---- Config de OpenCode: theme violeta + plugin del logo + agente por defecto + modelo ----
 # Mergeamos con la config que ya tenga el docente (ej: provider/model de /connect):
 # NO la pisamos. Usamos ConvertFrom-Json / ConvertTo-Json nativos (sin dependencias).
 # El theme y el plugin de TUI van en tui.json (opencode migra y borra esas claves de
-# opencode.json). El agente por defecto va en opencode.json.
+# opencode.json). El agente por defecto y el modelo del agente van en opencode.json.
 Write-Host ""
-Write-Host "==> Configurando OpenCode (theme + logo + agente por defecto)..."
+Write-Host "==> Configurando OpenCode (theme + logo + agente por defecto + modelo)..."
 
 # OpenCode acepta AMBAS extensiones para cada config: prueba [name.json, name.jsonc].
 # Detectamos cual existe y mergeamos en ESE (preferimos .json si estan los dos, igual
@@ -224,18 +419,46 @@ if ($tuiHasContent -and $null -eq $tui) {
     Write-Host "  [OK] $(Split-Path $TuiJson -Leaf) actualizado (theme + logo)."
 }
 
-# --- opencode (json/jsonc): default_agent (preserva todas las demas claves) ---
+# --- opencode (json/jsonc): default_agent + modelo del agente (preserva las demas claves) ---
 $ocHasContent = Test-HasContent $OpencodeJson
 $oc = Read-JsonObject $OpencodeJson
 if ($ocHasContent -and $null -eq $oc) {
     Write-Host "  [AVISO] No pude parsear ${OpencodeJson}: lo dejo intacto."
-    Write-Host "          Agregale a mano `"default_agent`": `"$TecniaAgent`"."
+    Write-Host "          Agregale a mano `"default_agent`": `"$TecniaAgent`", `"autoupdate`": false y el modelo del agente:"
+    Write-Host "          `"agent`": { `"$TecniaAgent`": { `"model`": `"$ModeloElegido`" } }"
 } else {
     if (-not $oc) { $oc = [PSCustomObject]@{} }
     if (-not ($oc.PSObject.Properties.Name -contains '$schema')) {
         $oc | Add-Member -NotePropertyName '$schema' -NotePropertyValue $OpencodeSchema -Force
     }
     $oc | Add-Member -NotePropertyName "default_agent" -NotePropertyValue $TecniaAgent -Force
+    # autoupdate = false: OpenCode se actualiza SOLO ante cualquier version "patch" nueva
+    # (cli/upgrade.ts) y para Scoop lo hace con `scoop install opencode@<nueva>`, que es
+    # una instalacion explicita y NO respeta `scoop hold` (el hold solo frena `scoop update`).
+    # Visto en la VM: una hora despues de fijar 1.18.18 corria 1.18.29 y el install.json
+    # habia perdido el hold. La version la decide install/OPENCODE_VERSION, no OpenCode.
+    $oc | Add-Member -NotePropertyName "autoupdate" -NotePropertyValue $false -Force
+
+    # agent.tecnia-bot.model: el modelo elegido arriba (Gemini con key, Big Pickle sin).
+    # ESTA ES LA UNICA FUENTE DEL MODELO. El modelo NO va en el frontmatter de
+    # opencode/agent/tecnia-bot.md porque el .md gana sobre opencode.json: OpenCode
+    # hace mergeDeep(config.agent, agentes .md) (config.ts), o sea que un "model:" en
+    # el frontmatter pisaria esto y Big Pickle nunca correria. Lo escribe el
+    # instalador; las demas claves que el docente tenga en "agent" (otros agentes,
+    # u otras opciones de tecnia-bot) se preservan.
+    $agentes = $null
+    if (($oc.PSObject.Properties.Name -contains "agent") -and ($oc.agent -is [PSCustomObject])) {
+        $agentes = $oc.agent
+    }
+    if ($null -eq $agentes) { $agentes = [PSCustomObject]@{} }
+    $agenteTecnia = $null
+    if (($agentes.PSObject.Properties.Name -contains $TecniaAgent) -and ($agentes.$TecniaAgent -is [PSCustomObject])) {
+        $agenteTecnia = $agentes.$TecniaAgent
+    }
+    if ($null -eq $agenteTecnia) { $agenteTecnia = [PSCustomObject]@{} }
+    $agenteTecnia | Add-Member -NotePropertyName "model" -NotePropertyValue $ModeloElegido -Force
+    $agentes | Add-Member -NotePropertyName $TecniaAgent -NotePropertyValue $agenteTecnia -Force
+    $oc | Add-Member -NotePropertyName "agent" -NotePropertyValue $agentes -Force
 
     # instructions: array de rutas que opencode carga en el contexto de cada sesion.
     # Agregamos el perfil si no esta (idempotente, sin duplicar), preservando el resto.
@@ -257,132 +480,11 @@ if ($ocHasContent -and $null -eq $oc) {
         $ocText = [regex]::Replace($ocText, '("instructions":\s*)("(?:[^"\\]|\\.)*")', '$1[$2]')
     }
     [System.IO.File]::WriteAllText($OpencodeJson, $ocText, (New-Object System.Text.UTF8Encoding $false))
-    Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto + perfil + memoria)."
+    Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto + modelo $ModeloElegido + perfil + memoria)."
 }
 
 Write-Host "==> Listo! Tecnia Bot v$Version instalado."
 Write-Host ""
-
-# ---- API key de Gemini: se pide UNA sola vez, solo si no hay ninguna guardada ----
-# Sin esto Tecnia Bot no puede hablar con el modelo. Se guarda directo en el archivo
-# de credenciales de OpenCode -- NUNCA en este repo, NUNCA en git, nunca se comparte
-# entre instalaciones (cada compu pone la suya). Idempotente: si ya hay una key de
-# "google" guardada (de esta instalacion o de un /connect manual), no se pregunta de
-# nuevo en cada /actualizar.
-if ($env:XDG_DATA_HOME) {
-    $DataDir = Join-Path $env:XDG_DATA_HOME "opencode"
-} else {
-    $DataDir = Join-Path $env:USERPROFILE ".local\share\opencode"
-}
-New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-$AuthFile = Join-Path $DataDir "auth.json"
-
-# ---- Curar un auth.json con BOM ---------------------------------------------
-#
-# ESTO NO ES PARANOIA: es el bucle que dejaba maquinas muertas para siempre.
-#
-# Las instalaciones anteriores a la v0.3.55 escribian este archivo con
-# `Set-Content -Encoding UTF8`, que en PowerShell 5.1 mete BOM. Y el BOM crea una
-# asimetria letal entre quien escribe y quien lee:
-#
-#   PowerShell (Get-Content -Raw)  ->  SACA el BOM solo. El archivo le parece
-#                                      perfecto y ve una key valida.
-#   OpenCode   (JSON.parse)        ->  NO lo saca. Rechaza el archivo entero y se
-#                                      traga el error sin avisar.
-#
-# Entonces el instalador leia, veia una key sana, concluia "ya esta configurado" y
-# NO TOCABA NADA. Reinstalar no servia. Actualizar no servia. La maquina quedaba
-# con el bot abriendo perfecto y fallando al primer mensaje, y ninguna cantidad de
-# reinstalaciones podia arreglarlo, porque cada una confirmaba que estaba bien.
-#
-# Se detecto instalando de cero en una VM: el auth.json tenia fecha de una semana
-# antes que el resto de los archivos. La instalacion nueva lo habia respetado.
-#
-# Por eso se miran los BYTES y no el texto: es la unica forma de ver lo que ve
-# OpenCode. Y si aparece el BOM, se reescribe conservando el contenido -- la key
-# del docente no se pierde.
-if (Test-Path $AuthFile) {
-    $bytes = [System.IO.File]::ReadAllBytes($AuthFile)
-    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
-        Write-Host "  [i] El archivo de credenciales tenia BOM y OpenCode no podia leerlo. Corrigiendo..."
-        $texto = [System.Text.Encoding]::UTF8.GetString($bytes, 3, $bytes.Length - 3)
-        [System.IO.File]::WriteAllText($AuthFile, $texto, (New-Object System.Text.UTF8Encoding $false))
-    }
-}
-
-$authData = $null
-if (Test-Path $AuthFile) {
-    try { $authData = Get-Content $AuthFile -Raw | ConvertFrom-Json } catch { $authData = $null }
-}
-if (-not $authData) { $authData = [PSCustomObject]@{} }
-
-$tieneGoogle = ($authData.PSObject.Properties.Name -contains "google") -and $authData.google.key
-if (-not $tieneGoogle) {
-    Write-Host "==> Tecnia Bot necesita una API key GRATIS de Google (sin tarjeta) para hablar con el modelo."
-    Write-Host "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
-    Write-Host "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
-    # Timeout de 60s: si esto corre en modo silencioso/desatendido (deploy a varias
-    # PCs) con una consola real pero nadie tipeando, una lectura bloqueante se
-    # colgaria para siempre. Start-Job/Read-Host NO sirve (un job corre en un
-    # proceso aislado sin consola real -> deadlock detectado por PowerShell). Un
-    # Task sobre [Console]::ReadLine() tampoco -- falla si no hay consola real
-    # adjunta. La tecnica correcta: sondear [Console]::KeyAvailable con un
-    # cronometro. Si la entrada esta redirigida (pipe/automatizacion), KeyAvailable
-    # tira excepcion -- en ese caso caemos a una lectura simple, que ahi SI es
-    # segura (un pipe nunca se cuelga: devuelve al toque lo que tenga, o vacio).
-    Write-Host "    Pegala aca (o Enter para hacerlo despues con /connect dentro de OpenCode) [60s]:"
-    $key = ""
-    $recibioAlgo = $false
-    try {
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        while ($sw.Elapsed.TotalSeconds -lt 60) {
-            if ([Console]::KeyAvailable) {
-                $charInfo = [Console]::ReadKey($true)
-                if ($charInfo.Key -eq "Enter") { $recibioAlgo = $true; Write-Host ""; break }
-                elseif ($charInfo.Key -eq "Backspace") {
-                    if ($key.Length -gt 0) { $key = $key.Substring(0, $key.Length - 1) }
-                } else {
-                    $key += $charInfo.KeyChar
-                }
-            } else {
-                Start-Sleep -Milliseconds 100
-            }
-        }
-        if (-not $recibioAlgo) { Write-Host ""; Write-Host "  [i] Sin respuesta en 60s -- seguimos sin key por ahora." }
-    } catch [System.InvalidOperationException] {
-        # Consola redirigida (pipe/automatizacion): un pipe no se cuelga, leemos directo.
-        $key = [Console]::In.ReadLine()
-        if (-not $key) { $key = "" }
-    }
-    # OJO -- decision explicita, pedida y confirmada por el equipo: si nadie pega su
-    # propia key, se usa una key de respaldo hardcodeada ahi mismo, para que la
-    # instalacion quede usable sin friccion. Esta key queda publica en este repo
-    # (es publico) y es MUY probable que Google la revoque via su escaneo automatico
-    # de secretos -- ya se explico ese riesgo antes de escribir esto. Cada quien
-    # puede seguir pegando la SUYA en el prompto de arriba para no depender de esta.
-    $keyFinal = if ($key -and $key.Trim()) { $key.Trim() } else { "AQ.Ab8RN6JscK6NsgkvLXY0RfzoGCdIVVQYs7xUYNtxM377VgPZRA" }
-    $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
-    # SIN BOM, y esto es un bloqueante que estuvo silencioso.
-    #
-    # `Set-Content -Encoding UTF8` en PowerShell 5.1 -- el que trae Windows 10 --
-    # escribe UTF-8 CON BOM. OpenCode lee este archivo con JSON.parse, que revienta
-    # con BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
-    #
-    # El docente ve la instalacion perfecta, el bot abre con su logo y su agente, y
-    # al primer mensaje: error de proveedor. Cero pistas.
-    #
-    # Este archivo era el unico que quedaba mal: las otras cuatro escrituras de
-    # este script ya usan WriteAllText por exactamente esta razon, y lo dicen en
-    # sus comentarios. Se sabia, y justo el de las credenciales quedo afuera.
-    [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
-    [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
-    if ($key -and $key.Trim()) {
-        Write-Host "  [OK] Key guardada. Tecnia Bot ya puede usar Gemini."
-    } else {
-        Write-Host "  [OK] Usando key de respaldo (podes reemplazarla despues con /connect si conseguis la tuya propia)."
-    }
-    Write-Host ""
-}
 
 Write-Host "Verificando dependencias:"
 

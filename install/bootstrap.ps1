@@ -27,8 +27,53 @@ $RepoDir = Split-Path -Parent $PSScriptRoot
 #
 # Va al lado del programa, no a %TEMP%, para que el diagnostico lo encuentre solo
 # y el docente lo pueda mandar sin buscarlo.
+#
+# Y NO SE PISA. Cada "Reparar Tecnia Bot" volvia a escribir el mismo archivo con
+# -Force y se llevaba la corrida anterior: justo la que fallo, la unica que hacia
+# falta leer. Ahora la anterior se renombra con su fecha antes de empezar y se
+# guardan las ultimas 5. instalacion.log sigue siendo siempre la corrida mas
+# reciente, asi diagnostico.ps1 la encuentra igual que antes.
 $LogInstalacion = Join-Path $RepoDir "instalacion.log"
+try {
+    if (Test-Path $LogInstalacion) {
+        $marca = (Get-Item $LogInstalacion).LastWriteTime.ToString("yyyyMMdd-HHmmss")
+        Move-Item $LogInstalacion (Join-Path $RepoDir ("instalacion-" + $marca + ".log")) -Force
+    }
+    Get-ChildItem $RepoDir -Filter "instalacion-*.log" | Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip 5 | Remove-Item -Force -ErrorAction SilentlyContinue
+} catch { }
 try { Start-Transcript -Path $LogInstalacion -Force | Out-Null } catch { }
+
+# ---- LA VERSION DE OPENCODE ESTA FIJADA, Y EN UN SOLO LUGAR -------------------
+#
+# Hasta aca este script hacia `scoop install opencode` a secas: cada PC de la
+# escuela se llevaba la version que fuera la ultima ESE DIA. Mientras tanto,
+# bootstrap.sh (Linux/mac) fijaba una version, distinta y vieja. Dos maquinas
+# instaladas con una semana de diferencia tenian dos OpenCode distintos, y la
+# capa educativa depende de detalles que OpenCode cambia entre versiones
+# (default_agent, instructions, agent.<nombre>.model, tui.json, el cargador de
+# plugins). Un "anda en mi maquina" que no se podia reproducir en la otra.
+#
+# La version vive en install\OPENCODE_VERSION -- un archivo, no una variable en
+# dos scripts -- para que Windows y Linux instalen LO MISMO y para que cambiarla
+# sea un commit que se ve. Se lee relativo a este script porque el .exe copia
+# install\ entero al lado; si falta, se corta con un mensaje claro: instalar
+# "la que sea" es exactamente el problema que esto vino a resolver.
+$ArchivoVersionOpenCode = Join-Path $PSScriptRoot "OPENCODE_VERSION"
+$OpenCodeVersion = ""
+if (Test-Path $ArchivoVersionOpenCode) {
+    $OpenCodeVersion = (Get-Content $ArchivoVersionOpenCode -Raw).Trim()
+}
+if ($OpenCodeVersion -notmatch '^\d+\.\d+\.\d+$') {
+    Write-Host ""
+    Write-Host "  [X] No se pudo leer la version de OpenCode a instalar." -ForegroundColor Red
+    Write-Host "      Tiene que estar en: $ArchivoVersionOpenCode"
+    if ($OpenCodeVersion) { Write-Host "      Dice '$OpenCodeVersion' y se esperaba algo como 1.18.18." }
+    else { Write-Host "      El archivo falta o esta vacio. Volve a descargar el instalador." }
+    Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
+}
 
 # TLS 1.2 explicito. Medido en un Windows 10 22H2 con .NET 4.8: el default es
 # SystemDefault y negocia 1.2 solo, asi que NO es el problema habitual que
@@ -80,7 +125,25 @@ function Refresh-Path {
 # 'opencode --version' tarda menos de un segundo y devuelve exit 0. Es barato y
 # es la unica prueba que vale: el programa arranco.
 # Donde vive el binario de verdad, mas alla del shim.
-$BinOpenCode = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\opencode.exe"
+$OpenCodeAppDir = Join-Path $env:USERPROFILE "scoop\apps\opencode"
+$BinOpenCode = Join-Path $OpenCodeAppDir "current\opencode.exe"
+$ShimOpenCode = Join-Path $env:USERPROFILE "scoop\shims\opencode.exe"
+
+# Que OpenCode CORRA no alcanza: tiene que ser el que SCOOP ADMINISTRA.
+#
+# Se vio en la VM: despues de `scoop uninstall opencode`, este instalador decia
+# "[OK] OpenCode ya esta instalado" y no instalaba nada. En scoop\shims\opencode.exe
+# habia un binario ENTERO de 178 MB que dejo la version anterior de Reparar-Shim
+# (copiaba el programa completo como si fuera el lanzador). Scoop no sabe de ese
+# archivo: uninstall no lo borra, `Get-Command opencode` lo encuentra, y cuando
+# Scoop actualice o resetee, ese "shim" seguira ejecutando la version vieja para
+# siempre. Un OpenCode fantasma, fuera de todo control de version.
+#
+# Scoop registra lo que instalo en apps\opencode\current\manifest.json: si eso no
+# esta, para Scoop OpenCode no existe, corra lo que corra.
+function Test-OpenCodeScoop {
+    return (Test-Path (Join-Path $OpenCodeAppDir "current\manifest.json"))
+}
 
 # Repara el shim cuando el programa ESTA pero le falta su lanzador de 20 KB.
 #
@@ -92,13 +155,35 @@ $BinOpenCode = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\opencode.
 # Antes se reinstalaba de cero por eso: 57 MB de descarga para recuperar 20 KB que
 # se pueden escribir en el momento. En un aula con la red saturada, esa diferencia
 # es la clase entera.
+#
+# COMO SE REPARA: con `scoop reset opencode`, que es la herramienta de Scoop para
+# exactamente esto (libexec/scoop-reset.ps1: rehace shims, 'current' y PATH desde
+# la version instalada, sin bajar nada). La version anterior copiaba el programa
+# entero (178 MB) como lanzador, y eso creaba el fantasma que se describe arriba.
+# Se conserva esa copia SOLO como ultimo recurso, avisando que queda fuera de Scoop.
 function Reparar-Shim {
     if (-not (Test-Path $BinOpenCode)) { return $false }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     try {
-        $shims = Join-Path $env:USERPROFILE "scoop\shims"
-        New-Item -ItemType Directory -Force -Path $shims | Out-Null
-        Copy-Item $BinOpenCode (Join-Path $shims "opencode.exe") -Force
+        $global:LASTEXITCODE = 0
+        $salida = scoop reset opencode *>&1 | Out-String
         Refresh-Path
+        if (($LASTEXITCODE -eq 0) -and ($salida -notmatch '(?m)^\s*ERROR') -and (Test-Path $ShimOpenCode)) {
+            return $true
+        }
+        Write-Host "  [i] 'scoop reset opencode' no pudo rehacer el lanzador."
+    } catch {
+        Write-Host "  [i] 'scoop reset opencode' fallo: $($_.Exception.Message)"
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    try {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ShimOpenCode) | Out-Null
+        Copy-Item $BinOpenCode $ShimOpenCode -Force
+        Refresh-Path
+        Write-Host "  [!] Se copio el programa entero como lanzador. Ese archivo queda FUERA de Scoop:" -ForegroundColor Yellow
+        Write-Host "      no se actualiza con el, y hay que borrarlo a mano si se reinstala OpenCode." -ForegroundColor Yellow
         return $true
     } catch { return $false }
 }
@@ -173,9 +258,15 @@ function Test-OpenCode {
 function Install-OpenCodeBaseline {
     $appDir = Join-Path $env:USERPROFILE "scoop\apps\opencode"
     if (-not (Test-Path $appDir)) { return $false }
-    $ver = (Get-ChildItem $appDir -Directory -EA SilentlyContinue |
-            Where-Object { $_.Name -ne 'current' } |
-            Sort-Object Name -Descending | Select-Object -First 1)
+    # Primero la carpeta de la version FIJADA, que es la que Scoop acaba de
+    # instalar y a la que apunta 'current'. Recien si no esta (una instalacion
+    # vieja, anterior al pin) se toma la mas alta que haya.
+    $ver = Get-Item (Join-Path $appDir $OpenCodeVersion) -EA SilentlyContinue
+    if (-not $ver) {
+        $ver = (Get-ChildItem $appDir -Directory -EA SilentlyContinue |
+                Where-Object { $_.Name -ne 'current' } |
+                Sort-Object Name -Descending | Select-Object -First 1)
+    }
     if (-not $ver) { return $false }
     $url = "https://github.com/anomalyco/opencode/releases/download/v$($ver.Name)/opencode-windows-x64-baseline.zip"
     $zip = Join-Path $env:TEMP "opencode-baseline.zip"
@@ -265,11 +356,129 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
 #
 # Un instalador que dice OK sin haber mirado es peor que uno que falla: manda a
 # buscar el problema al lugar equivocado.
-if (Test-OpenCode) {
+#
+# LA VERSION SE INSTALA FIJA Y SE DEJA FIJA. Dos comandos de Scoop, verificados
+# en su codigo (github.com/ScoopInstaller/Scoop, libexec/scoop-install.ps1,
+# scoop-hold.ps1, scoop-update.ps1 y lib/manifest.ps1):
+#
+#   scoop install opencode@1.18.18
+#     No busca en el historial git del bucket: toma el manifest actual y le
+#     REGENERA la url y el hash para esa version con su bloque 'autoupdate'
+#     (generate_user_manifest). Avisa "Given version (x) does not match
+#     manifest (y)" y "Attempting to generate manifest": es normal, no es error.
+#     El manifest generado queda en scoop\workspace\opencode.json y el
+#     install.json de la app apunta a ese archivo ('url') en vez de al bucket:
+#     por eso `scoop info opencode` muestra esa ruta como Source. Necesita red,
+#     como cualquier instalacion.
+#
+#   scoop hold opencode
+#     Escribe "hold": true en scoop\apps\opencode\current\install.json.
+#     `scoop update *` la saltea con "'opencode' is held to version ...", asi que
+#     el binario que se probo es el que se queda. El AVX2 'baseline' que se copia
+#     encima tambien: un update lo pisaria por el binario que esa CPU no corre.
+#
+# Si ya hay OTRA version instalada NO se desinstala nada (la regla de siempre:
+# puede fallar, pero no puede romper). Si la fijada ya esta en el disco, se
+# activa con `scoop reset opencode@<ver>` -- documentado para eso: mueve
+# 'current' y rehace los shims, no baja ni borra nada. Si no esta, se avisa y se
+# deja como esta; el hold se pone igual, para que al menos deje de moverse.
+
+# Instalado DE VERDAD = Scoop lo registro Y el programa arranca. Las dos cosas.
+function Test-OpenCodeInstalado {
+    return ((Test-OpenCodeScoop) -and (Test-OpenCode))
+}
+
+# La version que Scoop tiene ACTIVA, leida de su manifest.json. Es la que
+# importa para hold/reset, mas alla de lo que conteste el binario.
+function Get-OpenCodeVersionInstalada {
+    $mf = Join-Path $OpenCodeAppDir "current\manifest.json"
+    try {
+        if (Test-Path $mf) { return ("" + (Get-Content $mf -Raw | ConvertFrom-Json).version).Trim() }
+    } catch { }
+    if ($script:SalidaOpenCode -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
+    return ""
+}
+
+# `scoop hold` NO tira excepcion y NO devuelve exit distinto de 0 cuando falla:
+# verificado en libexec/scoop-hold.ps1, que si la app no esta hace
+# `error "'$app' is not installed."; continue` y termina con `exit $exitcode`
+# con esa variable sin definir (o sea, 0). Y `error` es un Write-Host "ERROR ..."
+# (lib/core.ps1), ni siquiera stderr. En la VM se vio la consecuencia: "ERROR
+# 'opencode' is not installed" seguido de nuestro "[OK] fijado". La unica senal
+# fiable es la linea que empieza con ERROR; el exit code se mira igual, por si
+# algun dia lo arreglan.
+function Fijar-OpenCode {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $global:LASTEXITCODE = 0
+        $salidaHold = scoop hold opencode *>&1 | Out-String
+        $lineas = @($salidaHold -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $errores = @($lineas | Where-Object { $_ -match '^ERROR' })
+        if (($LASTEXITCODE -ne 0) -or ($errores.Count -gt 0)) {
+            $motivo = if ($errores.Count) { $errores[0] } else { "scoop hold devolvio exit $LASTEXITCODE" }
+            Write-Host "  [X] No se pudo fijar la version: $motivo" -ForegroundColor Red
+            return $false
+        }
+        foreach ($l in $lineas) { Write-Host ("      " + $l) }
+        Write-Host "  [OK] OpenCode fijado en la version $OpenCodeVersion (scoop hold)."
+        return $true
+    } catch {
+        Write-Host "  [X] No se pudo fijar la version: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+if (Test-OpenCodeInstalado) {
     Write-Host "  [OK] OpenCode ya esta instalado"
+    $instalada = Get-OpenCodeVersionInstalada
+    if ($instalada -and $instalada -ne $OpenCodeVersion) {
+        Write-Host "  [i] Esta la version $instalada y esta version de Tecnia Bot se probo con la $OpenCodeVersion."
+        if (Test-Path (Join-Path $OpenCodeAppDir $OpenCodeVersion)) {
+            Write-Host "  [..] La $OpenCodeVersion ya esta en el disco: la vuelvo a activar (scoop reset)..."
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $salidaReset = ""
+            try {
+                $salidaReset = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String
+            } catch {
+                $salidaReset = "ERROR " + $_.Exception.Message
+            }
+            $ErrorActionPreference = $prev
+            Refresh-Path
+            # Scoop escribe sus errores con Write-Host (stream de informacion): 2>&1 NO los
+            # captura en PowerShell 5.1, por eso se usa *>&1 (todos los streams).
+            # scoop reset imprime "ERROR ..." y sale con 0 si no pudo (por ejemplo, con OpenCode
+            # abierto: "instances of opencode are still running"). Antes se decia [OK] igual.
+            # Lo unico que vale es releer que version quedo activa.
+            $quedo = Get-OpenCodeVersionInstalada
+            if ($quedo -eq $OpenCodeVersion) {
+                Write-Host "  [OK] OpenCode vuelve a la version $OpenCodeVersion."
+            } else {
+                Write-Host "  [X] No pude volver a la version ${OpenCodeVersion}: sigue activa la $quedo."
+                if ($salidaReset -match "still running") {
+                    Write-Host "      Tecnia Bot (OpenCode) esta abierto. Cerralo y volve a correr 'Reparar Tecnia Bot'."
+                } else {
+                    foreach ($l in ($salidaReset -split "`n")) { if ($l -match "^\s*ERROR") { Write-Host ("      " + $l.Trim()) } }
+                    Write-Host "      Volve a correr 'Reparar Tecnia Bot'; si sigue, en PowerShell: scoop reset opencode@$OpenCodeVersion"
+                }
+            }
+        } else {
+            Write-Host "      Se deja como esta: este instalador no desinstala nada."
+            Write-Host "      Si el bot no anda bien, en PowerShell: scoop install opencode@$OpenCodeVersion"
+        }
+    }
+    Fijar-OpenCode | Out-Null
 } else {
-    Write-Host "  [..] Instalando OpenCode..."
-    scoop install opencode
+    # Corre pero Scoop no lo tiene: es el exe suelto de arriba. NO se borra antes
+    # de instalar (puede fallar, no puede romper): Scoop pisa el shim al instalar.
+    if (-not (Test-OpenCodeScoop) -and (Test-OpenCode)) {
+        Write-Host "  [i] Hay un opencode.exe suelto que Scoop no administra; instalo la version fijada con Scoop."
+    }
+    Write-Host "  [..] Instalando OpenCode $OpenCodeVersion..."
+    scoop install opencode@$OpenCodeVersion
     Refresh-Path
 
     # UN intento de reparacion, automatico, sin preguntarle nada al docente.
@@ -292,7 +501,7 @@ if (Test-OpenCode) {
     #
     #   NO ESTA        -> falto instalarlo. Reinstalar sirve.
     #   ESTA Y REVIENTA -> el binario no corre en esta CPU. Reinstalar NO sirve.
-    if (-not (Test-OpenCode)) {
+    if (-not (Test-OpenCodeInstalado)) {
         $exe = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\opencode.exe"
         $esAvx = (Test-Path $exe) -and ($script:SalidaOpenCode -match 'no_avx2|Illegal instruction|instruccion ilegal')
 
@@ -331,9 +540,9 @@ if (Test-OpenCode) {
                 Write-Host "  [..] El programa esta pero falta su lanzador. Reparandolo..."
                 if (Reparar-Shim) { Write-Host "  [OK] Reparado sin volver a descargar nada." }
             }
-            if (-not (Test-OpenCode)) {
+            if (-not (Test-OpenCodeInstalado)) {
                 Write-Host "  [..] OpenCode no arranca. Reintentando la instalacion..."
-                scoop install opencode
+                scoop install opencode@$OpenCodeVersion
             }
             Refresh-Path
             # Si despues de reinstalar sigue sin arrancar Y el binario esta, es la
@@ -345,7 +554,17 @@ if (Test-OpenCode) {
         }
     }
 
-    if (-not (Test-OpenCode)) {
+    if (-not (Test-OpenCodeInstalado)) {
+        # Scoop no lo registro y el exe suelto sigue ahi: lo mas probable es que
+        # Scoop no haya podido pisar ese archivo (OpenCode abierto, o el antivirus
+        # escaneando 178 MB). Se dice con todas las letras: es lo que hay que hacer.
+        if (-not (Test-OpenCodeScoop) -and (Test-Path $ShimOpenCode) -and ((Get-Item $ShimOpenCode).Length -gt 1MB)) {
+            Write-Host ""
+            Write-Host "  [X] Scoop no pudo instalar OpenCode: hay un opencode.exe suelto en" -ForegroundColor Red
+            Write-Host "      $ShimOpenCode" -ForegroundColor Red
+            Write-Host "      y probablemente esta bloqueado (abierto, o tomado por el antivirus)."
+            Write-Host "      Cerra OpenCode, espera un minuto y volve a correr el instalador."
+        }
         # NO SE CORTA ACA, Y ESTA DECISION SE TOMO ROMPIENDO UNA QUE FUNCIONABA.
         #
         # Hasta la v0.3.19 este script no tenia un solo `exit`: si OpenCode
@@ -374,6 +593,7 @@ if (Test-OpenCode) {
         Write-Host ""
     } else {
         Write-Host "  [OK] OpenCode instalado."
+        Fijar-OpenCode | Out-Null
     }
 }
 
@@ -454,7 +674,38 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
         Write-Host "      Python: $PyExe"
         $Tmp = Join-Path $env:TEMP "get-platformio.py"
         Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null
-        & $PyExe $Tmp
+        # get-platformio.py (pioinstaller) arma el venv y, ANTES de instalar
+        # PlatformIO, intenta actualizar pip adentro del venv (penv.update_pip).
+        # En Windows eso falla a veces con "[WinError 1921]", y el propio
+        # instalador de PlatformIO lo TRAGA a proposito: update_pip captura la
+        # excepcion, la manda a log.debug, devuelve False y sigue; PlatformIO se
+        # instala igual. Pero pip ya escribio su ERROR en rojo en la consola, y el
+        # docente ve un error gordo seguido de "Listo".
+        #
+        # No hay opcion para saltear ese paso: el CLI de pioinstaller acepta
+        # --verbose, --dev, --ignore-python, --pypi-index-url y
+        # --no-shutdown-piohome, nada sobre pip (verificado decodificando el
+        # script embebido). Asi que se filtra ACA: esas lineas no se muestran y al
+        # final va UN aviso calmo. Lo que decide si PlatformIO quedo es pio.exe en
+        # el disco, que se mira mas abajo, no lo que pip haya dicho.
+        #
+        # 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta
+        # en PowerShell 5.1 (misma trampa que en Buscar-Python): se baja a
+        # Continue solo para este paso.
+        $prevEAP = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $avisoPip = $false
+        try {
+            & $PyExe $Tmp 2>&1 | ForEach-Object {
+                $linea = "$_"
+                if ($linea -match "WinError 1921|Could not install packages due to an OSError|pip install --upgrade pip|A new release of pip") {
+                    $avisoPip = $true
+                } else {
+                    Write-Host $linea
+                }
+            }
+        } finally { $ErrorActionPreference = $prevEAP }
+        if ($avisoPip) { Write-Host "  [i] Aviso de pip (no pudo actualizarse a si mismo): no afecta a PlatformIO." }
         Remove-Item $Tmp -ErrorAction SilentlyContinue
     }
     # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en
@@ -477,7 +728,14 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
 # --- 4. Tecnia Bot (capa educativa) ------------------------------------------
 Write-Host ""
 Write-Host "  [..] Instalando la capa de Tecnia Bot..."
-powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
+# powershell.exe POR RUTA, no por nombre. "powershell" a secas depende del PATH del
+# docente, y ya paso que no estuviera (CHANGELOG 0.3.75: el reparar del tool no
+# podia ni lanzarlo). $PSHOME es la carpeta del PowerShell que esta corriendo ESTE
+# script, asi que existe siempre; si es pwsh 7 (que no trae powershell.exe ahi) se
+# cae al nombre, como antes.
+$PsExe = Join-Path $PSHOME "powershell.exe"
+if (-not (Test-Path $PsExe)) { $PsExe = "powershell" }
+& $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
 
 # SE VERIFICA QUE LA CAPA HAYA QUEDADO, y por dos vias.
 #

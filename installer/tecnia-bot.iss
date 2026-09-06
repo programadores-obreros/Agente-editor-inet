@@ -178,7 +178,7 @@ Type: filesandordirs; Name: "{app}"
 [UninstallRun]
 ; Quita solo la capa de la config de OpenCode (no toca OpenCode ni los proyectos del docente).
 Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"""; \
+  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"" -Conservar"; \
   Flags: runhidden; RunOnceId: "quitarcapa"
 
 [Messages]

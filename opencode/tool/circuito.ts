@@ -171,10 +171,10 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "3.3V",
     attrs: (i) => `color="${["red", "green", "yellow", "blue"][i % 4]}"`,
     pines: [
-      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0} (con 330Ω)" },
+      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0} (con 220Ω)" },
       { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "cada LED siempre con su resistencia de 330Ω en serie (por los 3.3V del ESP32).",
+    advertencia: "cada LED siempre con su resistencia de 220Ω en serie: es el valor para los 3.3V del ESP32 (los 330 ohm son la regla del UNO a 5V; acá un LED azul o blanco casi no prende con esos).",
     anim: (id) => `const e=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(e)e.value=on;},600);`,
   },
 
@@ -240,7 +240,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "DATA", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
       { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "el DHT22 funciona a 3.3V; conviene un pull-up de 10kΩ entre DATA y VCC.",
+    advertencia: "el DHT22 funciona a 3.3V. Módulo de 3 pines (plaqueta): ya trae el pull-up, no agregues nada. Sensor pelado de 4 patas: 10kΩ entre DATA y VCC.",
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.08;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
   },
 
@@ -253,7 +253,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "OUT", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
       { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "el PIR se alimenta de 5V (VIN). ¡OJO! Muchos módulos PIR dan 5V en la salida OUT: verificá el tuyo antes de conectarlo directo al ESP32 (tolera máx 3.6V). Si da 5V, usá un divisor de tensión como el HC-SR04.",
+    advertencia: "el PIR se alimenta de 5V (VIN), pero OUT = 3.3V en el HC-SR501 (trae regulador a bordo): va directo al GPIO, sin divisor. Sólo módulos mini sin regulador pueden dar 5V en OUT: si el tuyo no es un HC-SR501, medí OUT con el téster antes de conectarlo (el ESP32 tolera máx 3.6V).",
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 12px #27ae60)':'none';},800);`,
   },
 
@@ -268,7 +268,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
       { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
     ],
-    advertencia: "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32).",
+    advertencia: "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32). ¡OJO con los 5V! La mochila I2C tiene sus pull-ups a su propio VCC: alimentada a 5V pone SDA y SCL en 5V, y GPIO21/22 NO toleran 5V. Opciones: alimentarla a 3.3V (segura, con menos contraste) o 5V + conversor de nivel bidireccional en SDA/SCL (el divisor de resistencias NO sirve: I2C es bidireccional). Nunca mochila a 5V con SDA/SCL directo al ESP32.",
     anim: (id) => `const l=document.getElementById('${id}');const m=["Hola Tecnia Bot!","Escuela tecnica","Arduino + ESP32"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
   },
 
@@ -291,12 +291,12 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "LED RGB",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "GPIO{0} (con 330Ω)" },
-      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "GPIO{1} (con 330Ω)" },
-      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "GPIO{2} (con 330Ω)" },
+      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "GPIO{0} (con 220Ω)" },
+      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "GPIO{1} (con 220Ω)" },
+      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "GPIO{2} (con 220Ω)" },
       { nombre: "Común (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "el LED RGB combina 3 colores. Cada pin con su resistencia de 330Ω. Con analogWrite (PWM) mezclás cualquier color.",
+    advertencia: "el LED RGB combina 3 colores. Cada pin con su resistencia de 220Ω. Con analogWrite (PWM) mezclás cualquier color.",
     anim: (id) => `const e=document.getElementById('${id}');let h=0;setInterval(()=>{h=(h+8)%360;const c=h/60,x=1-Math.abs(c%2-1);let r=0,g=0,b=0;if(c<1){r=1;g=x}else if(c<2){r=x;g=1}else if(c<3){g=1;b=x}else if(c<4){g=x;b=1}else if(c<5){r=x;b=1}else{r=1;b=x}if(e){e.ledRed=r>0.3;e.ledGreen=g>0.3;e.ledBlue=b>0.3}},120);`,
   },
 
@@ -332,10 +332,10 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Display 7 segmentos",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "7 pines (cada segmento con 330Ω)" },
+      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "7 pines (cada segmento con 220Ω)" },
       { nombre: "Común", color: CABLE.marron, clase: "fijo", rol: "GND (cátodo común)", destino: "GND" },
     ],
-    advertencia: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 330Ω. Conviene la librería SevSeg para no gastar tantos pines.",
+    advertencia: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 220Ω. Conviene la librería SevSeg para no gastar tantos pines.",
     anim: (id) => `const d=document.getElementById('${id}');const digs=[[1,1,1,1,1,1,0,0],[0,1,1,0,0,0,0,0],[1,1,0,1,1,0,1,0],[1,1,1,1,0,0,1,0],[0,1,1,0,0,1,1,0]];let i=0;setInterval(()=>{i=(i+1)%digs.length;if(d)d.values=digs[i];},800);`,
   },
 
@@ -665,6 +665,16 @@ const ALIAS: Record<string, string> = {
  * anda sin que nadie tenga que preverla — y las entradas acentuadas que YA
  * están en ALIAS siguen funcionando porque se consultan primero.
  */
+// Busca la definición de un componente ya validado. Los desconocidos se filtran
+// antes (el tool contesta "No conozco: ..."), así que llegar acá con uno que no
+// existe es un bug: se corta con un mensaje claro en vez de un TypeError sobre
+// undefined. Con `noUncheckedIndexedAccess`, COMPONENTES[x] es `Componente | undefined`.
+function componenteDe(tipo: string): Componente {
+  const def = COMPONENTES[normalizarTipo(tipo)]
+  if (!def) throw new Error(`Componente desconocido: ${tipo}`)
+  return def
+}
+
 export function normalizarTipo(t: string): string {
   const k = t.trim().toLowerCase()
   if (ALIAS[k]) return ALIAS[k]
@@ -722,7 +732,8 @@ function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] 
     for (const pin of def.pines) {
       if (pin.clase === "fijo" && pin.destino) {
         const m = pin.destino.match(/GPIO(\d+)/)
-        if (m) usados.add(parseInt(m[1], 10))
+        const nro = m?.[1]
+        if (nro != null) usados.add(parseInt(nro, 10))
       }
     }
   }
@@ -736,7 +747,7 @@ function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] 
   }
 
   for (const ped of pedidos) {
-    const def = COMPONENTES[normalizarTipo(ped.tipo)]
+    const def = componenteDe(ped.tipo)
     const asignados: number[] = []
     const pinesGpio = def.pines.filter((p) => p.clase !== "fijo")
 
@@ -805,11 +816,12 @@ function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuad
     ["led", "servo", "buzzer", "relay", "bomba", "valvula", "lampara", "calefactor", "motor"].includes(t)
   const iSens = idx((t) => SENSOR_SIM[t] != null)
   const iActS = idx(ESACTU)
-  if (iSens >= 0 && iActS >= 0) {
-    const tSens = normalizarTipo(pedidos[iSens].tipo)
-    const tActu = normalizarTipo(pedidos[iActS].tipo)
+  const pSens = pedidos[iSens], pActS = pedidos[iActS]
+  const s = pSens ? SENSOR_SIM[normalizarTipo(pSens.tipo)] : undefined
+  if (pSens && pActS && s) {
+    const tSens = normalizarTipo(pSens.tipo)
+    const tActu = normalizarTipo(pActS.tipo)
     const idSens = `${tSens}${iSens}`, idActu = `${tActu}${iActS}`
-    const s = SENSOR_SIM[tSens]
     // qué le hace al actuador cuando se dispara
     const onAct =
       tActu === "led" ? "act.value=disparado;act.brightness=disparado?1:0;" :
@@ -853,8 +865,10 @@ function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuad
   const iAct = idx((t) => t === "led" || t === "servo" || t === "buzzer")
   if (iInter < 0 || iAct < 0) return null
 
-  const tInter = normalizarTipo(pedidos[iInter].tipo)
-  const tAct = normalizarTipo(pedidos[iAct].tipo)
+  const pInter = pedidos[iInter], pAct = pedidos[iAct]
+  if (!pInter || !pAct) return null
+  const tInter = normalizarTipo(pInter.tipo)
+  const tAct = normalizarTipo(pAct.tipo)
   const idInter = `${tInter}${iInter}`
   const idAct = `${tAct}${iAct}`
 
@@ -938,9 +952,9 @@ function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
 
   pedidos.forEach((ped, i) => {
     const tipo = normalizarTipo(ped.tipo)
-    const def = COMPONENTES[tipo]
+    const def = componenteDe(tipo)
     const id = `${tipo}${i}`
-    const gpios = gpiosPorComp[i]
+    const gpios = gpiosPorComp[i] ?? []
 
     if (def.voltaje === "5V") hay5V = true
     if (def.interactivo) interactivo = true
@@ -952,10 +966,10 @@ function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
       .map((pin) => {
         const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
         // R en serie: solo cuando "(con XΩ)" CIERRA la etiqueta (LED, RGB). El caso
-        // "7 pines (cada segmento con 330Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
+        // "7 pines (cada segmento con 220Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
         const conR = pin.clase !== "fijo" && destino.match(/^(.*?)\s*\(con\s*([\d.]+\s*[kKmM]?)\s*Ω\)\s*$/)
         const etiqueta = conR ? conR[1] : destino
-        const valorR = conR ? conR[2].replace(/\s+/g, "") : null
+        const valorR = conR ? (conR[2] ?? "").replace(/\s+/g, "") : null
         const cable = valorR
           ? `<span class="cable"></span><span class="res" title="Resistencia de ${valorR}Ω en serie">${valorR}Ω</span><span class="cable"></span>`
           : `<span class="cable"></span>`
@@ -1046,7 +1060,7 @@ function parsearComponentes(raw: string): Pedido[] {
     .map((tok) => {
       const [tipo, g] = tok.split(":").map((x) => x.trim())
       const gpio = g != null && /^\d+$/.test(g) ? parseInt(g, 10) : undefined
-      return { tipo: normalizarTipo(tipo), gpio }
+      return { tipo: normalizarTipo(tipo ?? tok), gpio }
     })
 }
 
@@ -1219,11 +1233,11 @@ const PRESET_COMPONENTES: Record<string, string[]> = {
 const PLANTILLAS_PROTOBOARD: Record<string, { archivo: string; que: string }> = {
   "boton-led-protoboard": {
     archivo: "plantilla-boton-led-protoboard.html",
-    que: "un ESP32 con un botón y un LED (con resistencia 330Ω). Apretás el botón rojo y el LED se enciende",
+    que: "un ESP32 con un botón y un LED (con resistencia 220Ω). Apretás el botón rojo y el LED se enciende",
   },
   "semaforo-protoboard": {
     archivo: "plantilla-semaforo-protoboard.html",
-    que: "un semáforo: tres LEDs (verde, amarillo, rojo) con sus resistencias 330Ω, encendiéndose en secuencia solos",
+    que: "un semáforo: tres LEDs (verde, amarillo, rojo) con sus resistencias 220Ω, encendiéndose en secuencia solos",
   },
 }
 
@@ -1300,7 +1314,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
         return `No conozco: ${desconocidos.map((d) => d.tipo).join(", ")}. Tengo: ${Object.keys(COMPONENTES).join(", ")}.`
       }
       const r = armarCircuito(pedidos, args.umbral)
-      const nombres = pedidos.map((p) => COMPONENTES[normalizarTipo(p.tipo)].etiqueta).join(" + ")
+      const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
       plantilla = {
         titulo: `🔧 ${nombres} + ESP32`,
         sub: "armado libre — piezas reales conectadas al ESP32",
@@ -1336,8 +1350,8 @@ Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los 
       // Circuito MONTADO sobre una protoboard: plantilla validada (componentes Wokwi
       // reales pinchados en la placa + jumpers). Se lee del asset instalado.
       const def = PLANTILLAS_PROTOBOARD[args.circuito]
-      const plantillaFile = plantillaPath(def.archivo)
-      if (!existsSync(plantillaFile)) {
+      const plantillaFile = def ? plantillaPath(def.archivo) : ""
+      if (!def || !existsSync(plantillaFile)) {
         return "No encontré la plantilla del circuito en protoboard. Reinstalá Tecnia Bot con el instalador."
       }
       base = nombreSeguro(args.nombre_archivo, args.circuito)
@@ -1361,7 +1375,7 @@ Vas a ver el circuito armado en la placa de pruebas, con los componentes reales 
       }
       const pedidos = tipos.map((t) => ({ tipo: t }))
       const r = armarCircuito(pedidos)
-      const nombres = pedidos.map((p) => COMPONENTES[normalizarTipo(p.tipo)].etiqueta).join(" + ")
+      const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
       plantilla = {
         titulo: `🔧 ${nombres} + ESP32`,
         sub: "piezas reales conectadas al ESP32",

@@ -42,7 +42,7 @@
     <h1>ESP32 + Botón + LED en protoboard</h1>
     <span class="badge">✋ Interactivo — apretá el botón</span>
   </div>
-  <div class="sub">Así se arma de verdad en la placa de pruebas: botón con <b>INPUT_PULLUP</b> en GPIO4 y LED con resistencia de 330&nbsp;Ω en GPIO5.</div>
+  <div class="sub">Así se arma de verdad en la placa de pruebas: botón con <b>INPUT_PULLUP</b> en GPIO4 y LED con resistencia de 220&nbsp;Ω en GPIO5.</div>
 
   <div class="stage-wrap">
     <svg id="scene" viewBox="0 0 1016 452" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -53,7 +53,7 @@
       <div class="aviso">
         <b>¿Cómo funciona?</b> El pin GPIO4 se configura como <code>INPUT_PULLUP</code>: internamente queda en ALTO (1).
         Al apretar el botón, la pata se conecta a <b>GND</b> y el pin lee BAJO (0). Con eso el programa enciende el LED de GPIO5.
-        El LED SIEMPRE va con su resistencia de <b>330&nbsp;Ω</b> en serie para limitar la corriente y no quemarlo.
+        El LED SIEMPRE va con su resistencia de <b>220&nbsp;Ω</b> en serie para limitar la corriente y no quemarlo.
       </div>
       <div class="legend" id="legend"></div>
     </div>
@@ -61,7 +61,7 @@
       <tr><th>Componente</th><th>Pin ESP32</th><th>Conexión</th></tr>
       <tr><td><span class="chip" style="background:#22a95b"></span>Botón · pata A</td><td>GPIO4</td><td>Entrada con pull-up interno</td></tr>
       <tr><td><span class="chip" style="background:#6b7784"></span>Botón · pata B</td><td>GND</td><td>Riel &minus; (azul)</td></tr>
-      <tr><td><span class="chip" style="background:#ef8c1b"></span>Resistencia 330&nbsp;Ω</td><td>GPIO5</td><td>En serie hacia el ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#ef8c1b"></span>Resistencia 220&nbsp;Ω</td><td>GPIO5</td><td>En serie hacia el ánodo</td></tr>
       <tr><td><span class="chip" style="background:#ef8c1b"></span>LED · ánodo (+)</td><td>—</td><td>Sale de la resistencia</td></tr>
       <tr><td><span class="chip" style="background:#2b8cd6"></span>LED · cátodo (&minus;)</td><td>GND</td><td>Riel &minus; (azul)</td></tr>
       <tr><td><span class="chip" style="background:#2a2f36"></span>Alimentación GND</td><td>GND</td><td>ESP32 → riel &minus;</td></tr>
@@ -168,10 +168,10 @@
   const B_1l=btn.pin(0,13), B_1r=btn.pin(67,13);   // net A (GPIO4)
   const B_2l=btn.pin(0,32), B_2r=btn.pin(67,32);   // net B (GND)
 
-  // RESISTENCIA 330Ω — apoyada en fila C, columnas 17..20
+  // RESISTENCIA 220Ω — apoyada en fila C, columnas 17..20
   const resScale=1.05;
   const resLeft=colX(17), resTop=rowsTop.C-5.65*resScale;
-  const res=place('<wokwi-resistor id="r1" value="330"></wokwi-resistor>', resLeft, resTop, resScale);
+  const res=place('<wokwi-resistor id="r1" value="220"></wokwi-resistor>', resLeft, resTop, resScale);
   const R_1=res.pin(0,5.65), R_2=res.pin(58.8,5.65);
 
   // LED — espejado: ánodo (izq) hacia la resistencia (col20), cátodo (der) col21
@@ -233,13 +233,13 @@
   label('GPIO4',P_D4.x-58,P_D4.y-8,true);
   label('GPIO5',P_D5.x-58,P_D5.y-8,true);
   label('GND',P_GND.x-46,P_GND.y-8,true);
-  label('330 Ω',resLeft+2,rowsTop.C+16);
+  label('220 Ω',resLeft+2,rowsTop.C+16);
   label('Botón',btnBx+4,btnBy-26);
   label('LED',colX(22)+4,rowsTop.A-40);
 
   /* ---------- LEYENDA ---------- */
   const legend=document.getElementById('legend');
-  [['#22a95b','GPIO4 → botón (pull-up)'],['#6b7784','botón → GND'],['#ef8c1b','GPIO5 → 330 Ω → LED'],['#2b8cd6','LED → GND'],['#2a2f36','GND → riel −']]
+  [['#22a95b','GPIO4 → botón (pull-up)'],['#6b7784','botón → GND'],['#ef8c1b','GPIO5 → 220 Ω → LED'],['#2b8cd6','LED → GND'],['#2a2f36','GND → riel −']]
     .forEach(([c,t])=>{const s=document.createElement('span');s.innerHTML='<span class="ln" style="background:'+c+'"></span>'+t;legend.appendChild(s);});
 
   /* ---------- INTERACCIÓN ---------- */

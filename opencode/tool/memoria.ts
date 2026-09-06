@@ -67,7 +67,7 @@ function agregarProyecto(proyectos: string[], nuevo: string): string[] {
 // El "ultimo proyecto" NO se guarda aparte: se deriva del ultimo de la lista,
 // asi nunca queda desincronizado con "Proyectos hechos".
 function ultimoProyecto(memoria: Memoria): string {
-  return memoria.proyectos.length ? memoria.proyectos[memoria.proyectos.length - 1] : SIN_DEFINIR
+  return memoria.proyectos.at(-1) ?? SIN_DEFINIR
 }
 
 // Arma el markdown legible (mismo formato que crea el instalador). El encabezado

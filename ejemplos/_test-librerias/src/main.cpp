@@ -28,6 +28,8 @@
 #include <Stepper.h>          // arduino-libraries/Stepper (NO bundled)
 #include <LiquidCrystal.h>    // arduino-libraries/LiquidCrystal (NO bundled)
 #include <LiquidCrystal_I2C.h>// marcoschwartz/LiquidCrystal_I2C (LCD por I2C)
+#include <SevSeg.h>           // deanisme/SevSeg (display 7 segmentos)
+#include <AccelStepper.h>     // waspinator/AccelStepper (paso a paso con aceleracion)
 
 // --- Especifico por placa: la libreria del Servo cambia de nombre ----------
 #if defined(ESP32)
@@ -65,6 +67,11 @@ LiquidCrystal_I2C lcdI2C(0x27, 16, 2);               // LCD 16x2 por modulo I2C 
 
 Servo miServo;                                       // Servo (AVR) o ESP32Servo (ESP32)
 
+SevSeg sevseg;                                       // display 7 segmentos (1 digito)
+byte pinesDigito[1]   = {13};
+byte pinesSegmento[8] = {2, 3, 4, 5, 6, 7, 8, 9};    // A-G + DP
+AccelStepper pasoAPaso(AccelStepper::FULL4WIRE, 25, 26, 27, 32);  // 28BYJ-48 via ULN2003
+
 void setup() {
   Serial.begin(115200);
 
@@ -101,6 +108,16 @@ void setup() {
   // Teclado
   char t = teclado.getKey();
   (void)t;
+
+  // Display 7 segmentos
+  sevseg.begin(COMMON_CATHODE, 1, pinesDigito, pinesSegmento);
+  sevseg.setNumber(4);
+  sevseg.refreshDisplay();
+
+  // Paso a paso con aceleracion
+  pasoAPaso.setMaxSpeed(200);
+  pasoAPaso.setAcceleration(50);
+  pasoAPaso.moveTo(2048);
 
   // Servo (pin distinto segun placa)
 #if defined(ESP32)

@@ -27,13 +27,19 @@ difundido en internet es el de VS Code. Se le pidió que eligiera, y eligió.
 
 Acá hay **una sola** forma, y ya está instalada en la máquina:
 
-1. **Menú inicio → «Reparar Tecnia Bot».** Instala PlatformIO Core solo, sin
-   preguntar nada, y no toca lo que ya está.
+1. **Instalalo VOS**: `platformio` con `action: "reparar"`. Es el mismo
+   instalador de Tecnia Bot, y lo podés correr desde acá. Preguntá antes (tarda
+   unos minutos y baja unos 60 MB) y contá lo que el tool devuelve, no lo que
+   suponés.
+2. **Plan B, sólo si el tool dice que no pudo correr la reparación**: Menú inicio
+   → «Reparar Tecnia Bot». Hace exactamente lo mismo, sin preguntar nada, y no
+   toca lo que ya está. En Linux/Mac el tool devuelve el comando exacto
+   (`bash install/bootstrap.sh`): pasáselo tal cual.
 
    Nombralo así, tal cual. Antes esto decía «volvé a correr el instalador» y una
    docente fue a buscarlo al menú inicio: no existía. Un consejo que no se puede
    seguir deja a la persona igual de trabada, pero convencida de que hizo algo mal.
-2. Si después de eso sigue faltando, **es la red, no la máquina**: menú inicio →
+3. Si después de eso sigue faltando, **es la red, no la máquina**: menú inicio →
    «Diagnostico de Tecnia Bot», que deja un `.txt` diciendo si esa máquina llega
    a `pypi.org`. En una escuela con filtro de contenido, ese dominio es de los
    primeros que se bloquean, y no avisa que bloqueó: da timeout.

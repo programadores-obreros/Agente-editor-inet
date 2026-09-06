@@ -1,24 +1,260 @@
 name: CI
 
-# Corre los smoke tests del armador de circuitos en cada push y PR.
-# No necesita instalar dependencias: los tests corren con Node puro.
+# Corre en cada push y PR a main. Dos jobs, en paralelo:
+#   - test (Linux):  typecheck de las tools + smoke tests con Node puro.
+#   - windows:       lo que la escuela ejecuta DE VERDAD. Parsea cada .ps1 con el
+#                    Windows PowerShell 5.1 real, corre bootstrap.ps1 de punta a
+#                    punta en un Windows limpio, compila un sketch con el PlatformIO
+#                    que el bootstrap instalo, y desinstala.
+#
+# POR QUE EL JOB DE WINDOWS. 243 tests de Node pasaban en verde y el PowerShell 5.1
+# de una VM encontro dos errores de parseo ("$var: texto") que ninguno podia ver:
+# los tests miraban los .ps1 como texto, nunca los ejecutaban. Un instalador que
+# solo se prueba en Linux no esta probado. tests/ci.test.mjs cuida que estos pasos
+# no se saquen sin querer.
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      esp32:
+        description: "Compilar tambien el env esp32dev (~5 min mas, baja ~300 MB)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   test:
-    name: Smoke tests
+    name: Typecheck + smoke tests (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # pnpm antes que setup-node: setup-node lo necesita para `cache: pnpm`.
+      # La version sale de "packageManager" en package.json (la unica fuente).
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           # 24+ corre TypeScript nativo (type stripping), que los tests necesitan
-          # para importar el tool circuito.ts sin transpilar ni instalar nada.
+          # para importar los tools .ts sin transpilar.
           node-version: "24"
+          cache: pnpm
+      - name: Instalar dependencias de desarrollo (typescript, tipos de Bun y del plugin)
+        run: pnpm install --frozen-lockfile
+      # tsc sobre las tools con los tipos REALES del runtime (@types/bun y
+      # @opencode-ai/plugin fijado a install/OPENCODE_VERSION). Estuvo roto con 88
+      # errores durante meses porque nadie lo corria: ahora corta el PR.
+      - name: Typecheck (tsc --noEmit)
+        run: pnpm typecheck
       - name: Correr smoke tests
-        run: node --test tests/*.test.mjs
+        run: pnpm test
+
+  windows:
+    name: Instalador real (Windows PowerShell 5.1)
+    # windows-latest = Windows Server 2025 (actions/runner-images, README "Available
+    # Images"). Trae Windows PowerShell 5.1 (viene con el sistema) y pwsh 7.
+    runs-on: windows-latest
+    # Medido a ojo: Scoop + OpenCode (~60 MB) + Python + PlatformIO + toolchain AVR
+    # rondan los 10-15 min. El default de GitHub son 360 min: un colgado costaria
+    # seis horas de runner.
+    timeout-minutes: 45
+    defaults:
+      run:
+        # powershell = "PowerShell Desktop" en la doc de GitHub (workflow-syntax,
+        # jobs.<job_id>.steps[*].shell): es Windows PowerShell 5.1, el que traen las
+        # PCs de la escuela. El default en Windows es pwsh (7.x), que es mas permisivo
+        # y NO reproduce lo que ve un docente. Ningun paso de este job usa pwsh.
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+
+      # El parser de verdad, en el PowerShell de verdad. Es lo que hubiera cazado
+      # los dos "$var: texto" de update.ps1 antes de publicarlos. Se imprime cada
+      # error con archivo, linea y mensaje, y se corta si hay uno solo.
+      - name: Parsear cada .ps1 con el parser de Windows PowerShell 5.1
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            Write-Host "::error::Este paso tiene que correr en Windows PowerShell 5.1 y corrio en $($PSVersionTable.PSVersion)"
+            exit 1
+          }
+          $archivos = @(Get-ChildItem install\*.ps1) + @(Get-ChildItem installer\*.ps1)
+          if ($archivos.Count -lt 5) { Write-Host "::error::Esperaba al menos 5 .ps1 y encontre $($archivos.Count)"; exit 1 }
+          $total = 0
+          foreach ($f in $archivos) {
+            $tokens = $null
+            $errores = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$tokens, [ref]$errores) | Out-Null
+            $rel = $f.FullName.Substring($PWD.Path.Length + 1).Replace('\', '/')
+            if ($errores.Count -eq 0) { Write-Host "  OK   $rel"; continue }
+            $total += $errores.Count
+            foreach ($e in $errores) {
+              Write-Host "::error file=$rel,line=$($e.Extent.StartLineNumber),col=$($e.Extent.StartColumnNumber)::$($e.Message)"
+            }
+          }
+          if ($total -gt 0) { Write-Host "::error::$total error(es) de parseo en Windows PowerShell 5.1"; exit 1 }
+
+      # Linter, solo severidad Error. La imagen windows-2025 trae PSScriptAnalyzer
+      # 1.25 (runner-images, Windows2025-Readme.md) instalado desde Windows PowerShell
+      # con -Scope AllUsers (scripts/build/Install-PowerShellModules.ps1), asi que 5.1
+      # lo ve. Si algun dia lo sacan, se intenta instalar; si eso falla, se avisa y se
+      # sigue: el que decide si un .ps1 parsea es el paso anterior, no este.
+      - name: PSScriptAnalyzer (solo Severity Error)
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+            try {
+              Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+            } catch {
+              Write-Host "::warning::PSScriptAnalyzer no esta en la imagen y no se pudo instalar ($($_.Exception.Message)). Se saltea el linter."
+              exit 0
+            }
+          }
+          Import-Module PSScriptAnalyzer
+          $hallazgos = @(Invoke-ScriptAnalyzer -Path install -Severity Error)
+          foreach ($h in $hallazgos) {
+            Write-Host "::error file=install/$($h.ScriptName),line=$($h.Line)::[$($h.RuleName)] $($h.Message)"
+          }
+          if ($hallazgos.Count -gt 0) { exit 1 }
+          Write-Host "  OK   PSScriptAnalyzer sin hallazgos de severidad Error en install\"
+
+      # Solo la cache de DESCARGAS de PlatformIO (lo que recomienda su doc de CI:
+      # docs.platformio.org/en/latest/integration/ci/github-actions.html), NO
+      # ~/.platformio entero: si se restaurara penv\Scripts\pio.exe, el bootstrap
+      # diria "PlatformIO ya esta instalado" y ese paso quedaria sin probar.
+      - name: Cache de descargas de PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-${{ hashFiles('ejemplos/_test-librerias/platformio.ini') }}
+          restore-keys: ${{ runner.os }}-pio-
+
+      # El instalador entero, como lo corre el .exe: powershell.exe 5.1 por ruta,
+      # -NoProfile -ExecutionPolicy Bypass -File. TECNIA_SIN_PROMPT hace que
+      # install.ps1 no pregunte la key de Google (60 s de espera en una consola sin
+      # nadie) y siga con el modelo gratuito, que es lo que se verifica despues.
+      #
+      # UN reintento, del paso entero. bootstrap.ps1 es idempotente (lo que quedo
+      # instalado se detecta y no se repite), asi que volver a correrlo es lo mismo
+      # que hace un docente al que se le corto la red: "Reparar Tecnia Bot". Los
+      # scripts del producto NO llevan reintentos a ciegas; el reintento vive aca,
+      # donde la variable que no controlamos es la red del runner.
+      - name: bootstrap.ps1 de punta a punta (Scoop + OpenCode + PlatformIO + capa)
+        env:
+          TECNIA_SIN_PROMPT: "1"
+        run: |
+          $ps51 = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          $codigo = 1
+          foreach ($intento in 1, 2) {
+            Write-Host "=== bootstrap.ps1, intento $intento de 2 ==="
+            & $ps51 -NoProfile -ExecutionPolicy Bypass -File install\bootstrap.ps1
+            $codigo = $LASTEXITCODE
+            if ($codigo -eq 0) { break }
+            Write-Host "::warning::bootstrap.ps1 termino con codigo $codigo en el intento $intento"
+          }
+          if ($codigo -ne 0) { exit $codigo }
+
+      # Lo que el bootstrap PROMETE, verificado desde afuera, en el disco:
+      #   1. OpenCode arranca y es la version de install\OPENCODE_VERSION.
+      #   2. Scoop lo tiene fijado ("hold": true), para que un update no lo mueva.
+      #   3. opencode.json tiene el agente por defecto y el modelo gratuito.
+      #   4. El pio.exe que instalo el bootstrap arranca.
+      - name: Verificar lo que dejo el bootstrap
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fallas = @()
+          $ver = (Get-Content install\OPENCODE_VERSION -Raw).Trim()
+
+          $shim = Join-Path $env:USERPROFILE "scoop\shims\opencode.exe"
+          if (-not (Test-Path $shim)) { $fallas += "no existe $shim" }
+          else {
+            $salida = (& $shim --version | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { $fallas += "opencode --version devolvio $LASTEXITCODE" }
+            elseif ($salida -notmatch ('(^|[^\d.])' + [regex]::Escape($ver) + '([^\d.]|$)')) { $fallas += "opencode --version dice '$salida' y install\OPENCODE_VERSION dice $ver" }
+            else { Write-Host "  OK   opencode --version -> $salida" }
+          }
+
+          $installJson = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\install.json"
+          if (-not (Test-Path $installJson)) { $fallas += "no existe $installJson" }
+          else {
+            $ij = Get-Content $installJson -Raw | ConvertFrom-Json
+            if ($ij.hold -ne $true) { $fallas += "install.json no tiene ""hold"": true (scoop hold no quedo)" }
+            else { Write-Host "  OK   scoop hold opencode" }
+          }
+
+          $ocJson = Join-Path $env:USERPROFILE ".config\opencode\opencode.json"
+          if (-not (Test-Path $ocJson)) { $fallas += "no existe $ocJson" }
+          else {
+            $oc = Get-Content $ocJson -Raw | ConvertFrom-Json
+            if ($oc.default_agent -ne "tecnia-bot") { $fallas += "default_agent es '$($oc.default_agent)', no 'tecnia-bot'" }
+            $modelo = $null
+            if ($oc.agent -and ($oc.agent.PSObject.Properties.Name -contains "tecnia-bot")) { $modelo = $oc.agent."tecnia-bot".model }
+            if ($modelo -ne "opencode/big-pickle") { $fallas += "agent.tecnia-bot.model es '$modelo', no 'opencode/big-pickle'" }
+            else { Write-Host "  OK   opencode.json: default_agent tecnia-bot, modelo $modelo" }
+          }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\agent\tecnia-bot.md"))) { $fallas += "falta .config\opencode\agent\tecnia-bot.md" }
+
+          $pio = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
+          if (-not (Test-Path $pio)) { $fallas += "no existe $pio" }
+          else {
+            $v = (& $pio --version | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) { $fallas += "pio --version devolvio $LASTEXITCODE" }
+            else { Write-Host "  OK   $v" }
+          }
+
+          if ($fallas.Count -gt 0) {
+            $fallas | ForEach-Object { Write-Host "::error::$_" }
+            exit 1
+          }
+
+      # Con el pio del bootstrap (por ruta, no por PATH: PlatformIO no se agrega al
+      # PATH de esta consola). El env uno tarda ~2 min; esp32dev queda a pedido.
+      - name: Compilar ejemplos/_test-librerias para Arduino UNO
+        run: |
+          $pio = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
+          & $pio run -d ejemplos\_test-librerias -e uno
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compilar tambien para ESP32 (solo a pedido, Run workflow -> esp32)
+        if: inputs.esp32
+        run: |
+          $pio = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
+          & $pio run -d ejemplos\_test-librerias -e esp32dev
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # -Conservar: no pregunta por los datos personales (los deja). Despues no
+      # tiene que quedar rastro nuestro en opencode.json ni el agente instalado.
+      - name: uninstall.ps1 -Conservar deja opencode.json sin rastro de tecnia-bot
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ps51 = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          & $ps51 -NoProfile -ExecutionPolicy Bypass -File install\uninstall.ps1 -Conservar
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::uninstall.ps1 devolvio $LASTEXITCODE"; exit 1 }
+          $ocJson = Join-Path $env:USERPROFILE ".config\opencode\opencode.json"
+          if (Test-Path $ocJson) {
+            $oc = Get-Content $ocJson -Raw | ConvertFrom-Json
+            if ($oc.default_agent -eq "tecnia-bot") { Write-Host "::error::default_agent sigue siendo tecnia-bot"; exit 1 }
+            if ($oc.agent -and ($oc.agent.PSObject.Properties.Name -contains "tecnia-bot")) { Write-Host "::error::agent.tecnia-bot sigue en opencode.json"; exit 1 }
+            Write-Host "  OK   opencode.json quedo sin tecnia-bot"
+          } else {
+            # uninstall.ps1 borra el archivo si solo quedaba nuestro $schema: tambien vale.
+            Write-Host "  OK   opencode.json se borro (solo tenia lo nuestro)"
+          }
+          if (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\agent\tecnia-bot.md")) { Write-Host "::error::agent\tecnia-bot.md sigue instalado"; exit 1 }
+
+      # El transcript del bootstrap (Start-Transcript, al lado del repo). Si algo
+      # fallo, es lo primero que hay que leer; se sube siempre, no solo en fallo.
+      - name: Guardar instalacion.log (transcript del bootstrap)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instalacion-log
+          path: |
+            instalacion.log
+            instalacion-*.log
+          if-no-files-found: ignore

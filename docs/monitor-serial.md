@@ -88,7 +88,7 @@ void loop() {
 
 ## Los baudios (importante)
 
-Los **baudios** son la velocidad de la conversación. El sketch los fija con `Serial.begin(9600)`, y el monitor tiene que usar **el mismo número**. Tecnia Bot usa **9600 por defecto**; si tu sketch usa otro (muchos ESP32 usan `115200`), pedíselo:
+Los **baudios** son la velocidad de la conversación. El sketch los fija con `Serial.begin(9600)`, y el monitor tiene que usar **el mismo número**. Tecnia Bot toma el `monitor_speed` de tu `platformio.ini` y, si no hay ninguno, usa **9600**; si tu sketch usa otro (muchos ESP32 usan `115200`), pedíselo:
 
 ```
 abrí el monitor serial a 115200 baudios

@@ -4,7 +4,7 @@
 
 **Asistente educativo de IA para enseñar Arduino y ESP32 en escuelas técnicas argentinas (programa INET).**
 
-Habla en español, explica el *porqué* antes del código, comenta cada línea y traduce los errores técnicos a un lenguaje que se entiende. Pensado para **docentes y estudiantes con poca o nula experiencia** — offline y de un doble clic (con un único paso extra la primera vez: conectar una API key gratis de Google, ver [Instalación](#-instalación)).
+Habla en español, explica el *porqué* antes del código, comenta cada línea y traduce los errores técnicos a un lenguaje que se entiende. Pensado para **docentes y estudiantes con poca o nula experiencia** — se instala de un doble clic; los circuitos, fichas y hojas que genera funcionan sin internet (el chat sí necesita conexión) (con un único paso extra la primera vez: conectar una API key gratis de Google, ver [Instalación](#-instalación)).
 
 [![Versión](https://img.shields.io/github/v/release/programadores-obreros/Agente-editor-inet?label=versi%C3%B3n&color=6d28d9)](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)
 [![CI](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/ci.yml/badge.svg)](https://github.com/programadores-obreros/Agente-editor-inet/actions/workflows/ci.yml)
@@ -51,7 +51,8 @@ Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuand
 | Tecnología | Para qué |
 |------------|----------|
 | **[OpenCode](https://opencode.ai)** | La plataforma de agente sobre la que se monta la capa educativa (MIT). |
-| **Google Gemini Flash-Lite** (gratis) | El modelo de lenguaje del agente (`google/gemini-flash-lite-latest`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se usa el alias `-latest` (no una versión fija) para no depender de un modelo puntual que Google puede discontinuar. |
+| **Big Pickle** (gratis, sin cuenta) | El modelo de lenguaje por defecto cuando no hay API key (`opencode/big-pickle`), servido por [OpenCode Zen](https://opencode.ai/zen). Gratis **por tiempo limitado**; mientras dure esa etapa, OpenCode puede usar las conversaciones para mejorar el modelo — ver [Instalación](#-instalación). |
+| **Google Gemini 3.5 Flash-Lite** (gratis) | El modelo del agente cuando hay una API key de Google (`google/gemini-3.5-flash-lite`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se fija la versión explícita (no un alias `-latest`): un alias cambia solo, sin quedar registrado en ningún commit (ver CHANGELOG 0.3.63). El modelo **no** vive en el frontmatter del agente sino en `opencode.json` → `agent.tecnia-bot.model`, que escribe el instalador: OpenCode mezcla los agentes `.md` **encima** del JSON, así que un `model:` en el `.md` pisaría la elección. Detalle en [docs/api-key-google.md](docs/api-key-google.md). |
 | **[Bun](https://bun.sh)** | Runtime de OpenCode: las herramientas del agente corren sobre Bun. |
 | **TypeScript** | Las 8 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ficha`, `ayuda`, `actualizar`, `perfil`, `memoria`). |
 | **[PlatformIO](https://platformio.org)** | Compila y carga el firmware a la placa real. |
@@ -82,7 +83,12 @@ bash install/bootstrap.sh
 powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 ```
 
-> 🔑 **El instalador te pide la API key gratis de Google directo** (sin tarjeta, sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — pegala cuando te la pida al final de la instalación. Si no la tenés a mano, apretá Enter y agregala después con `/connect` dentro de OpenCode. Es un paso único: se guarda para siempre.
+> 🔑 **La API key es opcional.** El instalador te la pide una vez y decide el modelo según lo que hagas:
+>
+> - **Sin API key** (Enter): Tecnia Bot usa **Big Pickle** (`opencode/big-pickle`), el modelo gratuito de OpenCode. No hace falta cuenta ni login. Es gratis **por tiempo limitado**, y ⚠️ mientras dure esa etapa **OpenCode puede usar lo que se escribe en el chat para mejorar el modelo**: no pongas datos personales ni nombres de alumnos en la conversación.
+> - **Con API key de Google** (gratis, sin tarjeta, sacala en [aistudio.google.com/apikey](https://aistudio.google.com/apikey)): usa **Gemini 3.5 Flash-Lite**, con cuota propia y sin esa cláusula. Pegala cuando el instalador te la pida; se guarda en tu compu para siempre.
+>
+> Podés cambiar después: conseguí la key y corré **"Reparar Tecnia Bot"** (menú inicio en Windows) o `bash install/install.sh`; o pegala con `/connect` dentro de OpenCode y corré `/actualizar`. El instalador vuelve a elegir el modelo en cada corrida.
 
 > 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md) · [todo sobre la API key de Google — cómo conseguirla y qué hacer si deja de andar](docs/api-key-google.md)
 
@@ -115,7 +121,7 @@ Probá:
 - *"dame algo para repartir del LDR"* — te abre la ficha A4 en el navegador, lista para imprimir.
 - `/ayuda` — resumen de uso + manual/onboarding en el navegador.
 - `/diagnostico` — verifica tu entorno (OpenCode, PlatformIO, la placa).
-- `/actualizar` — trae la última versión desde GitHub.
+- `/actualizar` — trae el último release publicado desde GitHub (verifica lo que bajó antes de instalarlo).
 
 ---
 
@@ -125,15 +131,15 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
 - **8 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género) y `memoria` (progreso de la compu).
-- **14 bases de conocimiento** (skills) — ver abajo.
-- **3 comandos** — `/diagnostico`, `/actualizar`, `/ayuda`.
+- **16 bases de conocimiento** (skills) — ver abajo.
+- **4 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
 
 ### Los 15 proyectos INET
 
 El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Digitales / INET-EDUCAR): cada uno con sus niveles, pinout exacto UNO/ESP32, cableado, código clave y *gotchas* verificados. Así el bot guía cualquiera de los 15 sin depender de internet.
 
-**Los 14 skills:** `arduino` · `esp32` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `proyectos-inet` · `proyecto-guiado`
+**Los 16 skills:** `arduino` · `esp32` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado`
 
 ---
 
@@ -143,7 +149,7 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
 │   ├── tool/               # 8 herramientas .ts (platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria)
-│   ├── skills/             # 14 bases de conocimiento
+│   ├── skills/             # 16 bases de conocimiento
 │   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca

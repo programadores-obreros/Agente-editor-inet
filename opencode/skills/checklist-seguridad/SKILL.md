@@ -43,7 +43,7 @@ Este skill es PREVENTIVO: se usa **antes** de que el alumno conecte el USB, carg
 | Potenciómetro | 3.3V | salida analógica al GPIO (0-4095 en ESP32) |
 | Servo SG90 | **VIN (5V)** | consume corriente; si tiembla, fuente externa + GND común |
 | HC-SR04 (ultrasónico) | **VIN (5V)** | ECHO devuelve 5V → **divisor** antes del GPIO |
-| PIR (movimiento) | **VIN (5V)** | salida suele ser 3.3V, OK directo |
+| PIR (movimiento) | **VIN (5V)** | OUT = 3.3V en el HC-SR501 (trae regulador), OK directo; sólo módulos mini sin regulador pueden dar 5V: medí antes |
 | LCD 16x2 (I2C) | ⚠️ **no hay respuesta simple** — leé la nota de abajo | SDA/SCL **NO** son tolerantes a 5V en el ESP32 |
 | DHT11/22 | 3.3V | la plaqueta de 3 pines **ya trae** su pull-up; sólo el sensor pelado de 4 patas necesita uno externo |
 | Relé | según módulo (muchos 5V → VIN) | separá la potencia de la lógica |

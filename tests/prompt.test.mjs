@@ -55,8 +55,11 @@ test("el bot puede INSTALAR PlatformIO, no sólo avisar que falta", () => {
   const sinCitas = prompt.replace(/«[^»]*»/g, "")
   assert.doesNotMatch(sinCitas, /No instalás PlatformIO autom/i,
     "el prompt sigue prohibiéndole instalar PlatformIO")
-  assert.match(prompt, /accion:\s*"reparar"|acción\s*`?reparar/i,
-    "el prompt no le dice que puede repararlo él")
+  // `action`, no `accion`: es el nombre real del parametro en platformio.ts
+  // (memoria y perfil usan `accion`; platformio no). El prompt decia `accion:
+  // "reparar"` y el modelo, obediente, mandaba un parametro que el schema no tiene.
+  assert.match(prompt, /action:\s*"reparar"/,
+    "el prompt no le dice que puede repararlo él (con el parámetro real, `action`)")
 
   // Y el aviso previo, que no es cortesía: son 60 MB y varios minutos. Arrancar
   // sin decir nada deja al docente mirando una pantalla quieta.
@@ -76,10 +79,12 @@ test("el prompt no nombra acciones de platformio que no existen", () => {
   const linea = prompt.split("\n").find((l) => l.includes("Las acciones son exactamente"))
   assert.ok(linea, "el prompt tiene que enumerar las acciones válidas")
   const citadas = [...linea.matchAll(/`([a-z]+)`/g)].map((m) => m[1])
-  const inventadas = citadas.filter((c) => !acciones.includes(c) && c !== "platformio")
+  // `platformio` es el tool y `action` el nombre del parámetro: no son acciones.
+  const inventadas = citadas.filter((c) => !acciones.includes(c) && c !== "platformio" && c !== "action")
   assert.deepEqual(inventadas, [], `el prompt nombra acciones que no existen: ${inventadas.join(", ")}`)
-  // Y que estén todas las que hay que usar.
-  for (const necesaria of ["compile", "flash", "both"]) {
+  // Y que estén TODAS las del tool: la lista decía «no existe ninguna otra» y
+  // faltaba `reparar`, así que el modelo se negaba a usar la acción que instala.
+  for (const necesaria of acciones) {
     assert.ok(citadas.includes(necesaria), `falta ${necesaria} en la lista del prompt`)
   }
 })

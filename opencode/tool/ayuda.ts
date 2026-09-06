@@ -61,7 +61,7 @@ Escribime en español, con tus palabras. Podés pedirme, por ejemplo:
 - *"dame algo para repartir del LDR"* — te abro la ficha A4 en el navegador, lista para imprimir
 - *"¿puedo prenderlo?"* — te chequeo la seguridad antes de dar corriente
 
-Comandos: \`/diagnostico\` (revisa que todo esté listo) · \`/actualizar\` (última versión).`
+Comandos: \`/diagnostico\` (revisa que todo esté listo) · \`/reparar\` (instala lo que falte, PlatformIO incluido) · \`/actualizar\` (última versión) · \`/ayuda\` (esto mismo).`
 
 export default tool({
   description: `Muestra la ayuda de Tecnia Bot: un resumen rapido de como usarlo (en el chat) y abre el manual completo en el navegador (offline). Usalo cuando el usuario pida ayuda, no sepa por donde empezar, pregunte "que podes hacer" o escriba /ayuda.`,

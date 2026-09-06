@@ -1,6 +1,6 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -12,43 +12,221 @@ interface RunResult {
 
 // PlatformIO casi nunca queda en el PATH tras instalarse (ni en Linux ni en Windows).
 // Buscamos el binario en las rutas de instalación conocidas antes de caer al PATH.
+//
+// Solo se cachea una ruta REAL. La primera version cacheaba tambien el fallback
+// "pio": si el tool arrancaba sin PlatformIO, se quedaba con "pio" para siempre y
+// despues de que `reparar` lo instalara seguia sin encontrarlo (y `compile`
+// fallaba hasta reiniciar OpenCode).
 let pioPathCache: string | null = null
-function pioBin(): string {
-  if (pioPathCache) return pioPathCache
+
+function pioCandidatos(): string[] {
   const home = homedir()
-  const candidates =
-    process.platform === "win32"
-      ? [join(home, ".platformio", "penv", "Scripts", "pio.exe")]
-      : [join(home, ".platformio", "penv", "bin", "pio")]
-  for (const candidate of candidates) {
+  return process.platform === "win32"
+    ? [join(home, ".platformio", "penv", "Scripts", "pio.exe")]
+    : [join(home, ".platformio", "penv", "bin", "pio")]
+}
+
+export function resetPioCache(): void {
+  pioPathCache = null
+}
+
+export function pioBin(): string {
+  if (pioPathCache) return pioPathCache
+  for (const candidate of pioCandidatos()) {
     if (existsSync(candidate)) {
       pioPathCache = candidate
       return candidate
     }
   }
-  pioPathCache = "pio" // fallback: confiar en el PATH del sistema
-  return "pio"
+  return "pio" // fallback: confiar en el PATH del sistema (sin cachear)
 }
 
-async function run(cmd: string[], cwd: string, signal?: AbortSignal): Promise<RunResult> {
+// Resuelve de nuevo, sin cache: hay binario en las rutas conocidas o en el PATH.
+// Nunca hace existsSync("pio"): eso mira un archivo relativo al cwd, no el PATH.
+export function pioDisponible(): boolean {
+  resetPioCache()
+  return pioCandidatos().some((c) => existsSync(c)) || Bun.which("pio") !== null
+}
+
+/*
+ * CUANTO SE ESPERA A CADA COMANDO, y por que dos numeros distintos.
+ *
+ * La primera vez que se compila para una placa nueva, `pio run` baja el
+ * toolchain entero (cientos de MB) con una barra de progreso que por el pipe no
+ * se ve: minutos de silencio total. En el aula eso se leia como "se colgo", y
+ * sin timeout la unica salida era cerrar OpenCode. Con 15 minutos alcanza para
+ * cualquier red que anda; si no termina, se lo decimos en vez de esperar para
+ * siempre. Lo mismo vale para la carga: `tool-avrdude`/`esptool` se bajan en
+ * el PRIMER upload, no en el compile.
+ *
+ * Los comandos de consulta (`pio --version`, `pio device list`, PowerShell)
+ * tardan segundos: si a los 60 s no contestaron, algo esta roto.
+ *
+ * Se puede acortar por variable de entorno (la usan los tests para probar el
+ * camino del timeout sin esperar 15 minutos).
+ */
+const TIMEOUT_CORTO_MS = 60_000
+export function timeoutLargoMs(): number {
+  const n = Number(process.env.TECNIA_PIO_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 15 * 60_000
+}
+
+/** Lo que devuelve `run()` cuando el comando no termino a tiempo (mismo codigo que `timeout(1)`). */
+export const CODIGO_TIMEOUT = 124
+/** Lo que devuelve `run()` cuando el usuario corto la accion desde OpenCode (Ctrl+C: 128+SIGINT). */
+export const CODIGO_CANCELADO = 130
+
+/**
+ * Una sola senal que se dispara si CUALQUIERA de las dos se dispara. Bun trae
+ * `AbortSignal.any` en las versiones nuevas; si no esta, se compone a mano.
+ */
+function combinarSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
+  const lista = signals.filter((s): s is AbortSignal => s !== undefined)
+  const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any
+  if (typeof anyFn === "function") return anyFn.call(AbortSignal, lista)
+  const ctrl = new AbortController()
+  for (const s of lista) {
+    if (s.aborted) {
+      ctrl.abort(s.reason)
+      break
+    }
+    s.addEventListener("abort", () => ctrl.abort(s.reason), { once: true })
+  }
+  return ctrl.signal
+}
+
+/**
+ * Corre un comando y devuelve codigo + salida, sin colgarse.
+ *
+ * El ORDEN importa: stdout y stderr se leen ANTES de esperar `exited`. Al reves,
+ * el proceso se bloquea al llenar el buffer del pipe y el tool espera a un
+ * proceso que espera al tool.
+ *
+ * El timeout y el `ctx.abort` de OpenCode se combinan en una sola senal: se le
+ * pasa a Bun (que mata el proceso) Y se corre una carrera contra la lectura,
+ * porque si el proceso ignora la senal —o quedo colgado en una descarga— los
+ * pipes no se cierran nunca y `await` no vuelve.
+ */
+export async function run(
+  cmd: string[],
+  cwd: string,
+  signal?: AbortSignal,
+  timeoutMs: number = TIMEOUT_CORTO_MS,
+): Promise<RunResult> {
   // Resolvemos "pio" a la ruta real del binario (PATH-independiente)
   if (cmd[0] === "pio") cmd = [pioBin(), ...cmd.slice(1)]
+  const porTiempo = AbortSignal.timeout(timeoutMs)
+  const corte = combinarSignals(signal, porTiempo)
+  const resultadoCorte = (): RunResult =>
+    porTiempo.aborted
+      ? {
+          code: CODIGO_TIMEOUT,
+          stdout: "",
+          stderr: `El comando no termino en ${describirDuracion(timeoutMs)} y se corto: ${cmd.join(" ")}`,
+        }
+      : { code: CODIGO_CANCELADO, stdout: "", stderr: "Cancelado por el usuario." }
+
+  if (corte.aborted) return resultadoCorte()
+
+  const lanzar = () => Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", signal: corte })
+  let proc: ReturnType<typeof lanzar>
   try {
-    const proc = Bun.spawn(cmd, {
-      cwd,
-      stdout: "pipe",
-      stderr: "pipe",
-      ...(signal ? { signal } : {}),
-    })
+    proc = lanzar()
+  } catch {
+    return { code: 127, stdout: "", stderr: "command not found" }
+  }
+
+  const lectura = (async (): Promise<RunResult> => {
     const [stdout, stderr] = await Promise.all([
       new Response(proc.stdout).text(),
       new Response(proc.stderr).text(),
     ])
     const code = await proc.exited
     return { code, stdout, stderr }
+  })()
+  // Nunca rechaza: si gana la carrera, el resultado se arma abajo.
+  const cortado = new Promise<"cortado">((resolve) => corte.addEventListener("abort", () => resolve("cortado"), { once: true }))
+
+  const ganador = await Promise.race([lectura, cortado])
+  if (ganador !== "cortado") return ganador
+
+  // Por si Bun no lo mato solo (o el mock de los tests no lo hace).
+  try {
+    proc.kill()
   } catch {
-    return { code: 127, stdout: "", stderr: "command not found" }
+    /* ya estaba muerto */
   }
+  // Que la lectura pendiente no quede como rechazo sin atender si el pipe revienta al matarlo.
+  lectura.catch(() => {})
+  return resultadoCorte()
+}
+
+function describirDuracion(ms: number): string {
+  if (ms >= 60_000) {
+    const min = Math.round(ms / 60_000)
+    return `${min} minuto${min === 1 ? "" : "s"}`
+  }
+  return `${Math.max(1, Math.round(ms / 1000))} segundo${ms >= 1500 ? "s" : ""}`
+}
+
+/**
+ * Lo que se le dice al docente cuando compilar o cargar no termino a tiempo.
+ * La causa casi siempre es la descarga inicial del toolchain, que por el pipe
+ * no muestra progreso: el segundo intento arranca con todo bajado.
+ */
+function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number): string {
+  return (
+    `No termine de ${que} en ${describirDuracion(timeoutMs)}. ` +
+    "PlatformIO sigue descargando herramientas o se colgó; probá de nuevo, la segunda vez es rápido " +
+    "(lo que ya se bajo queda guardado). Si vuelve a pasar, corré `/diagnostico`: puede ser la red " +
+    "de la escuela bloqueando las descargas."
+  )
+}
+
+/**
+ * Recorta una salida larga para que llegue al modelo lo que sirve.
+ *
+ * POR QUE. Un `pio run` con warnings tira 3000 lineas por stderr. Todo eso iba
+ * al chat, y `traducirError()` solo mira la primera linea con `error:`. El
+ * modelo recibia una pared de texto para encontrar una linea.
+ *
+ * Que se conserva: las 15 lineas antes y despues del PRIMER `error:` (o
+ * `Error`), que es donde esta el contexto del error de compilacion, y las
+ * ultimas 10, que es donde PlatformIO dice como termino (`*** [upload] Error 1`,
+ * `[FAILED] Took 3.21 seconds`). Lo demas se marca como omitido, con el numero,
+ * para que se sepa que falta algo y cuanto.
+ *
+ * Es una funcion pura para poder probarla sin compilar nada. Y hay que llamar a
+ * `traducirError()` con el texto COMPLETO, antes de recortar.
+ */
+export function recortarSalida(texto: string, maxLineas = 40): string {
+  const lineas = texto.replace(/\r\n?/g, "\n").trimEnd().split("\n")
+  if (lineas.length <= maxLineas) return lineas.join("\n")
+
+  const CONTEXTO = 15
+  const COLA = 10
+  const n = lineas.length
+  const marcar = (omitidas: number) => `… (${omitidas} línea${omitidas === 1 ? "" : "s"} omitida${omitidas === 1 ? "" : "s"})`
+
+  const iError = lineas.findIndex((l) => /error:|Error/.test(l))
+  // Rangos [desde, hasta) a conservar, en orden, sin solaparse.
+  const rangos: Array<[number, number]> = []
+  if (iError >= 0) rangos.push([Math.max(0, iError - CONTEXTO), Math.min(n, iError + CONTEXTO + 1)])
+  else rangos.push([0, CONTEXTO])
+  const cola: [number, number] = [Math.max(0, n - COLA), n]
+  const ultimo = rangos[rangos.length - 1]!
+  if (cola[0] <= ultimo[1]) ultimo[1] = n
+  else rangos.push(cola)
+
+  const salida: string[] = []
+  let cursor = 0
+  for (const [desde, hasta] of rangos) {
+    if (desde > cursor) salida.push(marcar(desde - cursor))
+    salida.push(...lineas.slice(desde, hasta))
+    cursor = hasta
+  }
+  if (cursor < n) salida.push(marcar(n - cursor))
+  return salida.join("\n")
 }
 
 // Envuelve un valor entre comillas dobles solo si contiene espacios (o esta vacio).
@@ -362,8 +540,19 @@ export function leerDispositivosConProblema(
  */
 async function placasSinDriver(cwd: string, signal?: AbortSignal) {
   if (process.platform !== "win32") return []
+  /*
+   * `Get-CimInstance` y no `Get-WmiObject`: la misma clase y las mismas
+   * propiedades, pero el cmdlet viejo no existe en PowerShell 7 —y en algunas
+   * maquinas `powershell` resuelve a pwsh 7—, con lo que la consulta fallaba en
+   * silencio y el diagnostico decia "ninguna placa" con la placa enchufada.
+   *
+   * Y la salida se pide en UTF-8: por defecto PowerShell escribe al pipe en la
+   * pagina de codigos OEM, `run()` la decodifica como UTF-8, y un "Puerto de
+   * comunicaciones" con tilde llegaba roto al chat.
+   */
   const ps =
-    "Get-WmiObject Win32_PnPEntity -ErrorAction SilentlyContinue | " +
+    "[Console]::OutputEncoding=[Text.Encoding]::UTF8; " +
+    "Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue | " +
     "Where-Object { $_.ConfigManagerErrorCode -ne 0 } | " +
     "Select-Object Name, DeviceID, ConfigManagerErrorCode | ConvertTo-Json -Compress"
   const r = await run(["powershell", "-NoProfile", "-Command", ps], cwd, signal)
@@ -396,14 +585,14 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
 
   if (candidates.length === 0) {
     const otros = devices.filter((d) => !identificar(d.hwid, d.description).esPlaca)
-    const detalle =
-      otros.length > 0
-        ? ` Veo ${otros.length === 1 ? "un puerto serie" : `${otros.length} puertos serie`} (${otros
-            .map((d) => d.port)
-            .join(", ")}), pero ${otros.length === 1 ? "no es" : "ninguno es"} una placa: ${
-            identificar(otros[0].hwid, otros[0].description).motivo
-          }.`
-        : ""
+    const primero = otros[0]
+    const detalle = primero
+      ? ` Veo ${otros.length === 1 ? "un puerto serie" : `${otros.length} puertos serie`} (${otros
+          .map((d) => d.port)
+          .join(", ")}), pero ${otros.length === 1 ? "no es" : "ninguno es"} una placa: ${
+          identificar(primero.hwid, primero.description).motivo
+        }.`
+      : ""
     return {
       error:
         `No encuentro ninguna placa conectada. Conectá el Arduino o el ESP32 por USB y probá de nuevo.${detalle}` +
@@ -411,13 +600,70 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
     }
   }
 
-  if (candidates.length === 1) {
-    return { port: candidates[0].port }
+  const unica = candidates[0]
+  if (unica && candidates.length === 1) {
+    return { port: unica.port }
   }
 
   const lista = candidates.map((d, i) => `${i + 1}. ${d.port}${d.description ? ` (${d.description})` : ""}`).join("\n")
   return {
     error: `Hay varios dispositivos conectados. Indicame cual es el tuyo:\n${lista}\n\nVolve a intentar con el parametro 'port' especificando el puerto que corresponde.`,
+  }
+}
+
+/** Una sola forma de decir "reinstala desde cero": la misma en este tool y en /actualizar. */
+const CLONAR_REPO =
+  "descarga el proyecto de nuevo con `git clone https://github.com/programadores-obreros/Agente-editor-inet.git` " +
+  "(o el ZIP desde esa pagina) y corre `bash install/bootstrap.sh` adentro de la carpeta."
+const REINSTALAR_DESDE_CERO =
+  "Baja el instalador de la ultima version publicada, " +
+  "https://github.com/programadores-obreros/Agente-editor-inet/releases/latest " +
+  "(`Instalar-Tecnia-Bot.exe`), y corrilo una vez: instala solo lo que falte y no borra tu trabajo. " +
+  "En Linux/Mac, " + CLONAR_REPO
+
+/**
+ * Los baudios del monitor salen del `monitor_speed` del platformio.ini.
+ *
+ * La descripcion del tool prometia "puerto y baudios automaticos" y el codigo
+ * hacia `args.baud ?? 9600`. El ini que el propio prompt genera para ESP32 dice
+ * `monitor_speed = 115200`: el monitor abria a 9600 y el docente veia basura
+ * en pantalla, con el dato correcto escrito a dos lineas de distancia.
+ *
+ * Es una funcion pura sobre el TEXTO del ini para poder probarla sin disco.
+ * Prioridad: el environment pedido, despues la seccion comun `[env]`, despues
+ * el primer `monitor_speed` que aparezca en cualquier `[env:*]`.
+ */
+export function leerMonitorSpeed(iniText: string, env?: string): number | null {
+  const porSeccion = new Map<string, number>()
+  const orden: string[] = []
+  let seccion = ""
+  for (const cruda of iniText.split(/\r?\n/)) {
+    const linea = cruda.replace(/[;#].*$/, "").trim()
+    const cab = linea.match(/^\[([^\]]+)\]$/)
+    if (cab) {
+      seccion = (cab[1] ?? "").trim()
+      continue
+    }
+    const kv = linea.match(/^monitor_speed\s*=\s*(\d+)\s*$/)
+    if (kv && seccion && !porSeccion.has(seccion)) {
+      porSeccion.set(seccion, Number(kv[1] ?? 0))
+      orden.push(seccion)
+    }
+  }
+  if (env && porSeccion.has(`env:${env}`)) return porSeccion.get(`env:${env}`)!
+  if (porSeccion.has("env")) return porSeccion.get("env")!
+  const primero = orden.find((s) => s.startsWith("env:"))
+  return primero ? porSeccion.get(primero)! : null
+}
+
+/** El monitor_speed del platformio.ini de `cwd`, o null si no hay ini o no lo declara. */
+function monitorSpeedDelProyecto(cwd: string, env?: string): number | null {
+  const ini = join(cwd, "platformio.ini")
+  if (!existsSync(ini)) return null
+  try {
+    return leerMonitorSpeed(readFileSync(ini, "utf8"), env)
+  } catch {
+    return null
   }
 }
 
@@ -442,9 +688,12 @@ function pioNoEncontrado() {
   return (
     "PlatformIO no esta instalado.\n\n" +
     "COMO SE ARREGLA (no hay que instalar nada aparte, ni VS Code, ni Python a mano):\n" +
-    "  1. Menu inicio -> 'Reparar Tecnia Bot'.\n" +
-    "     Instala PlatformIO Core solo, sin preguntar nada.\n" +
-    "  2. Si despues de eso sigue faltando, es la RED y no la maquina:\n" +
+    "  1. Instalalo VOS ahora: llama a este mismo tool con action: \"reparar\".\n" +
+    "     Avisale antes al usuario que tarda unos minutos y baja unos 60 MB.\n" +
+    "  2. Plan B, solo si la reparacion desde aca no pudo correr (el tool lo dice):\n" +
+    "     Menu inicio -> 'Reparar Tecnia Bot'. Hace exactamente lo mismo.\n" +
+    "     En Linux/Mac, el tool devuelve el comando exacto (bash install/bootstrap.sh).\n" +
+    "  3. Si despues de eso sigue faltando, es la RED y no la maquina:\n" +
     "     menu inicio -> 'Diagnostico de Tecnia Bot'. Deja un .txt que dice si\n" +
     "     esta maquina llega a pypi.org, que es de donde se baja.\n\n" +
     "Mientras tanto Tecnia Bot sirve igual para explicar, dibujar circuitos y\n" +
@@ -459,8 +708,9 @@ Acciones:
 - compile: compilar el proyecto actual
 - flash: cargar el codigo en el dispositivo
 - both: compilar y cargar en un solo paso
-- monitor: abre una ventana de terminal aparte con el monitor serial ya corriendo (puerto y baudios automaticos). NO requiere un proyecto ni codigo cargado: sirve para ver los datos que manda la placa y para mandarle teclas (ej: comandar un servo desde el teclado). Cuando el usuario pida "ver el monitor serial", "abrir la terminal serial" o similar, llama a esta accion DIRECTAMENTE, sin pedir ni crear un proyecto.
-- diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)`,
+- monitor: abre una ventana de terminal aparte con el monitor serial ya corriendo. El puerto se detecta solo (si hay varias placas, pide elegir). Los baudios: si no pasas 'baud', lee el monitor_speed del platformio.ini de la carpeta actual (del environment que indiques, o el primero que tenga uno) y si no hay ninguno usa 9600. NO requiere codigo cargado: sirve para ver los datos que manda la placa y para mandarle teclas (ej: comandar un servo desde el teclado). Cuando el usuario pida "ver el monitor serial", "abrir la terminal serial" o similar, llama a esta accion DIRECTAMENTE, sin pedir ni crear un proyecto.
+- diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)
+- reparar: instala PlatformIO Core cuando falta, corriendo el instalador de Tecnia Bot (en Linux/Mac devuelve el comando exacto para hacerlo a mano). Tarda unos minutos y baja unos 60 MB: avisale antes.`,
   args: {
     action: tool.schema
       .enum(["compile", "flash", "both", "monitor", "diagnostico", "reparar"])
@@ -469,8 +719,9 @@ Acciones:
         "monitor: abre el monitor serie. diagnostico: informa que hay y que falta. " +
         "reparar: INSTALA PlatformIO cuando falta, corriendo el instalador de Tecnia Bot. " +
         "Usa 'reparar' apenas veas que falta PlatformIO y el usuario quiera compilar o " +
-        "cargar codigo — no lo mandes a buscar nada al menu inicio, hacelo vos. Tarda " +
-        "unos minutos y baja unos 60 MB, asi que avisale antes de arrancar."
+        "cargar codigo: hacelo vos. El acceso directo del menu inicio, Reparar Tecnia Bot, " +
+        "es el plan B, solo si desde aca no se pudo correr. Tarda unos minutos y baja unos " +
+        "60 MB, asi que avisale antes de arrancar."
       ),
     port: tool.schema
       .string()
@@ -480,7 +731,7 @@ Acciones:
       .number()
       .optional()
       .describe(
-        "Velocidad del monitor serial en baudios (default 9600). Debe coincidir con el valor de Serial.begin(...) del sketch (ej: 115200 para muchos ESP32).",
+        "Velocidad del monitor serial en baudios. Si no se indica, se usa el monitor_speed del platformio.ini de la carpeta actual y, si no hay, 9600. Debe coincidir con el valor de Serial.begin(...) del sketch (ej: 115200 para muchos ESP32).",
       ),
     environment: tool.schema
       .string()
@@ -496,7 +747,34 @@ Acciones:
     const signal = ctx.abort
     const envFlag = args.environment ? ["-e", args.environment] : []
 
-    if (args.action !== "diagnostico") {
+    // Compilar y cargar son los dos comandos largos (descargan toolchain la primera vez).
+    const compilar = () => run(["pio", "run", ...envFlag], cwd, signal, timeoutLargoMs())
+    const cargar = (puerto: string) =>
+      run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal, timeoutLargoMs())
+
+    /*
+     * Primero se traduce sobre el texto COMPLETO (el patron puede estar en
+     * cualquier linea) y recien despues se recorta lo que se muestra: si fuera
+     * al reves, un error que quedo fuera de la ventana perderia su traduccion.
+     */
+    const explicarFalla = (r: RunResult) => {
+      const traduccion = traducirError(r.stderr, r.stdout)
+      const original = recortarSalida(r.stderr.trim() ? r.stderr : r.stdout)
+      return `**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${original}\n\`\`\``
+    }
+    // Timeout o cancelacion no son errores de compilacion: no se traducen, se explican.
+    const noTermino = (r: RunResult, que: "compilar" | "cargar el codigo"): string | null =>
+      r.code === CODIGO_TIMEOUT
+        ? mensajeTimeout(que, timeoutLargoMs())
+        : r.code === CODIGO_CANCELADO
+          ? `Se cancelo la accion antes de terminar de ${que}.`
+          : null
+
+    // `diagnostico` informa que falta, y `reparar` existe PARA cuando falta: si
+    // el pre-chequeo corriera tambien para `reparar`, devolveria "anda al menu
+    // inicio" y la rama de reparacion seria inalcanzable justo en el unico caso
+    // para el que se escribio. Paso en la VM: /reparar no instalaba nada.
+    if (args.action !== "diagnostico" && args.action !== "reparar") {
       const check = await run(["pio", "--version"], cwd, signal)
       if (check.code === 127 || check.stderr.includes("command not found") || check.stderr.includes("is not recognized")) {
         return pioNoEncontrado()
@@ -520,7 +798,14 @@ Acciones:
          * conversacion. Estuvimos tres rondas pidiendo un log por foto.
          */
         if (process.platform !== "win32") {
-          return "La reparacion automatica es solo para Windows. En Linux o Mac, instala PlatformIO Core con el instalador oficial de tu sistema."
+          return (
+            "La reparacion automatica es solo para Windows (corre el bootstrap.ps1 del instalador). " +
+            "En Linux o Mac se arregla con UN comando, en una terminal, parado en la carpeta del proyecto " +
+            "(la que se clono al instalar, `Agente-editor-inet`):\n\n" +
+            "```\nbash install/bootstrap.sh\n```\n\n" +
+            "Instala lo que falte (PlatformIO Core incluido) y no toca lo que ya esta. " +
+            "Si esa carpeta ya no existe: " + CLONAR_REPO
+          )
         }
 
         const appDir = join(process.env.LOCALAPPDATA ?? "", "TecniaBot")
@@ -529,7 +814,7 @@ Acciones:
           return (
             "No encuentro el instalador en esta maquina (`" + bootstrap + "`).\n\n" +
             "Suele pasar cuando Tecnia Bot se instalo a mano o con una version muy vieja. " +
-            "Baja el instalador de https://tecnialab.net.ar/tecnia-bot/ y corrilo una vez."
+            REINSTALAR_DESDE_CERO
           )
         }
 
@@ -549,12 +834,14 @@ Acciones:
          * La diferencia importa: si algo mas seguia roto, el docente se iba
          * convencido de que la reparacion se hizo.
          */
-        const pioAntes = existsSync(pioBin()) || Bun.which("pio") !== null
+        const pioAntes = pioDisponible()
 
+        // El bootstrap baja e instala PlatformIO: son minutos, como una compilacion.
         const result = await run(
           ["powershell", "-ExecutionPolicy", "Bypass", "-NoProfile", "-File", bootstrap],
           appDir,
           signal,
+          timeoutLargoMs(),
         )
 
         // 127 es lo que devuelve run() cuando ni siquiera pudo lanzar el proceso.
@@ -568,7 +855,9 @@ Acciones:
           )
         }
 
-        const pioAhora = existsSync(pioBin()) || Bun.which("pio") !== null
+        // Se vuelve a resolver sin cache: el chequeo inicial de `pio --version`
+        // corrio cuando todavia no estaba instalado.
+        const pioAhora = pioDisponible()
         // Las ultimas lineas, que es donde el bootstrap dice como le fue. El log
         // entero son cientos de lineas de descarga que no le sirven a nadie.
         const salida = (result.stdout + "\n" + result.stderr)
@@ -603,10 +892,9 @@ Acciones:
       }
 
       case "compile": {
-        const result = await run(["pio", "run", ...envFlag], cwd, signal)
+        const result = await compilar()
         if (result.code === 0) return "Compilacion exitosa. El codigo esta listo para cargar al dispositivo."
-        const traduccion = traducirError(result.stderr, result.stdout)
-        return `Hubo un error al compilar:\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${result.stderr.trim()}\n\`\`\``
+        return noTermino(result, "compilar") ?? `Hubo un error al compilar:\n\n${explicarFalla(result)}`
       }
 
       case "flash": {
@@ -616,17 +904,15 @@ Acciones:
           if ("error" in detected) return detected.error
           puerto = detected.port
         }
-        const result = await run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal)
+        const result = await cargar(puerto)
         if (result.code === 0) return `Codigo cargado exitosamente en ${puerto}.`
-        const traduccion = traducirError(result.stderr, result.stdout)
-        return `Error al cargar el codigo:\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${result.stderr.trim()}\n\`\`\``
+        return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
       }
 
       case "both": {
-        const compile = await run(["pio", "run", ...envFlag], cwd, signal)
+        const compile = await compilar()
         if (compile.code !== 0) {
-          const traduccion = traducirError(compile.stderr, compile.stdout)
-          return `Error al compilar (no se intento cargar):\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${compile.stderr.trim()}\n\`\`\``
+          return noTermino(compile, "compilar") ?? `Error al compilar (no se intento cargar):\n\n${explicarFalla(compile)}`
         }
         let puerto = args.port
         if (!puerto) {
@@ -634,14 +920,22 @@ Acciones:
           if ("error" in detected) return detected.error
           puerto = detected.port
         }
-        const flash = await run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal)
+        const flash = await cargar(puerto)
         if (flash.code === 0) return `Compilacion y carga exitosa en ${puerto}.`
-        const traduccion = traducirError(flash.stderr, flash.stdout)
-        return `La compilacion fue bien pero hubo un error al cargar:\n\n**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${flash.stderr.trim()}\n\`\`\``
+        return (
+          noTermino(flash, "cargar el codigo") ??
+          `La compilacion fue bien pero hubo un error al cargar:\n\n${explicarFalla(flash)}`
+        )
       }
 
       case "monitor": {
-        const baud = args.baud ?? 9600
+        const baudDelIni = args.baud ? null : monitorSpeedDelProyecto(cwd, args.environment)
+        const baud = args.baud ?? baudDelIni ?? 9600
+        const origenBaud = args.baud
+          ? ""
+          : baudDelIni
+            ? " (el monitor_speed de tu platformio.ini)"
+            : " (el valor por defecto: si tu sketch usa otro Serial.begin, pedime esos baudios)"
 
         // Resolvemos el puerto automaticamente (el docente no tiene que saber que es COM3).
         let puerto = args.port
@@ -659,7 +953,7 @@ Acciones:
         // Comando "pelado" listo para copiar y pegar en una terminal (fallback / instrucciones).
         const comandoManual = `${quoteIfNeeded(pioPath)} device monitor --port ${puerto} --baud ${baud}`
 
-        const mensajeExito = `Abri una ventana nueva (negra) con el monitor serial en ${puerto} a ${baud} baudios. Ahi vas a ver los datos de la placa y podes apretar teclas para comandarla. Para cerrarlo, apreta Ctrl+C en esa ventana.`
+        const mensajeExito = `Abri una ventana nueva (negra) con el monitor serial en ${puerto} a ${baud} baudios${origenBaud}. Ahi vas a ver los datos de la placa y podes apretar teclas para comandarla. Para cerrarlo, apreta Ctrl+C en esa ventana.`
 
         const mensajeManual = `No pude abrir una ventana nueva automaticamente en este equipo, pero es facil hacerlo a mano:
 
@@ -670,7 +964,7 @@ Acciones:
 ${comandoManual}
 \`\`\`
 
-Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, apreta Ctrl+C en esa ventana.`
+Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Para cerrarlo, apreta Ctrl+C en esa ventana.`
 
         // Windows: `start` abre una ventana nueva y vuelve al instante, asi que `run()` no cuelga.
         // El primer argumento entre comillas de `start` es el TITULO de la ventana, por eso va
@@ -769,9 +1063,8 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, a
            * código de error. Decir "no hay ninguna placa" cuando está enchufada
            * manda al docente a revisar el cable durante media hora.
            */
-          const rotas = await placasSinDriver(cwd, signal)
-          if (rotas.length > 0) {
-            const d = rotas[0]
+          const d = (await placasSinDriver(cwd, signal))[0]
+          if (d) {
             estado =
               `**Hay una placa enchufada, pero Windows no la puede usar.**\n\n` +
               `Ve un \`${d.nombre}\` y ${d.problema}.\n\n` +

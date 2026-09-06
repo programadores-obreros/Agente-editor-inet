@@ -17,6 +17,7 @@ import { RGBA, TextAttributes } from "@opentui/core"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 
 // Robot en arte Unicode. Solo caracteres presentes en la fuente de consola de
 // Windows (Consolas): bloques █ y box-drawing ━┃┏┓┗┛┻╻. Nada de ◕/‿ (salen □).
@@ -54,17 +55,18 @@ const TIPS: string[] = [
   'Escribí /actualizar para traer la última versión',
 ]
 
-// Key de respaldo hardcodeada en install.ps1/install.sh (v0.3.36) -- si la que
-// esta guardada coincide con esta, el usuario nunca puso la suya. Ver
-// CHANGELOG [0.3.36] e issue #4 del repo para el porque de esta decision.
-const FALLBACK_KEY = "AQ.Ab8RN6JscK6NsgkvLXY0RfzoGCdIVVQYs7xUYNtxM377VgPZRA"
+// La key compartida que traian install.ps1/install.sh hasta la v0.3.75 (ver
+// CHANGELOG [0.3.36] por la decision original) se elimino del codigo y se roto:
+// en las maquinas que la tienen guardada es una credencial MUERTA. Se la reconoce
+// por su SHA-256 -- el literal no vuelve a este repo, y un test lo verifica.
+const HASH_KEY_VIEJA = "121163b85b0396edcfcc4840981d823c4f1e9c23aadc72b39c9723fef70cf3b4"
 
 type EstadoKey = "sin-key" | "fallback" | "propia"
 
 // Lee ~/.local/share/opencode/auth.json (respeta XDG_DATA_HOME, igual que
-// install.sh) para saber si hay una key de Google propia, la de respaldo
-// compartida, o ninguna. Sincrono y defensivo: si algo falla, avisamos igual
-// (mejor un tip de mas que dejar a alguien sin saber que le falta la key).
+// install.sh) para saber si hay una key de Google propia, la compartida vieja
+// (muerta), o ninguna. Sincrono y defensivo: si algo falla, se asume "sin-key",
+// que es el estado que no rompe nada (el agente corre en Big Pickle).
 function estadoDeLaKey(): EstadoKey {
   try {
     const dataDir = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
@@ -73,7 +75,8 @@ function estadoDeLaKey(): EstadoKey {
     const data = JSON.parse(readFileSync(authFile, "utf8")) as { google?: { key?: string } }
     const key = data?.google?.key
     if (!key) return "sin-key"
-    return key === FALLBACK_KEY ? "fallback" : "propia"
+    const hash = createHash("sha256").update(String(key), "utf8").digest("hex")
+    return hash === HASH_KEY_VIEJA ? "fallback" : "propia"
   } catch {
     return "sin-key"
   }
@@ -218,15 +221,17 @@ const tui: TuiPlugin = async (api) => {
   const version = versionInstalada()
   const nueva = await hayVersionNueva()
 
-  // Si no hay key propia (ninguna, o la de respaldo compartida), avisamos
-  // SIEMPRE con la URL directa -- pisa el tip aleatorio, porque esto importa
-  // más. Con key propia ya puesta, no molestamos: tip normal, al azar.
+  // Sin key propia el agente corre en Big Pickle (gratis por tiempo limitado; las
+  // conversaciones pueden usarse para mejorar el modelo): eso se dice SIEMPRE,
+  // pisando el tip aleatorio, porque este producto lo usan menores. Si la key
+  // guardada es la compartida vieja, esta muerta: se manda a Reparar, que la quita.
+  // Con key propia ya puesta, no molestamos: tip normal, al azar.
   const estadoKey = estadoDeLaKey()
   const avisoKey =
     estadoKey === "sin-key"
-      ? "Necesitás una API key gratis de Google para hablar con el modelo: aistudio.google.com/apikey, después escribí /connect"
+      ? "Usás Big Pickle, el modelo gratuito de OpenCode (por tiempo limitado; el chat puede usarse para mejorar el modelo). Para Gemini: key gratis en aistudio.google.com/apikey y 'Reparar Tecnia Bot'"
       : estadoKey === "fallback"
-        ? "Estás usando una key compartida temporal -- conseguite la tuya gratis (2 min, sin tarjeta) en aistudio.google.com/apikey y ponela con /connect"
+        ? "La key compartida guardada ya no es válida: corré 'Reparar Tecnia Bot' (menú inicio) o /actualizar para quitarla y seguir con Big Pickle"
         : null
   const tip = avisoKey ?? (TIPS[Math.floor(Math.random() * TIPS.length)] ?? TIPS[0])
   const label = avisoKey ? "Importante" : "Tip"

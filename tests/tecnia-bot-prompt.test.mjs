@@ -130,27 +130,25 @@ test("después de compilar, dice que TODAVÍA NO está en la placa", () => {
   assert.match(bloque, /sin preguntar/i, "no prohíbe cargar sin preguntar")
 })
 
-test("el modelo está FIJADO, no es un alias 'latest'", () => {
-  // La noche antes de una capacitación, un docente sacó una key nueva y el bot
-  // le contestó:
+test("el frontmatter NO declara modelo: lo decide el instalador", () => {
+  // Historia en dos actos.
   //
-  //   This model models/gemini-2.5-flash-lite is no longer available to NEW
-  //   USERS. Please update your code to use models/gemini-3.5-flash-lite
+  // 1) La v0.3.63 FIJÓ acá `google/gemini-3.5-flash-lite`: el alias `-latest`
+  //    resolvía a la 2.5, que las cuentas nuevas ya no podían usar, y el bot falló
+  //    la noche antes de una capacitación. Este test exigía un modelo fijado.
   //
-  // El agente pedía `gemini-flash-lite-latest`, un alias — y ese alias resolvía a
-  // la 2.5, que las cuentas nuevas ya no pueden usar. O sea: andaba en las
-  // máquinas viejas y fallaba en TODAS las nuevas. El peor tipo de bug para el
-  // día de una capacitación: invisible para el que probó, fatal para los 20 que
-  // llegan.
+  // 2) Después la key de Google pasó a ser opcional: sin key, Big Pickle. El
+  //    instalador escribe la elección en opencode.json (agent.tecnia-bot.model) y
+  //    se probó en una VM... y el agente siguió en Gemini. OpenCode hace
+  //    mergeDeep(config.agent, agentes .md) en config.ts: los .md se mezclan
+  //    ENCIMA del JSON, así que un `model:` acá gana SIEMPRE sobre opencode.json.
   //
-  // Un alias es una dependencia que cambia sola, sin avisar y sin quedar
-  // registrada en ningún commit. Fijar la versión hace que el día que haya que
-  // cambiarla sea una decisión, no una sorpresa.
-  const m = prompt.match(/^model:\s*(\S+)/m)
-  assert.ok(m, "el agente no declara modelo")
-  assert.doesNotMatch(m[1], /latest$/,
-    `el modelo es un alias ("${m[1]}"): puede cambiar solo y romper las cuentas nuevas`)
-  assert.match(m[1], /^google\/gemini-[\d.]+-/, `modelo inesperado: ${m[1]}`)
+  // Por eso el frontmatter no lleva `model`. El id fijado vive en install.ps1 e
+  // install.sh (tests/modelo.test.mjs verifica que coincidan y no sean alias).
+  const frontmatter = prompt.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  assert.ok(frontmatter, "el agente no tiene frontmatter")
+  assert.doesNotMatch(frontmatter[1], /^model:/m,
+    "el modelo lo decide el instalador; si lo ponés acá gana sobre opencode.json y rompe Big Pickle")
 })
 
 test("no pega el código: lo ofrece, junto con cargarlo", () => {
@@ -347,7 +345,8 @@ test("no confunde REPARAR con ACTUALIZAR, y no afirma sobre lo que no miró", ()
   // intacto, y cuando vuelve ya no confía en lo que el bot le dice.
   const bloque = bloqueDesde(prompt, "«Reparar» y «actualizar» NO son lo mismo")
   assert.ok(bloque, "el prompt no distingue reparar de actualizar")
-  assert.match(bloque, /accion:\s*"reparar"|`reparar`/i, "no dice qué llamar cuando piden reparar")
+  // Con el nombre real del parámetro (`action`): con `accion:` la llamada fallaba.
+  assert.match(bloque, /action:\s*"reparar"/, "no dice qué llamar cuando piden reparar")
   assert.match(bloque, /sólo sabe de versiones|no mira PlatformIO/i,
     "no acota lo que la tool `actualizar` puede afirmar")
 })

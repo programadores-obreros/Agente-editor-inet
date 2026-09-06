@@ -99,8 +99,8 @@ Reglas del Mermaid:
 
 Cuando el circuito lo amerite, agregá una nota de seguridad:
 
-- **LED:** siempre con resistencia (220Ω–330Ω) en serie, o se quema. Respetar polaridad (pata larga = positivo).
-- **ESP32:** trabaja a **3.3V**, no 5V. Conectar componentes de 5V a sus pines puede dañarlo. Usá una resistencia de 330Ω para LEDs (no 220Ω).
+- **LED:** siempre con resistencia en serie, o se quema: **220Ω en 3.3V (ESP32), 330Ω en 5V (UNO)**. Respetar polaridad (pata larga = positivo).
+- **ESP32:** trabaja a **3.3V**, no 5V. Conectar componentes de 5V a sus pines puede dañarlo. Para LEDs en 3.3V usá **220Ω, no 330Ω**: los 330Ω son una regla de 5V, y con un LED azul/blanco/verde InGaN (Vf ~3,2V) en 3.3V dejan 0,3 mA — no prende. Medí el Vf con el téster (ver skill `esp32`); los rojos (1,8-2,0V) andan con cualquiera de las dos.
 - **Sensores de 5V en ESP32:** usar divisor de tensión o módulo adaptador.
 - **Relay / 220V:** advertir SIEMPRE sobre el peligro de la tensión de red.
 

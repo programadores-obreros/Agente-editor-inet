@@ -30,19 +30,35 @@
 #
 # Ahora sale por pantalla Y queda en un archivo. El docente lee, y manda uno solo.
 # ----------------------------------------------------------------------------
+param(
+  # OPCIONAL: una carpeta compartida (p. ej. \\servidor\Compartido) donde dejar el
+  # reporte si esta al alcance. Antes iba FIJA la IP de una escuela, primera en la
+  # lista: en cualquier otra red, Test-Path contra una UNC inalcanzable se cuelga
+  # decenas de segundos antes de imprimir una sola linea -- justo en el script que
+  # se corre cuando algo ya no anda. Y el reporte trae datos de la maquina: a una
+  # carpeta ajena va solo si alguien lo pide.
+  #   powershell -ExecutionPolicy Bypass -File install\diagnostico.ps1 -Compartido \\servidor\Compartido
+  [string]$Compartido = ""
+)
 $ErrorActionPreference = "Continue"
 $U = $env:USERPROFILE
 
-# Donde dejar el reporte. El primero que exista gana.
-#
-# La carpeta compartida va primera a proposito: si esta, el reporte se puede leer
-# del otro lado sin pedirle nada a nadie. Si no esta -que es el caso de cualquier
-# maquina fuera de la escuela- cae al Escritorio, donde el docente lo encuentra.
+# Config de OpenCode: honra XDG_CONFIG_HOME, igual que install.ps1 y bootstrap.ps1.
+# Si aca se mirara siempre %USERPROFILE%\.config, en una maquina con esa variable
+# puesta el diagnostico diria "capa: FALTA" con la capa instalada, y el docente
+# volveria a correr el instalador en loop.
+$ocDir = "$U\.config\opencode"
+if ($env:XDG_CONFIG_HOME) { $ocDir = "$env:XDG_CONFIG_HOME\opencode" }
+
+# Donde dejar el reporte. El primero que exista gana: el Escritorio, donde el
+# docente lo encuentra; si no (perfil movido a OneDrive, escritorio redirigido),
+# al lado del programa; si no, TEMP. La carpeta compartida solo si se pidio.
 $destinos = @(
-  "\\192.168.100.9\Compartido",
   "$env:USERPROFILE\Desktop",
+  "$env:LOCALAPPDATA\TecniaBot",
   "$env:TEMP"
 )
+if ($Compartido) { $destinos = @($Compartido) + $destinos }
 $dir = $destinos | Where-Object { Test-Path $_ } | Select-Object -First 1
 $Reporte = Join-Path $dir ("tecniabot-diagnostico-" + $env:COMPUTERNAME + ".txt")
 
@@ -67,9 +83,39 @@ Dato "Usuario es admin" (([Security.Principal.WindowsPrincipal][Security.Princip
 Titulo "Lo que tiene que estar"
 Dato "Scoop" $(if (Get-Command scoop -EA SilentlyContinue) { "OK" } else { "FALTA" })
 $shim = "$U\scoop\shims\opencode.exe"
-Dato "shim de OpenCode" $(if (Test-Path $shim) { "OK" } else { "FALTA" })
+# El shim de Scoop pesa unos 20 KB. Si pesa MEGAS es el programa entero copiado a
+# mano ahi (lo hacia una version vieja del instalador): Scoop no lo administra, no
+# lo actualiza ni lo borra al desinstalar, y sigue corriendo la version vieja.
+Dato "shim de OpenCode" $(if (-not (Test-Path $shim)) { "FALTA" } elseif ((Get-Item $shim).Length -gt 1MB) { "binario copiado a mano (" + [math]::Round((Get-Item $shim).Length / 1MB, 1) + " MB), no administrado por Scoop" } else { "OK" })
 Dato "PlatformIO" $(if (Test-Path "$U\.platformio\penv\Scripts\pio.exe") { "OK" } else { "FALTA" })
-Dato "capa Tecnia Bot" $(if (Test-Path "$U\.config\opencode\agent\tecnia-bot.md") { "OK" } else { "FALTA" })
+Dato "capa Tecnia Bot" $(if (Test-Path "$ocDir\agent\tecnia-bot.md") { "OK" } else { "FALTA" })
+
+Titulo "OpenCode: la version que HAY vs la que se PROBO"
+# El instalador fija la version de OpenCode (install\OPENCODE_VERSION, un solo
+# archivo para Windows y Linux) y la deja fijada con `scoop hold`. Aca se mira si
+# esta maquina cumple las dos cosas, porque "OpenCode anda pero el bot hace algo
+# raro" casi siempre es una version que no es la probada.
+#
+# Lo que Scoop tiene ACTIVO se lee de scoop\apps\opencode\current\manifest.json.
+# El hold se lee de current\install.json, clave "hold": true -- es lo que escribe
+# `scoop hold` (libexec/scoop-hold.ps1). `scoop hold` sin argumentos NO lista
+# nada, imprime el uso: no sirve para detectarlo.
+$pinArchivo = Join-Path $PSScriptRoot "OPENCODE_VERSION"
+$pin = if (Test-Path $pinArchivo) { (Get-Content $pinArchivo -Raw).Trim() } else { "" }
+Dato "fijada (OPENCODE_VERSION)" $(if ($pin) { $pin } else { "NO ESTA el archivo install\OPENCODE_VERSION" })
+$ocActual = "$U\scoop\apps\opencode\current"
+$ocInstalada = ""
+try { if (Test-Path "$ocActual\manifest.json") { $ocInstalada = ("" + (Get-Content "$ocActual\manifest.json" -Raw | ConvertFrom-Json).version).Trim() } } catch { }
+Dato "instalada (Scoop)" $(if ($ocInstalada) { $ocInstalada } else { "no se pudo leer current\manifest.json" })
+if ($pin -and $ocInstalada -and $pin -ne $ocInstalada) {
+  Write-Host "     >> NO COINCIDEN: el bot se probo con la $pin. Reparar Tecnia Bot la activa si esta en el disco;" -ForegroundColor Yellow
+  Write-Host "        si no, en PowerShell: scoop install opencode@$pin" -ForegroundColor Yellow
+}
+$ocHold = $false
+try { if (Test-Path "$ocActual\install.json") { $ocHold = [bool]((Get-Content "$ocActual\install.json" -Raw | ConvertFrom-Json).hold) } } catch { }
+Dato "scoop hold" $(if ($ocHold) { "OK (no se actualiza sola)" } elseif (Test-Path "$ocActual\install.json") { "NO: 'scoop update' la puede cambiar. Reparar Tecnia Bot lo pone." } else { "no se pudo leer current\install.json" })
+$ocDirs = @(Get-ChildItem "$U\scoop\apps\opencode" -Directory -EA SilentlyContinue | Where-Object { $_.Name -ne "current" } | ForEach-Object { $_.Name })
+Dato "versiones en disco" $(if ($ocDirs.Count) { $ocDirs -join ", " } else { "ninguna" })
 
 Titulo "OpenCode: existe es una cosa, CORRE es otra"
 if (Get-Command opencode -EA SilentlyContinue) {
@@ -186,6 +232,66 @@ if (Test-Path $auth) {
 $envKey = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
 Dato "variable con la key" $(if ($envKey) { "puesta" } else { "NO esta" })
 
+Titulo "El modelo -- Gemini con key de Google, Big Pickle sin"
+# La key de Google es OPCIONAL. Sin key, el instalador deja al agente en
+# opencode/big-pickle (el modelo gratuito de OpenCode, sin cuenta); con key, en
+# Gemini. Lo decide en cada corrida y lo escribe como override del agente en
+# opencode.json ("agent" -> "tecnia-bot" -> "model"). Aca se informa que quedo
+# escrito y si es coherente con la key que hay: son las dos cosas que explican un
+# "configured model ... is not valid" o un "Invalid API key" con todo instalado.
+#
+# De auth.json se informa SOLO si hay una entrada "google" con key, nunca su valor.
+$ocCfg = @("$ocDir\opencode.json", "$ocDir\opencode.jsonc") | Where-Object { Test-Path $_ } | Select-Object -First 1
+$modelo = $null
+$cfgParsea = $false
+if ($ocCfg) {
+  Dato "config de OpenCode" $ocCfg
+  # Sin sacar comentarios: si es un .jsonc comentado no va a parsear y se informa
+  # eso, que ya es un dato (el instalador si los tolera).
+  try {
+    $cfg = Get-Content $ocCfg -Raw -EA Stop | ConvertFrom-Json -EA Stop
+    $cfgParsea = $true
+    if ($cfg.agent -and $cfg.agent.'tecnia-bot' -and $cfg.agent.'tecnia-bot'.model) { $modelo = [string]$cfg.agent.'tecnia-bot'.model }
+  } catch { }
+  if (-not $cfgParsea) { Dato "modelo de tecnia-bot" "no se pudo leer la config (no parsea como JSON)" }
+  elseif ($modelo) { Dato "modelo de tecnia-bot" $modelo }
+  else { Dato "modelo de tecnia-bot" "sin override en la config: usa el del archivo del agente (Gemini)" }
+} else {
+  Dato "config de OpenCode" "NO ESTA (ni opencode.json ni opencode.jsonc)"
+}
+# La key compartida que traian las versiones hasta la 0.3.75 se roto: una
+# instalacion vieja la tiene guardada y MUERTA. Se la reconoce por su SHA-256
+# (el literal no esta en ningun lado); de la key nunca se imprime nada.
+$HashKeyVieja = "121163b85b0396edcfcc4840981d823c4f1e9c23aadc72b39c9723fef70cf3b4"
+function Test-KeyVieja($k) {
+  if (-not $k) { return $false }
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  try { $h = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$k)) } finally { $sha.Dispose() }
+  return ((($h | ForEach-Object { $_.ToString("x2") }) -join "") -eq $HashKeyVieja)
+}
+$hayKey = $false
+$keyVieja = $false
+if (Test-Path $auth) {
+  try {
+    $authObj = [Text.Encoding]::UTF8.GetString($b) | ConvertFrom-Json
+    $hayKey = [bool](($authObj.PSObject.Properties.Name -contains "google") -and $authObj.google.key)
+    if ($hayKey) { $keyVieja = Test-KeyVieja $authObj.google.key }
+  } catch { }
+}
+if (Test-KeyVieja $envKey) { $keyVieja = $true }
+Dato "key de Google guardada" $(if ($hayKey) { "si" } else { "no" })
+if ($keyVieja) {
+  Write-Host "     >> Es la key de respaldo vieja (auth.json o la variable), ya invalida: corre 'Reparar Tecnia Bot' (menu inicio) para quitarla" -ForegroundColor Red
+}
+if ($hayKey -and $modelo -eq "opencode/big-pickle") {
+  Write-Host "     >> Hay key de Google pero el agente sigue en Big Pickle: corre 'Reparar Tecnia Bot' (menu inicio) y pasa a Gemini" -ForegroundColor Yellow
+}
+if (-not $hayKey -and ($modelo -like "google/*" -or ($cfgParsea -and -not $modelo))) {
+  Write-Host "     >> El agente apunta a Gemini y NO hay key de Google: falla al primer mensaje. Corre 'Reparar Tecnia Bot' (menu inicio)" -ForegroundColor Red
+}
+Write-Host "     Para cambiar: pega una key de Google (en Reparar, o con /connect y despues Reparar) y usa Gemini;"
+Write-Host "     sin key usa Big Pickle (gratis por tiempo limitado; OpenCode puede usar el chat para mejorar el modelo)."
+
 Titulo "Politica de ejecucion -- una GPO de escuela bloquea todo sin avisar"
 Get-ExecutionPolicy -List | ForEach-Object { Dato $_.Scope.ToString() $_.ExecutionPolicy }
 
@@ -232,9 +338,14 @@ if (Test-Path $oclog) {
 }
 
 Titulo "El log del bootstrap -- ACA esta en que paso murio"
+# instalacion.log es SIEMPRE la ultima corrida. Las anteriores quedan al lado como
+# instalacion-<fecha>.log: el bootstrap las rota y guarda hasta 5. Antes cada
+# "Reparar" pisaba el unico log, y se perdia justo la corrida que habia fallado.
 $bl = "$env:LOCALAPPDATA\TecniaBot\instalacion.log"
+$blViejos = @(Get-ChildItem "$env:LOCALAPPDATA\TecniaBot" -Filter "instalacion-*.log" -EA SilentlyContinue)
 if (Test-Path $bl) {
   Dato "archivo" $bl
+  Dato "corridas anteriores" $(if ($blViejos.Count) { "" + $blViejos.Count + " (instalacion-<fecha>.log, en la misma carpeta)" } else { "ninguna" })
   Write-Host "     --- ultimas lineas ---"
   Get-Content $bl | Where-Object { $_ -match '\[OK\]|\[X\]|\[!\]|\[\.\.\]|ERROR|WARN|Exception' } |
     Select-Object -Last 14 | ForEach-Object { Write-Host ("     " + $_.Trim()) }

@@ -49,7 +49,7 @@ Cada sensor sigue la misma estructura: voltaje, dificultad, librería, para qué
 ```cpp
 #include <DHT.h>            // Librería del sensor (instalar: "DHT sensor library")
 
-#define PIN_DHT 15          // GPIO donde está el DATA
+#define PIN_DHT 4           // GPIO donde está el DATA (el mismo de la tabla de arriba)
 #define TIPO DHT22          // Cambiar a DHT11 si usás el DHT11
 
 DHT dht(PIN_DHT, TIPO);     // Creamos el objeto sensor
@@ -190,7 +190,7 @@ void loop() {
 | OUT | 🟢 verde | GPIO13 |
 | GND | 🟤 marrón | GND |
 
-> ⚠️ Muchos módulos PIR dan **5V en OUT**. Verificá el tuyo: si da 5V, usá divisor de tensión antes del GPIO (igual que el HC-SR04).
+> ✅ **OUT = 3.3V en el HC-SR501, directo al GPIO.** El módulo trae un regulador de 3.3V a bordo: se alimenta de 5V (VIN) pero su salida es lógica de 3.3V, así que NO lleva divisor (a diferencia del ECHO del HC-SR04). Sólo módulos mini sin regulador pueden dar 5V en OUT: si el tuyo no es un HC-SR501, medí OUT con el téster antes de conectarlo.
 
 **Código:**
 ```cpp
@@ -425,7 +425,7 @@ void loop() {
 
 | Sensor | Tipo de lectura | Pin sugerido ESP32 | Voltaje |
 |--------|-----------------|--------------------|---------|
-| DHT11/22 | digital especial | GPIO15 | 3.3V |
+| DHT11/22 | digital especial | GPIO4 | 3.3V |
 | HC-SR04 | digital (pulso) | TRIG 5, ECHO 18 + divisor | 5V |
 | LDR | analógica | GPIO34 + resistencia 10kΩ | 3.3V |
 | PIR | digital | GPIO13 | 5V |
