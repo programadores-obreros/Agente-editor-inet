@@ -247,6 +247,10 @@ function Test-OpenCode {
         $directo = ""
         try { $directo = (& $BinOpenCode --version 2>&1 | Out-String) } catch { $directo = "" }
         if ($LASTEXITCODE -eq 0 -and $directo -match '\d+\.\d+\.\d+') { Write-Host "  [i] El binario de OpenCode arranca pero su shim de Scoop fallo. Rehago el shim (scoop reset)..."; Reparar-Shim | Out-Null; $script:SalidaOpenCode = $directo; return $true }
+        # Queda escrito POR QUE se decidio que no arranca: sin esto, en una notebook real se
+        # discutio media hora sobre un "no arranca" que nadie podia explicar.
+        $bits = if ([Environment]::Is64BitProcess) { "64" } else { "32" }
+        Write-Host ("  [i] Chequeo de OpenCode: shim en PATH=" + $hayShim + ", PowerShell de " + $bits + " bits, binario '" + $BinOpenCode + "' exit=" + $LASTEXITCODE + ", salida: " + (($directo -replace "\s+", " ").Trim()).Substring(0, [Math]::Min(120, (($directo -replace "\s+", " ").Trim()).Length)))
         return $false
     } catch {
         $script:SalidaOpenCode = $_.Exception.Message
@@ -533,7 +537,7 @@ if (Test-OpenCodeInstalado) {
         Write-Host "  [..] La $OpenCodeVersion ya esta en el disco: la activo (scoop reset)..."
         $ErrorActionPreference = "Continue"
         $salidaResetInst = ""
-        try { $salidaResetInst = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaResetInst = "ERROR " + $_.Exception.Message }
+        try { $salidaResetInst = scoop reset opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaResetInst = "ERROR " + $_.Exception.Message + " | en: " + (($_.ScriptStackTrace -split "`n" | Select-Object -First 3) -join " <- ") }
         $ErrorActionPreference = $prevInst
         # Se muestra lo que dijo Scoop (sin el ruido de descarga): si el reset falla al rehacer
         # el shim, la causa tiene que quedar en el log, no tragada.
