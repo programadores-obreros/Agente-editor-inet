@@ -3,7 +3,8 @@
 //
 // Cubre los TRES modos y la PRIVACIDAD DE MENORES:
 // - personal: guarda nombre + genero.
-// - aula (compartida por muchos): NUNCA guarda nombre ni genero.
+// - aula (compartida por muchos): NUNCA guarda nombre ni genero, ni la placa
+//   (la comparten personas con placas distintas: heredarla da pines que no existen).
 // - grupo (pocas personas conocidas): recuerda a cada una (nombre, rol, genero).
 
 import { test, before, beforeEach } from "node:test"
@@ -56,6 +57,31 @@ test("aula: ni nombre ni género se persisten (privacidad de menores)", async ()
   assert.match(g, /^-\s*Nombre:\s*\(sin definir\)\s*$/m)
   assert.match(g, /^-\s*Género:\s*\(sin definir\)\s*$/m, "en aula el género tampoco")
   assert.match(g, /^-\s*Rol:\s*alumno\s*$/m, "el rol si se conserva")
+})
+
+// El prompt decía «la placa NO se guarda en modo aula» y el tool la guardaba
+// igual (`if (args.placa) actual.placa = args.placa`, sin mirar el modo). Se
+// eligió la regla del producto: en una compu compartida el segundo alumno, con
+// otra placa, heredaba la del primero y recibía pines que no existen.
+test("aula: la placa NO se persiste (compu compartida con placas distintas)", async () => {
+  const r = await mod.execute({ accion: "guardar", modo: "aula", rol: "alumno", placa: "ESP32" }, {})
+  const g = readFileSync(perfilFile, "utf8")
+  assert.doesNotMatch(g, /ESP32/, "en aula la placa no va a disco")
+  assert.match(g, /^-\s*Placa preferida:\s*\(sin definir\)\s*$/m)
+  assert.match(r, /placa/i, "la respuesta tiene que avisar que la placa se pregunta cada sesión")
+  assert.doesNotMatch(r, /el rol y la placa/i, "la respuesta no puede decir que guardó la placa")
+})
+
+test("cambiar a aula BORRA una placa vieja ya persistida", async () => {
+  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Sofia", placa: "UNO" }, {})
+  assert.match(readFileSync(perfilFile, "utf8"), /Placa preferida:\s*UNO/)
+  await mod.execute({ accion: "guardar", modo: "aula" }, {})
+  assert.doesNotMatch(readFileSync(perfilFile, "utf8"), /UNO/, "al pasar a aula, la placa vieja se borra")
+})
+
+test("personal: la placa SI se persiste", async () => {
+  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Marta", placa: "ESP32" }, {})
+  assert.match(readFileSync(perfilFile, "utf8"), /^-\s*Placa preferida:\s*ESP32\s*$/m)
 })
 
 test("cambiar a aula BORRA un nombre viejo ya persistido", async () => {

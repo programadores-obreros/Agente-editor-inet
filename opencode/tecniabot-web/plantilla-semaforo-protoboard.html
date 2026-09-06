@@ -42,7 +42,7 @@
     <h1>Semáforo en protoboard</h1>
     <span class="badge">▶ animado</span>
   </div>
-  <div class="sub">Así se arma de verdad en la placa de pruebas: tres LEDs (rojo, amarillo, verde) con su resistencia de 330&nbsp;Ω, cumpliendo la secuencia de un semáforo.</div>
+  <div class="sub">Así se arma de verdad en la placa de pruebas: tres LEDs (rojo, amarillo, verde) con su resistencia de 220&nbsp;Ω, cumpliendo la secuencia de un semáforo.</div>
 
   <div class="stage-wrap">
     <svg id="scene" viewBox="0 0 1016 452" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -52,7 +52,7 @@
     <div>
       <div class="aviso">
         <b>¿Cómo funciona?</b> Cada LED se maneja desde un pin distinto del ESP32 (<b>GPIO16</b>, <b>GPIO17</b>, <b>GPIO18</b>)
-        y SIEMPRE lleva su resistencia de <b>330&nbsp;Ω</b> en serie para limitar la corriente y no quemarlo.
+        y SIEMPRE lleva su resistencia de <b>220&nbsp;Ω</b> en serie para limitar la corriente y no quemarlo.
         Todos los cátodos van al riel <b>&minus; (GND)</b>. El programa enciende uno por vez siguiendo la secuencia real:
         <b>verde&nbsp;→&nbsp;amarillo&nbsp;→&nbsp;rojo</b> y vuelve a empezar.
       </div>
@@ -60,9 +60,9 @@
     </div>
     <table class="conx">
       <tr><th>LED</th><th>Pin ESP32</th><th>Conexión</th></tr>
-      <tr><td><span class="chip" style="background:#22a95b"></span>Verde</td><td>GPIO16</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
-      <tr><td><span class="chip" style="background:#e8b021"></span>Amarillo</td><td>GPIO17</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
-      <tr><td><span class="chip" style="background:#d94141"></span>Rojo</td><td>GPIO18</td><td>→ 330&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#22a95b"></span>Verde</td><td>GPIO16</td><td>→ 220&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#e8b021"></span>Amarillo</td><td>GPIO17</td><td>→ 220&nbsp;Ω → ánodo</td></tr>
+      <tr><td><span class="chip" style="background:#d94141"></span>Rojo</td><td>GPIO18</td><td>→ 220&nbsp;Ω → ánodo</td></tr>
       <tr><td><span class="chip" style="background:#2b8cd6"></span>Cátodos (&minus;)</td><td>GND</td><td>Riel &minus; (azul)</td></tr>
       <tr><td><span class="chip" style="background:#2a2f36"></span>Alimentación GND</td><td>GND</td><td>ESP32 → riel &minus;</td></tr>
     </table>
@@ -197,7 +197,7 @@
     // resistencia
     const resScale=1.05;
     const resLeft=colX(resCol), resTop=rowsTop.C-5.65*resScale;
-    const res=place('<wokwi-resistor value="330"></wokwi-resistor>', resLeft, resTop, resScale);
+    const res=place('<wokwi-resistor value="220"></wokwi-resistor>', resLeft, resTop, resScale);
     const R_1=res.pin(0,5.65), R_2=res.pin(58.8,5.65);
     leg(R_1,H['C'+resCol]); leg(R_2,H['C'+anCol]);
     // LED espejado
@@ -212,7 +212,7 @@
     // GPIO -> pata izquierda de la resistencia (fila C)
     wire(gpioPin,H['C'+resCol],wireColor,3.4,12);
     endcap(gpioPin,wireColor);
-    label('330 Ω',resLeft+1,rowsTop.C+15);
+    label('220 Ω',resLeft+1,rowsTop.C+15);
     leds[color]=led.el.querySelector('wokwi-led');
     return led;
   }
@@ -238,7 +238,7 @@
 
   /* ---------- LEYENDA ---------- */
   const legend=document.getElementById('legend');
-  [['#22a95b','GPIO16 → 330 Ω → LED verde'],['#e8b021','GPIO17 → 330 Ω → LED amarillo'],['#d94141','GPIO18 → 330 Ω → LED rojo'],['#2b8cd6','cátodos → riel −'],['#2a2f36','GND → riel −']]
+  [['#22a95b','GPIO16 → 220 Ω → LED verde'],['#e8b021','GPIO17 → 220 Ω → LED amarillo'],['#d94141','GPIO18 → 220 Ω → LED rojo'],['#2b8cd6','cátodos → riel −'],['#2a2f36','GND → riel −']]
     .forEach(([c,t])=>{const s=document.createElement('span');s.innerHTML='<span class="ln" style="background:'+c+'"></span>'+t;legend.appendChild(s);});
 
   /* ---------- ANIMACIÓN (secuencia del semáforo) ---------- */

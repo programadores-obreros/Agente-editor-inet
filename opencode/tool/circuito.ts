@@ -171,10 +171,10 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "3.3V",
     attrs: (i) => `color="${["red", "green", "yellow", "blue"][i % 4]}"`,
     pines: [
-      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0} (con 330Ω)" },
+      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0} (con 220Ω)" },
       { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "cada LED siempre con su resistencia de 330Ω en serie (por los 3.3V del ESP32).",
+    advertencia: "cada LED siempre con su resistencia de 220Ω en serie: es el valor para los 3.3V del ESP32 (los 330 ohm son la regla del UNO a 5V; acá un LED azul o blanco casi no prende con esos).",
     anim: (id) => `const e=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(e)e.value=on;},600);`,
   },
 
@@ -291,12 +291,12 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "LED RGB",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "GPIO{0} (con 330Ω)" },
-      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "GPIO{1} (con 330Ω)" },
-      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "GPIO{2} (con 330Ω)" },
+      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "GPIO{0} (con 220Ω)" },
+      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "GPIO{1} (con 220Ω)" },
+      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "GPIO{2} (con 220Ω)" },
       { nombre: "Común (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "el LED RGB combina 3 colores. Cada pin con su resistencia de 330Ω. Con analogWrite (PWM) mezclás cualquier color.",
+    advertencia: "el LED RGB combina 3 colores. Cada pin con su resistencia de 220Ω. Con analogWrite (PWM) mezclás cualquier color.",
     anim: (id) => `const e=document.getElementById('${id}');let h=0;setInterval(()=>{h=(h+8)%360;const c=h/60,x=1-Math.abs(c%2-1);let r=0,g=0,b=0;if(c<1){r=1;g=x}else if(c<2){r=x;g=1}else if(c<3){g=1;b=x}else if(c<4){g=x;b=1}else if(c<5){r=x;b=1}else{r=1;b=x}if(e){e.ledRed=r>0.3;e.ledGreen=g>0.3;e.ledBlue=b>0.3}},120);`,
   },
 
@@ -332,10 +332,10 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Display 7 segmentos",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "7 pines (cada segmento con 330Ω)" },
+      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "7 pines (cada segmento con 220Ω)" },
       { nombre: "Común", color: CABLE.marron, clase: "fijo", rol: "GND (cátodo común)", destino: "GND" },
     ],
-    advertencia: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 330Ω. Conviene la librería SevSeg para no gastar tantos pines.",
+    advertencia: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 220Ω. Conviene la librería SevSeg para no gastar tantos pines.",
     anim: (id) => `const d=document.getElementById('${id}');const digs=[[1,1,1,1,1,1,0,0],[0,1,1,0,0,0,0,0],[1,1,0,1,1,0,1,0],[1,1,1,1,0,0,1,0],[0,1,1,0,0,1,1,0]];let i=0;setInterval(()=>{i=(i+1)%digs.length;if(d)d.values=digs[i];},800);`,
   },
 
@@ -952,7 +952,7 @@ function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
       .map((pin) => {
         const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
         // R en serie: solo cuando "(con XΩ)" CIERRA la etiqueta (LED, RGB). El caso
-        // "7 pines (cada segmento con 330Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
+        // "7 pines (cada segmento con 220Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
         const conR = pin.clase !== "fijo" && destino.match(/^(.*?)\s*\(con\s*([\d.]+\s*[kKmM]?)\s*Ω\)\s*$/)
         const etiqueta = conR ? conR[1] : destino
         const valorR = conR ? conR[2].replace(/\s+/g, "") : null
@@ -1219,11 +1219,11 @@ const PRESET_COMPONENTES: Record<string, string[]> = {
 const PLANTILLAS_PROTOBOARD: Record<string, { archivo: string; que: string }> = {
   "boton-led-protoboard": {
     archivo: "plantilla-boton-led-protoboard.html",
-    que: "un ESP32 con un botón y un LED (con resistencia 330Ω). Apretás el botón rojo y el LED se enciende",
+    que: "un ESP32 con un botón y un LED (con resistencia 220Ω). Apretás el botón rojo y el LED se enciende",
   },
   "semaforo-protoboard": {
     archivo: "plantilla-semaforo-protoboard.html",
-    que: "un semáforo: tres LEDs (verde, amarillo, rojo) con sus resistencias 330Ω, encendiéndose en secuencia solos",
+    que: "un semáforo: tres LEDs (verde, amarillo, rojo) con sus resistencias 220Ω, encendiéndose en secuencia solos",
   },
 }
 

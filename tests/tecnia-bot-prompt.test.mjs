@@ -345,7 +345,8 @@ test("no confunde REPARAR con ACTUALIZAR, y no afirma sobre lo que no miró", ()
   // intacto, y cuando vuelve ya no confía en lo que el bot le dice.
   const bloque = bloqueDesde(prompt, "«Reparar» y «actualizar» NO son lo mismo")
   assert.ok(bloque, "el prompt no distingue reparar de actualizar")
-  assert.match(bloque, /accion:\s*"reparar"|`reparar`/i, "no dice qué llamar cuando piden reparar")
+  // Con el nombre real del parámetro (`action`): con `accion:` la llamada fallaba.
+  assert.match(bloque, /action:\s*"reparar"/, "no dice qué llamar cuando piden reparar")
   assert.match(bloque, /sólo sabe de versiones|no mira PlatformIO/i,
     "no acota lo que la tool `actualizar` puede afirmar")
 })

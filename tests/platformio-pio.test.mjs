@@ -131,3 +131,88 @@ test("compile sin PlatformIO sí contesta 'anda al menu inicio' (el pre-chequeo 
   const r = await mod.default.execute({ action: "compile" }, ctx)
   assert.match(r, FRASE_NO_ENCONTRADO)
 })
+
+// ── los baudios del monitor salen del platformio.ini ────────────────────────
+//
+// La descripción del tool prometía «puerto y baudios automáticos» y el código
+// hacía `args.baud ?? 9600`. El ini que el propio prompt genera para ESP32 trae
+// `monitor_speed = 115200`: el monitor abría a 9600 y se veía basura, con el dato
+// correcto escrito dos líneas más arriba. Se prueba la función pura sobre el
+// texto del ini, con DOS environments distintos, que es el caso real del aula
+// (un ini con `uno` y `esp32dev` para la misma carpeta).
+
+const INI_DOS_ENVS = `
+[platformio]
+default_envs = uno
+
+[env:uno]
+platform = atmelavr
+board = uno
+monitor_speed = 9600   ; el UNO de siempre
+
+[env:esp32dev]
+platform = espressif32
+board = esp32dev
+monitor_speed = 115200
+`
+
+test("leerMonitorSpeed: toma el monitor_speed del environment pedido", () => {
+  assert.equal(mod.leerMonitorSpeed(INI_DOS_ENVS, "esp32dev"), 115200)
+  assert.equal(mod.leerMonitorSpeed(INI_DOS_ENVS, "uno"), 9600)
+})
+
+test("leerMonitorSpeed: sin environment, el primero que lo declare", () => {
+  assert.equal(mod.leerMonitorSpeed(INI_DOS_ENVS), 9600)
+  // Y un environment que no existe no inventa: cae al primero.
+  assert.equal(mod.leerMonitorSpeed(INI_DOS_ENVS, "no-existe"), 9600)
+})
+
+test("leerMonitorSpeed: la sección común [env] vale para todos", () => {
+  const ini = "[env]\nmonitor_speed = 74880\n\n[env:esp32dev]\nboard = esp32dev\n"
+  assert.equal(mod.leerMonitorSpeed(ini, "esp32dev"), 74880)
+})
+
+test("leerMonitorSpeed: sin monitor_speed devuelve null (y el tool cae a 9600)", () => {
+  assert.equal(mod.leerMonitorSpeed("[env:uno]\nboard = uno\n"), null)
+  assert.equal(mod.leerMonitorSpeed(""), null)
+  // Una línea comentada no cuenta.
+  assert.equal(mod.leerMonitorSpeed("[env:uno]\n; monitor_speed = 115200\n"), null)
+})
+
+// Y el cableado completo, no sólo la función pura: `monitor` sin `baud` tiene que
+// abrir a los baudios del ini de la carpeta del proyecto. Se simula que PlatformIO
+// responde (Bun.spawn falso, sólo dentro de este test) y se pasa el puerto para
+// no depender de una placa enchufada. Sin emulador de terminal, el tool devuelve
+// las instrucciones manuales, que llevan el mismo `--baud`.
+test("monitor sin baud usa el monitor_speed del platformio.ini del proyecto", async () => {
+  const proyecto = join(OUT, "proyecto-ini")
+  mkdirSync(proyecto, { recursive: true })
+  writeFileSync(join(proyecto, "platformio.ini"), INI_DOS_ENVS)
+
+  const spawnOriginal = globalThis.Bun.spawn
+  globalThis.Bun.spawn = () => ({
+    stdout: "PlatformIO Core, version 6.0.0\n",
+    stderr: "",
+    exited: Promise.resolve(0),
+    unref() {},
+  })
+  try {
+    const ctxProyecto = { directory: proyecto, abort: new AbortController().signal }
+    const r = await mod.default.execute({ action: "monitor", port: "/dev/ttyFALSO", environment: "esp32dev" }, ctxProyecto)
+    assert.match(r, /115200 baudios/, "no tomó el monitor_speed del env esp32dev")
+    assert.match(r, /monitor_speed de tu platformio\.ini/, "no le dice de dónde salieron los baudios")
+
+    // Con `baud` explícito, gana el pedido del usuario.
+    const r2 = await mod.default.execute({ action: "monitor", port: "/dev/ttyFALSO", baud: 74880 }, ctxProyecto)
+    assert.match(r2, /74880 baudios/)
+
+    // Sin ini a la vista, 9600 y lo dice.
+    const sinIni = join(OUT, "sin-ini")
+    mkdirSync(sinIni, { recursive: true })
+    const r3 = await mod.default.execute({ action: "monitor", port: "/dev/ttyFALSO" }, { ...ctxProyecto, directory: sinIni })
+    assert.match(r3, /9600 baudios \(el valor por defecto/, "sin ini tiene que caer a 9600 y avisarlo")
+  } finally {
+    if (spawnOriginal) globalThis.Bun.spawn = spawnOriginal
+    else delete globalThis.Bun.spawn
+  }
+})

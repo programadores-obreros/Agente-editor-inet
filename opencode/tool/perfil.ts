@@ -13,8 +13,9 @@ import { existsSync, readFileSync } from "node:fs"
 //   Pregunta "quien sos" al arrancar y recuerda a CADA una (nombre, rol, genero,
 //   placa) en su propio renglon. Guarda nombres: solo para grupos chicos y conocidos.
 // - "aula": PC de escuela compartida por muchos chicos anonimos. El nombre y el
-//   genero son EFIMEROS (se usan en la charla, NUNCA se escriben a disco). Rol y
-//   placa (no identifican a nadie) si se conservan.
+//   genero son EFIMEROS (se usan en la charla, NUNCA se escriben a disco). El rol
+//   si se conserva. La placa TAMPOCO: la compu la comparten personas con placas
+//   distintas, y servirle a uno la placa del anterior es darle pines que no existen.
 function perfilPath(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
   return join(cfg, "opencode", "tecnia-perfil.md")
@@ -126,11 +127,11 @@ export default tool({
   description: `Perfil persistente del usuario de Tecnia Bot, con tres modos segun quien usa la compu (privacidad de menores):
 - "personal" (1 persona): guarda nombre y genero, no vuelve a preguntar.
 - "grupo" (pocas personas conocidas que rotan): recuerda a CADA una; al arrancar preguntas "quien sos" y la buscas por nombre. Guardas cada persona pasando 'persona' (su nombre) + rol/genero/placa.
-- "aula" (PC de escuela, muchos chicos anonimos): el nombre y el genero NO se guardan (privacidad). Rol y placa si.
+- "aula" (PC de escuela, muchos chicos anonimos): el nombre y el genero NO se guardan (privacidad), y la placa TAMPOCO (la comparten personas con placas distintas: se pregunta cada sesion). Solo el rol.
 
 Acciones:
 - leer: devuelve el perfil actual (modo y, segun el modo, la persona o la lista de personas).
-- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque). En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre y el genero se ignoran.`,
+- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque). En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre, el genero y la placa se ignoran (solo se guarda el rol).`,
   args: {
     accion: tool.schema
       .enum(["leer", "guardar"])
@@ -158,7 +159,7 @@ Acciones:
     placa: tool.schema
       .enum(["UNO", "ESP32", "no sé"])
       .optional()
-      .describe("La placa con la que trabaja: Arduino UNO, ESP32, o 'no sé'. Solo para 'guardar'."),
+      .describe("La placa con la que trabaja: Arduino UNO, ESP32, o 'no sé'. Solo para 'guardar'. En modo 'aula' se ignora: ahi la placa se pregunta cada sesion."),
   },
   async execute(args) {
     if (args.accion === "leer") {
@@ -189,7 +190,9 @@ Acciones:
     const actual = leerPerfil()
     if (args.modo) actual.modo = args.modo
     if (args.rol) actual.rol = args.rol
-    if (args.placa) actual.placa = args.placa
+    // La placa se persiste en personal y grupo. En aula NO (ver arriba): se
+    // ignora en silencio, y la respuesta le recuerda al modelo que la pregunte.
+    if (args.placa && actual.modo !== "aula") actual.placa = args.placa
 
     if (actual.modo === "grupo") {
       // Guardamos POR persona (upsert). El nombre "plano" no se usa en grupo.
@@ -204,9 +207,11 @@ Acciones:
       actual.nombre = SIN_DEFINIR
       actual.genero = SIN_DEFINIR
     } else if (actual.modo === "aula") {
-      // Compu compartida por muchos: nombre y genero EFIMEROS, nunca a disco.
+      // Compu compartida por muchos: nombre, genero y placa EFIMEROS, nunca a disco.
+      // Tambien se borra una placa que hubiera quedado de un modo anterior.
       actual.nombre = SIN_DEFINIR
       actual.genero = SIN_DEFINIR
+      actual.placa = SIN_DEFINIR
     } else {
       // personal (o todavia sin definir): campos "planos" de una sola persona.
       if (args.nombre && args.nombre.trim()) actual.nombre = args.nombre.trim()
@@ -222,7 +227,7 @@ Acciones:
     }
 
     if (actual.modo === "aula") {
-      return "Listo. Compu del aula (compartida): guardo el modo, el rol y la placa, pero NO el nombre ni el género (privacidad). Cada sesión te pregunto cómo te digo."
+      return "Listo. Compu del aula (compartida): guardo el modo y el rol, pero NO el nombre ni el género (privacidad), ni la placa (acá trabajan personas con placas distintas). Cada sesión te pregunto cómo te digo y con qué placa estás."
     }
     if (actual.modo === "grupo") {
       const quien = (args.persona || args.nombre || "").trim()

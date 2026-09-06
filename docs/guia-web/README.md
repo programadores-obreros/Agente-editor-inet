@@ -18,7 +18,7 @@ Tecnia Bot se instala **como cualquier programa**: bajás un archivo, doble clic
 
 ## Paso 1 — Descargá el instalador
 
-Tocá el botón **Descargar Tecnia Bot**. Se baja el archivo **`Instalar-Tecnia-Bot.exe`** (unos 2,5 MB).
+Tocá el botón **Descargar Tecnia Bot**. Se baja el archivo **`Instalar-Tecnia-Bot.exe`** (unos 7,4 MB).
 
 ## Paso 2 — Abrilo
 

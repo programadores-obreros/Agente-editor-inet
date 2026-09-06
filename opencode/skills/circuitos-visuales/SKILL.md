@@ -35,7 +35,7 @@ Ejemplos de proyectos del INET con el armador: riego → `"higrometro, relay, bo
 Cuando armes o expliques un circuito, respetá estas reglas para que quede claro y profesional:
 
 - **Sin cruces**: preferí que los cables corran paralelos, sin cruzarse. Ordená los componentes según el orden de sus pines y hacé que el flujo vaya en una sola dirección (de la señal hacia el actuador). Un cable que cruza a otro confunde al que recién arranca.
-- **Serie visible**: cuando una resistencia va EN SERIE (ej. GPIO → 330Ω → LED), tiene que notarse que la corriente la ATRAVIESA. Idealmente dibujada inline (el cable entra a la resistencia y sale hacia el LED); como mínimo, decilo claro con la notación `→ 330Ω →`. Nunca la muestres "colgando" al costado como si no formara parte del camino.
+- **Serie visible**: cuando una resistencia va EN SERIE (ej. GPIO → 220Ω → LED en ESP32), tiene que notarse que la corriente la ATRAVIESA. Idealmente dibujada inline (el cable entra a la resistencia y sale hacia el LED); como mínimo, decilo claro con la notación `→ 220Ω →`. Nunca la muestres "colgando" al costado como si no formara parte del camino.
 - **Colores estándar**: cada señal siempre del mismo color a lo largo de todo el esquema. Alimentación en rojo, GND en negro. Así el ojo sigue una señal sin perderse.
 - **Claridad para principiantes**: etiquetas claras en las DOS puntas de cada cable (de qué pin sale y a dónde llega). Nada de cables que se pierdan o queden sin destino visible.
 

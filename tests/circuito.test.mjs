@@ -188,3 +188,20 @@ test("lo que el describe() promete es lo que el código hace", () => {
       "el describe() sigue diciendo «true (default)» y el código dice lo contrario")
   }
 })
+
+// ── La resistencia del LED es de 220Ω, no 330Ω ──────────────────────────────
+//
+// El tool dibuja circuitos de ESP32 (3.3V) y las etiquetas decían «(con 330Ω)»,
+// que es la regla de 5V del UNO. Los skills `esp32` y `diagramas-conexion` ya
+// decían 220Ω para 3.3V: un LED azul/blanco (Vf ~3,2V) con 330Ω en 3.3V casi no
+// prende. El alumno leía una cosa en el chat y otra en el dibujo.
+test("los LEDs del ESP32 llevan 220Ω en el dibujo, nunca 330Ω", async () => {
+  for (const c of ["led", "rgb-led", "7segmentos"]) {
+    const { html } = await gen({ componentes: c, placa: "esp32" }, "ohm-" + c)
+    assert.doesNotMatch(html, /330\s*Ω/, `"${c}" sigue con la resistencia de 5V (330Ω)`)
+    assert.match(html, /220\s*Ω/, `"${c}" no dice cuál es la resistencia en serie`)
+  }
+  // Y la R en serie se dibuja inline en el cable (el parser de "(con XΩ)" la reconoce).
+  const { html } = await gen({ circuito: "led-esp32" }, "ohm-inline")
+  assert.match(html, /class="res"[^>]*>220Ω</, "la resistencia de 220Ω no quedó dibujada en serie")
+})

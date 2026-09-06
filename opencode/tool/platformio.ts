@@ -1,6 +1,6 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
@@ -439,6 +439,62 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
   }
 }
 
+/** Una sola forma de decir "reinstala desde cero": la misma en este tool y en /actualizar. */
+const CLONAR_REPO =
+  "descarga el proyecto de nuevo con `git clone https://github.com/programadores-obreros/Agente-editor-inet.git` " +
+  "(o el ZIP desde esa pagina) y corre `bash install/bootstrap.sh` adentro de la carpeta."
+const REINSTALAR_DESDE_CERO =
+  "Baja el instalador de la ultima version publicada, " +
+  "https://github.com/programadores-obreros/Agente-editor-inet/releases/latest " +
+  "(`Instalar-Tecnia-Bot.exe`), y corrilo una vez: instala solo lo que falte y no borra tu trabajo. " +
+  "En Linux/Mac, " + CLONAR_REPO
+
+/**
+ * Los baudios del monitor salen del `monitor_speed` del platformio.ini.
+ *
+ * La descripcion del tool prometia "puerto y baudios automaticos" y el codigo
+ * hacia `args.baud ?? 9600`. El ini que el propio prompt genera para ESP32 dice
+ * `monitor_speed = 115200`: el monitor abria a 9600 y el docente veia basura
+ * en pantalla, con el dato correcto escrito a dos lineas de distancia.
+ *
+ * Es una funcion pura sobre el TEXTO del ini para poder probarla sin disco.
+ * Prioridad: el environment pedido, despues la seccion comun `[env]`, despues
+ * el primer `monitor_speed` que aparezca en cualquier `[env:*]`.
+ */
+export function leerMonitorSpeed(iniText: string, env?: string): number | null {
+  const porSeccion = new Map<string, number>()
+  const orden: string[] = []
+  let seccion = ""
+  for (const cruda of iniText.split(/\r?\n/)) {
+    const linea = cruda.replace(/[;#].*$/, "").trim()
+    const cab = linea.match(/^\[([^\]]+)\]$/)
+    if (cab) {
+      seccion = (cab[1] ?? "").trim()
+      continue
+    }
+    const kv = linea.match(/^monitor_speed\s*=\s*(\d+)\s*$/)
+    if (kv && seccion && !porSeccion.has(seccion)) {
+      porSeccion.set(seccion, Number(kv[1] ?? 0))
+      orden.push(seccion)
+    }
+  }
+  if (env && porSeccion.has(`env:${env}`)) return porSeccion.get(`env:${env}`)!
+  if (porSeccion.has("env")) return porSeccion.get("env")!
+  const primero = orden.find((s) => s.startsWith("env:"))
+  return primero ? porSeccion.get(primero)! : null
+}
+
+/** El monitor_speed del platformio.ini de `cwd`, o null si no hay ini o no lo declara. */
+function monitorSpeedDelProyecto(cwd: string, env?: string): number | null {
+  const ini = join(cwd, "platformio.ini")
+  if (!existsSync(ini)) return null
+  try {
+    return leerMonitorSpeed(readFileSync(ini, "utf8"), env)
+  } catch {
+    return null
+  }
+}
+
 /**
  * ESTE MENSAJE NO DA EL LINK DE LA DOCUMENTACION OFICIAL, Y ES A PROPOSITO.
  *
@@ -460,9 +516,12 @@ function pioNoEncontrado() {
   return (
     "PlatformIO no esta instalado.\n\n" +
     "COMO SE ARREGLA (no hay que instalar nada aparte, ni VS Code, ni Python a mano):\n" +
-    "  1. Menu inicio -> 'Reparar Tecnia Bot'.\n" +
-    "     Instala PlatformIO Core solo, sin preguntar nada.\n" +
-    "  2. Si despues de eso sigue faltando, es la RED y no la maquina:\n" +
+    "  1. Instalalo VOS ahora: llama a este mismo tool con action: \"reparar\".\n" +
+    "     Avisale antes al usuario que tarda unos minutos y baja unos 60 MB.\n" +
+    "  2. Plan B, solo si la reparacion desde aca no pudo correr (el tool lo dice):\n" +
+    "     Menu inicio -> 'Reparar Tecnia Bot'. Hace exactamente lo mismo.\n" +
+    "     En Linux/Mac, el tool devuelve el comando exacto (bash install/bootstrap.sh).\n" +
+    "  3. Si despues de eso sigue faltando, es la RED y no la maquina:\n" +
     "     menu inicio -> 'Diagnostico de Tecnia Bot'. Deja un .txt que dice si\n" +
     "     esta maquina llega a pypi.org, que es de donde se baja.\n\n" +
     "Mientras tanto Tecnia Bot sirve igual para explicar, dibujar circuitos y\n" +
@@ -477,8 +536,9 @@ Acciones:
 - compile: compilar el proyecto actual
 - flash: cargar el codigo en el dispositivo
 - both: compilar y cargar en un solo paso
-- monitor: abre una ventana de terminal aparte con el monitor serial ya corriendo (puerto y baudios automaticos). NO requiere un proyecto ni codigo cargado: sirve para ver los datos que manda la placa y para mandarle teclas (ej: comandar un servo desde el teclado). Cuando el usuario pida "ver el monitor serial", "abrir la terminal serial" o similar, llama a esta accion DIRECTAMENTE, sin pedir ni crear un proyecto.
-- diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)`,
+- monitor: abre una ventana de terminal aparte con el monitor serial ya corriendo. El puerto se detecta solo (si hay varias placas, pide elegir). Los baudios: si no pasas 'baud', lee el monitor_speed del platformio.ini de la carpeta actual (del environment que indiques, o el primero que tenga uno) y si no hay ninguno usa 9600. NO requiere codigo cargado: sirve para ver los datos que manda la placa y para mandarle teclas (ej: comandar un servo desde el teclado). Cuando el usuario pida "ver el monitor serial", "abrir la terminal serial" o similar, llama a esta accion DIRECTAMENTE, sin pedir ni crear un proyecto.
+- diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)
+- reparar: instala PlatformIO Core cuando falta, corriendo el instalador de Tecnia Bot (en Linux/Mac devuelve el comando exacto para hacerlo a mano). Tarda unos minutos y baja unos 60 MB: avisale antes.`,
   args: {
     action: tool.schema
       .enum(["compile", "flash", "both", "monitor", "diagnostico", "reparar"])
@@ -487,8 +547,9 @@ Acciones:
         "monitor: abre el monitor serie. diagnostico: informa que hay y que falta. " +
         "reparar: INSTALA PlatformIO cuando falta, corriendo el instalador de Tecnia Bot. " +
         "Usa 'reparar' apenas veas que falta PlatformIO y el usuario quiera compilar o " +
-        "cargar codigo — no lo mandes a buscar nada al menu inicio, hacelo vos. Tarda " +
-        "unos minutos y baja unos 60 MB, asi que avisale antes de arrancar."
+        "cargar codigo: hacelo vos. El acceso directo del menu inicio, Reparar Tecnia Bot, " +
+        "es el plan B, solo si desde aca no se pudo correr. Tarda unos minutos y baja unos " +
+        "60 MB, asi que avisale antes de arrancar."
       ),
     port: tool.schema
       .string()
@@ -498,7 +559,7 @@ Acciones:
       .number()
       .optional()
       .describe(
-        "Velocidad del monitor serial en baudios (default 9600). Debe coincidir con el valor de Serial.begin(...) del sketch (ej: 115200 para muchos ESP32).",
+        "Velocidad del monitor serial en baudios. Si no se indica, se usa el monitor_speed del platformio.ini de la carpeta actual y, si no hay, 9600. Debe coincidir con el valor de Serial.begin(...) del sketch (ej: 115200 para muchos ESP32).",
       ),
     environment: tool.schema
       .string()
@@ -542,7 +603,14 @@ Acciones:
          * conversacion. Estuvimos tres rondas pidiendo un log por foto.
          */
         if (process.platform !== "win32") {
-          return "La reparacion automatica es solo para Windows. En Linux o Mac, instala PlatformIO Core con el instalador oficial de tu sistema."
+          return (
+            "La reparacion automatica es solo para Windows (corre el bootstrap.ps1 del instalador). " +
+            "En Linux o Mac se arregla con UN comando, en una terminal, parado en la carpeta del proyecto " +
+            "(la que se clono al instalar, `Agente-editor-inet`):\n\n" +
+            "```\nbash install/bootstrap.sh\n```\n\n" +
+            "Instala lo que falte (PlatformIO Core incluido) y no toca lo que ya esta. " +
+            "Si esa carpeta ya no existe: " + CLONAR_REPO
+          )
         }
 
         const appDir = join(process.env.LOCALAPPDATA ?? "", "TecniaBot")
@@ -551,7 +619,7 @@ Acciones:
           return (
             "No encuentro el instalador en esta maquina (`" + bootstrap + "`).\n\n" +
             "Suele pasar cuando Tecnia Bot se instalo a mano o con una version muy vieja. " +
-            "Baja el instalador de https://tecnialab.net.ar/tecnia-bot/ y corrilo una vez."
+            REINSTALAR_DESDE_CERO
           )
         }
 
@@ -665,7 +733,13 @@ Acciones:
       }
 
       case "monitor": {
-        const baud = args.baud ?? 9600
+        const baudDelIni = args.baud ? null : monitorSpeedDelProyecto(cwd, args.environment)
+        const baud = args.baud ?? baudDelIni ?? 9600
+        const origenBaud = args.baud
+          ? ""
+          : baudDelIni
+            ? " (el monitor_speed de tu platformio.ini)"
+            : " (el valor por defecto: si tu sketch usa otro Serial.begin, pedime esos baudios)"
 
         // Resolvemos el puerto automaticamente (el docente no tiene que saber que es COM3).
         let puerto = args.port
@@ -683,7 +757,7 @@ Acciones:
         // Comando "pelado" listo para copiar y pegar en una terminal (fallback / instrucciones).
         const comandoManual = `${quoteIfNeeded(pioPath)} device monitor --port ${puerto} --baud ${baud}`
 
-        const mensajeExito = `Abri una ventana nueva (negra) con el monitor serial en ${puerto} a ${baud} baudios. Ahi vas a ver los datos de la placa y podes apretar teclas para comandarla. Para cerrarlo, apreta Ctrl+C en esa ventana.`
+        const mensajeExito = `Abri una ventana nueva (negra) con el monitor serial en ${puerto} a ${baud} baudios${origenBaud}. Ahi vas a ver los datos de la placa y podes apretar teclas para comandarla. Para cerrarlo, apreta Ctrl+C en esa ventana.`
 
         const mensajeManual = `No pude abrir una ventana nueva automaticamente en este equipo, pero es facil hacerlo a mano:
 
@@ -694,7 +768,7 @@ Acciones:
 ${comandoManual}
 \`\`\`
 
-Vas a ver los datos de la placa en ${puerto} a ${baud} baudios. Para cerrarlo, apreta Ctrl+C en esa ventana.`
+Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Para cerrarlo, apreta Ctrl+C en esa ventana.`
 
         // Windows: `start` abre una ventana nueva y vuelve al instante, asi que `run()` no cuelga.
         // El primer argumento entre comillas de `start` es el TITULO de la ventana, por eso va
