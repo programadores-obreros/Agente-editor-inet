@@ -7,6 +7,8 @@ description: Módulos del kit que dan un salto de nivel - OLED, 7 segmentos, Neo
 
 Estos módulos llevan los proyectos a otro nivel: mostrar info en pantalla, controlar motores con precisión, detectar movimiento e inclinación, ingresar claves. Son los que aparecen en los proyectos de 2do y 3er año.
 
+> **Pines:** todos los números de pin de este skill son **ESP32**. Si trabajás con **Arduino UNO**: I2C es **SDA=A4, SCL=A5**; las entradas analógicas son **A0-A5** (`analogRead()` da 0-1023, no 0-4095); para los digitales usá cualquier pin 2-13 y ajustá los arrays del código.
+
 > **Concepto clave — I2C:** varios de estos (OLED, MPU6050) usan **I2C**, un "bus" donde muchos componentes comparten solo 2 cables (SDA y SCL). En el ESP32: **SDA=GPIO21, SCL=GPIO22**. Cada uno tiene una "dirección" (como un número de casa) para que el ESP32 sepa con quién habla. ¡Podés conectar varios módulos I2C a los mismos 2 pines!
 
 ---
@@ -44,11 +46,11 @@ void loop() {}
 
 ## Display 7 segmentos — Números grandes
 
-> ⚡ 3.3V · 📦 `SevSeg` · cada segmento con 330Ω
+> ⚡ 3.3V · 📦 `SevSeg` · cada segmento con 220Ω (en ESP32/3.3V; 330Ω si es UNO/5V)
 
 **¿Para qué sirve?** Mostrar UN dígito (0-9) bien grande y brillante. Contadores, relojes, marcadores. Tiene 7 segmentos (A-G) + el punto (DP).
 
-**Conexión:** cada segmento (A a G) a un GPIO con su resistencia de 330Ω; el común a GND (cátodo común) o a VCC (ánodo común). Gasta muchos pines — por eso conviene la librería `SevSeg` o un decodificador.
+**Conexión:** cada segmento (A a G) a un GPIO con su resistencia de 220Ω (330Ω en UNO a 5V; ver skill `esp32` para el cálculo); el común a GND (cátodo común) o a VCC (ánodo común). Gasta muchos pines — por eso conviene la librería `SevSeg` o un decodificador.
 
 **Concepto:** un número se "dibuja" encendiendo ciertos segmentos. El "2" prende A, B, G, E, D. El "1" solo B y C.
 
@@ -61,6 +63,8 @@ void loop() {}
 **¿Para qué sirve?** Es un LED RGB especial: con **un solo pin** controlás muchos en cadena, cada uno con su color y brillo. Tiras de luces, efectos, matrices. ¡Magia para los pibes!
 
 **Conexión:** VCC→5V, GND→GND, DIN→un GPIO.
+
+> ⚠️ **Nivel de la señal de datos:** el WS2812 pide en DIN un nivel alto de al menos **0,7·VDD** (hoja de datos Worldsemi). Alimentado a 5V eso son 3,5V, y el ESP32 entrega 3,3V: **funciona "a veces"** (parpadeos, colores raros, el primer LED que no responde). Para hacerlo bien: un conversor de nivel como el **74HCT125** (o 74AHCT125) entre el GPIO y DIN, o alimentar el **primer** LED a ~4V (un diodo en serie con su VCC) para que acepte los 3,3V y le pase la señal ya a su nivel a los demás.
 
 ```cpp
 #include <Adafruit_NeoPixel.h>
@@ -157,7 +161,7 @@ void loop() {
 
 **¿Para qué sirve?** Ingresar números, claves, comandos. 16 teclas (0-9, A-D, *, #). El truco genial: usa solo **8 pines** para 16 teclas, leyendo por filas y columnas (matriz).
 
-**Conexión:** 4 pines de filas + 4 de columnas, a 8 GPIO.
+**Conexión:** 4 pines de filas + 4 de columnas, a 8 GPIO. Acá: filas → GPIO13, 16, 14, 27; columnas → GPIO26, 25, 33, 32. Evitá GPIO12 y GPIO15 (strapping pins: la tecla apretada al encender puede cambiar cómo arranca la placa).
 
 ```cpp
 #include <Keypad.h>
@@ -167,7 +171,7 @@ char teclas[FILAS][COLS] = {
   {'1','2','3','A'}, {'4','5','6','B'},
   {'7','8','9','C'}, {'*','0','#','D'}
 };
-byte pinFilas[FILAS] = {13, 12, 14, 27};
+byte pinFilas[FILAS] = {13, 16, 14, 27};   // sin GPIO12: es strapping (MTDI) y puede impedir el arranque
 byte pinCols[COLS]   = {26, 25, 33, 32};
 
 Keypad teclado = Keypad(makeKeymap(teclas), pinFilas, pinCols, FILAS, COLS);
@@ -217,11 +221,11 @@ void loop() {
 
 ## LED RGB (cátodo común)
 
-> ⚡ 3.3V · cada color con 330Ω
+> ⚡ 3.3V · cada color con 220Ω (330Ω si es UNO/5V) — medí el Vf: el azul cae ~3,2V y en 3.3V casi no tiene margen
 
 **¿Para qué sirve?** Un LED que hace CUALQUIER color mezclando rojo, verde y azul. Indicadores de estado, ambientación.
 
-**Conexión:** 3 pines (R, G, B) cada uno a un GPIO con 330Ω; el común (la pata más larga) a GND.
+**Conexión:** 3 pines (R, G, B) cada uno a un GPIO con 220Ω (330Ω en UNO/5V); el común (la pata más larga) a GND. En 3.3V el azul va a verse más flojo que el rojo: es física, no un error de cableado (ver skill `esp32`).
 
 ```cpp
 const int R = 4, G = 5, B = 18;
@@ -253,3 +257,5 @@ void loop() {
 | Teclado 4x4 | matriz | 4 filas + 4 cols | Keypad |
 | Joystick | analógico | VRx, VRy + SW | — |
 | LED RGB | PWM | R, G, B + GND | — |
+
+Equivalentes en **Arduino UNO**: I2C → SDA=A4, SCL=A5; analógicos (joystick) → A0-A5; digitales → pines 2-13.

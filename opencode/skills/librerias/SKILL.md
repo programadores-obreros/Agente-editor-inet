@@ -50,11 +50,15 @@ Salen directo con su `#include`, sin agregar nada:
 | LCD paralelo 16x2 (HD44780) | `LiquidCrystal.h` | `arduino-libraries/LiquidCrystal` | UNO y ESP32 |
 | LCD 16x2 por modulo I2C | `LiquidCrystal_I2C.h` | `marcoschwartz/LiquidCrystal_I2C` | UNO y ESP32 (comun en ESP32, ahorra pines; dir 0x27 o 0x3F) |
 | Teclado matricial 4x4 | `Keypad.h` | `chris--a/Keypad` (owner con **doble guion**) | UNO y ESP32 |
+| Display 7 segmentos | `SevSeg.h` | `deanisme/SevSeg` | UNO y ESP32 |
+| Paso a paso con aceleracion | `AccelStepper.h` | `waspinator/AccelStepper` | UNO y ESP32 |
 | IoT — Adafruit IO por MQTT ⚠ | `Adafruit_MQTT.h` + `Adafruit_MQTT_Client.h` | `adafruit/Adafruit MQTT Library` | **solo ESP32** (el UNO no tiene WiFi) |
 
-> ⚠ **La fila de MQTT es la única que NO está verificada compilando**, a
-> diferencia del resto de esta tabla. Está puesta igual porque **trece de los
-> quince proyectos** tienen nivel IoT y ninguno decía qué librería hace falta.
+> ⚠ **La fila de MQTT NO está verificada compilando**, a diferencia del resto de esta
+> tabla (SevSeg 3.7.2 y AccelStepper 1.64.0 se compilaron en UNO y ESP32 el 2026-09-05,
+> desde `ejemplos/_test-librerias`, que es donde se verifica todo con `pio run`). Está
+> puesta igual porque **trece de los quince proyectos** tienen nivel IoT y ninguno decía
+> qué librería hace falta.
 >
 > Sin esta línea el camino era: el alumno compila → `fatal error:
 > Adafruit_MQTT.h: No such file or directory` → el bot lo manda a esta tabla →

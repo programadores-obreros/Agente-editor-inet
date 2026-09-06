@@ -55,6 +55,7 @@ en tu `platformio.ini`.
 | Servo en ESP32 | `ESP32Servo.h` | `madhephaestus/ESP32Servo` | **solo ESP32** | Reemplaza a `Servo.h`; misma clase `Servo` |
 | Motor paso a paso | `Stepper.h` | `arduino-libraries/Stepper` | UNO y ESP32 | **NO viene bundled** (contra lo que muchos creen) |
 | Tira LED WS2812 | `Adafruit_NeoPixel.h` | `adafruit/Adafruit NeoPixel` | UNO y ESP32 | Tiras largas → fuente externa de 5V |
+| Paso a paso con aceleración | `AccelStepper.h` | `waspinator/AccelStepper` | UNO y ESP32 | Alternativa a `Stepper.h` con rampas de velocidad. Compilada en UNO y ESP32 (VM, 2026-09-05) |
 
 ### Sensores
 
@@ -75,6 +76,7 @@ en tu `platformio.ini`.
 | LCD paralelo 16x2 (HD44780) | `LiquidCrystal.h` | `arduino-libraries/LiquidCrystal` | UNO y ESP32 | **NO viene bundled**. Para LCD por I2C es OTRA lib (fila siguiente) |
 | LCD 16x2 por módulo I2C | `LiquidCrystal_I2C.h` | `marcoschwartz/LiquidCrystal_I2C` | UNO y ESP32 | Común en ESP32 (ahorra pines). Dirección típica `0x27` (o `0x3F`). API: `lcd.init()` + `lcd.backlight()` |
 | Teclado matricial 4x4 | `Keypad.h` | `chris--a/Keypad` | UNO y ESP32 | El owner es `chris--a` (con **doble guion**) |
+| Display 7 segmentos | `SevSeg.h` | `deanisme/SevSeg` | UNO y ESP32 | Multiplexa 1 a 8 dígitos. Compilada en UNO y ESP32 (VM, 2026-09-05) |
 
 > **Sobre las dependencias que "arrastran":** cuando una lib depende de otra (por
 > ejemplo SSD1306 necesita GFX y BusIO), PlatformIO suele bajarlas solas. Aun así, la

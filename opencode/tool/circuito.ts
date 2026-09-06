@@ -240,7 +240,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "DATA", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
       { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "el DHT22 funciona a 3.3V; conviene un pull-up de 10kΩ entre DATA y VCC.",
+    advertencia: "el DHT22 funciona a 3.3V. Módulo de 3 pines (plaqueta): ya trae el pull-up, no agregues nada. Sensor pelado de 4 patas: 10kΩ entre DATA y VCC.",
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.08;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
   },
 
@@ -253,7 +253,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "OUT", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
       { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
     ],
-    advertencia: "el PIR se alimenta de 5V (VIN). ¡OJO! Muchos módulos PIR dan 5V en la salida OUT: verificá el tuyo antes de conectarlo directo al ESP32 (tolera máx 3.6V). Si da 5V, usá un divisor de tensión como el HC-SR04.",
+    advertencia: "el PIR se alimenta de 5V (VIN), pero OUT = 3.3V en el HC-SR501 (trae regulador a bordo): va directo al GPIO, sin divisor. Sólo módulos mini sin regulador pueden dar 5V en OUT: si el tuyo no es un HC-SR501, medí OUT con el téster antes de conectarlo (el ESP32 tolera máx 3.6V).",
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 12px #27ae60)':'none';},800);`,
   },
 
@@ -268,7 +268,7 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
       { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
     ],
-    advertencia: "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32).",
+    advertencia: "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32). ¡OJO con los 5V! La mochila I2C tiene sus pull-ups a su propio VCC: alimentada a 5V pone SDA y SCL en 5V, y GPIO21/22 NO toleran 5V. Opciones: alimentarla a 3.3V (segura, con menos contraste) o 5V + conversor de nivel bidireccional en SDA/SCL (el divisor de resistencias NO sirve: I2C es bidireccional). Nunca mochila a 5V con SDA/SCL directo al ESP32.",
     anim: (id) => `const l=document.getElementById('${id}');const m=["Hola Tecnia Bot!","Escuela tecnica","Arduino + ESP32"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
   },
 

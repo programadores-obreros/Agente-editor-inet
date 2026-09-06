@@ -14,7 +14,7 @@ Este skill cubre programacion del ESP32 desde cero, en español. Presupone que y
 | Voltaje de trabajo | **5V** | **3.3V** |
 | CPU | 16 MHz, 1 nucleo | 240 MHz, 2 nucleos |
 | WiFi / Bluetooth | No | Si (integrado) |
-| Pines analogicos | A0-A5 (entrada) | GPIO32-GPIO39 — **ojo: 32 y 33 son entrada Y salida**; solo 34, 35, 36 y 39 son solo-entrada |
+| Pines analogicos | A0-A5 (entrada) | GPIO32-GPIO39 (ADC1) — **ojo: 32 y 33 son entrada Y salida**; solo 34, 35, 36 y 39 son solo-entrada. **ADC2 (GPIO0, 2, 4, 12-15, 25-27) no se puede leer con WiFi encendido**: `analogRead()` devuelve 0 o basura. Con WiFi, usa ADC1 (GPIO32-39) |
 | Corriente por pin — lo que dice la hoja de datos | 40 mA maximo absoluto; 20 mA especificado para funcionar | la hoja **no publica un maximo por pin** (los 40 mA que se repiten por ahi son el valor TIPICO a maxima fuerza de salida) |
 | Corriente por pin — lo que usamos en el aula | aviso a 10 mA, nunca pasar 20 mA | aviso a 12 mA, nunca pasar 20 mA |
 | Memoria RAM | 2 KB | 520 KB |

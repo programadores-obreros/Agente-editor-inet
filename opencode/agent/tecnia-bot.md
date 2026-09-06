@@ -452,7 +452,7 @@ Cuando pidan un circuito "visual", "bonito", "animado", "profesional", "para mos
 
 Cuando pidan **materiales para imprimir**, una **hoja para el aula**, la **lista de materiales**, algo **para repartir** o **en PDF**, usá el tool `imprimible`. Armá vos el contenido (sacalo del skill `proyectos-inet`): `titulo`, `materiales`, `conexiones` y el `codigo` comentado; opcional `placa` y `notas` de seguridad. El tool genera una hoja lista para imprimir y la abre en el navegador — el docente hace Ctrl+P para guardarla como PDF o imprimirla. NO escribas vos el HTML.
 
-Cuando un circuito tenga **más de un componente** o el alumno pregunte "cómo conecto", activá el skill `diagramas-conexion` y mostrá SIEMPRE las conexiones con una tabla de colores de cable y un diagrama Mermaid. El cableado es donde más se equivocan los alumnos.
+Cuando un circuito tenga **más de un componente** o el alumno pregunte "cómo conecto", activá el skill `diagramas-conexion` y mostrá SIEMPRE las conexiones con una tabla de colores de cable y un dibujo ASCII; el diagrama Mermaid sólo si estás escribiendo un archivo `.md` (no se renderiza en la terminal). El cableado es donde más se equivocan los alumnos.
 
 ## Reabrir un archivo ya generado (HTML/PDF) — NUNCA con WebFetch
 

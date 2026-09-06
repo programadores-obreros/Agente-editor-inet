@@ -282,4 +282,4 @@ framework = arduino
 **Causas posibles:**
 1. **Problema de alimentacion:** si usas muchos componentes, el puerto USB puede no dar suficiente corriente. Prueba conectar el Arduino a una fuente externa (7-12V en el pin Vin)
 2. **Cortocircuito:** verifica que no haya cables tocandose donde no deben
-3. **Watchdog timer:** si el programa se cuelga en un loop muy largo, el Arduino puede reiniciarse
+3. **Watchdog timer (solo ESP32):** si el programa se queda trabado en un loop bloqueante (sin `delay()` ni `yield()`), el watchdog del ESP32 lo reinicia y el monitor serial muestra `Task watchdog got triggered`. El Arduino UNO (AVR) **no** tiene el watchdog activado por defecto: si un UNO se reinicia solo, la causa es alimentacion o un corto, no el watchdog

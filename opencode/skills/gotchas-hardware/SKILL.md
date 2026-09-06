@@ -38,10 +38,10 @@ El **ESP32 trabaja a 3.3V**. El **Arduino UNO a 5V**. Mezclarlos mal quema compo
 | Componente | Alimentación | Cuidado |
 |------------|--------------|---------|
 | Servo SG90 | 5V (VIN) | sin 5V no tiene fuerza |
-| Sensor PIR | 5V (VIN) | ⚠️ su salida puede dar 5V → divisor antes del GPIO |
+| Sensor PIR HC-SR501 | 5V (VIN) | OUT es de 3.3V (trae regulador a bordo) → directo al GPIO, sin divisor. Sólo módulos mini sin regulador pueden dar 5V: medí antes |
 | HC-SR04 | 5V (VIN) | ⚠️ el pin ECHO da 5V → SÍ o SÍ divisor de tensión |
 | DHT22 | 3.3V | anda directo |
-| LED | — | siempre con resistencia 330Ω |
+| LED | — | siempre con resistencia: **220Ω en 3.3V (ESP32)**, 330Ω en 5V (UNO). Medí el Vf del LED: los azules/blancos (~3,2V) con 330Ω en 3.3V no prenden |
 
 **El divisor de tensión (para bajar 5V a 3.3V):** dos resistencias — R1=1kΩ entre la señal de 5V y el GPIO, R2=2kΩ entre el GPIO y GND. Así el GPIO recibe ~3.3V seguros.
 
@@ -52,7 +52,7 @@ El **ESP32 trabaja a 3.3V**. El **Arduino UNO a 5V**. Mezclarlos mal quema compo
 Algunos GPIO del ESP32 tienen una función especial al encender. Si tenés algo conectado ahí al momento de programar o bootear, falla:
 
 - **GPIO0** — si está en LOW al encender, entra en modo programación. No lo uses para nada conectado.
-- **GPIO2** — tiene el LED interno; debe estar libre/LOW al bootear.
+- **GPIO2** — strapping pin, pero **NO** hace falta que esté en LOW para arrancar: para el arranque normal es indiferente. Sólo importa **acompañando a GPIO0 en LOW**, que es la combinación del modo de descarga. Tiene el LED integrado en muchas placas.
 - **GPIO12** — ⚠️ peligroso: define el voltaje de la flash. Un LED encendido ahí puede impedir el arranque.
 - **GPIO15** — silencia el log de arranque si está en LOW.
 - **GPIO6 a GPIO11** — conectados a la memoria flash interna. NUNCA usarlos.
@@ -64,7 +64,7 @@ Algunos GPIO del ESP32 tienen una función especial al encender. Si tenés algo 
 ## 💡 El LED no prende
 
 1. **Polaridad** — la pata larga (ánodo, +) va al pin con resistencia; la corta (cátodo, −) a GND. Al revés no prende.
-2. **Falta la resistencia** — siempre 330Ω en serie, o el LED se quema (o quema el pin).
+2. **Falta la resistencia, o es la equivocada** — siempre una en serie (220Ω en 3.3V/ESP32, 330Ω en 5V/UNO), o el LED se quema (o quema el pin). Y ojo: un LED azul, blanco o verde InGaN (Vf ~3,2V) con 330Ω en 3.3V recibe 0,3 mA y **no prende** — no está roto, le falta tensión. Medí el Vf con el téster (ver skill `esp32`).
 3. **`pinMode` olvidado** — en `setup()`: `pinMode(pin, OUTPUT)`.
 
 ## 🔌 Errores de conexión USB / no detecta la placa
