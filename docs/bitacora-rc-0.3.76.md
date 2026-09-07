@@ -68,6 +68,47 @@ dejar una máquina peor de lo que la dejaba la 0.3.75 con la key muerta.
   que ninguna VM ni CI puede probar). Anotar los resultados en la tabla de arriba.
 - Notas de la release en GitHub (la CI la crea sin texto).
 
-- Pasos 5 a 12 en la notebook, con el ESP32.
 - Después de publicar: decidir qué hace el bot cuando Big Pickle deje de ser gratis, el
-  lock del modo aula, y el gate de seguridad antes de cargar. Y Educabot.
+  lock del modo aula, y el gate de seguridad antes de cargar.
+
+---
+
+# 0.3.77 — Educabot entra al producto (2026-09-07)
+
+Release de contenido: skill `educabot` (PR #9, #10) con los datos del *Libro de
+actividades* oficial. **No cambió** instalador, bootstrap, lanzador ni `OPENCODE_VERSION`
+(1.18.18). Por eso no hizo falta repetir el ciclo de la RC en la notebook: el `.exe` es
+el mismo camino que el de la 0.3.76 con más archivos de texto.
+
+| Verificación | Resultado |
+|---|---|
+| PR #11 `release/0.3.77` → `main`, CI Linux + Windows (bootstrap de punta a punta) | verde (run 34076824700) |
+| Tag `v0.3.77` → `build-installer` | success (run 34077200252), publicada 2026-09-07 02:43 UTC |
+| `Instalar-Tecnia-Bot.exe` adjunto | 3.875.676 bytes, SHA256 `8bb3deee…` coincide con `SHA256SUMS.txt` |
+| `releases/latest` | redirige a `v0.3.77` |
+| El tag contiene `opencode/skills/educabot/` | sí (en la 0.3.76 no existía) |
+
+## Prueba del `.exe` oficial en la VM
+
+Bajado desde `releases/latest/download`, instalado como usuario sin admin, en silencio,
+encima de la 0.3.76, con OpenCode cerrado.
+
+- La VM tenía otra vez el shim de Scoop roto y `current` en 1.18.29. El bootstrap lo
+  detectó, apartó el shim (`.roto`), hizo `scoop reset` y **volvió a 1.18.18**: el arreglo
+  de la 0.3.76 sigue funcionando.
+- Estado final: `VERSION` 0.3.77; `skills\educabot\SKILL.md` y `bloques-a-codigo.md`
+  instalados; `opencode --version` 1.18.18; `hold: true`; shim de 136.192 bytes; modelo
+  `opencode/big-pickle`; `autoupdate: false`; log termina en LISTO sin `[X]`.
+- Escena con Big Pickle: *motor con velocidad en E3 + LED en el puerto 11 + matriz LED*.
+  El bot activó `educabot`, dijo que el motor ocupa 3, 2 **y 11**, marcó el choque con el
+  LED, propuso moverlo a 8, 12 o 13 o sacar un jumper, y mandó la matriz al IIC.
+
+## Qué falta
+
+- El permiso escrito de Educabot: la release salió con el texto en camino, bajo
+  responsabilidad del responsable del proyecto (`docs/permisos/educabot.md`). Completar la
+  tabla cuando llegue.
+- Medir con tester el orden de los 6 contactos del RJ12 en una placa real.
+- Pasos 5 a 12 de `docs/prueba-rc.md` en la notebook, con el ESP32 (siguen pendientes
+  desde la 0.3.76; este `.exe` sirve igual).
+- Notas de release en GitHub para `v0.3.76` y `v0.3.77` (la CI las crea sin texto).
