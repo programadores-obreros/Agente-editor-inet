@@ -1,13 +1,13 @@
 ---
 name: educabot
-description: Kits Educabot (Argentina) - placa Educablocks UNO (Arduino UNO compatible con 20 puertos RJ12 tipo teléfono, colores por pin), bloques de Educablocks/Robots y qué C++ generan, Kit Inventor, Robot Zonda, Codit. Cómo la reconoce y la programa Tecnia Bot con PlatformIO como `uno`, mapa de puertos, módulos y equivalencias con los skills sensores/actuadores. Frases típicas - "placa Educabot", "Educablocks", "conectores de teléfono", "cable RJ12", "Kit Inventor", "Zonda".
+description: Kits Educabot (Argentina) - placa Educablocks UNO (Arduino UNO compatible con 20 puertos RJ12 tipo teléfono, colores por pin), bloques de Educablocks/Robots y qué C++ generan, Kit Inventor, Robot Zonda, Codit. Cómo la reconoce y la programa Tecnia Bot con PlatformIO como `uno`, mapa de puertos (con las señales de cada conector según el Libro de actividades oficial), puertos especiales E3/E4/E6, módulos, proyectos escolares del libro y equivalencias con los skills sensores/actuadores. Frases típicas - "placa Educabot", "Educablocks", "conectores de teléfono", "cable RJ12", "Kit Inventor", "Zonda".
 ---
 
 # Educabot — la Educablocks UNO y los bloques de Educablocks/Robots
 
 Muchas escuelas técnicas tienen kits de **Educabot** (empresa argentina de tecnología educativa). El corazón del kit es la **Educablocks UNO**: un Arduino UNO con los pines sacados a **conectores RJ12** (los de teléfono fijo), así los alumnos enchufan módulos con cable en vez de armar protoboard. Este skill le da a Tecnia Bot lo que hace falta para reconocerla, programarla en C++ con PlatformIO y traducir lo que el docente ya sabe hacer con bloques.
 
-> **Regla de oro:** la Educablocks UNO **es un Arduino UNO** (ATmega328P, lógica de **5V**). Todo lo del skill `arduino` aplica tal cual. Lo que cambia es el conector: cada puerto RJ12 lleva **un pin del UNO** (o dos, en los puertos 3 y 6). Lo que este skill NO tiene —el orden de los 6 hilos del RJ12— **no está documentado públicamente**: si el docente lo necesita, decilo y mandalo a medir con tester, nunca lo inventes.
+> **Regla de oro:** la Educablocks UNO **es un Arduino UNO** (ATmega328P, lógica de **5V**). Todo lo del skill `arduino` aplica tal cual. Lo que cambia es el conector: cada puerto RJ12 lleva **un pin del UNO** más 5V y GND, salvo los puertos **especiales E3, E4 y E6**, que llevan **tres pines** (dos señales + un PWM) y VIN. Qué señales lleva cada conector está publicado en el *Libro de actividades* de Educabot (diagrama de la p. 29, copiado en `docs/educabot/`). Lo que **no está publicado** es la posición física de cada señal en los 6 contactos del RJ12: si el docente arma un cable o conecta algo que no es del kit, mandalo a medir con tester, nunca lo inventes.
 
 ---
 
@@ -15,11 +15,14 @@ Muchas escuelas técnicas tienen kits de **Educabot** (empresa argentina de tecn
 
 Serigrafía: **«EDUCABOT · Educablocks UNO»**. Tiene el ATmega328P en formato DIP (el chip grande con zócalo), el conector ICSP de 6 pines, botón de reset, **USB-B** (cuadrado, como el de impresora) y **jack DC** para alimentación. Alrededor, **20 conectores RJ12** rotulados con el pin que llevan:
 
-- **Azules:** digitales 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13. Los que tienen **mitad amarilla** son los PWM del UNO: 3, 5, 6, 9, 10, 11.
+- **Celestes/azules:** digitales 2 a 13 (en la unidad fotografiada no está el 4; en la revisión del libro sí). Los que tienen **mitad amarilla** son los PWM del UNO: 3, 5, 6, 9, 10, 11.
+- **Rojos (o mitad roja):** los puertos **especiales E3, E4 y E6**, con tres señales para ultrasonido y motores (ver más abajo).
 - **Rosas:** analógicos A0 a A5.
 - **Verde «COM»:** serie por hardware (D0/D1, el mismo canal que el USB).
 - **Violeta «IIC»:** I2C (A4 = SDA, A5 = SCL, como en cualquier UNO).
-- La serigrafía también dice **«D3-S1»**, **«D6-S3»** y **«D10-SPI»**: marcas de los puertos "especiales" (ver los puertos dobles más abajo).
+- La serigrafía también dice **«D3-S1»**, **«D6-S3»** y **«D10-SPI»**: marcas de los puertos especiales.
+
+**Código de colores oficial** (Libro de actividades, p. 30) — también está en la etiqueta de cada módulo, y la regla del libro es *«conectá el módulo en un puerto del mismo color»*: **rosa** analógico (potenciómetro, luz, suelo, sonido) · **celeste** digital (pulsador, táctil, obstáculos, LED, zumbador) · **azul** digital con protocolo propio (DHT11, control IR, DS18B20 sumergible) · **verde** COM (Bluetooth) · **violeta** IIC (LCD y matriz) · **amarillo** PWM (LED con brillo, motores) · **rojo** especial (motores, ultrasonido).
 
 La tienda de Educabot describe la placa así (cita textual del vendedor): *«puerto USB, alimentación hasta 24V, 20 puertos RJ12, 8 analógicos, 10 digitales, 1 IIC, 1 comunicación, 4 PWM»*. En la unidad fotografiada se cuentan **6 analógicos y 6 PWM**; la cantidad exacta **depende de la revisión** de la placa, así que confiá en lo que está serigrafiado en la que tenés adelante.
 
@@ -52,27 +55,31 @@ monitor_speed = 9600         ; la velocidad que usa la plataforma Educablocks
 
 | Puerto (rótulo) | Pin/es del UNO | Color | Para qué se usa |
 |---|---|---|---|
-| **2** | 2 | azul | digital (entrada/salida). Ojo: también es la **segunda señal del puerto 3** |
-| **3** | **3 + 2** (señal 1 = 3, señal 2 = 2) | azul/amarillo | puerto **doble** («D3-S1»): ultrasonido (trigger 3, echo 2) o motor DC (3 y 2). PWM en 3 |
-| **5** | 5 | azul/amarillo | digital con PWM (LED con brillo, buzzer, servo) |
-| **6** | **6 + 7** (señal 1 = 6, señal 2 = 7) | azul/amarillo | puerto **doble** («D6-S3»): ultrasonido (trigger 6, echo 7) o motor DC (6 y 7). PWM en 6 |
-| **7** | 7 | azul | digital. Ojo: también es la **segunda señal del puerto 6** |
-| **8** | 8 | azul | digital |
-| **9** | 9 | azul/amarillo | digital con PWM (servo) |
-| **10** | 10 | azul/amarillo | digital con PWM. Serigrafía «D10-SPI»: el 10 es SS de la SPI del UNO |
-| **11** | 11 | azul/amarillo | digital con PWM (también MOSI de SPI) |
-| **12** | 12 | azul | digital (también MISO de SPI) |
-| **13** | 13 | azul | digital (también SCK de SPI y el LED integrado `LED_BUILTIN`) |
+| **2** | 2 | celeste | digital (entrada/salida). Ojo: también es la **segunda señal del puerto E3** |
+| **3** (E3) | **3 + 2**, más **11** (PWM) y VIN | rojo/amarillo | puerto **especial** («D3-S1»): ultrasonido (trigger 3, echo 2) o motor DC (3 y 2; velocidad por el 11). Señales del conector según el libro: D11~, D2, D3~, VIN, 5V, GND |
+| **4** (E4) | **4 + 5**, más **9** (PWM) y VIN | rojo | puerto **especial**, sólo en algunas revisiones: ultrasonido (trigger 4, echo 5) o motor DC (4 y 5; velocidad por el 9). Señales: D9~, D5, D4, VIN, 5V, GND |
+| **5** | 5 | celeste/amarillo | digital con PWM (LED con brillo, buzzer, servo). Ojo: también es la **segunda señal del E4** |
+| **6** (E6) | **6 + 7**, más **10** (PWM) y VIN | rojo/amarillo | puerto **especial** («D6-S3»): ultrasonido (trigger 6, echo 7) o motor DC (6 y 7; velocidad por el 10). Señales: D10~, D7, D6, VIN, 5V, GND |
+| **7** | 7 | celeste | digital. Ojo: también es la **segunda señal del puerto E6** |
+| **8** | 8 | celeste | digital |
+| **9** | 9 | celeste/amarillo | digital con PWM (servo). Ojo: es el **PWM del E4** |
+| **10** | 10 | celeste/amarillo | digital con PWM. Serigrafía «D10-SPI»: el 10 es SS de la SPI del UNO. Ojo: es el **PWM del E6** |
+| **11** | 11 | celeste/amarillo | digital con PWM (también MOSI de SPI). Ojo: es el **PWM del E3** |
+| **12** | 12 | celeste | digital (también MISO de SPI) |
+| **13** | 13 | celeste | digital (también SCK de SPI y el LED integrado `LED_BUILTIN`) |
 | **A0 … A5** | A0 … A5 | rosa | analógico 0-1023 (potenciómetro, LDR, suelo, lluvia, sonido). También sirven como digital |
 | **COM** | D0 (RX) + D1 (TX) | verde | serie por hardware: Bluetooth HC-05/06 o cualquier módulo serie. Es el mismo canal que el USB: **desenchufá el módulo para cargar** |
-| **IIC** | A4 (SDA) + A5 (SCL) | violeta | I2C: LCD 16x2 con adaptador (0x27 o 0x3F) y otros módulos I2C |
+| **IIC** | A4 (SDA) + A5 (SCL) | violeta | I2C: LCD 16x2 con adaptador (0x27 o 0x3F), **matriz LED del kit** y otros módulos I2C |
 
-**Los puertos dobles 3 y 6, explicados.** Un ultrasonido necesita dos señales (trigger y echo) y un motor DC con puente H necesita dos (dirección). Educabot resolvió eso llevando **dos pines a un mismo RJ12**: al puerto 3 van los pines 3 y 2; al puerto 6 van los 6 y 7. Por eso el bloque de ultrasonido de Educablocks te deja elegir "puerto 3" o "puerto 6" y genera `trigger=3, echo=2` o `trigger=6, echo=7`. Consecuencias prácticas:
+Los puertos simples llevan **señal + 5V + GND** (tres hilos). COM lleva RX, TX, 5V, GND; IIC lleva SCL, SDA, 5V, GND. Todo esto sale del diagrama de la p. 29 del *Libro de actividades* (copia en `docs/educabot/educablocks-uno-conectores.png`).
 
-- Si tenés un ultrasonido o un motor en el puerto 3, **el puerto 2 queda ocupado** aunque esté libre a la vista (y lo mismo 6 con 7).
-- Si usás el pin 2 o el 7 para otra cosa por código, no enchufes nada en el puerto doble correspondiente.
-- Otra revisión del generador usa "puerto 4 → trigger 4, echo 5"; en la placa fotografiada **no hay puerto 4**, así que si un docente ve ese bloque, es de otra placa o versión.
-- Los rótulos «D3-S1» y «D6-S3» de la serigrafía son las marcas de esos puertos dobles (S1/S3 es la numeración interna de Educabot; no hay documento público que la explique).
+**Los puertos especiales E3, E4 y E6, explicados.** Un ultrasonido necesita dos señales (trigger y echo) y un motor DC con puente H necesita dos de dirección y, si querés velocidad, una tercera PWM. Educabot resolvió eso llevando **tres pines y VIN a un mismo RJ12** (el libro, p. 29: *«puertos especiales que permiten conectar hasta 3 pines digitales, de los cuales uno puede ser PWM… poseen una salida VIN»*): al E3 van los pines 3 y 2 más el 11; al E4 los 4 y 5 más el 9; al E6 los 6 y 7 más el 10. Por eso el bloque de ultrasonido de Educablocks te deja elegir el puerto y genera `trigger=3, echo=2` o `trigger=6, echo=7` (o `trigger=4, echo=5` en la revisión con E4). Consecuencias prácticas:
+
+- Si tenés un ultrasonido o un motor en el E3, **el puerto 2 queda ocupado** aunque esté libre a la vista (y lo mismo E4 con 5, E6 con 7). El libro lo dice textual: *«no conectemos nada a los puertos que están en uso cuando usamos los pines especiales»*.
+- Si el motor va **con velocidad** (puente H con los dos jumpers puestos, tres señales), además queda ocupado el pin PWM del especial: **11** para E3, **9** para E4, **10** para E6.
+- Si usás por código el pin 2, 5 o 7 (o el 11, 9, 10 con velocidad) para otra cosa, no enchufes nada en el especial correspondiente.
+- **La revisión importa.** La placa del libro (2018) tiene los doce digitales del 2 al 13, con E3, E4 y E6 en rojo. La unidad fotografiada por el usuario no tiene el puerto 4. Leé la serigrafía de la que tenés adelante.
+- Los rótulos «D3-S1» y «D6-S3» de la serigrafía son las marcas de esos puertos especiales (S1/S3 es la numeración interna de Educabot; no hay documento público que la explique).
 
 ---
 
@@ -88,20 +95,24 @@ Los módulos son los mismos sensores y actuadores genéricos que ya cubren los s
 | Potenciómetro | analógico | A0-A5 | `analogRead` | `arduino` › Potenciómetro |
 | Suelo (FC-28) / Lluvia | analógico | A0-A5 | `analogRead` | `sensores` › FC-28 / YL-83 |
 | Sonido | analógico | A0-A5 | `analogRead` | `sensores` › KY-038 |
-| Pir, Óptico, IR obstáculo, Tilt, Touch, Vibración, Hall | digital | el del puerto | `digitalRead` | `sensores` › PIR; los demás son digitales genéricos |
-| Ultrasonidos (HC-SR04) | **3 o 6** | 3+2 / 6+7 | `pulseIn` | `sensores` › HC-SR04 (**sin divisor**: el UNO es 5V) |
-| Motor DC (puente H del kit) | **3 o 6** | 3+2 / 6+7 | dos `digitalWrite` | `actuadores` › Motor DC + L298N |
+| Pir, Óptico, IR obstáculo, Tilt, Touch (táctil), Vibración, Hall (magnético) | digital (celeste) | el del puerto | `digitalRead` | `sensores` › PIR; los demás son digitales genéricos. El libro usa: obstáculos en 2, 4 o 5; óptico, táctil y magnético en 2 |
+| Ultrasonidos (HC-SR04) | **E3, E4 o E6** (rojo) | 3+2 / 4+5 / 6+7 | `pulseIn` | `sensores` › HC-SR04 (**sin divisor**: el UNO es 5V) |
+| Motor DC (puente H del kit, hasta 4 motores: 2 MI + 2 MD) | **E3, E4 o E6** (rojo) | 3+2 / 4+5 / 6+7, más 11 / 9 / 10 si va con velocidad | dos `digitalWrite` (+ `analogWrite` en el PWM) | `actuadores` › Motor DC + L298N. El libro: MI en E3, MD en E4 |
+| Temperatura LM335 (analógico) | analógico | A0-A5 | `analogRead` | Sin ficha propia en Tecnia Bot. Es un diodo Zener térmico: 10 mV por kelvin, así que °C = (tensión / 0,01) − 273 |
+| Temperatura sumergible DS18B20 | digital (azul) | el del puerto | 1-Wire | Sin ficha propia. `lib_deps = paulstoffregen/OneWire`, `milesburton/DallasTemperature` (registro de PlatformIO) |
+| Control IR (receptor + control remoto) | digital (azul) | el del puerto | `IRremote` | Sin ficha propia. `lib_deps = z3t0/IRremote`; el bloque «IR» de Educablocks imprime el código de cada botón por serie |
 | Seguidor de líneas | dos digitales | pin izquierda + pin derecha | dos `digitalRead` | `proyectos-inet` (robots) |
-| Servo 180 / Servo 360 | digital (mejor PWM) | el del puerto | `Servo.h` | `actuadores` › Servo SG90 |
+| Servo 180 / Servo 360 | cualquier digital (el libro usa el 2 y el 8) | el del puerto | `Servo.h` | `actuadores` › Servo SG90 |
 | Relé («Relé (invertido)») | digital | el del puerto | `digitalWrite` | `actuadores` › Relé. El bloque lo llama *invertido*: probá con `LOW` = activo |
 | Zumbador (buzzer) | digital | el del puerto | `tone()` | `fichas` › 15 «El zumbador» (activo vs pasivo) |
 | Led RGB | tres PWM | tres pines | `analogWrite` ×3 | `modulos-avanzados` › LED RGB |
 | DHT11 | digital | el del puerto | `dht11.h` | `sensores` › DHT11/22 con `DHT.h` |
 | LCD 16x2 I2C | **IIC** | A4/A5 | `LiquidCrystal_I2C` | `librerias` (fila LCD I2C) |
-| Matriz 8x8 | ver nota | — | `LedControlMS.h` | `modulos-avanzados` (no hay ficha propia) |
-| Bluetooth | **COM** o dos digitales | D0/D1 o RX/TX elegidos | `SoftwareSerial` | `comunicacion-serial` |
+| Matriz LED 8x8 | **IIC** (violeta) | A4/A5 | ver nota | `modulos-avanzados` (no hay ficha propia) |
+| Matriz RGB, Gesto, Makey Makey | — | — | — | Vienen en el inventario del kit (p. 28 del libro) pero el libro no trae actividad ni puerto: no inventes cómo van |
+| Bluetooth | **COM** (verde) | D0/D1 | `Serial` (o `SoftwareSerial` en dos digitales) | `comunicacion-serial`. **Conectalo después de cargar** (ver Advertencias) |
 
-> **Nota matriz 8x8:** la plantilla de Educablocks incluye `LedControlMS.h` (driver MAX7219, tres señales DIN/CLK/CS). En qué puerto va el módulo de matriz de Educabot **no lo pude confirmar**; la serigrafía «D10-SPI» sugiere el puerto 10, pero es una inferencia, no un dato.
+> **Nota matriz 8x8:** el *Libro de actividades* (p. 42) la conecta al puerto **IIC**, igual que el LCD, y la programa con el bloque «Matriz LED». La plantilla del editor offline viejo, en cambio, incluye `LedControlMS.h` (MAX7219, tres señales DIN/CLK/CS): hubo **dos módulos de matriz distintos**. Mirá el módulo: si tiene un chip MAX7219 y cuatro hilos de datos, es el viejo; si va al IIC, es el del libro (I2C). No mezcles las librerías.
 
 **Cuando el docente pregunta "cómo lo conecto":** la respuesta es esta tabla: *módulo X → puerto Y, con el cable RJ12 del kit*. No hay protoboard ni cables sueltos. Si quiere conectar un componente **que no es de Educabot** (un sensor pelado, un módulo de otro kit), pasá a los skills `sensores`/`actuadores` y al pinout del UNO; para llegar a los pines del UNO necesita los headers hembra de la placa o medir el RJ12 (ver Advertencias).
 
@@ -185,7 +196,7 @@ void setup() { pinMode(3, OUTPUT); pinMode(2, OUTPUT); }
 void loop()  { digitalWrite(3, HIGH); digitalWrite(2, LOW); }   // un sentido
 // HIGH/LOW al revés = el otro sentido; LOW/LOW = frena
 ```
-En Tecnia Bot: es un puente H de dos entradas (IN1/IN2) como en `actuadores` › L298N, pero el driver ya está en el módulo de Educabot y se alimenta por el RJ12. Con `analogWrite(3, velocidad)` en el pin PWM controlás la velocidad.
+En Tecnia Bot: es un puente H de dos entradas (IN1/IN2) como en `actuadores` › L298N, pero el driver ya está en el módulo de Educabot y se alimenta por el VIN del RJ12. **La velocidad no va por el pin 3**: el puente H del kit se controla *«de forma digital (2 señales) o con PWM (3 señales); para PWM hay que colocar ambos jumpers»* (libro, p. 72), y la tercera señal es el pin PWM del puerto especial: `analogWrite(11, velocidad)` en el E3, `analogWrite(9, …)` en el E4, `analogWrite(10, …)` en el E6.
 
 **7. Bloque «LCD I2C» — Dirección 0x27, «LCD: Imprimir»**
 ```cpp
@@ -203,6 +214,32 @@ void setup() { pinMode(7, OUTPUT); }
 void loop()  { digitalWrite(7, LOW); delay(1000); digitalWrite(7, HIGH); delay(1000); }
 ```
 El bloque se llama *invertido* porque el módulo relé del kit es **activo-bajo**: `LOW` engancha, `HIGH` suelta (las etiquetas Encender/Apagar del bloque están cruzadas a propósito). En Tecnia Bot: `actuadores` › Relé, con la advertencia de activo-bajo que ya está ahí.
+
+---
+
+## Proyectos del *Libro de actividades* (con sus puertos)
+
+Educabot publica un libro de actividades para primaria (4.º a 6.º grado, Diseño Curricular de la Provincia de Buenos Aires) con 17 proyectos por etapas (contextualizar → investigar → conectar → programar → desafíos → evaluar). Sirven tal cual como **escenas de ejemplo** para una escuela técnica que arranca, y como respuesta cuando un docente pregunta "qué puedo hacer con el kit". Puertos exactos del libro:
+
+| Proyecto (grado) | Módulos → puertos | Idea |
+|---|---|---|
+| ¡Yo no quiero humedad en mi pieza! (4.º) | DHT11 → 2, LCD → IIC | mostrar humedad y temperatura |
+| Don Quijote y los molinos (4.º) | ultrasonido → E3, motor DC → E4, matriz → IIC | al acercarse alguien, cambia la cara y gira el molino |
+| Semáforos… ¿para todos? (4.º) | LEDs → 4, 5, 6; zumbador → 7 | semáforo con sonido |
+| ¡Basta de calor! (4.º) | motor DC → E3, pulsador → 5 | ventilador a botón |
+| ¿Quién es más alto? (4.º) | ultrasonido → E4, LCD → IIC | medidor de altura |
+| Estación meteorológica (5.º) | LCD → IIC, LED → 3, DHT11 → 5 | alarma de temperatura |
+| Medir para conocer (5.º) | obstáculos → 4, zumbador → 5 | contador con aviso |
+| Contaminación sonora (5.º) | sonido → A0, LED → 2 | semáforo de ruido |
+| Comunicación de los seres vivos (5.º) | luz → A0, LED → 3 | luz que responde a la oscuridad |
+| Mejor convivencia escolar (5.º) | táctil y pulsador → 4, 5; LEDs → 2, 3 | votación con dos botones |
+| ¡Todos a la fábrica! (6.º) | motores DC → E3, servo → 8, obstáculos → 5 | cinta transportadora |
+| Ágilmente (6.º) | matriz → IIC, pulsador → 2 | juego de reacción |
+| Estacionamiento inteligente (6.º) | obstáculos → 5, LEDs → 2, 3 | libre/ocupado |
+| Instrucciones - Recorrido (6.º) | 4 motores DC → E3 + E4 (driver) | robot que sigue una secuencia |
+| La importancia del agua (6.º) | suelo → A0, zumbador → 3 | alarma de riego |
+
+Las actividades sueltas del capítulo «Kit electrónico» (pp. 32-73) usan casi siempre el **puerto 2** para digitales y **A0** para analógicos, ultrasonido en **E3**, motores MI en E3 y MD en E4, LCD y matriz en **IIC**, Bluetooth en **COM**.
 
 ---
 
@@ -229,27 +266,28 @@ El bloque se llama *invertido* porque el módulo relé del kit es **activo-bajo*
 
 ## Advertencias
 
-1. **El pinout del RJ12 no está documentado.** No hay documento público que diga cuál de los 6 hilos es VCC, GND, señal 1 y señal 2. **Nunca lo adivines ni lo deduzcas del color del cable.** Si el docente quiere conectar un módulo que no es de Educabot o armar un cable RJ12 casero, tiene que **medir continuidad con el tester** entre cada contacto del RJ12 y los pines GND / 5V / digital del header de la placa, y anotarlo. Un módulo alimentado al revés se quema en el acto.
+1. **El orden físico de los contactos del RJ12 no está publicado.** El libro dice QUÉ señales lleva cada conector (señal, 5V, GND; y en los especiales PWM, señal 2, señal 1, VIN, 5V, GND), pero ningún documento público dice en cuál de los 6 contactos va cada una. **Nunca lo adivines ni lo deduzcas del color del cable ni del orden del dibujo.** Si el docente quiere conectar un módulo que no es de Educabot o armar un cable RJ12 casero, tiene que **medir continuidad con el tester** entre cada contacto del RJ12 y los pines GND / 5V / digital del header de la placa, y anotarlo. Un módulo alimentado al revés se quema en el acto.
 2. **Nunca dos fuentes.** Los módulos reciben 5V y GND por el cable RJ12. No les agregues una segunda alimentación (una pila, una fuente externa) mientras están enchufados a la placa.
 3. **Lógica de 5V.** Es un UNO: sus salidas son de 5V y sus entradas toleran 5V. Todo lo que el skill `esp32` dice de 3.3V, divisores y strapping pins **no aplica**. A la inversa: un módulo de 3.3V puro (algunos sensores I2C) no va directo a esta placa.
 4. **El tool `circuito` dibuja ESP32.** No tiene ninguna pieza ni preset de la Educablocks UNO ni de los módulos RJ12. Para "cómo conecto" en esta placa, respondé con la tabla de puertos; no llames al tool y no muestres un dibujo de ESP32 como si fuera esta placa.
-5. **COM comparte el USB.** Si hay un módulo en el puerto COM (Bluetooth), desenchufalo para cargar el programa; si no, `avrdude` falla con `not in sync`.
-6. **Los puertos dobles ocupan dos pines.** Ultrasonido o motor en el 3 → el 2 no se usa; en el 6 → el 7 no se usa.
+5. **COM comparte el USB.** Si hay un módulo en el puerto COM (Bluetooth), desenchufalo para cargar el programa; si no, `avrdude` falla con `not in sync`. El libro (p. 68) lo dice en mayúsculas: *«conectarlo después de haber cargado nuestro programa y nunca tenerlo conectado cuando estemos cargando código»*.
+6. **Los puertos especiales ocupan dos o tres pines.** Ultrasonido o motor en el E3 → el 2 no se usa (y el 11 si hay velocidad); en el E4 → el 5 (y el 9); en el E6 → el 7 (y el 10).
 7. **Cantidades por revisión.** La cantidad de puertos analógicos y PWM varía según la revisión (el vendedor dice 8 analógicos/4 PWM; la unidad fotografiada tiene 6/6). Leé la serigrafía.
 
 ---
 
 ## Regla de oro (ampliada)
 
-- **No inventés el pinout del RJ12.** Si te lo preguntan, la respuesta es: *"no está publicado; se mide con tester así…"*.
-- **Si un dato no está en este skill, decilo.** Chip USB-serie, orden de hilos, puerto de la matriz, revisión exacta: no están verificados. Es mejor "no lo tengo confirmado, fijate en la serigrafía / medilo" que un número inventado que quema un módulo.
-- **Puerto = pin**, salvo 3 (3+2), 6 (6+7), COM (0+1) e IIC (A4+A5). Cualquier otra correspondencia que alguien te diga, verificala contra la serigrafía.
+- **No inventés el orden de los contactos del RJ12.** Si te lo preguntan, la respuesta es: *"qué señales lleva está en el libro; en qué contacto va cada una no está publicado; se mide con tester así…"*.
+- **Si un dato no está en este skill, decilo.** Chip USB-serie, orden de contactos, revisión exacta, puerto de la matriz RGB / gesto / Makey Makey: no están verificados. Es mejor "no lo tengo confirmado, fijate en la serigrafía / medilo" que un número inventado que quema un módulo.
+- **Puerto = pin**, salvo los especiales E3 (3+2+11), E4 (4+5+9), E6 (6+7+10), COM (0+1) e IIC (A4+A5). Cualquier otra correspondencia que alguien te diga, verificala contra la serigrafía.
 - **Es un UNO.** Cuando dudes, volvé al skill `arduino`.
 
 ---
 
 ## Fuentes
 
+- **Libro de actividades Educabot** (Educabot, 180 páginas; copia en `docs/educabot/libro-de-actividades-educabot.pdf`, uso autorizado por el fabricante: `docs/permisos/educabot.md`). Placa y diagrama de conectores p. 29; código de colores p. 30; señales analógicas/digitales p. 31; una actividad «¡A CONECTAR!» por módulo pp. 32-73 (puente H p. 72, Bluetooth p. 68); inventario del kit p. 28; kit mecánico p. 77; 17 proyectos por grado pp. 86-179.
 - Foto de la unidad del usuario (serigrafía, colores y rótulos de los 20 puertos) y página de la placa en la tienda oficial: https://www.tienda.educabot.com/placa-educablocks-uno-educabot-para-arduino (cita textual de la descripción del vendedor). Componentes: https://www.tienda.educabot.com/componentes-educablocks · Cable de 6 hilos: https://www.tienda.educabot.com/cable-conexion-simple-educabot-educablocks-arduino-30cm/p/MLA46716611
 - Editor offline de código abierto de Educabot: https://github.com/educabot/educablocks-offline — `views/global/js/arduino/client.js` (Arduino IDE 1.8.5, `arduino:avr:uno`, `avrdude -patmega328p -carduino -b115200`, monitor 9600) y `educablocks.js` (generadores de bloques: pines de ultrasonido y motor por puerto, plantillas C++, etiquetas en castellano).
 - Plataforma Educablocks/Robots: https://robots.educabot.com y https://labs.educabot.com.
