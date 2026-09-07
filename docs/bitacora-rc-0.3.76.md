@@ -47,10 +47,27 @@ arregla en la VM antes de tocar una máquina real.**
 | 11 | Reparar desde el menú inicio | pendiente | |
 | 12 | Desinstalar | pendiente | |
 
-## Qué falta para publicar
+## Publicación
+
+**Publicada el 2026-09-06 a las 23:57 UTC** como [v0.3.76](https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.76),
+con pasos 5 a 12 de la prueba todavía pendientes. Se decidió publicar igual: la key de
+respaldo revocada ese mismo día dejaba mudas las instalaciones de agosto sin key propia, y
+la página oficial seguía distribuyendo la 0.3.75. Ninguno de los pasos pendientes puede
+dejar una máquina peor de lo que la dejaba la 0.3.75 con la key muerta.
+
+| Verificación | Resultado |
+|---|---|
+| PR #7 `release/0.3.76` → `main`, CI Linux + Windows (bootstrap de punta a punta) | verde |
+| Tag coincide con `VERSION`; smoke; parseo 5.1 de la copia instalada; `OPENCODE_VERSION` y manifiesto | verde |
+| `Instalar-Tecnia-Bot.exe` adjunto | 3.864.584 bytes, SHA256 verificado contra `SHA256SUMS.txt` |
+| `releases/latest` | redirige a `v0.3.76`: la página oficial ya baja la nueva |
+
+## Qué falta después de publicar
+
+- Pasos 5 a 12 de la prueba en la notebook, con el ESP32 (el 8, cargar a la placa, es el
+  que ninguna VM ni CI puede probar). Anotar los resultados en la tabla de arriba.
+- Notas de la release en GitHub (la CI la crea sin texto).
 
 - Pasos 5 a 12 en la notebook, con el ESP32.
-- PR de `release/0.3.76` a `main`, merge, y tag `v0.3.76` (el tag publica la release y el
-  `.exe`; la página oficial pasa a bajar la nueva sola).
 - Después de publicar: decidir qué hace el bot cuando Big Pickle deje de ser gratis, el
   lock del modo aula, y el gate de seguridad antes de cargar. Y Educabot.
