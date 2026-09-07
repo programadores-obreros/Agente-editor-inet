@@ -4,6 +4,9 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+### Agregado
+- **Skill `educabot`: la placa Educablocks UNO y los bloques de Educablocks/Robots.** Es un Arduino UNO (ATmega328P) con los 20 pines sacados a conectores RJ12 con código de colores: Tecnia Bot la compila y carga como `uno` a 9600, igual que hace el propio editor de Educabot (verificado en su código abierto: `arduino:avr:uno`, `avrdude -patmega328p -carduino -b115200`). Mapa puerto → pin con los dos puertos dobles, 3 (3+2) y 6 (6+7), que usan el ultrasónico y el motor; catálogo de módulos con su equivalente en `sensores`/`actuadores`; ocho equivalencias bloque → C++ generado → cómo se escribe en Tecnia Bot (`bloques-a-codigo.md` trae la tabla completa); la plataforma (tres niveles, el botón de «las dos llaves» que muestra el código, el plugin) y cuándo conviene cada herramienta. Dice con honestidad lo que no está publicado: el pinout del RJ12 (prohibido adivinarlo), el chip USB-serie, y que el tool `circuito` dibuja ESP32 y no esta placa. README pasa a 17 skills; test `skill-educabot`.
+
 ## [0.3.76] — 2026-09-06
 
 La API key de Google pasa a ser opcional: sin key, el agente usa Big Pickle, el modelo gratuito de OpenCode. Y se va la key embebida en el instalador.

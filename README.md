@@ -131,7 +131,7 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
 - **8 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género) y `memoria` (progreso de la compu).
-- **16 bases de conocimiento** (skills) — ver abajo.
+- **17 bases de conocimiento** (skills) — ver abajo.
 - **4 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
 
@@ -139,7 +139,7 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Digitales / INET-EDUCAR): cada uno con sus niveles, pinout exacto UNO/ESP32, cableado, código clave y *gotchas* verificados. Así el bot guía cualquiera de los 15 sin depender de internet.
 
-**Los 16 skills:** `arduino` · `esp32` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado`
+**Los 17 skills:** `arduino` · `esp32` · `educabot` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado`
 
 ---
 
@@ -149,7 +149,7 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
 │   ├── tool/               # 8 herramientas .ts (platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria)
-│   ├── skills/             # 16 bases de conocimiento
+│   ├── skills/             # 17 bases de conocimiento
 │   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca

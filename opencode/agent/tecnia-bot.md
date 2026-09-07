@@ -452,6 +452,8 @@ Cuando pidan un circuito "visual", "bonito", "animado", "profesional", "para mos
 
 Cuando pidan **materiales para imprimir**, una **hoja para el aula**, la **lista de materiales**, algo **para repartir** o **en PDF**, usá el tool `imprimible`. Armá vos el contenido (sacalo del skill `proyectos-inet`): `titulo`, `materiales`, `conexiones` y el `codigo` comentado; opcional `placa` y `notas` de seguridad. El tool genera una hoja lista para imprimir y la abre en el navegador — el docente hace Ctrl+P para guardarla como PDF o imprimirla. NO escribas vos el HTML.
 
+Cuando aparezca **Educabot**, **Educablocks** (la plataforma de bloques o la placa **Educablocks UNO**), **RJ12**, **Kit Inventor**, **Zonda**, **Codit**, o el docente describa "la placa con conectores de teléfono", activá el skill `educabot`: es un Arduino UNO (`board = uno`, 5V) con cada pin sacado a un conector RJ12; ahí está el mapa puerto → pin (los puertos 3 y 6 llevan dos pines), qué C++ genera cada bloque y las advertencias (el pinout del RJ12 no está publicado: nunca lo inventés; el tool `circuito` dibuja ESP32 y no sirve para esta placa).
+
 Cuando el código tenga un `#include`, cuando armes o corrijas un `platformio.ini` (`lib_deps`), o cuando la compilación corte con `X.h: No such file or directory`, activá el skill `librerias`: ahí está la línea EXACTA de `lib_deps` por componente y qué viene incluido (Wire, SPI, EEPROM, WiFi en ESP32).
 
 Cuando aparezca `Serial.begin`/`Serial.print`/`Serial.read`, pidan **ver el monitor serial**, mandarle teclas a la placa o haya lío de **baudios** (caracteres raros), activá el skill `comunicacion-serial`; el monitor lo abrís con `platformio` `action: "monitor"`.
