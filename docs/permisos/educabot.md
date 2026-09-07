@@ -10,6 +10,13 @@ El 2026-09-06, el responsable del proyecto (Alejandro Palestrini) declaró en la
 de trabajo, textual: *«tengo el permiso explícito del fabricante para publicar o usar
 todo lo disponible de la web»*.
 
+## Estado al publicar la 0.3.77 (2026-09-07)
+
+El texto escrito del permiso está en camino ("me lo están por pasar"). El responsable del
+proyecto decidió publicar la release igual y declaró hacerse **totalmente responsable** del
+uso de este material hasta que el permiso quede registrado acá. Cuando llegue, completar la
+tabla de abajo en un commit propio.
+
 ## Datos a completar por quien recibió el permiso
 
 Este archivo vale como registro sólo cuando estén completos. Hasta entonces, el repo
