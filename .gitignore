@@ -45,3 +45,8 @@ Thumbs.db
 # Logs rotados del bootstrap (instalacion-<fecha>.log) cuando se corre desde un clon
 instalacion-*.log
 instalacion.log
+
+# Libro de actividades de Educabot: 22 MB de PDF del fabricante. El repo guarda
+# lo que la skill necesita (docs/educabot/*.md, el diagrama PNG) y el permiso de
+# uso (docs/permisos/educabot.md); el PDF se baja o se copia a mano.
+/docs/educabot/*.pdf

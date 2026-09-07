@@ -5,15 +5,17 @@
 // tiene en el aula a lo que Tecnia Bot sabe hacer (PlatformIO como `uno`).
 // Si alguien lo edita y (a) el modelo chico deja de elegirlo, (b) los puertos
 // dobles cambian de pines, (c) el platformio.ini deja de ser un UNO a 9600,
-// (d) desaparece la advertencia de que el pinout del RJ12 no está publicado
-// o (e) se pierde la equivalencia dht11.h → librerias, el docente recibe un
-// consejo que quema un módulo o no compila. Acá se fija cada uno.
+// (d) desaparece la advertencia de que el orden de los contactos del RJ12 no
+// está publicado, (e) se pierde la equivalencia dht11.h → librerias, o (f) se
+// pierden los datos del Libro de actividades oficial (tercer pin PWM de los
+// puertos especiales, matriz en IIC), el docente recibe un consejo que quema un
+// módulo o no compila. Acá se fija cada uno.
 //
 // Corre con: node --test tests/   (sin dependencias).
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
+import { readFileSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -33,9 +35,9 @@ function frontmatter(md) {
   return campos
 }
 
-/** La fila de la tabla de puertos cuyo primer campo es `puerto` (con o sin negrita). */
+/** La fila de la tabla de puertos cuyo primer campo es `puerto` (con o sin negrita, con o sin "(E3)"). */
 function filaDelPuerto(puerto) {
-  const re = new RegExp(`^\\|\\s*\\*{0,2}${puerto}\\*{0,2}\\s*\\|([^|]*)\\|`, "m")
+  const re = new RegExp(`^\\|\\s*\\*{0,2}${puerto}\\*{0,2}\\s*(?:\\(E\\d\\))?\\s*\\|([^|]*)\\|`, "m")
   const m = skill.match(re)
   assert.ok(m, `la tabla de puertos no tiene la fila del puerto ${puerto}`)
   // Se descarta lo que va entre paréntesis ("señal 1 = 3, señal 2 = 2"): ahí el
@@ -80,9 +82,9 @@ test("(c) el platformio.ini es un UNO con monitor a 9600", () => {
   assert.doesNotMatch(ini[1], /esp32/i, "el platformio.ini del skill no puede ser de ESP32")
 })
 
-test("(d) dice que el pinout del RJ12 no está documentado y manda a medir con tester", () => {
-  assert.match(skill, /RJ12[^\n]*(no está documentado|no publicado)|(no está documentado|no publicado)[^\n]*RJ12/i,
-    "el skill tiene que decir que el pinout del RJ12 no está documentado / no publicado")
+test("(d) dice que el orden de los contactos del RJ12 no está publicado y manda a medir con tester", () => {
+  assert.match(skill, /contactos del RJ12[^\n]*no (está )?publicad|RJ12[^\n]*no (está )?(documentad|publicad)/i,
+    "el skill tiene que decir que el orden de los contactos del RJ12 no está publicado")
   assert.match(skill, /tester/i, "tiene que mandar a medir con tester, no a adivinar")
   assert.match(skill, /(nunca|no) (lo )?(adivin|invent)/i, "tiene que prohibir adivinar/inventar el pinout")
 })
@@ -92,6 +94,37 @@ test("(e) nombra dht11.h (lo que genera Educablocks) y el skill librerias (con q
   assert.ok(skill.includes("`librerias`"), "no remite al skill `librerias`")
   assert.match(skill, /adafruit\/DHT sensor library/, "no da la lib_deps con la que compila Tecnia Bot")
   assert.match(bloques, /dht11\.h/, "bloques-a-codigo.md perdió la equivalencia del DHT11")
+})
+
+test("(f) los datos del Libro de actividades: tercer pin PWM y VIN en E3/E4/E6, velocidad por 11/9/10, matriz en IIC, Bluetooth después de cargar", () => {
+  // Puertos especiales: dos señales + un PWM propio. Si alguien vuelve a "3+2"
+  // a secas, el docente pierde el pin 11 sin saberlo cuando el motor lleva velocidad.
+  assert.match(filaDelPuerto(3), /\b11\b/, "el E3 tiene que llevar también el pin 11 (PWM del especial)")
+  const p4 = filaDelPuerto(4)
+  assert.match(p4, /\b4\b/); assert.match(p4, /\b5\b/); assert.match(p4, /\b9\b/, "el E4 lleva 4, 5 y 9")
+  assert.match(filaDelPuerto(6), /\b10\b/, "el E6 tiene que llevar también el pin 10 (PWM del especial)")
+  assert.match(skill, /VIN/, "los especiales llevan VIN para el driver de motores")
+
+  // La velocidad del motor NO va por el pin de dirección. La versión anterior del
+  // skill decía analogWrite(3, velocidad) y el libro (p. 72) lo desmiente.
+  assert.doesNotMatch(skill, /analogWrite\(\s*3\s*,/, "la velocidad del motor no va por analogWrite(3, …)")
+  assert.doesNotMatch(bloques, /analogWrite[^|\n]*\(3 o 6\)/, "bloques-a-codigo.md volvió a decir que la velocidad va por 3 o 6")
+  assert.match(skill, /analogWrite\(\s*11\s*,/, "tiene que decir analogWrite(11, …) para el E3")
+  assert.match(skill, /jumper/i, "tiene que nombrar los jumpers del puente H (2 señales vs 3)")
+
+  // Matriz: el libro la conecta al IIC. Tiene que estar en la fila del catálogo.
+  const filaMatriz = skill.match(/^\|\s*Matriz LED 8x8[^\n]*$/m)
+  assert.ok(filaMatriz, "el catálogo perdió la fila de la matriz 8x8")
+  assert.match(filaMatriz[0], /IIC/, "la matriz del libro va al puerto IIC")
+
+  // Bluetooth: cargar primero, conectar después (libro, p. 68).
+  assert.match(skill, /después de (haber )?carga/i, "falta la instrucción de conectar el Bluetooth después de cargar")
+
+  // La fuente y el permiso quedan referenciados y existen en el repo.
+  assert.match(skill, /Libro de actividades/, "no cita el Libro de actividades")
+  assert.ok(skill.includes("docs/permisos/educabot.md"), "no remite al registro del permiso del fabricante")
+  assert.ok(existsSync(join(REPO, "docs/permisos/educabot.md")), "falta docs/permisos/educabot.md")
+  assert.ok(existsSync(join(REPO, "docs/educabot/educablocks-uno-conectores.png")), "falta el diagrama de conectores en docs/educabot/")
 })
 
 test("el archivo largo bloque→código existe y el SKILL.md lo referencia", () => {
