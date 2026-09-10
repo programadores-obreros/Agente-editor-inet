@@ -161,8 +161,14 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; Work
 [Run]
 ; Instala OpenCode + PlatformIO + la capa (sin admin, vía Scoop). Se muestra la
 ; consola a propósito: tarda varios minutos y así el docente ve que avanza.
+; En modo silencioso se agrega -SinPrompt. El instalador ofrece cambiar la key de
+; Google cuando ya hay una, y espera 60 s por si el docente pega una nueva: frente
+; a una persona esta bien, pero en un despliegue desatendido no hay nadie que
+; conteste y son 60 s de reloj por maquina. Medido en la VM: una reinstalacion
+; sobre una maquina ya configurada paso de instantanea a 63 s. El porque completo
+; esta en el encabezado de install\bootstrap.ps1.
 Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\bootstrap.ps1"""; \
+  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\bootstrap.ps1""{code:BanderaSilencio}"; \
   WorkingDir: "{app}"; \
   StatusMsg: "Instalando OpenCode, PlatformIO y Tecnia Bot (puede tardar varios minutos)..."; \
   Check: CorrerBootstrap; \
@@ -226,6 +232,19 @@ begin
   { En CI se pasa /skipdeps=1 para probar el instalador sin las dependencias pesadas
     (Scoop/OpenCode/PlatformIO). En una instalación normal, siempre corre. }
   Result := ExpandConstant('{param:skipdeps|0}') <> '1';
+end;
+
+function BanderaSilencio(Value: String): String;
+begin
+  { Quien sabe que no hay nadie mirando es el instalador, no el script.
+    Corriendo por /VERYSILENT hay una consola REAL (vacía, pero real), así que
+    bootstrap.ps1 no puede deducirlo: su sondeo de teclado no falla, espera los
+    60 s completos y recién ahí sigue. Por eso la seña baja desde acá.
+    Se antepone un espacio porque esto se concatena pegado al -File de arriba. }
+  if WizardSilent() then
+    Result := ' -SinPrompt'
+  else
+    Result := '';
 end;
 
 var

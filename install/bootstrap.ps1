@@ -9,7 +9,30 @@
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 # ============================================================================
+
+# -SinPrompt: NO preguntar nada y NO tocar lo que ya este configurado.
+#
+# POR QUE EXISTE. El instalador ofrece cambiar la key de Google cuando ya hay una
+# guardada, y espera 60 segundos por si el docente quiere pegar una nueva. Frente
+# a una persona eso esta bien. Pero un despliegue silencioso (/VERYSILENT) no
+# tiene a nadie tipeando, y ahi los 60 segundos son 60 segundos de nada: medido
+# en la VM, una reinstalacion sobre una maquina ya configurada paso de instantanea
+# a 63 segundos, y de eso 60 eran la espera. En una escuela con veinte maquinas
+# son veinte minutos de reloj regalados.
+#
+# No alcanza con detectar "no hay consola": corriendo por /VERYSILENT SI hay una
+# consola real (solo que vacia), asi que el sondeo de teclado no falla y espera
+# hasta el final. Quien sabe que nadie va a contestar es el instalador, y por eso
+# la sena baja desde el .iss: installer\tecnia-bot.iss agrega -SinPrompt cuando
+# WizardSilent() es verdadero.
+#
+# Se traduce a TECNIA_SIN_PROMPT, que es la variable que install.ps1 ya sabia
+# mirar, para no inventar un segundo mecanismo que diga lo mismo. Se define en
+# ESTE proceso: install.ps1 corre como hijo y la hereda.
+param([switch]$SinPrompt)
+
 $ErrorActionPreference = "Stop"
+if ($SinPrompt) { $env:TECNIA_SIN_PROMPT = "1" }
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
 # ---- TODO LO QUE PASA ACA QUEDA ESCRITO -------------------------------------

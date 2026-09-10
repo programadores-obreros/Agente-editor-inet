@@ -574,3 +574,98 @@ test("la key vieja compartida se sigue rechazando TAMBIÉN en el camino nuevo", 
     assert.match(codigo, /Se deja la key que ya estaba guardada: no se piso nada/, `${nombre}: al rechazar la key vieja no aclara que la anterior sigue ahí`)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Y el costo del prompt nuevo: 60 segundos por maquina, regalados.
+//
+// Lo destapo la compuerta de QA, no los tests: ninguno de los 368 mira el reloj.
+// Corriendo el .exe /VERYSILENT en la VM, una reinstalacion sobre una maquina YA
+// configurada paso de instantanea a 63 segundos -- 60 de ellos esperando a nadie
+// frente a la oferta de cambiar la key. En una escuela con veinte maquinas son
+// veinte minutos de reloj.
+//
+// Y NO se puede deducir desde el script: por /VERYSILENT hay una consola REAL
+// (vacia, pero real), asi que el sondeo de teclado no falla y espera hasta el
+// final. El unico que sabe que nadie va a contestar es el instalador de Inno.
+// Por eso la senal baja desde el .iss y se traduce a TECNIA_SIN_PROMPT, que es la
+// variable que install.ps1 YA sabia mirar: un solo mecanismo, no dos que digan lo
+// mismo.
+// ---------------------------------------------------------------------------
+
+test("en modo silencioso el instalador no espera 60s a nadie", () => {
+  const iss = leer("installer/tecnia-bot.iss")
+
+  // El .iss tiene que consultar WizardSilent() y pasar la bandera al bootstrap.
+  assert.match(
+    iss,
+    /function BanderaSilencio/,
+    "el .iss no define BanderaSilencio: el bootstrap no se entera de que corre en silencio",
+  )
+  assert.match(iss, /WizardSilent\(\)/, "BanderaSilencio no consulta WizardSilent(): la bandera saldria siempre o nunca")
+  assert.match(iss, /-SinPrompt/, "el .iss no pasa -SinPrompt")
+
+  // Y la linea que lanza el bootstrap tiene que llevarla. Se mira ESA linea, no
+  // el archivo entero: definir la funcion y olvidarse de usarla deja todo verde.
+  //
+  // HAY DOS lugares que lanzan bootstrap.ps1 y NO llevan la misma bandera:
+  //   [Run]   -> la instalacion. Puede correr desatendida: lleva la bandera.
+  //   [Icons] -> el acceso directo "Reparar Tecnia Bot". Ahi HAY alguien que hizo
+  //              clic a proposito y que quiere que le pregunten: NO la lleva.
+  // La primera version de este test agarraba la del menu inicio y fallaba contra
+  // codigo sano. Por eso se recorta la seccion, en vez de barrer el archivo.
+  const seccion = (nombre) => {
+    const desde = iss.indexOf(`[${nombre}]`)
+    assert.ok(desde >= 0, `el .iss no tiene seccion [${nombre}]`)
+    const resto = iss.slice(desde + nombre.length + 2)
+    const hasta = resto.search(/^\[/m)
+    return hasta === -1 ? resto : resto.slice(0, hasta)
+  }
+
+  const enRun = seccion("Run")
+    .split("\n")
+    .filter((l) => l.includes("bootstrap.ps1") && l.includes("Parameters:"))
+  assert.equal(enRun.length, 1, "esperaba exactamente una linea en [Run] que lance bootstrap.ps1")
+  assert.match(
+    enRun[0],
+    /\{code:BanderaSilencio\}/,
+    "la linea de [Run] que lanza bootstrap.ps1 no usa {code:BanderaSilencio}: la funcion existe y no la llama nadie",
+  )
+
+  const enIcons = seccion("Icons")
+    .split("\n")
+    .filter((l) => l.includes("bootstrap.ps1") && l.includes("Parameters:"))
+  assert.equal(enIcons.length, 1, "esperaba exactamente una linea en [Icons] que lance bootstrap.ps1 (Reparar)")
+  assert.doesNotMatch(
+    enIcons[0],
+    /BanderaSilencio|-SinPrompt/,
+    "el acceso directo 'Reparar' no debe saltear la pregunta: ahi hay un docente que hizo clic para cambiar la key",
+  )
+})
+
+test("bootstrap.ps1 acepta -SinPrompt y lo traduce a la variable que ya existia", () => {
+  const ps1 = leer("install/bootstrap.ps1")
+
+  assert.match(ps1, /param\(\[switch\]\$SinPrompt\)/, "bootstrap.ps1 no acepta -SinPrompt")
+
+  // Se traduce a TECNIA_SIN_PROMPT: install.ps1 corre como hijo y la hereda. Si
+  // alguien inventa un segundo mecanismo, quedan dos verdades que se desincronizan.
+  assert.match(
+    ps1,
+    /\$env:TECNIA_SIN_PROMPT\s*=/,
+    "bootstrap.ps1 no define TECNIA_SIN_PROMPT: install.ps1 no se entera y sigue esperando 60s",
+  )
+  const iSet = ps1.indexOf("$env:TECNIA_SIN_PROMPT =")
+  const iSwitch = ps1.indexOf("if ($SinPrompt)")
+  assert.ok(iSwitch >= 0 && iSet > iSwitch, "TECNIA_SIN_PROMPT se define sin mirar el switch: la definiria SIEMPRE")
+
+  // param() tiene que ser la primera instruccion ejecutable, o PowerShell no parsea.
+  const ejecutables = ps1
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"))
+  assert.match(
+    ejecutables[0],
+    /^param\(/,
+    "param() no es la primera instruccion ejecutable: PowerShell no va a poder parsear el archivo",
+  )
+})
