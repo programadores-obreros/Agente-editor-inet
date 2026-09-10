@@ -363,14 +363,48 @@ test("la tool actualizar declara su alcance EN LA RESPUESTA", () => {
   assert.match(codigo, /No dice nada sobre PlatformIO/i,
     "la respuesta de `actualizar` no aclara que no mira PlatformIO")
 
-  // Y que ese límite viaje en TODAS las respuestas, no sólo en la del caso feliz:
-  // la que más se presta al malentendido es justamente «estás al día».
-  const returns = [...codigo.matchAll(/return `Tenés[^`]*`[^\n]*/g)].map((m) => m[0])
-  assert.ok(returns.length >= 3, `esperaba al menos 3 respuestas, encontré ${returns.length}`)
-  for (const r of returns) {
-    assert.match(r, /LIMITE_ALCANCE/,
-      `esta respuesta de \`actualizar\` no declara su alcance: ${r.slice(0, 70)}...`)
-  }
+  // Y que ese límite viaje en TODAS las respuestas, sin una sola excepción.
+  //
+  // ── POR QUÉ ESTE PEDAZO SE REESCRIBIÓ ──────────────────────────────────────
+  //
+  // Antes recolectaba así:
+  //
+  //     [...codigo.matchAll(/return `Tenés[^`]*`[^\n]*/g)]
+  //
+  // O sea: SÓLO los `return` que empiezan con la palabra literal «Tenés».
+  // Revisaba 5 de los 9 que tiene `execute()`, y el `assert.ok(>= 3)` de abajo
+  // confirmaba la falsa sensación de cobertura — cinco es más que tres, verde.
+  //
+  // Los cuatro que no miraba incluían el del ÉXITO («¡Actualizado! …»), que es
+  // justo donde el docente se va convencido de que terminó, y ahí el aviso
+  // faltaba de verdad. Un filtro que decide qué se audita por cómo arranca el
+  // texto audita lo que ya estaba bien.
+  //
+  // Ahora se recorren TODOS los `return` de `execute()` y se afirma sobre el
+  // TOTAL: si alguien agrega uno, el conteo cambia y esto se pone rojo aunque el
+  // nuevo sí tenga el límite. Ese rojo es el punto — obliga a mirarlo.
+  const RETURNS_ESPERADOS = 9
+
+  const iExec = codigo.indexOf("async execute(args)")
+  assert.ok(iExec > 0, "no encontré execute() en actualizar.ts")
+  const cuerpo = codigo.slice(iExec)
+
+  // CADA `return`, esté donde esté en la línea, hasta el próximo (o el final):
+  // así entran los que abren paréntesis y siguen abajo, y también el
+  // `if (x) return y` de una sola línea. Una primera versión de esto anclaba en
+  // `^[ \t]*return` y una mutación que agregaba justamente un `if (…) return …`
+  // sin el aviso pasaba en verde. Otra vez lo mismo: el filtro decidía qué se
+  // auditaba y dejaba afuera al que fallaba.
+  const marcas = [...cuerpo.matchAll(/\breturn\b/g)].map((m) => m.index)
+  const returns = marcas.map((ini, i) => cuerpo.slice(ini, marcas[i + 1] ?? cuerpo.length))
+
+  assert.equal(returns.length, RETURNS_ESPERADOS,
+    `execute() tiene ${returns.length} \`return\` y el test esperaba ${RETURNS_ESPERADOS}. ` +
+    `Si agregaste o sacaste una respuesta, revisá que declare su alcance y actualizá el número.`)
+
+  const sinAlcance = returns.filter((r) => !r.includes("LIMITE_ALCANCE"))
+  assert.deepEqual(sinAlcance.map((r) => r.trim().slice(0, 70) + "…"), [],
+    "hay respuestas de `actualizar` que no declaran su alcance (la del éxito es la que más importa)")
 })
 
 test("existe el comando /reparar", () => {

@@ -21,10 +21,24 @@ import { existsSync, readFileSync } from "node:fs"
  * Un OK falso es peor que un error: el docente se va tranquilo con el problema
  * intacto. Asi que el alcance viaja EN LA RESPUESTA, no en el prompt: el modelo
  * no puede afirmar sobre algo que la tool acaba de decirle que no miro.
+ *
+ * VA EN TODAS LAS RESPUESTAS, SIN UNA SOLA EXCEPCION -- y la que mas importa es
+ * la del EXITO. Justo ahi es donde el docente se va convencido de que termino:
+ * "actualizado, listo". Si la unica respuesta sin el limite es esa, el aviso
+ * falta exactamente en el turno en que hace falta. Faltaba, y nadie lo vio
+ * porque el test que lo custodiaba recolectaba los `return` con una regex que
+ * solo enganchaba los que empiezan con la palabra "Tenes": revisaba 5 de 9 y
+ * pasaba en verde. Hoy el test recorre TODOS los `return` de execute() y afirma
+ * sobre el total, que es la unica forma de que agregar uno nuevo se note.
+ *
+ * Y nombra tambien `/clave`: la docente que se quedo sin cuota de Google corre
+ * "actualizar" esperando que eso se la arregle, y no se la arregla. Que la
+ * respuesta le diga adonde ir le ahorra la tarde de probar keys.
  */
 const LIMITE_ALCANCE =
   "\n\n_Esto mira SOLO la version de Tecnia Bot. No dice nada sobre PlatformIO, " +
-  "Python ni las dependencias: para eso esta `/diagnostico`, y para instalarlas `/reparar`._"
+  "Python ni las dependencias: para eso esta `/diagnostico`, y para instalarlas `/reparar`. " +
+  "Tampoco dice nada sobre tu key de Google ni sobre la cuota: para eso esta `/clave`._"
 
 const REPO = "programadores-obreros/Agente-editor-inet"
 
@@ -134,7 +148,10 @@ export default tool({
   async execute(args) {
     const info = leerManifest()
     if (!info) {
-      return "No encontré el registro de instalación (manifest). Reinstalá Tecnia Bot con el instalador (bootstrap)."
+      return (
+        "No encontré el registro de instalación (manifest). Reinstalá Tecnia Bot con el instalador (bootstrap)." +
+        LIMITE_ALCANCE
+      )
     }
 
     // --- Modo VERIFICAR: solo compara versiones, no toca nada ---
@@ -176,7 +193,10 @@ export default tool({
     const { code, out, err } = r
 
     if (code !== 0) {
-      return `No pude actualizar (código ${code}).\n\n${(err || out).slice(-800)}\n\nProbá correr a mano: ${cmd.join(" ")}`
+      return (
+        `No pude actualizar (código ${code}).\n\n${(err || out).slice(-800)}\n\nProbá correr a mano: ${cmd.join(" ")}` +
+        LIMITE_ALCANCE
+      )
     }
 
     const nueva = leerManifest()?.version ?? info.version
@@ -184,6 +204,12 @@ export default tool({
       nueva === info.version
         ? `Ya estabas al día: versión ${nueva}.`
         : `¡Actualizado! De la versión ${info.version} a la ${nueva} (último release publicado).`
-    return `${cambio}\n\n⚠️ Reiniciá OpenCode para que los cambios tomen efecto.\n\n${out.slice(-400)}`
+    // LA RESPUESTA DEL EXITO ES LA QUE MAS NECESITA EL LIMITE, y era la unica que
+    // no lo tenia. "Actualizado, reinicia" se lee como "ya esta todo bien": el
+    // docente se va, y PlatformIO sigue sin estar y la cuota sigue agotada.
+    return (
+      `${cambio}\n\n⚠️ Reiniciá OpenCode para que los cambios tomen efecto.\n\n${out.slice(-400)}` +
+      LIMITE_ALCANCE
+    )
   },
 })
