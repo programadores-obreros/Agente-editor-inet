@@ -32,6 +32,29 @@
 //   7. que el 404 (modelo retirado) no le eche la culpa a la red;
 //   8. que el instalador y `/clave` no se contradigan.
 //
+// ── Y desde la 0.3.78, una CUARTA copia: el LANZADOR (§9) ────────────────────
+//
+// Se probó la skill `errores-del-bot` con el bot corriendo DE VERDAD en la VM,
+// con una key inválida y el agente en `google/gemini-3.5-flash-lite`. La docente
+// escribe un mensaje normal y lo único que ve es:
+//
+//     > tecnia-bot · gemini-3.5-flash-lite
+//     Error: API key not valid. Please pass a valid API key.
+//
+// Exit code 1. Ni la skill, ni el disparador del prompt del agente, ni una
+// palabra del bot. Y NO es un bug que se pueda arreglar ahí: el error ocurre en
+// la llamada al proveedor, ANTES de que el modelo genere nada. Le estábamos
+// pidiendo AL MODELO que explique que el modelo está muerto — imposible por
+// construcción, no por descuido.
+//
+// Por eso el aviso se mudó a algo que corre ANTES del modelo: el lanzador
+// (`installer/abrir-tecnia-bot.cmd`), que invoca `install/chequear-clave.ps1`.
+// Ésa es la CUARTA copia de la clasificación de los cinco resultados, y entra en
+// las MISMAS listas de este archivo — nada de una verificación aparte, que es lo
+// que se desincroniza. Lo propio del lanzador va en §9: que el chequeo sea un
+// AVISO y no un portero, que se saltee en la máquina sin key, y que «no se pudo
+// probar» no imprima nada.
+//
 // Son tests de FORMA sobre scripts que la CI de Linux no puede ejecutar (PowerShell)
 // o que no se pueden correr sin tocar la compu (bash). Miran el código SIN
 // comentarios: este repo cita los bugs en los comentarios, y una cita no es código.
@@ -57,6 +80,8 @@ const leer = (r) => readFileSync(join(REPO, r), "utf8")
 const ps1 = leer("install/install.ps1")
 const sh = leer("install/install.sh")
 const claveTs = leer("opencode/tool/clave.ts")
+const chequeo = leer("install/chequear-clave.ps1")
+const lanzador = leer("installer/abrir-tecnia-bot.cmd")
 
 /** Sin comentarios: los scripts explican los bugs citándolos, y la cita no es código. */
 const sinComentariosPs = (t) => t.replace(/^\s*#.*$/gm, "")
@@ -65,10 +90,16 @@ const sinComentariosTs = (t) => t.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\
 // scripts de este repo no tienen `#` dentro de strings en las partes que miramos,
 // y sacar sólo las líneas que EMPIEZAN con `#` es conservador: nunca borra código.
 const sinComentariosSh = (t) => t.replace(/^\s*#.*$/gm, "")
+// El `.cmd` sin comentarios. CUARTA vez que esto muerde en el repo: los
+// comentarios citan rutas y comandos para explicar los bugs, y un indexOf sobre
+// el archivo entero encuentra la CITA, no el código.
+const sinComentariosCmd = (t) => t.replace(/^\s*rem\b.*$/gim, "")
 
 const ps1Codigo = sinComentariosPs(ps1)
 const shCodigo = sinComentariosSh(sh)
 const claveCodigo = sinComentariosTs(claveTs)
+const chequeoCodigo = sinComentariosPs(chequeo)
+const lanzadorCodigo = sinComentariosCmd(lanzador)
 
 /** Los dos instaladores, para los tests que valen para los dos. */
 const INSTALADORES = [
@@ -97,6 +128,21 @@ function bloqueSh(etiqueta) {
   const j = shCodigo.indexOf("\n      ;;", i)
   assert.ok(j > i, `install.sh: no encuentro el ;; de la rama ${etiqueta}`)
   return shCodigo.slice(i, j)
+}
+
+/**
+ * El cuerpo de un `if (...) { ... }` de PRIMER NIVEL de `chequear-clave.ps1`:
+ * desde la cabecera hasta la línea que cierra con `}` en la columna 0. Ahí los
+ * avisos NO están anidados adentro de otro `if` (en install.ps1 sí, y por eso
+ * `bloquePs1` busca `\n    }`): un extractor prestado devolvería un bloque vacío
+ * y los tests de abajo pasarían mirando nada.
+ */
+function bloqueChequeo(cabecera) {
+  const i = chequeoCodigo.indexOf(cabecera)
+  assert.ok(i >= 0, `chequear-clave.ps1 no tiene el bloque: ${cabecera}`)
+  const j = chequeoCodigo.indexOf("\n}", i)
+  assert.ok(j > i, `chequear-clave.ps1: no encuentro el cierre del bloque ${cabecera}`)
+  return chequeoCodigo.slice(i, j)
 }
 
 // ---------------------------------------------------------------------------
@@ -259,9 +305,10 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
 // ---------------------------------------------------------------------------
 
 /**
- * Las tres implementaciones de la clasificación: PowerShell, el python3 embebido en
- * install.sh y el fallback de bash con curl. Están repetidas A PROPÓSITO (ningún
- * script hace dot-sourcing de otro: cada uno se copia y corre solo), igual que la
+ * Las implementaciones de la clasificación: PowerShell del instalador, el python3
+ * embebido en install.sh, el fallback de bash con curl, el tool del bot y —desde
+ * la 0.3.78— el chequeo del lanzador. Están repetidas A PROPÓSITO (ningún script
+ * hace dot-sourcing de otro: cada uno se copia y corre solo), igual que la
  * búsqueda de PlatformIO. Lo que las mantiene honestas es este test.
  */
 const CLASIFICADORES = [
@@ -269,18 +316,19 @@ const CLASIFICADORES = [
   ["install.sh (python3)", shCodigo.slice(shCodigo.indexOf("def clasificar(codigo, cuerpo)"), shCodigo.indexOf("cuerpo = json.dumps"))],
   ["install.sh (bash + curl)", shCodigo.slice(shCodigo.indexOf("clasificar_respuesta_google() {"), shCodigo.indexOf("probar_key_google() {"))],
   ["opencode/tool/clave.ts", claveCodigo.slice(claveCodigo.indexOf("if (res.ok) return"), claveCodigo.indexOf("} catch (e) {"))],
+  ["install/chequear-clave.ps1 (lanzador)", chequeoCodigo.slice(chequeoCodigo.indexOf("function Clasificar-RespuestaGoogle"), chequeoCodigo.indexOf("function Probar-KeyGoogle"))],
 ]
 
-test("hay TRES clasificaciones en los instaladores (más la del tool) y ninguna se perdió", () => {
-  // El conteo total, por la regla de arriba: si mañana alguien agrega una cuarta vía
+test("hay CUATRO clasificaciones en los scripts (más la del tool) y ninguna se perdió", () => {
+  // El conteo total, por la regla de arriba: si mañana alguien agrega una vía más
   // (¿wget?) o borra una, este test lo dice en vez de revisar sólo las que quedan.
-  assert.equal(CLASIFICADORES.length, 4, "cambió la cantidad de clasificaciones: revisá que todas sigan diciendo lo mismo")
+  assert.equal(CLASIFICADORES.length, 5, "cambió la cantidad de clasificaciones: revisá que todas sigan diciendo lo mismo")
   for (const [nombre, bloque] of CLASIFICADORES) {
     assert.ok(bloque && bloque.length > 100, `no encontré el clasificador de ${nombre} (¿se renombró?)`)
   }
 })
 
-test("las cuatro clasificaciones distinguen los CINCO resultados con los mismos criterios", () => {
+test("las cinco clasificaciones distinguen los CINCO resultados con los mismos criterios", () => {
   for (const [nombre, bloque] of CLASIFICADORES) {
     // cuota: 429 o RESOURCE_EXHAUSTED
     assert.match(bloque, /429/, `${nombre}: no reconoce el HTTP 429 (cuota agotada)`)
@@ -309,6 +357,17 @@ test("las cuatro clasificaciones distinguen los CINCO resultados con los mismos 
     assert.ok(cuota < invalida, `${nombre}: la cuota se clasifica DESPUÉS de "no sirve"`)
     assert.ok(invalida < modelo, `${nombre}: el 404 se clasifica antes que "no sirve"`)
     assert.ok(modelo < cajon, `${nombre}: el 404 cae en el cajón de "no pude probarla", que le echa la culpa a la red`)
+
+    // Y cada disparador DEVUELVE lo suyo. Sin esto se miraba sólo dónde caen los
+    // tokens de Google, no qué se responde: un `if (404) { return "sinProbar" }`
+    // dejaba los índices en su lugar y el test en verde, con el modelo retirado
+    // culpando a la red igual. Salió probando por mutación esta misma tanda.
+    const rCuota = bloque.indexOf("cuota")
+    const rInvalida = bloque.indexOf("invalida")
+    const rModelo = bloque.indexOf("modeloIdo")
+    assert.ok(rCuota > cuota && rCuota < invalida, `${nombre}: el 429/RESOURCE_EXHAUSTED no devuelve "cuota"`)
+    assert.ok(rInvalida > invalida && rInvalida < modelo, `${nombre}: el 400/403/API_KEY_INVALID no devuelve "invalida"`)
+    assert.ok(rModelo > modelo && rModelo < cajon, `${nombre}: el 404/NOT_FOUND no devuelve "modeloIdo" (¿cae en el cajón que culpa a la red?)`)
   }
 })
 
@@ -321,6 +380,18 @@ test("la prueba tiene timeout en los tres lados (una red filtrada no cuelga, cue
   assert.match(shCodigo, /--max-time "\$TIMEOUT_PRUEBA_KEY"/, "install.sh (curl) no usa el timeout")
   assert.match(shCodigo, /timeout=espera/, "install.sh (python3) no usa el timeout")
   assert.match(claveCodigo, /15_000/, "clave.ts cambió su timeout: los tres tienen que esperar lo mismo")
+})
+
+test("el chequeo del lanzador tiene un timeout CORTO: se paga en cada arranque", () => {
+  // Los 15 s del instalador se pagan UNA vez por corrida y con el docente
+  // avisado de que está instalando. Esto se paga en CADA doble clic de CADA
+  // máquina con key, con alguien mirando una pantalla en blanco antes de que
+  // abra el bot. Seis segundos alcanzan para cualquier red que ande.
+  assert.match(chequeoCodigo, /\$TimeoutChequeoKey = 6\b/, "chequear-clave.ps1 no acota la prueba a 6 s")
+  assert.match(chequeoCodigo, /-TimeoutSec \$TimeoutChequeoKey/, "chequear-clave.ps1 no le pasa el timeout a Invoke-WebRequest")
+  // Y que no se haya ido a los 15 del instalador, que acá son una eternidad.
+  const segundos = Number(chequeoCodigo.match(/\$TimeoutChequeoKey = (\d+)/)?.[1])
+  assert.ok(segundos > 0 && segundos <= 8, `el timeout del lanzador es de ${segundos} s: el docente lo espera en cada arranque`)
 })
 
 test("si no hay con qué probar, se avisa y la instalación SIGUE (nada de dependencias nuevas)", () => {
@@ -357,6 +428,7 @@ test("la key viaja SIEMPRE en el header x-goog-api-key y NUNCA en la URL", () =>
     ["install.ps1", ps1Codigo],
     ["install.sh", shCodigo],
     ["opencode/tool/clave.ts", claveCodigo],
+    ["install/chequear-clave.ps1", chequeoCodigo],
   ]
   const VARIABLES_CON_KEY = ["$clave", "$keyFinal", "$keyEfectiva", "$GEMINI_KEY", "$GOOGLE_KEY_ACTUAL", "${clave}", "clave}"]
   let headers = 0
@@ -384,10 +456,15 @@ test("la key viaja SIEMPRE en el header x-goog-api-key y NUNCA en la URL", () =>
       )
     }
   }
-  // CONTEO TOTAL: uno en install.ps1, dos en install.sh (python3 y curl) y uno en
-  // clave.ts. Si aparece un quinto lugar que manda la key, alguien tiene que mirarlo.
-  assert.equal(headers, 4, `hay ${headers} lugares que mandan la key en un header; se esperaban 4 (ps1 + sh python3 + sh curl + clave.ts)`)
-  assert.equal(lineasDeUrl, 3, `hay ${lineasDeUrl} líneas que arman una URL de Google; se esperaban 3 (una por archivo)`)
+  // CONTEO TOTAL: uno en install.ps1, dos en install.sh (python3 y curl), uno en
+  // clave.ts y uno en el chequeo del lanzador. Si aparece un sexto lugar que manda
+  // la key, alguien tiene que mirarlo.
+  assert.equal(
+    headers,
+    5,
+    `hay ${headers} lugares que mandan la key en un header; se esperaban 5 (ps1 + sh python3 + sh curl + clave.ts + chequear-clave.ps1)`,
+  )
+  assert.equal(lineasDeUrl, 4, `hay ${lineasDeUrl} líneas que arman una URL de Google; se esperaban 4 (una por archivo)`)
 })
 
 test("la key nunca se imprime: ningún mensaje del instalador la interpola", () => {
@@ -490,8 +567,9 @@ test("con el modelo retirado (404) NO se culpa a la red ni a la compu del docent
     ["install.ps1", bloquePs1('if ($resultadoKey -eq "modeloIdo") {')],
     ["install.sh", bloqueSh("\n    modeloIdo)")],
     ["opencode/tool/clave.ts", claveCodigo.slice(claveCodigo.indexOf("const MODELO_IDO ="), claveCodigo.indexOf("function censurar"))],
+    ["install/chequear-clave.ps1", bloqueChequeo('if ($resultado -eq "modeloIdo") {')],
   ]
-  assert.equal(bloques.length, 3, "cambió la cantidad de mensajes de «modelo retirado»")
+  assert.equal(bloques.length, 4, "cambió la cantidad de mensajes de «modelo retirado»")
   for (const [nombre, bloque] of bloques) {
     assert.ok(bloque && bloque.length > 50, `${nombre}: no encontré el mensaje del modelo retirado`)
     assert.match(bloque, /no es la red|NO es la red/, `${nombre}: no aclara que NO es la red`)
@@ -503,6 +581,10 @@ test("con el modelo retirado (404) NO se culpa a la red ni a la compu del docent
   }
   // Y el cajón de sinProbar SÍ nombra a la red: la distinción tiene que ser real,
   // no un descuido que quedó igual de los dos lados.
+  //
+  // El lanzador no entra acá porque ahí NO HAY cajón: cuando no se pudo probar no
+  // dice nada (§9). Nombrarlo en esta lista pediría un texto que a propósito no
+  // existe.
   for (const [nombre, cajon] of [["install.ps1", bloquePs1('if ($resultadoKey -ne "anda" -and')], ["install.sh", bloqueSh("\n    *)")]]) {
     assert.match(cajon, /Suele ser la red/, `${nombre}: el cajón de «no pude probarla» ya no explica que suele ser la red`)
   }
@@ -519,11 +601,36 @@ test("el modelo que se prueba contra Google se DERIVA del modelo configurado, en
   assert.match(ps1Codigo, /\$ModeloApi = \(\$ModeloConKey -split "\/"\)\[-1\]/, "install.ps1 no deriva el id de la API de $ModeloConKey")
   assert.match(shCodigo, /MODELO_API="\$\{MODELO_CON_KEY##\*\/\}"/, "install.sh no deriva el id de la API de MODELO_CON_KEY")
   assert.match(claveCodigo, /const MODELO_API = MODELO_CON_KEY\.split\("\/"\)\[1\]/, "clave.ts no deriva el id de la API de MODELO_CON_KEY")
+  assert.match(chequeoCodigo, /\$ModeloApi = \(\$ModeloConKey -split "\/"\)\[-1\]/, "chequear-clave.ps1 no deriva el id de la API de $ModeloConKey")
   // Y ninguno escribe un id de gemini a mano en la URL.
-  for (const [nombre, codigo] of [["install.ps1", ps1Codigo], ["install.sh", shCodigo], ["clave.ts", claveCodigo]]) {
+  for (const [nombre, codigo] of [
+    ["install.ps1", ps1Codigo],
+    ["install.sh", shCodigo],
+    ["clave.ts", claveCodigo],
+    ["install/chequear-clave.ps1", chequeoCodigo],
+  ]) {
     for (const m of codigo.matchAll(/generativelanguage\.googleapis\.com[^\s"'`]*/g)) {
       assert.doesNotMatch(m[0], /gemini/i, `${nombre}: la URL de la prueba tiene el modelo escrito a mano: ${m[0]}`)
     }
+  }
+})
+
+test("el modelo con key es EL MISMO en los cuatro, literal por literal", () => {
+  // El chequeo del lanzador decide si conviene preguntarle algo a Google
+  // comparando el modelo del agente con este literal. Si acá dijera otra cosa que
+  // el instalador, la comparación fallaría siempre y el aviso no saldría NUNCA —
+  // en silencio, y justo en la máquina que lo necesita.
+  const MODELO = "google/gemini-3.5-flash-lite"
+  const declaraciones = [
+    ["install.ps1", ps1Codigo.match(/\$ModeloConKey = "([^"]+)"/)],
+    ["opencode/tool/clave.ts", claveCodigo.match(/const MODELO_CON_KEY = "([^"]+)"/)],
+    ["install/chequear-clave.ps1", chequeoCodigo.match(/\$ModeloConKey = "([^"]+)"/)],
+    ["install.sh", shCodigo.match(/^MODELO_CON_KEY="([^"]+)"/m)],
+  ]
+  assert.equal(declaraciones.length, 4, "cambió la cantidad de lugares que declaran el modelo con key")
+  for (const [nombre, m] of declaraciones) {
+    assert.ok(m, `${nombre} ya no declara el modelo con key`)
+    assert.equal(m[1], MODELO, `${nombre} declara ${m[1]} y los demás ${MODELO}`)
   }
 })
 
@@ -532,7 +639,13 @@ test("los tres explican la cuota igual: es por PROYECTO, no por key", () => {
   // keys del mismo proyecto de Google comparten el límite, así que crear una key
   // nueva ahí adentro da exactamente el mismo error. Si el instalador y el bot lo
   // explicaran distinto, el docente probaría dos veces lo mismo.
-  const fuentes = [["install.ps1", ps1Codigo], ["install.sh", shCodigo], ["opencode/tool/clave.ts", claveCodigo]]
+  const fuentes = [
+    ["install.ps1", ps1Codigo],
+    ["install.sh", shCodigo],
+    ["opencode/tool/clave.ts", claveCodigo],
+    ["install/chequear-clave.ps1", chequeoCodigo],
+  ]
+  assert.equal(fuentes.length, 4, "cambió la cantidad de lugares que le explican la cuota a la docente")
   for (const [nombre, codigo] of fuentes) {
     assert.match(codigo, /por PROYECTO, no por key/, `${nombre} no explica que la cuota gratuita es por proyecto, no por key`)
     assert.match(codigo, /https:\/\/aistudio\.google\.com\/apikey/, `${nombre} no dice dónde sacar una key`)
@@ -550,11 +663,22 @@ test("con la cuota agotada, los instaladores mandan a /clave (que es donde se ca
   // El docente que se queda sin cuota está hablando con el bot en ese momento: que
   // pueda pegar la key ahí, sin PowerShell ni menú inicio. Es la misma lección que
   // dio origen a la acción `reparar` del tool platformio.
-  for (const [nombre, codigo] of INSTALADORES) {
-    const bloque = nombre === "install.ps1" ? bloquePs1('if ($resultadoKey -eq "cuota") {') : bloqueSh("\n    cuota)")
+  //
+  // El lanzador entra en la misma lista y por el mismo motivo: el aviso sale unos
+  // segundos ANTES de que el bot abra, así que la salida que se ofrece tiene que
+  // ser la que va a estar a mano cuando abra, y ésa es `/clave`.
+  const bloquesCuota = [
+    ["install.ps1", bloquePs1('if ($resultadoKey -eq "cuota") {')],
+    ["install.sh", bloqueSh("\n    cuota)")],
+    ["install/chequear-clave.ps1", bloqueChequeo('if ($resultado -eq "cuota") {')],
+  ]
+  assert.equal(bloquesCuota.length, 3, "cambió la cantidad de mensajes de «cuota agotada»")
+  for (const [nombre, bloque] of bloquesCuota) {
+    assert.ok(bloque.length > 50, `${nombre}: no encontré el mensaje de la cuota agotada`)
     assert.match(bloque, /\/clave/, `${nombre}: con la cuota agotada no manda a /clave`)
     assert.match(bloque, /por PROYECTO, no por key/, `${nombre}: con la cuota agotada no explica que la cuota es por proyecto`)
     assert.match(bloque, /Big Pickle/, `${nombre}: no ofrece la salida de seguir con el modelo gratuito`)
+    assert.match(bloque, /https:\/\/aistudio\.google\.com\/apikey/, `${nombre}: con la cuota agotada no dice dónde sacar una key de otro proyecto`)
   }
 })
 
@@ -668,4 +792,200 @@ test("bootstrap.ps1 acepta -SinPrompt y lo traduce a la variable que ya existia"
     /^param\(/,
     "param() no es la primera instruccion ejecutable: PowerShell no va a poder parsear el archivo",
   )
+})
+
+// ---------------------------------------------------------------------------
+// 9. EL LANZADOR: el aviso que el bot NO PUEDE dar
+//
+// Ayer se agregó la skill `opencode/skills/errores-del-bot/` y un disparador en
+// `opencode/agent/tecnia-bot.md` para que el bot le explique a la docente por
+// qué dejó de contestar. Se probó CON EL BOT CORRIENDO en la VM, con una key
+// inválida y el agente en `google/gemini-3.5-flash-lite`, y no funciona en el
+// caso que lo motivó: la docente escribe un mensaje normal y ve
+//
+//     Error: API key not valid. Please pass a valid API key.
+//
+// con exit code 1, sin una palabra del bot. La causa es de DISEÑO: el error pasa
+// en la llamada al proveedor, ANTES de que el modelo genere nada. Le pedíamos al
+// modelo que explicara que el modelo está muerto.
+//
+// (Con el modelo vivo la skill sí funciona: `opencode run --agent tecnia-bot
+// --command clave` ejecuta el tool y contesta bien. Eso no se toca.)
+//
+// Entonces el aviso se mudó a algo que corre ANTES del modelo: el lanzador, que
+// es lo que abren el acceso directo del menú inicio y el del escritorio. Lo que
+// custodian estos tests es lo que hace que eso sea una MEJORA y no un riesgo
+// nuevo en el arranque de un aula entera.
+// ---------------------------------------------------------------------------
+
+/** El tramo del lanzador que va desde `:listo2` hasta la línea que abre el bot. */
+function tramoDeApertura() {
+  const desde = lanzadorCodigo.indexOf(":listo2")
+  assert.ok(desde >= 0, "el lanzador ya no tiene la etiqueta :listo2")
+  const hasta = lanzadorCodigo.indexOf('\n"%OC%"', desde)
+  assert.ok(hasta > desde, "el lanzador ya no abre el bot con \"%OC%\" después de :listo2")
+  return lanzadorCodigo.slice(desde, hasta)
+}
+
+/** El rango [desde, hasta) de un `if` de primer nivel de chequear-clave.ps1. */
+function rangoChequeo(cabecera) {
+  const i = chequeoCodigo.indexOf(cabecera)
+  assert.ok(i >= 0, `chequear-clave.ps1 no tiene el bloque: ${cabecera}`)
+  const j = chequeoCodigo.indexOf("\n}", i)
+  assert.ok(j > i, `chequear-clave.ps1: no encuentro el cierre del bloque ${cabecera}`)
+  return [i, j]
+}
+
+test("el lanzador chequea la key ANTES de abrir el bot, y el chequeo existe", () => {
+  const tramo = tramoDeApertura()
+  assert.match(tramo, /chequear-clave\.ps1/, "el lanzador no invoca install\\chequear-clave.ps1 antes de abrir el bot")
+  assert.match(tramo, /powershell -ExecutionPolicy Bypass -NoProfile -File/, "el chequeo no se lanza como el resto de los .ps1 del repo")
+  // Y se invoca DESPUÉS del `cls` del logo: si corriera antes, el `cls` se
+  // llevaría puesto el aviso y el chequeo sería decorativo.
+  const cls = tramo.indexOf("cls")
+  const invocacion = tramo.indexOf("chequear-clave.ps1")
+  assert.ok(cls >= 0 && invocacion > cls, "el chequeo corre antes del `cls` del logo: el aviso se borra solo")
+  // Y sólo si el archivo está: en una instalación vieja o a medias, no está, y
+  // eso no puede ser un error en pantalla.
+  assert.match(tramo, /if exist "%CHEQUEO%"/, "el lanzador no verifica que el chequeo exista antes de invocarlo")
+})
+
+test("EL CHEQUEO NO PUEDE IMPEDIR QUE EL BOT ABRA (ni un exit /b, ni un goto)", () => {
+  // ES LA REGLA QUE MANDA SOBRE TODAS LAS DEMÁS. Esto es un AVISO, no un portero:
+  // una docente en el aula tiene que poder abrir Tecnia Bot aunque este chequeo
+  // esté roto —PowerShell bloqueado por la política de la escuela, el .ps1 que no
+  // parsea, el antivirus que se lo come—. Cualquier `exit` o `goto` metido en
+  // este tramo convierte un aviso en una puerta cerrada.
+  const tramo = tramoDeApertura()
+  assert.ok(tramo.length > 100, "el tramo de apertura quedó vacío: el extractor no está mirando el código")
+  assert.doesNotMatch(tramo, /\bexit\b/i, "hay un `exit` entre el chequeo de la key y la apertura del bot: eso deja a la docente sin bot")
+  assert.doesNotMatch(tramo, /^\s*goto\b/im, "hay un `goto` entre el chequeo de la key y la apertura del bot: puede saltar a una rama que no abre nada")
+
+  // Que el tramo NO esté vacío ni el regex sea inofensivo: el resto del lanzador
+  // sí tiene `exit /b` y `goto`, y tienen que verse. Sin esto, un extractor roto
+  // dejaría este test verde para siempre.
+  assert.match(lanzadorCodigo, /exit \/b/, "el lanzador ya no tiene ningún `exit /b`: revisá el extractor, este test se volvió inofensivo")
+  assert.match(lanzadorCodigo, /^\s*goto\b/im, "el lanzador ya no tiene ningún `goto`: revisá el extractor, este test se volvió inofensivo")
+
+  // Y del lado del .ps1: aunque reviente, sale por 0 o por 9, nunca por otra cosa
+  // que el lanzador pueda leer como "no abras".
+  assert.match(chequeoCodigo, /\} catch \{\s*\$resultado = ""\s*\}/, "chequear-clave.ps1 ya no se traga sus propios errores: una excepción sale por pantalla y ensucia el arranque")
+})
+
+test("sólo un aviso REAL frena el arranque, y el 9009 de «powershell no existe» no cuenta", () => {
+  // `if errorlevel 9` en cmd significa «9 o MÁS». Un powershell que no arranca
+  // devuelve 9009 y pausaría el arranque con la pantalla vacía: el docente
+  // esperando frente a un cartel que no está. De ahí las dos comparaciones.
+  const usos = [...lanzadorCodigo.matchAll(/if errorlevel 9\b(.*)/g)]
+  assert.equal(usos.length, 1, `el lanzador mira «errorlevel 9» ${usos.length} veces; se esperaba una`)
+  assert.match(usos[0][1], /^ if not errorlevel 10\b/, "«if errorlevel 9» sin acotar por arriba: el 9009 de un powershell ausente pausa el arranque con la pantalla vacía")
+  // La pausa es `pause`, no `timeout`: `timeout` falla si la consola no es
+  // interactiva (lo dice este mismo archivo más arriba) y `pause` con la entrada
+  // redirigida lee EOF y sigue de largo.
+  assert.match(lanzadorCodigo, /pause >nul/, "el aviso no le da tiempo de lectura a la docente antes de que la pantalla del bot se lo coma")
+  assert.doesNotMatch(tramoDeApertura(), /\btimeout\b/i, "se usa `timeout` para la pausa: falla si la consola no es interactiva")
+
+  // Y del otro lado: el 9 sale SÓLO si hubo aviso.
+  assert.match(chequeoCodigo, /if \(\$aviso\) \{ exit 9 \}/, "chequear-clave.ps1 no devuelve 9 cuando hay aviso (o lo devuelve siempre)")
+  assert.match(chequeoCodigo.trimEnd(), /exit 0$/, "chequear-clave.ps1 no termina saliendo por 0: cualquier otro código frenaría el arranque de gusto")
+})
+
+test("en la máquina SIN key (Big Pickle) el chequeo no toca la red: cuesta cero", () => {
+  // Es la mayoría de las máquinas de escuela. Preguntarle a Google por una key
+  // que no existe sería regalar segundos en cada arranque a cambio de nada.
+  const [desde, hasta] = rangoChequeo("if ($modeloActual -eq $ModeloConKey) {")
+  // La guarda es una igualdad POSITIVA contra el modelo con key: así, cualquier
+  // modelo que no sea Gemini (Big Pickle, o lo que elija el docente a mano) se
+  // saltea solo. Una guarda por la negativa (`-ne $ModeloSinKey`) dejaría entrar
+  // a todo lo que no sea Big Pickle.
+  assert.match(chequeoCodigo, /if \(\$modeloActual -eq \$ModeloConKey\) \{/, "la guarda dejó de comparar contra el modelo con key")
+  assert.doesNotMatch(chequeoCodigo, /-ne \$ModeloSinKey/, "la guarda pasó a ser por la negativa: cualquier modelo raro entraría a probar la key")
+
+  // Y el ÚNICO pedido a Google vive adentro de esa guarda. Por POSICIÓN, no por
+  // texto: una segunda llamada afuera tendría el mismo texto y pasaría un
+  // `includes`. Es la misma trampa que ya mordió en modelo.test.mjs.
+  const menciones = [...chequeoCodigo.matchAll(/Probar-KeyGoogle/g)]
+  assert.equal(menciones.length, 2, `esperaba 2 menciones de Probar-KeyGoogle (la definición y una llamada) y hay ${menciones.length}`)
+  const llamadas = menciones.filter((m) => chequeoCodigo.slice(m.index - "function ".length, m.index) !== "function ")
+  assert.equal(llamadas.length, 1, `esperaba UNA llamada a Probar-KeyGoogle y hay ${llamadas.length}`)
+  for (const m of llamadas) {
+    assert.ok(m.index >= desde && m.index < hasta, "se prueba la key fuera de la guarda del modelo: la máquina sin key paga el pedido igual")
+  }
+})
+
+test("«no se pudo probar» NO genera aviso: sólo hay tres bloques que imprimen", () => {
+  // Sin red, con timeout o con el filtro de la escuela cortando, no sabemos si la
+  // key sirve. Molestar con un aviso inútil en CADA arranque de una máquina sin
+  // internet es peor que callarse — y decir «anda» sería peor todavía.
+  //
+  // Se verifica por POSICIÓN y sobre el TOTAL: cada Write-Host del archivo tiene
+  // que caer adentro de uno de los tres bloques de aviso. Si alguien agrega un
+  // `if ($resultado -eq "sinProbar") { Write-Host ... }`, o un Write-Host suelto
+  // de depuración, este test se pone rojo. Contar los bloques y nada más dejaría
+  // pasar exactamente eso.
+  const rangos = [
+    rangoChequeo('if ($resultado -eq "cuota") {'),
+    rangoChequeo('if ($resultado -eq "invalida") {'),
+    rangoChequeo('if ($resultado -eq "modeloIdo") {'),
+  ]
+  assert.equal(rangos.length, 3, "cambió la cantidad de bloques que avisan")
+
+  const salidas = [...chequeoCodigo.matchAll(/^[ \t]*Write-Host\b.*$/gm)]
+  assert.ok(salidas.length > 20, `esperaba muchos Write-Host en chequear-clave.ps1 y encontré ${salidas.length}: ¿cambió el estilo?`)
+  const huerfanos = salidas
+    .filter((m) => !rangos.some(([d, h]) => m.index >= d && m.index < h))
+    .map((m) => m[0].trim())
+  assert.deepEqual(huerfanos, [], "hay Write-Host fuera de los tres bloques de aviso:\n" + huerfanos.join("\n"))
+
+  // Y que no aparezca un bloque para el cajón: es lo que hay que NO hacer.
+  assert.doesNotMatch(chequeoCodigo, /\$resultado -eq "sinProbar"/, "hay una rama que reacciona a «no pude probarla»: eso es un aviso inútil en cada arranque sin internet")
+  assert.doesNotMatch(chequeoCodigo, /\$resultado -eq "anda"/, "hay una rama para «anda»: cuando la key funciona no se dice nada, el bot abre y listo")
+})
+
+test("el chequeo del lanzador nunca imprime la key, ni el error que la trae de la mano", () => {
+  // La misma regla de clave.ts, de diagnostico.ps1 y del instalador. Acá pesa
+  // igual: esto se imprime en la ventana que la docente fotografía y manda por
+  // WhatsApp cuando pide ayuda.
+  const salidas = chequeoCodigo.match(/^\s*Write-Host .*$/gm) ?? []
+  assert.ok(salidas.length > 20, `esperaba muchos Write-Host en chequear-clave.ps1 y encontré ${salidas.length}`)
+  for (const linea of salidas) {
+    for (const variable of ["$clave", "$key", "$auth", "$textoRespuesta", "$cuerpo", "GOOGLE_GENERATIVE_AI_API_KEY"]) {
+      assert.ok(!linea.includes(variable), `chequear-clave.ps1 imprime algo que puede traer la key: ${linea.trim()}`)
+    }
+  }
+  // Del error de red no se informa NI EL TIPO: acá, a diferencia del instalador,
+  // el caso «no pude probarla» no imprime nada, así que no hay dónde meterlo.
+  assert.doesNotMatch(chequeoCodigo, /\$ex\.Message|\$_\.Exception\.Message/, "imprime (o arma) el mensaje de la excepción: ahí viaja la URL y el proxy con su usuario:clave")
+})
+
+test("el chequeo resuelve la config como el resto del repo: XDG_CONFIG_HOME y XDG_DATA_HOME", () => {
+  // Si mirara siempre %USERPROFILE%, en una máquina con XDG puesto leería un
+  // archivo que OpenCode no usa: vería «Big Pickle» y no avisaría NUNCA, o
+  // probaría una key que no es la que corre. Es el mismo bug que ya mordió en el
+  // lanzador y en diagnostico.ps1 (ver robustez.test.mjs).
+  const cfg = chequeoCodigo.slice(chequeoCodigo.indexOf("function Get-DirConfigOpencode"), chequeoCodigo.indexOf("function Get-DirDatosOpencode"))
+  const datos = chequeoCodigo.slice(chequeoCodigo.indexOf("function Get-DirDatosOpencode"), chequeoCodigo.indexOf("function Get-RutaConfigOpencode"))
+  assert.ok(cfg.length > 50 && datos.length > 50, "no encontré las funciones que resuelven las carpetas de OpenCode")
+  assert.ok(cfg.indexOf("XDG_CONFIG_HOME") >= 0 && cfg.indexOf("XDG_CONFIG_HOME") < cfg.indexOf("USERPROFILE"), "la config no honra XDG_CONFIG_HOME antes de caer a %USERPROFILE%")
+  assert.ok(datos.indexOf("XDG_DATA_HOME") >= 0 && datos.indexOf("XDG_DATA_HOME") < datos.indexOf("USERPROFILE"), "las credenciales no honran XDG_DATA_HOME antes de caer a %USERPROFILE%")
+
+  // Y las rutas no se escriben a fuego en ningún otro lado del archivo: una sola
+  // copia de cada una, adentro de su función.
+  const config = chequeoCodigo.match(/\.config\\opencode/g) ?? []
+  const share = chequeoCodigo.match(/\.local\\share\\opencode/g) ?? []
+  assert.equal(config.length, 1, `hay ${config.length} rutas a .config\\opencode escritas a fuego; tiene que haber una sola, en la función que honra XDG`)
+  assert.equal(share.length, 1, `hay ${share.length} rutas a .local\\share\\opencode escritas a fuego; tiene que haber una sola`)
+
+  // La misma preferencia de extensión que OpenCode, el instalador y clave.ts.
+  assert.match(chequeoCodigo, /"opencode\.json"/, "el chequeo no mira opencode.json")
+  assert.match(chequeoCodigo, /"opencode\.jsonc"/, "el chequeo no mira opencode.jsonc: en esa máquina no avisaría nunca")
+  assert.ok(chequeoCodigo.indexOf('"opencode.json"') < chequeoCodigo.indexOf('"opencode.jsonc"'), "se prefiere .jsonc sobre .json, al revés que OpenCode")
+
+  // Y el BOM, que es el bug que dejaba máquinas muertas para siempre: se leen los
+  // BYTES, que es la única forma de ver lo que ve OpenCode.
+  assert.match(chequeoCodigo, /\[System\.IO\.File\]::ReadAllBytes\(/, "chequear-clave.ps1 no lee los bytes: con un auth.json con BOM leería una key que OpenCode no puede usar")
+  assert.match(chequeoCodigo, /0xEF -and \$bytes\[1\] -eq 0xBB -and \$bytes\[2\] -eq 0xBF/, "no reconoce el BOM como lo reconocen install.ps1 y clave.ts")
+  // Pero NO lo cura: corre medio segundo antes de que abra el bot y no es momento
+  // de reescribirle credenciales a nadie. El instalador es el que cura.
+  assert.doesNotMatch(chequeoCodigo, /WriteAllText|Set-Content|Out-File/, "el chequeo ESCRIBE algo: es de sólo lectura, corre justo antes de abrir el bot")
 })
