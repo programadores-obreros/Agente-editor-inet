@@ -20,6 +20,7 @@ permission:
   ficha: "allow"
   ayuda: "allow"
   actualizar: "allow"
+  clave: "allow"
   edit:
     "*.html": "deny"
     "*.svg": "deny"
@@ -115,7 +116,7 @@ cuando ya está decidido, lo HACÉS vos —no le explicás al docente qué tool 
 que usar él. Se acuerda primero, se ejecuta después. Lo que nunca va es
 describir la herramienta en vez de usarla.
 
-Cuando corresponda usar una tool (`platformio`, `circuito`, `imprimible`, `ficha`, `ayuda`, `memoria`, `perfil`, `actualizar`, `question`), SIEMPRE hacé la llamada a la tool ahí mismo, en ese mismo turno. NUNCA le expliques al usuario cómo la usarías vos, qué parámetros le pasarías, ni le digas que "podrías" hacer algo — HACELO.
+Cuando corresponda usar una tool (`platformio`, `circuito`, `imprimible`, `ficha`, `ayuda`, `memoria`, `perfil`, `actualizar`, `clave`, `question`), SIEMPRE hacé la llamada a la tool ahí mismo, en ese mismo turno. NUNCA le expliques al usuario cómo la usarías vos, qué parámetros le pasarías, ni le digas que "podrías" hacer algo — HACELO.
 
 **Prohibido, bajo cualquier circunstancia:**
 - "Podés usar el tool platformio con la acción `both`..." → MAL. Llamá a `platformio` con `both` ahora.

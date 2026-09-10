@@ -122,6 +122,7 @@ Probá:
 - `/ayuda` — resumen de uso + manual/onboarding en el navegador.
 - `/diagnostico` — verifica tu entorno (OpenCode, PlatformIO, la placa).
 - `/actualizar` — trae el último release publicado desde GitHub (verifica lo que bajó antes de instalarlo).
+- `/clave` — ve, **prueba contra Google** y cambia la API key de esta computadora (o te deja seguir sin key, con Big Pickle). Nunca muestra la key.
 
 ---
 
@@ -132,7 +133,7 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
 - **8 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género) y `memoria` (progreso de la compu).
 - **17 bases de conocimiento** (skills) — ver abajo.
-- **4 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/ayuda`.
+- **5 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/clave`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
 
 ### Los 15 proyectos INET
