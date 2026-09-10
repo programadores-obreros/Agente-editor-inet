@@ -7,6 +7,14 @@
 # 20 s de espera y "No" por defecto. Para no preguntar:
 #   --conservar   los deja (lo que pasa si nadie contesta)
 #   --borrar      los quita sin preguntar
+#
+# LA REGLA DE ESTE SCRIPT: despues de borrar, RELEER. Y decir SOLO lo que se
+# comprobo. Un borrado que falla en silencio seguido de un mensaje que dice
+# "borrado" es PEOR que no borrar nada, porque le saca a la docente la
+# posibilidad de arreglarlo a mano. El caso real: una escuela reasigna la
+# notebook, el desinstalador pregunta si quitar la key de Google, la docente dice
+# que si, lee "Key de Google quitada", y la maquina se entrega con su credencial
+# adentro. Todo borrado de aca abajo pasa por una relectura antes de afirmarse.
 
 set -euo pipefail
 
@@ -33,13 +41,45 @@ fi
 
 echo "==> Desinstalando Tecnia Bot de: $CONFIG_DIR"
 
+# ---- Borrar y RELEER (la regla del encabezado, en dos funciones) -------------
+#
+# Lo que quedo sin borrar se junta en PENDIENTES y sale en el mensaje final, para
+# que el ultimo "Listo. Tecnia Bot desinstalado." tampoco afirme de mas.
+# Se usa una cadena y no un array a proposito: macOS trae bash 3.2, y ahi
+# expandir un array VACIO con `set -u` puesto aborta el script.
+PENDIENTES=""
+anotar_pendiente() { PENDIENTES="${PENDIENTES}    - $1"$'\n'; }
+
+# Borra y devuelve 0 SOLO si al releer el archivo ya no esta.
+# `-e` y no `-f`: tambien ve un symlink roto o un directorio que quedo en el medio.
+# El `|| true` es necesario con `set -e`: sin el, un `rm` que falla (carpeta de
+# solo lectura) corta el desinstalador de una sin decir una palabra.
+borrar_verificando() {
+  rm -f "$1" 2>/dev/null || true
+  [ ! -e "$1" ]
+}
+
 # Borra cada archivo listado en el manifest (líneas de datos, no las de config).
+# Si alguno no se pudo borrar (lo tipico: OpenCode abierto tomando un archivo),
+# se dice cual y se CONSERVA el manifest: es la lista de lo que falta sacar, y
+# sin ella la proxima corrida cree que no hay nada instalado y no borra nada.
+NO_BORRADOS=0
 while IFS= read -r rel; do
   case "$rel" in ""|"#"*|version=*|repo_dir=*) continue ;; esac
-  rm -f "$CONFIG_DIR/$rel"
+  if ! borrar_verificando "$CONFIG_DIR/$rel"; then
+    NO_BORRADOS=$((NO_BORRADOS + 1))
+    echo "  [X] No pude borrar $CONFIG_DIR/$rel (lo relei y sigue ahi)."
+  fi
 done < "$MANIFEST"
 
-rm -f "$MANIFEST"
+if [ "$NO_BORRADOS" = "0" ]; then
+  borrar_verificando "$MANIFEST" || anotar_pendiente "el registro de la instalacion: $MANIFEST"
+else
+  echo "      Casi siempre es que OpenCode esta abierto y los tiene tomados."
+  echo "      Cerra OpenCode y volve a correr el desinstalador."
+  echo "      Dejo el registro ($MANIFEST) para que el proximo intento sepa que falta."
+  anotar_pendiente "$NO_BORRADOS archivo(s) de Tecnia Bot en $CONFIG_DIR"
+fi
 
 # ---- Sacar NUESTRAS claves de la config de OpenCode (sin tocar el resto) ----
 # tui (json/jsonc): quitar el plugin del logo y el theme si es el nuestro.
@@ -185,9 +225,12 @@ unmerge_tui_jq() {
         | (if (.theme == $theme) then del(.theme) else . end)
       ' "$TUI_JSON" > "$tmp" 2>/dev/null; then
     if [ "$(jq '(keys - ["$schema"]) | length' "$tmp" 2>/dev/null)" = "0" ]; then
-      rm -f "$TUI_JSON"
+      borrar_verificando "$TUI_JSON" || anotar_pendiente "la config que quedo de Tecnia Bot: $TUI_JSON"
     else
-      mv "$tmp" "$TUI_JSON"
+      # `mv -f`: sin -f, mv PREGUNTA si el destino no tiene permiso de escritura, y
+      # aca la entrada estandar es la terminal de la docente -> quedaria esperando
+      # una respuesta a una pregunta que nadie ve.
+      mv -f "$tmp" "$TUI_JSON" 2>/dev/null || anotar_pendiente "la config que quedo de Tecnia Bot: $TUI_JSON"
     fi
     rm -f "$tmp"; return 0
   fi
@@ -205,9 +248,9 @@ unmerge_opencode_jq() {
         | (if ((.instructions | type) == "array" and (.instructions | length) == 0) then del(.instructions) else . end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
     if [ "$(jq '(keys - ["$schema"]) | length' "$tmp" 2>/dev/null)" = "0" ]; then
-      rm -f "$OPENCODE_JSON"
+      borrar_verificando "$OPENCODE_JSON" || anotar_pendiente "la config que quedo de Tecnia Bot: $OPENCODE_JSON"
     else
-      mv "$tmp" "$OPENCODE_JSON"
+      mv -f "$tmp" "$OPENCODE_JSON" 2>/dev/null || anotar_pendiente "la config que quedo de Tecnia Bot: $OPENCODE_JSON"
     fi
     rm -f "$tmp"; return 0
   fi
@@ -259,54 +302,140 @@ decidir() {  # 0 = quitar, 1 = conservar
 
 if [ -f "$PERFIL_FILE" ] || [ -f "$MEMORIA_FILE" ]; then
   if decidir "==> El perfil y la memoria del aula (tecnia-perfil.md, tecnia-memoria.md) son datos PERSONALES: lo que el bot aprendió de quien usa esta compu. ¿Borrarlos también?"; then
-    rm -f "$PERFIL_FILE" "$MEMORIA_FILE"
-    echo "    Perfil y memoria borrados."
+    # RELEER DESPUES DE BORRAR. El `rm -f` de antes, con `set -e`, tampoco mentia:
+    # cortaba el script de una, sin decir nada, justo a mitad del desinstalador.
+    # Ahora se borra, se relee, y se dice lo que paso. Son datos de MENORES
+    # (Ley 25.326, ver opencode/tool/memoria.ts): la docente tiene que poder
+    # saber si quedaron y donde para sacarlos a mano.
+    QUEDARON=""
+    for f in "$PERFIL_FILE" "$MEMORIA_FILE"; do
+      [ -e "$f" ] || continue
+      borrar_verificando "$f" || QUEDARON="${QUEDARON}$f"$'\n'
+    done
+    if [ -z "$QUEDARON" ]; then
+      echo "    Perfil y memoria borrados (los relei y ya no estan)."
+    else
+      echo "    [X] NO PUDE BORRAR estos datos personales: SIGUEN EN ESTA COMPUTADORA."
+      printf '%s' "$QUEDARON" | while IFS= read -r f; do [ -n "$f" ] && echo "        $f"; done
+      echo "        Casi siempre es que OpenCode esta abierto y los tiene tomados"
+      echo "        (los dos entran por \"instructions\" de opencode.json)."
+      echo "        Cerra OpenCode y volve a correr el desinstalador, o borralos a mano."
+      anotar_pendiente "datos personales del aula en $CONFIG_DIR (tecnia-perfil.md / tecnia-memoria.md)"
+    fi
   else
     echo "    Se conservan en $CONFIG_DIR: tecnia-perfil.md y tecnia-memoria.md (borralos a mano si querés)."
   fi
 fi
 
 # Key de Google en auth.json (se quita SOLO la entrada "google", el resto queda).
-auth_tiene_google() {
-  [ -f "$AUTH_FILE" ] || return 1
+#
+# Estado de la key: imprime "si", "no" o "?".
+#   si = se leyo el archivo y la key esta
+#   no = se leyo el archivo y la key NO esta  <- lo UNICO que habilita decir "quitada"
+#   ?  = no se pudo leer (no hay jq ni python3, el JSON no parsea, un BOM que
+#        esta version de jq no traga)
+# El "?" es el estado que faltaba. Antes "no pude leer" y "no hay key" eran lo
+# mismo (las dos cosas devolvian 1), y sobre esa confusion se afirmaba un borrado
+# que nunca habia pasado.
+auth_estado_google() {
+  [ -f "$AUTH_FILE" ] || { printf 'no\n'; return 0; }
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$AUTH_FILE" <<'PYEOF'
+    # utf-8-sig y no utf-8 pelado: si auth.json tiene BOM (lo escribio un editor
+    # de Windows), json.load revienta con "Unexpected UTF-8 BOM". Es el mismo BOM
+    # que install.ps1 y uninstall.ps1 ya manejan del lado Windows; aca faltaba.
+    python3 - "$AUTH_FILE" 2>/dev/null <<'PYEOF' || printf '?\n'
 import json, sys
 try:
-    d = json.load(open(sys.argv[1]))
-    sys.exit(0 if isinstance(d, dict) and d.get("google", {}).get("key") else 1)
+    with open(sys.argv[1], "r", encoding="utf-8-sig") as f:
+        d = json.load(f)
 except Exception:
-    sys.exit(1)
+    print("?"); raise SystemExit(0)
+if not isinstance(d, dict):
+    print("?"); raise SystemExit(0)
+g = d.get("google")
+print("si" if isinstance(g, dict) and g.get("key") else "no")
 PYEOF
   elif command -v jq >/dev/null 2>&1; then
-    [ "$(jq -r '.google.key // ""' "$AUTH_FILE" 2>/dev/null)" != "" ]
+    local salida
+    # Si jq no puede parsear (BOM en jq viejo, JSON roto), sale != 0 -> "?".
+    if salida="$(jq -r 'if ((.google.key? // "") | tostring) == "" then "no" else "si" end' "$AUTH_FILE" 2>/dev/null)"; then
+      case "$salida" in si|no) printf '%s\n' "$salida" ;; *) printf '?\n' ;; esac
+    else
+      printf '?\n'
+    fi
   else
-    return 1
+    printf '?\n'
   fi
 }
+
+# Quita la entrada "google" de auth.json. Devuelve 0 SOLO si despues de escribir
+# se RELEYO el archivo y la key ya no esta; devuelve 1 en todo el resto de los
+# casos (sin jq ni python3, BOM que jq no traga, JSON que no parsea, archivo de
+# solo lectura, mv que no pudo).
+#
+# LO QUE FALTABA ACA: el `else` del jq descartaba el temporal en silencio, y el
+# estado del `if` terminaba siendo el del `rm -f` (0). La funcion devolvia 0, el
+# llamador imprimia "Key de Google quitada" y la key seguia adentro. La guarda
+# correcta ya existia a 70 lineas de distancia, en el camino de ESCRITURA de
+# install.sh (el "[AVISO] No pude escribir $AUTH_FILE"): faltaba justo en el
+# BORRADO, que es el unico de los dos con consecuencia de privacidad.
 auth_quitar_google() {
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$AUTH_FILE" <<'PYEOF'
+    python3 - "$AUTH_FILE" 2>/dev/null <<'PYEOF' || return 1
 import json, sys
 path = sys.argv[1]
-d = json.load(open(path))
+with open(path, "r", encoding="utf-8-sig") as f:
+    d = json.load(f)
 d.pop("google", None)
+# Se reescribe SIN BOM: es lo que OpenCode necesita para poder leerlo.
 with open(path, "w", encoding="utf-8") as f:
     json.dump(d, f, indent=2)
 PYEOF
   elif command -v jq >/dev/null 2>&1; then
     local tmp; tmp="$(mktemp)"
-    if jq 'del(.google)' "$AUTH_FILE" > "$tmp" 2>/dev/null; then mv "$tmp" "$AUTH_FILE"; else rm -f "$tmp"; fi
+    if jq 'del(.google)' "$AUTH_FILE" > "$tmp" 2>/dev/null; then
+      # `mv -f`: sin -f, mv PREGUNTA si el destino no tiene permiso de escritura,
+      # y aca la entrada estandar es la terminal de la docente -> se colgaria
+      # esperando una respuesta a una pregunta que nadie ve.
+      mv -f "$tmp" "$AUTH_FILE" 2>/dev/null || { rm -f "$tmp"; return 1; }
+    else
+      rm -f "$tmp"; return 1
+    fi
+  else
+    return 1
   fi
+  # RELEER. Que el borrado no haya tirado error no alcanza: lo unico que habilita
+  # el mensaje de exito es volver a abrir el archivo y ver que la key no esta.
+  [ "$(auth_estado_google)" = "no" ]
 }
 
-if auth_tiene_google; then
+ESTADO_KEY_GOOGLE="$(auth_estado_google)"
+if [ "$ESTADO_KEY_GOOGLE" = "si" ]; then
   if decidir "==> Hay una API key de Google guardada en auth.json. Es TU credencial, no del programa: si esta compu pasa a otra persona conviene quitarla. ¿Quitarla también?"; then
-    auth_quitar_google
-    echo "    Key de Google quitada (las otras credenciales de auth.json se preservan)."
+    if auth_quitar_google; then
+      echo "    Key de Google quitada: relei $AUTH_FILE y ya no esta (las otras credenciales se preservan)."
+    else
+      echo "    [X] NO PUDE QUITAR LA KEY: tu credencial de Google SIGUE EN ESTA COMPUTADORA."
+      echo "        Esta en: $AUTH_FILE (adentro, el bloque \"google\")."
+      echo "        Si esta compu pasa a otra persona, sacala a mano ANTES de entregarla:"
+      echo "        abri ese archivo con un editor de texto y borra el bloque \"google\": { ... },"
+      echo "        o borra el archivo entero si no usas otras credenciales de OpenCode."
+      echo "        (Otra opcion: instalar python3 o jq y volver a correr este desinstalador.)"
+      anotar_pendiente "tu API key de Google en $AUTH_FILE"
+    fi
   else
     echo "    La key de Google se conserva: OpenCode la sigue usando si lo abrís sin Tecnia Bot."
   fi
+elif [ "$ESTADO_KEY_GOOGLE" = "?" ] && [ -s "$AUTH_FILE" ]; then
+  # Ni siquiera se pudo LEER el archivo, asi que no se toco. Callarse aca es el
+  # mismo problema con otra cara: la docente entrega la notebook creyendo que el
+  # desinstalador miro, y adentro puede estar la key.
+  echo ""
+  echo "  [AVISO] No pude leer $AUTH_FILE (JSON roto, BOM, o no hay python3 ni jq)."
+  echo "          NO SE si adentro quedo tu API key de Google, y no lo toque."
+  echo "          Si esta compu pasa a otra persona, abrilo con un editor de texto:"
+  echo "          si hay un bloque \"google\": { ... }, sacalo a mano antes de entregarla."
+  anotar_pendiente "no pude verificar si tu API key de Google sigue en $AUTH_FILE"
 fi
 # En Linux/macOS el instalador nunca escribió la variable de entorno; si está,
 # la puso alguien a mano en su shell y solo se puede avisar.
@@ -318,5 +447,13 @@ fi
 # Borra los directorios que hayan quedado vacíos (tecniabot-web, skills, plugins, themes...).
 find "$CONFIG_DIR/tecniabot-web" "$CONFIG_DIR/skills" "$CONFIG_DIR/plugins" "$CONFIG_DIR/themes" -type d -empty -delete 2>/dev/null || true
 
-echo "==> Listo. Tecnia Bot desinstalado."
+# El mensaje final tampoco afirma de mas: si algo quedo sin borrar, se dice que
+# la desinstalacion fue PARCIAL y se lista que quedo y donde.
+if [ -z "$PENDIENTES" ]; then
+  echo "==> Listo. Tecnia Bot desinstalado."
+else
+  echo "==> Tecnia Bot se desinstalo PARCIALMENTE. Quedo sin borrar:"
+  printf '%s' "$PENDIENTES"
+  echo "    Cerra OpenCode y volve a correr el desinstalador, o sacalo a mano."
+fi
 echo "    (OpenCode y PlatformIO NO se tocaron: son independientes.)"

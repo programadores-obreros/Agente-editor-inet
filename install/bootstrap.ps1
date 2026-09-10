@@ -9,7 +9,30 @@
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 # ============================================================================
+
+# -SinPrompt: NO preguntar nada y NO tocar lo que ya este configurado.
+#
+# POR QUE EXISTE. El instalador ofrece cambiar la key de Google cuando ya hay una
+# guardada, y espera 60 segundos por si el docente quiere pegar una nueva. Frente
+# a una persona eso esta bien. Pero un despliegue silencioso (/VERYSILENT) no
+# tiene a nadie tipeando, y ahi los 60 segundos son 60 segundos de nada: medido
+# en la VM, una reinstalacion sobre una maquina ya configurada paso de instantanea
+# a 63 segundos, y de eso 60 eran la espera. En una escuela con veinte maquinas
+# son veinte minutos de reloj regalados.
+#
+# No alcanza con detectar "no hay consola": corriendo por /VERYSILENT SI hay una
+# consola real (solo que vacia), asi que el sondeo de teclado no falla y espera
+# hasta el final. Quien sabe que nadie va a contestar es el instalador, y por eso
+# la sena baja desde el .iss: installer\tecnia-bot.iss agrega -SinPrompt cuando
+# WizardSilent() es verdadero.
+#
+# Se traduce a TECNIA_SIN_PROMPT, que es la variable que install.ps1 ya sabia
+# mirar, para no inventar un segundo mecanismo que diga lo mismo. Se define en
+# ESTE proceso: install.ps1 corre como hijo y la hereda.
+param([switch]$SinPrompt)
+
 $ErrorActionPreference = "Stop"
+if ($SinPrompt) { $env:TECNIA_SIN_PROMPT = "1" }
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
 # ---- TODO LO QUE PASA ACA QUEDA ESCRITO -------------------------------------
@@ -73,6 +96,39 @@ if ($OpenCodeVersion -notmatch '^\d+\.\d+\.\d+$') {
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
     exit 1
+}
+
+# La version de PYTHON, por el MISMO motivo y con la misma mecanica.
+#
+# Doce lineas mas arriba esta el ensayo entero de por que `scoop install opencode`
+# a secas estaba mal: cada PC de la escuela se llevaba la version que fuera la
+# ultima ESE DIA, y dos maquinas instaladas con una semana de diferencia tenian dos
+# OpenCode distintos. Al bloque de Python nunca se le aplico esa leccion: seguia
+# haciendo `scoop install python` a secas, y Python es el PRIMER eslabon de la
+# cadena que termina en PlatformIO (ver mas abajo). O sea que la pieza de la que
+# depende compilar era justo la que no estaba fijada.
+#
+# POR QUE 3.14.7 Y NO OTRA: es la version que HOY (2026-09-08), en la maquina real
+# de la escuela Juana Manso -la de la usuaria `Direccion310`-, instalo PlatformIO
+# Core 6.2.0 y quedo verificada con `pio.exe --version`. No es una eleccion de
+# catalogo: es la unica version con la que tenemos PRUEBA de que la cadena entera
+# (Python -> get-platformio.py -> venv -> pip install platformio) funciona.
+#
+# DIFERENCIA A PROPOSITO CON OpenCode: si el archivo falta o esta roto, ACA NO SE
+# CORTA. Sin OpenCode no hay producto y cortar es lo correcto; sin Python solo falta
+# PlatformIO, y la regla de este repo -escrita en el mensaje de mas abajo y
+# custodiada por tests/instalador.test.mjs- es que sin PlatformIO el bot igual sirve
+# para explicar, dibujar circuitos y repartir fichas. Dejar sin Tecnia Bot a un aula
+# por un archivo de version es peor que instalar Python sin fijar.
+$ArchivoVersionPython = Join-Path $PSScriptRoot "PYTHON_VERSION"
+$PythonVersion = ""
+if (Test-Path $ArchivoVersionPython) {
+    $PythonVersion = (Get-Content $ArchivoVersionPython -Raw).Trim()
+}
+if ($PythonVersion -notmatch '^\d+\.\d+\.\d+$') {
+    Write-Host "  [!] No se pudo leer la version de Python a instalar ($ArchivoVersionPython)." -ForegroundColor Yellow
+    Write-Host "      Se instala la ultima que ofrezca Scoop, sin fijar."
+    $PythonVersion = ""
 }
 
 # TLS 1.2 explicito. Medido en un Windows 10 22H2 con .NET 4.8: el default es
@@ -760,18 +816,219 @@ function Buscar-Python {
     return $null
 }
 
+# Fija Python en la version probada, igual que Fijar-OpenCode.
+#
+# `scoop hold` NO tira excepcion NI devuelve exit distinto de 0 cuando falla
+# (verificado en libexec/scoop-hold.ps1: hace `error "..."; continue` y termina con
+# `exit $exitcode` con la variable sin definir). La unica senal fiable es la linea
+# que empieza con ERROR; el exit code se mira igual por si algun dia lo arreglan.
+# Que el hold falle NO es motivo para cortar: la version ya quedo instalada.
+function Fijar-Python {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $global:LASTEXITCODE = 0
+        $salida = scoop hold python *>&1 | Out-String
+        $errores = @($salida -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^ERROR' })
+        if (($LASTEXITCODE -ne 0) -or ($errores.Count -gt 0)) {
+            $motivo = if ($errores.Count) { $errores[0] } else { "scoop hold devolvio exit $LASTEXITCODE" }
+            Write-Host "  [!] No se pudo fijar Python: $motivo" -ForegroundColor Yellow
+            return $false
+        }
+        Write-Host "  [OK] Python fijado en la version $PythonVersion (scoop hold)."
+        return $true
+    } catch {
+        Write-Host "  [!] No se pudo fijar Python: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    } finally { $ErrorActionPreference = $prev }
+}
+
+# Instala Python con Scoop, FIJADO en la version probada, y degrada con gracia.
+#
+# DEGRADAR CON GRACIA NO ES OPCIONAL, Y ESTE ES EL MOTIVO. Fijar una version que el
+# bucket de Scoop no pueda resolver no rompe UNA instalacion: rompe TODAS a la vez,
+# en toda la escuela, el mismo dia. Los buckets sacan versiones viejas del manifest
+# cuando publican nuevas. Asi que si `scoop install python@<version>` falla, se cae
+# a `scoop install python` a secas con un aviso claro en el log -y se pierde el pin,
+# que es un problema mucho mas chico que un aula sin Tecnia Bot-.
+#
+# "already installed" NO es una falla: es lo que Scoop contesta cuando la version
+# fijada ya esta en el disco, y es el caso normal al re-correr Reparar.
+function Instalar-Python {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $quedoFijada = $false
+    try {
+        if ($PythonVersion) {
+            Write-Host "  [..] Instalando Python $PythonVersion (la version con la que se probo PlatformIO)..."
+            $global:LASTEXITCODE = 0
+            try { $salida = scoop install python@$PythonVersion *>&1 | Out-String } catch { $salida = "ERROR " + $_.Exception.Message }
+            foreach ($l in @($salida -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) { Write-Host ("      " + $l) }
+            $fallo = ($LASTEXITCODE -ne 0) -or ($salida -match '(?m)^\s*ERROR')
+            if ($fallo -and ($salida -notmatch "already installed")) {
+                Write-Host "  [!] No se pudo instalar Python $PythonVersion (puede no estar mas en el bucket)." -ForegroundColor Yellow
+                Write-Host "      Sigo con la ultima que ofrezca Scoop, SIN fijar: quedarse sin Python"
+                Write-Host "      -y por lo tanto sin PlatformIO- por una version es peor que no fijarla."
+            } else {
+                $quedoFijada = $true
+            }
+        }
+        if ($quedoFijada) {
+            [void](Fijar-Python)
+        } else {
+            $global:LASTEXITCODE = 0
+            try { $salida = scoop install python *>&1 | Out-String } catch { $salida = "ERROR " + $_.Exception.Message }
+            foreach ($l in @($salida -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) { Write-Host ("      " + $l) }
+        }
+    } finally { $ErrorActionPreference = $prev }
+}
+
+# ULTIMO RECURSO cuando Buscar-Python no encontro NADA usable: rehacer lo que Scoop
+# administra. `scoop reset python` rehace shims, el enlace 'current' y el PATH desde
+# la version ya instalada, SIN descargar nada.
+#
+# EL DISPARADOR ES "NO HAY PYTHON", Y NO PUEDE SER OTRA COSA. Una version anterior de
+# este bloque reseteaba cuando faltaba scoop\shims\python.exe teniendo la app, con la
+# teoria de que Scoop habia abortado antes de crear el shim (el modo de falla que SI
+# tiene OpenCode). Estaba mal, y lo corrigio una medicion en la VM Windows 10 sobre
+# una instalacion sana:
+#
+#     scoop\shims\python.exe                -> False
+#     scoop\shims\python3.exe               -> True
+#     scoop\apps\python\current\python.exe  -> True
+#
+# El manifest main/bucket/python.json declara
+# bin: [["python.exe","python3"], "Lib\idlelib\idle.bat", ...], y en Scoop
+# ["archivo","nombre"] significa "shimea ESE archivo CON ESE nombre": el unico shim
+# que sale de ahi se llama python3.exe. NUNCA existio un scoop\shims\python.exe, en
+# ninguna maquina. O sea que aquella condicion era verdadera SIEMPRE y el reset
+# corria en cada instalacion sin arreglar nada: un no-op ruidoso construido sobre un
+# falso positivo. Ademas el manifest trae env_add_path: ["Scripts", "."], asi que la
+# carpeta de la app entra al PATH y `python` pelado resuelve igual.
+#
+# Buscar-Python ya acertaba sin ayuda: su candidato numero 2 es
+# scoop\apps\python\current\python.exe, que SI existe. El codigo estaba bien; lo que
+# estaba mal era el diagnostico.
+function Reparar-ScoopPython {
+    if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) { return }
+    Write-Host "  [..] No aparece ningun Python usable: le pido a Scoop que rehaga lo suyo (scoop reset)..."
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $salidaReset = scoop reset python *>&1 | Out-String
+        foreach ($l in @($salidaReset -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) { Write-Host ("      " + $l) }
+    } catch {
+    } finally { $ErrorActionPreference = $prev }
+}
+
+# TRES LUGARES DONDE BUSCAR, no uno -- ahora le toca a PlatformIO.
+#
+# Es la MISMA leccion que el lanzador (installer\abrir-tecnia-bot.cmd) aprendio
+# buscando OpenCode y que Buscar-Python, aca arriba, aprendio buscando Python. Es
+# la TERCERA vez que muerde, y esta vez costo tres semanas de una docente.
+#
+# EL CASO REAL (escuela Juana Manso, 2026-09-08). La usuaria de Windows se llama
+# `Direccion310` -- con `o` acentuada, que NO es ASCII. PlatformIO Core no soporta
+# rutas con caracteres no-ASCII (sus toolchains de gcc se rompen), asi que en
+# Windows RELOCALIZA su core_dir a la raiz del disco. Es comportamiento documentado
+# de PlatformIO, no un bug de ellos. El instalador oficial dejo esto en pantalla:
+#
+#     Creating a virtual environment at C:\.platformio\penv
+#     PlatformIO Core has been successfully installed into an isolated environment
+#     The full path to platformio.exe is C:\.platformio\penv\Scripts\platformio.exe
+#
+# Nosotros mirabamos UNA sola ruta -- $env:USERPROFILE\.platformio -- asi que este
+# bloque imprimia "[!] PlatformIO NO quedo instalado" en una maquina donde
+# `pio.exe --version` contestaba "PlatformIO Core, version 6.2.0". Tres semanas
+# diciendole a una docente que le faltaba algo que tenia.
+#
+# Por eso ahora es una LISTA ORDENADA de candidatos, no una ruta:
+#   1. $env:PLATFORMIO_CORE_DIR, si el usuario la seteo (lo explicito gana)
+#   2. $USERPROFILE\.platformio            (la instalacion normal)
+#   3. la raiz del disco de $USERPROFILE   <- el caso de arriba
+#   4. C:\.platformio fijo, por si el perfil vive en otro disco
+#   5. el PATH (`pio` y `platformio`)
+#
+# ESTA LOGICA ESTA REPETIDA en diagnostico.ps1, install.ps1, bootstrap.sh,
+# install.sh y opencode\tool\platformio.ts, A PROPOSITO. Ninguno de los .ps1 hace
+# dot-sourcing de otro: cada script se copia y corre SOLO (el .exe de Inno lleva
+# unos, el menu inicio lanza otros, /reparar lanza el bootstrap desde adentro del
+# bot). Meter un modulo compartido es un cambio estructural que no corresponde a
+# este arreglo. Lo que mantiene honestas a las seis copias es el test
+# tests/platformio-pio.test.mjs, que le exige a cada archivo que contemple
+# PLATFORMIO_CORE_DIR y la raiz del disco. Si agregas una septima copia, agregala
+# tambien a ese test.
+function Rutas-PioCore {
+    $dirs = @()
+    if ($env:PLATFORMIO_CORE_DIR) { $dirs += $env:PLATFORMIO_CORE_DIR }
+    $dirs += (Join-Path $env:USERPROFILE ".platformio")
+    # GetPathRoot("C:\Users\Direccion310") devuelve "C:\": la raiz del disco donde
+    # vive el perfil, que es adonde PlatformIO se muda cuando el nombre no es ASCII.
+    $raiz = [System.IO.Path]::GetPathRoot($env:USERPROFILE)
+    if ($raiz) { $dirs += (Join-Path $raiz ".platformio") }
+    $dirs += "C:\.platformio"
+    return ($dirs | Select-Object -Unique)
+}
+
+# Devuelve la ruta del pio que ANDA, o $null.
+#
+# En cada carpeta se miran pio.exe Y platformio.exe: normalmente estan los dos,
+# pero el mensaje final del instalador oficial nombra platformio.exe y no queremos
+# depender de que exista justo el que elegimos nosotros.
+#
+# Y AL PRIMERO QUE EXISTA SE LE PREGUNTA --version, no se supone que anda por donde
+# vive. Es la misma regla que Buscar-Python: cuesta un segundo, corre una sola vez,
+# y atrapa un venv a medio armar (el caso "penv existe pero pypi.org estaba
+# bloqueado" que diagnostico.ps1 documenta). El tool platformio.ts NO hace esto: esta
+# en el camino caliente y le alcanza con que el archivo exista. La asimetria es
+# deliberada.
+#
+# 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta en
+# PowerShell 5.1 (la trampa que ya resolvio Buscar-Python): se baja a Continue solo
+# para preguntar, y $LASTEXITCODE se resetea a mano antes de cada intento.
+function Buscar-Pio {
+    $candidatos = @()
+    foreach ($dir in (Rutas-PioCore)) {
+        foreach ($nombre in @("pio.exe", "platformio.exe")) {
+            $candidatos += (Join-Path $dir "penv\Scripts\$nombre")
+        }
+    }
+    # El PATH al final: PlatformIO casi nunca queda ahi, pero si alguien lo agrego
+    # a mano (o install.ps1 ya corrio) es una respuesta valida.
+    foreach ($c in (Get-Command -Name pio, platformio -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($c.Source) { $candidatos += $c.Source }
+    }
+    foreach ($ruta in $candidatos) {
+        if (-not $ruta) { continue }
+        if (-not (Test-Path $ruta)) { continue }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $global:LASTEXITCODE = 0
+            $v = (& $ruta --version 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -and $v -match "PlatformIO") { return $ruta }
+        } catch { } finally { $ErrorActionPreference = $prev }
+    }
+    return $null
+}
+
 # --- 3. Python + PlatformIO -------------------------------------------------
-$PioExe = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
-if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
-    Write-Host "  [OK] PlatformIO ya esta instalado"
+$PioExe = Buscar-Pio
+if ($PioExe) {
+    Write-Host "  [OK] PlatformIO ya esta instalado ($PioExe)"
 } else {
     Write-Host "  [..] Instalando PlatformIO Core (no necesita admin)..."
     # Python: NO usar 'Get-Command python' - Windows 10/11 trae un stub de la
     # Microsoft Store con ese nombre que NO es Python real y hace fallar la
     # instalacion. Instalamos con Scoop (idempotente) y lo llamamos por ruta.
-    scoop install python
+    # Y FIJADO en $PythonVersion, no "la ultima de hoy": ver el comentario de
+    # Instalar-Python y el de PYTHON_VERSION alla arriba.
+    Instalar-Python
     Refresh-Path
     $PyExe = Buscar-Python
+    # Sin Python usable, un ultimo intento: que Scoop rehaga shims y PATH. Se vuelve a
+    # preguntar UNA vez; si sigue sin aparecer, el mensaje de abajo queda como esta.
+    if (-not $PyExe) { Reparar-ScoopPython; Refresh-Path; $PyExe = Buscar-Python }
     if (-not $PyExe) {
         Write-Host ""
         Write-Host "  [!] No hay un Python usable en esta maquina." -ForegroundColor Yellow
@@ -821,9 +1078,12 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
         if ($avisoPip) { Write-Host "  [i] Aviso de pip (no pudo actualizarse a si mismo): no afecta a PlatformIO." }
         Remove-Item $Tmp -ErrorAction SilentlyContinue
     }
-    # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en
-    # ~/.platformio y no agrega nada al PATH de esta consola.
-    if (-not (Test-Path $PioExe)) {
+    # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en su
+    # venv privado y no agrega nada al PATH de esta consola. Se vuelve a BUSCAR (no
+    # se reusa el $PioExe de arriba) porque recien ahora sabemos donde eligio
+    # instalarse: si el nombre de usuario no es ASCII, se fue a la raiz del disco.
+    $PioExe = Buscar-Pio
+    if (-not $PioExe) {
         Write-Host ""
         Write-Host "  [!] PlatformIO NO quedo instalado." -ForegroundColor Yellow
         Write-Host ""
@@ -834,7 +1094,10 @@ if ((Get-Command pio -ErrorAction SilentlyContinue) -or (Test-Path $PioExe)) {
         Write-Host "      Adentro del bot, /diagnostico te dice como esta."
         Write-Host ""
     } else {
-        Write-Host "  [OK] PlatformIO instalado en ~/.platformio (Tecnia Bot lo encuentra solo)."
+        # Se dice la ruta REAL, no "~/.platformio": cuando PlatformIO se relocaliza a
+        # la raiz del disco, decir la ruta de siempre manda al docente a mirar una
+        # carpeta que no existe. Eso fue exactamente lo que paso durante tres semanas.
+        Write-Host "  [OK] PlatformIO instalado en $PioExe (Tecnia Bot lo encuentra solo)."
     }
 }
 

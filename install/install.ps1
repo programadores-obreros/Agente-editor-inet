@@ -135,6 +135,18 @@ if (-not (Test-Path $MemoriaFile)) {
 $ModeloConKey = "google/gemini-3.5-flash-lite"
 $ModeloSinKey = "opencode/big-pickle"
 
+# El id que entiende la API de Google es la parte de la DERECHA: el "google/" de
+# adelante es el proveedor, y eso es sintaxis de OpenCode, no de Google. Se DERIVA
+# de $ModeloConKey a proposito -- si manana cambia el modelo, la prueba de la key
+# apunta sola al nuevo y no queda un id viejo escondido en una URL. Es la misma
+# derivacion que MODELO_API en opencode\tool\clave.ts.
+$ModeloApi = ($ModeloConKey -split "/")[-1]
+
+# Cuanto se espera a Google antes de darse por vencido probando la key. En una
+# escuela con la red filtrada el pedido no falla: se queda colgado. Quince segundos
+# alcanzan para cualquier red que ande, y son quince segundos UNA vez por corrida.
+$TimeoutPruebaKey = 15
+
 # ---- La key compartida de versiones anteriores se reconoce por su SHA-256 ----
 # Las instalaciones hechas con la v0.3.75 o anteriores tienen esa key en auth.json Y
 # en la variable de usuario GOOGLE_GENERATIVE_AI_API_KEY. Como se roto, quedo una
@@ -151,6 +163,186 @@ function Get-Sha256Hex($texto) {
 function Test-KeyVieja($k) {
     if (-not $k) { return $false }
     return ((Get-Sha256Hex ([string]$k)) -eq $HashKeyVieja)
+}
+
+# ---- Leer una key del teclado, con timeout -----------------------------------
+#
+# Esta mecanica ya estaba resuelta y esta puesta en una funcion para que la usen
+# LOS DOS prompts (el de "no hay key" y el nuevo de "hay key, la cambias?"), sin
+# copiarla. Lo que hace y por que, que costo encontrarlo:
+#
+# Timeout de 60 s: si esto corre en modo silencioso/desatendido (deploy a varias
+# PCs) con una consola real pero nadie tipeando, una lectura bloqueante se
+# colgaria para siempre. Start-Job/Read-Host NO sirve (un job corre en un proceso
+# aislado sin consola real -> deadlock detectado por PowerShell). Un Task sobre
+# [Console]::ReadLine() tampoco -- falla si no hay consola real adjunta. La
+# tecnica correcta: sondear [Console]::KeyAvailable con un cronometro. Si la
+# entrada esta redirigida (pipe/automatizacion), KeyAvailable tira excepcion -- en
+# ese caso caemos a una lectura simple, que ahi SI es segura (un pipe nunca se
+# cuelga: devuelve al toque lo que tenga, o vacio).
+#
+# Devuelve @{ key = "<lo tipeado, sin blancos>"; respondio = $true/$false }.
+# `respondio` es $false SOLO cuando se cumplieron los segundos sin que nadie
+# apretara Enter: quien decide que significa ese silencio es el que llama, y en
+# este script significa SIEMPRE "no toques nada".
+function Leer-KeyConTimeout($segundos) {
+    $key = ""
+    $recibioAlgo = $false
+    try {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($sw.Elapsed.TotalSeconds -lt $segundos) {
+            if ([Console]::KeyAvailable) {
+                $charInfo = [Console]::ReadKey($true)
+                if ($charInfo.Key -eq "Enter") { $recibioAlgo = $true; Write-Host ""; break }
+                elseif ($charInfo.Key -eq "Backspace") {
+                    if ($key.Length -gt 0) { $key = $key.Substring(0, $key.Length - 1) }
+                } else {
+                    $key += $charInfo.KeyChar
+                }
+            } else {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+    } catch [System.InvalidOperationException] {
+        # Consola redirigida (pipe/automatizacion): un pipe no se cuelga, leemos directo.
+        $key = [Console]::In.ReadLine()
+        if (-not $key) { $key = "" }
+        $recibioAlgo = $true
+    }
+    $limpia = ""
+    if ($key) { $limpia = ([string]$key).Trim() }
+    return @{ key = $limpia; respondio = [bool]$recibioAlgo }
+}
+
+# ---- Probar la key CONTRA GOOGLE ---------------------------------------------
+#
+# EL SEGUNDO DEFECTO DEL 8 DE SEPTIEMBRE. Con la key literal "AIzaSyFALSA000..."
+# este script imprimia "==> Modelo configurado: google/gemini-3.5-flash-lite
+# (Gemini, con tu key de Google)". La key NUNCA se validaba: una credencial
+# muerta, vencida o con la cuota agotada producia exactamente el mismo mensaje
+# que una que anda. La docente leia que quedo todo configurado y se enteraba de
+# que no al primer mensaje, con un error en ingles que no explica nada.
+#
+# Es el mismo defecto que el resto del repo persigue con nombre propio: afirmar
+# sobre algo que no se miro (opencode\command\reparar.md: "Nunca digas que algo
+# quedo instalado si el tool no lo dijo").
+#
+# CINCO RESULTADOS, y ninguno se puede confundir con otro. Son LOS MISMOS de
+# probarClave() en opencode\tool\clave.ts, con los mismos criterios y en el mismo
+# orden -- si los dos clasificaran distinto, el instalador y el bot le contarian
+# a la misma docente dos historias diferentes de la misma key:
+#
+#   anda      -> Google contesto OK.
+#   cuota     -> HTTP 429 / RESOURCE_EXHAUSTED. ES EL CASO DE LA ESCUELA: la key
+#                es real y de la docente, lo que se acabo es el cupo gratis.
+#   invalida  -> HTTP 400/403, INVALID_ARGUMENT / PERMISSION_DENIED /
+#                UNAUTHENTICATED, o reason API_KEY_INVALID. La key no sirve.
+#   modeloIdo -> HTTP 404 / NOT_FOUND. La key puede estar perfecta: el que no esta
+#                es el MODELO. TIENE RAMA PROPIA porque el cajon de "no pude
+#                probarla" le echa la culpa a la red, y aca la red anda perfecto:
+#                mandaria a la docente a pelearse con el proxy de la escuela por
+#                un problema que esta del otro lado y que ninguna key arregla.
+#   sinProbar -> cualquier otro HTTP (un 500/503 es de Google, no de la key) o una
+#                excepcion de red. NUNCA se cuenta como "anda".
+#
+# LA KEY VA EN EL HEADER x-goog-api-key, NO EN EL QUERY STRING. Google acepta las
+# dos formas; con la del query string la key termina adentro de la URL, y la URL
+# termina adentro del texto de cualquier excepcion de red. Este repo ya tuvo esa
+# fuga con el proxy de la escuela (por eso el [regex]::Replace de
+# diagnostico.ps1). El header la deja afuera de todo lo que se pueda imprimir por
+# accidente, que es mas barato que acordarse de tapar la fuga en cada mensaje.
+#
+# Del cuerpo de la respuesta se sacan SOLO dos cosas: error.status y los reason de
+# error.details, que son tokens de una lista cerrada. El cuerpo entero no se
+# imprime nunca, y del texto de una excepcion no se imprime NADA salvo su tipo.
+function Clasificar-RespuestaGoogle($codigo, $cuerpo) {
+    $status = ""
+    $razones = @()
+    if ($cuerpo) {
+        try {
+            $json = $cuerpo | ConvertFrom-Json
+            if ($json.error) {
+                if ($json.error.status) { $status = [string]$json.error.status }
+                if ($json.error.details) {
+                    foreach ($d in @($json.error.details)) {
+                        if ($d.reason) { $razones += [string]$d.reason }
+                    }
+                }
+            }
+        } catch {
+            # Un cuerpo que no es JSON (la pagina del proxy de la escuela, por
+            # ejemplo) no aporta nada: el codigo HTTP alcanza para clasificar.
+        }
+    }
+    if ($codigo -eq 429 -or $status -eq "RESOURCE_EXHAUSTED") { return @{ resultado = "cuota"; detalle = "" } }
+    if ($codigo -eq 400 -or $codigo -eq 403 -or $status -eq "INVALID_ARGUMENT" -or $status -eq "PERMISSION_DENIED" -or $status -eq "UNAUTHENTICATED" -or ($razones -contains "API_KEY_INVALID")) {
+        return @{ resultado = "invalida"; detalle = "" }
+    }
+    # El modelo, no la key. Va ANTES del cajon de sinProbar a proposito.
+    if ($codigo -eq 404 -or $status -eq "NOT_FOUND") { return @{ resultado = "modeloIdo"; detalle = "" } }
+    return @{ resultado = "sinProbar"; detalle = "Google contesto HTTP $codigo" }
+}
+
+function Probar-KeyGoogle($clave) {
+    if (-not $clave) { return @{ resultado = "sinProbar"; detalle = "no hay key que probar" } }
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/" + $ModeloApi + ":generateContent"
+    # El pedido mas chico que sirve de prueba: una palabra y un token de respuesta.
+    # No es gratis (consume una llamada del cupo), pero preguntarle a Google es la
+    # unica forma de saber, y no preguntar es justamente el defecto que arreglamos.
+    $cuerpoPedido = '{"contents":[{"parts":[{"text":"ping"}]}],"generationConfig":{"maxOutputTokens":1}}'
+    # Se guarda y se restaura, como hace Buscar-Pio mas abajo: aca queremos que
+    # Invoke-WebRequest TIRE la excepcion para poder leerle el codigo HTTP a la
+    # respuesta, y que un error no se lleve puesto el instalador entero.
+    # (No se toca $LASTEXITCODE: aca no se invoca ningun comando nativo.)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Stop"
+    try {
+        # Windows 10 sin actualizar negocia TLS 1.0 por defecto y Google lo rechaza
+        # hace anios: sin esto el pedido muere con una excepcion de "conexion
+        # cerrada" que parece falta de red y no lo es. Best-effort.
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        } catch { }
+        try {
+            $resp = Invoke-WebRequest -Uri $url -Method Post -UseBasicParsing -TimeoutSec $TimeoutPruebaKey `
+                -ContentType "application/json" `
+                -UserAgent "tecnia-bot-instalador" `
+                -Headers @{ "x-goog-api-key" = [string]$clave } `
+                -Body $cuerpoPedido
+            $codigo = [int]$resp.StatusCode
+            if ($codigo -ge 200 -and $codigo -lt 300) { return @{ resultado = "anda"; detalle = "" } }
+            return (Clasificar-RespuestaGoogle $codigo "")
+        } catch {
+            # Un HTTP de error llega como excepcion con la respuesta adentro; una
+            # caida de red llega sin respuesta. Los dos casos son distintos y no se
+            # pueden mezclar: uno dice algo de la key, el otro no dice nada.
+            $ex = $_.Exception
+            $codigo = 0
+            $textoRespuesta = ""
+            $r = $null
+            try { $r = $ex.Response } catch { $r = $null }
+            if ($r) {
+                try { $codigo = [int]$r.StatusCode } catch { $codigo = 0 }
+                try {
+                    $lector = New-Object System.IO.StreamReader($r.GetResponseStream())
+                    try { $textoRespuesta = $lector.ReadToEnd() } finally { $lector.Dispose() }
+                } catch {
+                    $textoRespuesta = ""
+                }
+            }
+            if ($codigo -eq 0) {
+                # Timeout, DNS que no resuelve, el filtro de contenido de la escuela
+                # que corta. Se informa el TIPO de excepcion, NUNCA su mensaje: el
+                # mensaje se lleva puesta la URL, o el proxy con su usuario:clave.
+                $tipo = $ex.GetType().Name
+                try { if ($ex.Status) { $tipo = "$tipo/$($ex.Status)" } } catch { }
+                return @{ resultado = "sinProbar"; detalle = "no hubo respuesta ($tipo)" }
+            }
+            return (Clasificar-RespuestaGoogle $codigo $textoRespuesta)
+        }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 if ($env:XDG_DATA_HOME) {
@@ -220,58 +412,129 @@ if ($purgada) {
     Write-Host "  [i] Se quito la key de respaldo compartida que traian las versiones anteriores (ya no es valida)."
 }
 
-# TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para que
-# este script no pregunte nada y siga sin key, con el modelo gratuito Big Pickle.
-# Sin esto, el sondeo de teclado de abajo espera 60 s en una consola sin nadie, y si
-# la entrada esta redirigida lee una linea de ahi. La pregunta sigue existiendo para
-# el docente: solo se saltea cuando la variable esta definida.
-if (-not $tieneGoogle -and $env:TECNIA_SIN_PROMPT) {
+# ---------------------------------------------------------------------------
+# LA PREGUNTA POR LA KEY: TRES CAMINOS, Y EL DEFAULT SIEMPRE ES CONSERVAR
+# ---------------------------------------------------------------------------
+#
+# Hasta la v0.3.78 habia DOS caminos: "no hay key -> preguntar" y "hay key -> no
+# hacer nada". El segundo era una trampa sin salida.
+#
+# EL CASO REAL (escuela Juana Manso, 8 de septiembre de 2026). Varias docentes con
+# la cuota de Google agotada corrieron "Reparar Tecnia Bot" para poder pegar una
+# key nueva, y el instalador NUNCA se las pidio: la pregunta vivia adentro de
+# `elseif (-not $tieneGoogle)`, o sea que en una compu que ya tiene key la rama que
+# pregunta no se ejecuta, y no importa cuantas veces se corra Reparar. Probaron con
+# keys de otras cuentas y vieron el mismo error de siempre: las keys nuevas nunca
+# entraron. Reproducido en la VM de Windows 10: con key guardada no pregunta y
+# auth.json ni se toca (misma fecha de modificacion antes y despues). Ese detalle
+# es el que permite diagnosticarlo a distancia. Esta contado entero en
+# docs\key-de-google.md.
+#
+# La idempotencia se puso por una buena razon -- no molestar al docente en cada
+# actualizacion con algo que ya contesto -- pero se convirtio en una trampa justo
+# para el caso en que HAY que rotar la key. Ahora hay un tercer camino: "hay key ->
+# ofrecer cambiarla, con Enter para dejarla". Y una regla que no se negocia:
+#
+#   ENTER, TIMEOUT O CONSOLA SIN NADIE = SE DEJA LA QUE ESTA.
+#
+# Nunca se borra ni se pisa una key que funciona porque nadie contesto. Este script
+# corre con la salida pipeada desde /actualizar y /reparar (Bun.spawn(..., {
+# stdout: "pipe", stderr: "pipe" }) en actualizar.ts y platformio.ts): por esa via
+# NO HAY NADIE que pueda tipear, y el silencio tiene que significar "dejala como
+# esta", no "borrala". Para la docente que esta adentro del bot esta el comando
+# /clave, que es el unico que puede conversar.
+$keyFinal = ""
+$pruebaKey = $null
+$preguntar = $true
+
+if ($env:TECNIA_SIN_PROMPT) {
+    # TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para
+    # que este script no pregunte NADA. Sin key guardada se sigue sin key; con una
+    # key guardada se deja la que esta. Sin la variable, el sondeo de teclado espera
+    # 60 s en una consola sin nadie. La pregunta sigue existiendo para el docente:
+    # solo se saltea cuando la variable esta definida, y saltearla NUNCA borra nada.
+    $preguntar = $false
     Write-Host ""
-    Write-Host "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key."
-} elseif (-not $tieneGoogle) {
-    Write-Host ""
-    Write-Host "==> API key de Google (OPCIONAL). Con una key gratis (sin tarjeta) Tecnia Bot usa Gemini."
-    Write-Host "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
-    Write-Host "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
-    # Timeout de 60s: si esto corre en modo silencioso/desatendido (deploy a varias
-    # PCs) con una consola real pero nadie tipeando, una lectura bloqueante se
-    # colgaria para siempre. Start-Job/Read-Host NO sirve (un job corre en un
-    # proceso aislado sin consola real -> deadlock detectado por PowerShell). Un
-    # Task sobre [Console]::ReadLine() tampoco -- falla si no hay consola real
-    # adjunta. La tecnica correcta: sondear [Console]::KeyAvailable con un
-    # cronometro. Si la entrada esta redirigida (pipe/automatizacion), KeyAvailable
-    # tira excepcion -- en ese caso caemos a una lectura simple, que ahi SI es
-    # segura (un pipe nunca se cuelga: devuelve al toque lo que tenga, o vacio).
-    Write-Host "    Pegala aca, o Enter para seguir sin key: Tecnia Bot va a usar el modelo gratuito Big Pickle de OpenCode [60s]:"
-    $key = ""
-    $recibioAlgo = $false
-    try {
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        while ($sw.Elapsed.TotalSeconds -lt 60) {
-            if ([Console]::KeyAvailable) {
-                $charInfo = [Console]::ReadKey($true)
-                if ($charInfo.Key -eq "Enter") { $recibioAlgo = $true; Write-Host ""; break }
-                elseif ($charInfo.Key -eq "Backspace") {
-                    if ($key.Length -gt 0) { $key = $key.Substring(0, $key.Length - 1) }
-                } else {
-                    $key += $charInfo.KeyChar
-                }
-            } else {
-                Start-Sleep -Milliseconds 100
-            }
-        }
-        if (-not $recibioAlgo) { Write-Host ""; Write-Host "  [i] Sin respuesta en 60s -- seguimos sin key." }
-    } catch [System.InvalidOperationException] {
-        # Consola redirigida (pipe/automatizacion): un pipe no se cuelga, leemos directo.
-        $key = [Console]::In.ReadLine()
-        if (-not $key) { $key = "" }
+    if ($tieneGoogle) {
+        Write-Host "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta nada y se deja la key de Google que ya estaba."
     }
-    $keyFinal = if ($key) { $key.Trim() } else { "" }
-    if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
-        # La pego de algun apunte viejo: es la key compartida rotada. No se guarda.
-        Write-Host "  [X] Esa es la key de respaldo compartida de versiones anteriores: ya no es valida y no se guarda."
-        Write-Host "      Consegui la tuya en https://aistudio.google.com/apikey (seguimos sin key por ahora)."
-    } elseif ($keyFinal) {
+    if (-not $tieneGoogle) {
+        Write-Host "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key."
+    }
+}
+
+if ($preguntar) {
+    Write-Host ""
+    if ($tieneGoogle) {
+        # EL CAMINO NUEVO. El texto nombra la cuota por PROYECTO porque es lo que
+        # mas confunde y lo que hizo perder una tarde entera en la escuela: crear
+        # una key nueva en el MISMO proyecto de Google no da cuota nueva.
+        Write-Host "==> Ya hay una key de Google guardada en esta compu."
+        Write-Host "    Si se te agoto la cuota, esta es la ocasion de cambiarla. OJO: la cuota gratuita de"
+        Write-Host "    Google es por PROYECTO, no por key -- una key nueva del MISMO proyecto da el mismo"
+        Write-Host "    error. Sacate una de otro proyecto (o de otra cuenta): https://aistudio.google.com/apikey"
+        Write-Host "    Enter para dejarla como esta, o pega una nueva para reemplazarla [60s]:"
+    }
+    if (-not $tieneGoogle) {
+        Write-Host "==> API key de Google (OPCIONAL). Con una key gratis (sin tarjeta) Tecnia Bot usa Gemini."
+        Write-Host "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
+        Write-Host "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
+        Write-Host "    Pegala aca, o Enter para seguir sin key: Tecnia Bot va a usar el modelo gratuito Big Pickle de OpenCode [60s]:"
+    }
+    $lectura = Leer-KeyConTimeout 60
+    $keyFinal = [string]$lectura.key
+    if (-not $lectura.respondio -and -not $keyFinal) {
+        Write-Host ""
+        if ($tieneGoogle) {
+            Write-Host "  [i] Sin respuesta en 60s -- se deja la key que ya estaba guardada (no se toco nada)."
+        }
+        if (-not $tieneGoogle) {
+            Write-Host "  [i] Sin respuesta en 60s -- seguimos sin key."
+        }
+    }
+}
+
+# ---- Que se hace con lo que se leyo (o con lo que no se leyo) ----------------
+if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
+    # La pego de algun apunte viejo: es la key compartida rotada. No se guarda.
+    Write-Host "  [X] Esa es la key de respaldo compartida de versiones anteriores: ya no es valida y no se guarda."
+    Write-Host "      Consegui la tuya en https://aistudio.google.com/apikey"
+    if ($tieneGoogle) {
+        Write-Host "      Se deja la key que ya estaba guardada: no se piso nada."
+    }
+    if (-not $tieneGoogle) {
+        Write-Host "      (seguimos sin key por ahora)."
+    }
+} elseif ($keyFinal) {
+    # PROBAR ANTES DE GUARDAR, y guardar igual salvo un caso.
+    #
+    # Lo UNICO que impide guardar es que Google la RECHACE explicitamente (400/403
+    # / API_KEY_INVALID): eso casi siempre es una key cortada al copiar -- son
+    # larguisimas -- y pisar con eso la key que ya estaba seria cambiarle un
+    # problema por otro peor.
+    #
+    # Todo lo demas SE GUARDA y se informa. "No pude probarla" NO es motivo para
+    # rechazar nada: si la red de la escuela no llega a Google, no sabemos NADA de
+    # la key, y una instalacion no puede quedarse a medias porque el proxy filtra.
+    # Y una cuota agotada es una key REAL de la docente: guardarla no la deja peor
+    # que antes, y el mensaje de abajo le dice exactamente que hacer.
+    #
+    # (Aca esta la unica diferencia deliberada con probarClave() de clave.ts: alla
+    # la prueba ademas DECIDE si guardar, porque alla hay una conversacion donde
+    # ofrecer Big Pickle y volver a pedir la key. Aca, muchas veces, no hay nadie.
+    # La CLASIFICACION es identica; lo que cambia es que con ella se hace.)
+    Write-Host "  [i] Probando la key contra Google (hasta $TimeoutPruebaKey s)..."
+    $pruebaNueva = Probar-KeyGoogle $keyFinal
+    $rechazada = ($pruebaNueva.resultado -eq "invalida")
+    if ($rechazada) {
+        Write-Host "  [X] Probe esa key contra Google y la RECHAZO: no es una key valida, asi que no la guarde."
+        Write-Host "      Fijate de copiarla entera (son largas y a veces se corta al copiar), o saca una nueva"
+        Write-Host "      en https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+        if ($tieneGoogle) {
+            Write-Host "      Quedo la key que ya estaba guardada: no se piso nada."
+        }
+    }
+    if (-not $rechazada) {
         $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
         # SIN BOM, y esto es un bloqueante que estuvo silencioso.
         #
@@ -288,11 +551,36 @@ if (-not $tieneGoogle -and $env:TECNIA_SIN_PROMPT) {
         [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
         [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
         $tieneGoogle = $true
+        # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
+        # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
+        $pruebaKey = $pruebaNueva
         Write-Host "  [OK] Key guardada en esta compu."
-    } else {
-        # Sin key NO se toca auth.json ni la variable de entorno: no hay nada que guardar.
+    }
+} else {
+    # Enter, timeout, consola sin nadie, o TECNIA_SIN_PROMPT. NO SE TOCA NADA: ni
+    # auth.json ni la variable de entorno. Si habia una key sigue estando; si no
+    # habia, no hay. Este es el default seguro, y es el que mas importa: un bug aca
+    # le borra la key a una escuela entera sin que nadie haya pedido nada.
+    if ($tieneGoogle) {
+        Write-Host "  [i] Se deja la key de Google que ya estaba guardada."
+    }
+    if (-not $tieneGoogle) {
         Write-Host "  [i] Seguimos sin key de Google."
     }
+}
+
+# ---- Probar la key que QUEDO, sea la nueva o la de siempre -------------------
+#
+# Este es el punto 3 del analisis de docs\key-de-google.md: validar antes de
+# afirmar que quedo configurada. Se prueba la key EFECTIVA, no la que se tipeo:
+# si el docente apreto Enter, la efectiva es la que ya estaba -- y es exactamente
+# la que se quedo sin cuota el 8 de septiembre. Sin esto, Reparar seguiria
+# terminando con un "quedo todo bien" sobre una credencial muerta.
+$keyEfectiva = ""
+if ($tieneGoogle) { $keyEfectiva = [string]$authData.google.key }
+if ($tieneGoogle -and $null -eq $pruebaKey) {
+    Write-Host "  [i] Probando la key guardada contra Google (hasta $TimeoutPruebaKey s)..."
+    $pruebaKey = Probar-KeyGoogle $keyEfectiva
 }
 
 # Modelo del agente segun la decision de arriba. Se imprime SIEMPRE (tambien cuando
@@ -300,7 +588,47 @@ if (-not $tieneGoogle -and $env:TECNIA_SIN_PROMPT) {
 # como cambiarlo despues.
 if ($tieneGoogle) {
     $ModeloElegido = $ModeloConKey
-    Write-Host "==> Modelo configurado: $ModeloElegido (Gemini, con tu key de Google)."
+    # Antes aca decia, siempre y sin haber mirado nada, "(Gemini, con tu key de
+    # Google)". Ahora se dice lo que Google contesto, y NADA MAS que eso: la unica
+    # rama que afirma que anda es la que recibio un OK. "No pude probarla" no es
+    # "anda" -- un OK falso es peor que un error, porque manda a buscar el problema
+    # al lugar equivocado y el docente se va tranquilo con todo roto.
+    Write-Host "==> Modelo configurado: $ModeloElegido"
+    $resultadoKey = ""
+    $detalleKey = ""
+    if ($pruebaKey) {
+        $resultadoKey = [string]$pruebaKey.resultado
+        $detalleKey = [string]$pruebaKey.detalle
+    }
+    if ($resultadoKey -eq "anda") {
+        Write-Host "    Probe tu key contra Google y respondio bien: Gemini quedo andando."
+    }
+    if ($resultadoKey -eq "cuota") {
+        Write-Host "    OJO: probe tu key y Google dice que la CUOTA GRATUITA de ese proyecto esta agotada."
+        Write-Host "    No rompiste nada y la key sigue siendo tuya, pero hasta que se renueve (se renueva sola)"
+        Write-Host "    Tecnia Bot va a fallar al primer mensaje. Lo que mas confunde: la cuota gratuita de Google"
+        Write-Host "    es por PROYECTO, no por key -- una key nueva del MISMO proyecto da el mismo error."
+        Write-Host "    Saca una de OTRO proyecto (o de otra cuenta) en https://aistudio.google.com/apikey"
+        Write-Host "    y pegala con /clave adentro de Tecnia Bot, o volve a correr 'Reparar Tecnia Bot'."
+        Write-Host "    Si necesitas seguir trabajando ya mismo, /clave tambien te pasa al modelo gratuito Big Pickle."
+    }
+    if ($resultadoKey -eq "invalida") {
+        Write-Host "    OJO: probe la key guardada y Google la RECHAZO: no sirve."
+        Write-Host "    Escribi /clave adentro de Tecnia Bot para pegar una nueva, o saca una en"
+        Write-Host "    https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+    }
+    if ($resultadoKey -eq "modeloIdo") {
+        Write-Host "    OJO: la key esta bien -- el que no esta es el MODELO. Google dice que $ModeloApi ya no"
+        Write-Host "    esta disponible; pasa cuando retiran o renombran un modelo."
+        Write-Host "    NO es tu computadora, NO es tu key y NO es la red: no hay key nueva que lo arregle."
+        Write-Host "    Hace falta una version de Tecnia Bot que apunte a un modelo vigente: escribi /actualizar."
+    }
+    if ($resultadoKey -ne "anda" -and $resultadoKey -ne "cuota" -and $resultadoKey -ne "invalida" -and $resultadoKey -ne "modeloIdo") {
+        Write-Host "    NO pude probar la key contra Google ($detalleKey), asi que NO se si anda."
+        Write-Host "    Suele ser la red: sin internet, o el filtro de la escuela bloqueando a Google."
+        Write-Host "    La instalacion siguio igual y la key quedo donde estaba: no se toco nada."
+        Write-Host "    Si al primer mensaje ves un error, escribi /clave adentro de Tecnia Bot para probarla de nuevo."
+    }
 } else {
     $ModeloElegido = $ModeloSinKey
     Write-Host "==> Modelo configurado: $ModeloElegido (Big Pickle, el modelo gratuito de OpenCode)."
@@ -495,13 +823,97 @@ if (Get-Command opencode -ErrorAction SilentlyContinue) {
     Write-Host "  [FALTA] OpenCode no esta instalado. Instalalo desde https://opencode.ai"
 }
 
+# ----------------------------------------------------------------------------
+# DONDE VIVE PlatformIO: TRES LUGARES DONDE BUSCAR, no uno.
+#
+# Es la MISMA leccion que el lanzador (installer\abrir-tecnia-bot.cmd) aprendio
+# buscando OpenCode, y la tercera vez que muerde en este repo.
+#
+# EL CASO REAL (escuela Juana Manso, 2026-09-08). La usuaria de Windows se llama
+# `Direccion310` -- con `o` acentuada, que NO es ASCII. PlatformIO Core no soporta
+# rutas con caracteres no-ASCII (sus toolchains de gcc se rompen), asi que en
+# Windows RELOCALIZA su core_dir a la raiz del disco: C:\.platformio en vez de
+# C:\Users\Direccion310\.platformio. Aca eso tenia DOS consecuencias: no se
+# agregaba nada al PATH (asi que `pio` pelado en la terminal no andaba) y el
+# chequeo final decia "[FALTA] PlatformIO no esta instalado" con PlatformIO
+# instalado y contestando.
+#
+# Orden de busqueda:
+#   1. $env:PLATFORMIO_CORE_DIR, si el usuario la seteo (lo explicito gana)
+#   2. $USERPROFILE\.platformio            (la instalacion normal)
+#   3. la raiz del disco de $USERPROFILE   <- el caso de arriba
+#   4. C:\.platformio fijo, por si el perfil vive en otro disco
+#   5. el PATH (`pio` y `platformio`)
+#
+# ESTA LOGICA ESTA REPETIDA en bootstrap.ps1, diagnostico.ps1, bootstrap.sh,
+# install.sh y opencode\tool\platformio.ts, A PROPOSITO: ninguno de los .ps1 hace
+# dot-sourcing de otro, cada uno se copia y corre SOLO. Lo que mantiene honestas a
+# las copias es tests/platformio-pio.test.mjs.
+function Rutas-PioCore {
+    $dirs = @()
+    if ($env:PLATFORMIO_CORE_DIR) { $dirs += $env:PLATFORMIO_CORE_DIR }
+    $dirs += (Join-Path $env:USERPROFILE ".platformio")
+    # GetPathRoot("C:\Users\Direccion310") devuelve "C:\": la raiz del disco donde
+    # vive el perfil, que es adonde PlatformIO se muda cuando el nombre no es ASCII.
+    $raiz = [System.IO.Path]::GetPathRoot($env:USERPROFILE)
+    if ($raiz) { $dirs += (Join-Path $raiz ".platformio") }
+    $dirs += "C:\.platformio"
+    return ($dirs | Select-Object -Unique)
+}
+
+# La carpeta penv\Scripts que hay que agregar al PATH, o $null si no hay ninguna.
+# Se miran pio.exe Y platformio.exe: normalmente estan los dos, pero el instalador
+# oficial nombra platformio.exe en su mensaje final y no queremos depender de que
+# exista justo el que elegimos nosotros.
+function Buscar-PioScripts {
+    foreach ($dir in (Rutas-PioCore)) {
+        $scripts = Join-Path $dir "penv\Scripts"
+        foreach ($nombre in @("pio.exe", "platformio.exe")) {
+            if (Test-Path (Join-Path $scripts $nombre)) { return $scripts }
+        }
+    }
+    return $null
+}
+
+# El pio que ADEMAS contesta --version. Misma regla que Buscar-Python en
+# bootstrap.ps1: a un candidato se le pregunta, no se supone por donde vive. Cuesta
+# un segundo, corre una sola vez, y atrapa un venv a medio armar. (El tool
+# platformio.ts NO pregunta: esta en el camino caliente y le alcanza con que el
+# archivo exista. La asimetria es deliberada.)
+#
+# 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta en
+# PowerShell 5.1: se baja a Continue solo para preguntar.
+function Buscar-Pio {
+    $candidatos = @()
+    foreach ($dir in (Rutas-PioCore)) {
+        foreach ($nombre in @("pio.exe", "platformio.exe")) {
+            $candidatos += (Join-Path $dir "penv\Scripts\$nombre")
+        }
+    }
+    foreach ($c in (Get-Command -Name pio, platformio -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($c.Source) { $candidatos += $c.Source }
+    }
+    foreach ($ruta in $candidatos) {
+        if (-not $ruta) { continue }
+        if (-not (Test-Path $ruta)) { continue }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $global:LASTEXITCODE = 0
+            $v = (& $ruta --version 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -and $v -match "PlatformIO") { return $ruta }
+        } catch { } finally { $ErrorActionPreference = $prev }
+    }
+    return $null
+}
+
 # pio en el PATH del usuario (comodidad: que 'pio' funcione pelado en la terminal).
-# PlatformIO deja pio en su venv privado (~/.platformio/penv/Scripts), fuera del PATH.
+# PlatformIO deja pio en su venv privado (penv\Scripts), fuera del PATH.
 # Tecnia Bot lo encuentra por ruta completa igual; esto es para uso manual. Corre en
 # cada install/actualizar (idempotente), asi le llega a todos. Cuidado: preservamos el
 # tipo de registro (REG_EXPAND_SZ) y NO expandimos las %VAR% existentes, para no romper.
-$PioScripts = Join-Path $env:USERPROFILE ".platformio\penv\Scripts"
-if (Test-Path $PioScripts) {
+$PioScripts = Buscar-PioScripts
+if ($PioScripts) {
     $agregado = $false
     $reg = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
     try {
@@ -535,12 +947,12 @@ if (Test-Path $PioScripts) {
     }
 }
 
-# Chequear PlatformIO (en PATH o en la ruta de instalacion conocida)
-$pioPath = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
-if (Get-Command pio -ErrorAction SilentlyContinue) {
-    Write-Host "  [OK] PlatformIO en PATH"
-} elseif (Test-Path $pioPath) {
-    Write-Host "  [OK] PlatformIO instalado (Tecnia Bot lo encuentra aunque no este en PATH)"
+# Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
+# Se dice la ruta real: si PlatformIO se relocalizo a la raiz del disco, decir solo
+# "instalado" manda a mirar una carpeta que no existe.
+$pioPath = Buscar-Pio
+if ($pioPath) {
+    Write-Host "  [OK] PlatformIO instalado en $pioPath (Tecnia Bot lo encuentra aunque no este en PATH)"
 } else {
     Write-Host "  [FALTA] PlatformIO no esta instalado. Ver docs/instalacion-windows.md"
 }

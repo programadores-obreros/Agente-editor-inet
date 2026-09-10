@@ -122,6 +122,7 @@ Probá:
 - `/ayuda` — resumen de uso + manual/onboarding en el navegador.
 - `/diagnostico` — verifica tu entorno (OpenCode, PlatformIO, la placa).
 - `/actualizar` — trae el último release publicado desde GitHub (verifica lo que bajó antes de instalarlo).
+- `/clave` — ve, **prueba contra Google** y cambia la API key de esta computadora (o te deja seguir sin key, con Big Pickle). Nunca muestra la key.
 
 ---
 
@@ -131,15 +132,15 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
 - **8 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género) y `memoria` (progreso de la compu).
-- **17 bases de conocimiento** (skills) — ver abajo.
-- **4 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/ayuda`.
+- **18 bases de conocimiento** (skills) — ver abajo.
+- **5 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/clave`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
 
 ### Los 15 proyectos INET
 
 El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Digitales / INET-EDUCAR): cada uno con sus niveles, pinout exacto UNO/ESP32, cableado, código clave y *gotchas* verificados. Así el bot guía cualquiera de los 15 sin depender de internet.
 
-**Los 17 skills:** `arduino` · `esp32` · `educabot` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado`
+**Los 18 skills:** `arduino` · `esp32` · `educabot` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `errores-del-bot` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado`
 
 ---
 
@@ -149,7 +150,7 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
 │   ├── tool/               # 8 herramientas .ts (platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria)
-│   ├── skills/             # 17 bases de conocimiento
+│   ├── skills/             # 18 bases de conocimiento
 │   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
@@ -184,7 +185,7 @@ Para agregar un componente al armador de circuitos o un skill nuevo: `opencode/t
 
 ## 📌 Estado
 
-🚀 **v0.3.77.** Conoce los kits de **Educabot** (placa Educablocks UNO, puertos RJ12, bloques de Educablocks) con los datos del libro oficial. Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real y con el instalador ejecutado en la CI de Windows. Sin API key arranca con Big Pickle, el modelo gratuito de OpenCode. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, trae las 17 fichas A4 de Tecnia Lab y te las abre en el navegador, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
+🚀 **v0.3.78.** Encuentra PlatformIO aunque no esté donde siempre (usuarias con nombre no-ASCII: PlatformIO se muda a la raíz del disco) y fija la versión de Python. Conoce los kits de **Educabot** (placa Educablocks UNO, puertos RJ12, bloques de Educablocks) con los datos del libro oficial. Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real y con el instalador ejecutado en la CI de Windows. Sin API key arranca con Big Pickle, el modelo gratuito de OpenCode. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, trae las 17 fichas A4 de Tecnia Lab y te las abre en el navegador, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
 
 **Pendiente:**
 - Firmar el `.exe` — hoy sin firma, Windows muestra el aviso de SmartScreen (se saltea con *"Ejecutar de todas formas"*) y, en Windows 11 con **Control Inteligente de Aplicaciones** activado, directamente **bloquea la instalación sin opción de saltear** (confirmado con un caso real del equipo). Aplicación gratuita enviada a [SignPath Foundation](https://signpath.org/) el 2026-08-12, en revisión (proceso estándar: 2-4 semanas). Ver issue [#4](https://github.com/programadores-obreros/Agente-editor-inet/issues/4).

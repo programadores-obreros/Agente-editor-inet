@@ -112,6 +112,20 @@ fi
 MODELO_CON_KEY="google/gemini-3.5-flash-lite"
 MODELO_SIN_KEY="opencode/big-pickle"
 
+# El id que entiende la API de Google es la parte de la DERECHA: el "google/" de
+# adelante es el proveedor, y eso es sintaxis de OpenCode, no de Google. Se DERIVA
+# de MODELO_CON_KEY a proposito -- si manana cambia el modelo, la prueba de la key
+# apunta sola al nuevo y no queda un id viejo escondido en una URL. Es la misma
+# derivacion que $ModeloApi en install.ps1 y MODELO_API en opencode/tool/clave.ts.
+MODELO_API="${MODELO_CON_KEY##*/}"
+
+# Cuanto se espera a Google antes de darse por vencido probando la key. En una
+# escuela con la red filtrada el pedido no falla: se queda colgado. Quince segundos
+# alcanzan para cualquier red que ande, y son quince segundos UNA vez por corrida.
+TIMEOUT_PRUEBA_KEY=15
+URL_PRUEBA_KEY="https://generativelanguage.googleapis.com/v1beta/models/${MODELO_API}:generateContent"
+CUERPO_PRUEBA_KEY='{"contents":[{"parts":[{"text":"ping"}]}],"generationConfig":{"maxOutputTokens":1}}'
+
 # ---- La key compartida de versiones anteriores se reconoce por su SHA-256 ----
 # Las instalaciones hechas con la v0.3.75 o anteriores tienen esa key en auth.json.
 # Como se roto, quedo una credencial MUERTA que hace fallar el primer mensaje, y el
@@ -131,6 +145,167 @@ sha256_de() {
 }
 es_key_vieja() {
   [ -n "${1:-}" ] && [ "$(sha256_de "$1")" = "$HASH_KEY_VIEJA" ]
+}
+
+# ---- Probar la key CONTRA GOOGLE ---------------------------------------------
+#
+# EL SEGUNDO DEFECTO DEL 8 DE SEPTIEMBRE DE 2026. Con una key falsa el instalador
+# imprimia "==> Modelo configurado: google/gemini-3.5-flash-lite (Gemini, con tu
+# key de Google)". La key NUNCA se validaba: una credencial muerta, vencida o con
+# la cuota agotada producia exactamente el mismo mensaje que una que anda. El
+# docente leia que quedo todo configurado y se enteraba de que no al primer
+# mensaje, con un error en ingles que no explica nada. Es el mismo defecto que el
+# resto del repo persigue con nombre propio: afirmar sobre algo que no se miro
+# (opencode/command/reparar.md: "Nunca digas que algo quedo instalado si el tool
+# no lo dijo"). Esta contado entero en docs/key-de-google.md.
+#
+# CINCO RESULTADOS, y ninguno se puede confundir con otro. Son LOS MISMOS de
+# probarClave() en opencode/tool/clave.ts y de Probar-KeyGoogle en install.ps1,
+# con los mismos criterios y en el mismo orden -- si clasificaran distinto, el
+# instalador y el bot le contarian a la misma docente dos historias diferentes de
+# la misma key:
+#
+#   anda      -> Google contesto OK.
+#   cuota     -> HTTP 429 / RESOURCE_EXHAUSTED. ES EL CASO DE LA ESCUELA: la key
+#                es real y de la docente, lo que se acabo es el cupo gratis.
+#   invalida  -> HTTP 400/403, INVALID_ARGUMENT / PERMISSION_DENIED /
+#                UNAUTHENTICATED, o reason API_KEY_INVALID. La key no sirve.
+#   modeloIdo -> HTTP 404 / NOT_FOUND. La key puede estar perfecta: el que no esta
+#                es el MODELO. TIENE RAMA PROPIA porque el cajon de "no pude
+#                probarla" le echa la culpa a la red, y aca la red anda perfecto:
+#                mandaria al docente a pelearse con el proxy de la escuela por un
+#                problema que esta del otro lado y que ninguna key arregla.
+#   sinProbar -> cualquier otro HTTP (un 500/503 es de Google, no de la key) o una
+#                excepcion de red. NUNCA se cuenta como "anda".
+#
+# Se devuelve una sola linea "resultado|detalle". Del cuerpo de la respuesta se
+# miran SOLO error.status y los reason de error.details, que son tokens de una
+# lista cerrada; el cuerpo entero no se imprime nunca, y de una excepcion no se
+# imprime NADA salvo su tipo (el mensaje se lleva puesta la URL, o el proxy con su
+# usuario:clave adentro). La key no se imprime jamas, ni un pedazo, ni su largo.
+clasificar_respuesta_google() {
+  # $1 = codigo HTTP, $2 = cuerpo de la respuesta.
+  local codigo="${1:-0}" cuerpo="${2:-}"
+  case "$codigo" in ''|*[!0-9]*) codigo=0 ;; esac
+  if [ "$codigo" -ge 200 ] && [ "$codigo" -lt 300 ]; then printf 'anda|\n'; return 0; fi
+  if [ "$codigo" = "429" ] || printf '%s' "$cuerpo" | grep -q '"RESOURCE_EXHAUSTED"'; then
+    printf 'cuota|\n'; return 0
+  fi
+  if [ "$codigo" = "400" ] || [ "$codigo" = "403" ] \
+    || printf '%s' "$cuerpo" | grep -qE '"(INVALID_ARGUMENT|PERMISSION_DENIED|UNAUTHENTICATED)"' \
+    || printf '%s' "$cuerpo" | grep -q '"API_KEY_INVALID"'; then
+    printf 'invalida|\n'; return 0
+  fi
+  # El modelo, no la key. Va ANTES del cajon de sinProbar a proposito.
+  if [ "$codigo" = "404" ] || printf '%s' "$cuerpo" | grep -q '"NOT_FOUND"'; then
+    printf 'modeloIdo|\n'; return 0
+  fi
+  printf 'sinProbar|Google contesto HTTP %s\n' "$codigo"
+}
+
+probar_key_google() {
+  # $1 = la key. Imprime "resultado|detalle". Nunca falla: si no hay con que
+  # probar, lo dice y sigue -- que una red caida (o una compu pelada) no deje sin
+  # Tecnia Bot a un aula. No se inventan dependencias nuevas: python3 y curl son
+  # los que este script ya da por posibles, y si no hay ninguno se avisa.
+  if [ -z "${1:-}" ]; then printf 'sinProbar|no hay key que probar\n'; return 0; fi
+
+  # LA KEY VA EN EL HEADER x-goog-api-key, NO EN EL QUERY STRING. Google acepta
+  # las dos formas; con la del query string la key termina adentro de la URL, y la
+  # URL termina adentro del texto de cualquier excepcion de red. Este repo ya tuvo
+  # esa fuga con el proxy de la escuela. El header la deja afuera de todo lo que se
+  # pueda imprimir por accidente.
+  #
+  # Y con python3 la key viaja por el ENTORNO del proceso hijo, no por la linea de
+  # comandos: /proc/<pid>/cmdline lo lee cualquier proceso del mismo usuario y un
+  # `ps` de otra terminal mostraria la key entera. Es la misma razon por la que
+  # clave.ts se la pasa a PowerShell por el entorno.
+  if command -v python3 >/dev/null 2>&1; then
+    TECNIA_KEY_A_PROBAR="$1" python3 - "$URL_PRUEBA_KEY" "$TIMEOUT_PRUEBA_KEY" <<'PYEOF' 2>/dev/null || printf 'sinProbar|no pude correr la prueba (python3)\n'
+import json, os, sys, urllib.request, urllib.error
+
+url = sys.argv[1]
+try:
+    espera = float(sys.argv[2])
+except Exception:
+    espera = 15.0
+key = os.environ.get("TECNIA_KEY_A_PROBAR", "")
+
+def clasificar(codigo, cuerpo):
+    status = ""
+    razones = []
+    try:
+        d = json.loads(cuerpo)
+        err = d.get("error") or {}
+        s = err.get("status")
+        if isinstance(s, str):
+            status = s
+        for det in (err.get("details") or []):
+            if isinstance(det, dict) and isinstance(det.get("reason"), str):
+                razones.append(det["reason"])
+    except Exception:
+        pass
+    if codigo == 429 or status == "RESOURCE_EXHAUSTED":
+        return "cuota|"
+    if codigo in (400, 403) or status in ("INVALID_ARGUMENT", "PERMISSION_DENIED", "UNAUTHENTICATED") or "API_KEY_INVALID" in razones:
+        return "invalida|"
+    if codigo == 404 or status == "NOT_FOUND":
+        return "modeloIdo|"
+    return "sinProbar|Google contesto HTTP %d" % codigo
+
+# El pedido mas chico que sirve de prueba: una palabra y un token de respuesta.
+cuerpo = json.dumps({"contents": [{"parts": [{"text": "ping"}]}], "generationConfig": {"maxOutputTokens": 1}}).encode("utf-8")
+req = urllib.request.Request(url, data=cuerpo, method="POST")
+req.add_header("Content-Type", "application/json")
+req.add_header("x-goog-api-key", key)
+req.add_header("User-Agent", "tecnia-bot-instalador")
+try:
+    r = urllib.request.urlopen(req, timeout=espera)
+    try:
+        codigo = r.getcode()
+    finally:
+        r.close()
+    print("anda|" if 200 <= codigo < 300 else clasificar(codigo, ""))
+except urllib.error.HTTPError as e:
+    try:
+        texto = e.read().decode("utf-8", "replace")
+    except Exception:
+        texto = ""
+    print(clasificar(e.code, texto))
+except Exception as e:
+    print("sinProbar|no hubo respuesta (%s)" % type(e).__name__)
+PYEOF
+    return 0
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    local cfg cuerpoResp codigo
+    cfg="$(mktemp)" || { printf 'sinProbar|no pude crear un archivo temporal\n'; return 0; }
+    cuerpoResp="$(mktemp)" || { rm -f "$cfg"; printf 'sinProbar|no pude crear un archivo temporal\n'; return 0; }
+    # La key va en un archivo de configuracion de curl (-K), NO en la linea de
+    # comandos, por lo mismo que arriba. mktemp lo crea con permisos 600 y se borra
+    # apenas curl termina. Una key de Google es [A-Za-z0-9_-], asi que no hay nada
+    # que escapar adentro de las comillas del archivo de config.
+    printf 'header = "x-goog-api-key: %s"\n' "$1" > "$cfg"
+    codigo="$(curl -s -o "$cuerpoResp" -w '%{http_code}' -X POST \
+      --max-time "$TIMEOUT_PRUEBA_KEY" \
+      -H 'Content-Type: application/json' \
+      -A 'tecnia-bot-instalador' \
+      -K "$cfg" \
+      --data-binary "$CUERPO_PRUEBA_KEY" \
+      "$URL_PRUEBA_KEY" 2>/dev/null)" || codigo=""
+    rm -f "$cfg"
+    if [ -z "$codigo" ] || [ "$codigo" = "000" ]; then
+      rm -f "$cuerpoResp"
+      printf 'sinProbar|no hubo respuesta (curl)\n'
+      return 0
+    fi
+    clasificar_respuesta_google "$codigo" "$(cat "$cuerpoResp" 2>/dev/null || true)"
+    rm -f "$cuerpoResp"
+    return 0
+  fi
+
+  printf 'sinProbar|no hay python3 ni curl en esta compu para probarla\n'
 }
 
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
@@ -190,22 +365,113 @@ fi
 TIENE_GOOGLE=0
 [ -n "$GOOGLE_KEY_ACTUAL" ] && TIENE_GOOGLE=1
 
-if [ "$TIENE_GOOGLE" != "1" ]; then
+# ---------------------------------------------------------------------------
+# LA PREGUNTA POR LA KEY: TRES CAMINOS, Y EL DEFAULT SIEMPRE ES CONSERVAR
+# ---------------------------------------------------------------------------
+#
+# Hasta la v0.3.78 habia DOS caminos: "no hay key -> preguntar" y "hay key -> no
+# hacer nada". El segundo era una trampa sin salida.
+#
+# EL CASO REAL (escuela Juana Manso, 8 de septiembre de 2026). Varias docentes con
+# la cuota de Google agotada corrieron "Reparar Tecnia Bot" para poder pegar una
+# key nueva, y el instalador NUNCA se las pidio: la pregunta vivia adentro de la
+# rama "no hay key", o sea que en una compu que ya tiene key no se ejecuta, y no
+# importa cuantas veces se corra Reparar. Probaron con keys de otras cuentas y
+# vieron el mismo error de siempre: las keys nuevas nunca entraron. Reproducido en
+# la VM de Windows 10 con install.ps1, que tiene el mismo bloque: con key guardada
+# no pregunta y auth.json ni se toca (misma fecha de modificacion antes y
+# despues). Esta contado entero en docs/key-de-google.md.
+#
+# La idempotencia se puso por una buena razon -- no molestar al docente en cada
+# actualizacion con algo que ya contesto -- pero se convirtio en una trampa justo
+# para el caso en que HAY que rotar la key. Ahora hay un tercer camino: "hay key ->
+# ofrecer cambiarla, con Enter para dejarla". Y una regla que no se negocia:
+#
+#   ENTER, TIMEOUT O CONSOLA SIN NADIE = SE DEJA LA QUE ESTA.
+#
+# Nunca se borra ni se pisa una key que funciona porque nadie contesto. Este script
+# corre con la salida pipeada desde /actualizar (Bun.spawn(..., { stdout: "pipe",
+# stderr: "pipe" }) en actualizar.ts): por esa via NO HAY NADIE que pueda tipear
+# --`read` contra /dev/null vuelve vacio al toque-- y el silencio tiene que
+# significar "dejala como esta", no "borrala". Para el docente que esta adentro del
+# bot esta el comando /clave, que es el unico que puede conversar.
+GEMINI_KEY=""
+PRUEBA_KEY=""
+if [ -n "${TECNIA_SIN_PROMPT:-}" ]; then
+  # TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para
+  # que este script no pregunte NADA. Sin key guardada se sigue sin key; con una
+  # key guardada se deja la que esta. Saltear la pregunta NUNCA borra nada.
+  echo ""
+  if [ "$TIENE_GOOGLE" = "1" ]; then
+    echo "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta nada y se deja la key de Google que ya estaba."
+  else
+    echo "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key."
+  fi
+elif [ "$TIENE_GOOGLE" = "1" ]; then
+  # EL CAMINO NUEVO. El texto nombra la cuota por PROYECTO porque es lo que mas
+  # confunde y lo que hizo perder una tarde entera en la escuela: crear una key
+  # nueva en el MISMO proyecto de Google no da cuota nueva.
+  echo ""
+  echo "==> Ya hay una key de Google guardada en esta compu."
+  echo "    Si se te agoto la cuota, esta es la ocasion de cambiarla. OJO: la cuota gratuita de"
+  echo "    Google es por PROYECTO, no por key -- una key nueva del MISMO proyecto da el mismo"
+  echo "    error. Sacate una de otro proyecto (o de otra cuenta): https://aistudio.google.com/apikey"
+  # Timeout de 60s: si esto corre sin terminal (pipe, deploy desatendido), read
+  # se colgaria para siempre esperando una entrada que nunca llega. Y si vuelve
+  # vacio -- Enter, timeout o /dev/null -- no se toca NADA.
+  read -r -t 60 -p "    Enter para dejarla como esta, o pega una nueva para reemplazarla [60s]: " GEMINI_KEY || true
+else
   echo ""
   echo "==> API key de Google (OPCIONAL). Con una key gratis (sin tarjeta) Tecnia Bot usa Gemini."
   echo "    Sacala en: https://aistudio.google.com/apikey (1 minuto, con cualquier cuenta de Google)"
   echo "    Se guarda en ESTA compu, nunca se comparte ni sube a ningun lado."
   # Timeout de 60s: si esto corre sin terminal (pipe, deploy desatendido), read
   # se colgaria para siempre esperando una entrada que nunca llega.
-  GEMINI_KEY=""
   read -r -t 60 -p "    Pegala aca, o Enter para seguir sin key: Tecnia Bot va a usar el modelo gratuito Big Pickle de OpenCode [60s]: " GEMINI_KEY || true
-  # Una key no tiene espacios: se saca cualquier blanco que haya entrado al pegar.
-  GEMINI_KEY="$(printf '%s' "${GEMINI_KEY:-}" | tr -d ' \t\r\n')"
-  if es_key_vieja "$GEMINI_KEY"; then
-    # La pego de algun apunte viejo: es la key compartida rotada. No se guarda.
-    echo "  [X] Esa es la key de respaldo compartida de versiones anteriores: ya no es válida y no se guarda."
-    echo "      Conseguí la tuya en https://aistudio.google.com/apikey (seguimos sin key por ahora)."
-  elif [ -n "$GEMINI_KEY" ]; then
+fi
+# Una key no tiene espacios: se saca cualquier blanco que haya entrado al pegar.
+GEMINI_KEY="$(printf '%s' "${GEMINI_KEY:-}" | tr -d ' \t\r\n')"
+
+if es_key_vieja "$GEMINI_KEY"; then
+  # La pego de algun apunte viejo: es la key compartida rotada. No se guarda.
+  echo "  [X] Esa es la key de respaldo compartida de versiones anteriores: ya no es valida y no se guarda."
+  echo "      Consegui la tuya en https://aistudio.google.com/apikey"
+  if [ "$TIENE_GOOGLE" = "1" ]; then
+    echo "      Se deja la key que ya estaba guardada: no se piso nada."
+  else
+    echo "      (seguimos sin key por ahora)."
+  fi
+elif [ -n "$GEMINI_KEY" ]; then
+  # PROBAR ANTES DE GUARDAR, y guardar igual salvo un caso.
+  #
+  # Lo UNICO que impide guardar es que Google la RECHACE explicitamente (400/403 /
+  # API_KEY_INVALID): eso casi siempre es una key cortada al copiar -- son
+  # larguisimas -- y pisar con eso la key que ya estaba seria cambiarle un problema
+  # por otro peor.
+  #
+  # Todo lo demas SE GUARDA y se informa. "No pude probarla" NO es motivo para
+  # rechazar nada: si la red de la escuela no llega a Google, no sabemos NADA de la
+  # key, y una instalacion no puede quedarse a medias porque el proxy filtra. Y una
+  # cuota agotada es una key REAL del docente: guardarla no lo deja peor que antes,
+  # y el mensaje del final le dice exactamente que hacer.
+  #
+  # (Aca esta la unica diferencia deliberada con probarClave() de clave.ts: alla la
+  # prueba ademas DECIDE si guardar, porque alla hay una conversacion donde ofrecer
+  # Big Pickle y volver a pedir la key. Aca, muchas veces, no hay nadie. La
+  # CLASIFICACION es identica; lo que cambia es que se hace con ella.)
+  echo "  [i] Probando la key contra Google (hasta ${TIMEOUT_PRUEBA_KEY}s)..."
+  PRUEBA_NUEVA="$(probar_key_google "$GEMINI_KEY" | head -n 1 || true)"
+  if [ "${PRUEBA_NUEVA%%|*}" = "invalida" ]; then
+    echo "  [X] Probe esa key contra Google y la RECHAZO: no es una key valida, asi que no la guarde."
+    echo "      Fijate de copiarla entera (son largas y a veces se corta al copiar), o saca una nueva"
+    echo "      en https://aistudio.google.com/apikey y volve a correr este instalador."
+    if [ "$TIENE_GOOGLE" = "1" ]; then
+      echo "      Quedo la key que ya estaba guardada: no se piso nada."
+    fi
+  else
+    # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
+    # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
+    PRUEBA_KEY="$PRUEBA_NUEVA"
     if command -v python3 >/dev/null 2>&1; then
       python3 - "$AUTH_FILE" "$GEMINI_KEY" <<'PYEOF'
 import json, sys
@@ -236,18 +502,79 @@ PYEOF
       echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
       echo "          y volve a correr este instalador para que el agente pase a Gemini."
     fi
+  fi
+else
+  # Enter, timeout, consola sin nadie, o TECNIA_SIN_PROMPT. NO SE TOCA NADA: ni
+  # auth.json ni ninguna otra cosa. Si habia una key sigue estando; si no habia, no
+  # hay. Este es el default seguro, y es el que mas importa: un bug aca le borra la
+  # key a una escuela entera sin que nadie haya pedido nada.
+  if [ "$TIENE_GOOGLE" = "1" ]; then
+    echo "  [i] Se deja la key de Google que ya estaba guardada."
   else
-    # Sin key NO se toca auth.json: no hay nada que guardar.
     echo "  [i] Seguimos sin key de Google."
   fi
 fi
+
+# ---- Probar la key que QUEDO, sea la nueva o la de siempre -------------------
+#
+# Este es el punto 3 del analisis de docs/key-de-google.md: validar antes de
+# afirmar que quedo configurada. Se prueba la key EFECTIVA, no la que se tipeo: si
+# el docente apreto Enter, la efectiva es la que ya estaba -- y es exactamente la
+# que se quedo sin cuota el 8 de septiembre. Sin esto, el instalador seguiria
+# terminando con un "quedo todo bien" sobre una credencial muerta.
+#
+# Si no se puede probar, la instalacion SIGUE igual y se avisa: que una red caida
+# no deje sin Tecnia Bot a un aula.
+if [ "$TIENE_GOOGLE" = "1" ] && [ -z "$PRUEBA_KEY" ]; then
+  echo "  [i] Probando la key guardada contra Google (hasta ${TIMEOUT_PRUEBA_KEY}s)..."
+  PRUEBA_KEY="$(probar_key_google "$GOOGLE_KEY_ACTUAL" | head -n 1 || true)"
+fi
+RESULTADO_KEY="${PRUEBA_KEY%%|*}"
+DETALLE_KEY="${PRUEBA_KEY#*|}"
 
 # Modelo del agente segun la decision de arriba. Se imprime SIEMPRE (tambien cuando
 # la key ya estaba guardada), para que quede claro con que modelo quedo esta compu y
 # como cambiarlo despues.
 if [ "$TIENE_GOOGLE" = "1" ]; then
   MODELO_ELEGIDO="$MODELO_CON_KEY"
-  echo "==> Modelo configurado: $MODELO_ELEGIDO (Gemini, con tu key de Google)."
+  # Antes aca decia, siempre y sin haber mirado nada, "(Gemini, con tu key de
+  # Google)". Ahora se dice lo que Google contesto, y NADA MAS que eso: la unica
+  # rama que afirma que anda es la que recibio un OK. "No pude probarla" no es
+  # "anda" -- un OK falso es peor que un error, porque manda a buscar el problema al
+  # lugar equivocado y el docente se va tranquilo con todo roto. El `*)` del final
+  # se come cualquier resultado inesperado, asi que nunca se afirma de mas.
+  echo "==> Modelo configurado: $MODELO_ELEGIDO"
+  case "$RESULTADO_KEY" in
+    anda)
+      echo "    Probe tu key contra Google y respondio bien: Gemini quedo andando."
+      ;;
+    cuota)
+      echo "    OJO: probe tu key y Google dice que la CUOTA GRATUITA de ese proyecto esta agotada."
+      echo "    No rompiste nada y la key sigue siendo tuya, pero hasta que se renueve (se renueva sola)"
+      echo "    Tecnia Bot va a fallar al primer mensaje. Lo que mas confunde: la cuota gratuita de Google"
+      echo "    es por PROYECTO, no por key -- una key nueva del MISMO proyecto da el mismo error."
+      echo "    Saca una de OTRO proyecto (o de otra cuenta) en https://aistudio.google.com/apikey"
+      echo "    y pegala con /clave adentro de Tecnia Bot, o volve a correr este instalador."
+      echo "    Si necesitas seguir trabajando ya mismo, /clave tambien te pasa al modelo gratuito Big Pickle."
+      ;;
+    invalida)
+      echo "    OJO: probe la key guardada y Google la RECHAZO: no sirve."
+      echo "    Escribi /clave adentro de Tecnia Bot para pegar una nueva, o saca una en"
+      echo "    https://aistudio.google.com/apikey y volve a correr este instalador."
+      ;;
+    modeloIdo)
+      echo "    OJO: la key esta bien -- el que no esta es el MODELO. Google dice que $MODELO_API ya no"
+      echo "    esta disponible; pasa cuando retiran o renombran un modelo."
+      echo "    NO es tu computadora, NO es tu key y NO es la red: no hay key nueva que lo arregle."
+      echo "    Hace falta una version de Tecnia Bot que apunte a un modelo vigente: escribi /actualizar."
+      ;;
+    *)
+      echo "    NO pude probar la key contra Google ($DETALLE_KEY), asi que NO se si anda."
+      echo "    Suele ser la red: sin internet, o el filtro de la escuela bloqueando a Google."
+      echo "    La instalacion siguio igual y la key quedo donde estaba: no se toco nada."
+      echo "    Si al primer mensaje ves un error, escribi /clave adentro de Tecnia Bot para probarla de nuevo."
+      ;;
+  esac
 else
   MODELO_ELEGIDO="$MODELO_SIN_KEY"
   echo "==> Modelo configurado: $MODELO_ELEGIDO (Big Pickle, el modelo gratuito de OpenCode)."
@@ -523,23 +850,94 @@ else
   echo "  [FALTA] OpenCode no esta instalado. Instalalo desde https://opencode.ai"
 fi
 
+# TRES LUGARES DONDE BUSCAR, no uno -- la misma leccion que el lanzador de Windows
+# (installer/abrir-tecnia-bot.cmd) aprendio buscando OpenCode, y la tercera vez que
+# muerde en este repo. Aca mordia por PLATFORMIO_CORE_DIR: si el usuario la tiene
+# seteada, PlatformIO instala en otro lado y este script decia "[FALTA] PlatformIO
+# no esta instalado" con PlatformIO instalado y andando.
+#
+# El caso que destapo todo fue en Windows -- una usuaria llamada `Direccion310`, con
+# `o` acentuada, que no es ASCII: PlatformIO no soporta rutas con caracteres
+# no-ASCII y en Windows RELOCALIZA su core_dir a la raiz del disco. Esa
+# relocalizacion es SOLO de Windows, asi que aca NO se inventa: en Linux/macOS los
+# candidatos son la variable de entorno, ~/.platformio y el PATH, y nada mas.
+#
+# En cada carpeta se miran `pio` Y `platformio`: normalmente estan los dos, pero el
+# instalador oficial nombra `platformio` en su mensaje final y no queremos depender
+# de que exista justo el que elegimos nosotros.
+#
+# Esta logica esta repetida en bootstrap.sh, bootstrap.ps1, diagnostico.ps1,
+# install.ps1 y opencode/tool/platformio.ts, A PROPOSITO: ningun script hace
+# dot-sourcing de otro, cada uno se copia y corre SOLO. Lo que mantiene honestas a
+# las copias es tests/platformio-pio.test.mjs.
+pio_core_dirs() {
+  if [ -n "${PLATFORMIO_CORE_DIR:-}" ]; then printf '%s\n' "$PLATFORMIO_CORE_DIR"; fi
+  printf '%s\n' "$HOME/.platformio"
+}
+
+# La carpeta penv/bin que hay que agregar al PATH, o nada. Aca NO se pregunta
+# --version: es una comodidad del PATH, no un chequeo de que ande.
+buscar_pio_dir() {
+  local dir nombre
+  while IFS= read -r dir; do
+    for nombre in pio platformio; do
+      if [ -x "$dir/penv/bin/$nombre" ]; then
+        printf '%s\n' "$dir/penv/bin"
+        return 0
+      fi
+    done
+  done < <(pio_core_dirs)
+  return 1
+}
+
+# El pio que ADEMAS contesta --version, o nada. Al candidato se le PREGUNTA, no se
+# supone que anda por donde vive: eso atrapa un venv a medio armar. Cuesta un
+# segundo y corre una sola vez. El tool platformio.ts NO pregunta -- esta en el
+# camino caliente y le alcanza con que el archivo exista --; es deliberado.
+buscar_pio() {
+  local dir nombre ruta salida
+  while IFS= read -r dir; do
+    for nombre in pio platformio; do
+      ruta="$dir/penv/bin/$nombre"
+      [ -x "$ruta" ] || continue
+      if salida="$("$ruta" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+        printf '%s\n' "$ruta"
+        return 0
+      fi
+    done
+  done < <(pio_core_dirs)
+  for nombre in pio platformio; do
+    command -v "$nombre" >/dev/null 2>&1 || continue
+    if salida="$("$nombre" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+      command -v "$nombre"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # pio en el PATH (comodidad: que 'pio' funcione pelado en la terminal).
-# PlatformIO deja pio en su venv privado (~/.platformio/penv/bin), fuera del PATH.
+# PlatformIO deja pio en su venv privado (penv/bin), fuera del PATH.
 # Tecnia Bot lo encuentra por ruta completa igual; esto es para uso manual. Corre en
 # cada install/actualizar (idempotente, marcado con un comentario), asi le llega a todos.
-PIO_DIR="$HOME/.platformio/penv/bin"
-if [ -d "$PIO_DIR" ]; then
+PIO_DIR="$(buscar_pio_dir || true)"
+if [ -n "$PIO_DIR" ]; then
   case "${SHELL:-}" in
     *zsh)  RC="$HOME/.zshrc" ;;
     *bash) RC="$HOME/.bashrc" ;;
     *)     RC="$HOME/.profile" ;;
   esac
   MARCA="# Tecnia Bot: PlatformIO en el PATH"
+  # En el rc se escribe $HOME literal cuando la carpeta cuelga del home: asi la
+  # linea sigue sirviendo si el perfil se mueve. Si PlatformIO quedo en otro lado
+  # (PLATFORMIO_CORE_DIR), va la ruta absoluta, que es la unica cierta. Antes iba
+  # SIEMPRE la del home, asi que en ese caso el rc apuntaba a una carpeta vacia.
+  PIO_DIR_RC="${PIO_DIR/#$HOME/\$HOME}"
   if ! { [ -f "$RC" ] && grep -qF "$MARCA" "$RC" 2>/dev/null; }; then
     {
       echo ""
       echo "$MARCA"
-      echo 'export PATH="$HOME/.platformio/penv/bin:$PATH"'
+      echo "export PATH=\"$PIO_DIR_RC:\$PATH\""
     } >> "$RC"
   fi
   case ":$PATH:" in
@@ -548,11 +946,12 @@ if [ -d "$PIO_DIR" ]; then
   esac
 fi
 
-# Chequear PlatformIO (en PATH o en la ruta de instalacion conocida)
-if command -v pio >/dev/null 2>&1; then
-  echo "  [OK] PlatformIO: $(pio --version 2>/dev/null)"
-elif [ -x "$HOME/.platformio/penv/bin/pio" ]; then
-  echo "  [OK] PlatformIO: $("$HOME/.platformio/penv/bin/pio" --version 2>/dev/null) (instalado, no en PATH; Tecnia Bot lo encuentra igual)"
+# Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
+# Se dice la ruta real: "instalado" a secas manda a mirar la carpeta de siempre,
+# que puede no ser donde quedo.
+PIO_BIN="$(buscar_pio || true)"
+if [ -n "$PIO_BIN" ]; then
+  echo "  [OK] PlatformIO: $("$PIO_BIN" --version 2>/dev/null) ($PIO_BIN)"
 else
   echo "  [FALTA] PlatformIO no esta instalado."
   echo "          Instalalo con: python3 <(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"

@@ -70,7 +70,7 @@ Si preferís instalar cada cosa por separado (o el bootstrap falló), estos son 
    ```bash
    python3 -c "$(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"
    ```
-   Queda en `~/.platformio/penv/bin/pio` — Tecnia Bot lo busca ahí solo, no hace falta tocar el PATH.
+   Queda en `~/.platformio/penv/bin/pio` — o donde apunte `PLATFORMIO_CORE_DIR`, si la tenés seteada. Tecnia Bot busca en los dos lados solo, no hace falta tocar el PATH.
 3. **La capa de Tecnia Bot** (solo copia los archivos):
    ```bash
    bash install/install.sh

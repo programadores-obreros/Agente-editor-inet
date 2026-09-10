@@ -151,11 +151,15 @@ test("uninstall.ps1 pregunta (20 s, No por defecto) antes de borrar la key y el 
   const fn = codigo.slice(codigo.indexOf("function Preguntar-SiNo"))
   assert.match(fn.slice(0, fn.indexOf("\n}\n") + 3), /return \$false\s*\n\}/, "si nadie contesta no devuelve No")
   // La key y el perfil se borran DESPUÉS de preguntar, no antes.
+  // (El patrón del perfil era `Remove-Item $PerfilFile`, el literal de entonces.
+  // Hoy los dos archivos entran a una tubería que borra Y RELEE —ver
+  // desinstalar-privacidad.test.mjs—, así que lo que se busca es el par de datos
+  // personales entrando al borrado, que es la propiedad, no la forma del comando.)
   const pregunta = codigo.indexOf("function Preguntar-SiNo")
   for (const [patron, que] of [
     [/SetEnvironmentVariable\("GOOGLE_GENERATIVE_AI_API_KEY",\s*\$null/, "la variable con la key"],
     [/Properties\.Remove\("google"\)/, "la key de auth.json"],
-    [/Remove-Item \$PerfilFile/, "el perfil y la memoria"],
+    [/@\(\$PerfilFile, \$MemoriaFile\)/, "el perfil y la memoria"],
   ]) {
     const i = codigo.search(patron)
     assert.ok(i > pregunta, `borra ${que} sin haber preguntado antes`)

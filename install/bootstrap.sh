@@ -74,9 +74,64 @@ else
 fi
 
 # --- 2. PlatformIO Core ------------------------------------------------------
-PIO_BIN="$HOME/.platformio/penv/bin/pio"
-if command -v pio >/dev/null 2>&1 || [ -x "$PIO_BIN" ]; then
-  echo "  [✓] PlatformIO ya está instalado"
+# TRES LUGARES DONDE BUSCAR, no uno — la misma lección que el lanzador de Windows
+# (installer/abrir-tecnia-bot.cmd) aprendió buscando OpenCode, y la tercera vez que
+# muerde en este repo. Acá mordía por PLATFORMIO_CORE_DIR: si el usuario la tiene
+# seteada (o su distro se la setea), PlatformIO instala en otro lado y este script
+# decía "no está instalado" con PlatformIO instalado y andando.
+#
+# El caso que destapó todo fue en Windows — una usuaria llamada `Dirección310`, con
+# `ó`, que no es ASCII: PlatformIO no soporta rutas con caracteres no-ASCII y en
+# Windows RELOCALIZA su core_dir a la raíz del disco. Esa relocalización es SOLO de
+# Windows, así que acá NO se inventa: en Linux/macOS los candidatos son la variable
+# de entorno, ~/.platformio y el PATH, y nada más.
+#
+# En cada carpeta se miran `pio` Y `platformio`: normalmente están los dos, pero el
+# instalador oficial nombra `platformio` en su mensaje final y no queremos depender
+# de que exista justo el que elegimos nosotros.
+#
+# Esta lógica está repetida en install.sh, bootstrap.ps1, diagnostico.ps1,
+# install.ps1 y opencode/tool/platformio.ts, A PROPÓSITO: ningún script hace
+# dot-sourcing de otro, cada uno se copia y corre SOLO. Lo que mantiene honestas a
+# las copias es tests/platformio-pio.test.mjs.
+pio_core_dirs() {
+  if [ -n "${PLATFORMIO_CORE_DIR:-}" ]; then printf '%s\n' "$PLATFORMIO_CORE_DIR"; fi
+  printf '%s\n' "$HOME/.platformio"
+}
+
+# Devuelve la ruta del pio que ANDA, o nada (y código 1).
+#
+# Al candidato se le PREGUNTA --version, no se supone que anda por donde vive: eso
+# atrapa un venv a medio armar (el paquete no bajó pero la carpeta quedó). Cuesta un
+# segundo y corre una sola vez. El tool platformio.ts NO pregunta — está en el camino
+# caliente y le alcanza con que el archivo exista —; la asimetría es deliberada.
+buscar_pio() {
+  local dir nombre ruta salida
+  while IFS= read -r dir; do
+    for nombre in pio platformio; do
+      ruta="$dir/penv/bin/$nombre"
+      [ -x "$ruta" ] || continue
+      if salida="$("$ruta" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+        printf '%s\n' "$ruta"
+        return 0
+      fi
+    done
+  done < <(pio_core_dirs)
+  # El PATH al final: PlatformIO casi nunca queda ahí, pero si alguien lo agregó a
+  # mano (o install.sh ya corrió) es una respuesta válida.
+  for nombre in pio platformio; do
+    command -v "$nombre" >/dev/null 2>&1 || continue
+    if salida="$("$nombre" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+      command -v "$nombre"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PIO_BIN="$(buscar_pio || true)"
+if [ -n "$PIO_BIN" ]; then
+  echo "  [✓] PlatformIO ya está instalado ($PIO_BIN)"
 else
   echo "  [↓] Instalando PlatformIO Core (no necesita admin)..."
   if ! command -v python3 >/dev/null 2>&1; then
@@ -90,7 +145,18 @@ else
     https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
   python3 "$TMP/get-platformio.py"
   rm -rf "$TMP"
-  echo "  [✓] PlatformIO instalado en ~/.platformio (Tecnia Bot lo encuentra solo)."
+  # Se vuelve a BUSCAR: recién ahora sabemos dónde eligió instalarse, y se dice la
+  # ruta REAL. Decir "~/.platformio" cuando quedó en otro lado manda a mirar una
+  # carpeta que no existe — en Windows eso costó tres semanas de una docente.
+  PIO_BIN="$(buscar_pio || true)"
+  if [ -n "$PIO_BIN" ]; then
+    echo "  [✓] PlatformIO instalado en $PIO_BIN (Tecnia Bot lo encuentra solo)."
+  else
+    # No se corta: sin PlatformIO el bot igual sirve para explicar, dibujar
+    # circuitos y repartir fichas. Sólo no puede compilar ni cargar a la placa.
+    echo "  [!] PlatformIO no quedó instalado. Tecnia Bot va a arrancar igual, pero"
+    echo "      no va a poder compilar ni cargar a la placa hasta que esto se resuelva."
+  fi
 fi
 
 # --- 3. Tecnia Bot (capa educativa) ------------------------------------------

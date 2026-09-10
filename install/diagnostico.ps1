@@ -71,6 +71,113 @@ try { Start-Transcript -Path $Reporte -Force | Out-Null; $GuardaOK = $true } cat
 function Titulo($t) { Write-Host ""; Write-Host "  == $t ==" -ForegroundColor Cyan }
 function Dato($k, $v) { Write-Host ("     {0,-22} {1}" -f $k, $v) }
 
+# ----------------------------------------------------------------------------
+# DONDE VIVE PlatformIO: TRES LUGARES DONDE BUSCAR, no uno.
+#
+# Es la MISMA leccion que el lanzador (installer\abrir-tecnia-bot.cmd) aprendio
+# buscando OpenCode, y la tercera vez que muerde en este repo. Esta vez costo tres
+# semanas de una docente a la que este mismo diagnostico le dijo "PlatformIO:
+# FALTA" mientras lo tenia instalado y andando.
+#
+# EL CASO REAL (escuela Juana Manso, 2026-09-08). La usuaria de Windows se llama
+# `Direccion310` -- con `o` acentuada, que NO es ASCII. PlatformIO Core no soporta
+# rutas con caracteres no-ASCII (sus toolchains de gcc se rompen), asi que en
+# Windows RELOCALIZA su core_dir a la raiz del disco: instala en C:\.platformio en
+# vez de C:\Users\Direccion310\.platformio. Esta documentado por PlatformIO; no es
+# un bug de ellos, es un bug NUESTRO por mirar una sola ruta.
+#
+# Orden de busqueda:
+#   1. $env:PLATFORMIO_CORE_DIR, si el usuario la seteo (lo explicito gana)
+#   2. $USERPROFILE\.platformio            (la instalacion normal)
+#   3. la raiz del disco de $USERPROFILE   <- el caso de arriba
+#   4. C:\.platformio fijo, por si el perfil vive en otro disco
+#   5. el PATH (`pio` y `platformio`)
+#
+# ESTA LOGICA ESTA REPETIDA en bootstrap.ps1, install.ps1, bootstrap.sh, install.sh
+# y opencode\tool\platformio.ts, A PROPOSITO: ninguno de los .ps1 hace dot-sourcing
+# de otro, cada uno se copia y corre SOLO. Lo que mantiene honestas a las copias es
+# tests/platformio-pio.test.mjs, que le exige a cada archivo contemplar
+# PLATFORMIO_CORE_DIR y la raiz del disco.
+function Rutas-PioCore {
+    $dirs = @()
+    if ($env:PLATFORMIO_CORE_DIR) { $dirs += $env:PLATFORMIO_CORE_DIR }
+    $dirs += (Join-Path $U ".platformio")
+    # GetPathRoot("C:\Users\Direccion310") devuelve "C:\": la raiz del disco donde
+    # vive el perfil, que es adonde PlatformIO se muda cuando el nombre no es ASCII.
+    $raiz = [System.IO.Path]::GetPathRoot($U)
+    if ($raiz) { $dirs += (Join-Path $raiz ".platformio") }
+    $dirs += "C:\.platformio"
+    return ($dirs | Select-Object -Unique)
+}
+
+# Los ejecutables candidatos, en orden. Se miran pio.exe Y platformio.exe: estan
+# los dos normalmente, pero el instalador oficial nombra platformio.exe en su
+# mensaje final y no queremos depender de que exista justo el que elegimos.
+function Rutas-PioExe {
+    $rutas = @()
+    foreach ($dir in (Rutas-PioCore)) {
+        foreach ($nombre in @("pio.exe", "platformio.exe")) {
+            $rutas += (Join-Path $dir "penv\Scripts\$nombre")
+        }
+    }
+    foreach ($c in (Get-Command -Name pio, platformio -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($c.Source) { $rutas += $c.Source }
+    }
+    return $rutas
+}
+
+# El primero que EXISTE en el disco. Sin preguntarle nada: hace falta para poder
+# distinguir "el archivo no esta" de "el archivo esta pero no contesta", que son
+# dos fallas distintas y se arreglan distinto.
+function Buscar-PioEnDisco {
+    foreach ($ruta in (Rutas-PioExe)) {
+        if ($ruta -and (Test-Path $ruta)) { return $ruta }
+    }
+    return $null
+}
+
+# El primero que ADEMAS contesta --version. Es la misma regla que Buscar-Python en
+# bootstrap.ps1: a un candidato se le pregunta, no se supone por donde vive. Cuesta
+# un segundo y corre una sola vez.
+#
+# 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta en
+# PowerShell 5.1; aca el archivo ya corre en "Continue", pero se deja explicito
+# igual para que copiar esta funcion a otro script no herede la trampa.
+function Buscar-Pio {
+    foreach ($ruta in (Rutas-PioExe)) {
+        if (-not $ruta) { continue }
+        if (-not (Test-Path $ruta)) { continue }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $global:LASTEXITCODE = 0
+            $v = (& $ruta --version 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -and $v -match "PlatformIO") { return $ruta }
+        } catch { } finally { $ErrorActionPreference = $prev }
+    }
+    return $null
+}
+
+# La carpeta core_dir que hay que diagnosticar. Primero la que tiene el ejecutable
+# adentro; si ninguna lo tiene, la primera que exista -- que es la instalacion a
+# medio armar, justo el caso que este script sabe explicar; y si no hay ninguna, la
+# primera candidata, para poder decir "NO existe" nombrando una ruta de verdad.
+function Buscar-PioCore {
+    $dirs = @(Rutas-PioCore)
+    foreach ($dir in $dirs) {
+        foreach ($nombre in @("pio.exe", "platformio.exe")) {
+            if (Test-Path (Join-Path $dir "penv\Scripts\$nombre")) { return $dir }
+        }
+    }
+    foreach ($dir in $dirs) { if (Test-Path $dir) { return $dir } }
+    return ($dirs | Select-Object -First 1)
+}
+
+# Se resuelve UNA vez: --version se pregunta una sola vez en todo el diagnostico.
+$PioDisco = Buscar-PioEnDisco
+$PioExe   = Buscar-Pio
+$PioCore  = Buscar-PioCore
+
 Write-Host ""
 Write-Host "  DIAGNOSTICO DE TECNIA BOT" -ForegroundColor White
 Write-Host "  -------------------------"
@@ -87,7 +194,10 @@ $shim = "$U\scoop\shims\opencode.exe"
 # mano ahi (lo hacia una version vieja del instalador): Scoop no lo administra, no
 # lo actualiza ni lo borra al desinstalar, y sigue corriendo la version vieja.
 Dato "shim de OpenCode" $(if (-not (Test-Path $shim)) { "FALTA" } elseif ((Get-Item $shim).Length -gt 1MB) { "binario copiado a mano (" + [math]::Round((Get-Item $shim).Length / 1MB, 1) + " MB), no administrado por Scoop" } else { "OK" })
-Dato "PlatformIO" $(if (Test-Path "$U\.platformio\penv\Scripts\pio.exe") { "OK" } else { "FALTA" })
+# Se dice la RUTA, no solo "OK": cuando PlatformIO se relocaliza a la raiz del
+# disco, saber donde quedo es la mitad del diagnostico. Y "esta pero no contesta"
+# es una tercera respuesta, distinta de las otras dos: ahi el venv quedo a medias.
+Dato "PlatformIO" $(if ($PioExe) { "OK - $PioExe" } elseif ($PioDisco) { "el ejecutable esta ($PioDisco) pero NO contesta --version" } else { "FALTA" })
 Dato "capa Tecnia Bot" $(if (Test-Path "$ocDir\agent\tecnia-bot.md") { "OK" } else { "FALTA" })
 
 Titulo "OpenCode: la version que HAY vs la que se PROBO"
@@ -167,12 +277,45 @@ Titulo "PlatformIO: en cual de los cuatro pasos se corto"
 # no dice "bloqueado", dice "timeout". Se distingue mirando si quedo la carpeta
 # a medias: si hay `.platformio\penv` pero no hay `pio.exe`, el venv se armo y
 # lo que fallo fue bajar el paquete. O sea, red, no permisos.
-$P = "$U\.platformio"
-Dato "1. python (scoop)" $(if (Test-Path "$U\scoop\shims\python.exe") { "OK" } elseif (Get-Command python -EA SilentlyContinue) { "OK (otro python)" } else { "FALTA <- se corto aca" })
+#
+# Y OJO CON LA CARPETA: $P ya no es "$U\.platformio" fijo. Si el nombre de usuario
+# tiene caracteres no-ASCII (`Direccion310`), PlatformIO se muda solo a la raiz del
+# disco y toda esta cadena se diagnosticaba contra una carpeta que nunca existio:
+# los cuatro pasos daban "NO existe" con PlatformIO instalado y andando.
+$P = $PioCore
+Dato "core_dir en uso" $P
+Dato "PLATFORMIO_CORE_DIR" $(if ($env:PLATFORMIO_CORE_DIR) { $env:PLATFORMIO_CORE_DIR } else { "sin setear (se usa el default)" })
+# EL SHIM DE PYTHON SE LLAMA python3.exe, NO python.exe.
+#
+# Este renglon miraba scoop\shims\python.exe, que NO EXISTE EN NINGUNA MAQUINA.
+# El manifest main/bucket/python.json declara
+# bin: [["python.exe","python3"], "Lib\idlelib\idle.bat", ...], y en Scoop
+# ["archivo","nombre"] significa "shimea ESE archivo CON ESE nombre": el unico shim
+# que sale de ahi se llama python3.exe. Medido en la VM Windows 10 sobre una
+# instalacion sana: shims\python.exe -> False, shims\python3.exe -> True,
+# apps\python\current\python.exe -> True.
+#
+# O sea que el Test-Path daba False SIEMPRE y este diagnostico venia imprimiendo
+# "OK (otro python)" sobre instalaciones de Scoop perfectamente sanas, en cada
+# reporte. Una mentira chica, pero es la primera linea de la cadena que explica por
+# que no hay PlatformIO: manda a mirar al lado equivocado desde el paso 1.
+#
+# Se dice CUAL de los dos se encontro: si esta la app pero no el shim (o al reves),
+# eso es un dato, no un detalle.
+#
+# TODO (fuera de alcance en la 0.3.78, se arregla aparte): el `elseif (Get-Command
+# python ...)` de abajo NO descarta el senuelo de
+# %LOCALAPPDATA%\Microsoft\WindowsApps, que no es Python real -solo abre la
+# Microsoft Store- y hace fallar la instalacion de PlatformIO. Con ese senuelo
+# presente, este renglon puede decir "OK (otro python)" sobre algo que no sirve.
+# Buscar-Python en bootstrap.ps1 SI lo descarta; aca falta.
+$pyShim = "$U\scoop\shims\python3.exe"
+$pyApp = "$U\scoop\apps\python\current\python.exe"
+Dato "1. python (scoop)" $(if (Test-Path $pyShim) { "OK (shims\python3.exe)" } elseif (Test-Path $pyApp) { "OK (apps\python\current\python.exe)" } elseif (Get-Command python -EA SilentlyContinue) { "OK (otro python)" } else { "FALTA <- se corto aca" })
 Dato "2. carpeta .platformio" $(if (Test-Path $P) { "existe" } else { "NO existe" })
 Dato "3. entorno (penv)" $(if (Test-Path "$P\penv") { "armado" } else { "NO se armo" })
-Dato "4. pio.exe" $(if (Test-Path "$P\penv\Scripts\pio.exe") { "OK" } else { "FALTA" })
-if ((Test-Path "$P\penv") -and -not (Test-Path "$P\penv\Scripts\pio.exe")) {
+Dato "4. pio.exe" $(if ($PioDisco) { "OK - $PioDisco" } else { "FALTA" })
+if ((Test-Path "$P\penv") -and -not $PioDisco) {
   Write-Host "     >> El entorno se armo pero el paquete no bajo: mira la RED, no los permisos" -ForegroundColor Yellow
 }
 # Que la maquina llegue a pypi.org. Es la pregunta que decide todo lo demas, y
@@ -349,6 +492,62 @@ if (Test-Path $bl) {
   Write-Host "     --- ultimas lineas ---"
   Get-Content $bl | Where-Object { $_ -match '\[OK\]|\[X\]|\[!\]|\[\.\.\]|ERROR|WARN|Exception' } |
     Select-Object -Last 14 | ForEach-Object { Write-Host ("     " + $_.Trim()) }
+
+  # -- EL FILTRO DE ARRIBA SE COMIO LA CAUSA, Y ESTE BLOQUE LA RESCATA --------
+  #
+  # El resumen filtrado sirve para escanear de un vistazo, y se queda. Pero la
+  # salida cruda de get-platformio.py -pip, el venv, el traceback- NO matchea
+  # ninguno de esos patrones. Esto es LITERAL lo que llego en el reporte de la
+  # escuela, y es todo lo que llego:
+  #
+  #     [..] Instalando PlatformIO Core (no necesita admin)...
+  #     WARN  'python' (3.14.7) is already installed.
+  #     [!] PlatformIO NO quedo instalado.
+  #
+  # La causa estaba ENTERA en el medio y nadie la imprimio. El encabezado de este
+  # archivo promete "esto junta, de una sola pasada, todo lo que hace falta para
+  # saber que paso" -- y justo eso se lo comio el filtro.
+  #
+  # Se imprime solo si el log dice que PlatformIO fallo: cuando anduvo bien no hay
+  # nada que investigar y ensuciar el reporte tiene su propio costo (un reporte
+  # largo no se lee).
+  $marcaFalla = '\[!\] PlatformIO NO quedo instalado'
+  $lineasBl = @(Get-Content $bl -EA SilentlyContinue)
+  $fin = -1
+  for ($i = $lineasBl.Count - 1; $i -ge 0; $i--) {
+    if ($lineasBl[$i] -match $marcaFalla) { $fin = $i; break }
+  }
+  if ($fin -ge 0) {
+    # Desde donde arranco la instalacion de PlatformIO. Si no aparece la marca de
+    # arranque se empieza por el principio: el tope de lineas de abajo se encarga.
+    $ini = 0
+    for ($i = $fin; $i -ge 0; $i--) {
+      if ($lineasBl[$i] -match 'Instalando PlatformIO Core') { $ini = $i; break }
+    }
+    $crudo = @($lineasBl[$ini..$fin])
+    Write-Host ""
+    Write-Host "     --- Lo que dijo el instalador de PlatformIO, sin filtrar ---"
+    # Tope de 40 lineas, Y SE DICE CUANTAS SE OMITIERON. Cortar en silencio es como
+    # filtrar: el que lee no sabe que le falta algo. Se conservan las ULTIMAS, que
+    # es donde esta el error.
+    if ($crudo.Count -gt 40) {
+      Write-Host ("     (se omitieron " + ($crudo.Count - 40) + " lineas anteriores; el archivo completo esta en " + $bl + ")")
+      $crudo = @($crudo[($crudo.Count - 40)..($crudo.Count - 1)])
+    }
+    foreach ($linea in $crudo) {
+      $t = ("" + $linea).Trim()
+      # SE TAPA ANTES DE IMPRIMIR, igual que con el proxy de mas arriba y por el
+      # mismo motivo: este reporte se manda por WhatsApp. Si la escuela usa un
+      # indice de paquetes interno, pip escribe la URL entera -y esas URLs se
+      # configuran como https://usuario:clave@host/simple-. Mismo criterio, misma
+      # expresion: lo que sirve para diagnosticar es el host, no la credencial.
+      $t = [regex]::Replace($t, "//[^/@]+@", "//USUARIO:CLAVE@")
+      # 300 caracteres, igual que en el log de OpenCode: un traceback largo tapa el
+      # resto del reporte.
+      if ($t.Length -gt 300) { $t = $t.Substring(0, 300) + " ..." }
+      Write-Host ("     " + $t)
+    }
+  }
 } else {
   Dato "archivo" "no existe -- el bootstrap no llego ni a arrancar"
 }

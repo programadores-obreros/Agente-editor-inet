@@ -18,6 +18,32 @@ simplemente la versión anterior a la rota. (Hasta la v0.3.70 este documento
 decía v0.3.62: era el punto seguro de antes de la capacitación del 20/08, y el
 CHANGELOG de la v0.3.71 registra el cambio.)
 
+### Lo que hay que saber de la v0.3.78 antes de volver atrás
+
+La v0.3.78 es la primera que **fija la versión de Python con `scoop hold`**. Y
+`scoop hold` es una marca en la app, no en Tecnia Bot: **volver a una versión
+vieja NO la saca**. La máquina queda con `python 3.14.7 Held package` para
+siempre, aunque el Tecnia Bot instalado sea la v0.3.69.
+
+No rompe nada — las versiones anteriores hacen `scoop install python` a secas, y
+Scoop contesta "already installed" y sigue. Pero conviene saberlo antes de pasar
+media hora buscando por qué esa máquina no actualiza Python como las otras. Para
+soltarlo:
+
+```
+scoop unhold python
+```
+
+Lo mismo vale para `opencode`, que se fija desde mucho antes.
+
+Y al revés, hay un caso donde volver atrás **devuelve** un problema: las máquinas
+cuyo usuario de Windows tiene tilde o ñ (`Dirección`, `Preceptoría`, un apellido
+acentuado). Ahí PlatformIO se instala en la raíz del disco y las versiones
+anteriores a la v0.3.78 no lo encuentran: el bot dice que falta PlatformIO
+teniéndolo instalado, y no puede compilar. Es el caso real de la escuela Juana
+Manso, contado en `docs/rutas-no-ascii.md`. En esas máquinas, el rollback tiene
+costo: conviene agotar otras opciones antes.
+
 ## Qué hacer, en orden
 
 ### 1. Que el docente instale la versión vieja (30 segundos)

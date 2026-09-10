@@ -248,6 +248,53 @@ echo   ^| ^|_^|        /^|_^|\   Arduino y ESP32 para escuelas tecnicas
 echo.
 echo   Primeros pasos y ayuda:  https://tecnialab.net.ar/tecnia-bot/
 echo.
+
+rem -- EL AVISO DE LA KEY VIVE ACA, Y NO ADENTRO DEL BOT ----------------------
+rem
+rem Se probo con Tecnia Bot corriendo de verdad en la VM: key invalida, agente en
+rem google/gemini-3.5-flash-lite, la docente escribe un mensaje normal. Lo unico
+rem que ve es esto:
+rem
+rem     Error: API key not valid. Please pass a valid API key.
+rem
+rem Exit code 1. Ni la skill "errores-del-bot", ni el disparador del prompt del
+rem agente, ni una palabra del bot. Y NO es un bug que se pueda arreglar ahi: el
+rem error ocurre en la llamada al proveedor, ANTES de que el modelo genere nada.
+rem Le estabamos pidiendo AL MODELO que explique que el modelo esta muerto.
+rem EL BOT NO PUEDE EXPLICAR QUE EL BOT NO ARRANCA: es imposible por
+rem construccion, no por descuido. Por eso el aviso vive del lado de afuera, en
+rem el lanzador, que corre SIEMPRE, con modelo o sin modelo.
+rem
+rem La logica esta en install\chequear-clave.ps1 porque un .cmd no puede hacer
+rem HTTPS de forma decente. Ese script tambien es el que decide callarse: en una
+rem maquina sin key (agente en Big Pickle) sale sin tocar la red, y cuando no
+rem pudo probar la key -- sin internet, timeout, el filtro de la escuela -- no
+rem imprime nada, porque no sabemos si la key sirve y molestar en CADA arranque
+rem con un aviso que no dice nada es peor que callarse.
+rem
+rem ESTO ES UN AVISO, NO UN PORTERO. Pase lo que pase con el chequeo -- que
+rem PowerShell no arranque, que la politica de la escuela lo bloquee, que el
+rem archivo no este, que devuelva cualquier cosa -- se sigue de largo y el bot
+rem abre. Por eso en este tramo NO hay ni un `exit /b` ni un `goto`: una docente
+rem en el aula tiene que poder abrir Tecnia Bot aunque este chequeo este roto.
+rem Hay un test que lo custodia por mutacion.
+rem
+rem `set` deja ERRORLEVEL en 0: si el .ps1 no esta, el `if errorlevel` de abajo
+rem lee ese 0 y no arrastra el codigo de salida de cualquier comando anterior.
+set "CHEQUEO=%~dp0install\chequear-clave.ps1"
+if exist "%CHEQUEO%" powershell -ExecutionPolicy Bypass -NoProfile -File "%CHEQUEO%"
+
+rem Salida 9 EXACTA = el chequeo imprimio un aviso, y hay que darle tiempo de
+rem leerlo antes de que la pantalla completa del bot se lo coma. Un `if errorlevel
+rem 9` solo significa "9 o mas" y se comeria el 9009 de "powershell no existe"
+rem con la pantalla vacia: de ahi las dos comparaciones. `pause` no cuelga si la
+rem consola no es interactiva (lee EOF y sigue), a diferencia de `timeout`.
+if errorlevel 9 if not errorlevel 10 (
+  echo   Apreta una tecla para abrir Tecnia Bot igual.
+  pause >nul
+  echo.
+)
+
 echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
 echo.
 "%OC%"
