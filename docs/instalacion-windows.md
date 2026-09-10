@@ -105,7 +105,7 @@ Si preferís hacerlo a mano (o el bootstrap falló), estos son los pasos que aut
       ```powershell
       python -c "$(Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py | Select-Object -ExpandProperty Content)"
       ```
-   3. Queda en `%USERPROFILE%\.platformio\penv\Scripts\pio.exe` — Tecnia Bot lo busca ahí solo, no hace falta tocar el PATH.
+   3. Normalmente queda en `%USERPROFILE%\.platformio\penv\Scripts\pio.exe`. **Si tu usuario de Windows tiene tildes o eñes** (`Dirección310`, `Muñoz`), PlatformIO no soporta rutas con caracteres no-ASCII y se instala solo en la **raíz del disco**: `C:\.platformio\penv\Scripts\pio.exe`. Fijate cuál de las dos te dice el instalador al terminar. Tecnia Bot busca en las dos (y en `PLATFORMIO_CORE_DIR` si la tenés seteada), así que no hace falta tocar el PATH.
 3. **La capa de Tecnia Bot** (solo copia los archivos):
    ```powershell
    powershell -ExecutionPolicy Bypass -File install\install.ps1

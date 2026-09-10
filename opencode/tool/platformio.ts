@@ -2,7 +2,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { join, win32 } from "node:path"
 
 interface RunResult {
   code: number
@@ -19,11 +19,70 @@ interface RunResult {
 // fallaba hasta reiniciar OpenCode).
 let pioPathCache: string | null = null
 
-function pioCandidatos(): string[] {
-  const home = homedir()
-  return process.platform === "win32"
-    ? [join(home, ".platformio", "penv", "Scripts", "pio.exe")]
-    : [join(home, ".platformio", "penv", "bin", "pio")]
+/** Saca vacíos y repetidos preservando el orden: el primero que aparece manda. */
+const unicos = (xs: Array<string | undefined>): string[] => [
+  ...new Set(xs.filter((x): x is string => typeof x === "string" && x.trim() !== "")),
+]
+
+/**
+ * TRES LUGARES DONDE BUSCAR, NO UNO — la misma lección que el lanzador aprendió
+ * buscando OpenCode (`installer/abrir-tecnia-bot.cmd`) y que este comentario, en
+ * plural, prometía sobre una lista de UN elemento durante meses.
+ *
+ * EL CASO REAL (escuela Juana Manso, 2026-09-08). La usuaria de Windows se llama
+ * `Dirección310`, con `ó`, que no es ASCII. PlatformIO Core no soporta rutas con
+ * caracteres no-ASCII —sus toolchains de gcc se rompen— así que en Windows, y a
+ * propósito, RELOCALIZA su core_dir a la raíz del disco. El instalador oficial
+ * dejó escrito en pantalla:
+ *
+ *     Creating a virtual environment at C:\.platformio\penv
+ *     The full path to platformio.exe is C:\.platformio\penv\Scripts\platformio.exe
+ *
+ * Nosotros mirábamos SOLO `$HOME\.platformio` y le dijimos a una docente durante
+ * TRES SEMANAS que PlatformIO no estaba instalado. Lo tenía, y andaba: `pio.exe
+ * --version` contestaba «PlatformIO Core, version 6.2.0».
+ *
+ * Por eso esto es una LISTA ORDENADA, no una ruta:
+ *   1. `PLATFORMIO_CORE_DIR` si está seteada (lo que el usuario mandó, gana)
+ *   2. `$HOME\.platformio` (la instalación normal)
+ *   3. la raíz del disco de $HOME (`C:\.platformio`) <- el caso de arriba
+ *   4. `C:\.platformio` fijo, por si $HOME vive en otro disco
+ *   5. el PATH, que lo resuelve `pioBin()`/`pioDisponible()` al final
+ *
+ * En cada carpeta se miran `pio.exe` Y `platformio.exe` (en Unix `pio` y
+ * `platformio`): los dos suelen existir, pero el mensaje del instalador oficial
+ * nombra `platformio.exe`, y no queremos depender de que exista justo el que
+ * elegimos nosotros.
+ *
+ * La relocalización a la raíz del disco es SOLO de Windows: en Linux/macOS las
+ * rutas del home no rompen a gcc y PlatformIO no mueve nada. No la inventamos.
+ *
+ * ACÁ NO SE PREGUNTA `--version`, Y ES A PROPÓSITO. Este código está en el camino
+ * caliente del tool y ya cachea: alcanza con quedarse con el primero que EXISTE.
+ * Un pio a medio armar se manifiesta igual en el primer comando de verdad, con su
+ * error real. Los scripts de instalación y el diagnóstico sí le preguntan
+ * `--version` al primer candidato, porque corren una sola vez y ahí ese segundo
+ * de más compra la diferencia entre "está" y "anda". Si venís a "arreglar" esta
+ * asimetría: es deliberada.
+ *
+ * Toma home/plataforma/entorno por parámetro para poder probar el caso de
+ * `Dirección310` desde Linux; sin argumentos se comporta como siempre.
+ */
+export function pioCandidatos(
+  home: string = homedir(),
+  plataforma: string = process.platform,
+  entorno: Record<string, string | undefined> = process.env,
+): string[] {
+  const core = entorno.PLATFORMIO_CORE_DIR
+  if (plataforma === "win32") {
+    // win32.parse("C:\\Users\\Dirección310").root === "C:\\" — y anda también
+    // corriendo bajo Linux, que es como lo prueban los tests.
+    const raiz = win32.parse(home).root
+    const dirs = unicos([core, win32.join(home, ".platformio"), raiz && win32.join(raiz, ".platformio"), "C:\\.platformio"])
+    return dirs.flatMap((d) => ["pio.exe", "platformio.exe"].map((n) => win32.join(d, "penv", "Scripts", n)))
+  }
+  const dirs = unicos([core, join(home, ".platformio")])
+  return dirs.flatMap((d) => ["pio", "platformio"].map((n) => join(d, "penv", "bin", n)))
 }
 
 export function resetPioCache(): void {
@@ -45,7 +104,11 @@ export function pioBin(): string {
 // Nunca hace existsSync("pio"): eso mira un archivo relativo al cwd, no el PATH.
 export function pioDisponible(): boolean {
   resetPioCache()
-  return pioCandidatos().some((c) => existsSync(c)) || Bun.which("pio") !== null
+  // El PATH se prueba con los DOS nombres: el instalador oficial deja los dos y
+  // hubo maquinas donde el shim del PATH era `platformio` y no `pio`.
+  return (
+    pioCandidatos().some((c) => existsSync(c)) || Bun.which("pio") !== null || Bun.which("platformio") !== null
+  )
 }
 
 /*

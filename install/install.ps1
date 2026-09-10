@@ -495,13 +495,97 @@ if (Get-Command opencode -ErrorAction SilentlyContinue) {
     Write-Host "  [FALTA] OpenCode no esta instalado. Instalalo desde https://opencode.ai"
 }
 
+# ----------------------------------------------------------------------------
+# DONDE VIVE PlatformIO: TRES LUGARES DONDE BUSCAR, no uno.
+#
+# Es la MISMA leccion que el lanzador (installer\abrir-tecnia-bot.cmd) aprendio
+# buscando OpenCode, y la tercera vez que muerde en este repo.
+#
+# EL CASO REAL (escuela Juana Manso, 2026-09-08). La usuaria de Windows se llama
+# `Direccion310` -- con `o` acentuada, que NO es ASCII. PlatformIO Core no soporta
+# rutas con caracteres no-ASCII (sus toolchains de gcc se rompen), asi que en
+# Windows RELOCALIZA su core_dir a la raiz del disco: C:\.platformio en vez de
+# C:\Users\Direccion310\.platformio. Aca eso tenia DOS consecuencias: no se
+# agregaba nada al PATH (asi que `pio` pelado en la terminal no andaba) y el
+# chequeo final decia "[FALTA] PlatformIO no esta instalado" con PlatformIO
+# instalado y contestando.
+#
+# Orden de busqueda:
+#   1. $env:PLATFORMIO_CORE_DIR, si el usuario la seteo (lo explicito gana)
+#   2. $USERPROFILE\.platformio            (la instalacion normal)
+#   3. la raiz del disco de $USERPROFILE   <- el caso de arriba
+#   4. C:\.platformio fijo, por si el perfil vive en otro disco
+#   5. el PATH (`pio` y `platformio`)
+#
+# ESTA LOGICA ESTA REPETIDA en bootstrap.ps1, diagnostico.ps1, bootstrap.sh,
+# install.sh y opencode\tool\platformio.ts, A PROPOSITO: ninguno de los .ps1 hace
+# dot-sourcing de otro, cada uno se copia y corre SOLO. Lo que mantiene honestas a
+# las copias es tests/platformio-pio.test.mjs.
+function Rutas-PioCore {
+    $dirs = @()
+    if ($env:PLATFORMIO_CORE_DIR) { $dirs += $env:PLATFORMIO_CORE_DIR }
+    $dirs += (Join-Path $env:USERPROFILE ".platformio")
+    # GetPathRoot("C:\Users\Direccion310") devuelve "C:\": la raiz del disco donde
+    # vive el perfil, que es adonde PlatformIO se muda cuando el nombre no es ASCII.
+    $raiz = [System.IO.Path]::GetPathRoot($env:USERPROFILE)
+    if ($raiz) { $dirs += (Join-Path $raiz ".platformio") }
+    $dirs += "C:\.platformio"
+    return ($dirs | Select-Object -Unique)
+}
+
+# La carpeta penv\Scripts que hay que agregar al PATH, o $null si no hay ninguna.
+# Se miran pio.exe Y platformio.exe: normalmente estan los dos, pero el instalador
+# oficial nombra platformio.exe en su mensaje final y no queremos depender de que
+# exista justo el que elegimos nosotros.
+function Buscar-PioScripts {
+    foreach ($dir in (Rutas-PioCore)) {
+        $scripts = Join-Path $dir "penv\Scripts"
+        foreach ($nombre in @("pio.exe", "platformio.exe")) {
+            if (Test-Path (Join-Path $scripts $nombre)) { return $scripts }
+        }
+    }
+    return $null
+}
+
+# El pio que ADEMAS contesta --version. Misma regla que Buscar-Python en
+# bootstrap.ps1: a un candidato se le pregunta, no se supone por donde vive. Cuesta
+# un segundo, corre una sola vez, y atrapa un venv a medio armar. (El tool
+# platformio.ts NO pregunta: esta en el camino caliente y le alcanza con que el
+# archivo exista. La asimetria es deliberada.)
+#
+# 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta en
+# PowerShell 5.1: se baja a Continue solo para preguntar.
+function Buscar-Pio {
+    $candidatos = @()
+    foreach ($dir in (Rutas-PioCore)) {
+        foreach ($nombre in @("pio.exe", "platformio.exe")) {
+            $candidatos += (Join-Path $dir "penv\Scripts\$nombre")
+        }
+    }
+    foreach ($c in (Get-Command -Name pio, platformio -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($c.Source) { $candidatos += $c.Source }
+    }
+    foreach ($ruta in $candidatos) {
+        if (-not $ruta) { continue }
+        if (-not (Test-Path $ruta)) { continue }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $global:LASTEXITCODE = 0
+            $v = (& $ruta --version 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -and $v -match "PlatformIO") { return $ruta }
+        } catch { } finally { $ErrorActionPreference = $prev }
+    }
+    return $null
+}
+
 # pio en el PATH del usuario (comodidad: que 'pio' funcione pelado en la terminal).
-# PlatformIO deja pio en su venv privado (~/.platformio/penv/Scripts), fuera del PATH.
+# PlatformIO deja pio en su venv privado (penv\Scripts), fuera del PATH.
 # Tecnia Bot lo encuentra por ruta completa igual; esto es para uso manual. Corre en
 # cada install/actualizar (idempotente), asi le llega a todos. Cuidado: preservamos el
 # tipo de registro (REG_EXPAND_SZ) y NO expandimos las %VAR% existentes, para no romper.
-$PioScripts = Join-Path $env:USERPROFILE ".platformio\penv\Scripts"
-if (Test-Path $PioScripts) {
+$PioScripts = Buscar-PioScripts
+if ($PioScripts) {
     $agregado = $false
     $reg = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
     try {
@@ -535,12 +619,12 @@ if (Test-Path $PioScripts) {
     }
 }
 
-# Chequear PlatformIO (en PATH o en la ruta de instalacion conocida)
-$pioPath = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
-if (Get-Command pio -ErrorAction SilentlyContinue) {
-    Write-Host "  [OK] PlatformIO en PATH"
-} elseif (Test-Path $pioPath) {
-    Write-Host "  [OK] PlatformIO instalado (Tecnia Bot lo encuentra aunque no este en PATH)"
+# Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
+# Se dice la ruta real: si PlatformIO se relocalizo a la raiz del disco, decir solo
+# "instalado" manda a mirar una carpeta que no existe.
+$pioPath = Buscar-Pio
+if ($pioPath) {
+    Write-Host "  [OK] PlatformIO instalado en $pioPath (Tecnia Bot lo encuentra aunque no este en PATH)"
 } else {
     Write-Host "  [FALTA] PlatformIO no esta instalado. Ver docs/instalacion-windows.md"
 }

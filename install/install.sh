@@ -523,23 +523,94 @@ else
   echo "  [FALTA] OpenCode no esta instalado. Instalalo desde https://opencode.ai"
 fi
 
+# TRES LUGARES DONDE BUSCAR, no uno -- la misma leccion que el lanzador de Windows
+# (installer/abrir-tecnia-bot.cmd) aprendio buscando OpenCode, y la tercera vez que
+# muerde en este repo. Aca mordia por PLATFORMIO_CORE_DIR: si el usuario la tiene
+# seteada, PlatformIO instala en otro lado y este script decia "[FALTA] PlatformIO
+# no esta instalado" con PlatformIO instalado y andando.
+#
+# El caso que destapo todo fue en Windows -- una usuaria llamada `Direccion310`, con
+# `o` acentuada, que no es ASCII: PlatformIO no soporta rutas con caracteres
+# no-ASCII y en Windows RELOCALIZA su core_dir a la raiz del disco. Esa
+# relocalizacion es SOLO de Windows, asi que aca NO se inventa: en Linux/macOS los
+# candidatos son la variable de entorno, ~/.platformio y el PATH, y nada mas.
+#
+# En cada carpeta se miran `pio` Y `platformio`: normalmente estan los dos, pero el
+# instalador oficial nombra `platformio` en su mensaje final y no queremos depender
+# de que exista justo el que elegimos nosotros.
+#
+# Esta logica esta repetida en bootstrap.sh, bootstrap.ps1, diagnostico.ps1,
+# install.ps1 y opencode/tool/platformio.ts, A PROPOSITO: ningun script hace
+# dot-sourcing de otro, cada uno se copia y corre SOLO. Lo que mantiene honestas a
+# las copias es tests/platformio-pio.test.mjs.
+pio_core_dirs() {
+  if [ -n "${PLATFORMIO_CORE_DIR:-}" ]; then printf '%s\n' "$PLATFORMIO_CORE_DIR"; fi
+  printf '%s\n' "$HOME/.platformio"
+}
+
+# La carpeta penv/bin que hay que agregar al PATH, o nada. Aca NO se pregunta
+# --version: es una comodidad del PATH, no un chequeo de que ande.
+buscar_pio_dir() {
+  local dir nombre
+  while IFS= read -r dir; do
+    for nombre in pio platformio; do
+      if [ -x "$dir/penv/bin/$nombre" ]; then
+        printf '%s\n' "$dir/penv/bin"
+        return 0
+      fi
+    done
+  done < <(pio_core_dirs)
+  return 1
+}
+
+# El pio que ADEMAS contesta --version, o nada. Al candidato se le PREGUNTA, no se
+# supone que anda por donde vive: eso atrapa un venv a medio armar. Cuesta un
+# segundo y corre una sola vez. El tool platformio.ts NO pregunta -- esta en el
+# camino caliente y le alcanza con que el archivo exista --; es deliberado.
+buscar_pio() {
+  local dir nombre ruta salida
+  while IFS= read -r dir; do
+    for nombre in pio platformio; do
+      ruta="$dir/penv/bin/$nombre"
+      [ -x "$ruta" ] || continue
+      if salida="$("$ruta" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+        printf '%s\n' "$ruta"
+        return 0
+      fi
+    done
+  done < <(pio_core_dirs)
+  for nombre in pio platformio; do
+    command -v "$nombre" >/dev/null 2>&1 || continue
+    if salida="$("$nombre" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+      command -v "$nombre"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # pio en el PATH (comodidad: que 'pio' funcione pelado en la terminal).
-# PlatformIO deja pio en su venv privado (~/.platformio/penv/bin), fuera del PATH.
+# PlatformIO deja pio en su venv privado (penv/bin), fuera del PATH.
 # Tecnia Bot lo encuentra por ruta completa igual; esto es para uso manual. Corre en
 # cada install/actualizar (idempotente, marcado con un comentario), asi le llega a todos.
-PIO_DIR="$HOME/.platformio/penv/bin"
-if [ -d "$PIO_DIR" ]; then
+PIO_DIR="$(buscar_pio_dir || true)"
+if [ -n "$PIO_DIR" ]; then
   case "${SHELL:-}" in
     *zsh)  RC="$HOME/.zshrc" ;;
     *bash) RC="$HOME/.bashrc" ;;
     *)     RC="$HOME/.profile" ;;
   esac
   MARCA="# Tecnia Bot: PlatformIO en el PATH"
+  # En el rc se escribe $HOME literal cuando la carpeta cuelga del home: asi la
+  # linea sigue sirviendo si el perfil se mueve. Si PlatformIO quedo en otro lado
+  # (PLATFORMIO_CORE_DIR), va la ruta absoluta, que es la unica cierta. Antes iba
+  # SIEMPRE la del home, asi que en ese caso el rc apuntaba a una carpeta vacia.
+  PIO_DIR_RC="${PIO_DIR/#$HOME/\$HOME}"
   if ! { [ -f "$RC" ] && grep -qF "$MARCA" "$RC" 2>/dev/null; }; then
     {
       echo ""
       echo "$MARCA"
-      echo 'export PATH="$HOME/.platformio/penv/bin:$PATH"'
+      echo "export PATH=\"$PIO_DIR_RC:\$PATH\""
     } >> "$RC"
   fi
   case ":$PATH:" in
@@ -548,11 +619,12 @@ if [ -d "$PIO_DIR" ]; then
   esac
 fi
 
-# Chequear PlatformIO (en PATH o en la ruta de instalacion conocida)
-if command -v pio >/dev/null 2>&1; then
-  echo "  [OK] PlatformIO: $(pio --version 2>/dev/null)"
-elif [ -x "$HOME/.platformio/penv/bin/pio" ]; then
-  echo "  [OK] PlatformIO: $("$HOME/.platformio/penv/bin/pio" --version 2>/dev/null) (instalado, no en PATH; Tecnia Bot lo encuentra igual)"
+# Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
+# Se dice la ruta real: "instalado" a secas manda a mirar la carpeta de siempre,
+# que puede no ser donde quedo.
+PIO_BIN="$(buscar_pio || true)"
+if [ -n "$PIO_BIN" ]; then
+  echo "  [OK] PlatformIO: $("$PIO_BIN" --version 2>/dev/null) ($PIO_BIN)"
 else
   echo "  [FALTA] PlatformIO no esta instalado."
   echo "          Instalalo con: python3 <(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"
