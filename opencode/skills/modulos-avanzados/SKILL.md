@@ -10,6 +10,8 @@ Estos módulos llevan los proyectos a otro nivel: mostrar info en pantalla, cont
 > **Pines:** todos los números de pin de este skill son **ESP32**. Si trabajás con **Arduino UNO**: I2C es **SDA=A4, SCL=A5**; las entradas analógicas son **A0-A5** (`analogRead()` da 0-1023, no 0-4095); para los digitales usá cualquier pin 2-13 y ajustá los arrays del código.
 
 > **Concepto clave — I2C:** varios de estos (OLED, MPU6050) usan **I2C**, un "bus" donde muchos componentes comparten solo 2 cables (SDA y SCL). En el ESP32: **SDA=GPIO21, SCL=GPIO22**. Cada uno tiene una "dirección" (como un número de casa) para que el ESP32 sepa con quién habla. ¡Podés conectar varios módulos I2C a los mismos 2 pines!
+>
+> **Y acá va la respuesta a una pregunta que aparece siempre: «¿por qué mi display es 0x27 y el del compañero 0x3F?»** La mochilita que lleva pegada atrás el LCD tiene adentro un chip expansor, el **PCF8574** — y de ese chip existen dos variantes: el `PCF8574` (direcciones `0x20` a `0x27`) y el `PCF8574A` (`0x38` a `0x3F`). Son **idénticas en todo lo demás**: misma patas, misma función, mismo comportamiento. Lo único distinto es el rango de direcciones. **¿Y para qué se fabricaron dos?** Justamente para poder usar las dos a la vez: ocho de cada una son **dieciséis módulos en el mismo par de cables**, sin que ninguno le pise la casa a otro. Siguiendo la analogía: no son dos casas distintas, son **dos barrios**, y el fabricante hizo el segundo para que entren más vecinos en la misma calle.
 
 ---
 

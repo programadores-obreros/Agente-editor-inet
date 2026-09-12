@@ -72,6 +72,32 @@ test("tecnia-bot.md: prohíbe explícitamente webfetch con rutas locales/file://
   assert.match(prompt, /doble clic/, "indica pedir doble clic para abrir el archivo")
 })
 
+test("un aviso preventivo da un síntoma reconocible, no un parámetro suelto", () => {
+  // Salió de probar el bot con un LCD en el Bhoot. Dijo, textual: "el LCD usa la
+  // dirección 0x27 por defecto. Si al cargarlo no muestra nada, es que tu módulo
+  // usa la 0x3F — se cambia en una sola línea y listo."
+  //
+  // El dato era CORRECTO y aun así la frase no servía, por tres motivos:
+  // (1) "se cambia en una línea" es una instrucción sobre un archivo que el docente
+  //     no tiene delante — el bot no le pegó el código, por su propia regla;
+  // (2) "si no muestra nada" tiene cinco causas (contraste, VCC, cableado, módulo
+  //     muerto, dirección) y la frase las colapsa en una sola;
+  // (3) "0x27" en hexadecimal no lo puede ni leer en voz alta.
+  //
+  // Avisar sigue estando bien: si carga, no ve nada y no sabía que podía pasar,
+  // pierde la clase. Lo que cambia es CÓMO se avisa.
+  const i = prompt.indexOf("Con los gotchas que avisás por adelantado")
+  assert.ok(i > 0, "no está la regla de cómo dar un aviso preventivo")
+  const regla = prompt.slice(i, i + 1800)
+
+  assert.match(regla, /síntoma/i, "no pide un síntoma reconocible")
+  assert.match(regla, /no le pegaste el código|no tiene delante/i,
+    "no recuerda que el docente NO tiene el código a la vista")
+  assert.match(regla, /avisás y te lo cambio|acción es tuya/i,
+    "no deja la acción del lado del bot")
+  assert.match(regla, /hexadecimal|jerga/i, "no prohíbe la jerga en el aviso")
+})
+
 test("la placa se resuelve ANTES de responder de hardware", () => {
   // Lo pidió el usuario probando el bot: "quiero que piense, siempre, qué placa
   // tiene, o que pregunte".

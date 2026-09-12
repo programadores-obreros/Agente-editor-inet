@@ -1,17 +1,47 @@
 ---
 name: educabot
-description: Kits Educabot (Argentina) - placa Educablocks UNO (Arduino UNO compatible con 20 puertos RJ12 tipo teléfono, colores por pin), bloques de Educablocks/Robots y qué C++ generan, Kit Inventor, Robot Zonda, Codit. Cómo la reconoce y la programa Tecnia Bot con PlatformIO como `uno`, mapa de puertos (con las señales de cada conector según el Libro de actividades oficial), puertos especiales E3/E4/E6, módulos, proyectos escolares del libro y equivalencias con los skills sensores/actuadores. Frases típicas - "placa Educabot", "Educablocks", "conectores de teléfono", "cable RJ12", "Kit Inventor", "Zonda".
+description: Kits Educabot (Argentina). OJO - Educabot tiene MÁS DE UNA placa y NO son iguales: la Educablocks UNO (placa de banco, 20 puertos RJ12, ATmega328P en zócalo DIP, USB-B cuadrado) y el Bhoot - que el software de Educabot llama "Buty" - (placa de robot, 6 puertos + 2 IIC, motores MI/MD, zumbador y Bluetooth HM-10 a bordo, ATmega328P TQFP soldado). Antes de dar un dato hay que saber CUÁL de las dos es. Este skill tiene - cómo distinguirlas, el mapa de puertos de la Educablocks UNO con sus puertos especiales E3/E4/E6 y los colores oficiales, los bloques de Educablocks/Robots y qué C++ generan, Kit Inventor, Robot Zonda, Codit, los proyectos del Libro de actividades. El mapa de puertos del Bhoot y el `board =` de las dos están en el skill `placas`. Frases típicas - "placa Educabot", "Educablocks", "Bhoot", "Buty", "conectores de teléfono", "cable RJ12", "Kit Inventor", "Zonda".
 ---
 
-# Educabot — la Educablocks UNO y los bloques de Educablocks/Robots
+# Educabot — las placas y los bloques de Educablocks/Robots
 
-Muchas escuelas técnicas tienen kits de **Educabot** (empresa argentina de tecnología educativa). El corazón del kit es la **Educablocks UNO**: un Arduino UNO con los pines sacados a **conectores RJ12** (los de teléfono fijo), así los alumnos enchufan módulos con cable en vez de armar protoboard. Este skill le da a Tecnia Bot lo que hace falta para reconocerla, programarla en C++ con PlatformIO y traducir lo que el docente ya sabe hacer con bloques.
+Muchas escuelas técnicas tienen kits de **Educabot** (empresa argentina de tecnología educativa). Los alumnos enchufan módulos con cable **RJ12** (los de teléfono fijo) en vez de armar protoboard, y programan con bloques en la plataforma de Educabot. Este skill le da a Tecnia Bot lo que hace falta para reconocer sus placas, programarlas en C++ con PlatformIO y traducir lo que el docente ya sabe hacer con bloques.
+
+## ⚠️ PRIMERO: «placa Educabot» NO alcanza. ¿CUÁL de las dos?
+
+**Educabot tiene más de una placa, y son distintas.** Decir «tengo la placa de Educabot» no
+identifica nada. Antes de dar un puerto, un pin o un módulo, resolvé cuál es — y si el docente
+no sabe, **pedile que mire la plaqueta**, que se distinguen de un vistazo:
+
+| | **Educablocks UNO** | **Bhoot v1.0** (el software la llama **«Buty»**) |
+|---|---|---|
+| Qué es | placa de **banco** | placa de **robot** |
+| Serigrafía | «EDUCABOT · Educablocks UNO» | «EDUCABOT · **Bhoot v1.0**» |
+| Puertos RJ12 | **20**, rotulados con el pin (2-13, A0-A5, COM, IIC) | **6** numerados **0 a 5** + **2 IIC** |
+| Motores | por los puertos especiales E3/E4/E6 | conectores **MI** y **MD** dedicados |
+| El chip | ATmega328P **DIP, en zócalo** (se puede sacar) | ATmega328P **TQFP, soldado** |
+| USB | **USB-B cuadrado**, el de impresora | conector chico |
+| A bordo | nada | **zumbador** + **Bluetooth HM-10** soldados |
+
+**Si ves motores MI/MD y un módulo Bluetooth soldado: es un Bhoot, y NADA de lo que sigue en
+este skill sobre puertos le aplica.** No tiene E3, ni E4, ni E6, ni 20 conectores.
+
+> **El mapa puerto → pin del Bhoot está en el skill `placas`**, junto con sus tres variantes
+> (común, LGO20, IACO — que tienen pinouts distintos). Este skill cubre la **Educablocks UNO**.
+> Las dos compilan igual, con `board = uno`.
+
+Todo lo demás de este skill —los bloques y qué C++ generan, el Kit Inventor, el Zonda, el Codit,
+los proyectos del Libro de actividades— **aplica a las dos**: lo que cambia es dónde enchufás.
+
+---
 
 > **Regla de oro:** la Educablocks UNO **es un Arduino UNO** (ATmega328P, lógica de **5V**). Todo lo del skill `arduino` aplica tal cual. Lo que cambia es el conector: cada puerto RJ12 lleva **un pin del UNO** más 5V y GND, salvo los puertos **especiales E3, E4 y E6**, que llevan **tres pines** (dos señales + un PWM) y VIN. Qué señales lleva cada conector está publicado en el *Libro de actividades* de Educabot (diagrama de la p. 29, copiado en `docs/educabot/`). Lo que **no está publicado** es la posición física de cada señal en los 6 contactos del RJ12: si el docente arma un cable o conecta algo que no es del kit, mandalo a medir con tester, nunca lo inventes.
 
 ---
 
-## Qué es y cómo reconocerla
+## La Educablocks UNO — qué es y cómo reconocerla
+
+*(Si tenés un Bhoot, esta sección no es tuya: volvé a la tabla de arriba.)*
 
 Serigrafía: **«EDUCABOT · Educablocks UNO»**. Tiene el ATmega328P en formato DIP (el chip grande con zócalo), el conector ICSP de 6 pines, botón de reset, **USB-B** (cuadrado, como el de impresora) y **jack DC** para alimentación. Alrededor, **20 conectores RJ12** rotulados con el pin que llevan:
 
@@ -26,7 +56,7 @@ Serigrafía: **«EDUCABOT · Educablocks UNO»**. Tiene el ATmega328P en formato
 
 La tienda de Educabot describe la placa así (cita textual del vendedor): *«puerto USB, alimentación hasta 24V, 20 puertos RJ12, 8 analógicos, 10 digitales, 1 IIC, 1 comunicación, 4 PWM»*. En la unidad fotografiada se cuentan **6 analógicos y 6 PWM**; la cantidad exacta **depende de la revisión** de la placa, así que confiá en lo que está serigrafiado en la que tenés adelante.
 
-Si el docente dice "la placa con conectores de teléfono", "la del kit de robótica del colegio", "la que se programa con bloques en la web de Educabot", "Kit Inventor" o "Zonda": es esta.
+Si el docente dice "la placa con conectores de teléfono", "la del kit de robótica del colegio", "la que se programa con bloques en la web de Educabot", "Kit Inventor" o "Zonda": **es una placa de Educabot, pero eso NO dice cuál**. Cualquiera de esas frases le queda igual de bien al Bhoot. Volvé a la tabla del principio y resolvé cuál es antes de dar un puerto.
 
 **Alimentación:** por USB, por el jack DC o con el **portapilas del kit**, que se enchufa al conector de alimentación al lado del USB y trae llave de encendido. Los módulos reciben **5V y GND por el mismo cable RJ12**.
 
@@ -206,7 +236,47 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 void setup() { lcd.init(); lcd.backlight(); }
 void loop()  { lcd.setCursor(0, 0); lcd.print("Hola"); }
 ```
-En Tecnia Bot: idéntico, con `lib_deps = marcoschwartz/LiquidCrystal_I2C` (misma API `init()`/`backlight()`). Puerto **IIC**. Si no muestra nada, probá `0x3F`: el bloque «Escaner I2C» de Educablocks hace justamente eso (recorre direcciones con `Wire.beginTransmission`).
+En Tecnia Bot: idéntico, con `lib_deps = marcoschwartz/LiquidCrystal_I2C` (misma API `init()`/`backlight()`). Puerto **IIC**.
+
+**La dirección: en los kits de Educabot, `0x27`. Ponela y seguí.**
+
+En los kits que vimos **hasta hoy**, la mochila del LCD siempre fue la de `0x27`. Usala
+**sin preguntar y sin avisar nada**: un aviso sobre algo que no pasa nunca entrena al
+docente a ignorar los avisos, y el día que le des uno que importa no te va a leer.
+
+> **Ojo, que esto es lo observado, no una garantía del fabricante.** Educablocks genera
+> `0x27` por defecto, **pero su bloque «LCD I2C» ofrece `0x27 / 0x3F` como parámetro
+> elegible** — o sea que Educabot mismo contempla que cambie, probablemente por lote o
+> por proveedor. Si algún día aparece un kit con `0x3F`, **actualizá esta línea** y dejá
+> anotado qué lote era.
+
+**Si NO muestra nada, recién ahí:**
+
+Estos displays vienen en dos versiones que por fuera son idénticas — cambia el chip de la
+mochila, y con él la dirección. Decíselo con el síntoma, no con el número:
+
+> Estos displays vienen en dos versiones que por fuera son idénticas. **Dale vuelta el
+> display y mirá el chip más grande de la plaquita de atrás: si dice `PCF8574A`, con A al
+> final, decímelo** y te lo cambio en cinco segundos.
+
+`PCF8574` → `0x27` · `PCF8574A` → `0x3F`. **Una sola letra.** Mirar es mejor que probar:
+convierte dos compilaciones a ciegas en una observación de cinco segundos. Si el docente
+no quiere dar vuelta el display, el bloque «Escaner I2C» de Educablocks recorre el bus y
+la encuentra.
+
+**Si el display NO es del kit** (comprado suelto, de otra marca, heredado de otro
+proyecto), ahí **sí** avisá antes de cargar: no hay costumbre observada que valga, y
+aplicá la regla de gotchas preventivos del prompt (síntoma reconocible, la acción de tu lado).
+
+> **Y por qué acá la dirección es la primera sospecha, cuando en otros proyectos no lo es.**
+> Las fichas de `proyectos-inet` (invernadero, calefacción) dicen *«antes de salir a
+> escanear direcciones, mirá de dónde sale el VCC»* — y tienen razón **ahí**, porque son
+> montajes con cables sueltos donde el display puede terminar colgado del bus de 3,3 V y
+> quedarse sin contraste. Ojo que **el síntoma es el mismo**: luz de fondo prendida y
+> pantalla en blanco. **Por el puerto IIC del kit eso no puede pasar**: el RJ12 lleva
+> señal, 5 V y GND en el mismo cable, así que alimentación y cableado ya están
+> garantizados por el conector, y el síntoma deja de ser ambiguo. **Fijate siempre cómo
+> está conectado antes de elegir por dónde empezar a sospechar.**
 
 **8. Bloque «Relé (invertido)» — Pin 7**
 ```cpp

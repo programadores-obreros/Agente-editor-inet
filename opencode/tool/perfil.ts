@@ -134,7 +134,9 @@ export default tool({
 
 Acciones:
 - leer: devuelve el perfil actual (modo y, segun el modo, la persona o la lista de personas).
-- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque). En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre, el genero y la placa se ignoran (solo se guarda el rol).`,
+- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque). En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre, el genero y la placa se ignoran (solo se guarda el rol).
+
+La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la variante incluida si la placa tiene (ej: 'Educabot Bhoot v1.0', 'Mis Ladrillos R10 v1.1'). El catalogo es la unica lista de placas: este tool guarda lo que le pasan, no valida contra una lista propia.`,
   args: {
     accion: tool.schema
       .enum(["leer", "guardar"])
@@ -159,10 +161,31 @@ Acciones:
       .enum(["docente", "alumno"])
       .optional()
       .describe("Si es docente preparando clases o alumno aprendiendo. Solo para 'guardar'."),
+    /**
+     * POR QUE ES UN STRING Y NO UN ENUM.
+     *
+     * Era `enum(["UNO", "ESP32", "no sé"])`, y eso convertia al tool en una
+     * SEGUNDA fuente de verdad sobre que placas existen — que se desincronizo
+     * con la primera apenas el catalogo crecio. El docente con una Educablocks
+     * UNO, un Bhoot o una Mis Ladrillos no tenia donde caer: el enum le decia
+     * que su placa no existe.
+     *
+     * La lista de placas vive en UN solo lugar, el skill `placas`. Ampliarla
+     * tiene que ser editar ese markdown, no tocar TypeScript y sacar version.
+     *
+     * Y la validacion no se pierde, cambia de lugar: al leer el perfil, la placa
+     * se busca en el catalogo. Si no esta (porque se escribio mal, o porque el
+     * catalogo cambio), el bot vuelve a preguntar. El catalogo valida, el enum no.
+     *
+     * La VARIANTE va en el mismo string a proposito. Meterla en un campo aparte
+     * obligaba a sumar una quinta columna al renglon `nombre | rol | genero |
+     * placa` de "## Personas", que se parsea con una regex de cuatro grupos: los
+     * perfiles que ya existen en las compus de las escuelas dejarian de leerse.
+     */
     placa: tool.schema
-      .enum(["UNO", "ESP32", "no sé"])
+      .string()
       .optional()
-      .describe("La placa con la que trabaja: Arduino UNO, ESP32, o 'no sé'. Solo para 'guardar'. En modo 'aula' se ignora: ahi la placa se pregunta cada sesion."),
+      .describe("La placa con la que trabaja, tal como la nombra el catalogo del skill `placas`, con la variante si tiene (ej: 'Arduino UNO', 'ESP32 DevKit', 'Educabot Bhoot v1.0', 'Mis Ladrillos R10 v1.1'). Si no sabe cual es, 'no sé'. Solo para 'guardar'. En modo 'aula' se ignora: ahi la placa se pregunta cada sesion."),
   },
   async execute(args) {
     if (args.accion === "leer") {
