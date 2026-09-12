@@ -90,7 +90,7 @@ powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
 >
 > Podés cambiar después: conseguí la key y corré **"Reparar Tecnia Bot"** (menú inicio en Windows) o `bash install/install.sh`; o pegala con `/connect` dentro de OpenCode y corré `/actualizar`. El instalador vuelve a elegir el modelo en cada corrida.
 
-> 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md) · [todo sobre la API key de Google — cómo conseguirla y qué hacer si deja de andar](docs/api-key-google.md)
+> 📖 Guías paso a paso (drivers USB + permisos del puerto serial + conectar la API key): [Windows](docs/instalacion-windows.md) · [Linux](docs/instalacion-linux.md) · [Chromebook (en prueba)](docs/instalacion-chromebook.md) · [todo sobre la API key de Google — cómo conseguirla y qué hacer si deja de andar](docs/api-key-google.md)
 
 ### 🔧 Instalación manual (avanzada)
 
