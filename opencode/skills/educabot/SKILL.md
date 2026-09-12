@@ -236,7 +236,47 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 void setup() { lcd.init(); lcd.backlight(); }
 void loop()  { lcd.setCursor(0, 0); lcd.print("Hola"); }
 ```
-En Tecnia Bot: idéntico, con `lib_deps = marcoschwartz/LiquidCrystal_I2C` (misma API `init()`/`backlight()`). Puerto **IIC**. Si no muestra nada, probá `0x3F`: el bloque «Escaner I2C» de Educablocks hace justamente eso (recorre direcciones con `Wire.beginTransmission`).
+En Tecnia Bot: idéntico, con `lib_deps = marcoschwartz/LiquidCrystal_I2C` (misma API `init()`/`backlight()`). Puerto **IIC**.
+
+**La dirección: en los kits de Educabot, `0x27`. Ponela y seguí.**
+
+En los kits que vimos **hasta hoy**, la mochila del LCD siempre fue la de `0x27`. Usala
+**sin preguntar y sin avisar nada**: un aviso sobre algo que no pasa nunca entrena al
+docente a ignorar los avisos, y el día que le des uno que importa no te va a leer.
+
+> **Ojo, que esto es lo observado, no una garantía del fabricante.** Educablocks genera
+> `0x27` por defecto, **pero su bloque «LCD I2C» ofrece `0x27 / 0x3F` como parámetro
+> elegible** — o sea que Educabot mismo contempla que cambie, probablemente por lote o
+> por proveedor. Si algún día aparece un kit con `0x3F`, **actualizá esta línea** y dejá
+> anotado qué lote era.
+
+**Si NO muestra nada, recién ahí:**
+
+Estos displays vienen en dos versiones que por fuera son idénticas — cambia el chip de la
+mochila, y con él la dirección. Decíselo con el síntoma, no con el número:
+
+> Estos displays vienen en dos versiones que por fuera son idénticas. **Dale vuelta el
+> display y mirá el chip más grande de la plaquita de atrás: si dice `PCF8574A`, con A al
+> final, decímelo** y te lo cambio en cinco segundos.
+
+`PCF8574` → `0x27` · `PCF8574A` → `0x3F`. **Una sola letra.** Mirar es mejor que probar:
+convierte dos compilaciones a ciegas en una observación de cinco segundos. Si el docente
+no quiere dar vuelta el display, el bloque «Escaner I2C» de Educablocks recorre el bus y
+la encuentra.
+
+**Si el display NO es del kit** (comprado suelto, de otra marca, heredado de otro
+proyecto), ahí **sí** avisá antes de cargar: no hay costumbre observada que valga, y
+aplicá la regla de gotchas preventivos del prompt (síntoma reconocible, la acción de tu lado).
+
+> **Y por qué acá la dirección es la primera sospecha, cuando en otros proyectos no lo es.**
+> Las fichas de `proyectos-inet` (invernadero, calefacción) dicen *«antes de salir a
+> escanear direcciones, mirá de dónde sale el VCC»* — y tienen razón **ahí**, porque son
+> montajes con cables sueltos donde el display puede terminar colgado del bus de 3,3 V y
+> quedarse sin contraste. Ojo que **el síntoma es el mismo**: luz de fondo prendida y
+> pantalla en blanco. **Por el puerto IIC del kit eso no puede pasar**: el RJ12 lleva
+> señal, 5 V y GND en el mismo cable, así que alimentación y cableado ya están
+> garantizados por el conector, y el síntoma deja de ser ambiguo. **Fijate siempre cómo
+> está conectado antes de elegir por dónde empezar a sospechar.**
 
 **8. Bloque «Relé (invertido)» — Pin 7**
 ```cpp

@@ -127,6 +127,30 @@ test("(f) los datos del Libro de actividades: tercer pin PWM y VIN en E3/E4/E6, 
   assert.ok(existsSync(join(REPO, "docs/educabot/educablocks-uno-conectores.png")), "falta el diagrama de conectores en docs/educabot/")
 })
 
+test("(g) la dirección del LCD: 0x27 sin avisar, y el «hasta hoy» queda escrito", () => {
+  // Salió de probar el bot con un display en el puerto IIC del Bhoot. Avisaba SIEMPRE
+  // que "si no muestra nada es que usa la 0x3F". El dato era correcto y el aviso
+  // sobraba: en los kits de Educabot vistos hasta hoy la mochila fue siempre 0x27.
+  // Un aviso sobre algo que no pasa nunca entrena al docente a ignorar los avisos.
+  //
+  // Pero "siempre" acá es una costumbre OBSERVADA, no una garantía: el propio bloque
+  // «LCD I2C» de Educablocks ofrece 0x27/0x3F como parámetro elegible. Por eso el
+  // skill tiene que decir "hasta hoy" y no "es": si mañana entra un lote con 0x3F,
+  // el que lo lea tiene que saber qué evidencia había, no adivinar quién lo escribió.
+  assert.match(skill, /hasta hoy/i, "el skill afirma la dirección como un hecho: falta el «hasta hoy» y su evidencia")
+  assert.match(skill, /sin preguntar y sin avisar/i, "no dice que con el kit se pone 0x27 y se sigue, sin aviso preventivo")
+
+  // El discriminador tiene que ser MIRAR el chip, no probar direcciones a ciegas.
+  assert.match(skill, /PCF8574A/, "no dice cómo distinguir las dos mochilas mirando el chip")
+  assert.match(skill, /una sola letra/i, "no explica que la diferencia visible es la A final")
+
+  // Y la trampa: el síntoma «luz sí, letras no» también lo da un LCD a 3,3 V. Acá no
+  // aplica porque el RJ12 garantiza los 5 V — pero eso tiene que estar dicho, para que
+  // nadie copie la frase a un montaje con cables sueltos.
+  assert.match(skill, /el síntoma es el mismo|síntoma deja de ser ambiguo/i,
+    "no avisa que el mismo síntoma lo da la alimentación a 3,3 V en montajes con cables sueltos")
+})
+
 test("el archivo largo bloque→código existe y el SKILL.md lo referencia", () => {
   assert.ok(skill.includes("bloques-a-codigo.md"), "SKILL.md no referencia bloques-a-codigo.md")
   assert.ok(bloques.length > 2000, "bloques-a-codigo.md está vacío o casi")
