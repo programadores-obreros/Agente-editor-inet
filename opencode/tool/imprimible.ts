@@ -110,13 +110,29 @@ export default tool({
   description: `Genera una HOJA para IMPRIMIR o repartir en el aula (materiales + conexiones + codigo) y la abre en el navegador para que el docente haga Ctrl+P —o Cmd+P en Mac— (guardar como PDF o imprimir). Usalo cuando pidan "materiales para imprimir", "hoja para el aula", "lista de materiales", "para repartir", "en PDF". El contenido lo armas vos (sacalo del skill proyectos-inet): pasas titulo, materiales, conexiones y codigo.`,
   args: {
     titulo: tool.schema.string().describe("Titulo del proyecto (ej: 'Semáforo con 3 LEDs — ESP32')."),
-    placa: tool.schema.enum(["UNO", "ESP32"]).optional().describe("La placa del proyecto, para mostrarla en el encabezado."),
+    /**
+     * POR QUE ES UN STRING Y NO UN ENUM — mismo motivo que en `perfil.ts`.
+     *
+     * Era `enum(["UNO", "ESP32"])`, el MISMO enum que se saco de `perfil.ts` por
+     * ser una SEGUNDA fuente de verdad sobre que placas existen. Ahi se corrigio
+     * y aca sobrevivio: el docente con una Educablocks, un Bhoot o una Mis
+     * Ladrillos pedia la hoja para repartir en el aula y el encabezado solo podia
+     * rotular "UNO" o "ESP32" — le imprimiamos una placa que no es la suya, en el
+     * papel que el pibe se lleva a la mesa de trabajo.
+     *
+     * La lista de placas vive en UN solo lugar, el skill `placas`.
+     */
+    placa: tool.schema.string().optional().describe("La placa del proyecto tal como la nombra el skill `placas` (ej: 'Arduino UNO', 'ESP32 DevKit', 'Educabot Bhoot'), para mostrarla en el encabezado."),
     materiales: tool.schema
       .array(tool.schema.string())
-      .describe("Lista de materiales, uno por elemento con cantidad (ej: '3x LED (rojo, amarillo, verde)', '3x resistencia 330Ω', '1x protoboard')."),
+      .describe("Lista de materiales, uno por elemento con cantidad (ej: '3x LED (rojo, amarillo, verde)', '3x resistencia 220Ω', '1x protoboard')."),
     conexiones: tool.schema
       .array(tool.schema.string())
-      .describe("Conexiones, una por elemento (ej: 'LED rojo (ánodo) → GPIO12 con 330Ω', 'LED rojo (cátodo) → GND'). Se muestran como tabla."),
+      // El ejemplo dice GPIO18 y no GPIO12 a proposito: GPIO12 es strapping
+      // (`circuito.ts` lo tiene en GPIO_STRAPPING y NUNCA lo reparte). El ejemplo
+      // de un schema es lo que el modelo copia, asi que un tool no puede sugerir
+      // el pin que el otro prohibe. GPIO18 es el del LED rojo en 01-semaforizacion.
+      .describe("Conexiones, una por elemento (ej: 'LED rojo (ánodo) → GPIO18 con 220Ω', 'LED rojo (cátodo) → GND'). Se muestran como tabla."),
     codigo: tool.schema.string().describe("El código comentado del proyecto (en español, línea por línea)."),
     notas: tool.schema.string().optional().describe("Notas de seguridad o tips (opcional): ej. los 3.3V del ESP32, polaridad, etc."),
   },
