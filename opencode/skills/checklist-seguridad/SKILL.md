@@ -28,10 +28,10 @@ Este skill es PREVENTIVO: se usa **antes** de que el alumno conecte el USB, carg
 
 1. **¿Alimentación correcta?** Los componentes de 5V (servo, PIR, HC-SR04) al **VIN**, no a 3.3V. Los de 3.3V a 3.3V. El **LCD I2C** tiene su nota aparte más abajo: no se resuelve con "VIN y listo".
 2. **¿Polaridad del LED?** La pata larga (ánodo, +) va al lado de la señal/positivo; la corta (cátodo, −) a GND. Al revés no enciende (y no es lindo para el LED).
-3. **¿Resistencia en serie con cada LED, y del valor correcto para ESTA fuente?** Siempre una resistencia entre el GPIO y el LED — sin ella, el LED y el pin sufren. Pero **el valor no es siempre 330Ω**: en 5V (UNO) 330Ω anda con cualquier LED, y en 3.3V (ESP32) un LED azul, blanco o verde InGaN con 330Ω recibe 0,3 mA y **no enciende**. El color del LED no dice su tensión: medila con el téster (modo diodo). Ver el skill `esp32` para el cálculo. Y en 3.3V nunca bajes de 100Ω.
+3. **¿Resistencia en serie con cada LED?** Siempre una resistencia entre el GPIO y el LED — sin ella, el LED y el pin sufren. El valor de la casa es **220Ω**, el que viene en los kits, y sirve en las dos placas: en los **5V del UNO** deja 13,6 mA con un LED de 2V (el pin aguanta 20) y en los **3.3V del ESP32** deja 5,5 mA con un LED de 2,1V. **Pero en 3.3V hay una trampa que no existe en 5V:** un LED azul, blanco o verde InGaN cae ~3,2V, así que sobre 3,3V **no enciende con ninguna resistencia** (con 220Ω recibe 0,45 mA) — no queda tensión, y no se arregla cambiando el valor. El color del LED no dice su tensión: medila con el téster (modo diodo). Ver el skill `esp32` para el cálculo y las salidas. Y en 3.3V nunca bajes de 100Ω.
 4. **¿GND común?** Si usás una fuente externa (para el servo, tira de LEDs, etc.), el GND de ESA fuente tiene que estar unido al GND del ESP32. Sin GND común, no funciona o se comporta raro.
 5. **¿Ningún cable pelado tocándose?** Un corto entre 5V/3.3V y GND puede resetear la placa o dañarla. Revisá que no haya cobres sueltos cruzándose.
-6. **¿Señal de 5V entrando a un GPIO del ESP32?** (ej: ECHO del HC-SR04) → tiene que pasar por un divisor de tensión primero. Nunca directo.
+6. **¿Señal de 5V entrando a un GPIO del ESP32?** (ej: ECHO del HC-SR04) → tiene que pasar por un divisor de tensión primero. Nunca directo. **Este ítem es sólo del ESP32:** si estás en un **Arduino UNO**, saltealo — la placa entera es de 5V y sus entradas toleran 5V, así que el ECHO va directo al pin y el divisor sobra.
 7. **¿La placa correcta seleccionada?** Antes de cargar, que el proyecto apunte a tu placa (UNO / ESP32) y al puerto correcto. Cargar el binario equivocado no rompe el hardware, pero no va a andar.
 8. **¿Strapping pins libres al arrancar?** En el ESP32, GPIO0, 2, 12 y 15 son "strapping": el chip les mira el nivel en el instante del encendido para decidir **cómo** arranca. El más peligroso es **GPIO12**: si está en HIGH al dar corriente, configura la memoria flash a 1,8V y la placa **no bootea** — sin mensaje de error, sin nada. Usá los pines seguros: **GPIO4, 5, 18, 19, 21, 22, 23, 25, 26, 27**.
 
@@ -39,12 +39,12 @@ Este skill es PREVENTIVO: se usa **antes** de que el alumno conecte el USB, carg
 
 | Componente | Alimentación | Ojo |
 |---|---|---|
-| LED | GPIO (3.3V) + resistencia **calculada** | polaridad + resistencia; en 3.3V **330Ω no sirve para todos los colores** (ver ítem 3) |
-| Potenciómetro | 3.3V | salida analógica al GPIO (0-4095 en ESP32) |
+| LED | GPIO + **220Ω** en serie (5V y 3.3V) | polaridad + resistencia; en 3.3V **ningún valor alcanza para un azul/blanco/verde InGaN** (ver ítem 3) |
+| Potenciómetro | 3.3V | salida analógica al GPIO (0-4095 en ESP32; **0-1023 en UNO**) |
 | Servo SG90 | **VIN (5V)** | consume corriente; si tiembla, fuente externa + GND común |
-| HC-SR04 (ultrasónico) | **VIN (5V)** | ECHO devuelve 5V → **divisor** antes del GPIO |
+| HC-SR04 (ultrasónico) | **VIN (5V)** | ECHO devuelve 5V → **divisor** antes del GPIO **sólo en ESP32**; en **UNO va directo**, sin divisor |
 | PIR (movimiento) | **VIN (5V)** | OUT = 3.3V en el HC-SR501 (trae regulador), OK directo; sólo módulos mini sin regulador pueden dar 5V: medí antes |
-| LCD 16x2 (I2C) | ⚠️ **no hay respuesta simple** — leé la nota de abajo | SDA/SCL **NO** son tolerantes a 5V en el ESP32 |
+| LCD 16x2 (I2C) | **UNO: 5V y listo.** ESP32: ⚠️ **no hay respuesta simple** — leé la nota de abajo | SDA/SCL **NO** son tolerantes a 5V en el ESP32. En **UNO el problema no existe**: la placa ya es de 5V, no hace falta conversor de nivel |
 | DHT11/22 | 3.3V | la plaqueta de 3 pines **ya trae** su pull-up; sólo el sensor pelado de 4 patas necesita uno externo |
 | Relé | según módulo (muchos 5V → VIN) | separá la potencia de la lógica |
 

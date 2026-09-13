@@ -266,7 +266,7 @@ framework = arduino
 
 **Como verificarlo:**
 1. Revisa la polaridad: la pata larga del LED (anodo) va al positivo, la corta (catodo) va a GND
-2. Verifica que haya una resistencia de 220-330 ohm en serie
+2. Verifica que haya una resistencia de 220 ohm en serie (es el valor de la casa, el de los kits, tanto en UNO/5 V como en ESP32/3,3 V)
 3. Confirma que el pin en el codigo coincide con el pin fisico donde conectaste el LED
 4. Prueba el pin con otro LED o con un multimetro
 

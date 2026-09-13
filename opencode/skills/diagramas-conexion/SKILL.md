@@ -41,7 +41,7 @@ Ejemplo (LED + botón en Arduino UNO):
 ```
    Arduino UNO                    LED
   ┌───────────┐
-  │      pin13├──🟡──[330Ω]──►|── ánodo (pata larga)
+  │      pin13├──🟡──[220Ω]──►|── ánodo (pata larga)
   │           │                │
   │       GND ├──⚫────────────┘  cátodo (pata corta)
   │           │
@@ -65,7 +65,7 @@ Reglas del dibujo ASCII:
 
 | Desde (componente)       | Pin | Cable        | Hacia    | Pin              |
 |--------------------------|-----|--------------|----------|------------------|
-| LED ánodo (pata larga)   | +   | 🟡 amarillo  | Arduino  | pin 13 (con 330Ω)|
+| LED ánodo (pata larga)   | +   | 🟡 amarillo  | Arduino  | pin 13 (con 220Ω)|
 | LED cátodo (pata corta)  | -   | ⚫ negro     | Arduino  | GND              |
 | Botón terminal 1         |     | 🟢 verde     | Arduino  | pin 2            |
 | Botón terminal 2         |     | ⚫ negro     | Arduino  | GND              |
@@ -79,7 +79,7 @@ Usalo únicamente cuando escribís un archivo que se va a leer en GitHub o VS Co
 flowchart LR
     ARD[Arduino UNO]
     LED[LED]
-    R[Resistencia 330Ω]
+    R[Resistencia 220Ω]
     BTN[Botón]
 
     ARD -->|🟡 pin 13| R
@@ -99,8 +99,8 @@ Reglas del Mermaid:
 
 Cuando el circuito lo amerite, agregá una nota de seguridad:
 
-- **LED:** siempre con resistencia en serie, o se quema: **220Ω en 3.3V (ESP32), 330Ω en 5V (UNO)**. Respetar polaridad (pata larga = positivo).
-- **ESP32:** trabaja a **3.3V**, no 5V. Conectar componentes de 5V a sus pines puede dañarlo. Para LEDs en 3.3V usá **220Ω, no 330Ω**: los 330Ω son una regla de 5V, y con un LED azul/blanco/verde InGaN (Vf ~3,2V) en 3.3V dejan 0,3 mA — no prende. Medí el Vf con el téster (ver skill `esp32`); los rojos (1,8-2,0V) andan con cualquiera de las dos.
+- **LED:** siempre con resistencia en serie, o se quema: **220Ω**, que es el valor de la casa en las dos placas — los 5V del UNO y los 3.3V del ESP32. Es el que viene en los kits. Respetar polaridad (pata larga = positivo).
+- **ESP32:** trabaja a **3.3V**, no 5V. Conectar componentes de 5V a sus pines puede dañarlo. Y con los LED, **3.3V no es 5V con menos brillo**: un LED azul/blanco/verde InGaN (Vf ~3,2V) colgado de un GPIO de 3.3V **no prende con ninguna resistencia** — con 220Ω le llegan 0,45 mA — porque no queda tensión, no porque el valor esté mal elegido. Los rojos y amarillos (1,8-2,0V) andan bien con los mismos 220Ω. Medí el Vf con el téster (ver skill `esp32`), y en 3.3V nunca bajes de 100Ω.
 - **Sensores de 5V en ESP32:** usar divisor de tensión o módulo adaptador.
 - **Relay / 220V:** advertir SIEMPRE sobre el peligro de la tensión de red.
 
