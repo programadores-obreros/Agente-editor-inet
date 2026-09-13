@@ -1,8 +1,8 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import { homedir } from "node:os"
-import { join } from "node:path"
-import { existsSync, readFileSync } from "node:fs"
+import { basename, join } from "node:path"
+import { existsSync, readFileSync, statSync } from "node:fs"
 
 /**
  * La ruta del archivo como URL `file://` bien formada.
@@ -151,6 +151,18 @@ interface Pin {
   clase: ClasePin
   rol: string
   destino?: string
+  /**
+   * Cuántos GPIO consume ESTA fila de la tabla. Default 1.
+   *
+   * FIX auditoría B6 (pines fantasma): el display de 7 segmentos y el teclado 4x4
+   * declaran UNA fila ("Segmentos A-G", "Filas R1-R4") que en la placa real son
+   * varios pines. Antes el rol no tenía placeholder, así que el pin se consumía
+   * del pool igual pero NO se imprimía: pedías "7segmentos, led, led" y el display
+   * se comía GPIO4 sin figurar en ningún lado, mientras el primer LED arrancaba en
+   * GPIO5. La docente contaba los pines del dibujo y le faltaba uno — el peor tipo
+   * de error, porque el dibujo se ve perfecto.
+   */
+  cantidad?: number
 }
 
 interface Componente {
@@ -169,7 +181,16 @@ const COMPONENTES: Record<string, Componente> = {
     tag: "wokwi-led",
     etiqueta: "LED",
     voltaje: "3.3V",
-    attrs: (i) => `color="${["red", "green", "yellow", "blue"][i % 4]}"`,
+    // FIX auditoría B10/B9: el ciclo era ["red","green","yellow","blue"] y el 4º LED
+    // de CUALQUIER circuito salía AZUL. skills/esp32/SKILL.md es taxativo: un LED que
+    // cae 3 V o más (azul, blanco) sobre 3,3 V "no hay con qué hacerlo andar decente,
+    // y no es un problema de elegir mejor la resistencia: no queda tensión". O sea que
+    // dibujábamos un circuito IMPOSIBLE de armar, y el alumno lo iba a intentar igual.
+    // Ahora el ciclo es rojo → amarillo → verde: son los tres colores de LED comunes de
+    // 5 mm que SÍ andan a 3,3 V con 220 Ω (el verde común es GaP, ~2,1 V; el verde
+    // InGaN del SKILL es otra pieza, la de alto brillo), y de paso es el orden del
+    // semáforo, que es el proyecto de 3 LEDs que más se pide.
+    attrs: (i) => `color="${["red", "yellow", "green"][i % 3]}"`,
     pines: [
       { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0} (con 220Ω)" },
       { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
@@ -332,7 +353,7 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Display 7 segmentos",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "7 pines (cada segmento con 220Ω)" },
+      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "{0-6} (cada segmento con 220Ω)", cantidad: 7 },
       { nombre: "Común", color: CABLE.marron, clase: "fijo", rol: "GND (cátodo común)", destino: "GND" },
     ],
     advertencia: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 220Ω. Conviene la librería SevSeg para no gastar tantos pines.",
@@ -386,13 +407,18 @@ const COMPONENTES: Record<string, Componente> = {
     tag: "wokwi-stepper-motor",
     etiqueta: "Motor paso a paso",
     voltaje: "5V",
+    // FIX auditoría B2: estos cuatro pines eran clase:"digital", así que el asignador
+    // les daba 4 GPIO reales y el dibujo salía con CUATRO CABLES del ESP32 directo a
+    // las bobinas — mientras la advertencia de abajo decía "se conecta por el driver
+    // ULN2003". El texto y el dibujo se contradecían, y el alumno cablea lo que VE:
+    // las bobinas del 28BYJ-48 chupan ~240 mA por fase y el GPIO da 12 mA. Se quema.
+    // Ahora replica el patrón del motor DC (pines "fijo" que terminan en el driver):
+    // el único que manda señales al ESP32 es el driver, que ya tiene sus IN1-IN4.
     pines: [
-      { nombre: "IN1", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "IN2", color: CABLE.amarillo, clase: "digital", rol: "GPIO{1}" },
-      { nombre: "IN3", color: CABLE.verde, clase: "digital", rol: "GPIO{2}" },
-      { nombre: "IN4", color: CABLE.azul, clase: "digital", rol: "GPIO{3}" },
+      { nombre: "Bobinas (4 hilos)", color: CABLE.naranja, clase: "fijo", rol: "Driver ULN2003 (OUT)", destino: "Driver ULN2003 (OUT)" },
+      { nombre: "Común (hilo rojo)", color: CABLE.rojo, clase: "fijo", rol: "Driver ULN2003 (5V)", destino: "Driver ULN2003 (5V)" },
     ],
-    advertencia: "el motor paso a paso (28BYJ-48) gira en pasos exactos, ideal para posición precisa (impresora, reloj, persiana). Se conecta por el driver ULN2003 (4 pines IN1-IN4). El motor se alimenta de 5V. Librería: Stepper o AccelStepper.",
+    advertencia: "el motor paso a paso (28BYJ-48) gira en pasos exactos, ideal para posición precisa (impresora, reloj, persiana). NO se conecta al ESP32: su conector de 5 hilos va al driver ULN2003, y son los IN1-IN4 del driver los que van a los GPIO. El motor se alimenta de 5V desde el driver. Librería: Stepper o AccelStepper.",
     anim: (id) => `const s=document.getElementById('${id}');let a=0;setInterval(()=>{a=(a+6)%360;if(s)s.angle=a;},40);`,
   },
 
@@ -401,8 +427,8 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Teclado matricial 4x4",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Filas (R1-R4)", color: CABLE.naranja, clase: "digital", rol: "4 GPIO (filas)" },
-      { nombre: "Columnas (C1-C4)", color: CABLE.verde, clase: "digital", rol: "4 GPIO (columnas)" },
+      { nombre: "Filas (R1-R4)", color: CABLE.naranja, clase: "digital", rol: "{0-3}", cantidad: 4 },
+      { nombre: "Columnas (C1-C4)", color: CABLE.verde, clase: "digital", rol: "{4-7}", cantidad: 4 },
     ],
     advertencia: "el teclado 4x4 tiene 16 teclas pero usa solo 8 pines (4 filas + 4 columnas) gracias a la lectura matricial. Para ingresar claves, menús, números. Librería: Keypad.",
     anim: (id) => `const k=document.getElementById('${id}');`,
@@ -695,6 +721,34 @@ const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 
 const GPIO_FLASH = new Set([6, 7, 8, 9, 10, 11])
 // Pines "strapping": funcionan, pero pueden complicar el arranque si tienen algo conectado.
 const GPIO_STRAPPING = new Set([0, 2, 12, 15])
+// FIX auditoría B4: GPIO34/35/36/39 NO tienen driver de salida (son ADC/entrada pura)
+// y TAMPOCO tienen pull-up/pull-down interno. O sea: no sirven ni para encender algo
+// ni para un botón con INPUT_PULLUP. "led:34" se aceptaba sin chistar y el LED no
+// prendía nunca — y el alumno revisa el cable, la resistencia y la soldadura antes de
+// sospechar del pin, porque el diagrama se lo dio el bot.
+const GPIO_SOLO_ENTRADA = new Set([34, 35, 36, 39])
+// GPIO1 (TX) y GPIO3 (RX) van al chip USB-serie de la placa: con algo colgado ahí, la
+// carga del sketch falla y el Monitor Serie escupe basura. Clase perdida buscando por qué
+// "no anda el Arduino" cuando el circuito estaba bien.
+const GPIO_UART_USB = new Set([1, 3])
+
+/**
+ * Por qué NO se puede usar el GPIO que pidió el usuario ("led:34"), o null si se puede.
+ *
+ * Un solo lugar con los motivos: lo llama la siembra previa (para reservar el pin) y
+ * el asignador (para avisar). Si se separaran, el pin se reservaría y el aviso diría
+ * otra cosa.
+ */
+function motivoGpioRechazado(g: number, clase: ClasePin, etiqueta: string): string | null {
+  if (GPIO_FLASH.has(g))
+    return `⚠️ GPIO${g} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa. Le asigné un pin seguro.`
+  if (!GPIO_VALIDOS.has(g)) return `⚠️ GPIO${g} no existe en el ESP32. Le asigné un pin válido.`
+  if (GPIO_UART_USB.has(g))
+    return `⚠️ GPIO${g} es el puerto serie del USB (GPIO1=TX, GPIO3=RX): con algo conectado ahí la placa no acepta la carga del programa. Le asigné otro pin.`
+  if (clase !== "analogico" && GPIO_SOLO_ENTRADA.has(g))
+    return `⚠️ GPIO${g} es SOLO ENTRADA en el ESP32 (34, 35, 36 y 39): no puede encender nada ni tiene pull-up interno, así que ${etiqueta} ahí no funcionaría nunca. Le asigné un pin que sí sirve. Esos cuatro son ideales para sensores analógicos.`
+  return null
+}
 
 interface Pedido {
   tipo: string
@@ -708,19 +762,71 @@ interface ResultadoArmado {
   alto: number
   animacion: string
   interactivo: boolean
+  umbralAplicado: boolean // si el arg `umbral` se llegó a usar (ver armarPuente)
+  avisoUmbral: string | null // si se usó PERO recortado al rango del sensor (ver armarPuente)
+  notas: string[] // lo que el CHAT tiene que decir: "no te di lo que pediste" (ver asignarGpios)
+  sinPin: string[] // componentes que quedaron sin pin: el circuito está INCOMPLETO
+  conexiones: string[] // la tabla de pines en texto plano, para devolvérsela al modelo
 }
 
 // FIX auditoría #1: g >= 0 evita imprimir "GPIO-1" cuando se agota el pool.
+// FIX auditoría B8: devolvía "GPIO?" y el rol YA trae el literal "GPIO" delante
+// ("GPIO{0}"), así que al agotarse el pool imprimía "GPIOGPIO?" en la tabla de
+// conexiones. Se lee como un error del programa, no como "acá falta un pin".
+// FIX auditoría B6: {a-b} es una fila que consume VARIOS pines (7 segmentos,
+// teclado) y los imprime todos: el pin reservado tiene que verse en la tabla.
 function rellenarRol(rol: string, gpios: number[]): string {
-  return rol.replace(/\{(\d+)\}/g, (_, i) => {
-    const g = gpios[Number(i)]
-    return g != null && g >= 0 ? String(g) : "GPIO?"
-  })
+  const uno = (i: number): string => {
+    const g = gpios[i]
+    return g != null && g >= 0 ? String(g) : "?"
+  }
+  return rol
+    .replace(/\{(\d+)-(\d+)\}/g, (_, a: string, b: string) => {
+      const lista: string[] = []
+      for (let i = Number(a); i <= Number(b); i++) lista.push("GPIO" + uno(i))
+      return lista.join(", ")
+    })
+    .replace(/\{(\d+)\}/g, (_, i: string) => uno(Number(i)))
 }
 
-function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] } {
+/**
+ * Reparte los GPIO, y devuelve los avisos por CANALES SEPARADOS, a propósito.
+ *
+ * FIX auditoría A: hasta acá esta función tenía un solo canal (`avisos`) y todo
+ * terminaba en el `<div class="aviso">` del HTML. O sea: en la HOJA. El chat no se
+ * enteraba de nada. "lcd, led:21" contestaba «Listo! Generé el circuito visual y
+ * animado.» y punto, con el "No pude usar GPIO21" enterrado en la página, entre las
+ * advertencias generales de cada componente.
+ *
+ * Eso ya era así antes de la ronda anterior. Lo que hizo la ronda anterior fue crear
+ * `notas` en execute con un contrato explícito —«todo lo que el docente TIENE que
+ * saber porque no le dimos EXACTAMENTE lo que pidió; van al final de la respuesta,
+ * nunca en silencio»— y dejar la mitad de los avisos de esta función del otro lado.
+ * Misma función, dos contratos.
+ *
+ * - `avisos` → la HOJA. Sin cambios: es lo que el docente tiene delante al cablear.
+ * - `notas`  → el CHAT, y SÓLO lo que significa "no te di lo que pediste". El aviso
+ *              de strapping NO entra acá a propósito: ese pin sí se te dio y anda, es
+ *              una sugerencia. Si el chat avisa de todo, la docente aprende a
+ *              saltearse los ⚠️ y el aviso que sí importa deja de existir.
+ * - `sinPin` → los componentes que quedaron SIN pin (pool agotado). No es una nota
+ *              más: es un circuito INCOMPLETO, y cambia cómo se anuncia el resultado.
+ */
+function asignarGpios(pedidos: Pedido[]): {
+  gpios: number[][]
+  avisos: string[]
+  notas: string[]
+  sinPin: string[]
+} {
   const usados = new Set<number>()
   const avisos: string[] = []
+  const notas: string[] = []
+  const sinPin: string[] = []
+  // "no te di lo que pediste" va a los DOS lados: la hoja y el chat.
+  const avisar = (texto: string): void => {
+    avisos.push(texto)
+    notas.push(texto)
+  }
   const poolDig = [...POOL_DIGITAL]
   const poolAna = [...POOL_ANALOGICO]
   const resultado: number[][] = []
@@ -738,6 +844,32 @@ function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] 
     }
   }
 
+  /*
+   * FIX auditoría B13: sembrar TAMBIÉN los GPIO que el usuario pidió a mano, igual
+   * que arriba con los fijos del I2C.
+   *
+   * Sin esto el resultado dependía del ORDEN de la lista: "led, servo:4" le daba el
+   * GPIO4 al LED automático (es el primero del pool) y el servo recibía "ya ocupado,
+   * le asigné otro"; "servo:4, led" andaba perfecto. El mismo circuito, dos dibujos
+   * distintos, y el aviso culpaba al usuario por un pin que nadie más había pedido.
+   *
+   * Se reserva sólo lo que DE VERDAD se va a poder usar (misma función de motivos que
+   * usa el aviso de abajo): un pin de flash o uno solo-entrada no se reserva, se
+   * rechaza igual que antes. Si dos componentes piden el mismo pin, gana el primero
+   * y el segundo recibe el "ya ocupado" — que ahí sí es cierto.
+   */
+  const manual = new Map<Pedido, number>()
+  for (const ped of pedidos) {
+    if (ped.gpio == null) continue
+    const def = COMPONENTES[normalizarTipo(ped.tipo)]
+    const primero = def?.pines.find((p) => p.clase !== "fijo")
+    if (!def || !primero || (primero.cantidad ?? 1) > 1) continue
+    if (motivoGpioRechazado(ped.gpio, primero.clase, def.etiqueta)) continue
+    if (usados.has(ped.gpio)) continue
+    usados.add(ped.gpio)
+    manual.set(ped, ped.gpio)
+  }
+
   const sacar = (pool: number[]): number | null => {
     while (pool.length) {
       const g = pool.shift()!
@@ -752,41 +884,48 @@ function asignarGpios(pedidos: Pedido[]): { gpios: number[][]; avisos: string[] 
     const pinesGpio = def.pines.filter((p) => p.clase !== "fijo")
 
     pinesGpio.forEach((pin, idx) => {
+      // Una fila puede consumir varios pines (7 segmentos: 7, teclado: 4+4).
+      const cuantos = pin.cantidad ?? 1
+
       // gpio manual del alumno para el primer pin digital O analógico.
-      // Se VALIDA contra los pines reales del ESP32 antes de aceptarlo: un pin de
-      // flash (GPIO6-11) cuelga la placa; uno inexistente no sirve. En esos casos
-      // avisamos y caemos al pool seguro. Los strapping se aceptan con nota.
-      if (idx === 0 && pin.clase !== "fijo" && ped.gpio != null) {
-        const g = ped.gpio
-        if (GPIO_FLASH.has(g)) {
-          avisos.push(`⚠️ GPIO${g} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa. Le asigné un pin seguro.`)
-        } else if (!GPIO_VALIDOS.has(g)) {
-          avisos.push(`⚠️ GPIO${g} no existe en el ESP32. Le asigné un pin válido.`)
-        } else if (usados.has(g)) {
-          avisos.push(`No pude usar GPIO${g} para ${def.etiqueta} (ya ocupado): le asigné otro.`)
-        } else {
-          usados.add(g)
-          asignados.push(g)
-          if (GPIO_STRAPPING.has(g)) {
-            avisos.push(`Nota: GPIO${g} es un pin "strapping" del ESP32 — funciona, pero puede complicar el arranque si tiene algo conectado al encender. Si podés, elegí otro.`)
+      // Ya quedó reservado (o rechazado) en la siembra de arriba: acá sólo se
+      // usa, o se explica por qué no se pudo.
+      if (idx === 0 && ped.gpio != null) {
+        const reservado = manual.get(ped)
+        if (reservado != null) {
+          asignados.push(reservado)
+          if (GPIO_STRAPPING.has(reservado)) {
+            avisos.push(`Nota: GPIO${reservado} es un pin "strapping" del ESP32 — funciona, pero puede complicar el arranque si tiene algo conectado al encender. Si podés, elegí otro.`)
           }
           return
         }
+        if (cuantos > 1) {
+          avisar(`${def.etiqueta} usa ${cuantos} pines, no uno: el GPIO${ped.gpio} que pediste no alcanza, así que se los asigné yo.`)
+        } else {
+          avisar(
+            motivoGpioRechazado(ped.gpio, pin.clase, def.etiqueta) ??
+              `No pude usar GPIO${ped.gpio} para ${def.etiqueta} (ya ocupado): le asigné otro.`,
+          )
+        }
       }
-      const g = pin.clase === "analogico" ? sacar(poolAna) : sacar(poolDig)
-      if (g == null) {
-        avisos.push(`No quedan GPIO ${pin.clase} libres para ${def.etiqueta}: revisalo a mano.`)
-        asignados.push(-1)
-        return
+
+      for (let n = 0; n < cuantos; n++) {
+        const g = pin.clase === "analogico" ? sacar(poolAna) : sacar(poolDig)
+        if (g == null) {
+          avisar(`No quedan GPIO ${pin.clase} libres para ${def.etiqueta}: revisalo a mano.`)
+          if (!sinPin.includes(def.etiqueta)) sinPin.push(def.etiqueta)
+          asignados.push(-1)
+          continue
+        }
+        usados.add(g)
+        asignados.push(g)
       }
-      usados.add(g)
-      asignados.push(g)
     })
 
     resultado.push(asignados)
   }
 
-  return { gpios: resultado, avisos }
+  return { gpios: resultado, avisos, notas, sinPin }
 }
 
 
@@ -805,7 +944,20 @@ const SENSOR_SIM: Record<string, { magnitud: string; unidad: string; min: number
   lluvia: { magnitud: "Lluvia", unidad: "%", min: 0, max: 100, umbral: 50, emoji: "🌧️" },
 }
 
-function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuador: string } | null {
+// `usaUmbral` dice si el arg `umbral` de la tool llegó a usarse (sólo el puente
+// sensor→actuador lo mira). Lo necesita execute para avisar cuando se ignoró:
+// FIX auditoría B11 — pedir "que prenda a 20 grados" y que el circuito salga con
+// el default sin decir nada es peor que rechazar el pedido.
+//
+// `avisoUmbral` es el caso de al lado, que B11 no había cubierto: el umbral SÍ se
+// aplica, pero no el que se pidió. El Math.max/Math.min que lo acota al rango del
+// sensor era mudo y usaUmbral seguía en true, así que el aviso de arriba tampoco
+// disparaba: se pedía 200, la hoja decía "≥ 60 °C" y el chat no decía nada. Ése es el
+// que se ve bien y miente, que es peor que el que se ve roto.
+function armarPuente(
+  pedidos: Pedido[],
+  umbral?: number,
+): { js: string; idActuador: string; usaUmbral: boolean; avisoUmbral: string | null } | null {
   const idx = (pred: (t: string) => boolean): number =>
     pedidos.findIndex((p) => pred(normalizarTipo(p.tipo)))
 
@@ -835,6 +987,13 @@ function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuad
     const disparaBajo = tSens === "ultrasonico" || tSens === "higrometro" || hayCalefactor
     // umbral: el que pidió el usuario (si vino), o el default del sensor. Lo acotamos al rango del slider.
     const umbralUsado = umbral != null ? Math.max(s.min, Math.min(s.max, umbral)) : s.umbral
+    // …y si al acotarlo quedó otro número, se dice. Recortar en silencio es la misma
+    // falta que B11 vino a arreglar: la hoja sale prolija mostrando un valor que nadie pidió.
+    const conUnidad = (v: number): string => `${v} ${s.unidad}`.trim() // hay sensores sin unidad (PIR)
+    const avisoUmbral =
+      umbral != null && umbral !== umbralUsado
+        ? `El umbral que pediste (${umbral}) queda fuera de lo que mide el sensor (${s.magnitud.toLowerCase()}: de ${conUnidad(s.min)} a ${conUnidad(s.max)}): lo recorté a ${conUnidad(umbralUsado)}, que es lo que vas a ver en la hoja. Si el número era otro, pedímelo de nuevo.`
+        : null
     const cmp = disparaBajo ? `m<=${umbralUsado}` : `m>=${umbralUsado}`
     // texto claro de cuándo se activa (ej: "el LED se prende con ≥ 20 °C")
     const nombreActu = COMPONENTES[tActu]?.etiqueta ?? "el actuador"
@@ -858,7 +1017,7 @@ function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuad
       sl.addEventListener('input',()=>aplicar(+sl.value));
       aplicar(${s.min});
     })();`
-    return { js, idActuador: idActu }
+    return { js, idActuador: idActu, usaUmbral: true, avisoUmbral }
   }
 
   const iInter = idx((t) => COMPONENTES[t]?.interactivo === true)
@@ -921,7 +1080,7 @@ function armarPuente(pedidos: Pedido[], umbral?: number): { js: string; idActuad
     })();`
   }
   if (!js) return null
-  return { js, idActuador: idAct }
+  return { js, idActuador: idAct, usaUmbral: false, avisoUmbral: null }
 }
 
 // Escala visual por tipo de pieza para que ninguna quede gigante ni minúscula.
@@ -939,12 +1098,13 @@ const ESCALA: Record<string, number> = {
 // LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
 // Sin coordenadas globales en SVG estirado → las piezas y sus conexiones NUNCA se desalinean.
 function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
-  const { gpios: gpiosPorComp, avisos: avisosGpio } = asignarGpios(pedidos)
+  const { gpios: gpiosPorComp, avisos: avisosGpio, notas: notasGpio, sinPin } = asignarGpios(pedidos)
   const puente = armarPuente(pedidos, umbral)
   const gobernado = puente ? puente.idActuador : null
 
   const filas: string[] = []
   const filasTabla: string[] = []
+  const conexiones: string[] = []
   const anims: string[] = []
   const advertencias = new Set<string>()
   let hay5V = false
@@ -1005,6 +1165,16 @@ ${conex}
       .join("")
     filasTabla.push(`      <tr><td>${def.etiqueta}</td><td>${dots}</td><td>${resumen}</td></tr>`)
 
+    // La MISMA tabla, en texto plano, para devolvérsela al modelo (FIX auditoría A).
+    // Se arma acá y no aparte para que no puedan divergir: si algún día la fila de la
+    // hoja cambia, esta línea cambia con ella.
+    conexiones.push(
+      `${def.etiqueta}: ` +
+        def.pines
+          .map((pin) => `${pin.nombre} → ${pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)}`)
+          .join(", "),
+    )
+
     if (id !== gobernado) {
       anims.push(`(() => { ${def.anim(id)} })();`)
     }
@@ -1029,6 +1199,11 @@ ${filas.join("\n")}
     : "💡 <strong>Atención:</strong> "
   if (hay5V) advertencias.add("los componentes de 5V (servo, PIR, HC-SR04, LCD) van a VIN, NO a 3.3V.")
   avisosGpio.forEach((a) => advertencias.add(a))
+  const notas = [...notasGpio]
+  for (const choque of avisosI2cRepetido(pedidos)) {
+    advertencias.add(choque)
+    notas.push(choque)
+  }
   const aviso = cabecera + Array.from(advertencias).map((f) => "• " + f).join(" ")
 
   const tabla = `
@@ -1036,32 +1211,378 @@ ${filas.join("\n")}
 ${filasTabla.join("\n")}`
 
   // alto: no se usa para layout (las filas crecen solas), pero lo dejamos por compatibilidad
-  return { escena, tabla, aviso, alto: 0, animacion: anims.join("\n"), interactivo }
+  return {
+    escena,
+    tabla,
+    aviso,
+    alto: 0,
+    animacion: anims.join("\n"),
+    interactivo,
+    umbralAplicado: puente?.usaUmbral === true,
+    avisoUmbral: puente?.avisoUmbral ?? null,
+    notas,
+    sinPin,
+    conexiones,
+  }
+}
+
+/**
+ * FIX auditoría F: dos dispositivos I2C del MISMO tipo en el mismo bus.
+ *
+ * "oled, oled" salía con los dos colgados de SDA=GPIO21 / SCL=GPIO22 y sin una
+ * palabra. En el papel se ve impecable —es literalmente cómo se cablea el I2C, todos
+ * en paralelo— y por eso es de los que más engañan: el bus está bien, lo que está mal
+ * es que los dos módulos vienen de fábrica con la MISMA dirección (el SSD1306 en
+ * 0x3C, la mochila del LCD en 0x27, el MPU6050 en 0x68). El ESP32 no tiene forma de
+ * hablarle a uno sin hablarle al otro: en la práctica anda uno solo, o ninguno.
+ *
+ * Se avisa y no se corta: el circuito es armable —cambiándole la dirección a uno, que
+ * es un jumper en la plaquita— y decirle a la docente "no puedo" en el medio de la
+ * clase no la ayuda. Pero enterarse DESPUÉS de cablear dos displays que no prenden sí
+ * que no la ayuda.
+ *
+ * Sólo se mira el mismo tipo repetido: un OLED (0x3C) y un LCD (0x27) conviven
+ * perfecto en el mismo bus, que es justamente la gracia del I2C. Avisar de eso sería
+ * ruido, y el ⚠️ que grita siempre no lo lee nadie.
+ */
+function avisosI2cRepetido(pedidos: Pedido[]): string[] {
+  const esI2c = (tipo: string): boolean =>
+    (COMPONENTES[tipo]?.pines ?? []).some((p) => p.clase === "fijo" && p.destino === "GPIO21")
+
+  const cuenta = new Map<string, number>()
+  for (const ped of pedidos) {
+    const t = normalizarTipo(ped.tipo)
+    if (esI2c(t)) cuenta.set(t, (cuenta.get(t) ?? 0) + 1)
+  }
+
+  return [...cuenta.entries()]
+    .filter(([, n]) => n > 1)
+    .map(
+      ([t, n]) =>
+        `Pediste ${n} unidades de "${componenteDe(t).etiqueta}" y las ${n} van al MISMO bus I2C (SDA=GPIO21, SCL=GPIO22) con la MISMA dirección de fábrica: el ESP32 no las puede distinguir, así que en la placa real va a andar una sola. Para usar ${n} hay que cambiarle la dirección a las demás (es un puente/jumper en la plaquita, o el pin de dirección) o poner un multiplexor I2C TCA9548A. El cableado del dibujo está bien: lo que choca son las direcciones.`,
+    )
 }
 
 // Sanitiza el nombre de archivo que pide el usuario: evita que un "../../.." escriba
 // FUERA de la carpeta de trabajo, y que un nombre vacío cree un archivo oculto ".html".
 // Deja solo letras, números, guión, guión bajo y punto (sin separadores de ruta).
-function nombreSeguro(raw: string | undefined, fallback: string): string {
-  if (!raw || !raw.trim()) return fallback
-  const limpio = raw
-    .trim()
+// FIX auditoría B11: además del nombre, dice cuándo el pedido NO se pudo respetar. Un
+// nombre en otro alfabeto ("電路図") se convertía entero en guiones, caía al default y
+// nadie se enteraba: la docente después buscaba un archivo con el nombre que había
+// pedido y no estaba. Pedir algo y recibir otra cosa sin enterarse es el peor default
+// que puede tener una herramienta.
+//
+// FIX auditoría C: "riego.html" salía como "riego.html.html". El punto sobrevivía al
+// saneamiento (es un carácter permitido, y tiene que serlo), el nombre quedaba igual
+// al pedido —así que tampoco había aviso— y después execute le pegaba la extensión de
+// nuevo. Pedir el archivo con su extensión es lo más natural del mundo, y el modelo lo
+// hace todo el tiempo. La extensión se saca ANTES de comparar: "riego.html" y "riego"
+// son el mismo pedido, y ninguno de los dos merece un ⚠️.
+//
+// FIX auditoría D: ya NO devuelve el aviso armado, sólo el nombre que no se pudo usar.
+// El aviso lo arma execute DESPUÉS de guardar, porque antes de guardar el nombre final
+// todavía no se decidió: si el archivo ya existía, el de verdad es "…-2.html". Esta
+// función afirmaba uno y rutaDeSalida afirmaba otro, en la misma respuesta. La docente
+// que leía la primera línea abría el archivo viejo.
+function nombreSeguro(
+  raw: string | undefined,
+  fallback: string,
+): { nombre: string; pedidoNoUsado: string | null } {
+  if (!raw || !raw.trim()) return { nombre: fallback, pedidoNoUsado: null }
+  const pedido = raw.trim()
+  const sinExtension = pedido.replace(/\.html?$/i, "") // "riego.html" == "riego"
+  const limpio = sinExtension
     .replace(/[^a-zA-Z0-9._-]+/g, "-") // saca "/", "\", espacios y cualquier cosa rara
     .replace(/\.{2,}/g, ".") // colapsa ".." (evita traversal aunque no haya "/")
     .replace(/^[.\-]+|[.\-]+$/g, "") // sin punto/guión al principio o al final
-  return limpio.length > 0 ? limpio : fallback
+  const nombre = limpio.length > 0 ? limpio : fallback
+  return { nombre, pedidoNoUsado: nombre === sinExtension ? null : pedido }
 }
 
-function parsearComponentes(raw: string): Pedido[] {
-  return raw
+// FIX auditoría B11: "led:abc" se parseaba como un pedido sin GPIO y el tool le
+// asignaba otro pin en silencio. El alumno pidió un pin, el dibujo muestra otro, y
+// el cable termina en el agujero equivocado.
+function parsearComponentes(raw: string): { pedidos: Pedido[]; avisos: string[] } {
+  const avisos: string[] = []
+  const pedidos = raw
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
     .map((tok) => {
       const [tipo, g] = tok.split(":").map((x) => x.trim())
+      if (g != null && !/^\d+$/.test(g)) {
+        avisos.push(`En "${tok}" el GPIO tiene que ser un número (así: "${tipo}:4"). Como "${g}" no lo es, le asigné un pin automático.`)
+      }
       const gpio = g != null && /^\d+$/.test(g) ? parseInt(g, 10) : undefined
       return { tipo: normalizarTipo(tipo ?? tok), gpio }
     })
+  return { pedidos, avisos }
+}
+
+/**
+ * Actuadores de POTENCIA → quién los tiene que gobernar.
+ *
+ * FIX auditoría B3: no había ninguna validación de esto. "higrometro, bomba" se
+ * generaba sin chistar, y el HTML mostraba el sensor encendiendo la bomba DIRECTO —
+ * justo el error que el prompt del bot y todos los skills tratan de sacarle de la
+ * cabeza al alumno. Un GPIO del ESP32 da 12 mA; una bomba chica pide 500 mA o más.
+ * Si lo arma, quema la placa.
+ *
+ * Se INYECTA el mando en vez de cortar con un mensaje, y es a propósito: el docente
+ * que pide "riego" necesita el circuito de riego, no una clase de electrónica en el
+ * medio de la clase. El bot entrega lo que hace falta y AVISA qué agregó y por qué
+ * (que es exactamente lo que un profesor haría). Si además se le dice "no puedo",
+ * el modelo reintenta solo y termina dibujando cualquier cosa.
+ */
+const POTENCIA: Record<string, "relay" | "driver"> = {
+  bomba: "relay",
+  valvula: "relay",
+  lampara: "relay",
+  calefactor: "relay",
+  motor: "driver",
+  stepper: "driver",
+}
+
+/*
+ * OJO: el guard se mira POR FAMILIA, y eso es el arreglo.
+ *
+ * Antes era `if (tipos.some(t => t === "relay" || t === "driver")) return`: con
+ * CUALQUIER mando en la lista la inyección se apagaba ENTERA, sin preguntar si ese
+ * mando gobernaba a alguien ni si era de la familia que hacía falta. El motor pide
+ * DRIVER, no relé. "dht22, relay, calefactor, motor" salía sin un solo driver
+ * dibujado, y la tabla del motor igual mandaba a cablear contra "Driver
+ * (L298N/ULN2003)": una flecha que apunta a un componente que no está en la hoja.
+ *
+ * Lo que se conserva de la idea original: si el pedido YA trae el mando de la familia
+ * correcta, se respeta el criterio de quien lo pidió y no se toca nada.
+ */
+/*
+ * FIX auditoría E: UNO POR CARGA, no uno por circuito.
+ *
+ * Antes se buscaba la PRIMERA carga de la familia y se inyectaba UN mando, y listo:
+ * "ldr, lampara, calefactor" salía con un solo relé para las dos cargas, y el aviso
+ * nombraba nada más que la lámpara. Un módulo relé de un canal tiene UN contacto: no
+ * conmuta dos cargas independientes. El dibujo mandaba a la docente a armar algo que
+ * en la mesa no se puede armar — y encima el aviso ni mencionaba al calefactor, así
+ * que no tenía de dónde sospechar.
+ *
+ * Se elige INYECTAR uno por carga (y no avisar que se comparte) porque el pedido
+ * "lámpara y calefactor" son dos cosas que se prenden por separado: si fueran una
+ * sola, sería una sola carga. Un relé por carga es el circuito que la docente quería;
+ * compartir uno es un circuito distinto, que ella no pidió.
+ *
+ * PERO si el mando lo trajo EL USUARIO, no se toca la cuenta: ahí hay una decisión
+ * tomada (puede tener un módulo de 2 o 4 canales, que existe y es lo más común de
+ * comprar) y el criterio de la ronda anterior —no borrar ni pisar lo que el usuario
+ * pidió— sigue valiendo. Lo que no se puede es callarse: si su único relé tiene que
+ * gobernar dos cargas, se lo decimos y que decida él.
+ *
+ * Y ese aviso se cuenta CONTRA LA CANTIDAD, no contra "trajo alguno". Con
+ * "relay, lampara, relay, calefactor" el usuario trajo DOS relés para DOS cargas: el
+ * circuito está perfecto y avisarle que se comparten sería decirle algo falso — que es
+ * la categoría de error que esta ronda vino a sacar, no a mover de lugar.
+ */
+function inyectarMando(pedidos: Pedido[]): { pedidos: Pedido[]; avisos: string[] } {
+  const avisos: string[] = []
+  const salida: Pedido[] = []
+  // Cuántos mandos de cada familia trajo el pedido. Si trajo alguno no inyectamos
+  // nada (la decisión es suya); si trajo MENOS que cargas, se lo decimos.
+  const cuantosTrajo = (mando: "relay" | "driver"): number =>
+    pedidos.filter((p) => normalizarTipo(p.tipo) === mando).length
+
+  const inyectadas: Record<"relay" | "driver", string[]> = { relay: [], driver: [] }
+  const compartiendo: Record<"relay" | "driver", string[]> = { relay: [], driver: [] }
+
+  for (const ped of pedidos) {
+    const mando = POTENCIA[normalizarTipo(ped.tipo)]
+    if (mando) {
+      const etiqueta = componenteDe(ped.tipo).etiqueta.toLowerCase()
+      if (cuantosTrajo(mando) > 0) {
+        compartiendo[mando].push(etiqueta)
+      } else {
+        // entra JUSTO ANTES de SU carga: el circuito se lee sensor → mando → potencia
+        salida.push({ tipo: mando })
+        inyectadas[mando].push(etiqueta)
+      }
+    }
+    salida.push(ped)
+  }
+
+  for (const mando of ["relay", "driver"] as const) {
+    const nombre = mando === "relay" ? "relé" : "driver"
+    const cargas = inyectadas[mando]
+    if (cargas.length === 1) {
+      avisos.push(
+        `Le agregué ${componenteDe(mando).etiqueta} al circuito: ${cargas[0]} no se puede conectar directo al ESP32 (el GPIO entrega 12 mA y esto pide bastante más: lo quema). El ESP32 manda la señal al ${nombre}, y el ${nombre} mueve la potencia con su propia fuente.`,
+      )
+    } else if (cargas.length > 1) {
+      avisos.push(
+        `Le agregué un ${componenteDe(mando).etiqueta} POR CADA carga de potencia (${cargas.length} en total: ${cargas.join(" y ")}): ninguna se puede conectar directo al ESP32 (el GPIO entrega 12 mA y esto pide bastante más: lo quema). Va uno por carga y no uno solo para todas porque un ${nombre} de un canal conmuta UNA sola cosa: con uno compartido, ${cargas.join(" y ")} se prenderían y apagarían siempre juntos. El ESP32 manda la señal a cada ${nombre}, y cada ${nombre} mueve su potencia con su propia fuente.`,
+      )
+    }
+
+    // El usuario trajo SUS mandos, pero menos que cargas: algunas van a compartir.
+    // Si trajo uno por carga (o de más) el circuito está bien y no hay nada que decir.
+    const trajo = cuantosTrajo(mando)
+    const cargasPropias = compartiendo[mando]
+    if (cargasPropias.length > trajo) {
+      avisos.push(
+        `Respeté ${trajo === 1 ? `el ${nombre}` : `los ${trajo} ${nombre}s`} que pediste y no agregué otro, pero ojo: en este circuito hay ${cargasPropias.length} cargas de potencia (${cargasPropias.join(" y ")}) y cada módulo de un canal conmuta UNA sola. Así como está, no alcanzan: ${trajo === 1 ? `las ${cargasPropias.length} van a prenderse y apagarse juntas` : `algunas van a prenderse y apagarse juntas`}. Si las querés independientes necesitás ${cargasPropias.length} canales (un módulo de ${cargasPropias.length}, o uno por carga), o pedímelo sin el ${nombre} en la lista y te pongo uno por carga.`,
+      )
+    }
+  }
+
+  return { pedidos: salida, avisos }
+}
+
+/**
+ * La lista de ejemplo que se ofrece cuando el mando inyectado se pasa del tope de 6.
+ *
+ * Era `pedidos.slice(0, 6)` sobre la lista YA INYECTADA — y el mando entra JUSTO ANTES
+ * de la potencia, así que el que se caía por el borde era SIEMPRE el actuador.
+ * "higrometro, lluvia, bmp180, lcd, led, bomba" sugería "…led, relay": un riego sin
+ * bomba, con un relé que no gobierna nada. Y el modelo copia esa lista tal cual,
+ * porque va entre comillas y con formato de comando.
+ *
+ * Ahora se recorta sobre lo que pidió la persona (no sobre lo inyectado), se protege
+ * la potencia —que es el punto del circuito, no el accesorio— y antes de ofrecerla se
+ * la vuelve a pasar por inyectarMando para garantizar que lo sugerido ENTRA.
+ */
+function sugerenciaQueEntra(crudo: Pedido[]): string {
+  const entra = (lista: Pedido[]): boolean => lista.length > 0 && inyectarMando(lista).pedidos.length <= 6
+  const lista = [...crudo]
+  // 1) se sacan los accesorios, de atrás para adelante; los actuadores de potencia no se tocan
+  for (let i = lista.length - 1; i >= 0 && !entra(lista); i--) {
+    if (POTENCIA[normalizarTipo(lista[i]!.tipo)]) continue
+    lista.splice(i, 1)
+  }
+  // 2) si quedó sólo potencia y todavía no entra, recién ahí se recortan actuadores
+  while (lista.length > 1 && !entra(lista)) lista.pop()
+  return inyectarMando(lista)
+    .pedidos.map((p) => normalizarTipo(p.tipo))
+    .join(", ")
+}
+
+/**
+ * FIX auditoría B1: el HTML SIEMPRE emite <script src="componentes-extra.js">, pero
+ * ese archivo se copiaba sólo si existía. Sin él, los <pb-*> son custom elements que
+ * nadie define: el navegador los deja como spans de tamaño cero. Ni error, ni 404
+ * visible. La docente abría una página con la tabla de conexiones y CERO piezas,
+ * después de que el bot le dijera "Listo! Generé el circuito".
+ *
+ * Y son justo los 10 componentes de los proyectos del INET (relé, bomba, válvula,
+ * higrómetro, lluvia, BMP180, motor, driver, lámpara, calefactor). El guard de
+ * wokwi-bundle.js existía desde el día uno; a éste nunca se lo hizo.
+ */
+function faltanPiezasDibujadas(pedidos: Pedido[]): string | null {
+  const dibujadas = pedidos.filter((p) => componenteDe(p.tipo).tag.startsWith("pb-"))
+  if (dibujadas.length === 0 || existsSync(extraPath())) return null
+  const nombres = [...new Set(dibujadas.map((p) => componenteDe(p.tipo).etiqueta))].join(", ")
+  return `Me falta el archivo de piezas dibujadas (componentes-extra.js) y este circuito lo necesita para: ${nombres}. Si lo genero igual te sale una página con la tabla de conexiones y NINGUNA pieza dibujada, así que no lo genero. Reinstalá Tecnia Bot con el instalador (es el que copia la biblioteca visual) y pedímelo de nuevo. Mientras tanto puedo armarte circuitos con las piezas que sí tengo: led, servo, buzzer, potenciómetro, botón, ultrasónico, DHT22, PIR, LCD, OLED y varias más.`
+}
+
+/**
+ * FIX auditoría B5: antes era `Bun.write(archivo, html)` a secas, y el nombre lo elige
+ * el MODELO, no la persona. Dos pedidos parecidos en la misma clase ("circuito.html")
+ * y el trabajo de la docente desaparecía sin dejar rastro.
+ *
+ * Se versiona en vez de cortar con un error: la docente está en el medio de una clase
+ * y quiere su circuito, no un cartel. Pierde cero, y se le dice qué archivo quedó.
+ *
+ * OJO con la asimetría, que es deliberada: sólo se versiona cuando el nombre vino
+ * EXPLÍCITO. El nombre por defecto es determinista a propósito (regenerar el mismo
+ * circuito tiene que pisar el anterior, si no la carpeta se llena de copias iguales).
+ */
+function rutaDeSalida(
+  dir: string,
+  base: string,
+  explicito: boolean,
+): { archivo: string; aviso: string | null } | { error: string } {
+  const primera = join(dir, `${base}.html`)
+  if (!explicito || !existsSync(primera)) return { archivo: primera, aviso: null }
+  for (let n = 2; n < 100; n++) {
+    const otra = join(dir, `${base}-${n}.html`)
+    if (!existsSync(otra)) {
+      return {
+        archivo: otra,
+        aviso: `Ya había un "${base}.html" en la carpeta y no lo toqué: este quedó como "${base}-${n}.html".`,
+      }
+    }
+  }
+  // Acá abajo vivía el bug que esta misma función dice haber matado. El fallback era
+  // `${base}-${Date.now()}` a secas: el ÚNICO camino de rutaDeSalida que no preguntaba
+  // existsSync. Dos llamadas en el mismo milisegundo devolvían el mismo nombre y la
+  // segunda pisaba a la primera — con un aviso que juraba que no había tocado nada.
+  // El borde tiene que ser tan ruidoso como el centro: se pregunta igual que arriba, y
+  // si de verdad no queda lugar se corta, en vez de pisar y decir que no se pisó.
+  for (let n = 0; n < 100; n++) {
+    const sello = n === 0 ? `${base}-${Date.now()}` : `${base}-${Date.now()}-${n}`
+    const otra = join(dir, `${sello}.html`)
+    if (!existsSync(otra)) {
+      return {
+        archivo: otra,
+        aviso: `Ya había un "${base}.html" y 98 copias numeradas: este quedó como "${sello}.html". Convendría ordenar esa carpeta.`,
+      }
+    }
+  }
+  return {
+    error: `No guardé nada, y es a propósito: en esa carpeta ya hay un "${base}.html", las 98 copias numeradas ("${base}-2" … "${base}-99") y encima los nombres con sello de tiempo están ocupados. No me queda un nombre libre, y antes que pisarte un archivo prefiero avisarte. Ordená esa carpeta (o pedímelo con otro nombre) y te lo armo de nuevo.`,
+  }
+}
+
+/**
+ * FIX auditoría B12: antes se copiaba la biblioteca sólo `if (!existsSync(local))`.
+ * Cuando la docente actualizaba Tecnia Bot, en su carpeta de trabajo seguía el bundle
+ * VIEJO para siempre: la pieza nueva que el tool ya sabe dibujar salía como una caja
+ * vacía, y el circuito parecía roto justo después de actualizar.
+ */
+function hayQueCopiar(origen: string, destino: string): boolean {
+  if (!existsSync(destino)) return true
+  try {
+    const o = statSync(origen)
+    const d = statSync(destino)
+    return o.size !== d.size || o.mtimeMs > d.mtimeMs
+  } catch {
+    return true // si no podemos comparar, copiamos: es barato y la copia vieja es cara
+  }
+}
+
+async function copiarBiblioteca(dir: string, bundle: string): Promise<void> {
+  const bundleLocal = join(dir, "wokwi-bundle.js")
+  if (hayQueCopiar(bundle, bundleLocal)) await Bun.write(bundleLocal, Bun.file(bundle))
+  const extra = extraPath()
+  const extraLocal = join(dir, "componentes-extra.js")
+  if (existsSync(extra) && hayQueCopiar(extra, extraLocal)) await Bun.write(extraLocal, Bun.file(extra))
+}
+
+/**
+ * Escribe el HTML y deja la biblioteca de piezas al lado.
+ *
+ * FIX auditoría B7: execute no tenía un solo try/catch. Con la carpeta de trabajo sin
+ * permiso de escritura (o en OneDrive sincronizando, que es lo común en las netbooks
+ * de la escuela) subía un ENOENT/EACCES crudo hasta el modelo, que improvisaba una
+ * explicación. Un stack trace no le sirve a nadie; menos a una docente.
+ */
+async function guardarSalida(
+  dir: string,
+  base: string,
+  html: string,
+  explicito: boolean,
+  bundle: string,
+): Promise<{ archivo: string; avisos: string[] } | { error: string }> {
+  try {
+    const ruta = rutaDeSalida(dir, base, explicito)
+    if ("error" in ruta) return ruta
+    const { archivo, aviso } = ruta
+    await Bun.write(archivo, html)
+    await copiarBiblioteca(dir, bundle)
+    return { archivo, avisos: aviso ? [aviso] : [] }
+  } catch (e) {
+    const detalle = e instanceof Error ? e.message : String(e)
+    return {
+      error: `No pude guardar el circuito en la carpeta "${dir}". Suele pasar cuando la carpeta no existe, es de sólo lectura, o está sincronizando con OneDrive/Drive. Probá abrir Tecnia Bot desde otra carpeta (el Escritorio anda siempre) y pedímelo de nuevo. Si seguís sin poder, esto es lo que dijo el sistema: ${detalle}`,
+    }
+  }
 }
 
 // ============================================================================
@@ -1227,6 +1748,34 @@ const PRESET_COMPONENTES: Record<string, string[]> = {
   "semaforo": ["led", "led", "led"],
 }
 
+/**
+ * Animación propia de un preset, para cuando la suma de las animaciones sueltas NO
+ * representa el circuito que el preset promete.
+ *
+ * FIX auditoría B9: "semaforo" son tres LEDs, y cada LED trae su propia animación
+ * (un setInterval de 600 ms). Los tres arrancaban en el mismo tick, así que el
+ * "semáforo" eran tres luces parpadeando JUNTAS — que es exactamente lo que un
+ * semáforo no hace. Encima el preset hermano `semaforo-protoboard` (plantilla hecha
+ * a mano) sí hacía la secuencia bien: el mismo pedido daba dos cosas distintas según
+ * qué palabra usara el docente. Los tiempos de acá son los MISMOS de esa plantilla,
+ * a propósito: tienen que ser el mismo objeto contado dos veces, no dos objetos.
+ */
+const PRESET_ANIMACION: Record<string, (ids: string[]) => string> = {
+  semaforo: (ids) => {
+    // El ciclo de color del LED es rojo → amarillo → verde (ver attrs de `led`),
+    // así que led0=rojo, led1=amarillo, led2=verde.
+    const rojo = ids[0] ?? "", amarillo = ids[1] ?? "", verde = ids[2] ?? ""
+    return `(() => {
+      const R=document.getElementById('${rojo}'), A=document.getElementById('${amarillo}'), V=document.getElementById('${verde}');
+      if(!R||!A||!V) return;
+      // mismas fases y tiempos que plantilla-semaforo-protoboard.html
+      const fases=[[false,false,true,2600],[false,true,false,900],[true,false,false,2600]];
+      let i=0;
+      (function tick(){ const f=fases[i]; R.value=f[0]; A.value=f[1]; V.value=f[2]; i=(i+1)%fases.length; setTimeout(tick,f[3]); })();
+    })();`
+  },
+}
+
 // Circuitos MONTADOS SOBRE UNA PROTOBOARD: plantillas HTML pre-armadas y validadas
 // (viven como asset en tecniabot-web/, las copia el instalador). Para agregar un
 // circuito nuevo sobre protoboard: sumás la plantilla ahí + una entrada acá.
@@ -1256,7 +1805,7 @@ CIRCUITOS SOBRE PROTOBOARD (componentes reales pinchados en la placa + jumpers d
 
 ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, stepper (motor paso a paso), motor (motor DC, va por driver), driver (ULN2003), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton, relay, bomba, valvula (electrovalvula), higrometro, lluvia, bmp180 (presion), lampara, calefactor. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.
 
-PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humedad y se enciende el riego); tanques "ultrasonico, relay, bomba"; calefacción "dht22, relay, calefactor"; lumínico "ldr, pir, relay, lampara"; estación meteo "dht22, lluvia, bmp180, lcd". Los actuadores de potencia (bomba, válvula, lámpara, calefactor, motor) van SIEMPRE por un relé o driver, nunca directos al ESP32.`,
+PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humedad y se enciende el riego); tanques "ultrasonico, relay, bomba"; calefacción "dht22, relay, calefactor"; lumínico "ldr, pir, relay, lampara"; estación meteo "dht22, lluvia, bmp180, lcd". Los actuadores de potencia (bomba, válvula, lámpara, calefactor, motor, stepper) van SIEMPRE por un relé o driver, nunca directos al ESP32: si te olvidás de incluirlo, el tool lo agrega solo y te avisa qué agregó (contáselo al docente, es parte de la explicación).`,
   args: {
     circuito: tool.schema
       .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo", "protoboard", "boton-led-protoboard", "semaforo-protoboard"])
@@ -1301,51 +1850,108 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     // Por eso copiamos el bundle AL LADO del HTML y lo referenciamos con ruta relativa.
     const scriptSrc = "wokwi-bundle.js"
 
-    let plantilla: Plantilla
+    // ¿el nombre lo eligió alguien, o lo ponemos nosotros? Cambia la política de pisado
+    // (ver rutaDeSalida): el default es determinista y pisa; el explícito se versiona.
+    const explicito = !!(args.nombre_archivo && args.nombre_archivo.trim())
+    // Todo lo que el docente TIENE que saber porque no le dimos EXACTAMENTE lo que pidió.
+    // Van al final de la respuesta, nunca en silencio (FIX auditoría A/B3/B5/B11).
+    const notas: string[] = []
+    let umbralAplicado = false
+    // FIX auditoría D: el nombre final NO se sabe hasta después de guardar (si el
+    // archivo ya existía, el de verdad es "…-2.html"). Se guarda el pedido y el aviso
+    // se arma al final, con el nombre que quedó de verdad.
+    let pedidoNoUsado: string | null = null
+
+    // Cada rama arma el HTML y decide cómo se lo contamos; el guardado es uno solo
+    // para todas (FIX auditoría B5/B7/B12: antes había tres copias de esa lógica).
+    let html: string
     let base: string
+    let encabezado: string
+    let cierre: string
+    // La tabla de pines en texto: el prompt del agente le ORDENA al modelo describir
+    // las conexiones "leyendo la tabla que muestra el propio circuito", y hasta acá la
+    // respuesta no traía ninguna tabla (FIX auditoría A).
+    let conexiones: string[] = []
 
     if (args.componentes && args.componentes.trim()) {
-      const pedidos = parsearComponentes(args.componentes)
-      if (pedidos.length < 1 || pedidos.length > 6) {
+      const { pedidos: pedidoCrudo, avisos: avisosParseo } = parsearComponentes(args.componentes)
+      notas.push(...avisosParseo)
+      if (pedidoCrudo.length < 1 || pedidoCrudo.length > 6) {
         return "El armador libre maneja de 1 a 6 componentes. Si son más, dividilo en dos circuitos."
       }
-      const desconocidos = pedidos.filter((p) => !COMPONENTES[normalizarTipo(p.tipo)])
+      const desconocidos = pedidoCrudo.filter((p) => !COMPONENTES[normalizarTipo(p.tipo)])
       if (desconocidos.length) {
         return `No conozco: ${desconocidos.map((d) => d.tipo).join(", ")}. Tengo: ${Object.keys(COMPONENTES).join(", ")}.`
       }
-      const r = armarCircuito(pedidos, args.umbral)
-      const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
-      plantilla = {
-        titulo: `🔧 ${nombres} + ESP32`,
-        sub: "armado libre — piezas reales conectadas al ESP32",
-        escena: r.escena,
-        aviso: r.aviso,
-        tabla: r.tabla,
-        animacion: r.animacion,
-        alto: r.alto,
-        interactivo: r.interactivo,
+
+      // Seguridad eléctrica ANTES que el dibujo: nada de potencia colgado del GPIO.
+      const { pedidos, avisos: avisosMando } = inyectarMando(pedidoCrudo)
+      notas.push(...avisosMando)
+      if (pedidos.length > 6) {
+        return `Para que el circuito sea seguro le tengo que sumar un relé (o un driver): los actuadores de potencia nunca van directo al ESP32. Con eso pasa de 6 componentes, que es mi tope. Sacá uno y lo armo — por ejemplo: "${sugerenciaQueEntra(pedidoCrudo)}".`
       }
-      base = nombreSeguro(args.nombre_archivo, `circuito-armado-${pedidos.map((p) => normalizarTipo(p.tipo)).join("-")}`)
+
+      // Sin componentes-extra.js las piezas pb-* no se dibujan: mejor no generar nada.
+      const falta = faltanPiezasDibujadas(pedidos)
+      if (falta) return falta
+
+      const r = armarCircuito(pedidos, args.umbral)
+      umbralAplicado = r.umbralAplicado
+      // El umbral se aplicó, pero no el que se pidió: eso también se cuenta.
+      if (r.avisoUmbral) notas.push(r.avisoUmbral)
+      // Pines rechazados, reasignados, pool agotado, choque de direcciones I2C: todo
+      // eso vivía SOLO en la hoja. Ahora también llega al chat (FIX auditoría A/F).
+      notas.push(...r.notas)
+      conexiones = r.conexiones
+      const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
+      html = construirHTML(
+        {
+          titulo: `🔧 ${nombres} + ESP32`,
+          sub: "armado libre — piezas reales conectadas al ESP32",
+          escena: r.escena,
+          aviso: r.aviso,
+          tabla: r.tabla,
+          animacion: r.animacion,
+          alto: r.alto,
+          interactivo: r.interactivo,
+        },
+        scriptSrc,
+      )
+      const nom = nombreSeguro(args.nombre_archivo, `circuito-armado-${pedidos.map((p) => normalizarTipo(p.tipo)).join("-")}`)
+      pedidoNoUsado = nom.pedidoNoUsado
+      base = nom.nombre
+      /*
+       * FIX auditoría B: un componente sin pin NO se anuncia como "Listo!".
+       *
+       * "teclado, led, joystick, joystick, ldr, ntc" son 6 componentes, o sea un pedido
+       * perfectamente legal, y el pool analógico no alcanza para el último: el NTC sale
+       * con "GPIO?" en la hoja. Hasta acá el chat contestaba «Listo! Generé el circuito
+       * visual y animado.» sin un solo ⚠️.
+       *
+       * Que el aviso llegue al chat (arriba) es la mitad del arreglo. La otra mitad es
+       * ésta: un circuito al que le falta un pin NO está terminado, y el encabezado es
+       * lo primero —a veces lo único— que la docente lee. Anunciar como éxito algo que
+       * después se cablea es exactamente la categoría de error que no nos podemos
+       * permitir en este tool.
+       *
+       * Se genera igual y no se corta: los otros cinco componentes están bien y la hoja
+       * sirve. Lo que cambia es que se dice.
+       */
+      encabezado =
+        r.sinPin.length > 0
+          ? `Generé el circuito, pero quedó INCOMPLETO: me quedé sin pines libres para ${r.sinPin.join(" y ")}, así que en la hoja ${r.sinPin.length > 1 ? "esas filas dicen" : "esa fila dice"} "GPIO?" en vez de un número. NO lo cablees así: sacá un componente de la lista y te lo armo completo.`
+          : "Listo! Generé el circuito visual y animado."
+      cierre = `Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
+(Se copió la biblioteca de piezas al lado del archivo — no la borres.)`
     } else if (args.circuito === "protoboard") {
       // Caso especial: NO es un circuito con pines, es la placa misma explicada.
-      plantilla = armarProtoboard()
-      base = nombreSeguro(args.nombre_archivo, "protoboard-explicador")
-      const html = construirHTML(plantilla, scriptSrc)
-      const archivo = join(ctx.directory, `${base}.html`)
-      await Bun.write(archivo, html)
-      const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
-      if (!existsSync(bundleLocal)) await Bun.write(bundleLocal, Bun.file(bundle))
-      const extra2 = extraPath()
-      const extraLocal2 = join(ctx.directory, "componentes-extra.js")
-      if (existsSync(extra2) && !existsSync(extraLocal2)) await Bun.write(extraLocal2, Bun.file(extra2))
-      const abierto = abrir && abrirEnNavegador(archivo)
-      return `Listo! Generé el explicador interactivo de la protoboard.
-
-${abierto
-  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n${comoUrl(archivo)}`}
-
-Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los que están conectados con él por dentro. Así se entiende de una qué se une con qué: las filas, los buses y el canal del medio.`
+      const nom = nombreSeguro(args.nombre_archivo, "protoboard-explicador")
+      pedidoNoUsado = nom.pedidoNoUsado
+      base = nom.nombre
+      html = construirHTML(armarProtoboard(), scriptSrc)
+      encabezado = "Listo! Generé el explicador interactivo de la protoboard."
+      cierre =
+        "Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los que están conectados con él por dentro. Así se entiende de una qué se une con qué: las filas, los buses y el canal del medio."
     } else if (args.circuito && PLANTILLAS_PROTOBOARD[args.circuito]) {
       // Circuito MONTADO sobre una protoboard: plantilla validada (componentes Wokwi
       // reales pinchados en la placa + jumpers). Se lee del asset instalado.
@@ -1354,19 +1960,17 @@ Tocá (o pasá el mouse por) cualquier agujero y vas a ver iluminarse TODOS los 
       if (!def || !existsSync(plantillaFile)) {
         return "No encontré la plantilla del circuito en protoboard. Reinstalá Tecnia Bot con el instalador."
       }
-      base = nombreSeguro(args.nombre_archivo, args.circuito)
-      const archivo = join(ctx.directory, `${base}.html`)
-      await Bun.write(archivo, readFileSync(plantillaFile, "utf8"))
-      const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
-      if (!existsSync(bundleLocal)) await Bun.write(bundleLocal, Bun.file(bundle))
-      const abierto = abrir && abrirEnNavegador(archivo)
-      return `Listo! Generé un circuito montado sobre una protoboard: ${def.que}.
-
-${abierto
-  ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
-  : `**Abrilo en tu navegador (doble clic o pegá esto):**\n${comoUrl(archivo)}`}
-
-Vas a ver el circuito armado en la placa de pruebas, con los componentes reales (Wokwi) y los cables de colores conectados a los agujeros.`
+      const nom = nombreSeguro(args.nombre_archivo, args.circuito)
+      pedidoNoUsado = nom.pedidoNoUsado
+      base = nom.nombre
+      try {
+        html = readFileSync(plantillaFile, "utf8")
+      } catch {
+        return "No pude leer la plantilla del circuito en protoboard (está instalada pero no se deja leer). Reinstalá Tecnia Bot con el instalador."
+      }
+      encabezado = `Listo! Generé un circuito montado sobre una protoboard: ${def.que}.`
+      cierre =
+        "Vas a ver el circuito armado en la placa de pruebas, con los componentes reales (Wokwi) y los cables de colores conectados a los agujeros."
     } else if (args.circuito) {
       // Los presets ahora se generan con el ARMADOR (filas + cables CSS, prolijo).
       const tipos = PRESET_COMPONENTES[args.circuito]
@@ -1374,49 +1978,100 @@ Vas a ver el circuito armado en la placa de pruebas, con los componentes reales 
         return `No tengo ese circuito todavía. Disponibles: ${Object.keys(PRESET_COMPONENTES).join(", ")}.`
       }
       const pedidos = tipos.map((t) => ({ tipo: t }))
+      // Hoy ningún preset usa piezas pb-*, pero el día que se agregue uno (riego,
+      // calefacción) el guard tiene que estar acá también: es la misma página vacía.
+      const faltaPreset = faltanPiezasDibujadas(pedidos)
+      if (faltaPreset) return faltaPreset
       const r = armarCircuito(pedidos)
+      // Un preset no puede tener pines pedidos a mano, pero SÍ puede chocar direcciones
+      // I2C o agotar el pool el día que se agregue uno grande. El canal es el mismo.
+      notas.push(...r.notas)
+      conexiones = r.conexiones
       const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
-      plantilla = {
-        titulo: `🔧 ${nombres} + ESP32`,
-        sub: "piezas reales conectadas al ESP32",
-        escena: r.escena,
-        aviso: r.aviso,
-        tabla: r.tabla,
-        animacion: r.animacion,
-        alto: r.alto,
-        interactivo: r.interactivo,
-      }
-      base = nombreSeguro(args.nombre_archivo, `circuito-${args.circuito}`)
+      // Algunos presets tienen coreografía propia (el semáforo es una secuencia, no
+      // tres LEDs parpadeando por su cuenta). FIX auditoría B9.
+      const coreografia = PRESET_ANIMACION[args.circuito]
+      const ids = pedidos.map((p, i) => `${normalizarTipo(p.tipo)}${i}`)
+      html = construirHTML(
+        {
+          titulo: `🔧 ${nombres} + ESP32`,
+          sub: "piezas reales conectadas al ESP32",
+          escena: r.escena,
+          aviso: r.aviso,
+          tabla: r.tabla,
+          animacion: coreografia ? coreografia(ids) : r.animacion,
+          alto: r.alto,
+          interactivo: r.interactivo,
+        },
+        scriptSrc,
+      )
+      const nom = nombreSeguro(args.nombre_archivo, `circuito-${args.circuito}`)
+      pedidoNoUsado = nom.pedidoNoUsado
+      base = nom.nombre
+      encabezado = "Listo! Generé el circuito visual y animado."
+      cierre = `Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
+(Se copió la biblioteca de piezas al lado del archivo — no la borres.)`
     } else {
       return "Decime qué circuito armar: un preset (arg 'circuito') o una lista libre (arg 'componentes', ej 'led, servo')."
     }
 
-    const html = construirHTML(plantilla, scriptSrc)
-
-    const archivo = join(ctx.directory, `${base}.html`)
-    await Bun.write(archivo, html)
-
-    // Copiar la biblioteca de piezas al lado del HTML (ruta relativa = sin bloqueo de seguridad).
-    const bundleLocal = join(ctx.directory, "wokwi-bundle.js")
-    if (!existsSync(bundleLocal)) {
-      await Bun.write(bundleLocal, Bun.file(bundle))
+    if (args.umbral != null && !umbralAplicado) {
+      notas.push(
+        `El umbral (${args.umbral}) quedó sin usar: sólo se aplica en el armador libre cuando hay un sensor simulable + un actuador (ej "dht22, led" o "higrometro, relay, bomba"). En este circuito no hay dónde aplicarlo.`,
+      )
     }
 
-    // Copiar también los componentes dibujados (pb-relay, pb-bomba, etc.) al lado del HTML.
-    const extra = extraPath()
-    const extraLocal = join(ctx.directory, "componentes-extra.js")
-    if (existsSync(extra) && !existsSync(extraLocal)) {
-      await Bun.write(extraLocal, Bun.file(extra))
+    const guardado = await guardarSalida(ctx.directory, base, html, explicito, bundle)
+    if ("error" in guardado) return guardado.error
+
+    const archivo = guardado.archivo
+    /*
+     * FIX auditoría D: este aviso se arma ACÁ y no en nombreSeguro, y el orden importa.
+     *
+     * Antes nombreSeguro afirmaba el nombre final ("lo guardé como X.html") ANTES de que
+     * se decidiera, y si el archivo ya existía rutaDeSalida lo versionaba a "X-2.html".
+     * Salían los dos avisos juntos, contradiciéndose, en la misma respuesta:
+     *   ⚠️ No pude usar "電路図" … lo guardé como "circuito-led-esp32.html".
+     *   ⚠️ Ya había un "circuito-led-esp32.html" … este quedó como "…-2.html".
+     * La docente que lee la primera línea abre el archivo VIEJO, que es de otra clase.
+     * Ahora el nombre sale de `archivo`, que es el que se escribió de verdad.
+     */
+    if (pedidoNoUsado) {
+      notas.push(
+        `No pude usar "${pedidoNoUsado}" como nombre de archivo (van solo letras sin tilde, números, guiones y puntos): lo guardé como "${basename(archivo)}".`,
+      )
     }
+    notas.push(...guardado.avisos)
 
     const abierto = abrir && abrirEnNavegador(archivo)
-    return `Listo! Generé el circuito visual y animado.
+    /*
+     * FIX auditoría A: la tabla de pines vuelve al modelo.
+     *
+     * opencode/agent/tecnia-bot.md le ordena al modelo "describí las conexiones leyendo
+     * la tabla que muestra el propio circuito — NO inventes pines", y hasta acá la
+     * respuesta del tool no traía ninguna tabla. Le pedíamos leer algo que nunca
+     * recibía: o se callaba, o inventaba. Y lo que el modelo dice en el chat es lo que
+     * el pibe cablea, igual que el dibujo.
+     *
+     * Va DESPUÉS del cierre y ANTES de los ⚠️, que cierran siempre la respuesta.
+     */
+    const tablaPines = conexiones.length
+      ? "\n\n**Conexiones (ésta es la tabla que dibuja la hoja — usá estos pines, no inventes otros):**\n" +
+        conexiones.map((c) => "- " + c).join("\n")
+      : ""
+    // El `.replace` no es cosmético: varios motivos de `motivoGpioRechazado` ya traen
+    // su propio "⚠️ " adelante (nacieron para la hoja, donde no hay prefijo), así que
+    // sin esto la línea salía «⚠️ ⚠️ GPIO34 es SOLO ENTRADA…». Un aviso que se ve mal
+    // formateado se lee como un error del programa, no como algo que hay que atender.
+    const aclaraciones = notas.length
+      ? "\n\n" + notas.map((n) => "⚠️ " + n.replace(/^⚠️\s*/, "")).join("\n")
+      : ""
+    return `${encabezado}
 
 ${abierto
   ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
   : `**Abrilo en tu navegador (doble clic o pegá esto):**\n${comoUrl(archivo)}`}
 
-Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
-(Se copió la biblioteca de piezas al lado del archivo — no la borres.)`
+${cierre}${tablaPines}${aclaraciones}`
   },
 })
