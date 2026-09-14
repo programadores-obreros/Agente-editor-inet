@@ -48,11 +48,11 @@ void loop() {}
 
 ## Display 7 segmentos — Números grandes
 
-> ⚡ 3.3V · 📦 `SevSeg` · cada segmento con 220Ω (en ESP32/3.3V; 330Ω si es UNO/5V)
+> ⚡ 3.3V · 📦 `SevSeg` · cada segmento con **220Ω** (el mismo valor en ESP32/3.3V y en UNO/5V)
 
 **¿Para qué sirve?** Mostrar UN dígito (0-9) bien grande y brillante. Contadores, relojes, marcadores. Tiene 7 segmentos (A-G) + el punto (DP).
 
-**Conexión:** cada segmento (A a G) a un GPIO con su resistencia de 220Ω (330Ω en UNO a 5V; ver skill `esp32` para el cálculo); el común a GND (cátodo común) o a VCC (ánodo común). Gasta muchos pines — por eso conviene la librería `SevSeg` o un decodificador.
+**Conexión:** cada segmento (A a G) a un GPIO con su resistencia de **220Ω** — el mismo valor en UNO (5V) que en ESP32 (3.3V), y el que viene en los kits (ver skill `esp32` para la cuenta); el común a GND (cátodo común) o a VCC (ánodo común). Gasta muchos pines — por eso conviene la librería `SevSeg` o un decodificador.
 
 **Concepto:** un número se "dibuja" encendiendo ciertos segmentos. El "2" prende A, B, G, E, D. El "1" solo B y C.
 
@@ -223,11 +223,11 @@ void loop() {
 
 ## LED RGB (cátodo común)
 
-> ⚡ 3.3V · cada color con 220Ω (330Ω si es UNO/5V) — medí el Vf: el azul cae ~3,2V y en 3.3V casi no tiene margen
+> ⚡ 3.3V · cada color con **220Ω** (el mismo valor en UNO/5V) — medí el Vf: el azul cae ~3,2V y en 3.3V no le queda margen con ninguna resistencia
 
 **¿Para qué sirve?** Un LED que hace CUALQUIER color mezclando rojo, verde y azul. Indicadores de estado, ambientación.
 
-**Conexión:** 3 pines (R, G, B) cada uno a un GPIO con 220Ω (330Ω en UNO/5V); el común (la pata más larga) a GND. En 3.3V el azul va a verse más flojo que el rojo: es física, no un error de cableado (ver skill `esp32`).
+**Conexión:** 3 pines (R, G, B) cada uno a un GPIO con **220Ω** — el mismo valor en UNO (5V) que en ESP32 (3.3V); el común (la pata más larga) a GND. En 3.3V el azul va a verse más flojo que el rojo: es física, no un error de cableado, y no se corrige bajando la resistencia (ver skill `esp32`). En un UNO, con sus 5V, los tres colores se ven parejos.
 
 ```cpp
 const int R = 4, G = 5, B = 18;

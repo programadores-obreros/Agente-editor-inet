@@ -76,12 +76,16 @@ R = (tension de la fuente − Vf del LED) / corriente que queres
 
 **Por que en el UNO esto no se nota y en el ESP32 arruina la clase:**
 
-| Fuente | Con 330 Ω y un LED de 1,8 V | Con 330 Ω y un verde InGaN de 3,2 V |
-|---|---|---|
-| 5 V (Arduino UNO) | 9,7 mA — prende bien | 5,5 mA — prende bien |
-| 3,3 V (ESP32) | 4,5 mA — prende, medio flojo | **0,3 mA — NO PRENDE** |
+Misma resistencia, la de la casa — **220 Ω**, la que viene en los kits — y dos LED distintos:
 
-Sobre 5 V los 330 Ω andan con cualquier LED del rango: sobra tension para todos. Sobre 3,3 V no queda margen — al LED de 3,2 V le sobran 0,1 V, y 0,1 V sobre 330 Ω son 0,3 mA. El LED esta sano, el codigo esta bien, el cable esta bien, y no prende. Por eso "poné 330 y listo" es un consejo de 5 V que alguien copio a un mundo de 3,3 V.
+| Fuente | Con 220 Ω y un LED de 1,8 V | Con 220 Ω y un verde InGaN de 3,2 V |
+|---|---|---|
+| 5 V (Arduino UNO) | 14,5 mA — prende bien | 8,2 mA — prende bien |
+| 3,3 V (ESP32) | 6,8 mA — prende bien | **0,45 mA — NO PRENDE** |
+
+Sobre 5 V sobra tension para cualquier LED del rango: con 220 Ω andan todos, y por eso en el UNO nadie se entera de que este problema existe. Sobre 3,3 V no queda margen — al LED de 3,2 V le sobran 0,1 V, y 0,1 V sobre 220 Ω son 0,45 mA. El LED esta sano, el codigo esta bien, el cable esta bien, y no prende.
+
+**Y no se arregla cambiando la resistencia.** Es la trampa que hace perder la clase: el alumno prueba con 330 Ω y le va **peor** (0,3 mA), prueba con 1 kΩ y peor todavia. El numero que falta no es el de la resistencia: es el de la fuente. En 3,3 V, contra un LED de 3,2 V, **no hay valor que sirva**.
 
 **Que hacer, en orden:**
 

@@ -78,7 +78,7 @@ Dos reglas que lo explican todo:
 ### LED
 
 **Para que sirve?**
-Diodo que emite luz. Necesita una resistencia en serie (220-330 ohm) para no quemarse.
+Diodo que emite luz. Necesita una resistencia en serie para no quemarse: en los 5 V del UNO, **220 ohm**. Es el valor que viene en los kits, y con un LED de 2 V deja 13,6 mA — lejos de los 20 mA que aguanta el pin.
 
 **Pines:**
 | Pin del LED | Conexion |

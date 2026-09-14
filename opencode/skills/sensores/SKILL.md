@@ -10,6 +10,8 @@ Los sensores son los "sentidos" del Arduino: miden temperatura, distancia, luz, 
 Cada sensor sigue la misma estructura: voltaje, dificultad, librería, para qué sirve, conexiones (con colores de cable), código comentado y errores comunes. Para mostrar el cableado, combiná con el skill `circuitos-visuales` (tool `circuito`) y `diagramas-conexion`.
 
 > **Regla de oro de voltaje (ESP32):** el ESP32 es 3.3V. Varios sensores se alimentan de 5V (VIN) pero su salida puede dar 5V → necesitás un divisor de tensión antes del GPIO, o lo dañás. Ver skill `gotchas-hardware`.
+>
+> ⚠️ **Leé esto si estás en un Arduino UNO.** Este skill está escrito **en clave ESP32**: los pines se nombran GPIO, los ejemplos son de 3.3V y **cada vez que dice "divisor de tensión" está hablando del ESP32**. En el **UNO nada de eso hace falta**: la placa entera es de 5V, sus entradas toleran 5V, y la salida de 5V de un sensor (el ECHO del HC-SR04 es el caso típico) **entra directo al pin**. Poner el divisor en un UNO no protege nada: baja la señal a 3.3V, que el UNO igual lee bien, pero agrega dos resistencias, dos uniones y dos lugares donde el cable se suelta. Lo mismo con el resto: `analogRead()` da **0-1023** en UNO (no 0-4095), y **no hay strapping pins, ni pines de solo-entrada, ni pines de flash** — los únicos con letra chica son D0/D1 (el serie del USB) y D13 (el LED «L» + SCK), todo explicado en `gotchas-hardware`.
 
 ---
 
@@ -103,10 +105,12 @@ El DHT11 da temperatura sin decimales: eso es normal, no es un error.
 |-----|-------|-------------|
 | VCC | 🔴 rojo | VIN (5V) |
 | TRIG | 🟢 verde | GPIO5 |
-| ECHO | 🔵 azul | GPIO18 **¡con divisor de tensión!** |
+| ECHO | 🔵 azul | GPIO18 **¡con divisor de tensión!** (sólo ESP32 — en UNO va directo) |
 | GND | 🟤 marrón | GND |
 
 > ⚠️ **ECHO entrega 5V** y el ESP32 aguanta 3.3V. Divisor: R1=1kΩ entre ECHO y el GPIO, R2=2kΩ entre el GPIO y GND. Sin esto, dañás el ESP32.
+>
+> ✅ **En Arduino UNO NO va divisor.** La placa es de 5V y sus entradas toleran 5V: el ECHO se conecta **directo al pin digital**, igual que el TRIG. Ese es también el cableado del módulo de ultrasonido del kit Educablocks, que es un UNO (ver skill `educabot`: *"HC-SR04 (**sin divisor**: el UNO es 5V)"*). Si viste "divisor" en un tutorial de UNO, era un tutorial de ESP32 mal copiado.
 
 **Código:**
 ```cpp
@@ -135,7 +139,7 @@ void loop() {
 }
 ```
 
-**Errores comunes:** siempre 0 o valores locos → revisá el divisor de tensión y que TRIG/ECHO no estén cruzados. No apuntes a superficies blandas (absorben el ultrasonido).
+**Errores comunes:** siempre 0 o valores locos → en ESP32, revisá el divisor de tensión; en UNO **no hay divisor que revisar**, así que andá directo a lo otro: que TRIG/ECHO no estén cruzados, y que el VCC salga de 5V y no de 3.3V. No apuntes a superficies blandas (absorben el ultrasonido).
 
 ---
 
@@ -426,7 +430,7 @@ void loop() {
 | Sensor | Tipo de lectura | Pin sugerido ESP32 | Voltaje |
 |--------|-----------------|--------------------|---------|
 | DHT11/22 | digital especial | GPIO4 | 3.3V |
-| HC-SR04 | digital (pulso) | TRIG 5, ECHO 18 + divisor | 5V |
+| HC-SR04 | digital (pulso) | TRIG 5, ECHO 18 + divisor (**el divisor es sólo del ESP32**; en UNO el ECHO va directo) | 5V |
 | LDR | analógica | GPIO34 + resistencia 10kΩ | 3.3V |
 | PIR | digital | GPIO13 | 5V |
 | Sonido | digital | GPIO4 | 3.3V |
@@ -434,4 +438,6 @@ void loop() {
 | YL-83/FC-37 (lluvia) | analógica (AO) | GPIO35 | 3.3V/5V |
 | BMP180 (presión) | I2C (0x77) | SDA 21, SCL 22 | 3.3V |
 
-Recordá: pines analógicos del ESP32 = GPIO32-39 (los 34/35 son solo-entrada, ideales). `analogRead()` da 0-4095.
+Recordá: pines analógicos del ESP32 = GPIO32-39 (los 34/35 son solo-entrada, ideales). `analogRead()` da **0-4095** (12 bits).
+
+**Y la misma tabla, si tu placa es un Arduino UNO:** los analógicos son **A0-A5** (seis, y ninguno es solo-entrada: también sirven como digitales), `analogRead()` da **0-1023** (10 bits) y el HC-SR04 **no lleva divisor**. Si copiás un `map()` de un ejemplo de ESP32, cambiale el 4095 por 1023 o los números te van a salir a la cuarta parte.

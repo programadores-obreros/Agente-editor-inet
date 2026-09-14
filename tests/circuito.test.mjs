@@ -8,7 +8,7 @@
 
 import { test, before } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, copyFileSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, copyFileSync, readdirSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
@@ -28,6 +28,11 @@ const PLANTILLAS = {
 }
 
 let mod // el tool cargado
+// El MÓDULO entero, no sólo el `export default`. Hace falta para probar invariantes
+// que no se pueden ejercer dibujando: `avisoDe` con `uno: null` (hoy no hay ningún
+// componente escrito así) y los rótulos de `riel` de cada placa. Se leen del módulo
+// REAL y no se copian acá, o el test se desincroniza del código y deja de ser red.
+let ns
 
 before(async () => {
   // (c) XDG falso con bundle stub para que bundlePath()/extraPath() resuelvan
@@ -73,7 +78,8 @@ before(async () => {
     .replace('/// <reference path="../env.d.ts" />', "")
     .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
   writeFileSync(join(OUT, "circuito.ts"), src)
-  mod = (await import(join(OUT, "circuito.ts"))).default
+  ns = await import(join(OUT, "circuito.ts"))
+  mod = ns.default
 })
 
 const PRESETS = [
@@ -117,11 +123,21 @@ function filaTabla(html, etiqueta) {
   return m ? m[1] : ""
 }
 
-// Todos los GPIO que la tabla dice que se usan (incluye las filas que reservan varios).
+// Un pin de la placa, tal como lo escribe la hoja: "GPIO33" en el ESP32, "D4" o
+// "A4" en el Arduino UNO.
+//
+// EL BANCO VA INCLUIDO A PROPÓSITO, y es el cambio que hizo falta para que estos
+// tests sirvan con dos placas. Antes el regex era /GPIO(\d+)/ y devolvía el NÚMERO
+// pelado, que en el ESP32 alcanza (hay un solo banco: el 33 es el 33). En el UNO
+// D4 y A4 son dos pines FÍSICAMENTE distintos que comparten el número: comparar
+// por número no distingue un circuito bueno de uno roto, y un test que no
+// distingue eso pasa en verde con el bug puesto.
+const PIN = /\b(?:GPIO|D|A)\d+\b/g
+const pinesEn = (texto) => texto.match(PIN) ?? []
+
+// Todos los pines que la tabla dice que se usan (incluye las filas que reservan varios).
 function gpiosDeLaTabla(html) {
-  return [...html.matchAll(/<td>([^<]*GPIO[^<]*)<\/td>/g)].flatMap((m) =>
-    [...m[1].matchAll(/GPIO(\d+)/g)].map((x) => x[1]),
-  )
+  return [...html.matchAll(/<td>([^<]*)<\/td>/g)].flatMap((m) => pinesEn(m[1]))
 }
 
 test("el armador libre genera combinaciones con componentes nuevos", async () => {
@@ -144,13 +160,15 @@ test("el armador libre genera combinaciones con componentes nuevos", async () =>
 })
 
 // Extrae los pines ASIGNADOS (los de la columna de conexiones, no el texto de avisos ni la tabla).
+// Sigue mirando sólo el PRIMER pin de cada etiqueta, como siempre: las filas que
+// reservan varios (7 segmentos, teclado) se cuentan con gpiosDeLaTabla.
 function pinesAsignados(html) {
-  return [...html.matchAll(/class="gpio">GPIO(\d+)/g)].map((m) => m[1])
+  return [...html.matchAll(/class="gpio">((?:GPIO|D|A)\d+)/g)].map((m) => m[1])
 }
 
 test("no se repiten GPIOs dinámicos dentro de un circuito", async () => {
   const { html } = await gen({ componentes: "led, led, servo, buzzer" }, "gpios")
-  const dyn = pinesAsignados(html).filter((g) => g !== "21" && g !== "22") // 21/22 = I2C fijo compartido
+  const dyn = pinesAsignados(html).filter((g) => g !== "GPIO21" && g !== "GPIO22") // 21/22 = I2C fijo compartido
   assert.equal(dyn.length, new Set(dyn).size, "hay GPIOs dinámicos duplicados: " + dyn.join(", "))
 })
 
@@ -172,7 +190,7 @@ test("seguridad: nombre_archivo con ../ no escapa de la carpeta de trabajo", asy
 test("seguridad: un GPIO de flash (6-11) se reasigna y NO se usa como pin", async () => {
   const { html } = await gen({ componentes: "led:6" }, "flash")
   // "GPIO6" puede aparecer en el TEXTO del aviso; lo que no debe pasar es que quede ASIGNADO como pin.
-  assert.ok(!pinesAsignados(html).includes("6"), "asignó GPIO6 (memoria flash): cuelga la placa")
+  assert.ok(!pinesAsignados(html).includes("GPIO6"), "asignó GPIO6 (memoria flash): cuelga la placa")
 })
 
 // ── Tildes en el catálogo de componentes ───────────────────────────────────
@@ -204,17 +222,49 @@ test("los tres que el prompt escribe con tilde funcionan", async () => {
   }
 })
 
-test("los alias acentuados que ya andaban siguen andando", async () => {
+// ESTOS DOS TESTS ESTABAN EN VERDE Y DIBUJABAN LA PLACA EQUIVOCADA.
+//
+// Pasaban `placa: "uno"` cuando el arg `placa` NO EXISTÍA: el objeto llegaba entero
+// a execute (los tests llaman a execute directo, sin pasar por el schema), la clave
+// de más se ignoraba en silencio, y el tool dibujaba un ESP32. Los dos assert eran
+// sobre otra cosa —que el alias con tilde se resolviera— así que nunca se quejaron.
+//
+// Era el bug del producto fosilizado como test que pasa: el docente pedía "higrómetro
+// en mi Arduino" y recibía un ESP32, y la suite decía que estaba todo bien. Ahora
+// cada uno ASEVERA QUÉ PLACA SALIÓ DIBUJADA, que es lo único que hace la diferencia
+// entre el circuito de la docente y el de otra persona.
+test("los alias acentuados que ya andaban siguen andando, y salen en la placa que se pidió", async () => {
   // Éstos se resolvían por entrada explícita en ALIAS: no pueden romperse.
-  for (const nombre of ["lámpara", "higrómetro"]) {
-    const { r } = await gen({ componentes: nombre, placa: "uno" }, "a-" + nombre.slice(0, 4))
-    assert.doesNotMatch(r, /No conozco/i, "rechazó " + nombre)
-  }
+  // "lámpara" es de las que todavía no están portadas al UNO: el tool se tiene que
+  // NEGAR con un motivo, no dibujar un ESP32 disfrazado.
+  const lampara = await gen({ componentes: "lámpara", placa: "uno" }, "a-lamp-uno")
+  assert.doesNotMatch(lampara.r, /No conozco/i, "rechazó lámpara como si no existiera el componente")
+  assert.doesNotMatch(lampara.r, /^Listo/, "dibujó una lámpara en UNO sin tenerla portada")
+  assert.match(lampara.r, /Arduino UNO/, "no dice de qué placa está hablando")
+  assert.equal(lampara.html, "", "generó el HTML igual, con la placa que no era")
+
+  // "higrómetro" SÍ está portado: tiene que salir, y salir en un UNO.
+  const higro = await gen({ componentes: "higrómetro", placa: "uno" }, "a-higr-uno")
+  assert.doesNotMatch(higro.r, /No conozco/i, "rechazó higrómetro")
+  assert.ok(higro.r.startsWith("Listo"), "no armó el higrómetro en UNO: " + higro.r.slice(0, 120))
+  assert.match(higro.html, /<wokwi-arduino-uno/, "pidieron un UNO y no hay ningún UNO en la hoja")
+  assert.doesNotMatch(higro.html, /wokwi-esp32-devkit-v1/, "pidieron un UNO y dibujó un ESP32")
+
+  // Y el mismo alias en ESP32 sigue andando: el arreglo no puede romper la placa vieja.
+  const esp = await gen({ componentes: "lámpara, higrómetro", placa: "esp32" }, "a-alias-esp32")
+  assert.ok(esp.r.startsWith("Listo"), "rompió los alias acentuados en ESP32: " + esp.r.slice(0, 120))
+  assert.match(esp.html, /<wokwi-esp32-devkit-v1/, "el ESP32 dejó de dibujarse")
 })
 
 test("un componente que no existe se sigue rechazando, sin inventar", async () => {
-  const { r } = await gen({ componentes: "transistor", placa: "uno" }, "no-existe")
-  assert.match(r, /No conozco/i, "aceptó un componente inexistente")
+  // Mismo verde falso que el de arriba: pasaba placa:"uno" y el assert miraba otra
+  // cosa. Acá el pedido se rechaza por el COMPONENTE, y eso no depende de la placa —
+  // pero que no dependa es justamente lo que hay que probar, en las dos.
+  for (const placa of ["esp32", "uno"]) {
+    const { r, html } = await gen({ componentes: "transistor", placa }, "no-existe-" + placa)
+    assert.match(r, /No conozco/i, `aceptó un componente inexistente en ${placa}`)
+    assert.equal(html, "", `dijo "no conozco" y generó la hoja igual en ${placa}`)
+  }
 })
 
 test("lo que el describe() promete es lo que el código hace", () => {
@@ -330,7 +380,7 @@ test("B2: el motor paso a paso va al driver, nunca a un GPIO", async () => {
   assert.doesNotMatch(fila, /GPIO/, "el stepper sigue colgado de los GPIO: " + fila)
   assert.match(fila, /Driver ULN2003/, "no dice a dónde va el conector del motor")
   // y el driver (que es quien sí habla con el ESP32) tiene sus 4 señales
-  assert.equal(filaTabla(html, "Driver ULN2003").match(/GPIO\d+/g).length, 4, "el driver perdió sus 4 entradas")
+  assert.equal(pinesEn(filaTabla(html, "Driver ULN2003")).length, 4, "el driver perdió sus 4 entradas")
 })
 
 // ── B3 · cero validación de actuador de potencia ⇒ relé/driver ──────────────
@@ -408,14 +458,14 @@ test("B3: lo que sugiere al pasarse del tope se puede armar de verdad", async ()
 // antes de sospechar del pin — porque el diagrama se lo dio el bot.
 test("B4: un GPIO solo-entrada (34/35/36/39) no se acepta para un LED", async () => {
   const { html } = await gen({ componentes: "led:34" }, "b4-led34")
-  assert.ok(!pinesAsignados(html).includes("34"), "asignó GPIO34 a un LED: no prende nunca")
+  assert.ok(!pinesAsignados(html).includes("GPIO34"), "asignó GPIO34 a un LED: no prende nunca")
   assert.match(html, /SOLO ENTRADA/i, "lo reasignó en silencio, sin explicar por qué")
 })
 
 test("B4: GPIO1 y GPIO3 (puerto serie del USB) tampoco se reparten", async () => {
   for (const g of ["1", "3"]) {
     const { html } = await gen({ componentes: "led:" + g }, "b4-uart" + g)
-    assert.ok(!pinesAsignados(html).includes(g), `asignó GPIO${g}: la placa deja de aceptar la carga del programa`)
+    assert.ok(!pinesAsignados(html).includes("GPIO" + g), `asignó GPIO${g}: la placa deja de aceptar la carga del programa`)
     assert.match(html, /puerto serie del USB/i, `reasignó GPIO${g} sin avisar`)
   }
 })
@@ -429,7 +479,7 @@ test("B4: los solo-entrada SIGUEN siendo válidos para un sensor analógico", as
   // rechacé y el pool te devolvió el mismo número" se ven exactamente iguales. Se
   // podía mutar el fix entero y no fallaba ni un test.
   const { html } = await gen({ componentes: "potenciometro:35" }, "b4-pot35")
-  assert.ok(pinesAsignados(html).includes("35"), "bloqueó GPIO35 para un analógico, que es su mejor uso")
+  assert.ok(pinesAsignados(html).includes("GPIO35"), "bloqueó GPIO35 para un analógico, que es su mejor uso")
   assert.doesNotMatch(html, /SOLO ENTRADA/i, "lo rechazó por solo-entrada y el pool le devolvió otro analógico")
 })
 
@@ -442,7 +492,7 @@ test("B4: los solo-entrada SIGUEN siendo válidos para un sensor analógico", as
 // porque la hoja se ve perfecta.
 test("B6: el display de 7 segmentos declara los 7 pines que se reserva", async () => {
   const { html } = await gen({ componentes: "7segmentos, led, led" }, "b6-7seg")
-  const display = (filaTabla(html, "Display 7 segmentos").match(/GPIO\d+/g) ?? []).length
+  const display = pinesEn(filaTabla(html, "Display 7 segmentos")).length
   assert.equal(display, 7, "el display usa 7 pines y la tabla no los muestra")
   const usados = gpiosDeLaTabla(html)
   assert.equal(usados.length, new Set(usados).size, "dos componentes quedaron en el mismo pin: " + usados.join(", "))
@@ -450,7 +500,7 @@ test("B6: el display de 7 segmentos declara los 7 pines que se reserva", async (
 
 test("B6: el teclado 4x4 declara sus 8 pines (4 filas + 4 columnas)", async () => {
   const { html } = await gen({ componentes: "teclado" }, "b6-teclado")
-  assert.equal((filaTabla(html, "Teclado matricial 4x4").match(/GPIO\d+/g) ?? []).length, 8, "el teclado esconde sus pines")
+  assert.equal(pinesEn(filaTabla(html, "Teclado matricial 4x4")).length, 8, "el teclado esconde sus pines")
 })
 
 test("B6: el display sigue SIN una resistencia dibujada por segmento", async () => {
@@ -790,8 +840,8 @@ test("G2: el GPIO22 (SCL) tampoco se reparte", async () => {
 // MUTACIÓN QUE MATA: en `sacar()`, `if (!usados.has(g)) return g` → `return g`.
 test("G3: el GPIO33 (el único que está en los dos pools) no se entrega dos veces", async () => {
   const { html } = await gen({ componentes: "teclado, led, joystick, joystick, ldr, ntc" }, "g3-pool33")
-  const usados = gpiosDeLaTabla(html).filter((g) => g !== "21" && g !== "22") // 21/22 = I2C compartido
-  assert.ok(usados.includes("33"), "el caso dejó de llegar al GPIO33: este test ya no prueba nada, revisá los pools")
+  const usados = gpiosDeLaTabla(html).filter((g) => g !== "GPIO21" && g !== "GPIO22") // 21/22 = I2C compartido
+  assert.ok(usados.includes("GPIO33"), "el caso dejó de llegar al GPIO33: este test ya no prueba nada, revisá los pools")
   assert.equal(usados.length, new Set(usados).size, "dos componentes en el mismo pin: " + usados.join(", "))
 })
 
@@ -816,7 +866,7 @@ test("G3: el GPIO33 (el único que está en los dos pools) no se entrega dos vec
 test("G4: un GPIO de flash se rechaza POR SER DE FLASH, no por 'no existe'", async () => {
   for (const g of [6, 8, 11]) {
     const { r, html } = await gen({ componentes: "led:" + g }, "g4-flash" + g)
-    assert.ok(!pinesAsignados(html).includes(String(g)), `asignó GPIO${g}: cuelga la placa`)
+    assert.ok(!pinesAsignados(html).includes("GPIO" + g), `asignó GPIO${g}: cuelga la placa`)
     assert.match(html, new RegExp(`GPIO${g} está cableado a la memoria flash`),
       `dice que GPIO${g} "no existe" (es falso: es una pata real) en vez de decir que es la flash`)
     assert.doesNotMatch(r, new RegExp(`GPIO${g} no existe`), "le explicó el motivo equivocado a la docente")
@@ -826,7 +876,7 @@ test("G4: un GPIO de flash se rechaza POR SER DE FLASH, no por 'no existe'", asy
 test("G4: los 6 pines de la flash están todos bloqueados, no sólo las puntas", async () => {
   for (let g = 6; g <= 11; g++) {
     const { html } = await gen({ componentes: "led:" + g }, "g4-todos" + g)
-    assert.ok(!pinesAsignados(html).includes(String(g)), `GPIO${g} quedó asignado`)
+    assert.ok(!pinesAsignados(html).includes("GPIO" + g), `GPIO${g} quedó asignado`)
   }
 })
 
@@ -924,7 +974,7 @@ test("A: el aviso de strapping NO va al chat: ese pin SÍ se dio y funciona", as
   // elegí otro") que pertenece a la hoja. Si el chat avisa de TODO, la docente
   // aprende a saltearse los ⚠️ y el aviso que sí importa deja de existir.
   const { r, html } = await gen({ componentes: "led:15" }, "a-pin-15") // OJO: el nombre del archivo va en la respuesta, así que NO puede contener "strapping"
-  assert.ok(pinesAsignados(html).includes("15"), "no respetó el GPIO15, que es perfectamente usable")
+  assert.ok(pinesAsignados(html).includes("GPIO15"), "no respetó el GPIO15, que es perfectamente usable")
   assert.match(html, /strapping/i, "la hoja dejó de mencionar que es un pin strapping")
   assert.doesNotMatch(r, /strapping/i, "llenó el chat con un aviso de algo que SÍ le dio")
 })
@@ -947,7 +997,7 @@ test("A: la respuesta le devuelve al modelo la tabla de pines que el prompt le m
   }
   // y los pines del chat son EXACTAMENTE los del dibujo: si divergen, el modelo
   // describe un circuito y la hoja muestra otro, que es peor que no decir nada.
-  const enElChat = [...r.matchAll(/GPIO(\d+)/g)].map((m) => m[1])
+  const enElChat = pinesEn(r)
   const enLaHoja = pinesAsignados(html)
   assert.deepEqual(enElChat, enLaHoja, "los pines que el chat le dicta al modelo no son los del dibujo")
 })
@@ -955,11 +1005,7 @@ test("A: la respuesta le devuelve al modelo la tabla de pines que el prompt le m
 test("A: los presets también devuelven su tabla de pines", async () => {
   const { r, html } = await gen({ circuito: "alarma" }, "a-tabla-preset")
   assert.match(r, /Conexiones/i, "el preset no le devuelve ninguna tabla al modelo")
-  assert.deepEqual(
-    [...r.matchAll(/GPIO(\d+)/g)].map((m) => m[1]),
-    pinesAsignados(html),
-    "la tabla del preset no coincide con su dibujo",
-  )
+  assert.deepEqual(pinesEn(r), pinesAsignados(html), "la tabla del preset no coincide con su dibujo")
 })
 
 // ── B · pool agotado, y el tool decía "Listo!" ─────────────────────────────
@@ -1077,7 +1123,7 @@ test("E: dos cargas de potencia reciben un relé CADA UNA", async () => {
   assert.match(r, /calefactor/i, "el aviso no nombra el calefactor")
   // cada relé con su propio GPIO: si comparten pin, son un relé disfrazado de dos
   const señales = [...html.matchAll(/<tr><td>Módulo Relé<\/td>.*?<td>(.*?)<\/td><\/tr>/g)]
-    .flatMap((m) => [...m[1].matchAll(/GPIO(\d+)/g)].map((x) => x[1]))
+    .flatMap((m) => pinesEn(m[1]))
   assert.equal(señales.length, 2, "los dos relés no tienen dos señales en la tabla")
   assert.notEqual(señales[0], señales[1], "los dos relés cuelgan del mismo GPIO: se mueven juntos igual")
 })
@@ -1173,4 +1219,761 @@ test("E: con varias cargas, lo que sugiere al pasarse del tope se arma de verdad
   const piezas = piezasDe(html)
   const cargas = piezas.filter((p) => ["pb-lampara", "pb-calefactor", "pb-bomba", "pb-valvula"].includes(p)).length
   assert.equal(piezas.filter((p) => p === "pb-relay").length, cargas, "sugirió un circuito con menos relés que cargas")
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// ARDUINO UNO — la placa que de verdad hay arriba de la mesa
+//
+// Las escuelas técnicas argentinas usan Arduino UNO con Sensor Shield más que
+// ESP32. Hasta esta tanda, la docente que pedía SU circuito recibía el de otra
+// placa: pines GPIO que en la suya no existen, 3,3 V donde ella tiene 5 V, y un
+// bus I2C en dos pines que su placa dedica a otra cosa. El dibujo salía impecable
+// — por eso no había forma de darse cuenta.
+//
+// Cada test de acá abajo dice QUÉ VEÍA LA DOCENTE, igual que los de la auditoría.
+// ════════════════════════════════════════════════════════════════════════════
+
+const AVISO_HOJA = /<div class="aviso">([\s\S]*?)<\/div>/
+
+// El catálogo de componentes se le pregunta AL TOOL, no se copia acá: el mensaje
+// de "No conozco" ya lo enumera entero. Una lista a mano en este archivo
+// envejecería sola y los invariantes de más abajo pasarían a verificar un catálogo
+// que el tool ya no tiene.
+async function tiposDelTool() {
+  const { r } = await gen({ componentes: "esto-no-existe-ni-va-a-existir" }, "uno-catalogo")
+  const m = r.match(/Tengo: ([^.]+)\./)
+  assert.ok(m, "el tool dejó de enumerar su catálogo al rechazar un componente: " + r.slice(0, 120))
+  return m[1].split(",").map((s) => s.trim()).filter(Boolean)
+}
+
+// ── el reparto: D4 y A4 son DOS pines, no uno ───────────────────────────────
+//
+// ÉSTE ES EL TEST DE LA REGRESIÓN QUE MOTIVÓ TODO EL PORT.
+//
+// El asignador llevaba los ocupados en un `Set<number>`, y en el ESP32 estaba
+// bien: el GPIO33 aparece en el pool digital y en el analógico porque ES EL MISMO
+// PIN, y el Set evitaba entregarlo dos veces (una auditoría generó 40.169
+// circuitos y confirmó cero colisiones).
+//
+// En un UNO ese mismo Set es un bug: D4 y A4 son dos pines distintos, en dos
+// filas distintas de la placa, que apenas comparten el número. Con pools
+// numéricos, darle D4 a un LED tachaba también A4 — y el tool le decía a la
+// docente "no quedan entradas analógicas" con A4 libre y a la vista. Peor: darle
+// A5 a un sensor tachaba D5, que es PWM, que es donde va el servo.
+//
+// MUTACIÓN QUE MATA: en asignarGpios, `usados.add(clavePin(p))` → `usados.add(String(p.n))`.
+test("UNO: asignar D4 no bloquea A4 — son dos pines distintos con el mismo número", async () => {
+  // led, led → D2 y D4 · joystick ×2 → A0,A1 y A2,A3 (+ un digital cada uno) ·
+  // ldr → la única analógica que queda antes del bus I2C: A4.
+  const { html } = await gen({ componentes: "led, led, joystick, joystick, ldr", placa: "uno" }, "uno-d4-vs-a4")
+  const usados = gpiosDeLaTabla(html)
+  assert.ok(usados.includes("D4"), "el caso dejó de llegar a D4: este test ya no prueba nada, revisá el pool")
+  assert.ok(
+    usados.includes("A4"),
+    "D4 le bloqueó A4 al sensor: son dos pines distintos. Pines repartidos: " + usados.join(", "),
+  )
+  assert.equal(usados.length, new Set(usados).size, "dos componentes en el mismo pin: " + usados.join(", "))
+})
+
+test("UNO: y tampoco al revés — A5 no le come el D5, que es PWM", async () => {
+  // Lo que veía la docente con el Set numérico: pedía cinco sensores analógicos y
+  // un servo, y el servo salía "sin pines PWM" cuando le quedaban cinco de los seis.
+  const { html } = await gen({ componentes: "potenciometro, ntc, higrometro, lluvia, servo", placa: "uno" }, "uno-a5-vs-d5")
+  const usados = gpiosDeLaTabla(html)
+  assert.equal(usados.length, new Set(usados).size, "dos componentes en el mismo pin: " + usados.join(", "))
+  const servo = filaTabla(html, "Servo SG90")
+  assert.doesNotMatch(servo, /D\?/, "el servo se quedó sin pin PWM teniendo seis libres: " + servo)
+})
+
+// ── la placa que se dibuja es la que se pidió ───────────────────────────────
+//
+// Lo que veía la docente: pedía su circuito, recibía un ESP32 con pines GPIO, y el
+// chat se lo anunciaba como "Listo!". No hay forma de que se dé cuenta: el dibujo
+// está bien hecho, sólo que es de otra placa.
+test("UNO: dibuja un Arduino UNO, cero ESP32, y ningún pin dice GPIO", async () => {
+  const { r, html } = await gen({ componentes: "led, boton, buzzer, potenciometro", placa: "uno" }, "uno-es-uno")
+  assert.ok(r.startsWith("Listo"), "no armó el circuito básico en UNO: " + r.slice(0, 140))
+  assert.match(html, /<wokwi-arduino-uno/, "no dibujó la pieza del Arduino UNO")
+  assert.doesNotMatch(html, /wokwi-esp32-devkit-v1/, "pidieron un UNO y la hoja trae un ESP32")
+  const pines = [...pinesAsignados(html), ...gpiosDeLaTabla(html)]
+  assert.ok(pines.length > 0, "no encontré ningún pin en la hoja: el test no está probando nada")
+  assert.deepEqual(
+    pines.filter((p) => p.startsWith("GPIO")),
+    [],
+    "quedaron pines con nombre de ESP32 en un circuito de UNO",
+  )
+  // y el chat le dicta al modelo los mismos pines que muestra la hoja
+  assert.deepEqual(pinesEn(r), pinesAsignados(html), "los pines que el chat le dicta al modelo no son los del dibujo")
+})
+
+test("UNO: el default sigue siendo ESP32 — la segunda placa se pide, no se adivina", async () => {
+  // El contrapeso, y es el contrato de no-regresión de toda la tanda: los tests que
+  // ya existían no pasan `placa` y tienen que seguir recibiendo exactamente lo mismo.
+  const { html } = await gen({ componentes: "led, servo" }, "uno-default")
+  assert.match(html, /<wokwi-esp32-devkit-v1/, "sin pedir placa dejó de salir el ESP32")
+  assert.doesNotMatch(html, /wokwi-arduino-uno/, "sin pedir placa salió un UNO")
+})
+
+test("una placa que no sé dibujar se rechaza sin decirle que su placa no existe", async () => {
+  // La diferencia importa: el catálogo de placas que EXISTEN vive en el skill
+  // `placas` (Educablocks, Bhoot, Mis Ladrillos…). Este tool sólo sabe qué puede
+  // DIBUJAR, que es mucho menos. Contestarle "esa placa no existe" a la docente que
+  // tiene una Educablocks en la mano es peor que no dibujarle nada.
+  const { r, html } = await gen({ componentes: "led", placa: "nano" }, "placa-desconocida")
+  assert.doesNotMatch(r, /^Listo/, "aceptó una placa que no sabe dibujar")
+  assert.equal(html, "", "dijo que no y generó la hoja igual")
+  assert.match(r, /esp32/i, "no dice cuáles sí puede dibujar")
+  assert.match(r, /uno/i, "no dice cuáles sí puede dibujar")
+  assert.match(r, /placas/, "no manda al skill donde está el catálogo de placas de verdad")
+  assert.doesNotMatch(r, /no existe/i, "le dijo a la docente que su placa no existe")
+})
+
+// ── PWM: en el UNO son seis, y el servo los necesita ────────────────────────
+//
+// El skill `actuadores` es explícito (`:104`): «En Arduino UNO usá un pin PWM (con
+// ~); en ESP32 cualquier GPIO». La serigrafía de la propia pieza de Wokwi dice
+// «13 · 12 · ~11 · ~10 · ~9 · 8 | 7 · ~6 · ~5 · 4 · ~3 · 2 · TX→1 · RX←0».
+//
+// Lo que veía la docente sin esto: el servo cableado al D4, la librería Servo
+// cargada, y el brazo quieto. Y el diagrama se lo había dado el bot.
+const PWM_UNO = ["D3", "D5", "D6", "D9", "D10", "D11"]
+
+test("UNO: el servo cae SIEMPRE en un pin PWM, esté donde esté en la lista", async () => {
+  const casos = ["servo", "led, servo", "led, led, led, led, led, servo", "teclado, servo"]
+  for (const c of casos) {
+    const { html } = await gen({ componentes: c, placa: "uno" }, "uno-pwm-" + c.replace(/[^a-z]+/gi, "-"))
+    const fila = filaTabla(html, "Servo SG90")
+    const senal = pinesEn(fila).filter((p) => p.startsWith("D"))
+    assert.equal(senal.length, 1, `el servo dejó de declarar su pin de señal en "${c}": ${fila}`)
+    assert.ok(PWM_UNO.includes(senal[0]), `el servo quedó en ${senal[0]}, que no hace PWM ("${c}")`)
+  }
+})
+
+test("UNO: un pin pedido a mano que no hace PWM se rechaza, y se dice cuáles sí", async () => {
+  const { r, html } = await gen({ componentes: "servo:4", placa: "uno" }, "uno-servo-sin-pwm")
+  const senal = pinesEn(filaTabla(html, "Servo SG90")).filter((p) => p.startsWith("D"))
+  assert.ok(PWM_UNO.includes(senal[0]), "le dio al servo el D4, que no hace PWM")
+  assert.match(r, /PWM/, "le cambió el pin que pidió y el chat no dijo una palabra")
+  assert.match(html, /D3, D5, D6, D9, D10, D11/, "avisa del problema y no dice cuáles sirven")
+})
+
+test("UNO: quedarse sin PWM se avisa explícito, no se disfraza de digital", async () => {
+  // Cinco servos + un RGB piden nueve pines PWM y el UNO tiene seis. Lo que NO
+  // puede pasar es que los tres que faltan salgan en un digital cualquiera: ese
+  // circuito se ve completo y no anda, que es el peor de los dos finales.
+  const { r, html } = await gen({ componentes: "servo, servo, servo, servo, servo, rgb-led", placa: "uno" }, "uno-pwm-agotado")
+  assert.doesNotMatch(r, /^Listo/, "anunció como terminado un circuito al que le faltan pines PWM")
+  assert.match(r, /INCOMPLETO/, "no dice que el circuito quedó incompleto")
+  assert.match(r, /pines PWM/i, "no dice que lo que se acabó fue el PWM")
+  assert.match(html, /No quedan pines PWM libres/, "la hoja no lo avisa")
+  // los seis PWM se usaron de verdad antes de darse por vencido
+  const usados = gpiosDeLaTabla(html)
+  for (const p of PWM_UNO) assert.ok(usados.includes(p), `se rindió sin usar ${p}, que hace PWM`)
+  // y el chat le dice a la docente EXACTAMENTE el texto que va a encontrar en la hoja
+  const marca = r.match(/esa fila dice "([^"]+)"/)?.[1]
+  assert.ok(marca, "no le dice qué va a ver en la hoja")
+  assert.ok(html.includes(marca), `el chat manda a buscar "${marca}" y la hoja no dice eso`)
+})
+
+test("UNO: un LED común NO se come un pin PWM habiendo digitales pelados", async () => {
+  // El orden del pool no es cosmético: si el primer LED se lleva el D3, el servo
+  // del mismo circuito se queda sin lugar con la mitad del PWM libre.
+  const { html } = await gen({ componentes: "led, led, led", placa: "uno" }, "uno-led-no-pisa-pwm")
+  for (const p of pinesEn(filaTabla(html, "LED"))) {
+    assert.ok(!PWM_UNO.includes(p), `un LED se llevó ${p}, que es de los seis que hacen PWM`)
+  }
+})
+
+// ── I2C en A4/A5: el bug MUDO que el símbolo SDA/SCL arregla ────────────────
+//
+// La siembra de pines ocupados leía el destino con un regex /GPIO(\d+)/. En el UNO
+// el SDA se llama A4: ese regex no matchea, y los dos pines del bus quedaban SIN
+// reservar. El asignador le daba A4 al primer sensor analógico y el LCD se quedaba
+// sin bus.
+//
+// Lo que veía la docente: la hoja mandaba el SDA del display Y el sensor de
+// humedad al mismo agujero. Cableaba lo que veía, y no andaba ninguno de los dos.
+// Ni un ⚠️ en ningún lado: el dibujo está bien hecho.
+//
+// MUTACIÓN QUE MATA: borrar el loop de siembra I2C de asignarGpios.
+test("UNO: el LCD sale en A4/A5, y esas dos quedan FUERA del pool analógico", async () => {
+  const { html } = await gen({ componentes: "lcd, ntc, potenciometro, higrometro, lluvia", placa: "uno" }, "uno-i2c-reserva")
+  const lcd = filaTabla(html, "LCD I2C")
+  assert.match(lcd, /\bA4\b/, "el LCD perdió su SDA")
+  assert.match(lcd, /\bA5\b/, "el LCD perdió su SCL")
+  for (const et of ["Sensor de temperatura NTC", "Potenciómetro", "Higrómetro de suelo", "Sensor de lluvia"]) {
+    const fila = filaTabla(html, et)
+    assert.ok(fila.length > 0, `no encontré la fila de "${et}"`)
+    assert.doesNotMatch(fila, /\bA4\b|\bA5\b/, `${et} quedó pinchado en el bus I2C del LCD: ${fila}`)
+  }
+  const usados = gpiosDeLaTabla(html)
+  assert.equal(usados.length, new Set(usados).size, "dos componentes en el mismo pin: " + usados.join(", "))
+})
+
+test("UNO: sin ningún módulo I2C, A4 y A5 se reparten como cualquier analógica", async () => {
+  // El contrapeso: reservarlas SIEMPRE sería regalarle dos entradas al aire. Sólo
+  // se reservan cuando hay alguien colgado del bus.
+  const { html } = await gen({ componentes: "joystick, joystick, ntc, potenciometro", placa: "uno" }, "uno-sin-i2c")
+  const usados = gpiosDeLaTabla(html)
+  assert.ok(usados.includes("A4"), "dejó A4 sin usar sin que haya ningún I2C que la necesite")
+  assert.ok(usados.includes("A5"), "dejó A5 sin usar sin que haya ningún I2C que la necesite")
+})
+
+test("UNO: dos módulos I2C iguales siguen avisando del choque de direcciones", async () => {
+  // El detector preguntaba `destino === "GPIO21"`: en el UNO no matcheaba nunca, o
+  // sea que el aviso F —dos OLED con la misma dirección de fábrica— habría
+  // desaparecido en silencio justo en la placa nueva.
+  const { r, html } = await gen({ componentes: "oled, oled", placa: "uno" }, "uno-dos-oled")
+  assert.match(r, /MISMA direcci[óo]n/i, "el chat no dice nada del choque de direcciones")
+  assert.match(html, /SDA=A4, SCL=A5/, "nombra el bus con los pines de la otra placa")
+  assert.doesNotMatch(html, /GPIO21|GPIO22/, "el aviso del UNO cita los pines I2C del ESP32")
+})
+
+// ── pines que existen, con su pero: D0/D1 y D13 ─────────────────────────────
+//
+// Decisión del producto: ENTRAN al pool (el UNO tiene 14 digitales y sacarle tres
+// es sacarle el 20%), pero al final de la fila y con aviso — igual que hoy el GPIO2
+// del ESP32. El aviso va a la HOJA y no al chat, a propósito: ese pin SÍ se dio y
+// funciona. Si el chat avisa de todo, la docente aprende a saltearse los ⚠️.
+test("UNO: D13 y D0/D1 se usan, pero la hoja cuenta con qué se van a encontrar", async () => {
+  const { r, html } = await gen({ componentes: "led:13, led:0", placa: "uno" }, "uno-pines-con-pero")
+  const usados = pinesAsignados(html)
+  assert.ok(usados.includes("D13"), "no respetó el D13, que es perfectamente usable")
+  assert.ok(usados.includes("D0"), "no respetó el D0, que es perfectamente usable")
+  assert.match(html, /LED de la placa/i, "la hoja no avisa que D13 tiene el LED soldado en paralelo")
+  assert.match(html, /puerto serie/i, "la hoja no avisa que D0 y D1 son el serie del USB")
+  assert.doesNotMatch(r, /LED de la placa|puerto serie/i, "llenó el chat con avisos de pines que SÍ le dio")
+})
+
+test("UNO: los pines de riesgo van al FINAL del pool, no al principio", async () => {
+  // Si D13/D0/D1 salieran primero, el circuito más simple del mundo arrancaría en
+  // el pin que comparte el LED de placa. Entran, pero últimos.
+  const { html } = await gen({ componentes: "led, led, led", placa: "uno" }, "uno-orden-pool")
+  for (const p of pinesEn(filaTabla(html, "LED"))) {
+    assert.ok(!["D13", "D0", "D1"].includes(p), `repartió ${p} habiendo digitales sin ningún pero libres`)
+  }
+})
+
+test("UNO: un pin que no existe se rechaza nombrando el rango de verdad", async () => {
+  // El UNO no tiene flash SPI en pines, ni strapping, ni solo-entrada: de las cinco
+  // reglas del ESP32, la única que sobrevive es "ese pin no existe". Traducir las
+  // otras cuatro habría sido inventarle defectos a una placa que no los tiene.
+  const d14 = await gen({ componentes: "led:14", placa: "uno" }, "uno-d14")
+  assert.ok(!pinesAsignados(d14.html).includes("D14"), "asignó un D14 que no existe")
+  assert.match(d14.r, /D0 a D13/, "no dice cuál es el rango real de los digitales")
+  const a9 = await gen({ componentes: "potenciometro:9", placa: "uno" }, "uno-a9")
+  assert.ok(!pinesAsignados(a9.html).includes("A9"), "asignó una A9 que no existe")
+  assert.match(a9.r, /A0 a A5/, "no dice cuál es el rango real de las analógicas")
+})
+
+// ── el invariante: si no sé dibujarlo en esa placa, NO lo dibujo ────────────
+//
+// Éste es el corazón de la tanda. Antes `advertencia` era UN texto y se imprimía
+// siempre; con dos placas, el que le tocaba al docente del UNO iba a ser el del
+// ESP32 —"usá GPIO34 o GPIO35 (solo-entrada)"— y suena exactamente igual de seguro
+// que el correcto. El tool se niega y dice qué le falta. No hay fallback.
+//
+// MUTACIÓN QUE MATA: en `avisoDe`, devolver `{ texto: aviso.esp32 }` cuando falta
+// la clave de la placa pedida.
+test("UNO: todo componente que se DIBUJA tiene su propia advertencia; el resto se rechaza", async () => {
+  const tipos = await tiposDelTool()
+  assert.ok(tipos.length >= 30, "el catálogo que devuelve el tool se quedó corto: " + tipos.join(", "))
+  const dibujados = []
+  const rechazados = []
+  for (const tipo of tipos) {
+    const { r, html } = await gen({ componentes: tipo, placa: "uno" }, "uno-inv-" + tipo.replace(/[^a-z0-9]+/gi, "-"))
+    if (/^Listo|INCOMPLETO/.test(r)) {
+      dibujados.push(tipo)
+      const hoja = html.match(AVISO_HOJA)?.[1] ?? ""
+      assert.ok(hoja.length > 0, `"${tipo}" se dibujó en UNO sin una sola línea de advertencia`)
+      assert.match(html, /<wokwi-arduino-uno/, `"${tipo}" se dibujó, pero con la placa equivocada`)
+    } else {
+      rechazados.push(tipo)
+      // Negarse está bien; negarse sin decir qué falta, no. Y NUNCA puede haber hoja.
+      assert.equal(html, "", `"${tipo}" se rechazó en el chat y generó la hoja igual`)
+      assert.match(r, /Arduino UNO/, `"${tipo}" se rechazó sin decir de qué placa habla`)
+      assert.match(r, /esp32/i, `"${tipo}" se rechazó sin ofrecerle a la docente dónde SÍ lo tiene`)
+    }
+  }
+  // Las tres etapas de esta tanda: 14 (básicos) + 5 (PWM) + 4 (I2C) = 23.
+  assert.equal(
+    dibujados.length,
+    23,
+    `cambió la cantidad de componentes portados al UNO (${dibujados.length}). Si portaste otro, subí el número y agregale su advertencia; si se cayó alguno, esto es una regresión.\nDibuja: ${dibujados.join(", ")}\nRechaza: ${rechazados.join(", ")}`,
+  )
+})
+
+// ── ninguna advertencia de UNO habla de la otra placa ───────────────────────
+//
+// Cinco de las advertencias de la etapa 1 eran FALSAS en un UNO, no imprecisas:
+// el LED decía 220Ω "porque son los 3.3V del ESP32"; el botón, "nunca a 3.3V"; el
+// potenciómetro mandaba a "GPIO34 o GPIO35 (solo-entrada)"; el LDR y el higrómetro
+// decían que analogRead da 0-4095. Dibujar un UNO con esos textos no es arreglar el
+// bug: es cambiarlo de lugar.
+//
+// Este barrido es la red que impide que vuelvan a entrar de a una.
+//
+// ── POR QUÉ "3,3 V" YA NO ESTÁ EN LA LISTA DE PROHIBIDAS ───────────────────
+//
+// Estaba, y era un BUG DEL TEST: prohibía la frase CORRECTA. El UNO TIENE riel
+// de 3,3 V — skills/sensores/SKILL.md lo documenta en la columna "En Arduino
+// UNO" de la tabla del BMP180 (VCC → 3.3V), y circuito.ts lo cita en el `riel`
+// de la placa (`V3: "3.3V"`). El OLED, el MPU6050 y el BMP180 son módulos de
+// 3,3 V y este tool los dibuja al riel de 3,3 V en las DOS placas: decirlo en
+// la prosa es exactamente lo que hay que hacer.
+//
+// El costo de tenerlo prohibido no fue teórico. Las advertencias de UNO del
+// OLED, el MPU6050 y el BMP180 terminaron escritas como "la alimentación es la
+// que muestra la tabla de acá abajo" — un texto redactado para pasar ESTE test,
+// no para el aula. Un test que bloquea la verdad es peor que un test decorativo.
+//
+// Lo que se prohíbe es la jerga que NO APLICA al UNO, que era el objetivo real:
+// `divisor` y `VIN` (pines/técnicas del ESP32), `strapping` y `solo-entrada`
+// (clases de pin que el UNO no tiene: skills/placas/SKILL.md, "Pines prohibidos:
+// ninguno"), `4095` y `ADC2` (el ADC del UNO es de 0 a 1023), `ledc` (el
+// periférico de PWM del ESP32) y `GPIO` (el UNO nombra D0-D13 y A0-A5).
+//
+// Si alguien quiere reponer "3,3 V" acá, que lea primero la columna del BMP180.
+test("UNO: ninguna advertencia menciona divisor, VIN, strapping, GPIO ni 4095", async () => {
+  const prohibido = /divisor|\bVIN\b|strapping|4095|GPIO|solo[- ]entrada|ADC2|\bledc\b/i
+  const tipos = await tiposDelTool()
+  const hallazgos = []
+  for (const tipo of tipos) {
+    const { r, html } = await gen({ componentes: tipo, placa: "uno" }, "uno-jerga-" + tipo.replace(/[^a-z0-9]+/gi, "-"))
+    if (!/^Listo|INCOMPLETO/.test(r)) continue // no se dibuja en UNO: no tiene texto de UNO
+    // Sólo la PROSA de la hoja. La tabla de conexiones queda afuera a propósito: ahí
+    // "3.3V" puede ser el riel de verdad al que va el cable (el OLED, el MPU6050 y el
+    // BMP180 son de 3,3 V en las dos placas, y eso el dibujo lo tiene que decir). Lo
+    // que no puede pasar es que el TEXTO le explique al docente la placa que no tiene.
+    const hoja = (html.match(AVISO_HOJA)?.[1] ?? "").replace(/<[^>]+>/g, " ")
+    const m = hoja.match(prohibido)
+    if (m) hallazgos.push(`${tipo} → "${m[0]}" en: ${hoja.slice(Math.max(0, m.index - 60), m.index + 90).trim()}`)
+  }
+  assert.deepEqual(hallazgos, [], "una advertencia de UNO sigue explicando el ESP32")
+})
+
+// ── y el POSITIVO: que cada advertencia DIGA algo ───────────────────────────
+//
+// SE ROMPÍA ASÍ, y lo encontró una prueba de mutación: se podían VACIAR las 23
+// advertencias de UNO (`uno: null` en las 17 que son string literal) y la suite
+// entera seguía en verde. Con vaciar sólo la del LED alcanzaba: la hoja salía con
+// el cartel "💡 Atención:" y NADA atrás, y "sin la resistencia el LED se destruye
+// en el primer encendido" desaparecía sin que se enterara nadie.
+//
+// El motivo es que toda la red de UNO defendía el NEGATIVO (que no entre jerga del
+// ESP32) y el CONTEO (que sean 23), nunca el POSITIVO: que el texto exista y sirva.
+// Un componente con la advertencia vacía pasaba las dos.
+//
+// Por qué el piso es 80 y no 10: la advertencia de UNO más corta que hay hoy mide
+// 142 caracteres, así que 80 deja aire para una futura más breve y sigue estando
+// LEJOS de lo que se pasa con relleno. Y el piso solo no alcanza —80 caracteres de
+// lorem lo pasan—, por eso además se exige vocabulario de conexión: un aviso que no
+// nombra ni un pin, ni un riel, ni una unidad, no le sirve a nadie con la placa
+// en la mano.
+const MIN_AVISO = 80
+const VOCABULARIO_DE_CONEXION = /\b(D\d|A\d|GND|5\s*V|3[.,]3\s*V|PWM|I2C|SDA|SCL|Ω|pin|pines|analóg|digital|cable)/i
+
+test("UNO: la advertencia de cada componente dibujado DICE algo, no está vacía", async () => {
+  const tipos = await tiposDelTool()
+  const flacos = []
+  for (const tipo of tipos) {
+    const { r, html } = await gen({ componentes: tipo, placa: "uno" }, "uno-contenido-" + tipo.replace(/[^a-z0-9]+/gi, "-"))
+    if (!/^Listo|INCOMPLETO/.test(r)) continue // no se dibuja en UNO: no le toca advertencia
+    const crudo = html.match(AVISO_HOJA)?.[1] ?? ""
+    // Se saca el encabezado ("💡 Atención:") y las viñetas: lo que se mide es el
+    // TEXTO, no la decoración que el tool pone igual aunque la lista esté vacía.
+    const texto = crudo.replace(/<[^>]+>/g, " ").replace(/[💡✋•]/g, " ").replace(/Atención:|¡Probalo con el mouse!/g, " ").replace(/\s+/g, " ").trim()
+    if (texto.length < MIN_AVISO) {
+      flacos.push(`${tipo} → ${texto.length} caracteres: "${texto}"`)
+      continue
+    }
+    if (!VOCABULARIO_DE_CONEXION.test(texto)) {
+      flacos.push(`${tipo} → ${texto.length} caracteres pero no nombra ni un pin ni un riel: "${texto.slice(0, 120)}"`)
+    }
+  }
+  assert.deepEqual(flacos, [], "un componente se dibuja en UNO con una advertencia vacía o de relleno")
+})
+
+// ── los módulos de 3,3 V DICEN a qué riel van ──────────────────────────────
+//
+// MUTACIÓN QUE MATA: volver la advertencia de UNO del OLED, el MPU6050 o el
+// BMP180 a "La alimentación es la que muestra la tabla de acá abajo".
+//
+// SE ROMPÍA ASÍ, y es el caso más feo de toda la tanda: esos tres textos estaban
+// redactados para ESQUIVAR el barrido de jerga, que hasta recién prohibía escribir
+// "3,3 V" en cualquier prosa de UNO. O sea que un test bloqueaba la frase CORRECTA
+// y el código se acomodó al test en vez de al aula: en vez de decir a qué riel va
+// el cable rojo, mandaba a mirar una tabla.
+//
+// El dato existe y es del repo, no inventado: skills/sensores/SKILL.md tiene una
+// columna "En Arduino UNO" en la tabla del BMP180 que dice VCC → 3.3V, igual que
+// en el ESP32; y circuito.ts declara `V3` como "3,3 V DE VERDAD: el módulo lo pide
+// sí o sí, esté en la placa que esté". Los tres van al riel `V3`, que en el UNO se
+// rotula "3.3V". Decirlo es la obligación del tool; mandar a mirar la tabla, no.
+test("UNO: los módulos de 3,3 V dicen a QUÉ riel va el cable rojo", async () => {
+  // Son los tres que el tool cablea a `V3` (ver `pines[].destino` de cada uno).
+  const DE_TRES_CON_TRES = ["oled", "mpu6050", "bmp180"]
+  const flojos = []
+  for (const tipo of DE_TRES_CON_TRES) {
+    const { r, html } = await gen({ componentes: tipo, placa: "uno" }, "uno-riel-" + tipo)
+    assert.match(r, /^Listo|INCOMPLETO/, `"${tipo}" dejó de dibujarse en UNO: ${r.slice(0, 160)}`)
+    const texto = (html.match(AVISO_HOJA)?.[1] ?? "").replace(/<[^>]+>/g, " ")
+    // Tiene que NOMBRAR la tensión de alimentación, no mandar a buscarla.
+    if (!/3[.,]3\s*V/i.test(texto)) {
+      flojos.push(`${tipo} → su advertencia de UNO no dice a qué tensión va la alimentación: "${texto.slice(0, 200)}"`)
+      continue
+    }
+    // Y no puede hacerlo mandando a mirar otra cosa: ésa fue la redacción de evasión.
+    if (/la tabla de acá abajo|como dice la tabla/i.test(texto)) {
+      flojos.push(`${tipo} → vuelve a mandar a mirar la tabla en vez de decir la tensión: "${texto.slice(0, 200)}"`)
+    }
+  }
+  assert.deepEqual(flojos, [], "un módulo de 3,3 V se dibuja en UNO sin decir a qué riel va el cable rojo")
+})
+
+// MUTACIÓN QUE MATA: en `bloqueDeAvisos`, sacar el guard y dejar
+// `return cabecera + cuerpo`.
+test("sin advertencias no sale el cartel '💡 Atención:' vacío", async () => {
+  // Hoy es un estado INALCANZABLE dibujando (los 23 portados traen su advertencia),
+  // y por eso se prueba por la FUNCIÓN y no por un circuito: es el camino al que
+  // llega la hoja el día que a alguien se le vacía un aviso en un refactor — un
+  // camino que esta misma tanda ya vio abrirse. Un cartel de atención sin nada
+  // atrás se lee como un error del programa, y se lee justo en el papel que el
+  // pibe tiene delante mientras cablea.
+  const { bloqueDeAvisos } = ns
+  assert.ok(typeof bloqueDeAvisos === "function", "`bloqueDeAvisos` dejó de exportarse y este invariante se quedó sin red")
+
+  // 1. Lista vacía y NO interactivo: no sale absolutamente nada.
+  assert.equal(bloqueDeAvisos([], false), "", "salió el encabezado de avisos sin un solo aviso atrás")
+
+  // 2. Lista vacía pero interactivo: "✋ ¡Probalo con el mouse!" SÍ se queda. No
+  //    encabeza avisos, es una invitación que se sostiene sola.
+  const soloInteractivo = bloqueDeAvisos([], true)
+  assert.match(soloInteractivo, /Probalo con el mouse/, "se perdió la invitación del circuito interactivo")
+  assert.doesNotMatch(soloInteractivo, /Atención/, "el circuito interactivo salió con el encabezado de avisos")
+
+  // 3. Con avisos, todo sigue igual que siempre.
+  const conAvisos = bloqueDeAvisos(["el primero", "el segundo"], false)
+  assert.match(conAvisos, /Atención/, "el cartel perdió su encabezado")
+  assert.match(conAvisos, /• el primero/, "se perdió un aviso")
+  assert.match(conAvisos, /• el segundo/, "se perdió un aviso")
+
+  // 4. Y la hoja de verdad: cuando hay avisos el div está; cuando el bloque sale
+  //    vacío, no queda ni el div colgado en el HTML.
+  const { html } = await gen({ componentes: "led", placa: "uno" }, "uno-cartel-lleno")
+  assert.match(html, /<div class="aviso">/, "el circuito normal perdió el cartel de avisos")
+  assert.match(html, /Atención/, "el cartel salió sin su encabezado")
+  assert.doesNotMatch(html, /<div class="aviso">\s*<\/div>/, "quedó un div de avisos vacío en la hoja")
+})
+
+// ── el fallback a ESP32, por la puerta de atrás ─────────────────────────────
+//
+// MUTACIÓN QUE MATA: en `avisoDe`, cambiar `porPlaca[placa] ?? null` por
+// `porPlaca[placa] ?? porPlaca.esp32`.
+//
+// El guard de arriba (`!(placa in porPlaca)`) YA estaba probado: mutarlo pone
+// rojos 4 tests. La otra mitad del return no la mataba ninguno, y no por descuido:
+// hoy NO hay ningún componente escrito con `uno: null`, así que dibujando no se
+// recorre ese camino. Pero `uno: null` es una forma que el propio docstring de
+// `avisoDe` BENDICE ("la placa está soportada pero no hay nada que advertir"). El
+// día que alguien la use, ese `??` imprime el texto del ESP32 en la hoja del UNO
+// en silencio — el bug exacto que esta tanda vino a matar, a un carácter de
+// distancia. No se puede ejercer por el render, así que se ejerce por la función.
+test("`uno: null` NO cae al texto del ESP32: soportada sin aviso ≠ no soportada", () => {
+  const { avisoDe } = ns
+  assert.ok(typeof avisoDe === "function", "`avisoDe` dejó de exportarse y este invariante se quedó sin red")
+
+  const TEXTO_ESP32 = "TEXTO-EXCLUSIVO-DEL-ESP32-QUE-NO-PUEDE-APARECER-EN-UN-UNO"
+
+  // 1. La placa está soportada pero no hay nada que advertir: {texto: null}, NUNCA
+  //    el texto de la otra placa.
+  const soportadaSinAviso = avisoDe({ esp32: TEXTO_ESP32, uno: null }, "uno")
+  assert.notEqual(soportadaSinAviso, null, "`uno: null` se leyó como 'no soporta UNO': son dos cosas distintas")
+  assert.equal(soportadaSinAviso.texto, null, `\`uno: null\` cayó al texto del ESP32: "${soportadaSinAviso.texto}"`)
+
+  // 2. La placa NO está en el objeto: se NIEGA (null), que es otra cosa.
+  assert.equal(avisoDe({ esp32: TEXTO_ESP32 }, "uno"), null, "un componente sin clave `uno` dejó de rechazarse")
+
+  // 3. La forma corta (string pelado) equivale a `{esp32: …}` y a ninguna otra placa.
+  assert.equal(avisoDe(TEXTO_ESP32, "uno"), null, "la forma corta dejó de ser 'sólo ESP32'")
+
+  // 4. Y lo que SÍ tiene que pasar, para que el test no pase por estar todo roto.
+  assert.deepEqual(avisoDe({ esp32: TEXTO_ESP32 }, "esp32"), { texto: TEXTO_ESP32 })
+  assert.deepEqual(avisoDe({ esp32: TEXTO_ESP32, uno: "TEXTO-UNO" }, "uno"), { texto: "TEXTO-UNO" })
+})
+
+// ── los rótulos de riel: lo que dice el cable en la tabla ───────────────────
+//
+// MUTACIÓN QUE MATA: en `PLACAS.uno.riel`, poner `V5: "VIN (5V)"`.
+//
+// Quedaba 523 en verde. El barrido de jerga de más arriba mira SÓLO la prosa y
+// excluye a propósito la tabla de conexiones — que es justo donde aterriza `riel`.
+//
+// Y en un UNO "VIN" no es un sinónimo de 5V: es la entrada SIN REGULAR del jack
+// (7-12 V). Un servo, un LCD o un NeoPixel colgados ahí con un adaptador de 9 V se
+// queman, y alimentando por USB directamente no anda. El rótulo es lo que el pibe
+// busca en la serigrafía de su placa: tiene que decir lo que está impreso.
+test("los rótulos de riel de cada placa dicen lo que está serigrafiado en ESA placa", () => {
+  const { PLACAS } = ns
+  assert.ok(PLACAS, "`PLACAS` dejó de exportarse y este invariante se quedó sin red")
+
+  const uno = PLACAS.uno.riel
+  // En el UNO el riel de 5 V se llama "5V" y punto: es lo que dice la serigrafía.
+  assert.equal(uno.V5, "5V", "el riel de 5V del UNO dejó de llamarse como está impreso en la placa")
+  assert.equal(uno.V3, "3.3V", "el riel de 3,3 V del UNO dejó de llamarse como está impreso en la placa")
+  assert.equal(uno.VLOGICA, "5V", "el UNO trabaja a 5V: su riel de lógica es el de 5V")
+  // El I2C del UNO son A4/A5, no un GPIO.
+  assert.equal(uno.SDA, "A4")
+  assert.equal(uno.SCL, "A5")
+
+  // La jerga del ESP32 NO puede aparecer en NINGÚN rótulo del UNO.
+  const JERGA_AJENA = /VIN|GPIO/i
+  for (const [nombre, rotulo] of Object.entries(uno)) {
+    if (rotulo == null) continue
+    assert.doesNotMatch(rotulo, JERGA_AJENA, `el riel ${nombre} del UNO se rotula "${rotulo}", que es de la otra placa`)
+  }
+  // Y el de 5 V en particular no puede rotularse con el de 3,3 V ni al revés.
+  assert.doesNotMatch(uno.V5, /3[.,]3/, "el riel de 5V del UNO quedó rotulado como el de 3,3 V")
+  assert.notEqual(uno.V5, uno.V3, "los dos rieles del UNO quedaron con el MISMO rótulo: un cable iría a cualquier lado")
+
+  // La contracara en el ESP32: su lógica sigue siendo de 3,3 V, y ahí VIN sí es el
+  // nombre correcto del riel de 5 V (es como se llama en esa placa).
+  const esp32 = PLACAS.esp32.riel
+  assert.match(esp32.VLOGICA, /3[.,]3\s*V/i, "la lógica del ESP32 dejó de ser de 3,3 V")
+  assert.equal(esp32.V3, "3.3V")
+  assert.match(esp32.V5, /VIN/, "el riel de 5V del ESP32 dejó de nombrar VIN, que es como se llama en esa placa")
+
+  // Ningún rótulo puede quedar vacío: un cable que termina en "" se ve perfecto.
+  for (const placa of Object.values(PLACAS)) {
+    for (const [nombre, rotulo] of Object.entries(placa.riel)) {
+      if (rotulo == null) continue // `null` es "esta placa NO tiene ese riel", y es legítimo
+      assert.ok(rotulo.trim().length > 0, `el riel ${nombre} de ${placa.etiqueta} quedó con el rótulo vacío`)
+    }
+  }
+})
+
+// ── un tool no puede sugerir el pin que el otro nunca reparte ───────────────
+//
+// MUTACIÓN QUE MATA: en `imprimible.ts`, volver el ejemplo del `.describe()` de
+// `conexiones` a "LED rojo (ánodo) → GPIO12 con 220Ω".
+//
+// SE ROMPÍA ASÍ: el ejemplo decía GPIO12. GPIO12 está en `GPIO_STRAPPING` y NO
+// está en `POOL_DIGITAL`: el asignador de `circuito.ts` no lo reparte JAMÁS. O sea
+// que un tool sugería en el prompt el pin que el otro tiene prohibido — y los
+// `.describe()` no son documentación interna, viajan en el schema, o sea en el
+// prompt, o sea el modelo los copia al papel que el pibe se lleva a la mesa.
+//
+// En ESAS MISMAS DOS LÍNEAS el 330→220 sí estaba protegido (test 9 de
+// resistencia-led) y sacar el enum de placa también (test 10). Sólo el pin quedó
+// al aire, y reponerlo dejaba los 523 en verde.
+//
+// Los Sets se LEEN de `circuito.ts`, no se copian acá: si mañana cambia el pool,
+// este test cambia con él en vez de defender un mapa viejo.
+test("ningún .describe() de un tool da como ejemplo un GPIO que el asignador no reparte", () => {
+  const { POOL_DIGITAL, GPIO_STRAPPING, GPIO_FLASH, GPIO_SOLO_ENTRADA } = ns
+  assert.ok(Array.isArray(POOL_DIGITAL) && POOL_DIGITAL.length, "`POOL_DIGITAL` dejó de exportarse: el test perdió su fuente")
+  for (const [nombre, s] of [["GPIO_STRAPPING", GPIO_STRAPPING], ["GPIO_FLASH", GPIO_FLASH], ["GPIO_SOLO_ENTRADA", GPIO_SOLO_ENTRADA]]) {
+    assert.ok(s instanceof Set && s.size, `\`${nombre}\` dejó de exportarse: el test perdió su fuente`)
+  }
+  const reparte = new Set(POOL_DIGITAL)
+
+  // Por qué un pin del pool igual puede estar mal como EJEMPLO: GPIO2 y GPIO15
+  // están en `POOL_DIGITAL` pero van ÚLTIMOS y a propósito ("al final, bajo
+  // riesgo" dice el comentario del pool, porque son strapping). Un último recurso
+  // no es un ejemplo: el ejemplo es lo que el modelo copia primero y siempre.
+  const motivo = (g) => {
+    if (GPIO_FLASH.has(g)) return `está cableado a la flash SPI del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa`
+    if (GPIO_SOLO_ENTRADA.has(g)) return `es SOLO ENTRADA (34, 35, 36, 39): no puede encender nada`
+    if (GPIO_STRAPPING.has(g)) return `es un pin "strapping" y el pool lo reparte último o no lo reparte`
+    if (!reparte.has(g)) return `no está en POOL_DIGITAL: el asignador de circuito.ts no lo reparte nunca`
+    return null
+  }
+
+  const TOOLS = join(REPO, "opencode/tool")
+  const hallazgos = []
+  for (const archivo of readdirSync(TOOLS).filter((n) => n.endsWith(".ts"))) {
+    const crudo = readFileSync(join(TOOLS, archivo), "utf8")
+    // Los comentarios quedan AFUERA: el de `imprimible.ts` explica justamente por
+    // qué el ejemplo NO dice GPIO12, y nombrarlo para explicarlo tiene que seguir
+    // siendo posible. Lo que viaja al prompt es el texto, no el comentario.
+    const sinComentarios = crudo
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+      .replace(/(^|[^:])\/\/[^\n]*/g, (m, p) => p + " ".repeat(m.length - p.length))
+    // Todo lo que viaja en el schema: los `.describe()` de cada arg y la
+    // `description:` del tool. Las dos las lee el modelo igual.
+    const textos = [
+      ...sinComentarios.matchAll(/\.describe\(\s*(`|")([\s\S]*?)\1\s*\)/g),
+      ...sinComentarios.matchAll(/description:\s*(`|")([\s\S]*?)\1\s*,/g),
+    ]
+    for (const m of textos) {
+      for (const g of m[2].matchAll(/GPIO\s*(\d+)/gi)) {
+        const por = motivo(+g[1])
+        if (por) hallazgos.push(`opencode/tool/${archivo} → el ejemplo dice GPIO${g[1]}, que ${por}`)
+      }
+    }
+  }
+  assert.deepEqual(hallazgos, [], "un ejemplo de un .describe() es una ORDEN para el modelo, y va al papel del aula")
+
+  // El test se prueba a sí mismo contra la línea REAL que motivó esto. Si alguien
+  // ablanda el filtro de arriba, esto se pone rojo acá y no en producción.
+  assert.ok(motivo(12), "el filtro tiene que rechazar GPIO12, que es la línea que estuvo de verdad en imprimible.ts")
+  assert.equal(motivo(18), null, "el filtro rechaza GPIO18, que es el pin CORRECTO (el del LED rojo de 01-semaforizacion)")
+})
+
+// MUTACIÓN QUE MATA: volver `idPlaca` al ternario de antes
+// (`typeof args.placa === "string" && args.placa.trim() ? … : "esp32"`).
+test("una `placa` que no es string se RECHAZA, no cae al ESP32 en silencio", async () => {
+  // El comentario del código dice que `execute` valida "porque un modelo puede
+  // mandar cualquier cosa igual" — y para los no-strings no lo hacía: un 123, un
+  // {} o un ["uno"] caían al default y salía una hoja de ESP32 impecable. El modo
+  // silencioso es el peor: el docente no tiene con qué darse cuenta.
+  for (const basura of [123, {}, ["uno"], true]) {
+    const { r, html } = await gen({ componentes: "led", placa: basura }, "placa-basura-" + JSON.stringify(basura).replace(/[^a-z0-9]+/gi, "-"))
+    assert.doesNotMatch(r, /^Listo/, `placa=${JSON.stringify(basura)} dibujó igual en vez de rechazar`)
+    assert.equal(html, "", `placa=${JSON.stringify(basura)} dijo que no y generó la hoja igual`)
+    assert.match(r, /No sé DIBUJAR/, `placa=${JSON.stringify(basura)} no explicó por qué no dibuja: ${r.slice(0, 120)}`)
+    assert.doesNotMatch(html, /wokwi-esp32/, `placa=${JSON.stringify(basura)} cayó al ESP32`)
+  }
+
+  // Y lo que NO cambia: no venir sigue siendo el default, y el string vacío también
+  // (es "no me la dijeron", no "me la dijeron mal").
+  for (const ausente of [undefined, null, "", "   "]) {
+    const { r } = await gen({ componentes: "led", placa: ausente }, "placa-ausente-" + String(ausente).trim().length + String(ausente))
+    assert.match(r, /^Listo/, `placa=${JSON.stringify(ausente)} dejó de caer al default de ESP32: ${r.slice(0, 120)}`)
+  }
+})
+
+// MUTACIÓN QUE MATA: volver `avisar` a `avisos.push(texto); notas.push(texto)`.
+test("el chat no repite el mismo ⚠️ que la hoja muestra una sola vez", async () => {
+  // La hoja deduplica sola (`advertencias` es un Set); el chat no, porque `notas`
+  // es un array. Con un componente que agota el MISMO pool dos veces, la respuesta
+  // repetía la línea mientras la hoja la mostraba una vez. Dos canales que cuentan
+  // lo mismo tienen que contarlo igual.
+  // Los tres casos MEDIDOS contra el código de antes del fix: cada uno repetía.
+  // El primero es el que encontró la auditoría; los otros dos agotan el otro pool
+  // y la otra placa, para que el test no dependa de un solo camino.
+  const CASOS = [
+    { componentes: "joystick, joystick, joystick, lcd", placa: "uno" },
+    { componentes: "teclado, teclado, led, led", placa: "uno" },
+    { componentes: "joystick, joystick, joystick, joystick", placa: undefined },
+  ]
+  for (const [i, caso] of CASOS.entries()) {
+    const { r } = await gen(caso, "dup-avisos-" + i)
+    const lineas = r.split("\n").filter((l) => l.startsWith("⚠️")).map((l) => l.trim())
+    assert.ok(lineas.length > 0, `"${caso.componentes}" tenía que generar al menos un ⚠️ en el chat: ` + r.slice(-300))
+    assert.deepEqual(
+      lineas,
+      [...new Set(lineas)],
+      `el chat repitió un ⚠️ idéntico en "${caso.componentes}":\n` + lineas.join("\n"),
+    )
+  }
+})
+
+test("los avisos de potencia nombran la placa con su artículo", async () => {
+  // Se había perdido en el port: "El ESP32 manda la señal" quedó "ESP32 DevKit
+  // manda la señal". Es la frase que la docente lee en voz alta en el aula.
+  const { r } = await gen({ componentes: "higrometro, bomba" }, "articulo-placa")
+  if (!/manda la señal/.test(r)) return // sin inyección de mando no hay frase que revisar
+  assert.match(r, /El (ESP32 DevKit|Arduino UNO) manda la señal/, "la placa quedó sin artículo: " + r.match(/\S+ manda la señal/)?.[0])
+})
+
+test("UNO: la resistencia del LED es 220Ω y se dibuja en serie, igual que en ESP32", async () => {
+  // Decisión del dueño del producto: 220Ω en las DOS placas (ficha 03-led: "En 5 V:
+  // 220 ohm — es el valor de los kits"). El valor sale de la placa, no del texto del
+  // rol, así que si mañana una placa pide otro, cambia en un solo lugar.
+  for (const c of ["led", "rgb-led", "7segmentos"]) {
+    const { html } = await gen({ componentes: c, placa: "uno" }, "uno-ohm-" + c)
+    assert.match(html, /220\s*Ω/, `"${c}" no dice cuál es la resistencia en serie en UNO`)
+  }
+  const { html } = await gen({ componentes: "led", placa: "uno" }, "uno-ohm-serie")
+  assert.match(html, /class="res"[^>]*>220Ω</, "la resistencia no quedó dibujada en serie sobre el cable")
+})
+
+// ── los presets son de ESP32, y pedirlos con otra placa se contradice ──────
+test("un preset -esp32 con placa=uno se rechaza diciendo QUÉ pedir en su lugar", async () => {
+  // No se renombran ni se traducen: "led-esp32" con placa="uno" no es un pedido
+  // ambiguo que se pueda resolver eligiendo uno de los dos, es un pedido que se
+  // contradice a sí mismo. Y la lista que ofrece tiene que poder ARMARSE: una
+  // sugerencia que vuelve a rebotar es la peor forma de decir que no.
+  const { r, html } = await gen({ circuito: "led-esp32", placa: "uno" }, "preset-uno")
+  assert.doesNotMatch(r, /^Listo/, "armó un preset de ESP32 rotulado como UNO")
+  assert.equal(html, "", "dijo que no y generó la hoja igual")
+  const sugerida = r.match(/componentes="([^"]+)"/)?.[1]
+  assert.ok(sugerida, "no ofrece ninguna lista para pedirlo en su placa: " + r.slice(0, 200))
+  const r2 = await mod.execute(
+    { componentes: sugerida, placa: "uno", nombre_archivo: "preset-uno-equivalente" },
+    { directory: OUTDIR },
+  )
+  assert.ok(r2.startsWith("Listo"), `la lista que sugiere tampoco se arma: "${sugerida}" → ${r2.slice(0, 140)}`)
+})
+
+test("un preset cuyo equivalente NO se puede armar en UNO no manda a un callejón", async () => {
+  // "estacion-meteo" es dht22 + lcd, y el DHT22 todavía no está portado. Ofrecerle
+  // "dht22, lcd" sería mandarla a un pedido que va a rebotar por otro motivo.
+  const { r } = await gen({ circuito: "estacion-meteo", placa: "uno" }, "preset-meteo-uno")
+  assert.doesNotMatch(r, /^Listo/, "armó un preset de ESP32 rotulado como UNO")
+  assert.doesNotMatch(r, /pedímelo con el armador libre/, "ofreció una lista que después va a rechazar")
+  assert.match(r, /faltan portar|no lo puedo armar/i, "no explica por qué tampoco puede ofrecer el equivalente")
+})
+
+test("los presets siguen andando en ESP32, que es para lo que están", async () => {
+  for (const p of ["led-esp32", "semaforo", "estacion-meteo"]) {
+    const { r, html } = await gen({ circuito: p, placa: "esp32" }, "preset-esp32-" + p)
+    assert.ok(r.startsWith("Listo"), `el preset "${p}" dejó de andar en ESP32: ${r.slice(0, 120)}`)
+    assert.match(html, /<wokwi-esp32-devkit-v1/, `el preset "${p}" dejó de dibujar el ESP32`)
+  }
+})
+
+test("el explicador de protoboard no depende de la placa: no dibuja ninguna", async () => {
+  // No es un circuito con pines, es la placa de pruebas por dentro. Rechazarlo por
+  // `placa` sería negarle a la docente del UNO una explicación que le sirve igual.
+  for (const placa of ["esp32", "uno"]) {
+    const { r, html } = await gen({ circuito: "protoboard", placa }, "proto-" + placa)
+    assert.ok(r.startsWith("Listo"), `el explicador de protoboard se rompió con placa=${placa}: ${r.slice(0, 120)}`)
+    assert.doesNotMatch(html, /<wokwi-arduino-uno|<wokwi-esp32-devkit-v1/, "el explicador empezó a dibujar una placa")
+  }
+})
+
+// ── el mando de potencia habla de la placa que hay ─────────────────────────
+test("UNO: el driver inyectado explica el peligro sin inventar la corriente del ESP32", async () => {
+  // El "el GPIO entrega 12 mA" es un dato del ESP32. Traducirlo a otra placa
+  // poniéndole otro número sería inventar: un dato preciso y falso es peor que uno
+  // general y cierto, porque se copia al pizarrón.
+  const { r, html } = await gen({ componentes: "motor", placa: "uno" }, "uno-motor-driver")
+  assert.ok(piezasDe(html).includes("pb-driver"), "el motor DC salió sin driver en UNO")
+  assert.match(r, /agregu[ée]/i, "agregó el driver sin contarlo")
+  assert.match(r, /Arduino UNO/, "el aviso no nombra la placa del docente")
+  assert.doesNotMatch(r, /ESP32/, "le explicó el peligro hablando de otra placa")
+  assert.doesNotMatch(r, /12\s*mA/, "le inventó al UNO la corriente de pin del ESP32")
+  // y en ESP32 la cifra REAL se conserva: el arreglo no puede borrar el dato bueno
+  const esp = await gen({ componentes: "motor" }, "esp-motor-driver")
+  assert.match(esp.r, /12\s*mA/, "se perdió el dato de los 12 mA del GPIO del ESP32")
+})
+
+// ── la columna de la placa: el defecto que NO se ve en el HTML ──────────────
+//
+// `transform:scale()` no cambia la caja de layout, y ahí estaba la trampa. El ESP32
+// mide 106,6 px naturales y el `scale(1.25)` lo PINTA a 133, pero sigue reservando
+// 106,6: por eso entraba con aire en la columna de 230 px del CSS. El UNO reserva
+// 274,3 px de verdad (medido en Chrome sobre el bundle real).
+//
+// Lo que veía la docente si la columna se quedaba en 230: la placa montada 22 px
+// ENCIMA de la columna de conexiones, pisándole los nombres de los pines. Y como
+// `.hoja` tiene overflow:hidden, no se ve nada salirse — se ve un dibujo que parece
+// válido con el texto tapado. El HTML es correcto, el archivo abre, el test de
+// piezas pasa: no hay forma de cazarlo salvo mirando este número.
+//
+// MUTACIÓN QUE MATA: volver el grid-template-columns inline al literal "230px 1fr".
+test("cada placa se dibuja con el ancho de columna que su pieza necesita", async () => {
+  const anchoDe = (html) => +(html.match(/class="circuito-libre"[^>]*grid-template-columns:(\d+)px/)?.[1] ?? 0)
+
+  const esp = await gen({ componentes: "led" }, "ancho-esp32")
+  const uno = await gen({ componentes: "led", placa: "uno" }, "ancho-uno")
+  assert.equal(anchoDe(esp.html), 230, "el ESP32 dejó de reservar su columna de 230px")
+  assert.equal(anchoDe(uno.html), 290, "el UNO no reserva los 290px que necesita su pieza (274,3px + aire)")
+
+  // Y la escala: el ESP32 se pinta a 1.25 desde siempre; el UNO ya entra a 1.0 y
+  // achicarlo sería dejarle la serigrafía ilegible (3,0 px/mm contra 4,7 del ESP32).
+  assert.match(esp.html, /<wokwi-esp32-devkit-v1 style="transform:scale\(1\.25\)/, "cambió la escala del ESP32")
+  assert.match(uno.html, /<wokwi-arduino-uno style="transform:scale\(1\)/, "cambió la escala del UNO")
 })

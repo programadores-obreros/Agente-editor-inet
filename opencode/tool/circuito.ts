@@ -90,7 +90,13 @@ const ESTILO = `
   th,td { text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); }
   th { background:var(--violeta-soft); color:var(--violeta); text-transform:uppercase; font-size:11.5px; letter-spacing:.4px; font-weight:700; }
   .dot{display:inline-block;width:13px;height:13px;border-radius:50%;margin-right:7px;vertical-align:middle;border:1px solid rgba(0,0,0,.15);}
-  /* layout del ARMADOR LIBRE: ESP32 a la izquierda + una fila por componente, con cables CSS */
+  /* layout del ARMADOR LIBRE: la placa a la izquierda + una fila por componente, con cables CSS.
+     Los 230px son el FALLBACK (la medida del ESP32): el ancho real lo pisa inline el
+     armador, porque cada placa ocupa lo suyo. Y ojo con la trampa, que costó encontrarla:
+     transform:scale() NO cambia la caja de layout. El ESP32 reserva 106,6px aunque se
+     pinte a 133, y por eso acá le sobraba lugar; el UNO reserva 274,3px de verdad y en
+     230px se monta 22px sobre la columna de conexiones. Con overflow:hidden en .hoja no
+     se ve salir: se ve el texto pisado, que es peor porque parece un dibujo válido. */
   .circuito-libre{display:grid;grid-template-columns:230px 1fr;gap:0;align-items:center;margin:10px 0 6px;}
   .esp-col{display:flex;justify-content:center;align-items:center;}
   /* bus vertical UNICO (no por fila): un carril continuo del que "nacen" los cables */
@@ -145,14 +151,326 @@ const CABLE = {
 
 type ClasePin = "digital" | "analogico" | "fijo"
 
-interface Pin {
+// ============================================================================
+// LAS PLACAS — qué pin existe, cómo se llama, y a qué riel llega cada cable.
+//
+// Hasta acá este archivo dibujaba UNA placa. Los pines eran números pelados (4,
+// 33), el prefijo "GPIO" estaba escrito a mano en los 37 roles, y los destinos
+// fijos eran literales ("VIN (5V)", "GPIO21"). Con una sola placa eso alcanzaba.
+//
+// Con dos no: las escuelas técnicas argentinas usan Arduino UNO con Sensor Shield
+// más que ESP32, y hasta hoy el docente que pedía SU circuito recibía uno de otra
+// placa, con pines que en la suya no existen. Cada uno de esos tres atajos —el
+// número pelado, el prefijo a mano, el destino literal— es una forma distinta de
+// dibujar la placa equivocada, así que los tres se van juntos.
+// ============================================================================
+
+/**
+ * El banco al que pertenece un pin. NO es decoración: es parte de su IDENTIDAD.
+ *
+ * En el ESP32 hay un solo banco ("GPIO") y el número alcanza para nombrar el pin.
+ * Por eso el pool digital y el analógico podían compartir un `Set<number>`: el
+ * GPIO33 está en los dos porque ES EL MISMO PIN, y el Set evitaba repartirlo dos
+ * veces. Una auditoría generó 40.169 circuitos y confirmó cero colisiones.
+ *
+ * En un Arduino UNO eso es FALSO. D4 y A4 son dos pines distintos, en dos filas
+ * distintas de la placa, que apenas comparten el número 4. Con pools numéricos,
+ * asignar D4 bloquearía A4 y el tool diría "no quedan analógicos" con A4 libre.
+ * Peor todavía: asignar A5 bloquearía D5, que es PWM, que es donde va el servo.
+ *
+ * Por eso un pin es {banco, n} y el Set de ocupados se lleva por `clavePin`.
+ */
+type Banco = "GPIO" | "D" | "A"
+interface PinId {
+  banco: Banco
+  n: number
+}
+/** La clave con la que un pin entra al Set de ocupados. "D4" y "A4" son distintas. */
+const clavePin = (p: PinId): string => `${p.banco}${p.n}`
+const mismoPin = (a: PinId, b: PinId): boolean => a.banco === b.banco && a.n === b.n
+
+/**
+ * Los destinos que NO son un pin de señal: los rieles de la placa.
+ *
+ * Antes eran literales adentro de cada componente (`destino: "VIN (5V)"`,
+ * `destino: "GPIO21"`): la placa escrita a mano en 27 lugares. El componente ahora
+ * dice a QUÉ riel va —una idea que vale para cualquier placa— y cada placa dice
+ * cómo se llama ese riel en ella.
+ *
+ * - `VLOGICA` es la alimentación propia de la placa, la que le da de comer a los
+ *   módulos de lógica y la que le sirve de referencia al ADC: 3.3V en el ESP32,
+ *   5V en el UNO. Un módulo analógico alimentado con OTRA tensión que la del ADC
+ *   lee mal aunque el cable esté bien puesto, así que esto no es cosmético.
+ * - `V3` es 3,3 V DE VERDAD: el módulo lo pide sí o sí, esté en la placa que esté
+ *   (el OLED, el MPU6050 y el BMP180 son de 3,3 V en las dos).
+ * - `V5` son 5 V para un módulo de potencia/5 V (servo, LCD, NeoPixel).
+ *
+ * Si una placa no tiene ese riel, su valor es `null` y el tool se NIEGA a dibujar.
+ * Un cable que termina en la nada es peor que un "no puedo": se ve perfecto.
+ */
+type Riel = "V5" | "V3" | "VLOGICA" | "GND" | "SDA" | "SCL"
+
+type PlacaId = "esp32" | "uno"
+
+interface Placa {
+  id: PlacaId
+  /** Como se la nombra delante del docente: "ESP32 DevKit", "Arduino UNO". */
+  etiqueta: string
+  /** El custom element del bundle de Wokwi que la dibuja. */
+  tag: string
+  /**
+   * `transform:scale()` de la pieza. MEDIDO en Chrome sobre el bundle real, no
+   * estimado: el ESP32 mide 106,6 × 208,3 px naturales y el UNO 274,3 × 205,6.
+   * El ESP32 se pinta a 1.25 (133 px) desde siempre; el UNO ya entra a 1.0.
+   */
+  escala: number
+  /**
+   * Ancho en px de la columna de la placa en `.circuito-libre`.
+   *
+   * OJO, que es la parte contraintuitiva: `transform:scale()` NO cambia la caja de
+   * layout. El ESP32 reserva sus 106,6 px aunque se pinte a 133, y por eso entraba
+   * en la columna de 230 px del CSS con 48 px de aire a cada lado. El UNO reserva
+   * 274,3 px de verdad: en esa misma columna se monta 22 px SOBRE la columna de
+   * conexiones y le pisa el texto (`.hoja` tiene overflow:hidden, así que no se
+   * ve salir: se ve encimado). Achicarlo a 0.78 lo metería adentro, pero lo
+   * dejaría a 3,0 px/mm contra los 4,7 px/mm del ESP32 — 36% menos letra justo en
+   * la placa que más serigrafía tiene. Se ensancha la columna, no se achica la
+   * placa: 290 px deja 7,8 px de aire por lado y le saca a las filas 60 px de 730
+   * (un 8%), sobre una columna `minmax(0,1fr)` con el cable elástico.
+   */
+  anchoColumna: number
+  poolDigital: PinId[]
+  poolAnalogico: PinId[]
+  /**
+   * Los pines que hacen PWM, cuando NO son todos.
+   *
+   * `undefined` significa "cualquier salida de esta placa hace PWM" (el ESP32 lo
+   * resuelve por `ledc`), y entonces un pin que pide PWM sale del pool digital
+   * como cualquier otro: nada cambia.
+   */
+  poolPwm?: PinId[]
+  i2c: { sda: PinId; scl: PinId }
+  riel: Record<Riel, string | null>
+  /** El tope de `analogRead`: 4095 en el ESP32, 1023 en el UNO. */
+  adcMax: number
+  /** La resistencia en serie de un LED. 220Ω en las dos (decisión del producto). */
+  resistenciaLed: string
+  /** Cómo se escribe el aviso de "me quedé sin pines" para cada pool. */
+  nombreDePool: { digital: string; analogico: string }
+  /**
+   * El aviso general de 5V de la hoja, o null si en esta placa no significa nada.
+   * En el UNO TODO es de 5V: repetirlo sería ruido, y nombrar "VIN" sería mentir.
+   */
+  avisoCincoVolt: string | null
+  /** "GPIO4" · "D4" · "A0". El prefijo lo pone la placa, no el rol. */
+  etiquetaPin(p: PinId): string
+  /**
+   * Por qué NO se puede usar el pin que pidió el usuario ("led:34"), o null.
+   *
+   * Es un MÉTODO de la placa y no una tabla compartida a propósito. En el ESP32
+   * son cinco reglas con cinco mensajes distintos (flash, strapping, solo-entrada,
+   * UART, existencia) y TRES de esos conceptos no existen en el UNO: un ATmega328P
+   * no tiene flash SPI externa colgada de pines, ni pines de strapping, ni pines
+   * de solo entrada. Una tabla con columnas vacías para media placa no es una
+   * abstracción, es un formulario.
+   */
+  motivoRechazo(p: PinId, clase: ClasePin, etiqueta: string): string | null
+  /**
+   * El pin se puede usar, pero hay algo que conviene saber. Va SÓLO a la hoja.
+   *
+   * No entra al canal del chat a propósito (ver `asignarGpios`): ese pin SÍ se dio
+   * y funciona, es una sugerencia. Si el chat avisa de todo, la docente aprende a
+   * saltearse los ⚠️ y el aviso que sí importa deja de existir.
+   */
+  notaDePin?(p: PinId): string | null
+}
+
+const pinD = (n: number): PinId => ({ banco: "D", n })
+const pinA = (n: number): PinId => ({ banco: "A", n })
+const pinG = (n: number): PinId => ({ banco: "GPIO", n })
+
+// ── ESP32 DevKit ────────────────────────────────────────────────────────────
+//
+// Estas constantes se quedan SIN prefijo de placa (POOL_DIGITAL, GPIO_VALIDOS…)
+// aunque las del UNO sí lo lleven, y no es un descuido: tests/circuitos-visuales
+// las lee POR NOMBRE del código fuente para defender la regla de GPIO16/17 (el
+// pool no los reparte, pero la ficha de semaforización los pide, y el prompt tiene
+// que explicar esa excepción). Además "GPIO" ya es vocabulario del ESP32, así que
+// el nombre igual dice de qué placa habla.
+//
+// FIX auditoría #1/#3/#10: GPIO seguros primero. Sin 12 (strapping peligroso),
+// sin 16/17 (PSRAM). GPIO2 (LED onboard + strapping) y 15 al final, bajo riesgo.
+export const POOL_DIGITAL = [4, 5, 18, 19, 23, 25, 26, 27, 33, 13, 14, 15, 2]
+const POOL_ANALOGICO = [34, 35, 36, 39, 32, 33]
+
+// Validación de GPIO manual (el alumno puede forzar un pin con "led:5").
+// GPIOs que EXISTEN en el ESP32 DevKit.
+export const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 37, 38, 39])
+// GPIO6–11 están cableados a la memoria flash SPI: usarlos CUELGA/rompe la placa.
+export const GPIO_FLASH = new Set([6, 7, 8, 9, 10, 11])
+// Pines "strapping": funcionan, pero pueden complicar el arranque si tienen algo conectado.
+export const GPIO_STRAPPING = new Set([0, 2, 12, 15])
+// FIX auditoría B4: GPIO34/35/36/39 NO tienen driver de salida (son ADC/entrada pura)
+// y TAMPOCO tienen pull-up/pull-down interno. O sea: no sirven ni para encender algo
+// ni para un botón con INPUT_PULLUP. "led:34" se aceptaba sin chistar y el LED no
+// prendía nunca — y el alumno revisa el cable, la resistencia y la soldadura antes de
+// sospechar del pin, porque el diagrama se lo dio el bot.
+export const GPIO_SOLO_ENTRADA = new Set([34, 35, 36, 39])
+// GPIO1 (TX) y GPIO3 (RX) van al chip USB-serie de la placa: con algo colgado ahí, la
+// carga del sketch falla y el Monitor Serie escupe basura. Clase perdida buscando por qué
+// "no anda el Arduino" cuando el circuito estaba bien.
+export const GPIO_UART_USB = new Set([1, 3])
+
+// ── Arduino UNO ─────────────────────────────────────────────────────────────
+// Los digitales son D0-D13 (skills/arduino/SKILL.md:27). El orden del pool NO es
+// el orden de la placa, es el de menor riesgo primero:
+//   1º los digitales pelados (2, 4, 7, 8, 12): no le quitan nada a nadie;
+//   2º los PWM (3, 5, 6, 9, 10, 11): entran recién cuando no queda otra, para no
+//      gastar en un LED el pin que el servo necesita sí o sí;
+//   3º D13, D0 y D1 al final — igual que hoy el GPIO2 del ESP32 — porque entran al
+//      pool por decisión del producto pero con un pero, que cuenta `notaDePin`.
+const UNO_POOL_DIGITAL = [2, 4, 7, 8, 12, 3, 5, 6, 9, 10, 11, 13, 0, 1]
+// PWM: 3, 5, 6, 9, 10, 11 (skills/placas/SKILL.md:130 + skills/arduino/SKILL.md:29).
+// Confirmado por segunda vía, sin copiarse: la serigrafía de la pieza wokwi-arduino-uno
+// del bundle dice «13 · 12 · ~11 · ~10 · ~9 · 8 | 7 · ~6 · ~5 · 4 · ~3 · 2 · TX→1 · RX←0».
+const UNO_POOL_PWM = [3, 5, 6, 9, 10, 11]
+// A0-A5, analogRead 0-1023 (skills/placas/SKILL.md:129). A4 y A5 van últimas porque
+// son el bus I2C (SDA/SCL): un sensor analógico cualquiera no tiene por qué gastarlas.
+const UNO_POOL_ANALOGICO = [0, 1, 2, 3, 4, 5]
+
+export const PLACAS: Record<PlacaId, Placa> = {
+  esp32: {
+    id: "esp32",
+    etiqueta: "ESP32 DevKit",
+    tag: "wokwi-esp32-devkit-v1",
+    escala: 1.25,
+    anchoColumna: 230,
+    poolDigital: POOL_DIGITAL.map(pinG),
+    poolAnalogico: POOL_ANALOGICO.map(pinG),
+    // poolPwm ausente: en el ESP32 cualquier salida hace PWM por `ledc`.
+    i2c: { sda: pinG(21), scl: pinG(22) },
+    riel: { V5: "VIN (5V)", V3: "3.3V", VLOGICA: "3.3V", GND: "GND", SDA: "GPIO21", SCL: "GPIO22" },
+    adcMax: 4095,
+    resistenciaLed: "220Ω",
+    nombreDePool: { digital: "GPIO digital", analogico: "GPIO analogico" },
+    avisoCincoVolt: "los componentes de 5V (servo, PIR, HC-SR04, LCD) van a VIN, NO a 3.3V.",
+    etiquetaPin: (p) => `GPIO${p.n}`,
+    motivoRechazo(p, clase, etiqueta) {
+      const g = p.n
+      if (GPIO_FLASH.has(g))
+        return `⚠️ GPIO${g} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa. Le asigné un pin seguro.`
+      if (!GPIO_VALIDOS.has(g)) return `⚠️ GPIO${g} no existe en el ESP32. Le asigné un pin válido.`
+      if (GPIO_UART_USB.has(g))
+        return `⚠️ GPIO${g} es el puerto serie del USB (GPIO1=TX, GPIO3=RX): con algo conectado ahí la placa no acepta la carga del programa. Le asigné otro pin.`
+      if (clase !== "analogico" && GPIO_SOLO_ENTRADA.has(g))
+        return `⚠️ GPIO${g} es SOLO ENTRADA en el ESP32 (34, 35, 36 y 39): no puede encender nada ni tiene pull-up interno, así que ${etiqueta} ahí no funcionaría nunca. Le asigné un pin que sí sirve. Esos cuatro son ideales para sensores analógicos.`
+      return null
+    },
+    notaDePin: (p) =>
+      GPIO_STRAPPING.has(p.n)
+        ? `Nota: GPIO${p.n} es un pin "strapping" del ESP32 — funciona, pero puede complicar el arranque si tiene algo conectado al encender. Si podés, elegí otro.`
+        : null,
+  },
+
+  uno: {
+    id: "uno",
+    etiqueta: "Arduino UNO",
+    tag: "wokwi-arduino-uno",
+    escala: 1.0,
+    anchoColumna: 290,
+    poolDigital: UNO_POOL_DIGITAL.map(pinD),
+    poolAnalogico: UNO_POOL_ANALOGICO.map(pinA),
+    poolPwm: UNO_POOL_PWM.map(pinD),
+    // I2C: SDA=A4, SCL=A5 (skills/educabot/SKILL.md:52 y :102, skills/sensores/SKILL.md:381).
+    i2c: { sda: pinA(4), scl: pinA(5) },
+    // El UNO trabaja a 5V (skills/placas/SKILL.md:128) y su riel se rotula "5V"
+    // (skills/arduino/SKILL.md:66). El de 3,3 V también existe (skills/sensores/SKILL.md:379).
+    riel: { V5: "5V", V3: "3.3V", VLOGICA: "5V", GND: "GND", SDA: "A4", SCL: "A5" },
+    adcMax: 1023,
+    resistenciaLed: "220Ω",
+    nombreDePool: { digital: "pines digitales (D0 a D13)", analogico: "entradas analógicas (A0 a A5)" },
+    // En el UNO TODO es de 5V: no hay dos mundos que confundir. El aviso del ESP32
+    // ("van a VIN, NO a 3.3V") acá no aplica y nombraría un pin que no existe.
+    avisoCincoVolt: null,
+    etiquetaPin: (p) => `${p.banco}${p.n}`,
+    motivoRechazo(p) {
+      // El UNO no tiene flash SPI colgada de pines, ni strapping, ni solo-entrada
+      // (skills/educabot/SKILL.md:341). Lo único que se puede pedir mal es un pin
+      // que no existe. D0/D1 y D13 SÍ existen y entran al pool: llevan nota, no rechazo.
+      if (p.banco === "A")
+        return p.n >= 0 && p.n <= 5
+          ? null
+          : `⚠️ A${p.n} no existe en el Arduino UNO: las entradas analógicas van de A0 a A5. Le asigné una válida.`
+      return p.n >= 0 && p.n <= 13
+        ? null
+        : `⚠️ D${p.n} no existe en el Arduino UNO: los pines digitales van de D0 a D13. Le asigné un pin válido.`
+    },
+    notaDePin: (p) => {
+      if (p.banco !== "D") return null
+      if (p.n === 0 || p.n === 1)
+        return `Nota: D0 y D1 son el puerto serie que comparte el cable USB — en la placa están rotulados "RX←0" y "TX→1". El circuito funciona, pero mientras haya algo conectado ahí la carga del programa puede fallar y el Monitor Serie escupe basura. Si podés, dejalos libres.`
+      if (p.n === 13)
+        return `Nota: D13 tiene el LED de la placa soldado en paralelo (skills/placas: "LED de placa, pin 13"). Como salida funciona igual, pero vas a ver ese LED acompañando; como entrada, esa carga te puede falsear la lectura. Si podés, elegí otro.`
+      return null
+    },
+  },
+}
+
+/** El banco del que sale un pin de esta clase en esta placa. */
+function bancoDe(placa: Placa, clase: ClasePin): Banco {
+  const pool = clase === "analogico" ? placa.poolAnalogico : placa.poolDigital
+  return pool[0]?.banco ?? "GPIO"
+}
+
+/**
+ * Lo que la hoja escribe DE VERDAD donde faltó un pin: "GPIO?" en el ESP32, "D?"
+ * o "A?" (o las dos) en el UNO, según qué pool se haya agotado.
+ *
+ * Sale de los pines que quedaron sin asignar, no de la placa entera, y por eso
+ * recibe la lista y no sólo la placa: el encabezado del chat le dice a la docente
+ * qué texto va a encontrar en la hoja, y mandarla a buscar "D? o A?" cuando la
+ * hoja dice sólo "D?" es la misma clase de error que B8 vino a matar. Si no faltó
+ * ninguno, cae a los bancos de la placa (nadie lo lee en ese caso, pero el campo
+ * nunca queda vacío).
+ */
+function marcaSinPin(placa: Placa, pines: (PinId | null)[][]): string {
+  const faltantes = pines.flat().filter((p): p is PinId => p != null && p.n < 0)
+  const bancos = faltantes.length
+    ? [...new Set(faltantes.map((p) => p.banco))]
+    : [...new Set([bancoDe(placa, "digital"), bancoDe(placa, "analogico")])]
+  return bancos.map((b) => `${b}?`).join(" o ")
+}
+interface PinBase {
   nombre: string
   color: string
-  clase: ClasePin
-  rol: string
-  destino?: string
+}
+
+/** Un pin de SEÑAL: el asignador le busca un pin libre en la placa. */
+interface PinSenal extends PinBase {
+  clase: "digital" | "analogico"
   /**
-   * Cuántos GPIO consume ESTA fila de la tabla. Default 1.
+   * La etiqueta de la conexión, con huecos.
+   *
+   * `{0}`, `{1}`… es el n-ésimo pin que se le asignó a este componente, y `{a-b}`
+   * es una fila que consume VARIOS (7 segmentos, teclado) y los imprime a todos.
+   * `{R}` es la resistencia en serie del LED, que la pone la placa.
+   *
+   * Ojo con el prefijo: antes acá decía "GPIO{0}" y el "GPIO" estaba escrito a
+   * mano 37 veces. Ahora lo pone `placa.etiquetaPin`, que es la única que sabe si
+   * este pin se llama GPIO4, D4 o A4.
+   */
+  rol: string
+  /**
+   * Este pin necesita PWM de verdad (el servo, cada color del RGB).
+   *
+   * En el ESP32 no cambia nada: `poolPwm` es undefined porque cualquier salida
+   * hace PWM por `ledc`. En el UNO sólo lo hacen 3, 5, 6, 9, 10 y 11 — los
+   * marcados con `~` — y el skill `actuadores` es explícito (`:104`): «En Arduino
+   * UNO usá un pin PWM (con ~); en ESP32 cualquier GPIO».
+   */
+  requierePwm?: boolean
+  /**
+   * Cuántos pines consume ESTA fila de la tabla. Default 1.
    *
    * FIX auditoría B6 (pines fantasma): el display de 7 segmentos y el teclado 4x4
    * declaran UNA fila ("Segmentos A-G", "Filas R1-R4") que en la placa real son
@@ -165,6 +483,102 @@ interface Pin {
   cantidad?: number
 }
 
+/** Un destino que NO es la placa: un driver, un relé, una fuente externa, la red. */
+const afuera = (texto: string): { afuera: string } => ({ afuera: texto })
+
+/** Un pin FIJO: va siempre al mismo lado, y el asignador no lo toca. */
+interface PinFijo extends PinBase {
+  clase: "fijo"
+  /**
+   * Un símbolo de `Riel` (lo resuelve la placa: V5 es "VIN (5V)" en el ESP32 y
+   * "5V" en el UNO) o un destino de afuera de la placa, que es texto y punto.
+   *
+   * Antes esto era un literal: `destino: "GPIO21"`. O sea, la placa escrita a mano
+   * 27 veces adentro del catálogo de componentes. El día que apareció la segunda
+   * placa, esos 27 literales eran 27 cables mal dibujados.
+   */
+  destino: Riel | { afuera: string }
+}
+
+type Pin = PinSenal | PinFijo
+
+/**
+ * La advertencia de un componente, POR PLACA.
+ *
+ * `esp32` es obligatorio. Si falta la clave de la placa que se pidió, el tool NO
+ * dibuja: se niega y lo dice. NUNCA cae a la de ESP32 — ese fallback silencioso es
+ * exactamente el bug que esta tanda vino a matar. Un docente con un UNO leyendo
+ * "usá GPIO34 o GPIO35" no tiene forma de darse cuenta de que le contestaron sobre
+ * otra placa: el texto suena igual de seguro que el correcto.
+ *
+ * Un string pelado es la forma corta de "este componente todavía existe sólo en
+ * ESP32": equivale a `{ esp32: <ese texto> }` y a ninguna otra placa, así que
+ * pedirlo con otra placa se rechaza igual. Se deja como forma corta porque los 10
+ * componentes que faltan portar se leen de un vistazo — y porque
+ * tests/skills-coherencia.test.mjs lee la advertencia del PIR del código fuente
+ * (`advertencia: "…"`) para chequear que no diga que OUT es de 5V.
+ */
+type AvisoPorPlaca = { esp32: string | null } & Partial<Record<PlacaId, string | null>>
+type Aviso = string | AvisoPorPlaca
+
+/**
+ * El texto para esta placa, o `null` si el componente NO la soporta.
+ *
+ * Devuelve `{ texto: null }` cuando la placa está soportada pero no hay nada que
+ * advertir, que es distinto de no soportarla. Confundir esas dos cosas es volver
+ * al fallback silencioso por la puerta de atrás.
+ *
+ * LA FORMA CORTA SE NORMALIZA ANTES DE DECIDIR, y eso lo encontró una prueba de
+ * mutación, no el diseño. La primera versión tenía dos ramas —una para el string
+ * pelado y otra para el objeto— y cada una repetía la regla de "si falta la clave de
+ * esa placa, no se dibuja". El detalle es que HOY los 10 componentes sin portar usan
+ * la forma corta y los 23 portados traen las dos claves: la rama del objeto no la
+ * ejercía NADIE, y se le podía meter el fallback a ESP32 sin que se pusiera roja una
+ * sola línea de la suite. Una regla, un lugar: así el test del invariante mata las dos.
+ *
+ * SE EXPORTA PARA PODER PROBAR LA RAMA QUE NADIE EJERCE. El guard de arriba
+ * (`!(placa in porPlaca)`) lo matan 4 tests de punta a punta, pero la segunda
+ * mitad —el `?? null` del return— no la mataba ninguno: hoy NO existe ningún
+ * componente escrito con `uno: null`, así que ese camino no se recorre dibujando.
+ * Y `uno: null` es una forma que el contrato de arriba BENDICE explícitamente
+ * ("la placa está soportada pero no hay nada que advertir"). El día que alguien
+ * la use, un `?? porPlaca.esp32` acá imprimiría el texto del ESP32 en la hoja del
+ * UNO en silencio — el bug exacto que esta tanda vino a matar, a un `??` de
+ * distancia. No se puede probar por el render, así que se prueba por la función.
+ */
+export function avisoDe(aviso: Aviso, placa: PlacaId): { texto: string | null } | null {
+  const porPlaca: AvisoPorPlaca = typeof aviso === "string" ? { esp32: aviso } : aviso
+  if (!(placa in porPlaca)) return null
+  return { texto: porPlaca[placa] ?? null }
+}
+
+/**
+ * El bloque de avisos de la hoja: el encabezado y las viñetas, o NADA.
+ *
+ * SIN AVISOS NO HAY ENCABEZADO DE AVISOS. Antes esto vivía suelto en el render y
+ * era `cabecera + …join(" ")` a secas, así que con la lista vacía la hoja salía
+ * con un "💡 Atención:" y NADA atrás. Un cartel de atención vacío se lee como un
+ * error del programa, y se lee justo en el papel que el pibe tiene delante
+ * mientras cablea.
+ *
+ * Ese estado es INALCANZABLE dibujando —los 23 componentes portados traen su
+ * advertencia— pero es exactamente el estado al que llega la hoja el día que a
+ * alguien se le vacía un aviso en un refactor, que es un camino que esta tanda ya
+ * vio abrirse. Por eso está acá afuera y exportada: un invariante que no se puede
+ * ejercer por el render se prueba por la función, o no se prueba.
+ *
+ * "✋ ¡Probalo con el mouse!" NO se cae con la lista vacía, y es a propósito: ése
+ * no encabeza avisos, es una invitación que se sostiene sola.
+ */
+export function bloqueDeAvisos(advertencias: string[], interactivo: boolean): string {
+  const cabecera = interactivo
+    ? "✋ <strong>¡Probalo con el mouse!</strong> "
+    : "💡 <strong>Atención:</strong> "
+  const cuerpo = advertencias.map((f) => "• " + f).join(" ")
+  if (cuerpo) return cabecera + cuerpo
+  return interactivo ? cabecera.trimEnd() : ""
+}
+
 interface Componente {
   tag: string
   etiqueta: string
@@ -172,8 +586,14 @@ interface Componente {
   interactivo?: boolean
   attrs?: (i: number) => string
   pines: Pin[]
-  advertencia: string | null
-  anim: (id: string) => string
+  advertencia: Aviso
+  /**
+   * La animación de la pieza. Recibe la placa porque alguna la NOMBRA en pantalla:
+   * el LCD hace desfilar un mensaje, y decía "Arduino + ESP32" en el display de un
+   * circuito de UNO. Es texto chiquito y es la pieza que el alumno mira de frente.
+   * Las que no la usan declaran un solo parámetro y listo.
+   */
+  anim: (id: string, placa: Placa) => string
 }
 
 const COMPONENTES: Record<string, Componente> = {
@@ -192,10 +612,19 @@ const COMPONENTES: Record<string, Componente> = {
     // semáforo, que es el proyecto de 3 LEDs que más se pide.
     attrs: (i) => `color="${["red", "yellow", "green"][i % 3]}"`,
     pines: [
-      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0} (con 220Ω)" },
-      { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "{0} (con {R})" },
+      { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "cada LED siempre con su resistencia de 220Ω en serie: es el valor para los 3.3V del ESP32 (los 330 ohm son la regla del UNO a 5V; acá un LED azul o blanco casi no prende con esos).",
+    advertencia: {
+      // Antes esta advertencia explicaba los 220Ω "porque son los 3.3V del ESP32" y
+      // remataba con "los 330 ohm son la regla del UNO a 5V". Con el UNO dibujándose
+      // de verdad eso pasó de ser impreciso a ser una contradicción de la propia
+      // herramienta: la hoja del UNO dice 220Ω. Y la fuente del repo es clara —
+      // fichas/hojas/03-led.html:488, "En 5 V: 220 ohm… es el valor de los kits".
+      esp32:
+        "cada LED siempre con su resistencia de 220Ω en serie: es el valor de los kits, y el mismo que este tool dibuja en las dos placas. Ojo con el color: un LED azul o blanco cae 3 V o más y sobre los 3.3V del ESP32 casi no prende — no es cuestión de elegir otra resistencia, no queda tensión.",
+      uno: "cada LED siempre con su resistencia de 220Ω en serie, y el cátodo (la pata corta) a GND. Es el valor de los kits escolares. Sin la resistencia el LED se destruye en el primer encendido: el LED no limita su propia corriente, la limita la resistencia que le pongas o nada.",
+    },
     anim: (id) => `const e=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(e)e.value=on;},600);`,
   },
 
@@ -204,11 +633,14 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Servo SG90",
     voltaje: "5V",
     pines: [
-      { nombre: "Alimentación", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
-      { nombre: "Señal (PWM)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "Tierra", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "Alimentación", color: CABLE.rojo, clase: "fijo", destino: "V5" },
+      { nombre: "Señal (PWM)", color: CABLE.naranja, clase: "digital", rol: "{0}", requierePwm: true },
+      { nombre: "Tierra", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el servo necesita 5V: cable rojo a VIN, nunca a 3.3V.",
+    advertencia: {
+      esp32: "el servo necesita 5V: cable rojo a VIN, nunca a 3.3V.",
+      uno: "el servo necesita 5V: el cable rojo va al riel de 5V de la placa y el marrón a GND. La señal (el cable naranja) va a un pin PWM, de los marcados con ~ en la serigrafía: 3, 5, 6, 9, 10 u 11 — es lo que dice el skill de actuadores para UNO, y es donde te lo pongo. Librería: Servo.h.",
+    },
     anim: (id) => `const s=document.getElementById('${id}');let a=0,d=1;setInterval(()=>{a+=d*3;if(a>=180||a<=0)d*=-1;if(s)s.angle=a;},30);`,
   },
 
@@ -218,11 +650,14 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "3.3V",
     interactivo: true,
     pines: [
-      { nombre: "Extremo 1", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "Cursor", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
-      { nombre: "Extremo 2", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "Extremo 1", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "Cursor", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
+      { nombre: "Extremo 2", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el potenciómetro usa una entrada analógica. Usá GPIO34 o GPIO35 (solo-entrada, ideales para ADC). GPIO32/33 también sirven.",
+    advertencia: {
+      esp32: "el potenciómetro usa una entrada analógica. Usá GPIO34 o GPIO35 (solo-entrada, ideales para ADC). GPIO32/33 también sirven.",
+      uno: `el potenciómetro usa una entrada analógica: cualquiera de A0 a A5. El cursor (la pata del medio) es el que va a la placa; los dos extremos van uno a la alimentación y el otro a GND — si los invertís no se rompe nada, se invierte el sentido. analogRead devuelve de 0 a ${PLACAS.uno.adcMax}.`,
+    },
     anim: (id) => `const p=document.getElementById('${id}');if(p){p.addEventListener('input',()=>{const v=Math.round(((p.value??0)/1023)*100);document.title='Potenciometro: '+v+'%';});}`,
   },
 
@@ -231,10 +666,13 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Buzzer",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Positivo (+)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "Negativo (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "Positivo (+)", color: CABLE.naranja, clase: "digital", rol: "{0}" },
+      { nombre: "Negativo (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el buzzer tiene polaridad: la pata larga (+) al pin, la corta (−) a GND.",
+    advertencia: {
+      esp32: "el buzzer tiene polaridad: la pata larga (+) al pin, la corta (−) a GND.",
+      uno: "el buzzer tiene polaridad: la pata larga (+) al pin, la corta (−) a GND. Con tone(pin, frecuencia) le sacás notas y con noTone(pin) lo callás.",
+    },
     anim: (id) => `const b=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(b)b.hasSignal=on;},400);`,
   },
 
@@ -243,10 +681,10 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "HC-SR04",
     voltaje: "5V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
-      { nombre: "TRIG", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "ECHO", color: CABLE.azul, clase: "digital", rol: "GPIO{1} (¡con divisor!)" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
+      { nombre: "TRIG", color: CABLE.verde, clase: "digital", rol: "{0}" },
+      { nombre: "ECHO", color: CABLE.azul, clase: "digital", rol: "{1} (¡con divisor!)" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
     advertencia: "el HC-SR04 va a 5V (VIN); el pin ECHO entrega 5V — si lo conectás directo al ESP32 lo dañás. Divisor: R1=1kΩ entre ECHO y el GPIO, R2=2kΩ entre el GPIO y GND.",
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.1;if(s)s.style.opacity=(0.7+0.3*Math.abs(Math.sin(t))).toFixed(2);},60);`,
@@ -257,9 +695,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "DHT22",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "DATA", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "DATA", color: CABLE.naranja, clase: "digital", rol: "{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
     advertencia: "el DHT22 funciona a 3.3V. Módulo de 3 pines (plaqueta): ya trae el pull-up, no agregues nada. Sensor pelado de 4 patas: 10kΩ entre DATA y VCC.",
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.08;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
@@ -270,9 +708,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor PIR",
     voltaje: "5V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
-      { nombre: "OUT", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
+      { nombre: "OUT", color: CABLE.verde, clase: "digital", rol: "{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
     advertencia: "el PIR se alimenta de 5V (VIN), pero OUT = 3.3V en el HC-SR501 (trae regulador a bordo): va directo al GPIO, sin divisor. Sólo módulos mini sin regulador pueden dar 5V en OUT: si el tuyo no es un HC-SR501, medí OUT con el téster antes de conectarlo (el ESP32 tolera máx 3.6V).",
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 12px #27ae60)':'none';},800);`,
@@ -284,13 +722,21 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "5V",
     attrs: () => `text="Hola Tecnia Bot!" backlight`,
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
     ],
-    advertencia: "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32). ¡OJO con los 5V! La mochila I2C tiene sus pull-ups a su propio VCC: alimentada a 5V pone SDA y SCL en 5V, y GPIO21/22 NO toleran 5V. Opciones: alimentarla a 3.3V (segura, con menos contraste) o 5V + conversor de nivel bidireccional en SDA/SCL (el divisor de resistencias NO sirve: I2C es bidireccional). Nunca mochila a 5V con SDA/SCL directo al ESP32.",
-    anim: (id) => `const l=document.getElementById('${id}');const m=["Hola Tecnia Bot!","Escuela tecnica","Arduino + ESP32"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
+    advertencia: {
+      esp32:
+        "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32). ¡OJO con los 5V! La mochila I2C tiene sus pull-ups a su propio VCC: alimentada a 5V pone SDA y SCL en 5V, y GPIO21/22 NO toleran 5V. Opciones: alimentarla a 3.3V (segura, con menos contraste) o 5V + conversor de nivel bidireccional en SDA/SCL (el divisor de resistencias NO sirve: I2C es bidireccional). Nunca mochila a 5V con SDA/SCL directo al ESP32.",
+      // En el UNO desaparece TODO el problema de niveles del ESP32: la mochila y la
+      // placa hablan el mismo idioma. Lo que sí hay que decir es el costo oculto del
+      // bus, que en el ESP32 no existe: A4 y A5 dejan de estar disponibles como
+      // entradas analógicas, y quedan A0-A3 para sensores.
+      uno: "el LCD por I2C usa SDA=A4 y SCL=A5, que en el UNO son fijos. La mochila y la placa trabajan a la misma tensión, así que van directo: sin conversor y sin nada en el medio. El costo es que A4 y A5 dejan de servir como entradas analógicas mientras el display esté conectado: te quedan A0 a A3 para sensores. Si no muestra nada pero la luz de fondo prende, es el contraste (el potenciómetro azul de la mochila) o la dirección: 0x27 en las del PCF8574 y 0x3F en las del PCF8574A. Librería: LiquidCrystal_I2C.",
+    },
+    anim: (id, placa) => `const l=document.getElementById('${id}');const m=["Hola Tecnia Bot!","Escuela tecnica","${placa.etiqueta}"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
   },
 
   boton: {
@@ -300,10 +746,16 @@ const COMPONENTES: Record<string, Componente> = {
     interactivo: true,
     attrs: () => `color="green"`,
     pines: [
-      { nombre: "Una pata", color: CABLE.verde, clase: "digital", rol: "GPIO{0} (INPUT_PULLUP)" },
-      { nombre: "Otra pata", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "Una pata", color: CABLE.verde, clase: "digital", rol: "{0} (INPUT_PULLUP)" },
+      { nombre: "Otra pata", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el botón usa INPUT_PULLUP: sin apretar lee HIGH, al apretar LOW. La conexión es GPIO + GND, nunca a 3.3V con esta config.",
+    advertencia: {
+      esp32: "el botón usa INPUT_PULLUP: sin apretar lee HIGH, al apretar LOW. La conexión es GPIO + GND, nunca a 3.3V con esta config.",
+      // El "nunca a 3.3V" del ESP32 no se traduce cambiando el número: lo que la
+      // regla dice es "con INPUT_PULLUP, la otra pata va a GND y no a la
+      // alimentación". Eso vale igual en las dos placas, y es lo que se dice.
+      uno: "el botón usa INPUT_PULLUP: sin apretar lee HIGH, al apretar LOW. Con esa configuración las dos patas son el pin y GND — nunca la alimentación, porque el pull-up ya lo pone el micro por dentro y no hace falta ninguna resistencia externa. Ojo con el rebote: un pulsador mecánico cierra y abre varias veces en unos pocos milisegundos.",
+    },
     anim: (id) => `const b=document.getElementById('${id}');if(b)b.addEventListener('button-press',()=>{});`,
   },
 
@@ -312,12 +764,24 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "LED RGB",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "GPIO{0} (con 220Ω)" },
-      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "GPIO{1} (con 220Ω)" },
-      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "GPIO{2} (con 220Ω)" },
-      { nombre: "Común (−)", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "{0} (con {R})", requierePwm: true },
+      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "{1} (con {R})", requierePwm: true },
+      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "{2} (con {R})", requierePwm: true },
+      { nombre: "Común (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el LED RGB combina 3 colores. Cada pin con su resistencia de 220Ω. Con analogWrite (PWM) mezclás cualquier color.",
+    advertencia: {
+      esp32: "el LED RGB combina 3 colores. Cada pin con su resistencia de 220Ω. Con analogWrite (PWM) mezclás cualquier color.",
+      // 3 de los 6 pines PWM del UNO se van en un solo RGB: eso hay que decirlo
+      // antes, no cuando el servo del mismo circuito se queda sin dónde ir.
+      //
+      // OJO CON LO QUE *NO* DICE, que es la mitad del arreglo: la salvedad del azul
+      // (que sobre 3,3 V casi no prende porque su Vf ronda esa misma tensión) es un
+      // problema del ESP32 y acá no existe — con 5 V el azul enciende bien. La
+      // escribí igual "por las dudas" en el primer borrador y la cazó el test que
+      // barre la jerga de la otra placa. Copiar el matiz ajeno es exactamente el
+      // fallback silencioso que esta tanda vino a matar, sólo que a mano.
+      uno: "el LED RGB combina 3 colores y cada pata lleva su resistencia de 220Ω. Para mezclar colores con analogWrite, los tres van a pines PWM — los marcados con ~ — así que este solo componente se lleva 3 de los 6 que tiene el UNO: si además querés un servo, planificá los pines.",
+    },
     anim: (id) => `const e=document.getElementById('${id}');let h=0;setInterval(()=>{h=(h+8)%360;const c=h/60,x=1-Math.abs(c%2-1);let r=0,g=0,b=0;if(c<1){r=1;g=x}else if(c<2){r=x;g=1}else if(c<3){g=1;b=x}else if(c<4){g=x;b=1}else if(c<5){r=x;b=1}else{r=1;b=x}if(e){e.ledRed=r>0.3;e.ledGreen=g>0.3;e.ledBlue=b>0.3}},120);`,
   },
 
@@ -326,11 +790,14 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de luz (LDR)",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "OUT / AO", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "OUT / AO", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
     ],
-    advertencia: "el LDR mide luz. Su salida va a un pin analógico (GPIO34/35). analogRead da 0-4095 en ESP32 (0=oscuro, 4095=mucha luz).",
+    advertencia: {
+      esp32: "el LDR mide luz. Su salida va a un pin analógico (GPIO34/35). analogRead da 0-4095 en ESP32 (0=oscuro, 4095=mucha luz).",
+      uno: `el LDR mide luz. Su salida analógica va a cualquiera de A0 a A5, y analogRead devuelve de 0 a ${PLACAS.uno.adcMax}. No te fijes en el número absoluto: cambia con la lámpara del aula y con el módulo. Medí primero a oscuras y con luz, y recién ahí elegís el umbral.`,
+    },
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(s)s.style.opacity=(0.7+0.3*Math.abs(Math.sin(t))).toFixed(2);},60);`,
   },
 
@@ -339,12 +806,21 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Display OLED",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
     ],
-    advertencia: "el OLED SSD1306 es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x3C). Librerías: Adafruit_SSD1306 + Adafruit_GFX.",
+    advertencia: {
+      esp32: "el OLED SSD1306 es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x3C). Librerías: Adafruit_SSD1306 + Adafruit_GFX.",
+      // La alimentación se DICE, no se manda a mirar la tabla. La versión anterior
+      // ("la que muestra la tabla de acá abajo") estaba escrita para esquivar el
+      // barrido de jerga del test, que prohibía "3,3 V" en toda la prosa de UNO.
+      // El UNO TIENE riel de 3,3 V (skills/sensores/SKILL.md, columna "En Arduino
+      // UNO" del BMP180), así que nombrarlo es lo correcto, no la jerga de la otra
+      // placa. El módulo es de 3,3 V y a 3,3 V es a donde lo dibuja este tool.
+      uno: "el OLED SSD1306 es I2C: en el UNO va a SDA=A4 y SCL=A5, dirección 0x3C. Mientras esté conectado, A4 y A5 dejan de servir como entradas analógicas: te quedan A0 a A3. El módulo es de 3,3 V, así que el cable rojo va al riel de 3,3 V del UNO y NO a los 5 V. Librerías: Adafruit_SSD1306 + Adafruit_GFX. Si no aparece nada, casi siempre falta el oled.display() del final.",
+    },
     anim: (id) => `const o=document.getElementById('${id}');`,
   },
 
@@ -353,10 +829,13 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Display 7 segmentos",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "{0-6} (cada segmento con 220Ω)", cantidad: 7 },
-      { nombre: "Común", color: CABLE.marron, clase: "fijo", rol: "GND (cátodo común)", destino: "GND" },
+      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "{0-6} (cada segmento con {R})", cantidad: 7 },
+      { nombre: "Común", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 220Ω. Conviene la librería SevSeg para no gastar tantos pines.",
+    advertencia: {
+      esp32: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 220Ω. Conviene la librería SevSeg para no gastar tantos pines.",
+      uno: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un pin digital con su resistencia de 220Ω — el mismo valor en las dos placas. Son 7 pines de los 14 del UNO para UN dígito: si querés más de uno, la librería SevSeg los multiplexa y te ahorra pines.",
+    },
     anim: (id) => `const d=document.getElementById('${id}');const digs=[[1,1,1,1,1,1,0,0],[0,1,1,0,0,0,0,0],[1,1,0,1,1,0,1,0],[1,1,1,1,0,0,1,0],[0,1,1,0,0,1,1,0]];let i=0;setInterval(()=>{i=(i+1)%digs.length;if(d)d.values=digs[i];},800);`,
   },
 
@@ -365,11 +844,17 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "NeoPixel (LED inteligente)",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
-      { nombre: "DIN (datos)", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
+      { nombre: "DIN (datos)", color: CABLE.verde, clase: "digital", rol: "{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el NeoPixel (WS2812) es un LED RGB direccionable: con UN solo pin de datos controlás muchos en cadena. Librería: Adafruit_NeoPixel. Mejor alimentarlo de 5V.",
+    advertencia: {
+      esp32: "el NeoPixel (WS2812) es un LED RGB direccionable: con UN solo pin de datos controlás muchos en cadena. Librería: Adafruit_NeoPixel. Mejor alimentarlo de 5V.",
+      // OJO: el NeoPixel NO usa analogWrite, así que NO pide un pin PWM. Su dato es
+      // un tren de pulsos con tiempos propios que arma la librería. Marcarlo como
+      // PWM le comería al UNO uno de sus seis pines ~ sin ninguna razón.
+      uno: "el NeoPixel (WS2812) es un LED RGB direccionable: con UN solo pin de datos controlás muchos en cadena, y ese pin puede ser cualquier digital (no hace falta que sea PWM: la librería arma los tiempos ella misma). Se alimenta de 5V. Librería: Adafruit_NeoPixel.",
+    },
     anim: (id) => `const n=document.getElementById('${id}');let h=0;setInterval(()=>{h=(h+10)%360;const c=h/60,x=Math.round((1-Math.abs(c%2-1))*255);let r=0,g=0,b=0;if(c<1){r=255;g=x}else if(c<2){r=x;g=255}else if(c<3){g=255;b=x}else if(c<4){g=x;b=255}else if(c<5){r=x;b=255}else{r=255;b=x}if(n){n.r=r;n.g=g;n.b=b;}},120);`,
   },
 
@@ -379,13 +864,16 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "3.3V",
     interactivo: true,
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "VRx (eje X)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
-      { nombre: "VRy (eje Y)", color: CABLE.azul, clase: "analogico", rol: "GPIO{1} (analógico)" },
-      { nombre: "SW (botón)", color: CABLE.verde, clase: "digital", rol: "GPIO{2}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "VRx (eje X)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
+      { nombre: "VRy (eje Y)", color: CABLE.azul, clase: "analogico", rol: "{1} (analógico)" },
+      { nombre: "SW (botón)", color: CABLE.verde, clase: "digital", rol: "{2}" },
     ],
-    advertencia: "el joystick tiene 2 ejes analógicos (X, Y) que se leen con analogRead, y un botón al apretarlo. Ideal para mover algo en 2 direcciones (un robot, un juego).",
+    advertencia: {
+      esp32: "el joystick tiene 2 ejes analógicos (X, Y) que se leen con analogRead, y un botón al apretarlo. Ideal para mover algo en 2 direcciones (un robot, un juego).",
+      uno: `el joystick se lleva DOS entradas analógicas (los ejes X e Y, con analogRead de 0 a ${PLACAS.uno.adcMax}) más un pin digital para el botón. En reposo cada eje queda cerca de la mitad, no en cero. Ideal para mover algo en 2 direcciones (un robot, un juego); en el UNO, con A0 a A5, dos joysticks ya te dejan sólo dos analógicas libres.`,
+    },
     anim: (id) => `const j=document.getElementById('${id}');`,
   },
 
@@ -394,12 +882,17 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Acelerómetro MPU6050",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
     ],
-    advertencia: "el MPU6050 mide aceleración (3 ejes) y giro (3 ejes) — detecta inclinación, movimiento, caídas. Es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x68; si conectás AD0 a 3.3V pasa a 0x69). Librería: Adafruit_MPU6050 + Adafruit_Sensor. Proyectos: nivel digital, dron, control por gestos.",
+    advertencia: {
+      esp32: "el MPU6050 mide aceleración (3 ejes) y giro (3 ejes) — detecta inclinación, movimiento, caídas. Es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x68; si conectás AD0 a 3.3V pasa a 0x69). Librería: Adafruit_MPU6050 + Adafruit_Sensor. Proyectos: nivel digital, dron, control por gestos.",
+      // Misma corrección que el OLED: el aviso decía "alimentalo como dice la tabla"
+      // sólo porque el test prohibía escribir "3,3 V" en la prosa de UNO.
+      uno: "el MPU6050 mide aceleración (3 ejes) y giro (3 ejes) — detecta inclinación, movimiento, caídas. En el UNO es I2C por SDA=A4 y SCL=A5, y mientras esté conectado esas dos dejan de servir como entradas analógicas. La dirección es 0x68 con AD0 suelto o a GND. El módulo es de 3,3 V, así que VCC va al riel de 3,3 V del UNO y NO a los 5 V. Librería: Adafruit_MPU6050 + Adafruit_Sensor. Proyectos: nivel digital, dron, control por gestos.",
+    },
     anim: (id) => `const m=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(m)m.style.transform='scale(1) rotate('+(Math.sin(t)*8)+'deg)';},60);`,
   },
 
@@ -415,8 +908,8 @@ const COMPONENTES: Record<string, Componente> = {
     // Ahora replica el patrón del motor DC (pines "fijo" que terminan en el driver):
     // el único que manda señales al ESP32 es el driver, que ya tiene sus IN1-IN4.
     pines: [
-      { nombre: "Bobinas (4 hilos)", color: CABLE.naranja, clase: "fijo", rol: "Driver ULN2003 (OUT)", destino: "Driver ULN2003 (OUT)" },
-      { nombre: "Común (hilo rojo)", color: CABLE.rojo, clase: "fijo", rol: "Driver ULN2003 (5V)", destino: "Driver ULN2003 (5V)" },
+      { nombre: "Bobinas (4 hilos)", color: CABLE.naranja, clase: "fijo", destino: afuera("Driver ULN2003 (OUT)") },
+      { nombre: "Común (hilo rojo)", color: CABLE.rojo, clase: "fijo", destino: afuera("Driver ULN2003 (5V)") },
     ],
     advertencia: "el motor paso a paso (28BYJ-48) gira en pasos exactos, ideal para posición precisa (impresora, reloj, persiana). NO se conecta al ESP32: su conector de 5 hilos va al driver ULN2003, y son los IN1-IN4 del driver los que van a los GPIO. El motor se alimenta de 5V desde el driver. Librería: Stepper o AccelStepper.",
     anim: (id) => `const s=document.getElementById('${id}');let a=0;setInterval(()=>{a=(a+6)%360;if(s)s.angle=a;},40);`,
@@ -430,7 +923,10 @@ const COMPONENTES: Record<string, Componente> = {
       { nombre: "Filas (R1-R4)", color: CABLE.naranja, clase: "digital", rol: "{0-3}", cantidad: 4 },
       { nombre: "Columnas (C1-C4)", color: CABLE.verde, clase: "digital", rol: "{4-7}", cantidad: 4 },
     ],
-    advertencia: "el teclado 4x4 tiene 16 teclas pero usa solo 8 pines (4 filas + 4 columnas) gracias a la lectura matricial. Para ingresar claves, menús, números. Librería: Keypad.",
+    advertencia: {
+      esp32: "el teclado 4x4 tiene 16 teclas pero usa solo 8 pines (4 filas + 4 columnas) gracias a la lectura matricial. Para ingresar claves, menús, números. Librería: Keypad.",
+      uno: "el teclado 4x4 tiene 16 teclas pero usa solo 8 pines (4 filas + 4 columnas) gracias a la lectura matricial. En el UNO eso es 8 de los 14 digitales: queda poco para lo demás, y si el circuito lleva servo conviene mirar qué pines ~ quedaron libres. Librería: Keypad.",
+    },
     anim: (id) => `const k=document.getElementById('${id}');`,
   },
 
@@ -439,11 +935,14 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de llama",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "DO (digital)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "DO (digital)", color: CABLE.naranja, clase: "digital", rol: "{0}" },
     ],
-    advertencia: "el sensor de llama detecta fuego/luz infrarroja cercana. Salida digital DO (hay fuego o no) o analógica AO (nivel). Alarma de incendio, robot bombero. Tiene un potenciómetro para ajustar la sensibilidad.",
+    advertencia: {
+      esp32: "el sensor de llama detecta fuego/luz infrarroja cercana. Salida digital DO (hay fuego o no) o analógica AO (nivel). Alarma de incendio, robot bombero. Tiene un potenciómetro para ajustar la sensibilidad.",
+      uno: "el sensor de llama detecta fuego/luz infrarroja cercana. Acá se usa su salida digital DO (hay fuego o no), que va a cualquier pin digital; si querés el nivel, el módulo también trae AO y ahí va a una entrada analógica. El potenciómetro de la plaquita ajusta a partir de qué nivel dispara el DO: calibralo con la llama a la distancia de trabajo, no en el escritorio.",
+    },
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 10px #e74c3c)':'none';},700);`,
   },
 
@@ -452,11 +951,14 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de sonido",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "DO (digital)", color: CABLE.verde, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "DO (digital)", color: CABLE.verde, clase: "digital", rol: "{0}" },
     ],
-    advertencia: "el sensor de sonido detecta ruido (un aplauso, un golpe). Salida digital DO (umbral ajustable con el potenciómetro). Aplauso que prende la luz, alarma de ruido.",
+    advertencia: {
+      esp32: "el sensor de sonido detecta ruido (un aplauso, un golpe). Salida digital DO (umbral ajustable con el potenciómetro). Aplauso que prende la luz, alarma de ruido.",
+      uno: "el sensor de sonido detecta ruido (un aplauso, un golpe). Su salida digital DO va a cualquier pin digital, y el umbral lo ajustás con el potenciómetro de la plaquita. No mide cuán fuerte es el ruido: avisa que pasó de un nivel. Aplauso que prende la luz, alarma de ruido.",
+    },
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.opacity=on?'1':'0.7';},400);`,
   },
 
@@ -465,11 +967,14 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de temperatura NTC",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "OUT (analógico)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "OUT (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
     ],
-    advertencia: "el NTC es un termistor: su resistencia cambia con la temperatura. Salida analógica (analogRead, 0-4095). Más simple que el DHT pero mide solo temperatura. Termómetro, control de ventilador.",
+    advertencia: {
+      esp32: "el NTC es un termistor: su resistencia cambia con la temperatura. Salida analógica (analogRead, 0-4095). Más simple que el DHT pero mide solo temperatura. Termómetro, control de ventilador.",
+      uno: `el NTC es un termistor: su resistencia cambia con la temperatura. Su salida va a una entrada analógica (A0 a A5) y analogRead devuelve de 0 a ${PLACAS.uno.adcMax}. Ese número no son grados: hay que convertirlo. Más simple que el DHT pero mide solo temperatura. Termómetro, control de ventilador.`,
+    },
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
   },
 
@@ -478,9 +983,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Receptor infrarrojo (IR)",
     voltaje: "3.3V",
     pines: [
-      { nombre: "OUT (señal)", color: CABLE.amarillo, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
+      { nombre: "OUT (señal)", color: CABLE.amarillo, clase: "digital", rol: "{0}" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
     ],
     advertencia: "el receptor IR lee los códigos de un control remoto (TV, aire). Cada botón manda un código distinto. Librería: IRremote. Controlar el ESP32 con un control remoto común.",
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 8px #f1c40f)':'none';},600);`,
@@ -491,10 +996,13 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de inclinación",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Pata 1", color: CABLE.verde, clase: "digital", rol: "GPIO{0} (INPUT_PULLUP)" },
-      { nombre: "Pata 2", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
+      { nombre: "Pata 1", color: CABLE.verde, clase: "digital", rol: "{0} (INPUT_PULLUP)" },
+      { nombre: "Pata 2", color: CABLE.marron, clase: "fijo", destino: "GND" },
     ],
-    advertencia: "el sensor de inclinación (tilt) es como un interruptor que se activa al inclinarlo (una bolita adentro cierra el contacto). Detecta si algo se volcó o se movió. Usalo con INPUT_PULLUP.",
+    advertencia: {
+      esp32: "el sensor de inclinación (tilt) es como un interruptor que se activa al inclinarlo (una bolita adentro cierra el contacto). Detecta si algo se volcó o se movió. Usalo con INPUT_PULLUP.",
+      uno: "el sensor de inclinación (tilt) es como un interruptor que se activa al inclinarlo (una bolita adentro cierra el contacto). Detecta si algo se volcó o se movió. Va con INPUT_PULLUP: una pata al pin y la otra a GND, sin resistencia externa. Rebota como un pulsador, así que filtralo igual.",
+    },
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.transform='scale(1) rotate('+(on?12:-12)+'deg)';},800);`,
   },
 
@@ -507,9 +1015,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Módulo Relé",
     voltaje: "5V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "VIN (5V)", destino: "VIN (5V)" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "IN (señal)", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "IN (señal)", color: CABLE.naranja, clase: "digital", rol: "{0}" },
     ],
     advertencia:
       "el módulo relé es un interruptor que el ESP32 controla con un GPIO (pin IN). Sirve para prender/apagar cosas de POTENCIA (bomba, lámpara, motor). La bobina suele necesitar 5V (VCC a VIN). ⚡ El lado de 220V lo conecta SIEMPRE un adulto con todo apagado: nunca toques la red eléctrica con el ESP32.",
@@ -521,8 +1029,8 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Bomba de agua",
     voltaje: "5V",
     pines: [
-      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", rol: "Relé / fuente externa", destino: "Relé / fuente externa" },
-      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", rol: "GND fuente", destino: "GND fuente" },
+      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé / fuente externa") },
+      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", destino: afuera("GND fuente") },
     ],
     advertencia:
       "la bomba de agua consume mucha corriente: NO se conecta directo al ESP32 (lo quemaría). Va por un relé o un driver, con su propia fuente (5V o 12V). El ESP32 solo manda la orden al relé.",
@@ -534,8 +1042,8 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Electroválvula",
     voltaje: "5V",
     pines: [
-      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", rol: "Relé / fuente 12V", destino: "Relé / fuente 12V" },
-      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", rol: "GND fuente", destino: "GND fuente" },
+      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé / fuente 12V") },
+      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", destino: afuera("GND fuente") },
     ],
     advertencia:
       "la electroválvula abre o cierra el paso de agua con electricidad. Suele ser de 12V: va por un relé con fuente externa, nunca directa al ESP32.",
@@ -547,12 +1055,15 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Higrómetro de suelo",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
     ],
-    advertencia:
-      "el higrómetro mide la humedad de la tierra. Su salida analógica AO va a un pin ADC (GPIO34/35): suelo seco da un valor, suelo húmedo otro (analogRead 0-4095). ⚠️ La sonda se corroe si queda siempre energizada: alimentala desde un GPIO y prendela solo al medir.",
+    advertencia: {
+      esp32:
+        "el higrómetro mide la humedad de la tierra. Su salida analógica AO va a un pin ADC (GPIO34/35): suelo seco da un valor, suelo húmedo otro (analogRead 0-4095). ⚠️ La sonda se corroe si queda siempre energizada: alimentala desde un GPIO y prendela solo al medir.",
+      uno: `el higrómetro mide la humedad de la tierra. Su salida analógica AO va a una entrada analógica (A0 a A5): suelo seco da un valor, suelo húmedo otro, y analogRead devuelve de 0 a ${PLACAS.uno.adcMax}. Calibralo con la tierra del maceta real, seca y regada, antes de fijar el umbral. ⚠️ La sonda se corroe si queda siempre energizada: alimentala desde un pin digital y prendela sólo al medir.`,
+    },
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.05;if(s)s.style.opacity=(0.7+0.3*Math.abs(Math.sin(t))).toFixed(2);},60);`,
   },
 
@@ -561,12 +1072,15 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de lluvia",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "GPIO{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
     ],
-    advertencia:
-      "el sensor de lluvia detecta gotas sobre su placa. Salida analógica AO (cuánta agua hay) o digital DO (llueve / no llueve). Funciona a 3.3V. Útil en estación meteorológica.",
+    advertencia: {
+      esp32:
+        "el sensor de lluvia detecta gotas sobre su placa. Salida analógica AO (cuánta agua hay) o digital DO (llueve / no llueve). Funciona a 3.3V. Útil en estación meteorológica.",
+      uno: `el sensor de lluvia detecta gotas sobre su placa. Acá se usa su salida analógica AO (cuánta agua hay), que va a una entrada analógica y devuelve de 0 a ${PLACAS.uno.adcMax}; el módulo también trae una salida digital DO si sólo te interesa llueve/no llueve. Útil en estación meteorológica.`,
+    },
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.07;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
   },
 
@@ -575,13 +1089,24 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de presión BMP180",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", rol: "3.3V", destino: "3.3V" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", rol: "GND", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", rol: "GPIO21", destino: "GPIO21" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", rol: "GPIO22", destino: "GPIO22" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
     ],
-    advertencia:
-      "el BMP180 mide presión atmosférica y temperatura. Es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x77). Sirve para estación meteorológica y como altímetro. Librería: Adafruit_BMP085.",
+    advertencia: {
+      esp32:
+        "el BMP180 mide presión atmosférica y temperatura. Es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x77). Sirve para estación meteorológica y como altímetro. Librería: Adafruit_BMP085.",
+      // Éste es el único de los tres que tiene columna "En Arduino UNO" propia en el
+      // repo (skills/sensores/SKILL.md, tabla del BMP180): VCC → 3.3V, igual que en
+      // el ESP32. Por eso se dibuja a 3,3 V y el texto lo dice.
+      //
+      // El mismo skill aclara que "los módulos GY traen regulador y toleran 5V en
+      // VCC, pero el chip es de 3.3V". TOLERAR no es DONDE VA: la tabla del propio
+      // skill manda 3.3V en las dos placas, y el pibe cablea lo que lee. La
+      // tolerancia se nombra como dato tranquilizador, no como instrucción.
+      uno: "el BMP180 mide presión atmosférica y temperatura. En el UNO es I2C por SDA=A4 y SCL=A5 (dirección 0x77), y mientras esté conectado esas dos dejan de servir como entradas analógicas. VCC va al riel de 3,3 V del UNO: el chip es de 3,3 V. Si el módulo es de los GY, el regulador que trae aguanta 5 V en VCC sin romperse, pero igual conviene los 3,3 V, que es lo que dibuja esta hoja. Sirve para estación meteorológica y como altímetro. Librería: Adafruit_BMP085.",
+    },
     anim: () => ``,
   },
 
@@ -590,11 +1115,14 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Motor DC",
     voltaje: "5V",
     pines: [
-      { nombre: "+ (vía driver)", color: CABLE.rojo, clase: "fijo", rol: "Driver (L298N/ULN2003)", destino: "Driver (L298N/ULN2003)" },
-      { nombre: "− (vía driver)", color: CABLE.marron, clase: "fijo", rol: "Driver", destino: "Driver" },
+      { nombre: "+ (vía driver)", color: CABLE.rojo, clase: "fijo", destino: afuera("Driver (L298N/ULN2003)") },
+      { nombre: "− (vía driver)", color: CABLE.marron, clase: "fijo", destino: afuera("Driver") },
     ],
-    advertencia:
-      "el motor DC NO se conecta directo al ESP32 (lo quemaría por la corriente). Va por un driver (L298N, ULN2003) que recibe la señal del GPIO y le da potencia desde una fuente externa.",
+    advertencia: {
+      esp32:
+        "el motor DC NO se conecta directo al ESP32 (lo quemaría por la corriente). Va por un driver (L298N, ULN2003) que recibe la señal del GPIO y le da potencia desde una fuente externa.",
+      uno: "el motor DC NO se conecta directo al Arduino UNO (lo quemaría por la corriente: un pin del micro no da ni de cerca lo que pide un motor). Va por un driver (L298N, ULN2003) que recibe la señal de la placa y le da potencia desde una fuente externa. Si además querés controlar la VELOCIDAD, la entrada de habilitación del driver tiene que ir a un pin PWM (los del ~). Y la tierra en común entre placa, driver y fuente: sin eso no anda nada.",
+    },
     anim: () => ``,
   },
 
@@ -602,14 +1130,22 @@ const COMPONENTES: Record<string, Componente> = {
     tag: "pb-driver",
     etiqueta: "Driver ULN2003",
     voltaje: "5V",
+    // OJO: IN1-IN4 NO piden PWM. El ULN2003 con un 28BYJ-48 se maneja con pasos
+    // digitales, no con analogWrite (skills/modulos-avanzados: "⚡ 5V · Stepper o
+    // AccelStepper · driver ULN2003"). Marcarlos `requierePwm` le comería al UNO
+    // CUATRO de sus seis pines ~ para nada, y el servo del mismo circuito se
+    // quedaría sin dónde ir con seis pines PWM libres.
     pines: [
-      { nombre: "IN1", color: CABLE.naranja, clase: "digital", rol: "GPIO{0}" },
-      { nombre: "IN2", color: CABLE.amarillo, clase: "digital", rol: "GPIO{1}" },
-      { nombre: "IN3", color: CABLE.verde, clase: "digital", rol: "GPIO{2}" },
-      { nombre: "IN4", color: CABLE.azul, clase: "digital", rol: "GPIO{3}" },
+      { nombre: "IN1", color: CABLE.naranja, clase: "digital", rol: "{0}" },
+      { nombre: "IN2", color: CABLE.amarillo, clase: "digital", rol: "{1}" },
+      { nombre: "IN3", color: CABLE.verde, clase: "digital", rol: "{2}" },
+      { nombre: "IN4", color: CABLE.azul, clase: "digital", rol: "{3}" },
     ],
-    advertencia:
-      "el driver ULN2003 amplifica las señales del ESP32 para mover lo que el GPIO no puede solo (motores DC, paso a paso, relés). IN1-IN4 van a GPIOs; la potencia sale a 5V desde su fuente.",
+    advertencia: {
+      esp32:
+        "el driver ULN2003 amplifica las señales del ESP32 para mover lo que el GPIO no puede solo (motores DC, paso a paso, relés). IN1-IN4 van a GPIOs; la potencia sale a 5V desde su fuente.",
+      uno: "el driver ULN2003 amplifica las señales del Arduino UNO para mover lo que un pin del micro no puede solo (motores DC, paso a paso, relés). IN1-IN4 van a cuatro pines digitales cualquiera —no hace falta que sean PWM— y la potencia sale a 5V desde su propia fuente. Acordate de unir las tierras.",
+    },
     anim: (id) => `const e=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(e)e.style.filter=on?'drop-shadow(0 0 8px #27ae60)':'none';},700);`,
   },
 
@@ -619,8 +1155,8 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "5V",
     attrs: () => `encendido`,
     pines: [
-      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", rol: "Relé ← Red 220V", destino: "Relé ← Red 220V" },
-      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", rol: "Red 220V", destino: "Red 220V" },
+      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé ← Red 220V") },
+      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", destino: afuera("Red 220V") },
     ],
     advertencia:
       "⚡ PELIGRO 220V: la lámpara de red NUNCA se conecta al ESP32. El ESP32 manda un relé, y el relé conmuta los 220V. La parte de red la conecta un adulto/profesor con todo apagado.",
@@ -633,8 +1169,8 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "5V",
     attrs: () => `encendido`,
     pines: [
-      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", rol: "Relé ← Red 220V", destino: "Relé ← Red 220V" },
-      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", rol: "Red 220V", destino: "Red 220V" },
+      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé ← Red 220V") },
+      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", destino: afuera("Red 220V") },
     ],
     advertencia:
       "⚡ PELIGRO 220V: el radiador eléctrico va por un relé, igual que la lámpara. El ESP32 solo controla el relé; los 220V los maneja un adulto.",
@@ -709,45 +1245,21 @@ export function normalizarTipo(t: string): string {
 }
 
 
-// FIX auditoría #1/#3/#10: GPIO seguros primero. Sin 12 (strapping peligroso),
-// sin 16/17 (PSRAM). GPIO2 (LED onboard + strapping) y 15 al final, bajo riesgo.
-const POOL_DIGITAL = [4, 5, 18, 19, 23, 25, 26, 27, 33, 13, 14, 15, 2]
-const POOL_ANALOGICO = [34, 35, 36, 39, 32, 33]
-
-// Validación de GPIO manual (el alumno puede forzar un pin con "led:5").
-// GPIOs que EXISTEN en el ESP32 DevKit.
-const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 37, 38, 39])
-// GPIO6–11 están cableados a la memoria flash SPI: usarlos CUELGA/rompe la placa.
-const GPIO_FLASH = new Set([6, 7, 8, 9, 10, 11])
-// Pines "strapping": funcionan, pero pueden complicar el arranque si tienen algo conectado.
-const GPIO_STRAPPING = new Set([0, 2, 12, 15])
-// FIX auditoría B4: GPIO34/35/36/39 NO tienen driver de salida (son ADC/entrada pura)
-// y TAMPOCO tienen pull-up/pull-down interno. O sea: no sirven ni para encender algo
-// ni para un botón con INPUT_PULLUP. "led:34" se aceptaba sin chistar y el LED no
-// prendía nunca — y el alumno revisa el cable, la resistencia y la soldadura antes de
-// sospechar del pin, porque el diagrama se lo dio el bot.
-const GPIO_SOLO_ENTRADA = new Set([34, 35, 36, 39])
-// GPIO1 (TX) y GPIO3 (RX) van al chip USB-serie de la placa: con algo colgado ahí, la
-// carga del sketch falla y el Monitor Serie escupe basura. Clase perdida buscando por qué
-// "no anda el Arduino" cuando el circuito estaba bien.
-const GPIO_UART_USB = new Set([1, 3])
-
 /**
- * Por qué NO se puede usar el GPIO que pidió el usuario ("led:34"), o null si se puede.
+ * Por qué ese pin NO sirve para ESTE componente, aunque exista en la placa.
  *
- * Un solo lugar con los motivos: lo llama la siembra previa (para reservar el pin) y
- * el asignador (para avisar). Si se separaran, el pin se reservaría y el aviso diría
- * otra cosa.
+ * Vive aparte de `placa.motivoRechazo` a propósito: son dos preguntas distintas.
+ * "D14 no existe en el UNO" es un problema del pin; "D4 existe, anda perfecto, pero
+ * no hace PWM y el servo lo necesita" es un problema del PAR pin+componente.
+ * Mezclarlas daría mensajes que mienten sobre uno de los dos lados.
+ *
+ * En el ESP32 devuelve siempre null: `poolPwm` es undefined porque cualquier salida
+ * hace PWM por `ledc`.
  */
-function motivoGpioRechazado(g: number, clase: ClasePin, etiqueta: string): string | null {
-  if (GPIO_FLASH.has(g))
-    return `⚠️ GPIO${g} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa. Le asigné un pin seguro.`
-  if (!GPIO_VALIDOS.has(g)) return `⚠️ GPIO${g} no existe en el ESP32. Le asigné un pin válido.`
-  if (GPIO_UART_USB.has(g))
-    return `⚠️ GPIO${g} es el puerto serie del USB (GPIO1=TX, GPIO3=RX): con algo conectado ahí la placa no acepta la carga del programa. Le asigné otro pin.`
-  if (clase !== "analogico" && GPIO_SOLO_ENTRADA.has(g))
-    return `⚠️ GPIO${g} es SOLO ENTRADA en el ESP32 (34, 35, 36 y 39): no puede encender nada ni tiene pull-up interno, así que ${etiqueta} ahí no funcionaría nunca. Le asigné un pin que sí sirve. Esos cuatro son ideales para sensores analógicos.`
-  return null
+function motivoSinPwm(placa: Placa, p: PinId, etiqueta: string): string | null {
+  const pwm = placa.poolPwm
+  if (!pwm || pwm.some((q) => mismoPin(q, p))) return null
+  return `⚠️ ${placa.etiquetaPin(p)} no hace PWM en ${placa.etiqueta} y ${etiqueta} lo necesita para funcionar. Los únicos que hacen PWM (los marcados con ~) son ${pwm.map((q) => placa.etiquetaPin(q)).join(", ")}: le asigné uno de ésos.`
 }
 
 interface Pedido {
@@ -767,30 +1279,41 @@ interface ResultadoArmado {
   notas: string[] // lo que el CHAT tiene que decir: "no te di lo que pediste" (ver asignarGpios)
   sinPin: string[] // componentes que quedaron sin pin: el circuito está INCOMPLETO
   conexiones: string[] // la tabla de pines en texto plano, para devolvérsela al modelo
+  marcaSinPin: string // "GPIO?" / "D? o A?": lo que la hoja escribe donde falta un pin
 }
 
-// FIX auditoría #1: g >= 0 evita imprimir "GPIO-1" cuando se agota el pool.
-// FIX auditoría B8: devolvía "GPIO?" y el rol YA trae el literal "GPIO" delante
+// FIX auditoría #1: sólo se imprime un pin de verdad; si no, "?" — nunca "GPIO-1".
+// FIX auditoría B8: devolvía "GPIO?" y el rol YA traía el literal "GPIO" delante
 // ("GPIO{0}"), así que al agotarse el pool imprimía "GPIOGPIO?" en la tabla de
 // conexiones. Se lee como un error del programa, no como "acá falta un pin".
 // FIX auditoría B6: {a-b} es una fila que consume VARIOS pines (7 segmentos,
 // teclado) y los imprime todos: el pin reservado tiene que verse en la tabla.
-function rellenarRol(rol: string, gpios: number[]): string {
+//
+// OJO CON EL ORDEN: `{R}` se expande PRIMERO, antes que los pines. Tiene que ser
+// así porque el render de la resistencia (ver `armarCircuito`) corre un regex
+// `(con XΩ)` sobre la etiqueta YA RESUELTA: si `{R}` llegara sin expandir, ese
+// regex no matchearía y la resistencia dejaría de dibujarse en serie sobre el
+// cable — en silencio, con la hoja saliendo igual de prolija.
+function rellenarRol(rol: string, pines: (PinId | null)[], placa: Placa): string {
   const uno = (i: number): string => {
-    const g = gpios[i]
-    return g != null && g >= 0 ? String(g) : "?"
+    const p = pines[i]
+    if (p == null) return "?"
+    // n < 0 es el pin que no se pudo asignar: se imprime con su banco igual
+    // ("GPIO?", "D?") para que la hoja y el aviso del chat digan lo mismo.
+    return p.n < 0 ? `${p.banco}?` : placa.etiquetaPin(p)
   }
   return rol
+    .replace(/\{R\}/g, placa.resistenciaLed)
     .replace(/\{(\d+)-(\d+)\}/g, (_, a: string, b: string) => {
       const lista: string[] = []
-      for (let i = Number(a); i <= Number(b); i++) lista.push("GPIO" + uno(i))
+      for (let i = Number(a); i <= Number(b); i++) lista.push(uno(i))
       return lista.join(", ")
     })
     .replace(/\{(\d+)\}/g, (_, i: string) => uno(Number(i)))
 }
 
 /**
- * Reparte los GPIO, y devuelve los avisos por CANALES SEPARADOS, a propósito.
+ * Reparte los pines, y devuelve los avisos por CANALES SEPARADOS, a propósito.
  *
  * FIX auditoría A: hasta acá esta función tenía un solo canal (`avisos`) y todo
  * terminaba en el `<div class="aviso">` del HTML. O sea: en la HOJA. El chat no se
@@ -805,47 +1328,76 @@ function rellenarRol(rol: string, gpios: number[]): string {
  * Misma función, dos contratos.
  *
  * - `avisos` → la HOJA. Sin cambios: es lo que el docente tiene delante al cablear.
- * - `notas`  → el CHAT, y SÓLO lo que significa "no te di lo que pediste". El aviso
- *              de strapping NO entra acá a propósito: ese pin sí se te dio y anda, es
- *              una sugerencia. Si el chat avisa de todo, la docente aprende a
- *              saltearse los ⚠️ y el aviso que sí importa deja de existir.
+ * - `notas`  → el CHAT, y SÓLO lo que significa "no te di lo que pediste". La nota
+ *              de pin (strapping en el ESP32, D0/D1/D13 en el UNO) NO entra acá a
+ *              propósito: ese pin sí se te dio y anda, es una sugerencia. Si el chat
+ *              avisa de todo, la docente aprende a saltearse los ⚠️ y el aviso que
+ *              sí importa deja de existir.
  * - `sinPin` → los componentes que quedaron SIN pin (pool agotado). No es una nota
  *              más: es un circuito INCOMPLETO, y cambia cómo se anuncia el resultado.
+ *
+ * EL SET DE OCUPADOS VA POR CLAVE, NO POR NÚMERO, y ésa es la parte que había que
+ * cambiar para que exista la segunda placa. En el ESP32 un `Set<number>` estaba
+ * bien: el GPIO33 aparece en el pool digital y en el analógico porque ES EL MISMO
+ * PIN. En el UNO, D4 y A4 son dos pines distintos que comparten el número: con un
+ * Set numérico, asignar D4 bloquearía A4 y el tool diría "no quedan analógicas" con
+ * A4 libre; y asignar A5 bloquearía D5, que es PWM, que es donde va el servo.
  */
-function asignarGpios(pedidos: Pedido[]): {
-  gpios: number[][]
+function asignarGpios(
+  pedidos: Pedido[],
+  placa: Placa,
+): {
+  pines: (PinId | null)[][]
   avisos: string[]
   notas: string[]
   sinPin: string[]
 } {
-  const usados = new Set<number>()
+  const usados = new Set<string>()
   const avisos: string[] = []
   const notas: string[] = []
   const sinPin: string[] = []
   // "no te di lo que pediste" va a los DOS lados: la hoja y el chat.
+  //
+  // SIN REPETIR, y eso es un fix. La hoja deduplica sola porque `advertencias` es un
+  // `Set`; el chat no, porque `notas` es un array. Con un componente que agota el
+  // mismo pool DOS veces (el clásico: "joystick, joystick, joystick, lcd") la misma
+  // línea de ⚠️ salía repetida en la respuesta mientras la hoja la mostraba una vez.
+  // Dos canales que cuentan lo mismo tienen que contarlo igual.
   const avisar = (texto: string): void => {
-    avisos.push(texto)
-    notas.push(texto)
+    if (!avisos.includes(texto)) avisos.push(texto)
+    if (!notas.includes(texto)) notas.push(texto)
   }
-  const poolDig = [...POOL_DIGITAL]
-  const poolAna = [...POOL_ANALOGICO]
-  const resultado: number[][] = []
+  // La nota del pin va SÓLO a la hoja (ver el contrato de arriba).
+  const anotarPin = (p: PinId): void => {
+    const nota = placa.notaDePin?.(p)
+    if (nota && !avisos.includes(nota)) avisos.push(nota)
+  }
+  const poolDig = [...placa.poolDigital]
+  const poolAna = [...placa.poolAnalogico]
+  const poolPwm = placa.poolPwm ? [...placa.poolPwm] : null
+  const resultado: (PinId | null)[][] = []
 
-  // FIX auditoría #7: sembrar los GPIO fijos (I2C del LCD) en 'usados'.
+  // FIX auditoría #7: sembrar los pines fijos del bus I2C en 'usados'.
+  //
+  // Antes esto se hacía con un regex sobre el literal del destino (/GPIO(\d+)/), y
+  // ahí había un bug mudo esperando a la segunda placa: en el UNO el SDA se llama
+  // "A4", ese regex no matchea, y los dos pines del bus quedaban SIN reservar. El
+  // asignador después le daba A4 al primer sensor analógico y el LCD se quedaba sin
+  // bus, con la hoja mostrando los dos cables en el mismo agujero. Ahora se pregunta
+  // por el SÍMBOLO (SDA/SCL) y el pin lo dice la placa, así que no hay nada que
+  // parsear ni nada que se pueda escribir distinto.
   for (const ped of pedidos) {
     const def = COMPONENTES[normalizarTipo(ped.tipo)]
     if (!def) continue
     for (const pin of def.pines) {
-      if (pin.clase === "fijo" && pin.destino) {
-        const m = pin.destino.match(/GPIO(\d+)/)
-        const nro = m?.[1]
-        if (nro != null) usados.add(parseInt(nro, 10))
-      }
+      if (pin.clase !== "fijo" || typeof pin.destino !== "string") continue
+      if (pin.destino === "SDA") usados.add(clavePin(placa.i2c.sda))
+      if (pin.destino === "SCL") usados.add(clavePin(placa.i2c.scl))
     }
   }
 
   /*
-   * FIX auditoría B13: sembrar TAMBIÉN los GPIO que el usuario pidió a mano, igual
+   * FIX auditoría B13: sembrar TAMBIÉN los pines que el usuario pidió a mano, igual
    * que arriba con los fijos del I2C.
    *
    * Sin esto el resultado dependía del ORDEN de la lista: "led, servo:4" le daba el
@@ -853,71 +1405,86 @@ function asignarGpios(pedidos: Pedido[]): {
    * le asigné otro"; "servo:4, led" andaba perfecto. El mismo circuito, dos dibujos
    * distintos, y el aviso culpaba al usuario por un pin que nadie más había pedido.
    *
-   * Se reserva sólo lo que DE VERDAD se va a poder usar (misma función de motivos que
-   * usa el aviso de abajo): un pin de flash o uno solo-entrada no se reserva, se
-   * rechaza igual que antes. Si dos componentes piden el mismo pin, gana el primero
-   * y el segundo recibe el "ya ocupado" — que ahí sí es cierto.
+   * Se reserva sólo lo que DE VERDAD se va a poder usar (mismas funciones de motivos
+   * que usa el aviso de abajo): un pin de flash, uno solo-entrada o uno que no hace
+   * PWM no se reserva, se rechaza igual que antes. Si dos componentes piden el mismo
+   * pin, gana el primero y el segundo recibe el "ya ocupado" — que ahí sí es cierto.
    */
-  const manual = new Map<Pedido, number>()
+  const manual = new Map<Pedido, PinId>()
   for (const ped of pedidos) {
     if (ped.gpio == null) continue
     const def = COMPONENTES[normalizarTipo(ped.tipo)]
-    const primero = def?.pines.find((p) => p.clase !== "fijo")
-    if (!def || !primero || (primero.cantidad ?? 1) > 1) continue
-    if (motivoGpioRechazado(ped.gpio, primero.clase, def.etiqueta)) continue
-    if (usados.has(ped.gpio)) continue
-    usados.add(ped.gpio)
-    manual.set(ped, ped.gpio)
+    const primero = def?.pines.find((p): p is PinSenal => p.clase !== "fijo")
+    if (!def || !primero) continue
+    if ((primero.cantidad ?? 1) > 1) continue
+    // El número que escribió el usuario ("led:4") no dice el banco: lo pone la clase
+    // del pin. En el ESP32 hay uno solo; en el UNO, un pin digital es D4 y uno
+    // analógico es A4, que son dos pines distintos con el mismo número.
+    const pedido: PinId = { banco: bancoDe(placa, primero.clase), n: ped.gpio }
+    if (placa.motivoRechazo(pedido, primero.clase, def.etiqueta)) continue
+    if (primero.requierePwm && motivoSinPwm(placa, pedido, def.etiqueta)) continue
+    if (usados.has(clavePin(pedido))) continue
+    usados.add(clavePin(pedido))
+    manual.set(ped, pedido)
   }
 
-  const sacar = (pool: number[]): number | null => {
+  const sacar = (pool: PinId[]): PinId | null => {
     while (pool.length) {
-      const g = pool.shift()!
-      if (!usados.has(g)) return g
+      const p = pool.shift()!
+      if (!usados.has(clavePin(p))) return p
     }
     return null
   }
 
   for (const ped of pedidos) {
     const def = componenteDe(ped.tipo)
-    const asignados: number[] = []
-    const pinesGpio = def.pines.filter((p) => p.clase !== "fijo")
+    const asignados: (PinId | null)[] = []
+    const pinesSenal = def.pines.filter((p): p is PinSenal => p.clase !== "fijo")
 
-    pinesGpio.forEach((pin, idx) => {
+    pinesSenal.forEach((pin, idx) => {
       // Una fila puede consumir varios pines (7 segmentos: 7, teclado: 4+4).
       const cuantos = pin.cantidad ?? 1
 
-      // gpio manual del alumno para el primer pin digital O analógico.
+      // pin manual del alumno para el primer pin digital O analógico.
       // Ya quedó reservado (o rechazado) en la siembra de arriba: acá sólo se
       // usa, o se explica por qué no se pudo.
       if (idx === 0 && ped.gpio != null) {
         const reservado = manual.get(ped)
         if (reservado != null) {
           asignados.push(reservado)
-          if (GPIO_STRAPPING.has(reservado)) {
-            avisos.push(`Nota: GPIO${reservado} es un pin "strapping" del ESP32 — funciona, pero puede complicar el arranque si tiene algo conectado al encender. Si podés, elegí otro.`)
-          }
+          anotarPin(reservado)
           return
         }
+        const pedido: PinId = { banco: bancoDe(placa, pin.clase), n: ped.gpio }
         if (cuantos > 1) {
-          avisar(`${def.etiqueta} usa ${cuantos} pines, no uno: el GPIO${ped.gpio} que pediste no alcanza, así que se los asigné yo.`)
+          avisar(`${def.etiqueta} usa ${cuantos} pines, no uno: el ${placa.etiquetaPin(pedido)} que pediste no alcanza, así que se los asigné yo.`)
         } else {
           avisar(
-            motivoGpioRechazado(ped.gpio, pin.clase, def.etiqueta) ??
-              `No pude usar GPIO${ped.gpio} para ${def.etiqueta} (ya ocupado): le asigné otro.`,
+            placa.motivoRechazo(pedido, pin.clase, def.etiqueta) ??
+              (pin.requierePwm ? motivoSinPwm(placa, pedido, def.etiqueta) : null) ??
+              `No pude usar ${placa.etiquetaPin(pedido)} para ${def.etiqueta} (ya ocupado): le asigné otro.`,
           )
         }
       }
 
       for (let n = 0; n < cuantos; n++) {
-        const g = pin.clase === "analogico" ? sacar(poolAna) : sacar(poolDig)
+        // El orden importa: un pin que pide PWM sale del pool PWM aunque también
+        // esté en el digital. Como los dos pools comparten el Set de ocupados por
+        // clave, D5 no se puede entregar dos veces por venir en dos listas.
+        const usaPwm = pin.requierePwm === true && poolPwm != null
+        const g = usaPwm ? sacar(poolPwm!) : pin.clase === "analogico" ? sacar(poolAna) : sacar(poolDig)
         if (g == null) {
-          avisar(`No quedan GPIO ${pin.clase} libres para ${def.etiqueta}: revisalo a mano.`)
+          avisar(
+            usaPwm
+              ? `No quedan pines PWM libres para ${def.etiqueta}: en ${placa.etiqueta} los únicos que hacen PWM son ${placa.poolPwm!.map((q) => placa.etiquetaPin(q)).join(", ")}. Revisalo a mano.`
+              : `No quedan ${placa.nombreDePool[pin.clase]} libres para ${def.etiqueta}: revisalo a mano.`,
+          )
           if (!sinPin.includes(def.etiqueta)) sinPin.push(def.etiqueta)
-          asignados.push(-1)
+          asignados.push({ banco: bancoDe(placa, pin.clase), n: -1 })
           continue
         }
-        usados.add(g)
+        usados.add(clavePin(g))
+        anotarPin(g)
         asignados.push(g)
       }
     })
@@ -925,7 +1492,7 @@ function asignarGpios(pedidos: Pedido[]): {
     resultado.push(asignados)
   }
 
-  return { gpios: resultado, avisos, notas, sinPin }
+  return { pines: resultado, avisos, notas, sinPin }
 }
 
 
@@ -1095,10 +1662,10 @@ const ESCALA: Record<string, number> = {
   bmp180: 1.3, motor: 1.0, driver: 1.0, lampara: 0.9, calefactor: 1.0,
 }
 
-// LAYOUT POR FILAS (robusto): ESP32 fija a la izquierda + una fila por componente.
+// LAYOUT POR FILAS (robusto): la placa fija a la izquierda + una fila por componente.
 // Sin coordenadas globales en SVG estirado → las piezas y sus conexiones NUNCA se desalinean.
-function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
-  const { gpios: gpiosPorComp, avisos: avisosGpio, notas: notasGpio, sinPin } = asignarGpios(pedidos)
+function armarCircuito(pedidos: Pedido[], placa: Placa, umbral?: number): ResultadoArmado {
+  const { pines: pinesPorComp, avisos: avisosGpio, notas: notasGpio, sinPin } = asignarGpios(pedidos, placa)
   const puente = armarPuente(pedidos, umbral)
   const gobernado = puente ? puente.idActuador : null
 
@@ -1110,23 +1677,37 @@ function armarCircuito(pedidos: Pedido[], umbral?: number): ResultadoArmado {
   let hay5V = false
   let interactivo = false
 
+  // Un pin fijo dice a qué RIEL va (V5, GND, SDA…) y la placa dice cómo se llama ese
+  // riel en ella; los destinos de afuera de la placa (un driver, una fuente) son
+  // texto y punto. El `??` de acá no puede dispararse: `motivoNoDibujable` ya rechazó
+  // el circuito si la placa no tiene el riel, y se corre ANTES de llegar acá.
+  const destinoFijo = (pin: PinFijo): string =>
+    typeof pin.destino === "string" ? (placa.riel[pin.destino] ?? "?") : pin.destino.afuera
+  const etiquetaDe = (pin: Pin, pines: (PinId | null)[]): string =>
+    pin.clase === "fijo" ? destinoFijo(pin) : rellenarRol(pin.rol, pines, placa)
+
   pedidos.forEach((ped, i) => {
     const tipo = normalizarTipo(ped.tipo)
     const def = componenteDe(tipo)
     const id = `${tipo}${i}`
-    const gpios = gpiosPorComp[i] ?? []
+    const pines = pinesPorComp[i] ?? []
 
     if (def.voltaje === "5V") hay5V = true
     if (def.interactivo) interactivo = true
-    if (def.advertencia) advertencias.add(def.advertencia)
+    // El texto de la placa que se pidió. Si el componente no la soportara, no
+    // llegaríamos hasta acá: `motivoNoDibujable` corta antes. NUNCA cae al de ESP32.
+    const aviso = avisoDe(def.advertencia, placa.id)
+    if (aviso?.texto) advertencias.add(aviso.texto)
 
     // columna de conexiones: cada pin = nodo + etiqueta en cajita + cable CSS (flex).
     // El cable no tiene coordenadas: vive en la misma fila flex que su etiqueta, nunca se desalinea.
     const conex = def.pines
       .map((pin) => {
-        const destino = pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)
+        const destino = etiquetaDe(pin, pines)
         // R en serie: solo cuando "(con XΩ)" CIERRA la etiqueta (LED, RGB). El caso
         // "7 pines (cada segmento con 220Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
+        // OJO: este regex corre sobre la etiqueta YA RESUELTA, así que `rellenarRol`
+        // tiene que haber expandido `{R}` antes (lo hace primero, ver allá).
         const conR = pin.clase !== "fijo" && destino.match(/^(.*?)\s*\(con\s*([\d.]+\s*[kKmM]?)\s*Ω\)\s*$/)
         const etiqueta = conR ? conR[1] : destino
         const valorR = conR ? (conR[2] ?? "").replace(/\s+/g, "") : null
@@ -1157,9 +1738,7 @@ ${conex}
     )
 
     // fila de la tabla resumen
-    const resumen = def.pines
-      .map((pin) => (pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)))
-      .join(" · ")
+    const resumen = def.pines.map((pin) => etiquetaDe(pin, pines)).join(" · ")
     const dots = def.pines
       .map((pin) => `<span class="dot" style="background:${pin.color}"></span>`)
       .join("")
@@ -1169,14 +1748,11 @@ ${conex}
     // Se arma acá y no aparte para que no puedan divergir: si algún día la fila de la
     // hoja cambia, esta línea cambia con ella.
     conexiones.push(
-      `${def.etiqueta}: ` +
-        def.pines
-          .map((pin) => `${pin.nombre} → ${pin.clase === "fijo" ? pin.destino! : rellenarRol(pin.rol, gpios)}`)
-          .join(", "),
+      `${def.etiqueta}: ` + def.pines.map((pin) => `${pin.nombre} → ${etiquetaDe(pin, pines)}`).join(", "),
     )
 
     if (id !== gobernado) {
-      anims.push(`(() => { ${def.anim(id)} })();`)
+      anims.push(`(() => { ${def.anim(id, placa)} })();`)
     }
   })
 
@@ -1185,29 +1761,35 @@ ${conex}
     interactivo = true // si hay puente (incluido sensor→actuador con slider), es interactivo
   }
 
-  // escena = grid [ESP32 | columna de filas]
+  // escena = grid [placa | columna de filas]
+  //
+  // El ancho de la primera columna sale de la placa y NO del CSS estático, y no es
+  // cosmético: `transform:scale()` no cambia la caja de layout. El ESP32 ocupa 106,6
+  // px reales aunque se pinte a 133, así que le sobraba lugar en los 230 px de
+  // `.circuito-libre`; el UNO ocupa 274,3 px de verdad y en esa misma columna se
+  // montaría 22 px sobre las conexiones, pisándole el texto a la docente.
   const escena = `
-      <div class="circuito-libre">
-        <div class="esp-col"><wokwi-esp32-devkit-v1 style="transform:scale(1.25);transform-origin:center"></wokwi-esp32-devkit-v1></div>
+      <div class="circuito-libre" style="grid-template-columns:${placa.anchoColumna}px 1fr">
+        <div class="esp-col"><${placa.tag} style="transform:scale(${placa.escala});transform-origin:center"></${placa.tag}></div>
         <div class="filas-libre">
 ${filas.join("\n")}
         </div>
       </div>`
 
-  const cabecera = interactivo
-    ? "✋ <strong>¡Probalo con el mouse!</strong> "
-    : "💡 <strong>Atención:</strong> "
-  if (hay5V) advertencias.add("los componentes de 5V (servo, PIR, HC-SR04, LCD) van a VIN, NO a 3.3V.")
+  // El aviso de los 5V es de la placa: en el ESP32 hay dos mundos de tensión que se
+  // pueden confundir, en el UNO hay uno solo y repetirlo sería ruido (además de
+  // nombrar un pin, VIN, que en el UNO no se usa así).
+  if (hay5V && placa.avisoCincoVolt) advertencias.add(placa.avisoCincoVolt)
   avisosGpio.forEach((a) => advertencias.add(a))
   const notas = [...notasGpio]
-  for (const choque of avisosI2cRepetido(pedidos)) {
+  for (const choque of avisosI2cRepetido(pedidos, placa)) {
     advertencias.add(choque)
     notas.push(choque)
   }
-  const aviso = cabecera + Array.from(advertencias).map((f) => "• " + f).join(" ")
+  const aviso = bloqueDeAvisos(Array.from(advertencias), interactivo)
 
   const tabla = `
-      <tr><th>Componente</th><th>Cables</th><th>Conexiones al ESP32</th></tr>
+      <tr><th>Componente</th><th>Cables</th><th>Conexiones al ${placa.etiqueta}</th></tr>
 ${filasTabla.join("\n")}`
 
   // alto: no se usa para layout (las filas crecen solas), pero lo dejamos por compatibilidad
@@ -1223,6 +1805,7 @@ ${filasTabla.join("\n")}`
     notas,
     sinPin,
     conexiones,
+    marcaSinPin: marcaSinPin(placa, pinesPorComp),
   }
 }
 
@@ -1245,9 +1828,15 @@ ${filasTabla.join("\n")}`
  * perfecto en el mismo bus, que es justamente la gracia del I2C. Avisar de eso sería
  * ruido, y el ⚠️ que grita siempre no lo lee nadie.
  */
-function avisosI2cRepetido(pedidos: Pedido[]): string[] {
+function avisosI2cRepetido(pedidos: Pedido[], placa: Placa): string[] {
+  // "es I2C" se pregunta por el SÍMBOLO del riel, no por el literal del pin. Antes
+  // era `p.destino === "GPIO21"`, o sea: el detector reconocía dispositivos I2C sólo
+  // si el bus se llamaba como en el ESP32. En el UNO el SDA es A4, ese literal no
+  // matchea, y "oled, oled" se habría dibujado con los dos en el mismo bus, con la
+  // misma dirección de fábrica, y SIN una palabra — el mismo bug F que este aviso
+  // vino a matar, reencarnado en la segunda placa.
   const esI2c = (tipo: string): boolean =>
-    (COMPONENTES[tipo]?.pines ?? []).some((p) => p.clase === "fijo" && p.destino === "GPIO21")
+    (COMPONENTES[tipo]?.pines ?? []).some((p) => p.clase === "fijo" && p.destino === "SDA")
 
   const cuenta = new Map<string, number>()
   for (const ped of pedidos) {
@@ -1255,12 +1844,51 @@ function avisosI2cRepetido(pedidos: Pedido[]): string[] {
     if (esI2c(t)) cuenta.set(t, (cuenta.get(t) ?? 0) + 1)
   }
 
+  const sda = placa.riel.SDA ?? "SDA"
+  const scl = placa.riel.SCL ?? "SCL"
   return [...cuenta.entries()]
     .filter(([, n]) => n > 1)
     .map(
       ([t, n]) =>
-        `Pediste ${n} unidades de "${componenteDe(t).etiqueta}" y las ${n} van al MISMO bus I2C (SDA=GPIO21, SCL=GPIO22) con la MISMA dirección de fábrica: el ESP32 no las puede distinguir, así que en la placa real va a andar una sola. Para usar ${n} hay que cambiarle la dirección a las demás (es un puente/jumper en la plaquita, o el pin de dirección) o poner un multiplexor I2C TCA9548A. El cableado del dibujo está bien: lo que choca son las direcciones.`,
+        `Pediste ${n} unidades de "${componenteDe(t).etiqueta}" y las ${n} van al MISMO bus I2C (SDA=${sda}, SCL=${scl}) con la MISMA dirección de fábrica: ${placa.etiqueta} no las puede distinguir, así que en la placa real va a andar una sola. Para usar ${n} hay que cambiarle la dirección a las demás (es un puente/jumper en la plaquita, o el pin de dirección) o poner un multiplexor I2C TCA9548A. El cableado del dibujo está bien: lo que choca son las direcciones.`,
     )
+}
+
+/**
+ * Por qué este circuito NO se puede dibujar en esta placa, o null si se puede.
+ *
+ * El tool se NIEGA en vez de improvisar, y ésa es la decisión central de esta tanda.
+ * Antes `advertencia` era un solo texto y se imprimía siempre; el día que apareció la
+ * segunda placa, "usá GPIO34 o GPIO35 (solo-entrada)" se le iba a mostrar tal cual al
+ * docente del UNO. Un fallback silencioso acá no es "algo es mejor que nada": el
+ * texto equivocado suena exactamente igual de seguro que el correcto, y la docente no
+ * tiene con qué darse cuenta. Prefiere no dibujar y decir qué falta.
+ *
+ * Cubre las dos formas de no soportar una placa:
+ *  - el componente no tiene advertencia para ella (todavía no se portó), y
+ *  - el componente necesita un riel que esa placa no tiene (`riel[x] === null`), que
+ *    sería un cable dibujado hacia un pin inexistente.
+ */
+function motivoNoDibujable(pedidos: Pedido[], placa: Placa): string | null {
+  if (placa.id === "esp32") return null
+  const sinAviso: string[] = []
+  const sinRiel: string[] = []
+  for (const ped of pedidos) {
+    const def = COMPONENTES[normalizarTipo(ped.tipo)]
+    if (!def) continue
+    if (!avisoDe(def.advertencia, placa.id) && !sinAviso.includes(def.etiqueta)) sinAviso.push(def.etiqueta)
+    for (const pin of def.pines) {
+      if (pin.clase !== "fijo" || typeof pin.destino !== "string") continue
+      if (placa.riel[pin.destino] == null && !sinRiel.includes(def.etiqueta)) sinRiel.push(def.etiqueta)
+    }
+  }
+  if (sinRiel.length) {
+    return `No te lo dibujo, y es a propósito: ${sinRiel.join(" y ")} necesita${sinRiel.length > 1 ? "n" : ""} una alimentación que ${placa.etiqueta} no tiene en la placa. Si lo dibujara, el cable terminaría en un pin que no existe y la hoja se vería perfecta igual. Pedímelo con otra placa, o sacá ${sinRiel.length > 1 ? "esos componentes" : "ese componente"} de la lista.`
+  }
+  if (sinAviso.length) {
+    return `Todavía no sé dibujar ${sinAviso.join(" y ")} en ${placa.etiqueta}: me falta la parte que explica cómo se conecta en ESA placa, y sin eso lo único que puedo hacer es mostrarte el texto del ESP32 como si fuera el tuyo — que es justo lo que no quiero hacer. En ESP32 sí lo tengo (pedímelo con placa="esp32"). En ${placa.etiqueta} puedo armarte el circuito con el resto de la lista si sacás ${sinAviso.length > 1 ? "esos" : "ése"}.`
+  }
+  return null
 }
 
 // Sanitiza el nombre de archivo que pide el usuario: evita que un "../../.." escriba
@@ -1382,8 +2010,16 @@ const POTENCIA: Record<string, "relay" | "driver"> = {
  * circuito está perfecto y avisarle que se comparten sería decirle algo falso — que es
  * la categoría de error que esta ronda vino a sacar, no a mover de lugar.
  */
-function inyectarMando(pedidos: Pedido[]): { pedidos: Pedido[]; avisos: string[] } {
+function inyectarMando(pedidos: Pedido[], placa: Placa): { pedidos: Pedido[]; avisos: string[] } {
   const avisos: string[] = []
+  // El "12 mA" es un dato del ESP32, y no se traduce a otra placa inventando otra
+  // cifra: en el UNO se dice el HECHO (un pin del micro no da esa corriente) sin
+  // ponerle un número que nadie verificó. Un dato preciso y falso es peor que uno
+  // general y cierto, porque se copia al pizarrón.
+  const porQueQuema =
+    placa.id === "esp32"
+      ? `directo al ${placa.etiqueta} (el GPIO entrega 12 mA y esto pide bastante más: lo quema)`
+      : `directo al ${placa.etiqueta} (un pin del micro no entrega ni de cerca la corriente que esto pide: lo quema)`
   const salida: Pedido[] = []
   // Cuántos mandos de cada familia trajo el pedido. Si trajo alguno no inyectamos
   // nada (la decisión es suya); si trajo MENOS que cargas, se lo decimos.
@@ -1413,11 +2049,11 @@ function inyectarMando(pedidos: Pedido[]): { pedidos: Pedido[]; avisos: string[]
     const cargas = inyectadas[mando]
     if (cargas.length === 1) {
       avisos.push(
-        `Le agregué ${componenteDe(mando).etiqueta} al circuito: ${cargas[0]} no se puede conectar directo al ESP32 (el GPIO entrega 12 mA y esto pide bastante más: lo quema). El ESP32 manda la señal al ${nombre}, y el ${nombre} mueve la potencia con su propia fuente.`,
+        `Le agregué ${componenteDe(mando).etiqueta} al circuito: ${cargas[0]} no se puede conectar ${porQueQuema}. El ${placa.etiqueta} manda la señal al ${nombre}, y el ${nombre} mueve la potencia con su propia fuente.`,
       )
     } else if (cargas.length > 1) {
       avisos.push(
-        `Le agregué un ${componenteDe(mando).etiqueta} POR CADA carga de potencia (${cargas.length} en total: ${cargas.join(" y ")}): ninguna se puede conectar directo al ESP32 (el GPIO entrega 12 mA y esto pide bastante más: lo quema). Va uno por carga y no uno solo para todas porque un ${nombre} de un canal conmuta UNA sola cosa: con uno compartido, ${cargas.join(" y ")} se prenderían y apagarían siempre juntos. El ESP32 manda la señal a cada ${nombre}, y cada ${nombre} mueve su potencia con su propia fuente.`,
+        `Le agregué un ${componenteDe(mando).etiqueta} POR CADA carga de potencia (${cargas.length} en total: ${cargas.join(" y ")}): ninguna se puede conectar ${porQueQuema}. Va uno por carga y no uno solo para todas porque un ${nombre} de un canal conmuta UNA sola cosa: con uno compartido, ${cargas.join(" y ")} se prenderían y apagarían siempre juntos. El ${placa.etiqueta} manda la señal a cada ${nombre}, y cada ${nombre} mueve su potencia con su propia fuente.`,
       )
     }
 
@@ -1448,8 +2084,8 @@ function inyectarMando(pedidos: Pedido[]): { pedidos: Pedido[]; avisos: string[]
  * la potencia —que es el punto del circuito, no el accesorio— y antes de ofrecerla se
  * la vuelve a pasar por inyectarMando para garantizar que lo sugerido ENTRA.
  */
-function sugerenciaQueEntra(crudo: Pedido[]): string {
-  const entra = (lista: Pedido[]): boolean => lista.length > 0 && inyectarMando(lista).pedidos.length <= 6
+function sugerenciaQueEntra(crudo: Pedido[], placa: Placa): string {
+  const entra = (lista: Pedido[]): boolean => lista.length > 0 && inyectarMando(lista, placa).pedidos.length <= 6
   const lista = [...crudo]
   // 1) se sacan los accesorios, de atrás para adelante; los actuadores de potencia no se tocan
   for (let i = lista.length - 1; i >= 0 && !entra(lista); i--) {
@@ -1458,7 +2094,7 @@ function sugerenciaQueEntra(crudo: Pedido[]): string {
   }
   // 2) si quedó sólo potencia y todavía no entra, recién ahí se recortan actuadores
   while (lista.length > 1 && !entra(lista)) lista.pop()
-  return inyectarMando(lista)
+  return inyectarMando(lista, placa)
     .pedidos.map((p) => normalizarTipo(p.tipo))
     .join(", ")
 }
@@ -1723,7 +2359,7 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
   <h1>${p.titulo} <span class="badge">${p.interactivo ? "✋ interactivo" : "▶ animado"}</span></h1>
   <div class="sub">Esquema de conexión — Tecnia Bot · piezas reales, ${p.sub}</div>
   <div class="escena"${p.alto && p.alto > 0 ? ` style="height:${p.alto}px"` : ` style="height:auto"`}>${p.escena}</div>
-  <div class="aviso">${p.aviso}</div>
+  ${p.aviso ? `<div class="aviso">${p.aviso}</div>` : ""}
   <table>${p.tabla}</table>
 </div>
 <script>${p.animacion}</script>
@@ -1795,7 +2431,9 @@ export default tool({
 
 USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
-⚠️ TODOS LOS PRESETS SON PARA ESP32. No hay ninguno de Arduino UNO todavía. Los pines que dibuja (GPIO 2, 4, 18...) NO existen en un UNO, y su tensión es 3,3 V contra los 5 V del UNO. Si el docente trabaja con un Arduino UNO, DECÍSELO antes de mostrarle el diagrama: "el esquema que te puedo dibujar es para ESP32; en el UNO los pines son otros". Nunca se lo muestres como si fuera el suyo.
+PLACA: el arg 'placa' elige qué placa se DIBUJA. "esp32" (default, ESP32 DevKit) o "uno" (Arduino UNO, que es la que más se usa con Sensor Shield en las escuelas técnicas). Preguntale al docente con cuál trabaja ANTES de dibujar; si te dice UNO, pasá placa="uno" y los pines salen D0-D13, A0-A5, PWM en los ~ y el I2C en A4/A5, como en su placa. Si el componente que pide todavía no está portado a esa placa, el tool NO dibuja: te dice cuál falta, y eso se lo contás — nunca le muestres el dibujo de otra placa como si fuera el suyo.
+
+⚠️ TODOS LOS PRESETS SON PARA ESP32: los nombres con "-esp32" y también estacion-meteo, alarma, semaforo y los -protoboard. Pedir un preset con placa="uno" se rechaza a propósito (sería una contradicción explícita), y el tool te dice qué lista de 'componentes' pedir en su lugar. El armador libre ('componentes') SÍ dibuja las dos placas.
 
 Componentes sueltos: servo-esp32, led-esp32, ultrasonico-esp32, buzzer-esp32, dht22-esp32, pir-esp32, lcd-esp32.
 INTERACTIVOS (el alumno controla con el mouse): potenciometro-esp32 (girá la perilla y cambia el brillo del LED), boton-esp32 (apretá el botón y se prende el LED).
@@ -1805,7 +2443,7 @@ CIRCUITOS SOBRE PROTOBOARD (componentes reales pinchados en la placa + jumpers d
 
 ARMADOR LIBRE (combinaciones libres): si el pedido NO coincide con un preset (ej "ESP32 + 2 LEDs + potenciómetro + servo"), usá el arg 'componentes' con la lista separada por comas. Tipos: led, rgb-led, servo, stepper (motor paso a paso), motor (motor DC, va por driver), driver (ULN2003), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton, relay, bomba, valvula (electrovalvula), higrometro, lluvia, bmp180 (presion), lampara, calefactor. GPIO opcional con dos puntos: "led:2, led:4". El motor asigna pines, dibuja cables y combina animaciones solo. De 1 a 6 componentes.
 
-PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humedad y se enciende el riego); tanques "ultrasonico, relay, bomba"; calefacción "dht22, relay, calefactor"; lumínico "ldr, pir, relay, lampara"; estación meteo "dht22, lluvia, bmp180, lcd". Los actuadores de potencia (bomba, válvula, lámpara, calefactor, motor, stepper) van SIEMPRE por un relé o driver, nunca directos al ESP32: si te olvidás de incluirlo, el tool lo agrega solo y te avisa qué agregó (contáselo al docente, es parte de la explicación).`,
+PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humedad y se enciende el riego); tanques "ultrasonico, relay, bomba"; calefacción "dht22, relay, calefactor"; lumínico "ldr, pir, relay, lampara"; estación meteo "dht22, lluvia, bmp180, lcd". Los actuadores de potencia (bomba, válvula, lámpara, calefactor, motor, stepper) van SIEMPRE por un relé o driver, nunca directos a la placa: si te olvidás de incluirlo, el tool lo agrega solo y te avisa qué agregó (contáselo al docente, es parte de la explicación). Estos proyectos hoy salen sólo en ESP32: el relé, la bomba, la válvula, la lámpara, el calefactor, el HC-SR04, el DHT22, el PIR, el IR y el motor paso a paso todavía no están portados al UNO, y el tool te lo dice si los pedís con placa="uno".`,
   args: {
     circuito: tool.schema
       .enum(["servo-esp32", "led-esp32", "ultrasonico-esp32", "buzzer-esp32", "potenciometro-esp32", "dht22-esp32", "pir-esp32", "lcd-esp32", "boton-esp32", "estacion-meteo", "alarma", "semaforo", "protoboard", "boton-led-protoboard", "semaforo-protoboard"])
@@ -1815,6 +2453,29 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       .string()
       .optional()
       .describe("ARMADOR LIBRE: lista de componentes separada por comas, ej 'led, led, potenciometro, servo'. Tipos: led, rgb-led, servo, stepper (motor paso a paso), motor (motor DC, va por driver), driver (ULN2003), potenciometro, joystick, buzzer, ultrasonico, dht22, ntc, pir, ldr, llama, sonido, ir (infrarrojo), tilt (inclinacion), lcd, oled, 7segmentos, neopixel, mpu6050 (acelerometro), teclado, boton, relay, bomba, valvula (electrovalvula), higrometro, lluvia, bmp180 (presion), lampara, calefactor. GPIO opcional con dos puntos: 'led:2, led:4'. El motor calcula posiciones y cables solo."),
+    // String libre, NO enum, POR DECISIÓN DE DISEÑO — y ojo, que acá NO hay test.
+    //
+    // Este comentario decía "hay un test que lo exige (tests/resistencia-led:10)" y
+    // era FALSO. El test 10 hace exactamente lo contrario: tiene a `circuito.ts` en
+    // su lista blanca `DIBUJAN` y argumenta, con todas las letras, que acá el enum
+    // sería CORRECTO — porque este arg declara qué placas el tool SABE DIBUJAR, no
+    // cuáles EXISTEN, y eso sí es un conjunto cerrado y chico. Lo que el test 10
+    // prohíbe es el enum en `perfil` y en `imprimible`, que GUARDAN y ROTULAN la
+    // placa que el docente tiene en la mano. Convertir esto en enum deja la suite
+    // entera en verde. Inventar una red que no existe es peor que no tenerla: el
+    // que venga detrás confía en ella y no la escribe.
+    //
+    // Entonces, ¿por qué sigue siendo string? Porque el que valida es `execute` y es
+    // lo ÚNICO que corre cuando los tests llaman al tool directo, sin pasar por el
+    // schema — y porque el rechazo que escribe a mano dice "no la sé dibujar" y
+    // manda al skill `placas`, en vez del error seco de un enum, que suena a "tu
+    // placa no existe". Es una decisión de mensaje, no un invariante defendido.
+    //
+    // Si algún día merece red propia, hay que ESCRIBIRLA y recién ahí nombrarla acá.
+    placa: tool.schema
+      .string()
+      .optional()
+      .describe("Qué placa se dibuja: 'esp32' (default, ESP32 DevKit) o 'uno' (Arduino UNO). Preguntale al docente con cuál trabaja antes de generar: con 'uno' los pines salen D0-D13 / A0-A5, el PWM en los marcados con ~ y el I2C en A4/A5. Si algún componente del pedido todavía no está portado a esa placa, el tool no dibuja y te dice cuál falta — no le muestres el dibujo de otra placa como si fuera el suyo."),
     nombre_archivo: tool.schema
       .string()
       .optional()
@@ -1842,6 +2503,50 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
      * misma regla que ya rige para el código: hacer y ofrecer, no imponer.
      */
     const abrir = args.abrir === true
+
+    /*
+     * QUÉ PLACA SE DIBUJA, y se valida acá adentro a propósito.
+     *
+     * El schema del arg es un string libre (ver el comentario de `placa` más arriba:
+     * el catálogo de placas que EXISTEN es del skill `placas`, no de este tool), así
+     * que el único que puede decir "esa no la sé dibujar" es execute. Y tiene que
+     * poder: los tests llaman a execute directo, sin pasar por el schema, y un modelo
+     * puede mandar cualquier cosa igual.
+     *
+     * El default es "esp32" y eso NO cambia: los tests que ya había se escribieron
+     * contra el ESP32 y tienen que seguir dando exactamente lo mismo. La segunda placa
+     * se pide, no se adivina.
+     *
+     * AUSENTE ≠ BASURA, y esto es un fix: la versión anterior era un solo ternario
+     * (`typeof args.placa === "string" && args.placa.trim() ? … : "esp32"`), así que
+     * un `placa: 123`, un `{}` o un `["uno"]` caían al ESP32 EN SILENCIO. Justo lo
+     * que el comentario de arriba dice que no puede pasar ("un modelo puede mandar
+     * cualquier cosa igual"): para no-strings, no lo hacía. Y el modo silencioso es
+     * el peor de los dos, porque el docente recibe una hoja de ESP32 impecable.
+     *
+     * Ahora: no venir es el default; venir mal se RECHAZA con el mismo mensaje que
+     * una placa que no sabemos dibujar.
+     */
+    const PLACA_INVALIDA = " placa-invalida" // no existe en PLACAS: cae al rechazo de abajo
+    const idPlaca =
+      args.placa === undefined || args.placa === null
+        ? "esp32"
+        : typeof args.placa === "string"
+          ? args.placa.trim()
+            ? args.placa.trim().toLowerCase()
+            : "esp32" // string vacío o de puros espacios = "no me la dijeron"
+          : PLACA_INVALIDA
+    const placa = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
+    if (!placa) {
+      // Un `["uno"]` interpolado da "uno" a secas, y el rechazo saldría diciendo que
+      // no sabe dibujar una placa que SÍ dibuja. Los no-strings se muestran como lo
+      // que son, o el mensaje confunde más de lo que aclara.
+      const comoLoPidio = typeof args.placa === "string" ? args.placa : JSON.stringify(args.placa)
+      return `No sé DIBUJAR una "${comoLoPidio}" todavía. Las que sé dibujar son: ${Object.values(PLACAS)
+        .map((p) => `${p.id} (${p.etiqueta})`)
+        .join(" y ")}. Ojo que eso NO quiere decir que tu placa no exista ni que no la conozca: el catálogo de placas vive en el skill \`placas\` y te la puedo explicar con su tabla de pines aunque todavía no le tenga el dibujo. Decime si querés el circuito en una de las dos que dibujo, o preguntame por la tuya.`
+    }
+
     const bundle = bundlePath()
     if (!existsSync(bundle)) {
       return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Tecnia Bot con el instalador para que copie la biblioteca visual."
@@ -1884,18 +2589,25 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
         return `No conozco: ${desconocidos.map((d) => d.tipo).join(", ")}. Tengo: ${Object.keys(COMPONENTES).join(", ")}.`
       }
 
-      // Seguridad eléctrica ANTES que el dibujo: nada de potencia colgado del GPIO.
-      const { pedidos, avisos: avisosMando } = inyectarMando(pedidoCrudo)
+      // Seguridad eléctrica ANTES que el dibujo: nada de potencia colgado de un pin.
+      const { pedidos, avisos: avisosMando } = inyectarMando(pedidoCrudo, placa)
       notas.push(...avisosMando)
       if (pedidos.length > 6) {
-        return `Para que el circuito sea seguro le tengo que sumar un relé (o un driver): los actuadores de potencia nunca van directo al ESP32. Con eso pasa de 6 componentes, que es mi tope. Sacá uno y lo armo — por ejemplo: "${sugerenciaQueEntra(pedidoCrudo)}".`
+        return `Para que el circuito sea seguro le tengo que sumar un relé (o un driver): los actuadores de potencia nunca van directo a la placa. Con eso pasa de 6 componentes, que es mi tope. Sacá uno y lo armo — por ejemplo: "${sugerenciaQueEntra(pedidoCrudo, placa)}".`
       }
+
+      // ¿Se puede dibujar ESTE circuito en ESTA placa? Se pregunta DESPUÉS de inyectar
+      // el mando, porque el relé o el driver que agregamos nosotros también tienen que
+      // estar portados: ofrecer un riego en UNO con un relé que todavía no existe sería
+      // prometer algo que no podemos entregar.
+      const noDibujable = motivoNoDibujable(pedidos, placa)
+      if (noDibujable) return noDibujable
 
       // Sin componentes-extra.js las piezas pb-* no se dibujan: mejor no generar nada.
       const falta = faltanPiezasDibujadas(pedidos)
       if (falta) return falta
 
-      const r = armarCircuito(pedidos, args.umbral)
+      const r = armarCircuito(pedidos, placa, args.umbral)
       umbralAplicado = r.umbralAplicado
       // El umbral se aplicó, pero no el que se pidió: eso también se cuenta.
       if (r.avisoUmbral) notas.push(r.avisoUmbral)
@@ -1906,8 +2618,8 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
       html = construirHTML(
         {
-          titulo: `🔧 ${nombres} + ESP32`,
-          sub: "armado libre — piezas reales conectadas al ESP32",
+          titulo: `🔧 ${nombres} + ${placa.etiqueta}`,
+          sub: `armado libre — piezas reales conectadas al ${placa.etiqueta}`,
           escena: r.escena,
           aviso: r.aviso,
           tabla: r.tabla,
@@ -1939,12 +2651,41 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
        */
       encabezado =
         r.sinPin.length > 0
-          ? `Generé el circuito, pero quedó INCOMPLETO: me quedé sin pines libres para ${r.sinPin.join(" y ")}, así que en la hoja ${r.sinPin.length > 1 ? "esas filas dicen" : "esa fila dice"} "GPIO?" en vez de un número. NO lo cablees así: sacá un componente de la lista y te lo armo completo.`
+          ? `Generé el circuito, pero quedó INCOMPLETO: me quedé sin pines libres para ${r.sinPin.join(" y ")}, así que en la hoja ${r.sinPin.length > 1 ? "esas filas dicen" : "esa fila dice"} "${r.marcaSinPin}" en vez de un número. NO lo cablees así: sacá un componente de la lista y te lo armo completo.`
           : "Listo! Generé el circuito visual y animado."
       cierre = `Vas a ver las piezas reales conectadas con cables de colores, y la animación funcionando. Todo sin internet.
 (Se copió la biblioteca de piezas al lado del archivo — no la borres.)`
+    } else if (args.circuito && args.circuito !== "protoboard" && placa.id !== "esp32") {
+      /*
+       * UN PRESET ES DE ESP32 Y SE LLAMA ASÍ: pedirlo con otra placa es una
+       * contradicción explícita, y se rechaza con un motivo que dice QUÉ pedir.
+       *
+       * Los presets NO se renombran ni se traducen: "led-esp32" con placa="uno" no es
+       * un pedido ambiguo que se pueda resolver eligiendo uno de los dos, es un pedido
+       * que se contradice a sí mismo. Elegir por el docente acá es exactamente el bug
+       * que esta tanda vino a matar, sólo que al revés.
+       *
+       * La sugerencia tiene que poder ARMARSE de verdad: si el equivalente lleva algún
+       * componente que todavía no está portado, se lo decimos en vez de mandarla a un
+       * pedido que va a rebotar. Una sugerencia que vuelve a chocar es la peor forma de
+       * decir que no (ver `sugerenciaQueEntra`, mismo criterio).
+       */
+      const tipos = PRESET_COMPONENTES[args.circuito]
+      const equivalente = tipos?.map((t) => ({ tipo: t }))
+      const armable = equivalente && !motivoNoDibujable(inyectarMando(equivalente, placa).pedidos, placa)
+      return (
+        `El preset "${args.circuito}" es de ESP32 — el nombre lo dice, y los pines que dibuja son los de esa placa. No te lo voy a dibujar rotulado como ${placa.etiqueta}, porque eso es justo lo que hace que un circuito se vea bien y esté mal. ` +
+        (armable
+          ? `Para ${placa.etiqueta} pedímelo con el armador libre: componentes="${tipos!.join(", ")}", placa="${placa.id}". Sale el mismo circuito con los pines de tu placa.`
+          : tipos
+            ? `Y el equivalente libre ("${tipos.join(", ")}") todavía no lo puedo armar en ${placa.etiqueta}: hay componentes de esa lista que me faltan portar. Pedímelo en ESP32, o decime qué componentes querés y te armo lo que sí tengo.`
+            : `Ese circuito está montado sobre una plantilla hecha a mano para ESP32 y todavía no tengo la de ${placa.etiqueta}. Pedímelo en ESP32, o armémoslo con el arg "componentes" y los pines de tu placa.`)
+      )
     } else if (args.circuito === "protoboard") {
       // Caso especial: NO es un circuito con pines, es la placa misma explicada.
+      // No dibuja NINGUNA placa —es la protoboard por dentro— así que vale igual para
+      // las dos y no se rechaza por `placa`. Su layout es propio (ver armarProtoboard)
+      // y no usa la columna de `.circuito-libre`, así que el ancho de la placa no lo toca.
       const nom = nombreSeguro(args.nombre_archivo, "protoboard-explicador")
       pedidoNoUsado = nom.pedidoNoUsado
       base = nom.nombre
@@ -1982,7 +2723,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       // calefacción) el guard tiene que estar acá también: es la misma página vacía.
       const faltaPreset = faltanPiezasDibujadas(pedidos)
       if (faltaPreset) return faltaPreset
-      const r = armarCircuito(pedidos)
+      const r = armarCircuito(pedidos, placa)
       // Un preset no puede tener pines pedidos a mano, pero SÍ puede chocar direcciones
       // I2C o agotar el pool el día que se agregue uno grande. El canal es el mismo.
       notas.push(...r.notas)
@@ -1994,8 +2735,8 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       const ids = pedidos.map((p, i) => `${normalizarTipo(p.tipo)}${i}`)
       html = construirHTML(
         {
-          titulo: `🔧 ${nombres} + ESP32`,
-          sub: "piezas reales conectadas al ESP32",
+          titulo: `🔧 ${nombres} + ${placa.etiqueta}`,
+          sub: `piezas reales conectadas al ${placa.etiqueta}`,
           escena: r.escena,
           aviso: r.aviso,
           tabla: r.tabla,

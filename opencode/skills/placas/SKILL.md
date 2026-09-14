@@ -128,9 +128,18 @@ código. Lo único que cambia es el driver.
 | **Tensión** | **5 V** |
 | **ADC** | 0-1023 · A0 a A5 |
 | **PWM** | 3, 5, 6, 9, 10, 11 (los marcados con `~`) |
-| **LED de placa** | pin 13 |
+| **LED de placa** | pin 13 (el LED «L», soldado y con su limitadora propia) |
+| **Pines con dueño** | **D0 (RX) / D1 (TX)** = serie por hardware, el mismo canal del USB · **D13** = LED «L» + SCK de SPI |
+| **Pines prohibidos** | **ninguno** — no hay strapping pins, ni de solo-entrada, ni de flash |
 | **USB** | original: VID `2341`/`2A03`, sin driver · clon: **CH340**, VID `1A86` |
 | **Monitor** | 9600 |
+
+**Los pines libres son todos.** A diferencia del ESP32, acá los 14 digitales y los 6
+analógicos son de propósito general: entran, salen, y ninguno impide que la placa
+arranque. Las únicas tres excepciones son de uso compartido, no de peligro: **D0 y D1**
+llevan el puerto serie del USB (algo enchufado ahí rompe la carga del sketch y el Monitor
+Serie) y **D13** comparte con el LED de la placa y con el SCK de SPI. Se usan **últimos**,
+y avisando. El detalle, con el bug real del que salió la regla, está en `gotchas-hardware`.
 
 ```ini
 [env:uno]

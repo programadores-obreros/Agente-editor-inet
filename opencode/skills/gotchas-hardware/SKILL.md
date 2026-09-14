@@ -1,6 +1,6 @@
 ---
 name: gotchas-hardware
-description: Problemas reales de Arduino/ESP32 que NO están en los libros - por qué el servo no gira, el pote lee 0, el ESP32 da 0-4095, la alimentación, los strapping pins. La sabiduría que un buen profe tiene por experiencia.
+description: Problemas reales de Arduino/ESP32 que NO están en los libros - por qué el servo no gira, el pote lee 0, el ESP32 da 0-4095 y el UNO 0-1023, la alimentación, los strapping pins del ESP32, y los pines D0/D1 (serie del USB) y D13 (LED «L» + SCK) del UNO. La sabiduría que un buen profe tiene por experiencia.
 ---
 
 # Gotchas de hardware — lo que se aprende sufriendo, no leyendo
@@ -39,9 +39,9 @@ El **ESP32 trabaja a 3.3V**. El **Arduino UNO a 5V**. Mezclarlos mal quema compo
 |------------|--------------|---------|
 | Servo SG90 | 5V (VIN) | sin 5V no tiene fuerza |
 | Sensor PIR HC-SR501 | 5V (VIN) | OUT es de 3.3V (trae regulador a bordo) → directo al GPIO, sin divisor. Sólo módulos mini sin regulador pueden dar 5V: medí antes |
-| HC-SR04 | 5V (VIN) | ⚠️ el pin ECHO da 5V → SÍ o SÍ divisor de tensión |
+| HC-SR04 | 5V (VIN) | ⚠️ el pin ECHO da 5V → divisor de tensión **sólo en ESP32**. En el **UNO no hace falta**: la placa es de 5V y el pin tolera esos 5V, el echo entra directo |
 | DHT22 | 3.3V | anda directo |
-| LED | — | siempre con resistencia: **220Ω en 3.3V (ESP32)**, 330Ω en 5V (UNO). Medí el Vf del LED: los azules/blancos (~3,2V) con 330Ω en 3.3V no prenden |
+| LED | — | siempre con resistencia: **220Ω**, tanto en los 5V del UNO como en los 3.3V del ESP32. Es el valor que viene en los kits. En 3.3V medí igual el Vf: un azul/blanco/verde InGaN (~3,2V) no prende con ninguna resistencia, no le queda tensión |
 
 **El divisor de tensión (para bajar 5V a 3.3V):** dos resistencias — R1=1kΩ entre la señal de 5V y el GPIO, R2=2kΩ entre el GPIO y GND. Así el GPIO recibe ~3.3V seguros.
 
@@ -61,10 +61,30 @@ Algunos GPIO del ESP32 tienen una función especial al encender. Si tenés algo 
 
 **Para el alumno:** "Algunos pines del ESP32 están 'ocupados' cuando la placa arranca. Si conectás algo ahí, la placa no prende bien. Empezá usando GPIO4, 5, 18, 19 que son tranquilos."
 
+## 🟦 Los pines del Arduino UNO: los tres con letra chica (y por qué los demás no tienen)
+
+**Arrancá por lo que NO pasa, porque es la mitad del alivio:** en el UNO **no hay strapping pins, no hay pines de solo-entrada y no hay pines de flash**. Nada de lo que dice la sección de arriba aplica acá. Los 14 digitales (D0-D13) y los 6 analógicos (A0-A5) son todos de propósito general, entran y salen, y ninguno impide que la placa arranque. Es un ATmega328P a 5V con la flash adentro del chip (ver skill `placas`), y el mismo razonamiento ya está escrito para la Educablocks UNO en el skill `educabot` ("todo lo que el skill `esp32` dice de 3.3V, divisores y strapping pins **no aplica**").
+
+Dicho eso, **tres de esos pines vienen con algo pegado de fábrica**. No están prohibidos — se usan últimos, y avisando:
+
+| Pin | Qué tiene atado | Qué pasa si lo usás igual |
+|---|---|---|
+| **D0 (RX)** y **D1 (TX)** | el **puerto serie por hardware**, que es el **mismo canal del USB** | rompe la carga de sketches y el Monitor Serie, y lo que conectes ahí se mueve solo cada vez que la placa habla por USB |
+| **D13** | el **LED «L»** soldado a la placa, y además **SCK del bus SPI** | lo que conectes comparte el pin con ese LED: prenden y apagan juntos. Y si el proyecto usa SPI, D13 ya está tomado |
+
+**D0 y D1 — por qué es el peor lugar para enchufar algo.** No es teoría: está documentado en este repo como **"BUG CRÍTICO del material original"**. El esquema de 2019 del proyecto de estacionamiento ponía los **servos en los pines 0 y 1**, y eso *"rompe la carga de sketches y el Monitor Serie, y genera movimientos erráticos mientras la placa se comunica"* (`proyectos-inet/proyectos/06-estacionamiento.md`, Gotchas). En la reedición los servos se mudaron a **4 y 8**. El mismo bug está anotado en la cerradura: *"El pin 0 del UNO es el RX del puerto serie: por eso NUNCA se usa el servo ahí"* (`09-cerradura.md`). Y en la Educablocks el puerto **COM** es justamente D0+D1, con la regla de la casa: **desenchufá el módulo para cargar** (`educabot/SKILL.md`), o `avrdude` falla con `not in sync`.
+
+> **Síntoma de diagnóstico (memorizalo).** Si el UNO **no programa** o el **Monitor Serie se comporta raro**, sospechá que hay algo colgado del pin 0 o del 1 antes de mirar el código. Es la primera pregunta, no la última (`06-estacionamiento.md`, "Cómo ayudar al alumno").
+
+**D13 — no es peligroso, es compartido.** La ficha de la placa lo dice así: el **LED «L»** está *"en D13, ya viene cableado: sirve para probar sin armar nada"* (ficha `01-arduino-uno.html`), y el skill `placas` lo lista como **LED de placa: pin 13**. Consecuencia práctica: el LED de la placa se enciende con lo que vos escribas en D13, así que un LED externo ahí va a parecer que anda aunque esté mal cableado — el que estás viendo prender puede ser el de la placa. Ese LED de placa **ya trae su resistencia limitadora incorporada** — no le agregues una: *"En UNO el pin 13 ya trae el LED de la placa con su limitadora incorporada; el LED **externo** necesita la suya sí o sí"* (`12-calefaccion.md`, Materiales). Y **D13 es también SCK de SPI** (`educabot/SKILL.md`): si el proyecto lleva una tarjeta SD, un RFID o cualquier módulo SPI, el pin ya tiene dueño.
+
+**Para el alumno:** "En el UNO todos los pines sirven, pero tres ya tienen un inquilino. El 0 y el 1 son el cable por donde la placa habla con la computadora: si les colgás un servo, la placa deja de poder recibir el programa. Y el 13 tiene un LED soldado adentro de la placa — lo que conectes ahí va a prender ese LED también. Dejalos para el final, cuando ya no te queden otros."
+
 ## 💡 El LED no prende
 
 1. **Polaridad** — la pata larga (ánodo, +) va al pin con resistencia; la corta (cátodo, −) a GND. Al revés no prende.
-2. **Falta la resistencia, o es la equivocada** — siempre una en serie (220Ω en 3.3V/ESP32, 330Ω en 5V/UNO), o el LED se quema (o quema el pin). Y ojo: un LED azul, blanco o verde InGaN (Vf ~3,2V) con 330Ω en 3.3V recibe 0,3 mA y **no prende** — no está roto, le falta tensión. Medí el Vf con el téster (ver skill `esp32`).
+2. **Falta la resistencia, o es la equivocada** — siempre una en serie, y el valor de la casa es **220Ω**: en 5V (UNO) y en 3.3V (ESP32). Sin ella el LED se quema (o quema el pin). En 5V con un LED de 2V, 220Ω dan 13,6 mA — bien por debajo de los 20 mA que aguanta el pin — y **es el valor que viene en la caja del kit**: mandarlo a comprar 330Ω es mandarlo a comprar lo que ya tiene.
+   **Y ojo con los 3,3V, que es otra historia:** un LED azul, blanco o verde InGaN (Vf ~3,2V) alimentado desde 3,3V **no prende**, y no se arregla eligiendo mejor la resistencia — con 220Ω recibe 0,45 mA y con 330Ω, 0,3 mA. No queda tensión. El LED no está roto: le falta fuente. Medí el Vf con el téster (ver skill `esp32`), y en 3,3V **nunca bajes de 100Ω**.
 3. **`pinMode` olvidado** — en `setup()`: `pinMode(pin, OUTPUT)`.
 
 ## 🔌 Errores de conexión USB / no detecta la placa

@@ -7,24 +7,24 @@
       "componente": "etiqueta humana del componente/parte",
       "pin": "pin fisico como string: 'GPIO16' (ESP32), '11' o 'A0' (UNO)",
       "tipo": "senal | alimentacion | gnd | potencia",
-      "nota": "opcional: info critica atada al pin (ej: '330 en serie', 'con divisor de tension')"
+      "nota": "opcional: info critica atada al pin (ej: '220 en serie', 'con divisor de tension'). La VERDAD del pin es el .ino; la de la nota es la lista de materiales y la tabla de cableado del proyecto en opencode/skills/proyectos-inet/proyectos/<slug>.md. Si las dos no dicen lo mismo, el .md manda y esto se corrige."
     }
   },
   "01-semaforizacion": {
     "titulo": "Semaforo",
     "esp32": {
       "inicial": [
-        { "rol": "verde",    "componente": "LED verde",    "pin": "GPIO16", "tipo": "senal", "nota": "330 en serie" },
-        { "rol": "amarillo", "componente": "LED amarillo", "pin": "GPIO17", "tipo": "senal", "nota": "330 en serie" },
-        { "rol": "rojo",     "componente": "LED rojo",     "pin": "GPIO18", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "verde",    "componente": "LED verde",    "pin": "GPIO16", "tipo": "senal", "nota": "220 en serie" },
+        { "rol": "amarillo", "componente": "LED amarillo", "pin": "GPIO17", "tipo": "senal", "nota": "220 en serie" },
+        { "rol": "rojo",     "componente": "LED rojo",     "pin": "GPIO18", "tipo": "senal", "nota": "220 en serie" },
         { "rol": "gnd",      "componente": "catodos de los 3 LEDs", "pin": "GND", "tipo": "gnd" }
       ]
     },
     "uno": {
       "inicial": [
-        { "rol": "verde",    "componente": "LED verde",    "pin": "11", "tipo": "senal", "nota": "330 en serie" },
-        { "rol": "amarillo", "componente": "LED amarillo", "pin": "12", "tipo": "senal", "nota": "330 en serie" },
-        { "rol": "rojo",     "componente": "LED rojo",     "pin": "13", "tipo": "senal", "nota": "330 en serie" },
+        { "rol": "verde",    "componente": "LED verde",    "pin": "11", "tipo": "senal", "nota": "220 en serie" },
+        { "rol": "amarillo", "componente": "LED amarillo", "pin": "12", "tipo": "senal", "nota": "220 en serie" },
+        { "rol": "rojo",     "componente": "LED rojo",     "pin": "13", "tipo": "senal", "nota": "220 en serie" },
         { "rol": "gnd",      "componente": "catodos de los 3 LEDs", "pin": "GND", "tipo": "gnd" }
       ]
     }
