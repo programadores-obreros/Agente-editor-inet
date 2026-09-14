@@ -265,6 +265,32 @@ interface Placa {
   /** "GPIO4" · "D4" · "A0". El prefijo lo pone la placa, no el rol. */
   etiquetaPin(p: PinId): string
   /**
+   * El MISMO pin, pero como lo llama la PIEZA de Wokwi. `null` = no lo expone.
+   *
+   * `etiquetaPin` es para el ojo del docente; ésta es para el navegador. Hoy los
+   * cables salen de una barra gris al costado de la placa: el dibujo no le dice
+   * al pibe dónde pinchar. La pieza publica `el.pinInfo` con la coordenada de
+   * cada agujero del header, así que para anclar el cable al pin de verdad sólo
+   * falta el NOMBRE con el que preguntarle — y los nombres NO coinciden con los
+   * nuestros, de forma distinta en cada placa (ver NOMBRES DE WOKWI, más abajo).
+   *
+   * `null` no es un error ni un caso a tapar con una suposición: es "esta pieza
+   * no saca ese pin al header con un nombre que podamos nombrar". Un cable
+   * anclado a un nombre inventado se dibuja igual de prolijo y va al agujero
+   * equivocado, que es PEOR que la barra gris de hoy. Ante `null`, el que
+   * dibuje deja ese cable como está.
+   */
+  pinWokwi(p: PinId): string | null
+  /**
+   * El riel, como lo llama la pieza de Wokwi. `null` = esta placa no lo tiene.
+   *
+   * `ref` es el pin de SEÑAL del mismo componente, y no es decorativo: en
+   * NINGUNA de las dos placas existe un pin llamado `GND`. El UNO tiene tres
+   * masas y el ESP32 dos, en headers distintos, así que "cuál es la masa" sólo
+   * tiene respuesta EN RELACIÓN A ALGO. Ver LAS MASAS, más abajo.
+   */
+  rielWokwi(r: Riel, ref?: PinId | null): string | null
+  /**
    * Por qué NO se puede usar el pin que pidió el usuario ("led:34"), o null.
    *
    * Es un MÉTODO de la placa y no una tabla compartida a propósito. En el ESP32
@@ -338,6 +364,92 @@ const UNO_POOL_PWM = [3, 5, 6, 9, 10, 11]
 // son el bus I2C (SDA/SCL): un sensor analógico cualquiera no tiene por qué gastarlas.
 const UNO_POOL_ANALOGICO = [0, 1, 2, 3, 4, 5]
 
+// ════════════════════════════════════════════════════════════════════════════
+// NOMBRES DE WOKWI — el mapeo entre cómo llamamos al pin y cómo lo llama la pieza
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Acá se hardcodea EL NOMBRE, y NADA MÁS que el nombre. La coordenada del pin NO
+// vive en este archivo y no tiene que llegar nunca: los cables se van a dibujar
+// en el navegador de la docente preguntándole a la pieza en vivo por
+// `el.pinInfo`, que es quien sabe dónde cae cada agujero. Si alguna vez ves un
+// `x` o un `y` en este bloque, alguien se fue de alcance.
+//
+// LOS NOMBRES NO COINCIDEN, y de forma distinta en cada placa:
+//
+//   nosotros          Wokwi
+//   ────────          ─────
+//   GPIO13            `D13`        (ESP32: cambia el prefijo)
+//   D2                `"2"`        (UNO digital: el número PELADO, sin la D)
+//   A0                `A0`         (UNO analógico: la única que coincide)
+//   5V                `5V`         (UNO: coincide)
+//   3.3V              `3.3V`       (UNO: coincide) … pero en el ESP32 es `3V3`
+//   GND               NO EXISTE    (ninguna de las dos tiene un pin así)
+//
+// Fuente: `docs/wokwi-pinout-dump.md`, medido sobre la pieza real del bundle
+// (`opencode/tecniabot-web/wokwi-bundle.js`). El test NO copia esta tabla: vuelve
+// a extraer los nombres DEL BUNDLE y compara contra lo de acá. Un test que
+// compara el mapeo contra una copia del mapeo no prueba nada; la fuente tiene
+// que ser externa, o el día que Wokwi renombre un pin al actualizar el bundle
+// nos enteramos por la pantalla de la docente.
+//
+// ── LAS MASAS ───────────────────────────────────────────────────────────────
+//
+// No existe ningún pin llamado `GND`. El UNO tiene TRES (`GND.1` en el header de
+// arriba, `GND.2` y `GND.3` en el de abajo) y el ESP32 DOS (`GND.2` en la
+// columna izquierda, `GND.1` en la derecha). O sea que "¿cuál es la masa?" NO
+// tiene respuesta sola: sólo la tiene EN RELACIÓN al pin de señal del mismo
+// componente. Por eso `rielWokwi` pide `ref` — no es un parámetro de más, es que
+// la pregunta sin él está mal formulada.
+//
+// EL CRITERIO: la masa más cercana al pin de señal DE ESE componente. Un cable
+// que sale de un pin del header de arriba y cruza la placa entera hasta `GND.2`
+// se dibuja igual de prolijo y le enseña a cablear mal.
+//
+// Y sale del MISMO header, que es lo que el pibe tiene que ver:
+//   · UNO, señal digital  → `GND.1`, el único del header de arriba.
+//   · UNO, señal analógica→ `GND.3`, no `GND.2`: las dos están en el header de
+//     abajo, pero A0..A5 caen a la DERECHA de las dos, y `GND.3` es la de más a
+//     la derecha. `GND.2` no la elige nadie, y está bien que así sea.
+//   · ESP32, columna izq. → `GND.2`; columna der. → `GND.1`.
+// Esto vale para las DOS placas, así que el `ref` no es un parche del UNO.
+
+/**
+ * GPIO del ESP32 → nombre en `wokwi-esp32-devkit-v1`. Lo que NO está, no está.
+ *
+ * Los 19 `D<n>` salen del volcado. Los dos de abajo son la excepción, y NO es
+ * una suposición: la DevKit v1 no imprime "16" ni "17" en ningún lado, imprime
+ * el nombre del segundo puerto serie. Está escrito en la ficha del INET que
+ * justamente los usa — skills/proyectos-inet/proyectos/06-estacionamiento.md:42:
+ * «Los GPIO 16 y 17 … aparecen como RX2/TX2 … buscá el rótulo RX2/TX2, no un
+ * "16"/"17" que la plaquita no imprime». Y hacen falta de verdad: el pool
+ * automático los saltea, pero la ficha de semaforización los pide a mano
+ * (`led:16, led:17`), así que el tool SÍ los reparte.
+ *
+ * NO ESTÁN GPIO36 NI GPIO39, y eso es un HALLAZGO, no un olvido: los reparte
+ * `POOL_ANALOGICO` reparte GPIO36 y GPIO39, y la pieza NO expone ningún `D36`/`D39`:
+ * los llama `VP` y `VN`, que es como vienen serigrafiados en la placa de verdad.
+ *
+ * Eso no se dedujo de que "son los dos que sobran en el header" — así se mete un cable
+ * en el agujero de al lado con el dibujo viéndose perfecto. Está confirmado contra el
+ * fabricante: ESP32 Series Datasheet, tabla *Pin Definitions*, donde `SENSOR_VP` es el
+ * pin físico 5 (GPIO36, ADC1_CH0) y `SENSOR_VN` el 8 (GPIO39, ADC1_CH3), los dos de
+ * tipo I — solo entrada. Queda escrito con la cita en `skills/esp32` (sección "Cuando
+ * la placa NO dice GPIO"), que es donde tiene que vivir un dato de hardware: el tool
+ * no puede ser su fuente.
+ * <https://documentation.espressif.com/esp32_datasheet_en.html>
+ */
+const ESP32_WOKWI_PIN = new Map<number, string>([
+  ...[2, 4, 5, 12, 13, 14, 15, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35].map((n): [number, string] => [n, `D${n}`]),
+  // Los cuatro que la placa NO rotula "GPIO". Cada uno con su fuente:
+  [16, "RX2"], // skills/proyectos-inet/proyectos/06-estacionamiento.md:42
+  [17, "TX2"], // idem
+  [36, "VP"], // SENSOR_VP — ESP32 Series Datasheet, Pin Definitions, pin físico 5
+  [39, "VN"], // SENSOR_VN — idem, pin físico 8
+])
+
+/** Los GPIO de la columna IZQUIERDA de la pieza: su masa más cercana es `GND.2`. */
+const ESP32_WOKWI_IZQUIERDA = new Set([12, 13, 14, 25, 26, 27, 32, 33, 34, 35, 36, 39])
+
 export const PLACAS: Record<PlacaId, Placa> = {
   esp32: {
     id: "esp32",
@@ -355,6 +467,29 @@ export const PLACAS: Record<PlacaId, Placa> = {
     nombreDePool: { digital: "GPIO digital", analogico: "GPIO analogico" },
     avisoCincoVolt: "los componentes de 5V (servo, PIR, HC-SR04, LCD) van a VIN, NO a 3.3V.",
     etiquetaPin: (p) => `GPIO${p.n}`,
+    // En el ESP32 el banco es siempre "GPIO", pero se pregunta igual: un PinId de
+    // otra placa que se colara acá tiene que dar `null`, no un nombre plausible.
+    pinWokwi: (p) => (p.banco === "GPIO" ? (ESP32_WOKWI_PIN.get(p.n) ?? null) : null),
+    rielWokwi(r, ref) {
+      switch (r) {
+        // "VIN" a secas: el "(5V)" de `riel.V5` es para el ojo del docente, y la
+        // pieza no tiene ningún pin que se llame así.
+        case "V5":
+          return "VIN"
+        // Nosotros lo escribimos "3.3V" (riel.V3) y la pieza lo llama `3V3`.
+        case "V3":
+        case "VLOGICA":
+          return "3V3"
+        case "GND":
+          return ref != null && ESP32_WOKWI_IZQUIERDA.has(ref.n) ? "GND.2" : "GND.1"
+        // Derivados de `i2c` y no escritos a mano: si mañana el bus se mueve, se
+        // mueve en UN lugar. Dos tablas que dicen el mismo pin se desincronizan.
+        case "SDA":
+          return this.pinWokwi(this.i2c.sda)
+        case "SCL":
+          return this.pinWokwi(this.i2c.scl)
+      }
+    },
     motivoRechazo(p, clase, etiqueta) {
       const g = p.n
       if (GPIO_FLASH.has(g))
@@ -393,6 +528,35 @@ export const PLACAS: Record<PlacaId, Placa> = {
     // ("van a VIN, NO a 3.3V") acá no aplica y nombraría un pin que no existe.
     avisoCincoVolt: null,
     etiquetaPin: (p) => `${p.banco}${p.n}`,
+    // El UNO es la placa donde los dos nombres MÁS se parecen y por eso más
+    // engaña: `A0` es igual en las dos, pero el digital pierde la "D" y queda el
+    // número pelado. Devolver "D2" acá no rompe nada visible — simplemente no
+    // existe ese pin, y el cable se queda sin anclar sin que nadie se entere.
+    pinWokwi: (p) => {
+      if (p.banco === "A") return p.n >= 0 && p.n <= 5 ? `A${p.n}` : null
+      if (p.banco === "D") return p.n >= 0 && p.n <= 13 ? String(p.n) : null
+      return null
+    },
+    rielWokwi(r, ref) {
+      switch (r) {
+        case "V5":
+        case "VLOGICA":
+          return "5V"
+        // Ojo: acá sí es "3.3V" con punto. El `3V3` es el del ESP32.
+        case "V3":
+          return "3.3V"
+        // Las tres masas. El header de abajo tiene dos (`GND.2` en x=169,5 y
+        // `GND.3` en x=179) y las analógicas arrancan en x=208: `GND.3` es la de
+        // más a la derecha, o sea la más cercana a A0..A5. `GND.1` es la única
+        // del header de arriba, donde viven los digitales.
+        case "GND":
+          return ref?.banco === "A" ? "GND.3" : "GND.1"
+        case "SDA":
+          return this.pinWokwi(this.i2c.sda)
+        case "SCL":
+          return this.pinWokwi(this.i2c.scl)
+      }
+    },
     motivoRechazo(p) {
       // El UNO no tiene flash SPI colgada de pines, ni strapping, ni solo-entrada
       // (skills/educabot/SKILL.md:341). Lo único que se puede pedir mal es un pin
