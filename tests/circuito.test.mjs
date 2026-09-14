@@ -1822,6 +1822,83 @@ test("ningún .describe() de un tool da como ejemplo un GPIO que el asignador no
 
 // MUTACIÓN QUE MATA: volver `idPlaca` al ternario de antes
 // (`typeof args.placa === "string" && args.placa.trim() ? … : "esp32"`).
+test("un shield NO es una placa nueva: se resuelve a la de abajo y no rebota", async () => {
+  // SE ROMPÍA ASÍ: `placa: "uno con sensor shield"` REBOTABA con el mensaje de placa
+  // desconocida. Y el docente acababa de leer en el skill que el shield "no cambia ni
+  // un número" — así que el rechazo no tenía ningún sentido para él.
+  //
+  // Funcionaba sólo si el modelo adivinaba traducir "sensor shield" → "uno". Adivinar
+  // no es una garantía: el día que mande la placa tal cual la escribió el docente, el
+  // rechazo llega al aula.
+  for (const texto of [
+    "uno con sensor shield",
+    "Arduino UNO + Sensor Shield v5.0",
+    "sensor shield",
+    "shield",
+    "uno con shield",
+    "Arduino UNO con IO Expansion Shield DFRobot",
+  ]) {
+    const { r, html } = await gen({ componentes: "led, servo", placa: texto }, "sh-" + texto.replace(/\W+/g, ""))
+    assert.ok(r.startsWith("Listo"), `"${texto}" tendría que generar, no rebotar. Dijo: ${r.slice(0, 110)}`)
+    assert.match(html, /<wokwi-arduino-uno/, `"${texto}" tiene que dibujar el UNO de abajo`)
+    assert.doesNotMatch(html, /<wokwi-esp32-devkit-v1/, `"${texto}" no puede dibujar un ESP32`)
+  }
+})
+
+test("la placa que el docente NOMBRA manda sobre el shield", async () => {
+  // SE ROMPÍA ASÍ, y lo introduje yo al arreglar lo de arriba: la primera versión
+  // resolvía CUALQUIER shield a `uno`, porque el Sensor Shield v5.0 es formato UNO.
+  // Con eso, `placa: "ESP32 con sensor shield"` dibujaba un ARDUINO UNO, con pines
+  // D2/D3 que en un ESP32 NO EXISTEN.
+  //
+  // Es el mismo bug que este tool vino a matar, dado vuelta: darle al docente una placa
+  // que no es la suya. Se encontró PROBÁNDOLO, no leyéndolo — por eso queda este test.
+  for (const texto of ["esp32 con shield", "ESP32 con sensor shield", "esp32 devkit + shield"]) {
+    const { html } = await gen({ componentes: "led, servo", placa: texto }, "she-" + texto.replace(/\W+/g, ""))
+    assert.match(html, /<wokwi-esp32-devkit-v1/, `"${texto}" nombra el ESP32: ése tiene que dibujar`)
+    assert.doesNotMatch(html, /<wokwi-arduino-uno/, `"${texto}" NO puede dibujar un UNO: los pines D2/D3 no existen en un ESP32`)
+  }
+})
+
+test("con shield se AVISA dónde se pincha de verdad, con un pin de la propia tabla", async () => {
+  // SE ROMPÍA ASÍ: aunque el circuito salga bien, el dibujo muestra la placa PELADA y el
+  // docente tiene el shield encima. Los pines son los mismos, pero el pibe no mete el
+  // cable en el header: lo mete en la terna de tres colores. Un dibujo correcto y a la
+  // vez inservible en la mesa de trabajo.
+  const { r } = await gen({ componentes: "led, servo", placa: "uno con sensor shield" }, "sh-aviso")
+  assert.match(r, /tres vías/i, "el aviso tiene que explicar el conector de tres vías del shield")
+  assert.match(r, /\*\*S\*\*/, "y decir cuál de las tres lleva el número: la S de señal")
+
+  // El ejemplo sale del pin REALMENTE repartido, no de `pool[0]`: si sale de la lista y
+  // no de la tabla, el docente lee un número que en su hoja no aparece.
+  const tabla = r.split("no inventes otros):**")[1] || ""
+  const primero = tabla.match(/→ ((?:GPIO|[DA])\d+)/)
+  assert.ok(primero, "la tabla de conexiones tiene que traer al menos un pin")
+  assert.ok(
+    r.includes(`la **S** de la terna ${primero[1]}`),
+    `el ejemplo del aviso tiene que usar ${primero[1]}, que es el pin que salió en la tabla`,
+  )
+
+  // Y sin shield no se dice nada de ternas: un aviso que sale siempre no es un aviso.
+  const limpio = await gen({ componentes: "led, servo", placa: "uno" }, "sh-limpio")
+  assert.doesNotMatch(limpio.r, /tres vías/i, "sin shield no hay aviso de ternas")
+})
+
+test("si nombra un shield y NINGUNA placa, avisa que asumió el UNO", async () => {
+  // SE ROMPÍA ASÍ: "sensor shield" a secas cae a UNO porque ese shield es formato UNO
+  // ("no entra en un ESP32", skills/placas). Es la suposición correcta, pero suponer en
+  // SILENCIO es lo que hacía el tool cuando dibujaba siempre un ESP32.
+  const { r } = await gen({ componentes: "led" }, "sh-solo-1")
+  assert.doesNotMatch(r, /asumí/i, "sin shield no hay nada que asumir")
+
+  const asumido = await gen({ componentes: "led", placa: "sensor shield" }, "sh-solo-2")
+  assert.match(asumido.r, /asumí el Arduino UNO/i, "tiene que decir que asumió la placa de abajo")
+  assert.match(asumido.r, /decímelo/i, "y darle al docente la salida si su controlador es otro")
+
+  const nombrada = await gen({ componentes: "led", placa: "uno con sensor shield" }, "sh-solo-3")
+  assert.doesNotMatch(nombrada.r, /asumí/i, "si la nombró, no se asumió nada")
+})
+
 test("una `placa` que no es string se RECHAZA, no cae al ESP32 en silencio", async () => {
   // El comentario del código dice que `execute` valida "porque un modelo puede
   // mandar cualquier cosa igual" — y para los no-strings no lo hacía: un 123, un

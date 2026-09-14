@@ -438,6 +438,53 @@ const UNO_POOL_ANALOGICO = [0, 1, 2, 3, 4, 5]
  * no puede ser su fuente.
  * <https://documentation.espressif.com/esp32_datasheet_en.html>
  */
+/**
+ * SHIELDS DE EXPANSIÓN: son la MISMA placa, no una placa nueva.
+ *
+ * Un shield se apila sobre el controlador y saca cada pin a un conector de tres vías
+ * (señal · V · GND). **No cambia ni un número**: `skills/placas/SKILL.md` (entrada 02)
+ * lo dice con todas las letras para el Sensor Shield v5.0, y de la variante DFRobot
+ * dice que "funciona igual: apila sobre el UNO, agrupa señal+VCC+GND por servo, mismos
+ * pines". Los dos son formato UNO — "no entra en un ESP32".
+ *
+ * POR QUÉ ESTO EXISTE. Antes, un `placa: "uno con sensor shield"` REBOTABA con el
+ * mensaje de placa desconocida, y el docente —que acababa de leer que los pines son
+ * los mismos— no entendía nada. Funcionaba sólo si el modelo adivinaba mandar "uno";
+ * adivinar no es una garantía, y el día que mande la placa literal el rechazo llega al
+ * aula. Esto lo vuelve determinista.
+ *
+ * Lo que el shield SÍ cambia es DÓNDE se pincha: el pibe no mete el cable en el header
+ * de la placa, lo mete en la terna de colores. Por eso normalizar no alcanza y viene
+ * con un aviso. El dibujo sigue mostrando la placa pelada hasta que exista la pieza.
+ */
+const SHIELDS: ReadonlyArray<{ patron: RegExp; nombre: string }> = [
+  { patron: /sensor\s*shield/i, nombre: "Sensor Shield" },
+  { patron: /io\s*expansion|dfrobot/i, nombre: "IO Expansion Shield DFRobot" },
+  { patron: /\bshields?\b/i, nombre: "shield de expansión" },
+]
+
+/**
+ * La placa que el docente NOMBRA manda sobre el shield.
+ *
+ * Este orden es un fix, no un detalle. La primera versión resolvía cualquier shield a
+ * `uno` porque el Sensor Shield v5.0 es formato UNO — y con eso, un `placa: "ESP32 con
+ * sensor shield"` dibujaba un ARDUINO UNO, con pines D2/D3 que en un ESP32 no existen.
+ * Es el mismo bug que este tool vino a matar, dado vuelta: darle al docente una placa
+ * que no es la suya. Se encontró probándolo, no leyéndolo.
+ *
+ * Así que primero se busca la placa por nombre y sólo después se mira el shield. Si no
+ * nombra ninguna, el default es UNO, porque el shield de las escuelas es formato UNO
+ * ("no entra en un ESP32", `skills/placas`) — pero eso se AVISA, no se asume en silencio.
+ */
+function shieldDe(texto: string): { base: PlacaId; nombre: string; baseAsumida: boolean } | null {
+  const shield = SHIELDS.find((sh) => sh.patron.test(texto))
+  if (!shield) return null
+  const nombrada = (Object.keys(PLACAS) as PlacaId[]).find((id) =>
+    new RegExp(`\\b${id}\\b`, "i").test(texto),
+  )
+  return { base: nombrada ?? "uno", nombre: shield.nombre, baseAsumida: nombrada === undefined }
+}
+
 const ESP32_WOKWI_PIN = new Map<number, string>([
   ...[2, 4, 5, 12, 13, 14, 15, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35].map((n): [number, string] => [n, `D${n}`]),
   // Los cuatro que la placa NO rotula "GPIO". Cada uno con su fuente:
@@ -2639,7 +2686,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     placa: tool.schema
       .string()
       .optional()
-      .describe("Qué placa se dibuja: 'esp32' (default, ESP32 DevKit) o 'uno' (Arduino UNO). Preguntale al docente con cuál trabaja antes de generar: con 'uno' los pines salen D0-D13 / A0-A5, el PWM en los marcados con ~ y el I2C en A4/A5. Si algún componente del pedido todavía no está portado a esa placa, el tool no dibuja y te dice cuál falta — no le muestres el dibujo de otra placa como si fuera el suyo."),
+      .describe("Qué placa se dibuja: 'esp32' (default, ESP32 DevKit) o 'uno' (Arduino UNO). Preguntale al docente con cuál trabaja antes de generar: con 'uno' los pines salen D0-D13 / A0-A5, el PWM en los marcados con ~ y el I2C en A4/A5. Si algún componente del pedido todavía no está portado a esa placa, el tool no dibuja y te dice cuál falta — no le muestres el dibujo de otra placa como si fuera el suyo. SHIELDS: si el docente tiene un Sensor Shield o un IO Expansion, pasá el texto tal como te lo dijo ('uno con sensor shield') — el tool lo resuelve solo a la placa de abajo, porque un shield NO cambia ni un pin, y agrega el aviso de que en el shield se pincha en la terna de tres vías y no en el header. Lo que SÍ importa es nombrar la placa: 'esp32 con sensor shield' dibuja el ESP32, no el UNO."),
     nombre_archivo: tool.schema
       .string()
       .optional()
@@ -2692,12 +2739,15 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
      * una placa que no sabemos dibujar.
      */
     const PLACA_INVALIDA = " placa-invalida" // no existe en PLACAS: cae al rechazo de abajo
+    // Un shield es la MISMA placa con los pines sacados a ternas (ver SHIELDS): se
+    // resuelve a su base y se avisa, en vez de rebotar una placa que sí sabemos dibujar.
+    const shieldPedido = typeof args.placa === "string" ? shieldDe(args.placa) : null
     const idPlaca =
       args.placa === undefined || args.placa === null
         ? "esp32"
         : typeof args.placa === "string"
           ? args.placa.trim()
-            ? args.placa.trim().toLowerCase()
+            ? (shieldPedido?.base ?? args.placa.trim().toLowerCase())
             : "esp32" // string vacío o de puros espacios = "no me la dijeron"
           : PLACA_INVALIDA
     const placa = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
@@ -2960,6 +3010,22 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
      *
      * Va DESPUÉS del cierre y ANTES de los ⚠️, que cierran siempre la respuesta.
      */
+    // El shield no cambia un pin, pero cambia DÓNDE se pincha: el pibe no mete el cable
+    // en el header de la placa, lo mete en la terna de colores. Un dibujo de la placa
+    // pelada, sin decir esto, es correcto y a la vez inservible en la mesa de trabajo.
+    //
+    // Va acá, al final, y no donde se resuelve la placa: el ejemplo sale del PRIMER pin
+    // que se repartió de VERDAD, así el docente lee un número que está en SU tabla y no
+    // uno sacado del pool que a lo mejor no le tocó.
+    // (Cuando exista la pieza `pb-sensor-shield`, este aviso lo reemplaza el dibujo.)
+    if (shieldPedido) {
+      const primero = conexiones.join(" ").match(/→ ((?:GPIO|[DA])\d+)/)
+      const conEjemplo = primero ? ` Donde la tabla dice **${primero[1]}**, en tu placa es la **S** de la terna ${primero[1]}.` : ""
+      notas.push(
+        `Tenés ${shieldPedido.nombre}${shieldPedido.baseAsumida ? " y no me dijiste sobre qué placa, así que asumí el Arduino UNO, que es el formato de ese shield — si tu controlador es otro, decímelo" : ""}, así que dibujé el ${placa.etiqueta} **pelado**: el shield se apila encima y **no cambia ni un número** de los pines de la tabla. Lo que cambia es dónde pinchás — en el shield cada pin sale a un conector de **tres vías**, y la que lleva el número es la de **señal** (la **S**); las otras dos son tensión y masa.${conEjemplo}`,
+      )
+    }
+
     const tablaPines = conexiones.length
       ? "\n\n**Conexiones (ésta es la tabla que dibuja la hoja — usá estos pines, no inventes otros):**\n" +
         conexiones.map((c) => "- " + c).join("\n")
