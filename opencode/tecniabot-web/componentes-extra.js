@@ -5,14 +5,54 @@
    Se registran como custom elements: <pb-relay>, <pb-bomba>, etc.
    ============================================================ */
 (function () {
-  function definir(nombre, render) {
+  /* ── Pines (contrato Wokwi) ──────────────────────────────────────────────
+     Las piezas de Wokwi exponen `pinInfo`: [{name, x, y, signals}], con x/y en
+     PÍXELES DESDE EL BORDE DEL ELEMENTO, para que el que dibuja el cable lo
+     pueda nacer en el pin y no en una barra al costado.
+
+     Acá se imita igual:
+       · es un getter de INSTANCIA (el consumidor hace `el.pinInfo`), no estático;
+       · nuestros SVG son 1:1 (width/height == viewBox), así que las coordenadas
+         del pin son LAS MISMAS unidades que se leen en el SVG de acá abajo;
+       · medido en Chrome sobre este archivo: el <svg> arranca exactamente en el
+         borde del elemento (dx=0, dy=0 entre los dos getBoundingClientRect),
+         o sea que unidad de SVG == píxel desde el borde. Ojo que la CAJA del
+         elemento sale 4 px MÁS ALTA que el SVG (el hueco de la línea base del
+         inline-block): la caja no sirve para medir, el viewBox sí.
+
+     Cada coordenada sale del elemento SVG del conector, citado en el comentario
+     de al lado. Si una pieza NO tiene los conectores dibujados, va con un string
+     explicando por qué en vez de una coordenada inventada: un cable que nace en
+     un punto lindo pero falso le enseña a la docente a pinchar donde no va.
+     ──────────────────────────────────────────────────────────────────────── */
+
+  const ALIM = (signal) => ({ type: 'power', signal });
+
+  /**
+   * @param nombre  tag del custom element
+   * @param render  (el) => string con el SVG
+   * @param pines   array pinInfo, O un string con el motivo por el que la pieza
+   *                todavía no tiene pines conectables (conectores sin dibujar).
+   */
+  function definir(nombre, render, pines) {
     if (customElements.get(nombre)) return;
-    customElements.define(nombre, class extends HTMLElement {
+    const lista = Array.isArray(pines) ? pines : [];
+    const motivo = typeof pines === 'string' ? pines : null;
+    class Pieza extends HTMLElement {
       connectedCallback() {
         this.style.display = 'inline-block';
         this.innerHTML = render(this);
       }
-    });
+      // Getter de INSTANCIA, como Wokwi. Copia nueva en cada lectura para que
+      // el consumidor no nos pise las coordenadas sin querer.
+      get pinInfo() {
+        return lista.map((p) => ({ ...p, signals: (p.signals || []).slice() }));
+      }
+    }
+    // Por qué `pinInfo` viene vacío. Legible por máquina (lo mira un test) para
+    // que una pieza sin pines sea una DECISIÓN declarada y no un olvido.
+    Pieza.sinPinesDibujados = motivo;
+    customElements.define(nombre, Pieza);
   }
 
   // --- Módulo Relay (placa azul con relé negro y LED) ---
@@ -25,7 +65,17 @@
       <rect x="10" y="40" width="40" height="26" rx="3" fill="#16a085"/>
       <text x="30" y="56" font-size="7" fill="#fff" text-anchor="middle" font-family="sans-serif">IN VCC GND</text>
       <circle cx="14" cy="63" r="2.5" fill="#0d5"/><circle cx="30" cy="63" r="2.5" fill="#e74c3c"/><circle cx="46" cy="63" r="2.5" fill="#333"/>
-    </svg>`);
+    </svg>`, [
+    // Los tres <circle cy="63"> de la bornera: x = su cx (14 / 30 / 46).
+    // Los nombres y el ORDEN salen del rótulo que dibuja la propia pieza dos
+    // líneas más arriba, <text>IN VCC GND</text>, izquierda a derecha; el color
+    // de cada círculo lo confirma (verde = señal, rojo = VCC, negro = GND).
+    // No son los LED: el LED de esta placa es el <circle r="5" fill="#27ae60">
+    // con <animate>, y estos son r="2.5", sin animación y de colores distintos.
+    { name: 'IN', x: 14, y: 63, signals: [] },
+    { name: 'VCC', x: 30, y: 63, signals: [ALIM('VCC')] },
+    { name: 'GND', x: 46, y: 63, signals: [ALIM('GND')] },
+  ]);
 
   // --- Bomba de agua sumergible ---
   definir('pb-bomba', () => `
@@ -37,7 +87,11 @@
       <rect x="40" y="6" width="10" height="36" fill="#5dade2"/>
       <ellipse cx="45" cy="6" rx="5" ry="3" fill="#85c1e9"/>
       <text x="45" y="84" font-size="8" fill="#85c1e9" text-anchor="middle" font-family="sans-serif">BOMBA</text>
-    </svg>`);
+    </svg>`,
+    // sin conectores dibujados: la pieza es cuerpo + caño de agua (el <rect x="40" y="6"> azul es el
+    // caño, no un cable). Los dos cables de potencia (+ y −) que pide el catálogo del tool no
+    // existen en este SVG: para anclarlos hay que dibujarlos primero.
+    'pb-bomba: los dos cables de potencia no están dibujados (el SVG es cuerpo, impulsor y caño de agua).');
 
   // --- Electroválvula ---
   definir('pb-valvula', () => `
@@ -47,7 +101,11 @@
       <rect x="40" y="6" width="20" height="12" rx="2" fill="#922b21"/>
       <circle cx="50" cy="30" r="8" fill="#e74c3c"/>
       <text x="50" y="66" font-size="8" fill="#7f8c8d" text-anchor="middle" font-family="sans-serif">VÁLVULA</text>
-    </svg>`);
+    </svg>`,
+    // sin conectores dibujados: está el cuerpo del solenoide sobre el caño y su tapa
+    // (<rect x="40" y="6" width="20" height="12">), pero la tapa es la carcasa de la bobina, no
+    // dos terminales. Los dos cables (+ y −) no están dibujados.
+    'pb-valvula: los dos cables de la bobina no están dibujados (sólo el cuerpo del solenoide sobre el caño).');
 
   // --- Higrómetro de suelo (FC-28) ---
   definir('pb-higrometro', () => `
@@ -58,7 +116,11 @@
       <rect x="27" y="22" width="4" height="84" fill="#b8860b"/>
       <rect x="39" y="22" width="4" height="84" fill="#b8860b"/>
       <text x="35" y="52" font-size="6" fill="#7a5c00" text-anchor="middle" font-family="sans-serif" transform="rotate(90 35 52)">SUELO</text>
-    </svg>`);
+    </svg>`,
+    // sin conectores dibujados: los dos <rect> dorados son los ELECTRODOS que se clavan en la
+    // tierra, no los pads donde se sueldan los cables. El header de la sonda y el módulo
+    // comparador (VCC/GND/AO que pide el catálogo del tool) no están dibujados.
+    'pb-higrometro: los pads/header donde se sueldan los cables no están dibujados (lo dorado son los electrodos que van en la tierra).');
 
   // --- Sensor de lluvia ---
   definir('pb-lluvia', () => `
@@ -69,7 +131,10 @@
       </g>
       <circle cx="45" cy="10" r="3" fill="#5dade2"><animate attributeName="cy" values="6;14;6" dur="1s" repeatCount="indefinite"/></circle>
       <text x="45" y="74" font-size="7" fill="#7f8c8d" text-anchor="middle" font-family="sans-serif">LLUVIA</text>
-    </svg>`);
+    </svg>`,
+    // sin conectores dibujados: la grilla dorada es el área sensible a las gotas, no pines. El
+    // header de 2 pines que va al módulo, y el módulo con VCC/GND/AO, no están dibujados.
+    'pb-lluvia: el header de 2 pines no está dibujado (la grilla dorada es el área sensible a las gotas).');
 
   // --- BMP180 (presión atmosférica) ---
   definir('pb-bmp180', () => `
@@ -79,7 +144,10 @@
       <circle cx="49" cy="25" r="3" fill="#888"/>
       <text x="24" y="30" font-size="8" fill="#fff" text-anchor="middle" font-family="sans-serif">BMP180</text>
       <text x="35" y="56" font-size="7" fill="#7f8c8d" text-anchor="middle" font-family="sans-serif">presión</text>
-    </svg>`);
+    </svg>`,
+    // sin conectores dibujados: está la placa y el chip, pero la tira de 4 pines
+    // (VCC/GND/SDA/SCL, que es la que pide el catálogo del tool) no está dibujada.
+    'pb-bmp180: la tira de 4 pines VCC/GND/SDA/SCL no está dibujada.');
 
   // --- Protoboard (mini, decorativa) ---
   definir('pb-protoboard', () => {
@@ -93,7 +161,9 @@
       <rect x="6" y="81" width="174" height="3" fill="#2980b9"/>
       ${huecos}
     </svg>`;
-  });
+  },
+    // Los huecos son genéricos: no hay pin con nombre que valga como destino de un cable.
+    'pb-protoboard: es el tablero, no un componente; sus huecos no tienen nombre de pin.');
 
   // --- Motor DC (con eje girando) ---
   definir('pb-motor', () => `
@@ -105,7 +175,21 @@
       <g transform="translate(90,35)"><rect x="-3" y="-10" width="6" height="20" rx="2" fill="#e67e22"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="0.5s" repeatCount="indefinite"/></rect></g>
       <rect x="20" y="58" width="3" height="9" fill="#c0392b"/><rect x="30" y="58" width="3" height="9" fill="#2c3e50"/>
       <text x="41" y="38" font-size="9" fill="#fff" text-anchor="middle" font-family="sans-serif">M</text>
-    </svg>`);
+    </svg>`, [
+    // Las dos lengüetas que asoman abajo del cuerpo:
+    //   <rect x="20" y="58" width="3" height="9" fill="#c0392b"/>  (roja)
+    //   <rect x="30" y="58" width="3" height="9" fill="#2c3e50"/>  (negra)
+    // x = centro de la lengüeta (20+3/2 y 30+3/2); y = 58+9 = la PUNTA libre,
+    // que es donde sigue el cable. Esa es la convención de Wokwi, verificada
+    // contra wokwi-led del bundle: su pin cae en la punta de la pata
+    // (rect y=20.382 h=9.8273 -> 30.209 en unidades de su viewBox, que escalado
+    // da los y=42 que publica su pinInfo), no en el cuerpo del LED.
+    // Nombres: el SVG no los rotula. Salen del color de cada lengüeta, que es
+    // la convención del motor real y coincide con el catálogo del tool
+    // ("+ (vía driver)" en rojo, "− (vía driver)" en marrón).
+    { name: '+', x: 21.5, y: 67, signals: [] },
+    { name: '-', x: 31.5, y: 67, signals: [] },
+  ]);
 
   // --- Driver ULN2003 (placa de motor paso a paso / DC) ---
   definir('pb-driver', () => `
@@ -115,7 +199,13 @@
       <text x="79" y="26" font-size="6" fill="#fff" text-anchor="middle" font-family="sans-serif">ULN2003</text>
       <g fill="#27ae60">${Array.from({length:4},(_,i)=>`<circle cx="${14+i*5}" cy="44" r="2"><animate attributeName="opacity" values="0.2;1;0.2" dur="0.8s" begin="${i*0.2}s" repeatCount="indefinite"/></circle>`).join('')}</g>
       <text x="30" y="22" font-size="7" fill="#fff" text-anchor="middle" font-family="sans-serif">IN1-4</text>
-    </svg>`);
+    </svg>`,
+    // sin conectores dibujados: los cuatro <circle cy="44"> son los LED indicadores, no la tira
+    // IN1..IN4. Se ve en el propio archivo: son #27ae60 con <animate> de opacidad encadenado,
+    // la MISMA firma que el LED de pb-relay; los conectores de pb-relay, en cambio, son r="2.5",
+    // de colores distintos y sin animación. El header IN1..IN4, el conector del motor y la
+    // alimentación no están dibujados.
+    'pb-driver: la tira IN1..IN4 no está dibujada (los cuatro círculos verdes son los LED indicadores).');
 
   // --- Lámpara / foco 220V (se enciende con .encendido) ---
   definir('pb-lampara', (el) => {
@@ -129,7 +219,12 @@
       <rect x="30" y="70" width="14" height="12" rx="2" fill="#7f8c8d"/>
       <rect x="30" y="74" width="14" height="2" fill="#566573"/><rect x="30" y="78" width="14" height="2" fill="#566573"/>
     </svg>`;
-  });
+  },
+    // sin conectores dibujados: lo de abajo es el casquillo de rosca E27 (<rect y="64"> + <rect
+    // y="70">), que es lo que entra en un portalámparas — no terminales. Además acá los cables
+    // son fase y neutro de 220 V, que en el catálogo del tool van "vía relé": si algún día se
+    // anclan, que sea a un portalámparas dibujado, no a la lámpara pelada.
+    'pb-lampara: no tiene terminales dibujados, tiene casquillo de rosca E27; además son 220 V y van vía relé.');
 
   // --- Radiador / calefactor ---
   definir('pb-calefactor', (el) => {
@@ -143,7 +238,10 @@
       ${aletas}
       <text x="55" y="80" font-size="7" fill="#7f8c8d" text-anchor="middle" font-family="sans-serif">radiador</text>
     </svg>`;
-  });
+  },
+    // sin conectores dibujados: el radiador está dibujado sin bornera ni cable. Como la lámpara,
+    // sus dos cables son fase y neutro de 220 V y van "vía relé" según el catálogo del tool.
+    'pb-calefactor: no tiene bornera ni cables dibujados; además son 220 V y van vía relé.');
 
   // --- Dron cuadricóptero (Tello) — hélices girando ---
   definir('pb-dron', () => `
@@ -153,7 +251,8 @@
       <rect x="56" y="42" width="28" height="26" rx="6" fill="#2c3e50"/>
       <circle cx="70" cy="80" r="3" fill="#e74c3c"><animate attributeName="opacity" values="1;0.2;1" dur="0.6s" repeatCount="indefinite"/></circle>
       ${[[40,40],[100,40],[40,70],[100,70]].map(([x,y])=>`<g transform="translate(${x},${y})"><ellipse rx="16" ry="3" fill="#5dade2" opacity="0.7"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="0.15s" repeatCount="indefinite"/></ellipse><circle r="3" fill="#1a252f"/></g>`).join('')}
-    </svg>`);
+    </svg>`,
+    'pb-dron: es la ilustración del proyecto terminado, no una pieza que se cablea.');
 
   // --- Robot móvil (auto con ruedas / orugas) ---
   definir('pb-robot', () => `
@@ -167,7 +266,8 @@
       <circle cx="32" cy="71" r="3" fill="#7f8c8d"/><circle cx="88" cy="71" r="3" fill="#7f8c8d"/>
       <rect x="98" y="46" width="10" height="8" rx="2" fill="#27ae60"/>
       ${[0,1,2].map(i=>`<path d="M108 50 q${6+i*5} 0 ${6+i*5} 0" stroke="#27ae60" fill="none"/>`).join('')}
-    </svg>`);
+    </svg>`,
+    'pb-robot: es la ilustración del proyecto terminado, no una pieza que se cablea.');
 
   // --- Brazo robótico (6 servos articulado) ---
   definir('pb-brazo', () => `
@@ -185,5 +285,6 @@
         </g>
         <circle r="11" fill="#34495e"/>
       </g>
-    </svg>`);
+    </svg>`,
+    'pb-brazo: es la ilustración del proyecto terminado, no una pieza que se cablea.');
 })();

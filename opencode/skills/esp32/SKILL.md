@@ -56,6 +56,34 @@ Porque son dos criterios distintos, y ponerlos en la misma fila hace que un nume
 
 **El malentendido mas repetido de todos los tutoriales:** "GPIO32 a GPIO39 son solo entrada". **Es falso.** Solo-entrada son cuatro: **34, 35, 36 y 39**. **GPIO32 y GPIO33 son entrada Y salida completos**, con pull-up y pull-down internos — podes leer un pote con ellos y tambien manejar un LED. Los metieron a todos en la misma bolsa porque los seis comparten el ADC1, pero compartir el conversor analogico no los convierte en solo-entrada.
 
+### Cuando la placa NO dice "GPIO": VP, VN, VDET
+
+Cuatro de esos pines vienen serigrafiados con **otro nombre**, y el docente que busca
+"GPIO36" en su DevKit no lo encuentra por ningun lado. Son estos:
+
+| Dice en la placa | Es | Canal ADC | Tipo |
+|---|---|---|---|
+| **`VP`** (o `SENSOR_VP`) | **GPIO36** | ADC1_CH0 | I — solo entrada |
+| **`VN`** (o `SENSOR_VN`) | **GPIO39** | ADC1_CH3 | I — solo entrada |
+| `VDET_1` | GPIO34 | — | I — solo entrada |
+| `VDET_2` | GPIO35 | — | I — solo entrada |
+
+**Fuente:** ESP32 Series Datasheet, tabla *Pin Definitions* — `SENSOR_VP` es el pin
+fisico 5 y `SENSOR_VN` el 8. La tabla los declara tipo **I**, y el datasheet remata:
+*"GPIO pins 34-39 are input-only. These pins do not feature an output driver or
+internal pull-up/pull-down circuitry"*.
+<https://documentation.espressif.com/esp32_datasheet_en.html>
+
+**Por que importa en el aula:** si el chico busca "GPIO36" en la serigrafia no lo va a
+encontrar, va a suponer que su placa no lo trae y va a cablear el sensor en otro lado.
+Cuando le digas un pin de esos, **nombralo como esta escrito en SU placa**: "el que dice
+VP" y no "el GPIO36 a secas".
+
+**Un matiz honesto sobre "son cuatro":** a nivel chip, solo-entrada son **seis**
+(GPIO34 a GPIO39). GPIO37 y GPIO38 son `SENSOR_CAPP` y `SENSOR_CAPN`, y **no salen a
+ningun pin** del modulo WROOM que tienen las escuelas — por eso en la practica son
+cuatro. Si algun dia aparece un modulo que los exponga, ya sabes de donde salen.
+
 ---
 
 ## Componentes basicos

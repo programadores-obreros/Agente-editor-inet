@@ -1977,3 +1977,448 @@ test("cada placa se dibuja con el ancho de columna que su pieza necesita", async
   assert.match(esp.html, /<wokwi-esp32-devkit-v1 style="transform:scale\(1\.25\)/, "cambió la escala del ESP32")
   assert.match(uno.html, /<wokwi-arduino-uno style="transform:scale\(1\)/, "cambió la escala del UNO")
 })
+
+// ════════════════════════════════════════════════════════════════════════════
+// EL MAPEO A LOS NOMBRES DE WOKWI
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Por qué existe todo este bloque: hoy los cables salen de una barra gris al
+// costado de la placa. El dibujo NO le dice al pibe dónde pinchar. La pieza de
+// Wokwi publica `el.pinInfo` con la coordenada de cada agujero del header, así
+// que para anclar el cable al pin de verdad falta UNA cosa: el nombre con el que
+// preguntarle. Y los nombres no coinciden con los nuestros (GPIO13 → `D13`,
+// D2 → `"2"`, GND → no existe).
+//
+// Esta tanda no dibuja nada. Construye el mapeo. Y si el mapeo está mal, el
+// cable va al pin equivocado — que es PEOR que la barra gris de hoy, porque se
+// ve perfecto.
+//
+// ── DE DÓNDE SALEN ESTOS DATOS, Y CÓMO SE REGENERAN ─────────────────────────
+//
+// NO están copiados a mano. `pinesWokwi()` los vuelve a extraer del bundle REAL
+// del repo (`opencode/tecniabot-web/wokwi-bundle.js`) en cada corrida, parseando
+// el literal `pinInfo` que cada pieza lleva adentro.
+//
+// Y es a propósito que sea así. Un test que compara el mapeo contra una COPIA
+// del mapeo no prueba nada: los dos lados se editan juntos y siempre coinciden.
+// La fuente tiene que ser EXTERNA. Con esto, el día que alguien actualice el
+// bundle y Wokwi haya renombrado un pin, se pone rojo acá — que es el único
+// lugar barato donde enterarse.
+//
+// El volcado en prosa vive en `docs/wokwi-pinout-dump.md` (mismo dato, leído en
+// Chrome instanciando cada elemento: `pinInfo` es un getter de INSTANCIA). Si
+// alguna vez hay que regenerarlo a mano, está explicado al final de ese archivo.
+//
+// Las coordenadas SÓLO se usan acá, para verificar cuál masa es la más cercana.
+// En `circuito.ts` no hay ni un x ni un y: el navegador se las pregunta a la
+// pieza en vivo.
+
+const BUNDLE = join(REPO, "opencode/tecniabot-web/wokwi-bundle.js")
+
+// Las fábricas de `signals` del bundle, copiadas de su definición literal:
+//   x=l=>({type:"analog",channel:l}), z=(l,t=0)=>({type:"i2c",signal:l,bus:t}),
+//   u=spi, C=usart, v=()=>({type:"power",signal:"GND"}), b=VCC
+function pinesWokwi(tag) {
+  const src = readFileSync(BUNDLE, "utf8")
+  const iTag = src.indexOf(`"${tag}"`)
+  assert.ok(iTag > 0, `la pieza ${tag} ya no está en el bundle`)
+  const iBra = src.indexOf("[", src.lastIndexOf("pinInfo", iTag))
+  assert.ok(iBra > 0, `no se encontró el pinInfo de ${tag}`)
+  // Matcheo de corchetes salteando strings, que el bundle trae SVG con "[" adentro.
+  let prof = 0, fin = iBra, str = null
+  for (; fin < src.length; fin++) {
+    const c = src[fin]
+    if (str) { if (c === "\\") fin++; else if (c === str) str = null; continue }
+    if (c === '"' || c === "'" || c === "`") { str = c; continue }
+    if (c === "[") prof++
+    else if (c === "]" && --prof === 0) break
+  }
+  const lista = new Function(
+    "x", "z", "u", "C", "v", "b",
+    "return " + src.slice(iBra, fin + 1),
+  )(
+    (l) => ({ type: "analog", channel: l }),
+    (l, t = 0) => ({ type: "i2c", signal: l, bus: t }),
+    (l, t = 0) => ({ type: "spi", signal: l, bus: t }),
+    (l, t = 0) => ({ type: "usart", signal: l, bus: t }),
+    () => ({ type: "power", signal: "GND" }),
+    (l) => ({ type: "power", signal: "VCC", voltage: l }),
+  )
+  // El extractor es un parser sobre un archivo minificado: si un día devuelve
+  // basura o vacío, TODOS los tests de abajo pasarían por no tener nada contra
+  // qué comparar. Un test que pasa estando vacío no prueba nada, así que el
+  // parser se valida a sí mismo antes de que nadie lo use.
+  assert.ok(Array.isArray(lista) && lista.length >= 25, `el extractor devolvió ${lista?.length} pines de ${tag}: está roto`)
+  for (const p of lista) {
+    assert.equal(typeof p.name, "string", `un pin de ${tag} salió sin nombre`)
+    assert.ok(p.name.length > 0, `un pin de ${tag} salió con el nombre vacío`)
+    assert.equal(typeof p.x, "number", `el pin ${p.name} de ${tag} salió sin coordenada x`)
+    assert.equal(typeof p.y, "number", `el pin ${p.name} de ${tag} salió sin coordenada y`)
+  }
+  return lista
+}
+
+const WOKWI = {
+  esp32: () => pinesWokwi("wokwi-esp32-devkit-v1"),
+  uno: () => pinesWokwi("wokwi-arduino-uno"),
+}
+const tieneSenal = (p, tipo, senal) =>
+  (p.signals ?? []).some((s) => s.type === tipo && (senal === undefined || s.signal === senal))
+
+// ── el extractor, antes que nada ────────────────────────────────────────────
+//
+// MUTACIÓN QUE MATA: en `pinesWokwi`, devolver `[]` en vez de `lista`.
+//
+// Sin este test esa mutación deja TODO el bloque en verde: los barridos de abajo
+// recorren listas vacías y no fallan nunca. Es literalmente el bug de los siete
+// tests que pasaban sin probar nada. Así que el parser se ancla a mano.
+test("wokwi: el extractor lee el bundle de verdad, y no una lista vacía", () => {
+  const uno = WOKWI.uno()
+  const esp = WOKWI.esp32()
+  assert.equal(uno.length, 31, "el UNO dejó de tener 31 pines: cambió el bundle, hay que revisar el mapeo entero")
+  assert.equal(esp.length, 30, "el ESP32 dejó de tener 30 pines: cambió el bundle, hay que revisar el mapeo entero")
+
+  // Anclas concretas: los tres casos donde el nombre NO es el nuestro.
+  const porNombre = (l, n) => l.find((p) => p.name === n)
+  assert.ok(porNombre(uno, "2"), "el UNO dejó de llamar `2` a su pin digital 2")
+  assert.ok(!porNombre(uno, "D2"), "el UNO ahora TIENE un pin `D2`: el mapeo del número pelado quedó viejo")
+  assert.ok(porNombre(esp, "D13"), "el ESP32 dejó de llamar `D13` al GPIO13")
+  assert.ok(!porNombre(esp, "GPIO13"), "el ESP32 ahora TIENE un pin `GPIO13`: el mapeo quedó viejo")
+  assert.ok(!porNombre(uno, "GND") && !porNombre(esp, "GND"), "apareció un pin llamado `GND`: revisar la elección de masa")
+})
+
+// ── todo pin que el tool reparte EXISTE en la pieza ─────────────────────────
+//
+// El barrido completo: los dos pools enteros, el PWM, el I2C y TODOS los pines
+// que `motivoRechazo` deja pasar a mano ("led:5"). No 4 de 13: los 13.
+//
+// MUTACIÓN QUE MATA: en `PLACAS.uno.pinWokwi`, devolver `` `D${p.n}` `` en vez
+// de `String(p.n)` — o sea, dejar la "D" puesta como en la etiqueta del docente.
+// Los 14 digitales del UNO dejan de existir en la pieza de golpe.
+// Otra: en `PLACAS.esp32.pinWokwi`, sacarle el `[16, "RX2"]` al mapa.
+function pinesQueElToolReparte(placa) {
+  const claves = new Map() // clave → {pin, origen}
+  const meter = (pin, origen) => {
+    const k = `${pin.banco}${pin.n}`
+    if (!claves.has(k)) claves.set(k, { pin, origen })
+  }
+  for (const p of placa.poolDigital) meter(p, "poolDigital")
+  for (const p of placa.poolAnalogico) meter(p, "poolAnalogico")
+  for (const p of placa.poolPwm ?? []) meter(p, "poolPwm")
+  meter(placa.i2c.sda, "i2c.sda")
+  meter(placa.i2c.scl, "i2c.scl")
+  // Los que el alumno puede forzar ("led:5"): todo lo que `motivoRechazo` NO
+  // rechaza. El rango se pasa de largo a propósito, para incluir los que no
+  // existen y confirmar que ésos SÍ se rechazan.
+  //
+  // El BANCO no se barre: lo elige `bancoDe`, que es el `pool[0].banco` de esa
+  // clase. El número que escribe el usuario no dice el banco — en el UNO un "4"
+  // digital es D4 y uno analógico es A4, que son dos pines distintos — así que
+  // barrer los tres bancos inventaría pines que el tool no construye jamás (un
+  // "A25" en el ESP32, cuyo `motivoRechazo` mira sólo el número y lo aceptaría).
+  for (const clase of ["digital", "analogico"]) {
+    const banco = (clase === "analogico" ? placa.poolAnalogico : placa.poolDigital)[0]?.banco ?? "GPIO"
+    for (let n = -1; n <= 45; n++) {
+      const pin = { banco, n }
+      if (placa.motivoRechazo(pin, clase, "un componente") == null) meter(pin, `manual/${clase}`)
+    }
+  }
+  return claves
+}
+
+test("wokwi: VP y VN salen del skill, no de la memoria de nadie", () => {
+  // SE ROMPÍA ASÍ: el ESP32 reparte GPIO36 y GPIO39 y la pieza no los llama `D36`/`D39`
+  // sino `VP` y `VN` — la serigrafía real. Mapearlos "por descarte" (son los dos que
+  // sobran en el header) es lo más peligroso que se puede hacer acá: si quedan al revés,
+  // el cable del sensor va al agujero de al lado y EL DIBUJO SE VE PERFECTO. Nadie lo
+  // nota hasta que el pibe cablea y el sensor lee cualquier cosa.
+  //
+  // Y medido: con los otros tests puestos, invertir VP y VN dejaba la suite ENTERA en
+  // verde. Existir en la pieza existen los dos; lo que faltaba era quién es quién.
+  //
+  // Por eso el dato NO vive en el tool: vive en `skills/esp32`, con la cita al ESP32
+  // Series Datasheet (tabla Pin Definitions: SENSOR_VP = pin físico 5 = GPIO36;
+  // SENSOR_VN = pin 8 = GPIO39). Este test ata el mapa del tool a lo que dice el skill,
+  // así el tool REFLEJA la fuente en vez de ser la fuente.
+  const skill = readFileSync(join(REPO, "opencode/skills/esp32/SKILL.md"), "utf8")
+
+  // El skill tiene que seguir nombrando su fuente: sin cita, el dato es memoria de alguien.
+  assert.match(skill, /documentation\.espressif\.com/,
+    "el skill perdió el enlace al datasheet: entonces VP=GPIO36 vuelve a ser una suposición")
+
+  // Y tiene que decir explícitamente quién es quién, en la misma línea.
+  for (const [rotulo, gpio] of [["VP", 36], ["VN", 39]]) {
+    const linea = skill.split("\n").find((l) => l.includes(`\`${rotulo}\``) && l.includes(`GPIO${gpio}`))
+    assert.ok(linea, `el skill esp32 tiene que decir, en una línea, que ${rotulo} es GPIO${gpio}`)
+    // Y NO puede decir lo contrario en esa misma línea: eso cazaría una inversión.
+    const otro = rotulo === "VP" ? 39 : 36
+    assert.ok(!linea.includes(`GPIO${otro}`),
+      `la línea de ${rotulo} nombra también a GPIO${otro}: así no se puede saber cuál es cuál`)
+  }
+
+  // El tool refleja exactamente eso.
+  const { PLACAS } = ns
+  assert.equal(PLACAS.esp32.pinWokwi({ banco: "GPIO", n: 36 }), "VP",
+    "GPIO36 es SENSOR_VP (pin físico 5 del datasheet), no VN")
+  assert.equal(PLACAS.esp32.pinWokwi({ banco: "GPIO", n: 39 }), "VN",
+    "GPIO39 es SENSOR_VN (pin físico 8 del datasheet), no VP")
+})
+
+test("wokwi: cada pin que el tool puede repartir existe en la pieza de esa placa", () => {
+  const { PLACAS } = ns
+  assert.ok(PLACAS, "`PLACAS` dejó de exportarse y este invariante se quedó sin red")
+
+  // Los únicos huecos conocidos, escritos con nombre y apellido. Si aparece uno
+  // nuevo, este test se pone rojo: un pin sin nombre es un HALLAZGO, no un caso
+  // a resolver con una suposición.
+  const HUECOS = {
+    // GPIO36 y GPIO39 YA NO son huecos: la pieza los llama `VP` y `VN`, que es la
+    // serigrafía real de la placa. No se dedujo de "son los dos que sobran en el
+    // header" — así se manda un cable al agujero de al lado con el dibujo viéndose
+    // perfecto. Confirmado contra el fabricante (ESP32 Series Datasheet, tabla Pin
+    // Definitions: SENSOR_VP = pin físico 5 = GPIO36; SENSOR_VN = pin 8 = GPIO39) y
+    // escrito con la cita en `skills/esp32`, que es donde vive un dato de hardware.
+    //
+    // GPIO0/37/38 SIGUEN siendo huecos, y por un motivo distinto: pasan por
+    // `motivoRechazo` pero no salen a ningún pin del header de la DevKit v1. GPIO37 y
+    // GPIO38 son SENSOR_CAPP/SENSOR_CAPN y el módulo WROOM no los expone; GPIO0 es
+    // strapping y tampoco tiene agujero. Ésos no se pueden "mapear": no están.
+    esp32: ["GPIO0", "GPIO37", "GPIO38"],
+    uno: [],
+  }
+
+  for (const [id, placa] of Object.entries(PLACAS)) {
+    const reales = new Set(WOKWI[id]().map((p) => p.name))
+    const reparte = pinesQueElToolReparte(placa)
+    assert.ok(reparte.size > 10, `el barrido de ${id} juntó sólo ${reparte.size} pines: no está barriendo nada`)
+
+    const huerfanos = []
+    for (const [clave, { pin, origen }] of reparte) {
+      const nombre = placa.pinWokwi(pin)
+      if (nombre == null) { huerfanos.push(clave); continue }
+      assert.ok(
+        reales.has(nombre),
+        `${placa.etiqueta}: el tool reparte ${placa.etiquetaPin(pin)} (${origen}) y lo mapea al pin Wokwi "${nombre}", que NO EXISTE en ${placa.tag}. El cable iría a la nada.`,
+      )
+    }
+    assert.deepEqual(
+      huerfanos.sort(),
+      [...HUECOS[id]].sort(),
+      `${placa.etiqueta}: cambió la lista de pines que el tool reparte SIN nombre en Wokwi. Si apareció uno nuevo es un hallazgo, no un caso a tapar con una suposición; si desapareció uno, actualizá HUECOS y el comentario que lo explica.`,
+    )
+  }
+})
+
+// ── y al revés: el mapeo no INVENTA ningún nombre ───────────────────────────
+//
+// El test de arriba mira los pines que el tool reparte HOY. Éste mira el mapeo
+// entero, incluso lo que hoy nadie pide, porque el pool se toca seguido.
+//
+// MUTACIÓN QUE MATA: en `ESP32_WOKWI_PIN`, agregar `[36, "D36"]` — que es
+// justamente la suposición tentadora para tapar el hueco de POOL_ANALOGICO.
+// Pasaría el test de arriba (ya no sería huérfano) y rompe acá.
+test("wokwi: el mapeo nunca devuelve un nombre que la pieza no tenga", () => {
+  const { PLACAS } = ns
+  for (const [id, placa] of Object.entries(PLACAS)) {
+    const reales = new Set(WOKWI[id]().map((p) => p.name))
+    let mapeados = 0
+    for (const banco of ["GPIO", "D", "A"]) {
+      for (let n = -5; n <= 60; n++) {
+        const nombre = placa.pinWokwi({ banco, n })
+        if (nombre == null) continue
+        mapeados++
+        assert.ok(
+          reales.has(nombre),
+          `${placa.etiqueta}: pinWokwi({${banco},${n}}) inventó el nombre "${nombre}", que no existe en ${placa.tag}`,
+        )
+      }
+    }
+    assert.ok(mapeados >= 19, `${placa.etiqueta}: el barrido sólo mapeó ${mapeados} pines, no está barriendo`)
+  }
+})
+
+// ── los rieles, y las masas ─────────────────────────────────────────────────
+//
+// La parte que más se puede equivocar en silencio. NINGUNA de las dos placas
+// tiene un pin llamado `GND`: el UNO tiene tres y el ESP32 dos, en headers
+// distintos. Elegir la equivocada dibuja un cable que cruza la placa entera.
+//
+// Y no se verifica contra una copia del criterio: se RECALCULA cuál es la masa
+// más cercana usando las coordenadas que la propia pieza publica, y se exige que
+// el tool haya elegido ésa. El criterio queda demostrado, no declarado.
+//
+// MUTACIÓN QUE MATA: en `PLACAS.uno.rielWokwi`, devolver `"GND.2"` en vez de
+// `"GND.3"` para el banco analógico. Son las dos del mismo header, a 9,5 px una
+// de la otra: a ojo, en el HTML, no se distingue.
+// Otra: devolver siempre `"GND.1"` (ignorar el `ref`), que es el atajo obvio.
+test("wokwi: cada riel cae en un pin real, y la masa es la MÁS CERCANA al pin de señal", () => {
+  const { PLACAS } = ns
+  const RIELES = ["V5", "V3", "VLOGICA", "GND", "SDA", "SCL"]
+
+  for (const [id, placa] of Object.entries(PLACAS)) {
+    const pines = WOKWI[id]()
+    const reales = new Set(pines.map((p) => p.name))
+    const masas = pines.filter((p) => tieneSenal(p, "power", "GND"))
+    assert.ok(masas.length >= 2, `${placa.etiqueta}: se esperaban varias masas y salieron ${masas.length}`)
+
+    // 1. Todo riel que la placa declara tener, cae en un pin que existe.
+    for (const r of RIELES) {
+      if (placa.riel[r] == null) continue // `null` = esta placa no tiene ese riel
+      const nombre = placa.rielWokwi(r, null)
+      assert.ok(nombre != null, `${placa.etiqueta}: el riel ${r} se rotula "${placa.riel[r]}" pero no tiene nombre Wokwi`)
+      assert.ok(reales.has(nombre), `${placa.etiqueta}: el riel ${r} apunta a "${nombre}", que no existe en ${placa.tag}`)
+    }
+
+    // 2. El I2C sale de `i2c`, no de una segunda tabla escrita a mano.
+    assert.equal(placa.rielWokwi("SDA", null), placa.pinWokwi(placa.i2c.sda), `${placa.etiqueta}: el riel SDA se despegó de placa.i2c.sda`)
+    assert.equal(placa.rielWokwi("SCL", null), placa.pinWokwi(placa.i2c.scl), `${placa.etiqueta}: el riel SCL se despegó de placa.i2c.scl`)
+
+    // 3. LA MASA. Para CADA pin que el tool reparte y que tiene nombre Wokwi, se
+    //    calcula la masa más cercana con las coordenadas de la pieza y se exige
+    //    que el tool haya elegido exactamente ésa.
+    let verificados = 0
+    const elegidas = new Set()
+    for (const { pin } of pinesQueElToolReparte(placa).values()) {
+      const nombre = placa.pinWokwi(pin)
+      if (nombre == null) continue
+      const senal = pines.find((p) => p.name === nombre)
+      const dist = (m) => Math.hypot(m.x - senal.x, m.y - senal.y)
+      const cerca = masas.reduce((a, b) => (dist(b) < dist(a) ? b : a))
+      const elegida = placa.rielWokwi("GND", pin)
+      assert.equal(
+        elegida,
+        cerca.name,
+        `${placa.etiqueta}: para ${placa.etiquetaPin(pin)} (Wokwi "${nombre}") el tool manda la masa a ${elegida}, ` +
+          `pero la más cercana es ${cerca.name} (${dist(cerca).toFixed(1)} px contra ${dist(masas.find((m) => m.name === elegida)).toFixed(1)} px). ` +
+          `Ese cable cruza la placa.`,
+      )
+      elegidas.add(elegida)
+      verificados++
+    }
+    assert.ok(verificados > 10, `${placa.etiqueta}: sólo se verificaron ${verificados} masas, el barrido no está barriendo`)
+    // Si TODAS las señales cayeran en la misma masa, un `rielWokwi` que ignora el
+    // `ref` y devuelve una constante pasaría el punto 3 sin hacer nada.
+    assert.ok(elegidas.size >= 2, `${placa.etiqueta}: el tool usa una sola masa (${[...elegidas]}) para todos los pines: el \`ref\` no se está mirando`)
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// EL REGALO: `signals` como TERCERA voz sobre nuestro hardware
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Esto ya no valida el mapeo: valida LOS DATOS DE HARDWARE del tool contra una
+// fuente que no los copió de nosotros. Wokwi marca en cada pin si hace `pwm`, si
+// es `analog`, si es `SDA`/`SCL`, si es `TX`/`RX`. Nosotros sacamos esos mismos
+// datos de las skills y de la serigrafía del SVG. Son dos caminos distintos al
+// mismo número: si no coinciden, uno de los dos está mal, y averiguar cuál vale
+// más que el mapeo entero.
+//
+// MUTACIÓN QUE MATA: sacarle el 3 a `UNO_POOL_PWM` (o meterle el 4).
+// Dejaba en verde a los tests que ya existían: el pool PWM del UNO estaba
+// confirmado por el skill `placas` y por la serigrafía `~` del SVG, pero ningún
+// test lo ataba contra `pinInfo`.
+test("signals: el pool PWM del UNO es EXACTAMENTE el que Wokwi marca como pwm", () => {
+  const { PLACAS } = ns
+  const pines = WOKWI.uno()
+  const deWokwi = pines.filter((p) => tieneSenal(p, "pwm")).map((p) => p.name).sort()
+  assert.ok(deWokwi.length > 0, "Wokwi no marcó NINGÚN pin como pwm: el extractor de signals está roto")
+
+  const delTool = PLACAS.uno.poolPwm.map((p) => PLACAS.uno.pinWokwi(p)).sort()
+  assert.deepEqual(
+    delTool,
+    deWokwi,
+    "el pool PWM del UNO dejó de coincidir con los pines que Wokwi marca `pwm`. Son dos fuentes independientes: si difieren, una está mal y hay que averiguar cuál ANTES de tocar nada.",
+  )
+})
+
+// MUTACIÓN QUE MATA: sacarle el 5 a `UNO_POOL_ANALOGICO`.
+test("signals: el pool analógico del UNO es el que Wokwi marca como analog", () => {
+  const { PLACAS } = ns
+  // El UNO R3 repite el bus I2C arriba de AREF (`A4.2`/`A5.2`), así que los
+  // NOMBRES están duplicados. Lo que no se duplica es el CANAL del ADC, que es
+  // lo que de verdad identifica la entrada.
+  const canales = [...new Set(WOKWI.uno().flatMap((p) => (p.signals ?? []).filter((s) => s.type === "analog").map((s) => s.channel)))].sort()
+  assert.ok(canales.length > 0, "Wokwi no marcó NINGÚN canal analógico: el extractor de signals está roto")
+  const delTool = PLACAS.uno.poolAnalogico.map((p) => p.n).sort()
+  assert.deepEqual(delTool, canales, "el pool analógico del UNO dejó de coincidir con los canales que Wokwi marca `analog`")
+})
+
+// MUTACIÓN QUE MATA: en `PLACAS.uno.i2c`, poner `{ sda: pinA(5), scl: pinA(4) }`
+// (invertirlos). El circuito sale igual de prolijo y el LCD no arranca nunca.
+test("signals: el I2C de cada placa cae donde Wokwi marca SDA y SCL", () => {
+  const { PLACAS } = ns
+  for (const [id, placa] of Object.entries(PLACAS)) {
+    const pines = WOKWI[id]()
+    const sda = placa.pinWokwi(placa.i2c.sda)
+    const scl = placa.pinWokwi(placa.i2c.scl)
+    const busca = (n) => pines.find((p) => p.name === n)
+    assert.ok(busca(sda) && busca(scl), `${placa.etiqueta}: el I2C apunta a pines que no existen (${sda}/${scl})`)
+    assert.ok(tieneSenal(busca(sda), "i2c", "SDA"), `${placa.etiqueta}: el tool usa ${placa.etiquetaPin(placa.i2c.sda)} como SDA, pero Wokwi NO lo marca SDA`)
+    assert.ok(tieneSenal(busca(scl), "i2c", "SCL"), `${placa.etiqueta}: el tool usa ${placa.etiquetaPin(placa.i2c.scl)} como SCL, pero Wokwi NO lo marca SCL`)
+    assert.notEqual(sda, scl, `${placa.etiqueta}: SDA y SCL cayeron en el MISMO pin`)
+  }
+})
+
+// ── D0/D1 del UNO: la nota que ya tenían, atada a una tercera fuente ────────
+//
+// MUTACIÓN QUE MATA: en `PLACAS.uno.notaDePin`, cambiar el `p.n === 0 || p.n === 1`
+// por `p.n === 0` — la nota del puerto serie desaparece para D1 y nadie se entera.
+//
+// El tool ya avisa que D0/D1 son el puerto serie del USB, y hasta cita la
+// serigrafía ("RX←0", "TX→1"). Eso salió de las skills. `signals` lo dice por
+// tercera vía, sin habernos copiado.
+test("signals: D0 y D1 del UNO son los que Wokwi marca RX y TX, y llevan la nota", () => {
+  const { PLACAS } = ns
+  const uno = PLACAS.uno
+  const pines = WOKWI.uno()
+  const conUsart = (s) => pines.filter((p) => tieneSenal(p, "usart", s)).map((p) => p.name)
+  assert.deepEqual(conUsart("RX"), ["0"], "Wokwi dejó de marcar el pin `0` del UNO como RX")
+  assert.deepEqual(conUsart("TX"), ["1"], "Wokwi dejó de marcar el pin `1` del UNO como TX")
+
+  // Los dos están en el pool (decisión del producto: entran, pero con un pero).
+  for (const n of [0, 1]) {
+    const pin = { banco: "D", n }
+    assert.ok(uno.poolDigital.some((p) => p.banco === "D" && p.n === n), `D${n} salió del pool digital del UNO`)
+    const nota = uno.notaDePin(pin)
+    assert.ok(nota, `D${n} es el puerto serie del USB según Wokwi y el tool dejó de avisarlo`)
+    assert.match(nota, /serie|USB/i, `la nota de D${n} dejó de nombrar el puerto serie`)
+  }
+  // Y el pin de al lado NO puede llevar esa nota: si la llevara, el assert de
+  // arriba pasaría con un `notaDePin` que devuelve lo mismo para todo.
+  assert.doesNotMatch(uno.notaDePin({ banco: "D", n: 2 }) ?? "", /serie|USB/i, "D2 lleva la nota del puerto serie, que no es suya")
+})
+
+// ── el ESP32: los solo-entrada, por tercera vía ─────────────────────────────
+//
+// MUTACIÓN QUE MATA: sacarle el 34 a `GPIO_SOLO_ENTRADA`.
+//
+// `GPIO_SOLO_ENTRADA` salió del datasheet vía skills/esp32. Wokwi no sabe nada
+// de nuestras skills, y sin embargo marca `pwm` en TODOS los GPIO del DevKit
+// MENOS en D34 y D35 — que son justo dos de los cuatro. Un pin sin driver de
+// salida no puede hacer PWM: es el mismo hecho contado por otro.
+test("signals: los GPIO que Wokwi NO marca pwm son los solo-entrada del tool", () => {
+  const { PLACAS, GPIO_SOLO_ENTRADA } = ns
+  assert.ok(GPIO_SOLO_ENTRADA?.size > 0, "`GPIO_SOLO_ENTRADA` dejó de exportarse")
+  const esp = PLACAS.esp32
+
+  // De los GPIO que la pieza SÍ nombra, ¿cuáles no hacen pwm?
+  const sinPwm = WOKWI.esp32()
+    .filter((p) => /^D\d+$/.test(p.name) && !tieneSenal(p, "pwm"))
+    .map((p) => Number(p.name.slice(1)))
+    .sort((a, b) => a - b)
+  assert.ok(sinPwm.length > 0, "todos los D<n> del ESP32 hacen pwm: el extractor de signals está roto")
+
+  for (const n of sinPwm) {
+    assert.ok(
+      GPIO_SOLO_ENTRADA.has(n),
+      `Wokwi dice que GPIO${n} no hace PWM, pero el tool no lo tiene como solo-entrada: una de las dos fuentes está mal`,
+    )
+    // Y el tool lo rechaza de verdad para algo que tenga que encender.
+    assert.ok(esp.motivoRechazo({ banco: "GPIO", n }, "digital", "un LED"), `el tool acepta GPIO${n} como salida y Wokwi dice que no puede`)
+  }
+  // El ESP32 no declara `poolPwm` justamente porque cualquier salida hace PWM.
+  assert.equal(esp.poolPwm, undefined, "el ESP32 declaró un poolPwm: si de verdad hay pines sin PWM, este test tiene que decir cuáles")
+  for (const p of esp.poolDigital) {
+    assert.ok(!sinPwm.includes(p.n), `GPIO${p.n} está en el pool digital del ESP32 y Wokwi dice que no hace PWM`)
+  }
+})

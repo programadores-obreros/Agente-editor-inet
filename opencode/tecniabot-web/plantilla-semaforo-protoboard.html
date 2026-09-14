@@ -156,9 +156,14 @@
 
   // ESP32 sin espejar: usamos los pines del borde DERECHO (el que mira a la placa)
   const esp=place('<wokwi-esp32-devkit-v1 id="esp32"></wokwi-esp32-devkit-v1>', 40, 96, 1);
-  const P_G16=esp.pin(101.3,72.2);   // GPIO16 -> verde  (canonico: pinouts.json / .ino)
-  const P_G17=esp.pin(101.3,91.3);   // GPIO17 -> amarillo
-  const P_G18=esp.pin(101.3,120);    // GPIO18 -> rojo
+  // OJO: las coordenadas salen del pinInfo de la pieza, NO del orden en que se ven.
+  // Estaban mal las tres: 72.2 es D19, 91.3 es D5 y 120 es D4 — los cables iban a
+  // otro agujero con el rotulo correcto al lado. Y Wokwi NO llama D16/D17 a los
+  // GPIO16/17 del DevKit v1: los llama RX2 y TX2 (ver docs/wokwi-pinout-dump.md).
+  // Regenerar con: el.pinInfo.find(p => p.name === "RX2")
+  const P_G16=esp.pin(101.3,110.8);  // GPIO16 = RX2  -> verde  (canonico: pinouts.json / .ino)
+  const P_G17=esp.pin(101.3,101);    // GPIO17 = TX2  -> amarillo
+  const P_G18=esp.pin(101.3,81.7);   // GPIO18 = D18  -> rojo
   const P_GND=esp.pin(101.3,149);    // GND.1
 
   /* ---------- CABLES + PATAS ---------- */
@@ -221,7 +226,21 @@
   ledGroup(13, 'yellow', cYEL, P_G17);
   ledGroup(22, 'red',    cRED, P_G18);
 
-  // Etiquetas de pin sobre el ESP32 (los pines derechos quedan bien espaciados)
+  // Etiquetas de pin sobre el ESP32.
+  //
+  // ⚠ PENDIENTE DE LAYOUT, a proposito. Este bloque decia "los pines derechos quedan
+  // bien espaciados" y ponia los cuatro rotulos al mismo x. Esa premisa era FALSA y
+  // se descubrio al arreglar las coordenadas de arriba: GPIO16 y GPIO17 son RX2 y TX2,
+  // que en el DevKit v1 son VECINOS (9.8 px = los 2.54 mm del paso del header), y un
+  // rotulo mide mas que eso, asi que GPIO16 y GPIO17 se pisan.
+  //
+  // Probe escalonarlos a la izquierda y es PEOR: no hay panel a la izquierda de la
+  // placa y GPIO16 se sale del dibujo. La salida de verdad es reacomodar la escena
+  // (correr la placa o sacar los rotulos a una leyenda con linea guia), y eso es
+  // trabajo de layout, no de esta tanda.
+  //
+  // Se deja el solapamiento A SABIENDAS: un rotulo apretado se lee con esfuerzo,
+  // un cable en el agujero equivocado no funciona. El bug que importaba era el otro.
   [[P_G16,'GPIO16'],[P_G17,'GPIO17'],[P_G18,'GPIO18'],[P_GND,'GND']].forEach(([pin,txt])=>{
     label(txt,pin.x-66,pin.y-8,true);
   });
