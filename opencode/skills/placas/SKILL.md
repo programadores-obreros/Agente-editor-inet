@@ -161,6 +161,54 @@ Lo que sí cambia es la **alimentación**, y es el gotcha que importa:
 > el robot se reinicia al arrancar el movimiento, **no es el programa**: poné una fuente
 > en la bornera y cambiá el jumper.
 
+### El orden de la terna: **G · V · S**, y la señal va ABAJO
+
+Éste es el dato que más importa y el que más fácil se equivoca, porque **la sigla
+engaña**: todo el mundo dice "SVG" pero **el orden impreso en la placa es al revés**.
+
+```
+     ┌───┐
+  G  │ ● │  ← GND      · fila de ARRIBA
+  V  │ ● │  ← VCC      · fila del medio
+  S  │ ● │  ← Señal    · fila de ABAJO  ← ésta lleva el número del pin
+     └───┘
+     AREF GND 13 12 · 11 10 9 8 · 7 6 5 4 · 3 2 1 0
+```
+
+Las analógicas son iguales: `G` arriba, `V` al medio, `S` abajo, sobre `A0 A1 A2 A3 A4 A5`.
+
+**Por qué importa:** el docente no pincha donde dice el pinout del UNO pelado — pincha en
+la terna. Si le decís "el servo va a D3" y él cuenta las filas al revés, **mete la señal
+en la masa**. Cuando nombres un pin con shield, decilo así: *"la **S** de la terna 3"*.
+
+**Fuente:** *Arduino Sensor Shield v5.0 Functional Diagram*, el diagrama del fabricante
+— los dos detalles ampliados (Digital IO Ports D0~D13 y Analog IO Ports A0~A5) rotulan
+`G → GND`, `V → VCC`, `S → Sinal` de arriba hacia abajo.
+<https://curtocircuito.com.br/datasheet/arduino_sensor_shield.pdf>
+
+### Los otros conectores, que evitan cablear a mano
+
+El shield no es sólo ternas. Cada módulo tiene su zócalo, y **usarlo es más simple que
+cablear pin por pin**:
+
+| Zócalo | Va a |
+|---|---|
+| **`URF01` — ultrasónico** | `VCC · A0 · A1 · GND`, en ese orden (está pegado a `ANALOG IN`) |
+| `IIC` | `SCL · SDA · + · −` |
+| `SD Card` | `VCC · GND · D11 · D10 · D13 · D12` — son **seis** contactos, y `D10` es el select |
+| `Bluetooth` | `VCC · GND · D1 · D0 · GND · 3V3` |
+| `APC220` (radio) | `GND · VCC · D1 · D0` |
+| `COM` / RS232 | `RX · TX · + · −` |
+| LCD 12864 paralelo | `D13-D7` + `D2-D6` |
+| LCD 12864 serie | `D4 · D3 · D2` |
+
+⚠️ **El ultrasónico con shield NO va "a D4 y D5, por ejemplo".** Tiene zócalo propio
+cableado a **A0/A1**, y es un conector de cuatro donde el módulo entra derecho. Decirle
+al docente un par de pines digitales inventados le hace cablear de más una placa que ya
+le resolvía el problema.
+
+**Dimensión:** 57 × 57,5 mm — lo mismo que el UNO, el conjunto no crece.
+
 La ficha imprimible está en el skill `fichas` (`02 · Sensor Shield v5.0`), abrila con el
 tool `ficha`.
 

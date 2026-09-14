@@ -1822,6 +1822,39 @@ test("ningún .describe() de un tool da como ejemplo un GPIO que el asignador no
 
 // MUTACIÓN QUE MATA: volver `idPlaca` al ternario de antes
 // (`typeof args.placa === "string" && args.placa.trim() ? … : "esp32"`).
+test("la VERSIÓN del shield decide si el zócalo existe o no", async () => {
+  // SE ROMPÍA ASÍ, y es un agujero que dejé yo: el zócalo de ultrasónico `URF01` es un
+  // AGREGADO de la v5.0 — las fuentes lo listan entre lo que "la V5.0 suma sobre la
+  // V4.0", junto con el I2C, el Bluetooth, el SD y la alimentación externa. Una v4 NO
+  // lo trae.
+  //
+  // Y el docente real que disparó todo esto escribió, textual, "un shield sensor v4".
+  // Mandarlo al URF01 es mandarlo a un conector que su placa no tiene: el mismo error
+  // que este tool vino a matar, con otro disfraz.
+  const v4 = await gen({ componentes: "ultrasonico, led", placa: "uno con sensor shield v4" }, "zoc-v4")
+  assert.match(v4.r, /NO lo trae/i, "con una v4 tiene que decir que ESA versión no trae el zócalo")
+  assert.match(v4.r, /v5\.0/, "y nombrar desde qué versión existe, para que el docente lo chequee")
+  assert.match(v4.r, /cableado a mano/i, "y decirle qué hacer en su lugar")
+
+  // Con la versión que SÍ lo trae, el aviso es el de siempre y sin peros.
+  const v5 = await gen({ componentes: "ultrasonico, led", placa: "uno con sensor shield v5.0" }, "zoc-v5")
+  assert.match(v5.r, /URF01/, "con una v5.0 el zócalo se ofrece")
+  assert.doesNotMatch(v5.r, /NO lo trae/i, "y no se le advierte de una versión que no es la suya")
+
+  // Sin versión NO se asume: se da el dato CON su versión al lado. El docente tiene el
+  // número impreso en la placa; suponer por él es lo que hacía el tool con el ESP32.
+  const sinVer = await gen({ componentes: "ultrasonico, led", placa: "uno con sensor shield" }, "zoc-sinver")
+  assert.match(sinVer.r, /URF01/, "sin versión se sigue dando el dato, que es útil")
+  assert.match(sinVer.r, /v5\.0/, "pero diciendo de qué versión es")
+  assert.match(sinVer.r, /impreso en tu placa/i, "y mandándolo a mirar la suya")
+
+  // Las formas en que un docente escribe una versión tienen que caer todas en la misma.
+  for (const texto of ["sensor shield v4", "Sensor Shield V4.0", "sensor shield version 4"]) {
+    const { r } = await gen({ componentes: "ultrasonico", placa: "uno con " + texto }, "zv-" + texto.replace(/\W+/g, ""))
+    assert.match(r, /NO lo trae/i, `"${texto}" tiene que leerse como v4: es como lo escribe un docente`)
+  }
+})
+
 test("un shield NO es una placa nueva: se resuelve a la de abajo y no rebota", async () => {
   // SE ROMPÍA ASÍ: `placa: "uno con sensor shield"` REBOTABA con el mensaje de placa
   // desconocida. Y el docente acababa de leer en el skill que el shield "no cambia ni
@@ -1897,6 +1930,224 @@ test("si nombra un shield y NINGUNA placa, avisa que asumió el UNO", async () =
 
   const nombrada = await gen({ componentes: "led", placa: "uno con sensor shield" }, "sh-solo-3")
   assert.doesNotMatch(nombrada.r, /asumí/i, "si la nombró, no se asumió nada")
+})
+
+// ── el rechazo con shield tiene que ENSEÑAR, no sólo negarse ────────────────
+//
+// SE ROMPIÓ ASÍ, EN VIVO. Un docente con Arduino UNO + Sensor Shield pidió ultrasónico
+// + LED + servo. El tool rebotó bien el HC-SR04 (todavía no está portado al UNO, y eso
+// está bien). Pero el rechazo no decía nada más, y el modelo llenó el hueco en el chat:
+//
+//   "Para agregar el HC-SR04 en tu Sensor Shield: Trig → D4 (por ejemplo),
+//    Echo → D5 (por ejemplo)."
+//
+// Tres cosas mal en dos renglones. (1) "Por ejemplo" es el modelo INVENTANDO pines, y
+// lo que el modelo dice en el chat es lo que el pibe cablea, igual que el dibujo.
+// (2) D5 es PWM: se come uno de los seis `~` del UNO para un Echo que no los necesita.
+// (3) Con Sensor Shield eso NI SIQUIERA ES ASÍ: el shield tiene zócalo propio para el
+// ultrasónico (`URF01`, cableado a A0/A1) donde el módulo entra derecho. Mandarlo a un
+// par de pines digitales inventados le hace cablear a mano una placa que ya se lo
+// resolvía.
+//
+// La lección no es "el modelo alucinó": es que un hueco en la respuesta del tool NO
+// queda vacío. Si el tool se niega y se calla, lo completa el modelo.
+
+/**
+ * El dato del zócalo, LEÍDO DEL SKILL. No se copia acá ningún pin a mano.
+ *
+ * `skills/placas/SKILL.md`, entrada 02, sección "Los otros conectores", con la cita al
+ * *Arduino Sensor Shield v5.0 Functional Diagram* del fabricante. El tool REFLEJA esto;
+ * si el skill y el tool se separan, este helper es el que se pone rojo.
+ */
+function zocaloUltrasonicoDelSkill() {
+  const skill = readFileSync(join(REPO, "opencode/skills/placas/SKILL.md"), "utf8")
+
+  // Sin cita al fabricante, el dato vuelve a ser la memoria de alguien.
+  assert.match(
+    skill,
+    /arduino_sensor_shield\.pdf/,
+    "el skill placas perdió el enlace al diagrama del fabricante: entonces URF01→A0/A1 es una suposición",
+  )
+
+  // Sólo la entrada 02. El Bhoot (entrada 06) también dice "trig A0, echo A1" y es OTRA
+  // placa: si el barrido lo agarrara, el test pasaría leyendo el dato equivocado.
+  const entrada02 = skill.split(/^## /m).find((s) => /^02 ·/.test(s))
+  assert.ok(entrada02, "la entrada 02 (UNO + Sensor Shield) desapareció del skill placas")
+
+  const fila = entrada02
+    .split("\n")
+    .find((l) => l.trimStart().startsWith("|") && /ultras[oó]nico/i.test(l))
+  assert.ok(fila, "la entrada 02 tiene que tener la fila del zócalo del ultrasónico en la tabla de conectores")
+
+  // La fila trae dos cosas entre backticks: el rótulo del zócalo y la referencia para
+  // encontrarlo en la placa. Las dos son dato del fabricante, y las dos las repite el
+  // tool — así que las dos se leen de acá y ninguna se escribe a mano en este test.
+  const marcas = [...fila.matchAll(/`([^`]+)`/g)].map((m) => m[1])
+  const zocalo = marcas.find((t) => /^[A-Z][A-Z0-9]+$/.test(t))
+  assert.ok(zocalo, `no pude leer el nombre del zócalo de la fila del skill: ${fila}`)
+  const referencia = marcas.find((t) => t !== zocalo)
+  assert.ok(referencia, `la fila de ${zocalo} perdió la referencia de dónde está en la placa: ${fila}`)
+
+  const pines = [...fila.matchAll(/\bA\d\b/g)].map((m) => m[0])
+  assert.ok(pines.length >= 2, `la fila del zócalo ${zocalo} tiene que decir a qué pines va: ${fila}`)
+
+  return { zocalo, pines, referencia }
+}
+
+test("con shield, el rechazo del ultrasónico manda al ZÓCALO y no deja el hueco", async () => {
+  const { zocalo, pines, referencia } = zocaloUltrasonicoDelSkill()
+
+  const { r, html } = await gen(
+    { componentes: "ultrasonico, led", placa: "uno con sensor shield" },
+    "zoc-rebote",
+  )
+
+  // Sigue rebotando: portar el HC-SR04 al UNO es otra etapa. Negarse está BIEN.
+  assert.doesNotMatch(r, /^Listo/, "el HC-SR04 todavía no está portado al UNO: tiene que seguir rebotando")
+  assert.equal(html, "", "se rechazó en el chat: no puede quedar una hoja generada igual")
+  assert.match(r, /HC-SR04/, "el rechazo tiene que decir QUÉ componente es el que falta")
+
+  // Y ahora además enseña. El nombre del zócalo sale del skill, no de este test.
+  assert.ok(
+    r.includes(zocalo),
+    `el rechazo con shield tiene que nombrar el zócalo \`${zocalo}\` tal como lo escribe el skill. Dijo: ${r}`,
+  )
+  for (const pin of pines) {
+    assert.ok(r.includes(pin), `el rechazo tiene que decir que ${zocalo} va a ${pin}. Dijo: ${r}`)
+  }
+  // Y dónde está en la placa. "URF01" a secas es un rótulo que el docente tiene que ir
+  // a buscar con lupa; "pegado a ANALOG IN" es lo que le hace levantar la vista y verlo.
+  assert.ok(
+    r.includes(referencia),
+    `el rechazo tiene que decir dónde está ${zocalo} ("${referencia}", según el skill). Dijo: ${r}`,
+  )
+})
+
+test("el zócalo se nombra SÓLO para el componente que lo tiene", async () => {
+  // SE PODÍA ROMPER ASÍ, y lo encontré probando la mutación: si `avisoDeZocalos` deja de
+  // filtrar por tipo y pega la frase para cualquier componente rebotado, un docente que
+  // pide un RELÉ con Sensor Shield se lleva "el relé va al zócalo URF01, a A0 y A1".
+  // Es el bug original otra vez, y esta vez lo firma el tool en vez del modelo.
+  //
+  // El relé tampoco está portado al UNO, así que recorre exactamente el mismo camino:
+  // es el vecino más cercano del ultrasónico y el que revienta si el filtro se afloja.
+  const { zocalo } = zocaloUltrasonicoDelSkill()
+  const { r } = await gen({ componentes: "relay, led", placa: "uno con sensor shield" }, "zoc-otro-comp")
+
+  assert.doesNotMatch(r, /^Listo/, "el relé todavía no está portado al UNO: tiene que rebotar")
+  assert.ok(!r.includes(zocalo), `el relé no entra en \`${zocalo}\`: ése es el zócalo del ultrasónico. Dijo: ${r}`)
+  assert.doesNotMatch(r, /zócalo/i, "sin un zócalo que le corresponda, no hay nada que decir")
+})
+
+test("sin shield, el rechazo NO habla de un zócalo que el docente no tiene", async () => {
+  // Un aviso que sale siempre no es un aviso. El docente con UNO pelado no tiene ningún
+  // `URF01` donde meter el módulo: mandarlo a un conector que no existe en su placa lo
+  // confunde MÁS que el rechazo pelado, y es el mismo pecado que este tool vino a matar
+  // (texto de otra placa, dicho con la misma seguridad que el correcto).
+  const { zocalo } = zocaloUltrasonicoDelSkill()
+  const { r } = await gen({ componentes: "ultrasonico, led", placa: "uno" }, "zoc-sin-shield")
+
+  assert.doesNotMatch(r, /^Listo/, "sin shield también rebota: es la misma placa de abajo")
+  assert.ok(!r.includes(zocalo), `sin shield no puede aparecer \`${zocalo}\`. Dijo: ${r}`)
+  assert.doesNotMatch(r, /zócalo/i, "sin shield no hay zócalo del que hablar")
+})
+
+test("shield sin zócalo documentado: se niega, y NO le inventa el URF01", async () => {
+  // Del IO Expansion DFRobot V7.1 el skill dice que los pines son los mismos, y NADA de
+  // un zócalo de ultrasónico. "Los shields son todos parecidos" es exactamente la forma
+  // de razonar que produjo el "D4 por ejemplo": un dato de hardware deducido, que suena
+  // igual de seguro que el confirmado. Si no está escrito, no se dice.
+  const { zocalo } = zocaloUltrasonicoDelSkill()
+  for (const texto of ["uno con IO Expansion Shield DFRobot", "uno con shield"]) {
+    const { r } = await gen({ componentes: "ultrasonico", placa: texto }, "zoc-otro-" + texto.replace(/\W+/g, ""))
+    assert.doesNotMatch(r, /^Listo/, `"${texto}" tiene que seguir rebotando el HC-SR04`)
+    assert.ok(!r.includes(zocalo), `"${texto}" no tiene \`${zocalo}\` documentado: no se lo podemos prometer. Dijo: ${r}`)
+  }
+})
+
+test("ESP32 + ultrasónico sigue dibujando igual: el rechazo no se derramó", async () => {
+  // Contrato de no-regresión. Todo lo de arriba vive en el camino de `motivoNoDibujable`,
+  // que en ESP32 devuelve `null` en la primera línea. Si algún día deja de devolverlo,
+  // el preset más pedido de la escuela deja de salir y nadie se entera por los otros tests.
+  const { zocalo } = zocaloUltrasonicoDelSkill()
+  const { r, html } = await gen({ componentes: "ultrasonico, led", placa: "esp32" }, "zoc-esp32")
+
+  assert.match(r, /^Listo/, `ESP32 + ultrasónico tiene que dibujar. Dijo: ${r.slice(0, 160)}`)
+  assert.match(html, /<wokwi-hc-sr04/, "el HC-SR04 tiene que estar dibujado en la hoja")
+  assert.match(html, /<wokwi-esp32-devkit-v1/, "y sobre el ESP32")
+  assert.ok(!r.includes(zocalo), `en ESP32 no hay \`${zocalo}\`: ese shield es formato UNO`)
+})
+
+// MUTACIÓN QUE MATA: cambiar `pines: ["A0", "A1"]` por un par de pines digitales
+// (`["D4", "D5"]`) en `ZOCALOS_SENSOR_SHIELD` — que es, literalmente, el bug que se vio
+// en vivo escrito adentro del tool.
+test("INVARIANTE: con shield, ningún texto del tool manda el ultrasónico a un pin digital", async () => {
+  const { pines } = zocaloUltrasonicoDelSkill()
+  const permitidos = new Set(pines) // A0 y A1, y NADA más
+
+  // Todo pin que el docente podría llegar a cablear leyendo el mensaje: D0-D13, A0-A5,
+  // GPIOxx. No se prohíbe la PROSA ("no busques un par de pines digitales sueltos" es
+  // justo lo que hay que decir): se prohíbe que aparezca un NÚMERO de pin que no sea el
+  // del zócalo. Un número es lo que el pibe mete en el agujero.
+  const TOKEN_DE_PIN = /\bGPIO\s?\d{1,2}\b|\b[DA]\s?\d{1,2}\b/g
+
+  const placas = [
+    "uno con sensor shield",
+    "Arduino UNO + Sensor Shield v5.0",
+    "sensor shield",
+    "UNO con Sensor Shield v4",
+  ]
+  const listas = ["ultrasonico", "ultrasonico, led", "led, ultrasonico, servo", "ultrasonico, buzzer"]
+
+  const hallazgos = []
+  let vistos = 0
+  for (const placa of placas) {
+    for (const componentes of listas) {
+      const id = ("zoc-inv-" + placa + "-" + componentes).replace(/\W+/g, "-")
+      const { r } = await gen({ componentes, placa }, id)
+      assert.doesNotMatch(r, /^Listo/, `"${placa}" + "${componentes}" tendría que rebotar el HC-SR04`)
+      for (const m of r.match(TOKEN_DE_PIN) ?? []) {
+        if (permitidos.has(m.replace(/\s/g, ""))) vistos++
+        else hallazgos.push(`${placa} / ${componentes} → "${m}" en: ${r}`)
+      }
+    }
+  }
+  // EL BARRIDO TIENE QUE ESTAR BARRIENDO ALGO. Un invariante escrito en negativo pasa
+  // en verde con la entrada vacía: si el mensaje se quedara sin un solo token de pin
+  // —o si `TOKEN_DE_PIN` dejara de casar— `hallazgos` sigue vacío y este test "pasa"
+  // sin haber mirado nada. Ésa es justo la forma de test decorativo que estamos
+  // sacando del repo esta semana.
+  assert.ok(
+    vistos >= placas.length * listas.length * permitidos.size,
+    `el barrido no encontró los pines del zócalo en cada mensaje (vio ${vistos}): o el mensaje dejó de nombrarlos, o la regex dejó de casar y este test no está probando nada`,
+  )
+  assert.deepEqual(
+    hallazgos,
+    [],
+    `un mensaje con shield nombra un pin que NO es el del zócalo (${[...permitidos].join("/")}). Eso es lo que el pibe cablea.`,
+  )
+})
+
+test("el tool le dice al modelo que mande al zócalo en vez de improvisar pines", async () => {
+  // El punto 2 del bug: el tool no puede dejar solo al modelo. El `description` y el
+  // `.describe()` del arg `placa` son lo único que el modelo lee ANTES de contestar.
+  //
+  // El `.describe()` no se puede leer desde el módulo cargado (el mock del plugin
+  // devuelve un Proxy encadenado, no el string), así que se lee del FUENTE. Feo, pero
+  // es la única forma de que este contrato tenga red.
+  const fuente = readFileSync(join(REPO, "opencode/tool/circuito.ts"), "utf8")
+  const describePlaca = fuente.match(/\.describe\("Qué placa se dibuja:[\s\S]*?"\),/)?.[0]
+  assert.ok(describePlaca, "cambió el `.describe()` del arg `placa`: este test se quedó sin nada que mirar")
+
+  for (const [nombre, texto] of [["description", mod.description], [".describe() de placa", describePlaca]]) {
+    assert.match(texto, /zócalo/i, `el ${nombre} no le nombra el zócalo al modelo`)
+    assert.match(
+      texto,
+      /invent|improvis/i,
+      `el ${nombre} tiene que decirle explícitamente que NO invente pines cuando el tool rebota`,
+    )
+  }
+  assert.match(mod.description, /URF01/, "el description tiene que nombrar el zócalo concreto del Sensor Shield")
 })
 
 test("una `placa` que no es string se RECHAZA, no cae al ESP32 en silencio", async () => {
