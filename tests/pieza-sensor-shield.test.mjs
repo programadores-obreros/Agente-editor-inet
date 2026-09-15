@@ -301,11 +301,22 @@ test("6 · las otras piezas del archivo quedaron intactas", () => {
   // otra clase sale distinto, sin que nadie lo haya pedido. Se compara contra
   // HEAD, no contra una copia en el test, así que compara con lo que de verdad
   // estaba ahí antes.
-  const enHead = execFileSync("git", ["show", `HEAD:${RUTA_PIEZAS}`], { cwd: REPO, encoding: "utf8" })
-  const VIEJAS = cargarPiezas(enHead, "HEAD")
+  // La referencia NO puede ser `HEAD`: en cuanto esta pieza se commitea, `HEAD` ya la
+  // tiene y la comparación deja de probar nada — el test lo detectaba solo y se ponía
+  // rojo, que es lo correcto pero lo volvía imposible de mantener después del commit.
+  //
+  // La referencia es la MERGE-BASE con `origin/main`: el estado del que salió esta rama.
+  // El invariante que importa es "nada de lo que hice acá tocó las otras piezas", y eso
+  // se sigue verificando igual cuando la rama tenga diez commits encima.
+  const base = execFileSync("git", ["merge-base", "HEAD", "origin/main"], { cwd: REPO, encoding: "utf8" }).trim()
+  const enBase = execFileSync("git", ["show", `${base}:${RUTA_PIEZAS}`], { cwd: REPO, encoding: "utf8" })
+  const VIEJAS = cargarPiezas(enBase, base.slice(0, 8))
 
-  assert.ok(VIEJAS.size >= 14, `en HEAD había ${VIEJAS.size} piezas, esperaba al menos 14`)
-  assert.ok(!VIEJAS.has(TAG), `<${TAG}> ya existía en HEAD: este test no probaría nada`)
+  assert.ok(VIEJAS.size >= 14, `en ${base.slice(0, 8)} había ${VIEJAS.size} piezas, esperaba al menos 14`)
+  assert.ok(
+    !VIEJAS.has(TAG),
+    `<${TAG}> ya existía en la merge-base: o la rama ya se mergeó, y entonces este test hay que rehacerlo contra otra referencia, o alguien movió la base. No lo silencies: sin esta línea el test pasa sin comparar nada.`,
+  )
 
   for (const nombre of VIEJAS.keys()) {
     assert.ok(PIEZAS.has(nombre), `desapareció la pieza <${nombre}>`)

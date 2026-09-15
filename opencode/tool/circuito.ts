@@ -534,8 +534,38 @@ export const ZOCALOS_SENSOR_SHIELD: readonly ZocaloShield[] = [
  * seguro que el verdadero. Si alguien confirma esos zócalos contra el fabricante, se
  * escriben PRIMERO en `skills/placas` con la cita, y recién después entran acá.
  */
-const SHIELDS: ReadonlyArray<{ patron: RegExp; nombre: string; zocalos: readonly ZocaloShield[] }> = [
-  { patron: /sensor\s*shield/i, nombre: "Sensor Shield", zocalos: ZOCALOS_SENSOR_SHIELD },
+/**
+ * `pieza` es la cara del shield, y sólo la CARA.
+ *
+ * Un shield no cambia un pin: cambia dónde se pincha. Por eso no es una `Placa` nueva —
+ * sería duplicar los pools, los rieles y las 33 advertencias para que digan lo mismo, y
+ * cada copia es un lugar donde el dato se desincroniza. Es la MISMA placa con otra cara:
+ * se clona cambiándole `tag`, `escala` y `anchoColumna`, y nada más.
+ *
+ * `base` existe porque la cara no sirve para cualquier placa: `pb-sensor-shield` dibuja
+ * un shield formato UNO. Si alguien pide "esp32 con sensor shield", se dibuja el ESP32
+ * pelado — mostrarle la cara de un shield que no le entra sería el mismo bug de siempre.
+ *
+ * Los otros dos shields NO tienen pieza, y eso es correcto: del DFRobot y del genérico
+ * no tenemos dibujo ni datos, y prestarles la cara del v5.0 "porque son parecidos" es
+ * inventar hardware con cara de dato verificado.
+ */
+const SHIELDS: ReadonlyArray<{
+  patron: RegExp
+  nombre: string
+  zocalos: readonly ZocaloShield[]
+  pieza?: { base: PlacaId; tag: string; escala: number; anchoColumna: number }
+}> = [
+  {
+    patron: /sensor\s*shield/i,
+    nombre: "Sensor Shield",
+    zocalos: ZOCALOS_SENSOR_SHIELD,
+    // 237,4 px medidos en el navegador (57 × 57,5 mm a 3,779528 px/mm, el mismo factor
+    // que usa `wokwi-arduino-uno`). En 260 px de columna entra con 11 px de aire por
+    // lado; a escala 1.0 porque el paso de las ternas tiene que seguir siendo el real —
+    // contarlas en el dibujo es lo único que el pibe hace con esto.
+    pieza: { base: "uno", tag: "pb-sensor-shield", escala: 1.0, anchoColumna: 260 },
+  },
   { patron: /io\s*expansion|dfrobot/i, nombre: "IO Expansion Shield DFRobot", zocalos: [] },
   { patron: /\bshields?\b/i, nombre: "shield de expansión", zocalos: [] },
 ]
@@ -555,7 +585,14 @@ const SHIELDS: ReadonlyArray<{ patron: RegExp; nombre: string; zocalos: readonly
  */
 function shieldDe(
   texto: string,
-): { base: PlacaId; nombre: string; baseAsumida: boolean; zocalos: readonly ZocaloShield[]; version: string | null } | null {
+): {
+  base: PlacaId
+  nombre: string
+  baseAsumida: boolean
+  zocalos: readonly ZocaloShield[]
+  version: string | null
+  pieza?: { base: PlacaId; tag: string; escala: number; anchoColumna: number }
+} | null {
   const shield = SHIELDS.find((sh) => sh.patron.test(texto))
   if (!shield) return null
   const nombrada = (Object.keys(PLACAS) as PlacaId[]).find((id) =>
@@ -580,6 +617,7 @@ function shieldDe(
     baseAsumida: nombrada === undefined,
     zocalos: shield.zocalos,
     version,
+    pieza: shield.pieza,
   }
 }
 
@@ -2900,7 +2938,31 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
             ? (shieldPedido?.base ?? args.placa.trim().toLowerCase())
             : "esp32" // string vacío o de puros espacios = "no me la dijeron"
           : PLACA_INVALIDA
-    const placa = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
+    const placaBase = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
+    /*
+     * Con shield se dibuja la CARA del shield, y nada más cambia.
+     *
+     * No es una placa nueva: los pines, los rieles, el pool PWM, el I2C y las 33
+     * advertencias son EXACTAMENTE los mismos — el shield "no cambia ni un número"
+     * (`skills/placas`, entrada 02). Lo único que cambia es qué ve el docente, y por eso
+     * se clona cambiándole `tag`, `escala` y `anchoColumna`.
+     *
+     * `pieza.base === idPlaca` no es paranoia: `pb-sensor-shield` dibuja un shield
+     * formato UNO. Si alguien pide "esp32 con sensor shield", se dibuja el ESP32 pelado
+     * — ponerle la cara de un shield que no le entra es el mismo bug de siempre con
+     * otro disfraz. Y del DFRobot y el genérico no tenemos dibujo: ésos van pelados y
+     * el aviso de texto sigue siendo su respuesta.
+     */
+    const placa =
+      placaBase && shieldPedido?.pieza && shieldPedido.pieza.base === idPlaca
+        ? {
+            ...placaBase,
+            tag: shieldPedido.pieza.tag,
+            escala: shieldPedido.pieza.escala,
+            anchoColumna: shieldPedido.pieza.anchoColumna,
+          }
+        : placaBase
+    const shieldDibujado = placa !== placaBase
     if (!placa) {
       // Un `["uno"]` interpolado da "uno" a secas, y el rechazo saldría diciendo que
       // no sabe dibujar una placa que SÍ dibuja. Los no-strings se muestran como lo
@@ -3174,9 +3236,19 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     // (Cuando exista la pieza `pb-sensor-shield`, este aviso lo reemplaza el dibujo.)
     if (shieldPedido) {
       const primero = conexiones.join(" ").match(/→ ((?:GPIO|[DA])\d+)/)
-      const conEjemplo = primero ? ` Donde la tabla dice **${primero[1]}**, en tu placa es la **S** de la terna ${primero[1]}.` : ""
+      const conEjemplo = primero
+        ? ` Donde la tabla dice **${primero[1]}**, en tu placa es la **S** de la terna ${primero[1]}.`
+        : ""
       notas.push(
-        `Tenés ${shieldPedido.nombre}${shieldPedido.baseAsumida ? " y no me dijiste sobre qué placa, así que asumí el Arduino UNO, que es el formato de ese shield — si tu controlador es otro, decímelo" : ""}, así que dibujé el ${placa.etiqueta} **pelado**: el shield se apila encima y **no cambia ni un número** de los pines de la tabla. Lo que cambia es dónde pinchás — en el shield cada pin sale a un conector de **tres vías**, y la que lleva el número es la de **señal** (la **S**); las otras dos son tensión y masa.${conEjemplo}`,
+        shieldDibujado
+          ? // Ya no hay que pedirle que se imagine el shield: lo está viendo. Lo que
+            // sigue haciendo falta es decirle CUÁL de las tres filas lleva el número,
+            // porque el dibujo muestra las tres y la sigla "SVG" engaña — el orden
+            // impreso es G · V · S y la señal va ABAJO.
+            `Dibujé tu ${shieldPedido.nombre}${shieldPedido.baseAsumida ? ", y como no me dijiste sobre qué placa va, asumí el Arduino UNO — que es el formato de ese shield; si tu controlador es otro, decímelo" : ""}: los pines son los mismos que los del ${placaBase!.etiqueta} de abajo, el shield **no cambia ni un número**. Cada pin sale a un conector de **tres vías** — arriba la masa (**G**), al medio la tensión (**V**) y **abajo la señal (S)**, que es la que lleva el número de la tabla.${conEjemplo}`
+          : // Sin pieza propia (DFRobot, shield genérico): se dibuja la placa pelada, y
+            // se dice. No les prestamos la cara del v5.0 porque no sabemos cómo son.
+            `Tenés ${shieldPedido.nombre}${shieldPedido.baseAsumida ? " y no me dijiste sobre qué placa, así que asumí el Arduino UNO, que es el formato de ese shield — si tu controlador es otro, decímelo" : ""}, así que dibujé el ${placa.etiqueta} **pelado**: el shield se apila encima y **no cambia ni un número** de los pines de la tabla. Lo que cambia es dónde pinchás — en el shield cada pin sale a un conector de **tres vías**, y la que lleva el número es la de **señal** (la **S**); las otras dos son tensión y masa.${conEjemplo}`,
       )
     }
 

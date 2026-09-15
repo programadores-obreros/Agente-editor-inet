@@ -1873,8 +1873,24 @@ test("un shield NO es una placa nueva: se resuelve a la de abajo y no rebota", a
   ]) {
     const { r, html } = await gen({ componentes: "led, servo", placa: texto }, "sh-" + texto.replace(/\W+/g, ""))
     assert.ok(r.startsWith("Listo"), `"${texto}" tendría que generar, no rebotar. Dijo: ${r.slice(0, 110)}`)
-    assert.match(html, /<wokwi-arduino-uno/, `"${texto}" tiene que dibujar el UNO de abajo`)
+
+    // Qué se dibuja depende de si TENEMOS la cara de ese shield. El Sensor Shield tiene
+    // pieza propia (`pb-sensor-shield`) y se dibuja ÉL, que es lo que el docente tiene
+    // delante. El DFRobot no la tiene, y ahí se dibuja el UNO pelado con el aviso — no
+    // le prestamos la cara del v5.0 "porque son parecidos": eso es inventar hardware.
+    // Sólo el Sensor Shield tiene cara dibujada. "shield" a secas es el GENÉRICO — no
+    // sabemos cuál es, y darle la cara del v5.0 sería inventar. El DFRobot, igual.
+    const conPieza = /sensor\s*shield/i.test(texto)
+    if (conPieza) {
+      assert.match(html, /<pb-sensor-shield/, `"${texto}" tiene que dibujar el shield, que es lo que el docente ve`)
+    } else {
+      assert.match(html, /<wokwi-arduino-uno/, `"${texto}": sin pieza propia se dibuja el UNO de abajo`)
+    }
+    // Lo que NO cambia nunca: los pines son los del UNO, porque el shield no cambia
+    // ni un número. Si esto se rompe, el shield dejó de ser "la misma placa con ternas".
     assert.doesNotMatch(html, /<wokwi-esp32-devkit-v1/, `"${texto}" no puede dibujar un ESP32`)
+    assert.match(r, /→ D\d+/, `"${texto}" tiene que repartir pines del UNO (D2, D3…), no de otra placa`)
+    assert.doesNotMatch(r, /→ GPIO\d+/, `"${texto}" no puede repartir GPIOs: no es un ESP32`)
   }
 })
 
