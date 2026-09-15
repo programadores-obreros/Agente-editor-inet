@@ -587,6 +587,69 @@ const SHIELDS: ReadonlyArray<{
 ]
 
 /**
+ * La misma placa, con la CARA del shield — y con los rieles del shield.
+ *
+ * El shield NO es una placa nueva: "no cambia ni un número" (`skills/placas`, entrada
+ * 02), así que los pines, el pool PWM, el I2C y las advertencias son los de abajo. Lo
+ * que cambia es DÓNDE PINCHA la docente, y ahí el shield sí es otra cosa.
+ *
+ * ── POR QUÉ LOS RIELES TIENEN QUE CAMBIAR Y LOS PINES DE SEÑAL NO ──────────
+ *
+ * `pb-sensor-shield` saca cada pin del UNO a una terna de tres vías. La de SEÑAL se
+ * llama igual que el pin pelado (`"13"`, `"A0"`), y por eso `pinWokwi` sigue sirviendo
+ * tal cual: es decisión deliberada de la pieza, "el cable se engancha donde la docente
+ * PINCHA DE VERDAD: la S de cada terna" (`componentes-extra.js`).
+ *
+ * Los RIELES no tienen esa suerte. El UNO pelado contesta `GND.1`, `GND.3`, `5V` y
+ * `3.3V`, y NINGUNO de esos cuatro nombres existe en el shield: ahí la masa y la
+ * tensión de cada pin son `<pin>.G` y `<pin>.V`, la fila de arriba y la del medio de
+ * SU PROPIA terna. Medido sobre la hoja generada: 25 de los 74 cables del barrido con
+ * shield pedían un riel que la pieza dibujada no tiene y se quedaban sin anclar — el
+ * cable volvía a nacer de la barra gris, que es el defecto que este trabajo vino a
+ * matar. Y es peor que en el UNO pelado, porque en el shield el módulo de tres patas
+ * entra DERECHO en una terna: masa, tensión y señal salen del mismo conector.
+ *
+ * `rielWokwi` ya recibía el `ref` (el pin de señal del componente) porque sin él la
+ * pregunta "¿cuál es la masa?" está mal formulada. Acá ese mismo `ref` contesta ADEMÁS
+ * de qué terna estamos hablando: no hace falta ningún dato nuevo.
+ *
+ * `V3` devuelve `null` A PROPÓSITO, y no es un hueco a llenar: las ternas del Sensor
+ * Shield son de 5 V y la pieza no publica NINGÚN pin de 3,3 V. Mandar el cable del OLED
+ * a `<pin>.V` porque "es la fila de la tensión" sería alimentar con 5 V un módulo de
+ * 3,3 V, dibujado prolijo. Ese cable se queda sin anclar, que es la respuesta correcta.
+ */
+export function conCaraDeShield(
+  base: Placa,
+  pieza: { readonly tag: string; readonly escala: number; readonly anchoColumna: number },
+): Placa {
+  return {
+    ...base,
+    tag: pieza.tag,
+    escala: pieza.escala,
+    anchoColumna: pieza.anchoColumna,
+    rielWokwi(r, ref) {
+      // La terna de ESE pin. Sin `ref` no hay terna de la que hablar.
+      const terna = ref == null ? null : base.pinWokwi(ref)
+      switch (r) {
+        case "GND":
+          // Sin `ref`, el shield todavía tiene UN `GND` nombrable: la terna del GND que
+          // el UNO trae en el bloque del AREF, cuya vía de señal se llama `GND` pelado.
+          return terna == null ? "GND" : `${terna}.G`
+        case "V5":
+        case "VLOGICA":
+          return terna == null ? null : `${terna}.V`
+        case "V3":
+          return null
+        // El I2C sale por A4/A5, que en el shield son vías de señal y se llaman igual.
+        case "SDA":
+        case "SCL":
+          return base.rielWokwi(r, ref)
+      }
+    },
+  }
+}
+
+/**
  * La placa que el docente NOMBRA manda sobre el shield.
  *
  * Este orden es un fix, no un detalle. La primera versión resolvía cualquier shield a
@@ -902,6 +965,18 @@ export function anclajesDeCable(
     })
     enPlaca = nombres.every((n) => n != null) ? (nombres as string[]) : null
   }
+  // ESTA GUARDA NO SE DISPARA CON EL CATÁLOGO DE HOY, y se queda igual. Medido: en los
+  // 264 cables del barrido no salta ni una vez, y no puede — `indicesDeFila` reparte
+  // exactamente `cantidad` índices y otro test exige que los anclajes de la fila sean
+  // exactamente `cantidad`. O sea que hoy es defensa en profundidad de ese otro test.
+  //
+  // Se evaluó sacarla, porque una guarda que nadie sabe si funciona es peor que no
+  // tenerla. La decisión fue al revés: `anclajesDeCable` es una función EXPORTADA y
+  // esto es su contrato — dos listas de largo distinto aparearían el cable 2 con el
+  // agujero 3, que es el defecto de `plantilla-semaforo-protoboard.html` otra vez. Lo
+  // que no podía quedar era sin ejercer, así que ahora hay un test que la llama DERECHO
+  // con las dos listas desparejas y exige que devuelva las DOS puntas en `null`: ante
+  // la duda el cable se queda como hoy, y no "algo es mejor que nada".
   if (enPlaca && pieza && enPlaca.length !== pieza.length) return { placa: null, pieza: null }
   return { placa: enPlaca, pieza }
 }
@@ -3156,12 +3231,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
      */
     const placa =
       placaBase && shieldPedido?.pieza && shieldPedido.pieza.base === idPlaca
-        ? {
-            ...placaBase,
-            tag: shieldPedido.pieza.tag,
-            escala: shieldPedido.pieza.escala,
-            anchoColumna: shieldPedido.pieza.anchoColumna,
-          }
+        ? conCaraDeShield(placaBase, shieldPedido.pieza)
         : placaBase
     const shieldDibujado = placa !== placaBase
     if (!placa) {

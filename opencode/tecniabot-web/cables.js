@@ -32,7 +32,20 @@
    dos puntas se miden del DOM en cada trazado (load, resize, beforeprint), y si
    una medición no cierra, ese cable NO se dibuja y queda el cable CSS de
    siempre. Falla cerrado. El fallback es POR CABLE, no por hoja: una hoja con 3
-   cables trazados y 2 con la barra CSS tiene que verse bien, y se ve.
+   cables trazados y 2 con la barra CSS tiene que verse bien.
+
+   Y «tiene que verse bien» costó dos defectos, los dos del mismo tipo — el
+   fallback es por fila pero el DIBUJO tiene partes que son de la escena entera:
+     · la barra gris de dónde nacen los cables CSS es UNA para toda la escena, y
+       se ocultaba en cuanto UN cable se trazaba. Los que habían caído al
+       fallback quedaban naciendo del aire. 26 de las 79 hojas del catálogo. Hoy la
+       barra se oculta sólo si NO quedó ningún cable CSS a la vista, y eso se
+       cuenta del DOM (ver `cablesCSSVisibles`).
+     · y una fila cuya PIEZA no se podía medir hacía `continue` sin devolver su
+       cable CSS al layout: el cable no caía al fallback, desaparecía.
+   La regla, entonces: todo camino que abandona una fila pasa por
+   `devolverALaFila`, y lo que se decide para la escena entera se decide DESPUÉS
+   de dibujar, contando lo que quedó.
 
    LA ETIQUETA VA EN SERIE SOBRE EL CABLE
    Superponer los cables al layout actual empeora el dibujo: cruzan por encima
@@ -65,12 +78,24 @@
       unidad, así que el mismo código sirve para las dos familias. Se usa como
       SEGUNDA OPINIÓN (ver `medidorDe`): si la pieza tiene un solo <svg> pegado
       al borde, su tamaño declarado tiene que dar la misma escala.
-   4. Si las dos escalas (ancho y alto) no coinciden dentro del 2%, la caja está
-      estirada → `null` → fallback. Medido: el peor caso real es 0,91%
-      (wokwi-photoresistor-sensor, por el redondeo entero de offsetHeight).
-   5. `pinInfo` es getter de INSTANCIA, no estático, y las piezas pintan en
+   4. Si las dos escalas (ancho y alto) no coinciden, la caja está estirada →
+      `null` → fallback. La tolerancia NO es un 2% plano: es el redondeo entero
+      de `offsetWidth/offsetHeight`, modelado (ver `escalaUniforme`). El 2%
+      plano le perdonaba a la placa cuatro veces más de lo que el redondeo puede
+      explicar y le negaba a las piezas chicas lo que el redondeo les impone:
+      el `wokwi-neopixel` (caja de 21×24) desvía 2,274% por puro redondeo y
+      quedaba afuera, con sus 3 cables al fallback en las tres placas, en
+      silencio. Ese número no estaba medido y esta cabecera afirmaba que «el
+      peor caso real es 0,91%»: era el del fotorresistor, y era el peor de los
+      que alguien había mirado.
+   5. Que el pin EXISTA en `pinInfo` no quiere decir que caiga adentro del
+      dibujo. El `wokwi-membrane-keypad` publica sus 8 pines en y=338 sobre una
+      caja de 263 px: 41 px por debajo del teclado. Los 8 cables terminaban en
+      puntitos sobre el fondo. Es la única de las 36 piezas del catálogo así —
+      el peor sobrepaso de las otras 35 es 0,5 px. Ver `pinAdentro`.
+   6. `pinInfo` es getter de INSTANCIA, no estático, y las piezas pintan en
       `connectedCallback` → se corre en `load` + un tick, no en DOMContentLoaded.
-   6. El GND se tapa: con 6 componentes, 6 cables caen en el MISMO agujero. Lo
+   7. El GND se tapa: con 6 componentes, 6 cables caen en el MISMO agujero. Lo
       de acá es PALIATIVO (stubs escalonados + punto relleno más grande), no
       solución: la solución real es repartir las masas entre los agujeros que la
       placa tiene (el UNO tiene GND.1, GND.2 y GND.3), y eso se decide del lado
@@ -99,6 +124,58 @@
    Así, de los 15 cables de seis.html, 6 bajan por la banda ancha y 9 por la
    angosta (los que cruzan de un lado al otro de la placa). No es gratis: los 9
    siguen apretados. Está dicho en el informe.
+
+   LA IMPRESIÓN: LA ESCENA NO SE PARTE
+   Estas hojas se imprimen, y el cambio de `<span>` a `<svg>` rompió eso sin que
+   se notara: el cable vivía ADENTRO de su fila, así que el salto de página se
+   llevaba fila y cable juntos. El `<svg>` es absoluto y cubre la escena entera,
+   y el salto lo corta por donde caiga. Medido con `chromium --print-to-pdf`
+   sobre `uno-lleno`: «Extremo 1», «Cursor» y «Extremo 2» caían en la página 2,
+   los dos últimos sin NINGÚN cable y el primero con un muñón huérfano.
+   No se arregla con un SVG por fila: la PLACA también es una sola, centrada
+   sobre todas las filas, así que partida la escena no hay cable posible entre
+   una fila de la página 2 y una placa que quedó en la página 1. Lo único que
+   cierra es que la escena no se parta, y eso es una regla de impresión
+   (`break-inside:avoid`) que se inyecta junto con la de la barra.
+   LÍMITE CONOCIDO: si una escena no entra en una página, el navegador ignora
+   `break-inside:avoid` y la parte igual. Las 79 hojas del catálogo entran; una
+   escena con `alto` grande escrito a mano puede no entrar, y ahí vuelve el
+   defecto. Eso no se arregla acá: se arregla no generando escenas más altas que
+   una página, que se decide del lado del tool.
+
+   LA HOJA ANGOSTA: EL CABLE NO SE DIBUJA DONDE NO SE PUEDE DIBUJAR
+   Con la hoja angosta la columna de etiquetas se desborda del recuadro. Medido
+   en `e-7segmentos` a 420 px: el borde derecho de la etiqueta «Segmentos A-G»
+   queda en x=794 sobre una escena que termina en x=442. Rutear hasta ahí
+   dibujaba siete cables que salían del recuadro, cruzaban la placa por arriba y
+   pasaban por encima del título. El cable CSS vive ADENTRO de la fila: se
+   desborda con la fila y no hace ese desastre. Por eso, si una punta —el
+   agujero, el nodo, el borde de la etiqueta o el pin— no cae en la zona
+   dibujable, ese cable no se traza y queda el CSS.
+   El precio está medido y es en las hojas angostas: a 420 px vuelven al
+   fallback 56 cables del catálogo (140 → 73 trazados), y a cambio los puntos de
+   cable fuera del recuadro pasan de 95 a 6. A 800, 1000 y 1920 px no cambia
+   nada: ahí las etiquetas entran.
+   El desborde en sí no se arregla acá — es el grid de `.circuito-libre` — pero
+   sí se deja de dibujar encima.
+
+   LOS CRUCES Y LOS SOLAPES, DICHOS CON EL NÚMERO
+   El ruteo garantiza no cruzar la PLACA. Entre cables NO garantiza nada: es la
+   heurística de `repartirCarriles`, y el informe viejo decía «puede pasar»
+   cuando la medida dice que es la norma. Medido sobre el catálogo (79 hojas,
+   1920 px): 245 de 1022 pares de cables se cruzan — el 24% —, 92 de ellos del
+   mismo color. Antes eran 254 de 1163 (22%). NO mejoró: se mantuvo mientras
+   entraban 11 cables más.
+   Un cruce se ve como dos cables y se entiende. Lo que NO se entiende es el
+   SOLAPE COLINEAL —dos cables sobre la misma recta, donde el de arriba BORRA al
+   de abajo, y donde el informe viejo no decía nada— y ese sí se persiguió:
+   53.697 px en 38 hojas antes, 7.087 px en 25 después (−87%), y de esos sólo
+   3.754 px son entre cables de distinto color, que son los que de verdad
+   esconden información.
+   El 58% de lo que queda es del `wokwi-7segment`, que trae SIETE cables
+   colgando de una sola etiqueta de 40 px de alto: entran en abanico a 5 px uno
+   de otro y el trazo mide 4. Repartirlos mejor pide más alto de etiqueta, y eso
+   se decide del lado del tool, no acá.
 
    FUERA DE ALCANCE
    `armarProtoboard` y las PLANTILLAS_PROTOBOARD tienen su propio layout y su
@@ -166,6 +243,8 @@
     return medidaIntrinsecaPx(atributoDe(svg, "height"))
   }
 
+  var TOL_BASE = 0.005
+
   /**
    * La escala REAL a la que se pintó la pieza, o null si la caja está estirada.
    *
@@ -173,18 +252,61 @@
    * conversión válida es una escala UNIFORME. Si el ancho dice ×1,3 y el alto
    * dice ×1,9, alguien le puso width/height por CSS y las coordenadas de los
    * pines ya no valen: mejor no dibujar que dibujar en el agujero de al lado.
-   * La tolerancia del 2% absorbe el redondeo sub-pixel del navegador y el
-   * letterboxing chico (el ESP32 tiene viewBox 107×201 sobre una caja de
-   * 106,58×204,33 px: 0,4% de diferencia, entra).
+   *
+   * LA TOLERANCIA NO ES UN NÚMERO REDONDO: ES EL REDONDEO, MODELADO.
+   * `offsetWidth` y `offsetHeight` son ENTEROS —el navegador redondea la caja
+   * de layout— así que con la escala verdadera `s` y la caja real W,
+   *     k = s·W/round(W) ≈ s·(1 − e/W),  |e| ≤ 0,5
+   * y lo mismo para el alto. Dos escalas medidas sobre cajas redondeadas se
+   * separan, sin que nadie estire nada, hasta
+   *     |kv − k| ≤ k · 0,5 · (1/ancho + 1/alto)
+   * Una pieza CHICA tiene derecho a desviarse mucho más que una grande, y un
+   * 2% plano no distingue: le perdona a la placa cuatro veces más de lo que el
+   * redondeo puede explicar, y le niega a las piezas chicas lo que el redondeo
+   * les impone. Medido sobre las 36 piezas del catálogo (1920 px, Chromium):
+   *   · wokwi-neopixel  21×24 px de caja → 2,274% de desvío, cota 4,464%.
+   *     Con el 2% plano quedaba AFUERA: sus 3 cables caían al cable CSS en las
+   *     tres placas, en silencio, y la cabecera de este archivo afirmaba que
+   *     «el peor caso real es 0,91%» — nunca se lo había medido.
+   *   · wokwi-arduino-uno 274×207 → desvío 0,31%, cota 0,424%. El 2% plano le
+   *     dejaba pasar una placa estirada 1,5%: 4 px de error en el agujero del
+   *     pin 13, con el dibujo impecable.
+   *   · wokwi-mpu6050 5,497% (cota 1,367%) y wokwi-tilt-switch 12,988% (cota
+   *     1,388%) están de verdad estiradas y siguen afuera, como debe ser.
+   * El `TOL_BASE` de 0,5% que se suma es el colchón sub-píxel del propio
+   * `getBoundingClientRect` (el peor margen medido queda en el fotorresistor:
+   * 0,91% contra una cota total de 1,545%).
    */
   function escalaUniforme(anchoRend, altoRend, anchoIntr, altoIntr, tolerancia) {
-    var tol = typeof tolerancia === "number" ? tolerancia : 0.02
+    var tol = typeof tolerancia === "number" ? tolerancia : TOL_BASE
     if (!(anchoIntr > 0) || !(altoIntr > 0)) return null
     if (!(anchoRend > 0) || !(altoRend > 0)) return null
     var k = anchoRend / anchoIntr
     var kv = altoRend / altoIntr
-    if (Math.abs(kv - k) > k * tol) return null
+    var redondeo = 0.5 * (1 / anchoIntr + 1 / altoIntr)
+    if (Math.abs(kv - k) > k * (tol + redondeo)) return null
     return k
+  }
+
+  /**
+   * ¿El agujero que declara `pinInfo` cae DENTRO del dibujo de la pieza?
+   *
+   * Nadie lo chequeaba: `medidorDe` validaba la escala y daba por hecho la
+   * posición. Medido sobre las 36 piezas del catálogo (1920 px, Chromium), 35
+   * tienen todos sus pines adentro con 0,5 px de sobrepaso en el peor caso
+   * (el pin «1» del wokwi-buzzer). La 36ª es `wokwi-membrane-keypad`: publica
+   * sus 8 pines en y=338 sobre una caja de 263 px, o sea 41 px POR DEBAJO del
+   * teclado. Los 8 cables terminaban en puntitos sobre el fondo, sin tocar la
+   * pieza, donde antes había dos líneas que sí llegaban.
+   * 2 px son cuatro veces el peor sobrepaso legítimo y la vigésima parte del
+   * que no lo es: el corte separa los dos casos sin rozar ninguno.
+   */
+  var TOL_PIN = 2
+  function pinAdentro(p, ancho, alto, tolerancia) {
+    var t = typeof tolerancia === "number" ? tolerancia : TOL_PIN
+    if (!p || !isFinite(p.x) || !isFinite(p.y)) return false
+    if (!(ancho > 0) || !(alto > 0)) return false
+    return p.x >= -t && p.y >= -t && p.x <= ancho + t && p.y <= alto + t
   }
 
   // ── geometría chica ──────────────────────────────────────────────────────
@@ -262,6 +384,48 @@
     v = r.bottom + margen
     if (limites) v = Math.min(v, limites.bottom - 1)
     return v > r.bottom ? v : null
+  }
+
+  /**
+   * Dónde tiene permiso de dibujarse el cable.
+   *
+   * Arranca siendo el recuadro de la escena, y esa es la regla: el cable no se
+   * escapa de la hoja. Pero el recuadro tiene una altura fija y LA PLACA NO
+   * SIEMPRE ENTRA. Medido en `e-servo` (ESP32, 1920 px): la escena va de y=125
+   * a y=350 y la placa de y=108,8 a y=370,4 — sobresale 16,2 px por arriba y
+   * 20,4 px por abajo. Con el recuadro como límite duro, `corredor()` no
+   * encontraba pasillo NI por arriba NI por abajo, devolvía null en los dos
+   * sentidos, y TODO el header izquierdo del ESP32 —el que necesita rodear la
+   * placa para llegar a la columna de nodos— caía al cable CSS: 14 de 116
+   * filas, 12 de 33 hojas. Y en silencio: los dos nombres de pin resolvían
+   * bien. Lo insidioso es que el MISMO cable se dibujaba o no según cuántos
+   * componentes tuviera la hoja, porque con más filas la escena crece y la
+   * placa entra.
+   *
+   * La regla honesta no es «adentro del recuadro» sino «no más afuera que lo
+   * que ya está dibujado afuera»: donde la placa se sale, el cable puede
+   * acompañarla, más la `holgura` que necesita para bordearla. Donde la placa
+   * entra —que es el caso normal— el límite sigue siendo el recuadro, exacto:
+   * no se afloja nada que no haga falta aflojar.
+   */
+  function limitesUtiles(escena, placa, holgura) {
+    var e = comoRect(escena)
+    if (!e) return comoRect(placa)
+    var p = comoRect(placa)
+    if (!p) return e
+    var h = Math.max(0, numero(holgura, 0))
+    return {
+      left: p.left < e.left ? p.left - h : e.left,
+      top: p.top < e.top ? p.top - h : e.top,
+      right: p.right > e.right ? p.right + h : e.right,
+      bottom: p.bottom > e.bottom ? p.bottom + h : e.bottom,
+    }
+  }
+
+  /** ¿El punto cae adentro del rectángulo? Con 1 px de gracia para los bordes. */
+  function dentroDe(p, r) {
+    if (!p || !r) return true
+    return p.x >= r.left - 1 && p.x <= r.right + 1 && p.y >= r.top - 1 && p.y <= r.bottom + 1
   }
 
   /** ¿El segmento (a,b), que es horizontal o vertical, pisa el INTERIOR de r? */
@@ -464,10 +628,31 @@
       // El chequeo va sobre el candidato CRUDO (ver `libreDeLaPlaca`): recién
       // después se compacta, y sólo para dibujar.
       if (!libreDeLaPlaca(candidatos[c], placa)) continue
+
+      // Y EL LARGO TAMBIÉN SE MIDE EN CRUDO. ACÁ ESTABA EL DEFECTO QUE MÁS
+      // CABLES BORRÓ, y es de una sutileza que da rabia:
+      //
+      // el tramo de salida sale `salida` px del borde (14, 21, 28… escalonados)
+      // y el pasillo del rodeo está a `margen` = 8 px. Cuando el cable sale por
+      // el MISMO lado del pasillo, el candidato con rodeo RETROCEDE: sale hasta
+      // borde−14 y vuelve a borde−8. Son tres puntos sobre la misma vertical, o
+      // sea colineales, o sea que `compactar` borra el del medio — y con él los
+      // 2×6 px que el cable de verdad recorre. Midiendo el camino COMPACTADO,
+      // el rodeo "medía" 12 px menos que el directo y ganaba SIEMPRE.
+      //
+      // Y el rodeo pone su pasillo en `margen`, que es el mismo para todos: el
+      // escalonado del stub desaparecía y los N cables de una fila salían a la
+      // MISMA altura, uno encima del otro. Medido en `uno-simple`: los dos
+      // cables del LED corrían solapados 499 px —se ve uno— y el 220Ω, que se
+      // coloca en el medio del tramo horizontal más largo, quedaba montado
+      // sobre el cable marrón de GND en vez del naranja del ánodo.
+      //
+      // Comparar caminos compactados es comparar largos que ningún cable tiene.
+      // Se compacta para DIBUJAR, no para decidir.
+      var L = largoDe(candidatos[c])
       var pts = compactar(candidatos[c])
       if (pts.length < 2) continue
       if (!esOrtogonal(pts)) continue
-      var L = largoDe(pts)
       if (L < mejorLargo - EPS) {
         mejor = pts
         mejorLargo = L
@@ -481,14 +666,21 @@
     anchoIntrinsecoPx: anchoIntrinsecoPx,
     altoIntrinsecoPx: altoIntrinsecoPx,
     escalaUniforme: escalaUniforme,
+    pinAdentro: pinAdentro,
     ladoMasCercano: ladoMasCercano,
+    corredor: corredor,
+    limitesUtiles: limitesUtiles,
+    dentroDe: dentroDe,
     cruza: cruza,
     esOrtogonal: esOrtogonal,
     compactar: compactar,
+    largoDe: largoDe,
     desplazamiento: desplazamiento,
     rutear: rutear,
     SALIDA: SALIDA,
     MARGEN: MARGEN,
+    TOL_BASE: TOL_BASE,
+    TOL_PIN: TOL_PIN,
   }
   raiz.TecniaCables = API
   if (typeof module === "object" && module && module.exports) module.exports = API
@@ -594,7 +786,12 @@
       caja: { left: r.left, top: r.top, right: r.right, bottom: r.bottom },
       punto: function (nombre) {
         var p = buscarPin(el, nombre)
-        return p && isFinite(p.x) && isFinite(p.y) ? { x: r.left + p.x * k, y: r.top + p.y * k } : null
+        if (!p || !isFinite(p.x) || !isFinite(p.y)) return null
+        // TERCERA OPINIÓN: el agujero tiene que caer DENTRO del dibujo. Ver
+        // `pinAdentro` — el `wokwi-membrane-keypad` publica los 8 suyos 41 px
+        // por debajo de su caja, y los 8 cables terminaban en el aire.
+        if (!pinAdentro({ x: p.x * k, y: p.y * k }, r.width, r.height)) return null
+        return { x: r.left + p.x * k, y: r.top + p.y * k }
       },
     }
   }
@@ -663,6 +860,7 @@
     var capas = escena.querySelectorAll("." + CAPA)
     for (var i = 0; i < capas.length; i++) capas[i].remove()
     escena.removeAttribute("data-cables-trazados")
+    escena.removeAttribute("data-cables-barra")
     devolverALaFila(escena)
   }
 
@@ -671,15 +869,51 @@
    * cables cuando eran CSS. Donde ya nacen del agujero de verdad, sobra: los
    * cables la cruzan y queda una raya sin significado en el medio del dibujo.
    * Se tapa por pseudo-elemento, así que no alcanza con tocar el style del
-   * elemento: va una regla, una sola vez, acotada a las escenas trazadas. Donde
-   * no se trazó nada, el atributo no está y la barra queda como siempre.
+   * elemento: va una regla, una sola vez.
+   *
+   * PERO LA BARRA ES UNA SOLA PARA TODA LA ESCENA, Y EL FALLBACK ES POR FILA.
+   * Ese era el defecto que más hojas rompía: la regla colgaba de
+   * `[data-cables-trazados]`, o sea que alcanzaba con que UN cable se trazara
+   * para que la barra desapareciera de la escena ENTERA — y los cables que
+   * habían caído al fallback CSS se quedaban sin nada de dónde nacer: arrancan
+   * 30 px a la derecha de su etiqueta, pegados al aire. Medido sobre el
+   * catálogo (79 hojas × 3 placas, 1920 px): 26 hojas mixtas rotas, entre
+   * ellas el preset `estacion-meteo` con los 4 cables del LCD como palitos de
+   * colores flotando.
+   *
+   * La condición correcta no es «se trazó algo» sino «no quedó NINGÚN cable
+   * CSS visible», y eso se cuenta del DOM, que es donde está la verdad: si
+   * queda aunque sea uno, la barra se queda. El atributo que manda es
+   * `data-cables-barra`, distinto de `data-cables-trazados` a propósito: el
+   * segundo informa cuántos se trazaron, el primero decide el dibujo.
    */
-  function reglaDeBarra() {
+  function reglasDeTrazado() {
     if (document.getElementById("cables-trazados-css")) return
     var st = document.createElement("style")
     st.id = "cables-trazados-css"
-    st.textContent = '.escena[data-cables-trazados] .filas-libre::before{display:none}'
+    st.textContent =
+      '.escena[data-cables-barra="oculta"] .filas-libre::before{display:none}' +
+      // IMPRESIÓN: el cable ya no vive adentro de su fila, es un <svg> absoluto
+      // que cubre la escena entera, así que un salto de página lo corta por
+      // donde caiga y del otro lado quedan filas sin ningún cable. La placa
+      // también es UNA sola, centrada sobre todas las filas: partida la
+      // escena, no hay cable que pueda unir una fila de la página 2 con una
+      // placa que quedó en la página 1. Por eso la escena no se parte.
+      '@media print{.escena[data-cables-trazados]{break-inside:avoid;page-break-inside:avoid}}'
     document.head.appendChild(st)
+  }
+
+  /**
+   * ¿Quedó algún cable CSS a la vista en esta escena? Se pregunta al DOM
+   * DESPUÉS de dibujar, porque el fallback ocurre en tres lugares distintos
+   * (fila sin pieza, punta sin medir, ruteo sin camino) y contar en cada uno
+   * es la clase de cuenta que un día se desincroniza sin que nadie se entere.
+   */
+  function cablesCSSVisibles(escena) {
+    var todos = escena.querySelectorAll(".conex .cable")
+    var n = 0
+    for (var i = 0; i < todos.length; i++) if (!todos[i].hasAttribute("data-cables-oculto")) n++
+    return n
   }
 
   // ── dibujo ───────────────────────────────────────────────────────────────
@@ -847,7 +1081,14 @@
     }
     var esq = esquinaInterior(escena)
     var base = { x: esq.x, y: esq.y }
-    var limites = { left: esq.x, top: esq.y, right: esq.x + esq.ancho, bottom: esq.y + esq.alto }
+    // La holgura es lo que un cable necesita para bordear la placa por afuera:
+    // el pasillo (MARGEN) más el tramo de salida (SALIDA) y un píxel de gracia.
+    // Sólo se usa del lado por el que la placa YA se sale del recuadro.
+    var limites = limitesUtiles(
+      { left: esq.x, top: esq.y, right: esq.x + esq.ancho, bottom: esq.y + esq.alto },
+      medPlaca.caja,
+      MARGEN + SALIDA + 2,
+    )
 
     // Un HILO por cable. Una fila con "Segmentos A-G" da siete hilos, todos con
     // la misma etiqueta y el mismo color: siete agujeros de la placa que van a
@@ -858,7 +1099,16 @@
       var medPieza = medidorDe(c.piezaEl)
       var nodo = c.pinEl.querySelector(".nodo")
       var label = c.pinEl.querySelector(".label")
-      if (!medPieza || !nodo || !label) continue
+      // La pieza no se pudo medir (caja estirada, escala que no cierra): el
+      // cable CSS de esta fila TIENE que volver. El `continue` pelado que había
+      // acá dejaba el <span class="cable"> oculto del paso 2 y sin trazo que lo
+      // reemplace: el cable no caía al fallback, DESAPARECÍA. Se veía sólo en
+      // las hojas donde otra fila sí se trazaba, porque ahí no corre el
+      // `restaurar()` del final.
+      if (!medPieza || !nodo || !label) {
+        devolverALaFila(c.pinEl)
+        continue
+      }
       var rLabel = label.getBoundingClientRect()
       var xNodo = centro(nodo).x
       var color = (window.getComputedStyle(c.pinEl).getPropertyValue("--c") || "#607d8b").trim()
@@ -978,6 +1228,17 @@
     //    que no dice ni una cosa ni la otra.
     for (j = 0; j < orden.length; j++) {
       var v = orden[j]
+
+      // LAS PUNTAS TIENEN QUE CAER EN LA ZONA DIBUJABLE, y si no, falla cerrado.
+      // Con la hoja angosta la columna de etiquetas se desborda del recuadro:
+      // medido en `e-7segmentos` a 420 px, el borde derecho de la etiqueta
+      // «Segmentos A-G» queda en x=794 sobre una escena que termina en x=442.
+      // Rutear hasta ahí dibuja siete cables que salen del recuadro, cruzan la
+      // placa por arriba y pasan por encima del título. El cable CSS, que vive
+      // adentro de la fila, se desborda con la fila y no hace ese desastre.
+      // Cuando la punta no está donde se puede dibujar, no se dibuja.
+      if (!dentroDe(v.origen, limites) || !dentroDe(v.nodo, limites) || !dentroDe(v.salidaLabel, limites)) continue
+
       var tramoA = rutear({
         origen: v.origen,
         destino: v.nodo,
@@ -1004,12 +1265,46 @@
       // etiqueta (el `wokwi-photoresistor-sensor` tiene los cuatro pines
       // pegados a su borde derecho), salir perpendicular manda el cable a dar
       // la vuelta por afuera de la pieza, y afuera de la pieza está el borde de
-      // la hoja, que tiene overflow:hidden: el cable se cortaba. Ahí se entra
-      // derecho, como hace el cable CSS de hoy.
-      var carrilB = v.salidaLabel.x + 14 + (v.ordenFila || 0) * 9
-      if (carrilB > v.destino.x - 8) carrilB = Math.max(v.salidaLabel.x + 6, v.destino.x - 8)
+      // la hoja: el cable se cortaba.
+      //
+      // ACÁ SE ENTRA DERECHO Y SE FRENA EN EL BORDE, QUE ES LO QUE HACE EL
+      // CABLE CSS. La versión anterior decía que entraba «como el cable CSS de
+      // hoy» y no era cierto: pasaba `placa:null`, con lo cual el camino
+      // atravesaba el módulo ENTERO hasta el pin del borde opuesto, y como ese
+      // pin está sobre el borde derecho de la pieza —que en las hojas angostas
+      // es también el borde de la hoja— la punta terminaba dibujada afuera del
+      // recuadro, sobre el fondo blanco. Medido: 17 de 79 hojas con cable
+      // afuera a 1920 px, y las 15 con cable a 420 px. El cable CSS frena en el
+      // borde IZQUIERDO del módulo; acá se hace lo mismo, y el punto de llegada
+      // se corre a ese borde (`destinoB`) para que la punta tampoco mienta.
       var ladoPieza = ladoMasCercano(v.destino, v.cajaPieza)
       var daLaVuelta = ladoPieza === "der" && v.salidaLabel.x < v.cajaPieza.left
+      if (daLaVuelta) v.destino = { x: v.cajaPieza.left, y: v.destino.y }
+      if (!dentroDe(v.destino, limites)) continue
+
+      // EL CARRIL DE ESTE TRAMO VA PEGADO A LA PIEZA, NO A LA ETIQUETA, y eso
+      // decide cuál de los dos tramos largos es el que se ve.
+      //
+      // El camino tiene forma de Z: un horizontal a la altura de la ETIQUETA,
+      // un vertical en el carril, y un horizontal a la altura del PIN. El
+      // carril decide cuál de los dos horizontales es el largo. Con el carril
+      // pegado a la etiqueta, el largo quedaba a la altura del PIN — y las
+      // piezas tienen VARIOS pines a la MISMA altura: el `wokwi-rgb-led` pone
+      // R, G y B en y=44 y el `wokwi-7segment` pone A, B, F y G en y=3,78.
+      // Tres cables de colores distintos corriendo 485 px sobre la misma
+      // recta: se ve UNO. Y no lo arregla el escalonado de `salida`, que
+      // separa en la perpendicular al borde mientras que acá lo que se pisa es
+      // la paralela.
+      // Con el carril pegado a la pieza, el horizontal largo pasa a estar a la
+      // altura de la ETIQUETA, y las etiquetas SIEMPRE están separadas (la
+      // columna es un flex con gap de 9 px y cajas de 40 px de alto). Lo que
+      // queda compartido a la altura del pin son los 9 px que el escalonado le
+      // da a cada carril. De paso el cable corre alineado con su propio rótulo
+      // en casi todo su recorrido, que es lo que se quiere leer.
+      var carrilB = v.cajaPieza.left - 14 - (v.ordenFila || 0) * 9
+      var minCarril = v.salidaLabel.x + 6
+      if (carrilB < minCarril) carrilB = minCarril
+      if (carrilB > v.destino.x - 8) carrilB = Math.max(minCarril, v.destino.x - 8)
       var tramoB = rutear({
         origen: v.destino,
         destino: v.salidaLabel,
@@ -1069,8 +1364,11 @@
     if (!resultado.trazados) {
       restaurar(escena)
     } else {
-      reglaDeBarra()
+      reglasDeTrazado()
       escena.setAttribute("data-cables-trazados", String(resultado.trazados))
+      // La barra sólo sobra cuando ya no nace ningún cable de ella.
+      resultado.css = cablesCSSVisibles(escena)
+      escena.setAttribute("data-cables-barra", resultado.css ? "visible" : "oculta")
     }
     return resultado
   }
