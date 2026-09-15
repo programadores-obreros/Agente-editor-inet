@@ -457,10 +457,117 @@ const UNO_POOL_ANALOGICO = [0, 1, 2, 3, 4, 5]
  * de la placa, lo mete en la terna de colores. Por eso normalizar no alcanza y viene
  * con un aviso. El dibujo sigue mostrando la placa pelada hasta que exista la pieza.
  */
-const SHIELDS: ReadonlyArray<{ patron: RegExp; nombre: string }> = [
-  { patron: /sensor\s*shield/i, nombre: "Sensor Shield" },
-  { patron: /io\s*expansion|dfrobot/i, nombre: "IO Expansion Shield DFRobot" },
-  { patron: /\bshields?\b/i, nombre: "shield de expansión" },
+/**
+ * UN ZÓCALO DEDICADO DEL SHIELD: el módulo entra derecho, no se cablea pin por pin.
+ *
+ * DE DÓNDE SALE ESTE DATO. No de acá. Sale de `skills/placas/SKILL.md`, entrada 02,
+ * sección "Los otros conectores, que evitan cablear a mano", que lo cita del *Arduino
+ * Sensor Shield v5.0 Functional Diagram* del fabricante. El tool NO puede ser la fuente
+ * de un dato de hardware: esta tabla lo REFLEJA. Hay un test que lee el skill y compara,
+ * para que las dos no se separen en silencio.
+ *
+ * POR QUÉ EXISTE. Un docente con Sensor Shield pidió ultrasónico + LED + servo en UNO.
+ * El tool rebotó bien el HC-SR04 (todavía no está portado), pero el rechazo no decía
+ * NADA más, y el modelo llenó el hueco en el chat: "Trig → D4 (por ejemplo), Echo → D5
+ * (por ejemplo)". Tres cosas mal en una línea: pines inventados, uno de ellos PWM
+ * gastado al pedo, y el shield ya tenía el problema resuelto con un zócalo. Lo que el
+ * modelo dice en el chat es lo que el pibe cablea, igual que el dibujo — así que el
+ * rechazo tiene que ENSEÑAR lo que sí sabemos, no sólo negarse. Un hueco en la
+ * respuesta no queda vacío: lo llena el modelo.
+ */
+interface ZocaloShield {
+  /** Tipo de componente del tool (ya normalizado) que entra en este zócalo. */
+  tipo: string
+  /** El rótulo serigrafiado, tal cual lo nombra el skill. */
+  zocalo: string
+  /** Los pines de la placa de abajo a los que está cableado. */
+  pines: readonly string[]
+  /** Qué tiene al lado, para que el docente lo encuentre sin el datasheet. */
+  referencia: string
+  /** El orden físico de los contactos del zócalo, como los rotula la serigrafía. */
+  contactos: readonly string[]
+
+  /**
+   * Desde qué versión del shield existe este zócalo. NO es un adorno.
+   *
+   * El zócalo de ultrasónico (`RB URF v1.1`) es un AGREGADO de la v5.0: las fuentes lo
+   * listan entre lo que "la V5.0 suma sobre la V4.0", junto con el I2C, el Bluetooth,
+   * el SD y el conector de alimentación externa. O sea que **una v4 no lo trae**.
+   *
+   * Y el docente real que disparó esto escribió "shield sensor v4". Mandarlo a un
+   * conector que su placa no tiene es el mismo error que este tool vino a matar.
+   */
+  desde: string
+}
+
+/**
+ * Los zócalos del Sensor Shield que hoy le sirven a un rechazo. HOY es uno solo.
+ *
+ * El skill lista ocho (`URF01`, `IIC`, `SD Card`, `Bluetooth`, `APC220`, `COM`, y los
+ * dos de LCD 12864). Acá está sólo el que corresponde a un componente que el tool
+ * REBOTA en UNO, que es el único caso en el que este texto llega al docente. Copiar los
+ * otros siete sería mudar el catálogo del skill adentro del tool para que no los lea
+ * nadie — y cada copia es un lugar más donde el dato se puede desincronizar.
+ */
+export const ZOCALOS_SENSOR_SHIELD: readonly ZocaloShield[] = [
+  {
+    tipo: "ultrasonico",
+    zocalo: "URF01",
+    pines: ["A0", "A1"],
+    // El orden FÍSICO de los cuatro contactos, tal como los rotula el diagrama. No es
+    // redundante con `pines`: esos dos son los que van al código, éstos son los que el
+    // docente ve al enchufar. Sin el orden, el módulo entra al revés y no lee nada.
+    contactos: ["VCC", "A0", "A1", "GND"],
+    referencia: "ANALOG IN",
+    desde: "v5.0",
+  },
+]
+
+/**
+ * `zocalos` va POR SHIELD, y está vacío en dos de los tres a propósito.
+ *
+ * Del IO Expansion DFRobot V7.1 el skill dice que "funciona igual: apila sobre el UNO,
+ * agrupa señal+VCC+GND por servo, mismos pines" — y NO documenta ningún zócalo de
+ * ultrasónico. Del genérico ("shield") no sabemos ni cuál es. Mandar a un docente con
+ * DFRobot al `URF01` porque "los shields son todos parecidos" es exactamente el bug que
+ * esto vino a matar, con otro disfraz: un dato de hardware inventado que suena igual de
+ * seguro que el verdadero. Si alguien confirma esos zócalos contra el fabricante, se
+ * escriben PRIMERO en `skills/placas` con la cita, y recién después entran acá.
+ */
+/**
+ * `pieza` es la cara del shield, y sólo la CARA.
+ *
+ * Un shield no cambia un pin: cambia dónde se pincha. Por eso no es una `Placa` nueva —
+ * sería duplicar los pools, los rieles y las 33 advertencias para que digan lo mismo, y
+ * cada copia es un lugar donde el dato se desincroniza. Es la MISMA placa con otra cara:
+ * se clona cambiándole `tag`, `escala` y `anchoColumna`, y nada más.
+ *
+ * `base` existe porque la cara no sirve para cualquier placa: `pb-sensor-shield` dibuja
+ * un shield formato UNO. Si alguien pide "esp32 con sensor shield", se dibuja el ESP32
+ * pelado — mostrarle la cara de un shield que no le entra sería el mismo bug de siempre.
+ *
+ * Los otros dos shields NO tienen pieza, y eso es correcto: del DFRobot y del genérico
+ * no tenemos dibujo ni datos, y prestarles la cara del v5.0 "porque son parecidos" es
+ * inventar hardware con cara de dato verificado.
+ */
+const SHIELDS: ReadonlyArray<{
+  patron: RegExp
+  nombre: string
+  zocalos: readonly ZocaloShield[]
+  pieza?: { base: PlacaId; tag: string; escala: number; anchoColumna: number }
+}> = [
+  {
+    patron: /sensor\s*shield/i,
+    nombre: "Sensor Shield",
+    zocalos: ZOCALOS_SENSOR_SHIELD,
+    // 237,4 px medidos en el navegador (57 × 57,5 mm a 3,779528 px/mm, el mismo factor
+    // que usa `wokwi-arduino-uno`). En 260 px de columna entra con 11 px de aire por
+    // lado; a escala 1.0 porque el paso de las ternas tiene que seguir siendo el real —
+    // contarlas en el dibujo es lo único que el pibe hace con esto.
+    pieza: { base: "uno", tag: "pb-sensor-shield", escala: 1.0, anchoColumna: 260 },
+  },
+  { patron: /io\s*expansion|dfrobot/i, nombre: "IO Expansion Shield DFRobot", zocalos: [] },
+  { patron: /\bshields?\b/i, nombre: "shield de expansión", zocalos: [] },
 ]
 
 /**
@@ -476,13 +583,42 @@ const SHIELDS: ReadonlyArray<{ patron: RegExp; nombre: string }> = [
  * nombra ninguna, el default es UNO, porque el shield de las escuelas es formato UNO
  * ("no entra en un ESP32", `skills/placas`) — pero eso se AVISA, no se asume en silencio.
  */
-function shieldDe(texto: string): { base: PlacaId; nombre: string; baseAsumida: boolean } | null {
+function shieldDe(
+  texto: string,
+): {
+  base: PlacaId
+  nombre: string
+  baseAsumida: boolean
+  zocalos: readonly ZocaloShield[]
+  version: string | null
+  pieza?: { base: PlacaId; tag: string; escala: number; anchoColumna: number }
+} | null {
   const shield = SHIELDS.find((sh) => sh.patron.test(texto))
   if (!shield) return null
   const nombrada = (Object.keys(PLACAS) as PlacaId[]).find((id) =>
     new RegExp(`\\b${id}\\b`, "i").test(texto),
   )
-  return { base: nombrada ?? "uno", nombre: shield.nombre, baseAsumida: nombrada === undefined }
+  /*
+   * La VERSIÓN del shield, si el docente la dijo.
+   *
+   * No es un capricho: el zócalo de ultrasónico es un agregado de la v5.0, así que
+   * "sensor shield v4" y "sensor shield v5" NO tienen los mismos conectores. El docente
+   * que disparó todo esto escribió, textual, "un shield sensor v4".
+   *
+   * Se normaliza a "vN.M" para poder comparar con `<` contra el `desde` del zócalo:
+   * "v4", "V4.0", "v 4" y "version 4" caen todos en "v4.0". `null` = no la dijo, y ahí
+   * el dato se da CON su versión al lado en vez de asumir cuál tiene.
+   */
+  const m = texto.match(/v(?:ersi[oó]n)?\s*\.?\s*(\d+)(?:\s*\.\s*(\d+))?/i)
+  const version = m ? `v${m[1]}.${m[2] ?? "0"}` : null
+  return {
+    base: nombrada ?? "uno",
+    nombre: shield.nombre,
+    baseAsumida: nombrada === undefined,
+    zocalos: shield.zocalos,
+    version,
+    pieza: shield.pieza,
+  }
 }
 
 const ESP32_WOKWI_PIN = new Map<number, string>([
@@ -2066,6 +2202,44 @@ function avisosI2cRepetido(pedidos: Pedido[], placa: Placa): string[] {
 }
 
 /**
+ * La cola del rechazo: "no te lo dibujo, PERO en tu shield va acá".
+ *
+ * Devuelve "" cuando no hay nada honesto que agregar — sin shield, o con un shield al
+ * que no le conocemos zócalo para ese componente. Y ese "" es la mitad que importa: si
+ * el docente NO tiene shield, mandarlo a un conector que su placa no tiene lo confunde
+ * más que el rechazo pelado. Un aviso que sale siempre no es un aviso.
+ *
+ * Los pines NO se inventan acá ni se deducen: salen de `ZOCALOS_SENSOR_SHIELD`, que
+ * refleja `skills/placas/SKILL.md` (entrada 02) y su cita al diagrama del fabricante.
+ */
+function avisoDeZocalos(
+  tipos: string[],
+  shield?: { nombre: string; zocalos: readonly ZocaloShield[]; version: string | null } | null,
+): string {
+  if (!shield) return ""
+  const aplican = shield.zocalos.filter((z) => tipos.includes(z.tipo))
+  if (!aplican.length) return ""
+
+  // Si el docente NOMBRÓ una versión anterior a la que trae el zócalo, no lo mandamos
+  // ahí: se lo decimos. Una v4 no tiene el URF01 — es un agregado de la v5.0.
+  const viejas = aplican.filter((z) => shield.version !== null && shield.version < z.desde)
+  if (viejas.length) {
+    const z = viejas[0]!
+    return ` Y ojo con una: el zócalo de ${componenteDe(z.tipo).etiqueta} (\`${z.zocalo}\`, a ${z.pines.join("/")}) es un agregado de la **${z.desde}** — tu ${shield.nombre} ${shield.version} NO lo trae, así que ahí sí va cableado a mano. Fijate el número impreso en la placa antes de buscar el conector.`
+  }
+
+  const frases = aplican.map(
+    (z) =>
+      `el ${componenteDe(z.tipo).etiqueta} NO se cablea pin por pin — tiene zócalo propio, \`${z.zocalo}\` (está pegado a ${z.referencia}), cableado a ${z.pines.join(" y ")}, y el módulo entra derecho ahí. El conector es \`${z.contactos.join(" · ")}\` en ese orden, así que fijate de no darlo vuelta`,
+  )
+  // Si NO nos dijo la versión, el dato se da con su versión al lado: el zócalo existe
+  // desde la v5.0, y el docente tiene el número impreso en su placa para chequearlo.
+  const cual = shield.version === null ? ` (esto es del **${aplican[0]!.desde}** — mirá el número impreso en tu placa)` : ""
+  // El "igual" es literal: el docente se va sin el dibujo, pero CON la respuesta.
+  return ` Ahora, una cosa sí te la puedo decir igual, y es la que te resuelve la mesa de trabajo: en tu ${shield.nombre}, ${frases.join("; y ")}${cual}. Así que no busques un par de pines digitales sueltos para eso — el shield ya te lo resolvió. (Lo tenés en el skill \`placas\`, entrada 02, con el diagrama del fabricante.)`
+}
+
+/**
  * Por qué este circuito NO se puede dibujar en esta placa, o null si se puede.
  *
  * El tool se NIEGA en vez de improvisar, y ésa es la decisión central de esta tanda.
@@ -2079,15 +2253,29 @@ function avisosI2cRepetido(pedidos: Pedido[], placa: Placa): string[] {
  *  - el componente no tiene advertencia para ella (todavía no se portó), y
  *  - el componente necesita un riel que esa placa no tiene (`riel[x] === null`), que
  *    sería un cable dibujado hacia un pin inexistente.
+ *
+ * Y NEGARSE NO ES LO MISMO QUE CALLARSE. Si el docente pidió la placa CON shield, el
+ * rechazo suma lo que sí sabemos: que ese componente tiene zócalo propio y no se cablea
+ * pin por pin. No es un extra amable — es el hueco por el que se coló el bug. Ver
+ * `ZOCALOS_SENSOR_SHIELD`.
  */
-function motivoNoDibujable(pedidos: Pedido[], placa: Placa): string | null {
+function motivoNoDibujable(
+  pedidos: Pedido[],
+  placa: Placa,
+  shield?: { nombre: string; zocalos: readonly ZocaloShield[]; version: string | null } | null,
+): string | null {
   if (placa.id === "esp32") return null
   const sinAviso: string[] = []
+  const sinAvisoTipos: string[] = []
   const sinRiel: string[] = []
   for (const ped of pedidos) {
-    const def = COMPONENTES[normalizarTipo(ped.tipo)]
+    const tipo = normalizarTipo(ped.tipo)
+    const def = COMPONENTES[tipo]
     if (!def) continue
-    if (!avisoDe(def.advertencia, placa.id) && !sinAviso.includes(def.etiqueta)) sinAviso.push(def.etiqueta)
+    if (!avisoDe(def.advertencia, placa.id) && !sinAviso.includes(def.etiqueta)) {
+      sinAviso.push(def.etiqueta)
+      sinAvisoTipos.push(tipo)
+    }
     for (const pin of def.pines) {
       if (pin.clase !== "fijo" || typeof pin.destino !== "string") continue
       if (placa.riel[pin.destino] == null && !sinRiel.includes(def.etiqueta)) sinRiel.push(def.etiqueta)
@@ -2097,7 +2285,7 @@ function motivoNoDibujable(pedidos: Pedido[], placa: Placa): string | null {
     return `No te lo dibujo, y es a propósito: ${sinRiel.join(" y ")} necesita${sinRiel.length > 1 ? "n" : ""} una alimentación que ${placa.etiqueta} no tiene en la placa. Si lo dibujara, el cable terminaría en un pin que no existe y la hoja se vería perfecta igual. Pedímelo con otra placa, o sacá ${sinRiel.length > 1 ? "esos componentes" : "ese componente"} de la lista.`
   }
   if (sinAviso.length) {
-    return `Todavía no sé dibujar ${sinAviso.join(" y ")} en ${placa.etiqueta}: me falta la parte que explica cómo se conecta en ESA placa, y sin eso lo único que puedo hacer es mostrarte el texto del ESP32 como si fuera el tuyo — que es justo lo que no quiero hacer. En ESP32 sí lo tengo (pedímelo con placa="esp32"). En ${placa.etiqueta} puedo armarte el circuito con el resto de la lista si sacás ${sinAviso.length > 1 ? "esos" : "ése"}.`
+    return `Todavía no sé dibujar ${sinAviso.join(" y ")} en ${placa.etiqueta}: me falta la parte que explica cómo se conecta en ESA placa, y sin eso lo único que puedo hacer es mostrarte el texto del ESP32 como si fuera el tuyo — que es justo lo que no quiero hacer. En ESP32 sí lo tengo (pedímelo con placa="esp32"). En ${placa.etiqueta} puedo armarte el circuito con el resto de la lista si sacás ${sinAviso.length > 1 ? "esos" : "ése"}.${avisoDeZocalos(sinAvisoTipos, shield)}`
   }
   return null
 }
@@ -2642,7 +2830,7 @@ export default tool({
 
 USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
-PLACA: el arg 'placa' elige qué placa se DIBUJA. "esp32" (default, ESP32 DevKit) o "uno" (Arduino UNO, que es la que más se usa con Sensor Shield en las escuelas técnicas). Preguntale al docente con cuál trabaja ANTES de dibujar; si te dice UNO, pasá placa="uno" y los pines salen D0-D13, A0-A5, PWM en los ~ y el I2C en A4/A5, como en su placa. Si el componente que pide todavía no está portado a esa placa, el tool NO dibuja: te dice cuál falta, y eso se lo contás — nunca le muestres el dibujo de otra placa como si fuera el suyo.
+PLACA: el arg 'placa' elige qué placa se DIBUJA. "esp32" (default, ESP32 DevKit) o "uno" (Arduino UNO, que es la que más se usa con Sensor Shield en las escuelas técnicas). Preguntale al docente con cuál trabaja ANTES de dibujar; si te dice UNO, pasá placa="uno" y los pines salen D0-D13, A0-A5, PWM en los ~ y el I2C en A4/A5, como en su placa. Si el componente que pide todavía no está portado a esa placa, el tool NO dibuja: te dice cuál falta, y eso se lo contás — nunca le muestres el dibujo de otra placa como si fuera el suyo. Y cuando el tool rebota un componente, NO completes el hueco inventando pines en el chat: lo que vos escribís es lo que el pibe cablea, igual que el dibujo. Si el docente tiene shield, varios módulos tienen ZÓCALO propio y no van pin por pin (el HC-SR04 del Sensor Shield entra en el zócalo URF01, NO en un par de pines digitales elegidos "por ejemplo"); el rechazo del tool ya te manda al zócalo cuando lo sabe, y el resto lo tenés en el skill 'placas', entrada 02. Si no lo tenés escrito en ningún lado, decí que no lo sabés — no lo estimes.
 
 ⚠️ TODOS LOS PRESETS SON PARA ESP32: los nombres con "-esp32" y también estacion-meteo, alarma, semaforo y los -protoboard. Pedir un preset con placa="uno" se rechaza a propósito (sería una contradicción explícita), y el tool te dice qué lista de 'componentes' pedir en su lugar. El armador libre ('componentes') SÍ dibuja las dos placas.
 
@@ -2686,7 +2874,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     placa: tool.schema
       .string()
       .optional()
-      .describe("Qué placa se dibuja: 'esp32' (default, ESP32 DevKit) o 'uno' (Arduino UNO). Preguntale al docente con cuál trabaja antes de generar: con 'uno' los pines salen D0-D13 / A0-A5, el PWM en los marcados con ~ y el I2C en A4/A5. Si algún componente del pedido todavía no está portado a esa placa, el tool no dibuja y te dice cuál falta — no le muestres el dibujo de otra placa como si fuera el suyo. SHIELDS: si el docente tiene un Sensor Shield o un IO Expansion, pasá el texto tal como te lo dijo ('uno con sensor shield') — el tool lo resuelve solo a la placa de abajo, porque un shield NO cambia ni un pin, y agrega el aviso de que en el shield se pincha en la terna de tres vías y no en el header. Lo que SÍ importa es nombrar la placa: 'esp32 con sensor shield' dibuja el ESP32, no el UNO."),
+      .describe("Qué placa se dibuja: 'esp32' (default, ESP32 DevKit) o 'uno' (Arduino UNO). Preguntale al docente con cuál trabaja antes de generar: con 'uno' los pines salen D0-D13 / A0-A5, el PWM en los marcados con ~ y el I2C en A4/A5. Si algún componente del pedido todavía no está portado a esa placa, el tool no dibuja y te dice cuál falta — no le muestres el dibujo de otra placa como si fuera el suyo. SHIELDS: si el docente tiene un Sensor Shield o un IO Expansion, pasá el texto tal como te lo dijo ('uno con sensor shield') — el tool lo resuelve solo a la placa de abajo, porque un shield NO cambia ni un pin, y agrega el aviso de que en el shield se pincha en la terna de tres vías y no en el header. Lo que SÍ importa es nombrar la placa: 'esp32 con sensor shield' dibuja el ESP32, no el UNO. Y si con shield el tool rebota un componente, leé el rechazo entero antes de contestar: cuando ese módulo tiene zócalo dedicado te lo nombra con sus pines, y ESO es lo que le decís al docente — no improvises un par de pines digitales para tapar el hueco."),
     nombre_archivo: tool.schema
       .string()
       .optional()
@@ -2750,7 +2938,31 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
             ? (shieldPedido?.base ?? args.placa.trim().toLowerCase())
             : "esp32" // string vacío o de puros espacios = "no me la dijeron"
           : PLACA_INVALIDA
-    const placa = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
+    const placaBase = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
+    /*
+     * Con shield se dibuja la CARA del shield, y nada más cambia.
+     *
+     * No es una placa nueva: los pines, los rieles, el pool PWM, el I2C y las 33
+     * advertencias son EXACTAMENTE los mismos — el shield "no cambia ni un número"
+     * (`skills/placas`, entrada 02). Lo único que cambia es qué ve el docente, y por eso
+     * se clona cambiándole `tag`, `escala` y `anchoColumna`.
+     *
+     * `pieza.base === idPlaca` no es paranoia: `pb-sensor-shield` dibuja un shield
+     * formato UNO. Si alguien pide "esp32 con sensor shield", se dibuja el ESP32 pelado
+     * — ponerle la cara de un shield que no le entra es el mismo bug de siempre con
+     * otro disfraz. Y del DFRobot y el genérico no tenemos dibujo: ésos van pelados y
+     * el aviso de texto sigue siendo su respuesta.
+     */
+    const placa =
+      placaBase && shieldPedido?.pieza && shieldPedido.pieza.base === idPlaca
+        ? {
+            ...placaBase,
+            tag: shieldPedido.pieza.tag,
+            escala: shieldPedido.pieza.escala,
+            anchoColumna: shieldPedido.pieza.anchoColumna,
+          }
+        : placaBase
+    const shieldDibujado = placa !== placaBase
     if (!placa) {
       // Un `["uno"]` interpolado da "uno" a secas, y el rechazo saldría diciendo que
       // no sabe dibujar una placa que SÍ dibuja. Los no-strings se muestran como lo
@@ -2814,7 +3026,11 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       // el mando, porque el relé o el driver que agregamos nosotros también tienen que
       // estar portados: ofrecer un riego en UNO con un relé que todavía no existe sería
       // prometer algo que no podemos entregar.
-      const noDibujable = motivoNoDibujable(pedidos, placa)
+      // `shieldPedido` viaja hasta acá porque el rechazo se va POR SU CUENTA: corta
+      // antes de armar nada, así que el aviso de shield del final (el de las ternas)
+      // nunca se ejecuta. Si el dato del zócalo no entra en ESTE texto, no entra en
+      // ninguno, y el docente con shield se queda con un "no" a secas.
+      const noDibujable = motivoNoDibujable(pedidos, placa, shieldPedido)
       if (noDibujable) return noDibujable
 
       // Sin componentes-extra.js las piezas pb-* no se dibujan: mejor no generar nada.
@@ -3020,9 +3236,19 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     // (Cuando exista la pieza `pb-sensor-shield`, este aviso lo reemplaza el dibujo.)
     if (shieldPedido) {
       const primero = conexiones.join(" ").match(/→ ((?:GPIO|[DA])\d+)/)
-      const conEjemplo = primero ? ` Donde la tabla dice **${primero[1]}**, en tu placa es la **S** de la terna ${primero[1]}.` : ""
+      const conEjemplo = primero
+        ? ` Donde la tabla dice **${primero[1]}**, en tu placa es la **S** de la terna ${primero[1]}.`
+        : ""
       notas.push(
-        `Tenés ${shieldPedido.nombre}${shieldPedido.baseAsumida ? " y no me dijiste sobre qué placa, así que asumí el Arduino UNO, que es el formato de ese shield — si tu controlador es otro, decímelo" : ""}, así que dibujé el ${placa.etiqueta} **pelado**: el shield se apila encima y **no cambia ni un número** de los pines de la tabla. Lo que cambia es dónde pinchás — en el shield cada pin sale a un conector de **tres vías**, y la que lleva el número es la de **señal** (la **S**); las otras dos son tensión y masa.${conEjemplo}`,
+        shieldDibujado
+          ? // Ya no hay que pedirle que se imagine el shield: lo está viendo. Lo que
+            // sigue haciendo falta es decirle CUÁL de las tres filas lleva el número,
+            // porque el dibujo muestra las tres y la sigla "SVG" engaña — el orden
+            // impreso es G · V · S y la señal va ABAJO.
+            `Dibujé tu ${shieldPedido.nombre}${shieldPedido.baseAsumida ? ", y como no me dijiste sobre qué placa va, asumí el Arduino UNO — que es el formato de ese shield; si tu controlador es otro, decímelo" : ""}: los pines son los mismos que los del ${placaBase!.etiqueta} de abajo, el shield **no cambia ni un número**. Cada pin sale a un conector de **tres vías** — arriba la masa (**G**), al medio la tensión (**V**) y **abajo la señal (S)**, que es la que lleva el número de la tabla.${conEjemplo}`
+          : // Sin pieza propia (DFRobot, shield genérico): se dibuja la placa pelada, y
+            // se dice. No les prestamos la cara del v5.0 porque no sabemos cómo son.
+            `Tenés ${shieldPedido.nombre}${shieldPedido.baseAsumida ? " y no me dijiste sobre qué placa, así que asumí el Arduino UNO, que es el formato de ese shield — si tu controlador es otro, decímelo" : ""}, así que dibujé el ${placa.etiqueta} **pelado**: el shield se apila encima y **no cambia ni un número** de los pines de la tabla. Lo que cambia es dónde pinchás — en el shield cada pin sale a un conector de **tres vías**, y la que lleva el número es la de **señal** (la **S**); las otras dos son tensión y masa.${conEjemplo}`,
       )
     }
 
