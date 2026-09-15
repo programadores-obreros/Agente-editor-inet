@@ -4,6 +4,27 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-09-15
+
+**El docente con Sensor Shield ve SU placa.** Hasta acá recibía el dibujo del Arduino UNO pelado — eléctricamente correcto y a la vez inservible en la mesa de trabajo, porque **el pibe no mete el cable en el header de la placa: lo mete en la terna de tres**.
+
+### Agregado
+- **La pieza del Sensor Shield se dibuja en la hoja.** Wokwi no tiene shields (verificado contra su catálogo: 50 elementos, cero) y tiene sentido — para un *simulador* un shield es transparente. Pero nosotros no simulamos: enseñamos a cablear. La pieza es propia, como las otras catorce, con **70 pines**: 16 ternas digitales, 6 analógicas y los 4 contactos del zócalo del ultrasónico. El dibujo y `pinInfo` llaman a **las mismas funciones**: el `<circle>` del agujero y el `{x,y}` del pin son el mismo número, así que no puede haber una coordenada que mienta.
+- **Pedir el shield ya no rebota.** `"uno con sensor shield"`, `"Arduino UNO + Sensor Shield v5.0"`, `"IO Expansion DFRobot"` — antes daban *"no sé dibujar esa placa"* justo después de que el skill dijera que los pines son los mismos. Funcionaba **solo si el modelo adivinaba** traducir a `uno`, y nada se lo indicaba: ni el `.describe()`, ni el prompt (cero menciones al Sensor Shield), ni el skill. Ahora es determinista, y un shield se resuelve a la placa de abajo porque **es la misma placa con otra cara**, no una placa nueva.
+- **El orden de la terna, con fuente:** `G` arriba (masa), `V` al medio (tensión) y **`S` abajo — la señal**, que es la que lleva el número de la tabla. **La sigla engaña**: todos dicen "SVG" pero el orden impreso es al revés, y las dos fuentes web consultadas se contradecían justo en eso. Lo zanjó el [diagrama funcional del fabricante](https://curtocircuito.com.br/datasheet/arduino_sensor_shield.pdf). Si se dibujaba al revés, **el dibujo quedaba precioso** y mandaba a los pibes a pinchar la señal del servo en la masa.
+
+### Corregido
+- **El ultrasónico con shield no va "a D4 y D5, por ejemplo".** Eso escribió el modelo en una prueba real cuando el tool rebotó el componente: *"por ejemplo"* es el modelo inventando, y ese texto **no pasa por ninguna regla del tool**; encima D5 es PWM, y se lo estaba comiendo para un Echo que no lo necesita. Con shield el HC-SR04 tiene **zócalo propio** (`URF01`, conector `VCC · A0 · A1 · GND` en ese orden) donde entra derecho. Ahora el rechazo **enseña**: el docente se va sin el dibujo pero **con la respuesta** — y sin eso, el modelo llena el hueco inventando.
+- **Y la versión del shield decide.** El zócalo del ultrasónico es un **agregado de la v5.0**: las fuentes lo listan entre lo que *"la V5.0 suma sobre la V4.0"*, junto con el I²C, el Bluetooth, el SD y la alimentación externa. El docente que disparó todo esto escribió, textual, **"shield sensor v4"** — mandarlo al `URF01` era mandarlo a un conector que **no tiene**. Con `v4` se lo dice; con `v5.0` se lo ofrece; **sin número da el dato con su versión al lado y lo manda a mirar el que está impreso en su placa**, en vez de suponer por él.
+- **El zócalo del SD Card del skill estaba mal escrito**: decía `VCC GND D11 D12 D13` y el diagrama muestra **seis** contactos, `VCC GND D11 D10 D13 D12`. Faltaba el `D10` (el *select*) y D12/D13 estaban invertidos.
+- **Ningún shield recibe una cara prestada.** Del IO Expansion DFRobot y del "shield" genérico no tenemos ni dibujo ni datos: ésos siguen mostrando la placa pelada con su aviso. Darles la cara del v5.0 *"porque son parecidos"* es inventar hardware con cara de dato verificado.
+
+### Calidad
+- **556 → 571 tests.**
+- **Catorce mutaciones** sobre la pieza y el skill: ninguna sobrevive. Invertir `G` y `S` mata un test **y sólo ése**.
+- Se midieron las 22 ternas (`y(G) < y(V) < y(S)` en todas) y se pintó cada coordenada sobre el dibujo: **caen dentro de los agujeros**.
+- **Un test que dependía de git, sacado de git.** Comparaba las 14 piezas contra `HEAD` y se autodetectaba inútil al commitear; apuntado a la merge-base con `origin/main`, **se rompió en el CI** porque el checkout es shallow. Ahora usa huellas escritas en el propio test: corre igual en un clon completo, en un checkout shallow y en cualquier máquina. Que actualizarlas obligue a un cambio deliberado y visible en el diff es una **feature**, no un costo.
+
 ## [0.4.0] — 2026-09-14
 
 **Salto de minor porque el bot aprendió a dibujar una placa nueva.** Hasta acá el generador visual dibujaba **siempre un ESP32**: un docente con un Arduino UNO y un Sensor Shield pedía su circuito y recibía una placa que no es la suya, con pines que en la suya no existen. **El pibe cablea lo que ve en el dibujo.**
