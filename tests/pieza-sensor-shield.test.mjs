@@ -15,8 +15,8 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import vm from "node:vm"
-import { execFileSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -297,45 +297,70 @@ test("5 · el zócalo del ultrasónico existe y tiene sus cuatro pines", () => {
 })
 
 test("6 · las otras piezas del archivo quedaron intactas", () => {
-  // Qué vería la docente si esto se rompe: cualquier otro circuito de cualquier
-  // otra clase sale distinto, sin que nadie lo haya pedido. Se compara contra
-  // HEAD, no contra una copia en el test, así que compara con lo que de verdad
-  // estaba ahí antes.
-  // La referencia NO puede ser `HEAD`: en cuanto esta pieza se commitea, `HEAD` ya la
-  // tiene y la comparación deja de probar nada — el test lo detectaba solo y se ponía
-  // rojo, que es lo correcto pero lo volvía imposible de mantener después del commit.
+  // Qué vería la docente si esto se rompe: cualquier otro circuito, de cualquier otra
+  // clase, sale distinto sin que nadie lo haya pedido.
   //
-  // La referencia es la MERGE-BASE con `origin/main`: el estado del que salió esta rama.
-  // El invariante que importa es "nada de lo que hice acá tocó las otras piezas", y eso
-  // se sigue verificando igual cuando la rama tenga diez commits encima.
-  const base = execFileSync("git", ["merge-base", "HEAD", "origin/main"], { cwd: REPO, encoding: "utf8" }).trim()
-  const enBase = execFileSync("git", ["show", `${base}:${RUTA_PIEZAS}`], { cwd: REPO, encoding: "utf8" })
-  const VIEJAS = cargarPiezas(enBase, base.slice(0, 8))
+  // POR QUÉ HUELLAS Y NO GIT. Este test comparó contra `HEAD` y contra la merge-base con
+  // `origin/main`, y las dos referencias fallaron por motivos distintos:
+  //
+  //  · contra `HEAD`: en cuanto la pieza nueva se commitea, `HEAD` ya la tiene y la
+  //    comparación deja de probar nada. El test lo detectaba SOLO y se ponía rojo —
+  //    correcto, pero lo volvía imposible de mantener después del commit.
+  //  · contra `merge-base` con `origin/main`: el checkout del CI es SHALLOW y no tiene
+  //    `origin/main`. Verde acá, `fatal: Not a valid object name origin/main` allá.
+  //
+  // O sea: un test que depende del estado de git es frágil por diseño, y su fragilidad
+  // aparece en el peor momento. La huella no depende de nada externo: corre igual en un
+  // clon completo, en un checkout shallow y en la máquina de cualquiera.
+  //
+  // CÓMO SE ACTUALIZA, si algún día una pieza cambia A PROPÓSITO: se recalcula la huella
+  // (mismo hash que arma este test) y se cambia acá. Eso es una FEATURE: obliga a que el
+  // cambio sea deliberado y quede en el diff, para que un reviewer lo vea. Si una huella
+  // cambia sin que nadie lo pidiera, eso es exactamente el bug que este test caza.
+  const HUELLAS = {
+    "pb-bmp180": "46925b1e34baa6b9",
+    "pb-bomba": "43a3e7eacd953d00",
+    "pb-brazo": "0f278569e52dcab4",
+    "pb-calefactor": "a5f0e032a308e8da",
+    "pb-driver": "f9589fafba3a7bd7",
+    "pb-dron": "c524526c223f3b78",
+    "pb-higrometro": "84eca6e4b97c00e4",
+    "pb-lampara": "6fbc4de7f9c122b1",
+    "pb-lluvia": "11da775e9c31775f",
+    "pb-motor": "2ed199d12dac2c19",
+    "pb-protoboard": "6d54c7e517c74304",
+    "pb-relay": "4a8ed5d48b035adb",
+    "pb-robot": "d8a2f9efd37d5b18",
+    "pb-valvula": "b8eb53a3f1927a39",
+  }
 
-  assert.ok(VIEJAS.size >= 14, `en ${base.slice(0, 8)} había ${VIEJAS.size} piezas, esperaba al menos 14`)
-  assert.ok(
-    !VIEJAS.has(TAG),
-    `<${TAG}> ya existía en la merge-base: o la rama ya se mergeó, y entonces este test hay que rehacerlo contra otra referencia, o alguien movió la base. No lo silencies: sin esta línea el test pasa sin comparar nada.`,
-  )
+  const SEP = String.fromCharCode(0)
+  const huellaDe = (nombre) => {
+    const P = PIEZAS.get(nombre)
+    const el = dibujar(P)
+    return createHash("sha256")
+      .update(el.innerHTML)
+      .update(SEP)
+      .update(JSON.stringify(Array.from(el.pinInfo ?? [])))
+      .update(SEP)
+      .update(String(P.sinPinesDibujados ?? ""))
+      .digest("hex")
+      .slice(0, 16)
+  }
 
-  for (const nombre of VIEJAS.keys()) {
+  // La huella cubre el DIBUJO, los PINES y el motivo declarado: si cambia cualquiera de
+  // los tres, salta. Se compara de a una para que el mensaje diga CUÁL pieza cambió.
+  for (const [nombre, esperada] of Object.entries(HUELLAS)) {
     assert.ok(PIEZAS.has(nombre), `desapareció la pieza <${nombre}>`)
-    const antes = dibujar(VIEJAS.get(nombre))
-    const ahora = dibujar(PIEZAS.get(nombre))
-    assert.equal(ahora.innerHTML, antes.innerHTML, `cambió el DIBUJO de <${nombre}>`)
     assert.equal(
-      JSON.stringify(Array.from(ahora.pinInfo)),
-      JSON.stringify(Array.from(antes.pinInfo)),
-      `cambiaron los PINES de <${nombre}>`,
-    )
-    assert.equal(
-      PIEZAS.get(nombre).sinPinesDibujados,
-      VIEJAS.get(nombre).sinPinesDibujados,
-      `cambió el motivo declarado de <${nombre}>`,
+      huellaDe(nombre),
+      esperada,
+      `cambió <${nombre}> (dibujo, pines o motivo). Si fue a propósito, recalculá la huella y dejala en el diff; si no, es el bug que este test caza.`,
     )
   }
 
-  // Lo único nuevo es la pieza de este cambio.
-  const nuevas = [...PIEZAS.keys()].filter((n) => !VIEJAS.has(n))
-  assert.deepEqual(Array.from(nuevas), [TAG], `aparecieron piezas de más: ${nuevas.join(", ")}`)
+  // Y ninguna pieza de más ni de menos: la única que se suma en esta tanda es el shield.
+  const esperadas = new Set([...Object.keys(HUELLAS), TAG])
+  const sobran = [...PIEZAS.keys()].filter((n) => !esperadas.has(n))
+  assert.deepEqual(sobran, [], `aparecieron piezas sin huella: ${sobran.join(", ")}`)
 })
