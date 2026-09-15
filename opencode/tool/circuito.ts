@@ -35,6 +35,22 @@ function extraPath(): string {
   return join(cfg, "opencode", "tecniabot-web", "componentes-extra.js")
 }
 
+/*
+ * El trazador de cables: dibuja cada cable del agujero REAL del header al pin REAL de
+ * la pieza, leyendo `pinInfo` en el navegador del docente.
+ *
+ * Va en un archivo aparte y NO inline, por tres motivos que valen para cualquier asset
+ * de estos: inline hay que escaparlo, no se puede testear, y se duplica en cada HTML
+ * que el tool genera. Acá se testea (`tests/cables.test.mjs`) y se copia una vez.
+ *
+ * Es OPCIONAL a propósito: si el archivo no está, la hoja sale con los cables CSS de
+ * siempre. Una instalación vieja no se rompe, se queda sin la mejora.
+ */
+function cablesPath(): string {
+  const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
+  return join(cfg, "opencode", "tecniabot-web", "cables.js")
+}
+
 // Plantillas HTML pre-armadas y validadas (ej: circuito montado sobre protoboard).
 function plantillaPath(nombre: string): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
@@ -787,9 +803,118 @@ function marcaSinPin(placa: Placa, pines: (PinId | null)[][]): string {
     : [...new Set([bancoDe(placa, "digital"), bancoDe(placa, "analogico")])]
   return bancos.map((b) => `${b}?`).join(" o ")
 }
+/**
+ * El mismo pin, pero DEL LADO DE LA PIEZA: el nombre con el que `el.pinInfo` lo
+ * publica, o el motivo por el que no hay ninguno.
+ *
+ * `placa.pinWokwi`/`rielWokwi` resuelven la punta de la PLACA. Ésta es la otra
+ * punta, y es la que más engaña, porque los nombres casi coinciden: el servo
+ * dice "Señal (PWM)" y la pieza dice `PWM`; el DHT22 dice "DATA" y la pieza dice
+ * `SDA`; el OLED dice "VCC" y la pieza tiene DOS candidatos (`3V3` y `VIN`).
+ *
+ * Un array cuando la fila consume VARIOS pines (`cantidad`): "Segmentos A-G" es
+ * UNA etiqueta y SIETE agujeros. El largo tiene que dar igual que `cantidad`.
+ *
+ * `{ sinAnclaje }` NO es un hueco a llenar después: es la respuesta correcta
+ * cuando la pieza dibujada no tiene ese contacto. Un nombre inventado se dibuja
+ * igual de prolijo y manda al pibe al agujero equivocado, que es PEOR que la
+ * barra gris de hoy — es el bug de `plantilla-semaforo-protoboard.html`, tres
+ * coordenadas a mano y las tres mal, con el rótulo correcto al lado.
+ */
+type AnclajePieza = string | readonly string[] | { sinAnclaje: string }
+
+/**
+ * Los nombres de pieza de una fila, o `null` si está declarada sin anclaje.
+ *
+ * Se exporta porque el barrido de tests la usa para comparar contra el `pinInfo`
+ * REAL del bundle, que es una fuente externa. Si esto fuera una tabla aparte del
+ * catálogo, el día que alguien agregue un pin la tabla no diría nada: por eso el
+ * anclaje es un campo OBLIGATORIO de cada pin y no un diccionario al costado.
+ */
+export function anclajesDe(pin: { pinPieza: AnclajePieza }): readonly string[] | null {
+  const a = pin.pinPieza
+  if (typeof a === "string") return [a]
+  if (Array.isArray(a)) return a
+  return null
+}
+
+/** El motivo declarado por el que esta fila no se ancla, o `null` si sí se ancla. */
+export function motivoSinAnclaje(pin: { pinPieza: AnclajePieza }): string | null {
+  const a = pin.pinPieza
+  return typeof a === "object" && !Array.isArray(a) ? (a as { sinAnclaje: string }).sinAnclaje : null
+}
+
+/**
+ * Qué posiciones del array de pines asignados le tocan a cada FILA de la tabla.
+ *
+ * Es la MISMA cuenta que `rellenarRol` hace con `{0}` y `{0-6}`, pero derivada
+ * del catálogo en vez de leída del texto: las filas fijas no consumen nada y
+ * cada fila de señal se lleva `cantidad` posiciones, en orden. Se saca acá
+ * afuera y se exporta porque si esta cuenta y la de los `{…}` se separan, los
+ * cables se anclan a un pin y la etiqueta dice otro — con los dos textos bien
+ * escritos. Un test aparea las dos y muere si se desincronizan.
+ */
+export function indicesDeFila(pines: readonly Pin[]): (readonly number[] | null)[] {
+  let k = 0
+  return pines.map((p) => {
+    if (p.clase === "fijo") return null
+    const n = p.cantidad ?? 1
+    const r = Array.from({ length: n }, (_, j) => k + j)
+    k += n
+    return r
+  })
+}
+
+/**
+ * Las DOS puntas de los cables de una fila, con los nombres que entiende el
+ * navegador: `placa` es dónde pinchar en la placa, `pieza` dónde en el componente.
+ *
+ * Cada punta se resuelve SOLA y puede salir `null` sin arrastrar a la otra: el
+ * fallback es por atributo. Lo que NO puede pasar es que salgan dos listas de
+ * largo distinto — ahí el que dibuja aparearía el cable 2 con el agujero 3 — así
+ * que ese caso se trata como si no hubiera anclaje y no como "algo es mejor que
+ * nada". Ante la duda, el cable se queda como está hoy.
+ */
+export function anclajesDeCable(
+  pin: Pin,
+  indices: readonly number[] | null,
+  asignados: readonly (PinId | null)[],
+  placa: Placa,
+): { placa: readonly string[] | null; pieza: readonly string[] | null } {
+  const pieza = anclajesDe(pin) ?? null
+  let enPlaca: string[] | null = null
+  if (pin.clase === "fijo") {
+    // Un destino de afuera de la placa (un driver, la red de 220 V) no tiene
+    // punta de placa: no es un riel que falte, es que el cable no llega ahí.
+    if (typeof pin.destino === "string") {
+      // `ref` = el primer pin de señal del componente. No es decorativo: ninguna
+      // de las dos placas tiene un pin llamado `GND`, y cuál de las tres masas es
+      // "la de al lado" sólo se puede contestar en relación a algo.
+      const n = placa.rielWokwi(pin.destino, asignados.find((p) => p != null) ?? null)
+      enPlaca = n == null ? null : [n]
+    }
+  } else if (indices) {
+    const nombres = indices.map((i) => {
+      const p = asignados[i]
+      // n < 0 es el pin que no se pudo asignar (pool agotado): la hoja escribe
+      // "GPIO?" y acá no hay nada que anclar.
+      return p == null || p.n < 0 ? null : placa.pinWokwi(p)
+    })
+    enPlaca = nombres.every((n) => n != null) ? (nombres as string[]) : null
+  }
+  if (enPlaca && pieza && enPlaca.length !== pieza.length) return { placa: null, pieza: null }
+  return { placa: enPlaca, pieza }
+}
+
 interface PinBase {
   nombre: string
   color: string
+  /**
+   * OBLIGATORIO a propósito: sin `?`, agregar un pin sin decidir su anclaje no
+   * compila. El test de completitud es la segunda red; ésta es la primera, y
+   * corre antes de que el archivo llegue a un test.
+   */
+  pinPieza: AnclajePieza
 }
 
 /** Un pin de SEÑAL: el asignador le busca un pin libre en la placa. */
@@ -943,7 +1068,7 @@ interface Componente {
   anim: (id: string, placa: Placa) => string
 }
 
-const COMPONENTES: Record<string, Componente> = {
+export const COMPONENTES: Record<string, Componente> = {
   led: {
     tag: "wokwi-led",
     etiqueta: "LED",
@@ -959,8 +1084,8 @@ const COMPONENTES: Record<string, Componente> = {
     // semáforo, que es el proyecto de 3 LEDs que más se pide.
     attrs: (i) => `color="${["red", "yellow", "green"][i % 3]}"`,
     pines: [
-      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "{0} (con {R})" },
-      { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "{0} (con {R})", pinPieza: "A" },
+      { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "C" },
     ],
     advertencia: {
       // Antes esta advertencia explicaba los 220Ω "porque son los 3.3V del ESP32" y
@@ -980,9 +1105,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Servo SG90",
     voltaje: "5V",
     pines: [
-      { nombre: "Alimentación", color: CABLE.rojo, clase: "fijo", destino: "V5" },
-      { nombre: "Señal (PWM)", color: CABLE.naranja, clase: "digital", rol: "{0}", requierePwm: true },
-      { nombre: "Tierra", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "Alimentación", color: CABLE.rojo, clase: "fijo", destino: "V5", pinPieza: "V+" },
+      { nombre: "Señal (PWM)", color: CABLE.naranja, clase: "digital", rol: "{0}", requierePwm: true, pinPieza: "PWM" },
+      { nombre: "Tierra", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
     ],
     advertencia: {
       esp32: "el servo necesita 5V: cable rojo a VIN, nunca a 3.3V.",
@@ -997,9 +1122,9 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "3.3V",
     interactivo: true,
     pines: [
-      { nombre: "Extremo 1", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "Cursor", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
-      { nombre: "Extremo 2", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "Extremo 1", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
+      { nombre: "Cursor", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)", pinPieza: "SIG" },
+      { nombre: "Extremo 2", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
     ],
     advertencia: {
       esp32: "el potenciómetro usa una entrada analógica. Usá GPIO34 o GPIO35 (solo-entrada, ideales para ADC). GPIO32/33 también sirven.",
@@ -1013,8 +1138,17 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Buzzer",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Positivo (+)", color: CABLE.naranja, clase: "digital", rol: "{0}" },
-      { nombre: "Negativo (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      // EL "1" ES EL NEGATIVO, y no al revés. La pieza llama a sus patas `1` y `2`
+      // y no publica ni descripción ni `signals`, así que el número NO dice la
+      // polaridad. Lo dice el SVG que dibuja la propia pieza: de las dos patas,
+      // `<path d="m7.23 16.5v3.5" stroke="#000">` es negra y
+      // `<path d="m9.77 16.5v3.5" fill="#f00" stroke="#f00">` es ROJA. El viewBox
+      // es de 17 mm y `pinInfo` publica píxeles (3.78 px/mm): 7.23·3.78 = 27.3 → el
+      // pin `1`, y 9.77·3.78 = 36.9 → el pin `2`. O sea que la pata roja, la
+      // positiva, es el `2`. Mapear "Positivo" a "1" porque suena a primero es
+      // exactamente el error que se dibuja perfecto y nadie nota.
+      { nombre: "Positivo (+)", color: CABLE.naranja, clase: "digital", rol: "{0}", pinPieza: "2" },
+      { nombre: "Negativo (−)", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "1" },
     ],
     advertencia: {
       esp32: "el buzzer tiene polaridad: la pata larga (+) al pin, la corta (−) a GND.",
@@ -1028,10 +1162,10 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "HC-SR04",
     voltaje: "5V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
-      { nombre: "TRIG", color: CABLE.verde, clase: "digital", rol: "{0}" },
-      { nombre: "ECHO", color: CABLE.azul, clase: "digital", rol: "{1} (¡con divisor!)" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5", pinPieza: "VCC" },
+      { nombre: "TRIG", color: CABLE.verde, clase: "digital", rol: "{0}", pinPieza: "TRIG" },
+      { nombre: "ECHO", color: CABLE.azul, clase: "digital", rol: "{1} (¡con divisor!)", pinPieza: "ECHO" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
     ],
     advertencia: "el HC-SR04 va a 5V (VIN); el pin ECHO entrega 5V — si lo conectás directo al ESP32 lo dañás. Divisor: R1=1kΩ entre ECHO y el GPIO, R2=2kΩ entre el GPIO y GND.",
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.1;if(s)s.style.opacity=(0.7+0.3*Math.abs(Math.sin(t))).toFixed(2);},60);`,
@@ -1042,9 +1176,11 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "DHT22",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "DATA", color: CABLE.naranja, clase: "digital", rol: "{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
+      // La pieza le dice `SDA` al pin de datos del DHT22. No es un bus I2C — el
+      // DHT22 habla su protocolo propio de un hilo — pero el nombre es el que hay.
+      { nombre: "DATA", color: CABLE.naranja, clase: "digital", rol: "{0}", pinPieza: "SDA" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
     ],
     advertencia: "el DHT22 funciona a 3.3V. Módulo de 3 pines (plaqueta): ya trae el pull-up, no agregues nada. Sensor pelado de 4 patas: 10kΩ entre DATA y VCC.",
     anim: (id) => `const s=document.getElementById('${id}');let t=0;setInterval(()=>{t+=0.08;if(s)s.style.opacity=(0.75+0.25*Math.abs(Math.sin(t))).toFixed(2);},60);`,
@@ -1055,9 +1191,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor PIR",
     voltaje: "5V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
-      { nombre: "OUT", color: CABLE.verde, clase: "digital", rol: "{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5", pinPieza: "VCC" },
+      { nombre: "OUT", color: CABLE.verde, clase: "digital", rol: "{0}", pinPieza: "OUT" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
     ],
     advertencia: "el PIR se alimenta de 5V (VIN), pero OUT = 3.3V en el HC-SR501 (trae regulador a bordo): va directo al GPIO, sin divisor. Sólo módulos mini sin regulador pueden dar 5V en OUT: si el tuyo no es un HC-SR501, medí OUT con el téster antes de conectarlo (el ESP32 tolera máx 3.6V).",
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 12px #27ae60)':'none';},800);`,
@@ -1069,10 +1205,21 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "5V",
     attrs: () => `text="Hola Tecnia Bot!" backlight`,
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
+      // LOS CUATRO SIN ANCLAJE, y no es un olvido: es que el tool y la pieza modelan
+      // DOS COSAS DISTINTAS. Acá arriba está el LCD CON MOCHILA I2C (4 cables). La
+      // pieza `wokwi-lcd1602` que se instancia es el display PARALELO: sus 16 pines
+      // son `VSS VDD V0 RS RW E D0..D7 A K`, que son los del display pelado, los que
+      // en el módulo real están SOLDADOS a la mochila y nunca se cablean.
+      //
+      // (La pieza SÍ sabe hacer I2C: con `pins="i2c"` su `pinInfo` pasa a ser
+      // `GND VCC SDA SCL`. Pero `attrs` no le pone ese atributo, así que lo que se
+      // dibuja hoy son los 16. Anclar a los 16 es el camino: mientras no esté,
+      // anclar "VCC" a `VDD` sería mandar al pibe al pin 2 del header paralelo,
+      // que NO es donde está el VCC de la mochila.)
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5", pinPieza: { sinAnclaje: "el tool dibuja el LCD con mochila I2C y la pieza instanciada es el display paralelo: no publica ningún VCC (su alimentación es VDD, del header que la mochila tapa)." } },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: { sinAnclaje: "mismo caso: la pieza paralela llama VSS a su masa, y es la del display, no la del borne de la mochila." } },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA", pinPieza: { sinAnclaje: "la pieza paralela NO tiene bus I2C: no hay ningún pin SDA al que anclar." } },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL", pinPieza: { sinAnclaje: "la pieza paralela NO tiene bus I2C: no hay ningún pin SCL al que anclar." } },
     ],
     advertencia: {
       esp32:
@@ -1093,8 +1240,15 @@ const COMPONENTES: Record<string, Componente> = {
     interactivo: true,
     attrs: () => `color="green"`,
     pines: [
-      { nombre: "Una pata", color: CABLE.verde, clase: "digital", rol: "{0} (INPUT_PULLUP)" },
-      { nombre: "Otra pata", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      // La pieza publica CUATRO contactos: `1.l` `2.l` `1.r` `2.r`. El punto es la
+      // convención de Wokwi para "el mismo nodo, sacado dos veces" — la misma que
+      // usa el UNO en `GND.1/.2/.3` y en `A4`/`A4.2`. O sea que hay DOS nodos,
+      // `1` y `2`, y cada uno asoma a izquierda y a derecha (lo confirma la
+      // geometría: `1.l` y `1.r` comparten y=13, `2.l` y `2.r` comparten y=32).
+      // Las dos patas del catálogo tienen que salir de nodos DISTINTOS, así que se
+      // eligen los dos de la izquierda; los `.r` son los mismos nodos y andan igual.
+      { nombre: "Una pata", color: CABLE.verde, clase: "digital", rol: "{0} (INPUT_PULLUP)", pinPieza: "1.l" },
+      { nombre: "Otra pata", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "2.l" },
     ],
     advertencia: {
       esp32: "el botón usa INPUT_PULLUP: sin apretar lee HIGH, al apretar LOW. La conexión es GPIO + GND, nunca a 3.3V con esta config.",
@@ -1111,10 +1265,10 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "LED RGB",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "{0} (con {R})", requierePwm: true },
-      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "{1} (con {R})", requierePwm: true },
-      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "{2} (con {R})", requierePwm: true },
-      { nombre: "Común (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "Rojo (R)", color: CABLE.rojo, clase: "digital", rol: "{0} (con {R})", requierePwm: true, pinPieza: "R" },
+      { nombre: "Verde (G)", color: CABLE.verde, clase: "digital", rol: "{1} (con {R})", requierePwm: true, pinPieza: "G" },
+      { nombre: "Azul (B)", color: CABLE.azul, clase: "digital", rol: "{2} (con {R})", requierePwm: true, pinPieza: "B" },
+      { nombre: "Común (−)", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "COM" },
     ],
     advertencia: {
       esp32: "el LED RGB combina 3 colores. Cada pin con su resistencia de 220Ω. Con analogWrite (PWM) mezclás cualquier color.",
@@ -1137,9 +1291,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de luz (LDR)",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "OUT / AO", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      { nombre: "OUT / AO", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)", pinPieza: "AO" },
     ],
     advertencia: {
       esp32: "el LDR mide luz. Su salida va a un pin analógico (GPIO34/35). analogRead da 0-4095 en ESP32 (0=oscuro, 4095=mucha luz).",
@@ -1153,10 +1307,16 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Display OLED",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
+      // `3V3` y NO `VIN`: la pieza saca DOS pines de alimentación y hay que elegir
+      // el que corresponde al riel que pide esta fila. El destino de acá es `V3`, y
+      // los `signals` de la pieza desempatan sin opinión de nadie: `3V3` declara
+      // `{type:"power",signal:"VCC",voltage:3.3}` y `VIN` declara VCC sin voltaje.
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3", pinPieza: "3V3" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      // El OLED es la pieza donde MENOS coinciden los nombres: el bus I2C se llama
+      // `DATA`/`CLK`, no `SDA`/`SCL`. Los `signals` lo confirman (i2c SDA / i2c SCL).
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA", pinPieza: "DATA" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL", pinPieza: "CLK" },
     ],
     advertencia: {
       esp32: "el OLED SSD1306 es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x3C). Librerías: Adafruit_SSD1306 + Adafruit_GFX.",
@@ -1176,8 +1336,16 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Display 7 segmentos",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "{0-6} (cada segmento con {R})", cantidad: 7 },
-      { nombre: "Común", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      // UNA etiqueta, SIETE agujeros: por eso el anclaje es una lista y su largo
+      // tiene que dar igual que `cantidad`. El orden es el de la etiqueta (A→G) y
+      // el mismo con el que `{0-6}` reparte los pines de la placa, así que el que
+      // dibuja puede aparear las dos listas por índice.
+      { nombre: "Segmentos A-G", color: CABLE.naranja, clase: "digital", rol: "{0-6} (cada segmento con {R})", cantidad: 7, pinPieza: ["A", "B", "C", "D", "E", "F", "G"] },
+      // La pieza saca el común dos veces (`COM.1` abajo, `COM.2` arriba), que es el
+      // display de verdad: los dos comunes están unidos adentro. Punto = mismo nodo,
+      // igual que `GND.1/.2/.3` del UNO. Se elige el de abajo, que es el header
+      // donde también caen C, D, E y DP.
+      { nombre: "Común", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "COM.1" },
     ],
     advertencia: {
       esp32: "el display de 7 segmentos muestra un dígito. Cada segmento (A-G) va a un GPIO con su resistencia de 220Ω. Conviene la librería SevSeg para no gastar tantos pines.",
@@ -1191,9 +1359,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "NeoPixel (LED inteligente)",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
-      { nombre: "DIN (datos)", color: CABLE.verde, clase: "digital", rol: "{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5", pinPieza: "VDD" },
+      { nombre: "DIN (datos)", color: CABLE.verde, clase: "digital", rol: "{0}", pinPieza: "DIN" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "VSS" },
     ],
     advertencia: {
       esp32: "el NeoPixel (WS2812) es un LED RGB direccionable: con UN solo pin de datos controlás muchos en cadena. Librería: Adafruit_NeoPixel. Mejor alimentarlo de 5V.",
@@ -1211,11 +1379,14 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "3.3V",
     interactivo: true,
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "VRx (eje X)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
-      { nombre: "VRy (eje Y)", color: CABLE.azul, clase: "analogico", rol: "{1} (analógico)" },
-      { nombre: "SW (botón)", color: CABLE.verde, clase: "digital", rol: "{2}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      // OJO EL CRUCE: la pieza no dice X/Y, dice HORZ/VERT. El eje X es el
+      // horizontal y el Y el vertical, así que van cruzados respecto del orden en
+      // que la pieza los publica (VERT primero, HORZ después).
+      { nombre: "VRx (eje X)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)", pinPieza: "HORZ" },
+      { nombre: "VRy (eje Y)", color: CABLE.azul, clase: "analogico", rol: "{1} (analógico)", pinPieza: "VERT" },
+      { nombre: "SW (botón)", color: CABLE.verde, clase: "digital", rol: "{2}", pinPieza: "SEL" },
     ],
     advertencia: {
       esp32: "el joystick tiene 2 ejes analógicos (X, Y) que se leen con analogRead, y un botón al apretarlo. Ideal para mover algo en 2 direcciones (un robot, un juego).",
@@ -1229,10 +1400,10 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Acelerómetro MPU6050",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3", pinPieza: "VCC" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA", pinPieza: "SDA" },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL", pinPieza: "SCL" },
     ],
     advertencia: {
       esp32: "el MPU6050 mide aceleración (3 ejes) y giro (3 ejes) — detecta inclinación, movimiento, caídas. Es I2C (SDA=GPIO21, SCL=GPIO22, dirección 0x68; si conectás AD0 a 3.3V pasa a 0x69). Librería: Adafruit_MPU6050 + Adafruit_Sensor. Proyectos: nivel digital, dron, control por gestos.",
@@ -1255,8 +1426,14 @@ const COMPONENTES: Record<string, Componente> = {
     // Ahora replica el patrón del motor DC (pines "fijo" que terminan en el driver):
     // el único que manda señales al ESP32 es el driver, que ya tiene sus IN1-IN4.
     pines: [
-      { nombre: "Bobinas (4 hilos)", color: CABLE.naranja, clase: "fijo", destino: afuera("Driver ULN2003 (OUT)") },
-      { nombre: "Común (hilo rojo)", color: CABLE.rojo, clase: "fijo", destino: afuera("Driver ULN2003 (5V)") },
+      // LA PIEZA ES BIPOLAR Y EL CATÁLOGO ES UNIPOLAR: no es un nombre que falte, es
+      // otro motor. `wokwi-stepper-motor` publica `A-` `A+` `B+` `B-`, los cuatro
+      // extremos de dos bobinas sueltas. Acá arriba está el 28BYJ-48 de los kits:
+      // cinco hilos, con el rojo que es el PUNTO MEDIO de las dos bobinas y va al
+      // ULN2003. Ese hilo no existe en una bipolar, y los otros cuatro no van a la
+      // placa sino al driver, así que tampoco hay punta de placa que anclar.
+      { nombre: "Bobinas (4 hilos)", color: CABLE.naranja, clase: "fijo", destino: afuera("Driver ULN2003 (OUT)"), pinPieza: { sinAnclaje: "la pieza dibuja un paso a paso BIPOLAR (A-/A+/B+/B-) y el catálogo modela el 28BYJ-48 unipolar de 5 hilos: los cuatro hilos no se corresponden uno a uno, y además van al driver y no a la placa." } },
+      { nombre: "Común (hilo rojo)", color: CABLE.rojo, clase: "fijo", destino: afuera("Driver ULN2003 (5V)"), pinPieza: { sinAnclaje: "el hilo rojo es el punto medio de las bobinas del 28BYJ-48 unipolar; una bipolar no tiene punto medio, así que la pieza no publica ningún contacto equivalente." } },
     ],
     advertencia: "el motor paso a paso (28BYJ-48) gira en pasos exactos, ideal para posición precisa (impresora, reloj, persiana). NO se conecta al ESP32: su conector de 5 hilos va al driver ULN2003, y son los IN1-IN4 del driver los que van a los GPIO. El motor se alimenta de 5V desde el driver. Librería: Stepper o AccelStepper.",
     anim: (id) => `const s=document.getElementById('${id}');let a=0;setInterval(()=>{a=(a+6)%360;if(s)s.angle=a;},40);`,
@@ -1267,8 +1444,8 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Teclado matricial 4x4",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Filas (R1-R4)", color: CABLE.naranja, clase: "digital", rol: "{0-3}", cantidad: 4 },
-      { nombre: "Columnas (C1-C4)", color: CABLE.verde, clase: "digital", rol: "{4-7}", cantidad: 4 },
+      { nombre: "Filas (R1-R4)", color: CABLE.naranja, clase: "digital", rol: "{0-3}", cantidad: 4, pinPieza: ["R1", "R2", "R3", "R4"] },
+      { nombre: "Columnas (C1-C4)", color: CABLE.verde, clase: "digital", rol: "{4-7}", cantidad: 4, pinPieza: ["C1", "C2", "C3", "C4"] },
     ],
     advertencia: {
       esp32: "el teclado 4x4 tiene 16 teclas pero usa solo 8 pines (4 filas + 4 columnas) gracias a la lectura matricial. Para ingresar claves, menús, números. Librería: Keypad.",
@@ -1282,9 +1459,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de llama",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "DO (digital)", color: CABLE.naranja, clase: "digital", rol: "{0}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      { nombre: "DO (digital)", color: CABLE.naranja, clase: "digital", rol: "{0}", pinPieza: "DOUT" },
     ],
     advertencia: {
       esp32: "el sensor de llama detecta fuego/luz infrarroja cercana. Salida digital DO (hay fuego o no) o analógica AO (nivel). Alarma de incendio, robot bombero. Tiene un potenciómetro para ajustar la sensibilidad.",
@@ -1298,9 +1475,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de sonido",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "DO (digital)", color: CABLE.verde, clase: "digital", rol: "{0}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      { nombre: "DO (digital)", color: CABLE.verde, clase: "digital", rol: "{0}", pinPieza: "DOUT" },
     ],
     advertencia: {
       esp32: "el sensor de sonido detecta ruido (un aplauso, un golpe). Salida digital DO (umbral ajustable con el potenciómetro). Aplauso que prende la luz, alarma de ruido.",
@@ -1314,9 +1491,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de temperatura NTC",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "OUT (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      { nombre: "OUT (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)", pinPieza: "OUT" },
     ],
     advertencia: {
       esp32: "el NTC es un termistor: su resistencia cambia con la temperatura. Salida analógica (analogRead, 0-4095). Más simple que el DHT pero mide solo temperatura. Termómetro, control de ventilador.",
@@ -1330,9 +1507,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Receptor infrarrojo (IR)",
     voltaje: "3.3V",
     pines: [
-      { nombre: "OUT (señal)", color: CABLE.amarillo, clase: "digital", rol: "{0}" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
+      { nombre: "OUT (señal)", color: CABLE.amarillo, clase: "digital", rol: "{0}", pinPieza: "DAT" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: "VCC" },
     ],
     advertencia: "el receptor IR lee los códigos de un control remoto (TV, aire). Cada botón manda un código distinto. Librería: IRremote. Controlar el ESP32 con un control remoto común.",
     anim: (id) => `const s=document.getElementById('${id}');let on=false;setInterval(()=>{on=!on;if(s)s.style.filter=on?'drop-shadow(0 0 8px #f1c40f)':'none';},600);`,
@@ -1343,8 +1520,14 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de inclinación",
     voltaje: "3.3V",
     pines: [
-      { nombre: "Pata 1", color: CABLE.verde, clase: "digital", rol: "{0} (INPUT_PULLUP)" },
-      { nombre: "Pata 2", color: CABLE.marron, clase: "fijo", destino: "GND" },
+      // OTRA VEZ DOS COSAS DISTINTAS. Acá arriba hay un tilt PELADO: dos patas, una
+      // al GPIO con INPUT_PULLUP y la otra a masa. La pieza `wokwi-tilt-switch`
+      // publica `GND` `VCC` `OUT`, o sea el MÓDULO con comparador, que necesita
+      // alimentación propia. Anclar "Pata 1" a `OUT` dibujaría un módulo sin VCC:
+      // un circuito que no puede andar, con los cables saliendo prolijos de los
+      // agujeros equivocados. Se declara hasta que uno de los dos lados se mueva.
+      { nombre: "Pata 1", color: CABLE.verde, clase: "digital", rol: "{0} (INPUT_PULLUP)", pinPieza: { sinAnclaje: "la pieza es el MÓDULO de tilt (GND/VCC/OUT, con comparador) y el catálogo modela el interruptor pelado de dos patas: OUT no es una pata del switch, y el módulo además pide un VCC que este circuito no cablea." } },
+      { nombre: "Pata 2", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: { sinAnclaje: "misma discordancia: el GND de la pieza es la masa de alimentación del módulo, no la segunda pata del interruptor." } },
     ],
     advertencia: {
       esp32: "el sensor de inclinación (tilt) es como un interruptor que se activa al inclinarlo (una bolita adentro cierra el contacto). Detecta si algo se volcó o se movió. Usalo con INPUT_PULLUP.",
@@ -1362,9 +1545,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Módulo Relé",
     voltaje: "5V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "IN (señal)", color: CABLE.naranja, clase: "digital", rol: "{0}" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V5", pinPieza: "VCC" },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: "GND" },
+      { nombre: "IN (señal)", color: CABLE.naranja, clase: "digital", rol: "{0}", pinPieza: "IN" },
     ],
     advertencia:
       "el módulo relé es un interruptor que el ESP32 controla con un GPIO (pin IN). Sirve para prender/apagar cosas de POTENCIA (bomba, lámpara, motor). La bobina suele necesitar 5V (VCC a VIN). ⚡ El lado de 220V lo conecta SIEMPRE un adulto con todo apagado: nunca toques la red eléctrica con el ESP32.",
@@ -1376,8 +1559,8 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Bomba de agua",
     voltaje: "5V",
     pines: [
-      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé / fuente externa") },
-      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", destino: afuera("GND fuente") },
+      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé / fuente externa"), pinPieza: { sinAnclaje: "pb-bomba declara `sinPinesDibujados`: el SVG es cuerpo, impulsor y caño, los dos cables de potencia no están dibujados." } },
+      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", destino: afuera("GND fuente"), pinPieza: { sinAnclaje: "pb-bomba declara `sinPinesDibujados`: el SVG es cuerpo, impulsor y caño, los dos cables de potencia no están dibujados." } },
     ],
     advertencia:
       "la bomba de agua consume mucha corriente: NO se conecta directo al ESP32 (lo quemaría). Va por un relé o un driver, con su propia fuente (5V o 12V). El ESP32 solo manda la orden al relé.",
@@ -1389,8 +1572,8 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Electroválvula",
     voltaje: "5V",
     pines: [
-      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé / fuente 12V") },
-      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", destino: afuera("GND fuente") },
+      { nombre: "+ (potencia)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé / fuente 12V"), pinPieza: { sinAnclaje: "pb-valvula declara `sinPinesDibujados`: está el cuerpo del solenoide sobre el caño, los dos cables de la bobina no están dibujados." } },
+      { nombre: "− (potencia)", color: CABLE.marron, clase: "fijo", destino: afuera("GND fuente"), pinPieza: { sinAnclaje: "pb-valvula declara `sinPinesDibujados`: está el cuerpo del solenoide sobre el caño, los dos cables de la bobina no están dibujados." } },
     ],
     advertencia:
       "la electroválvula abre o cierra el paso de agua con electricidad. Suele ser de 12V: va por un relé con fuente externa, nunca directa al ESP32.",
@@ -1402,9 +1585,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Higrómetro de suelo",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: { sinAnclaje: "pb-higrometro declara `sinPinesDibujados`: lo dorado son los electrodos que se clavan en la tierra; los pads/header donde se sueldan los cables no están dibujados." } },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: { sinAnclaje: "pb-higrometro declara `sinPinesDibujados`: los pads/header no están dibujados." } },
+      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)", pinPieza: { sinAnclaje: "pb-higrometro declara `sinPinesDibujados`: el módulo comparador con VCC/GND/AO no está dibujado." } },
     ],
     advertencia: {
       esp32:
@@ -1419,9 +1602,9 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de lluvia",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "VLOGICA", pinPieza: { sinAnclaje: "pb-lluvia declara `sinPinesDibujados`: la grilla dorada es el área sensible a las gotas; el header de 2 pines no está dibujado." } },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: { sinAnclaje: "pb-lluvia declara `sinPinesDibujados`: el header de 2 pines no está dibujado." } },
+      { nombre: "AO (analógico)", color: CABLE.violeta, clase: "analogico", rol: "{0} (analógico)", pinPieza: { sinAnclaje: "pb-lluvia declara `sinPinesDibujados`: el módulo con VCC/GND/AO no está dibujado." } },
     ],
     advertencia: {
       esp32:
@@ -1436,10 +1619,10 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Sensor de presión BMP180",
     voltaje: "3.3V",
     pines: [
-      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3" },
-      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND" },
-      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA" },
-      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL" },
+      { nombre: "VCC", color: CABLE.rojo, clase: "fijo", destino: "V3", pinPieza: { sinAnclaje: "pb-bmp180 declara `sinPinesDibujados`: está la placa y el chip, la tira de 4 pines VCC/GND/SDA/SCL no está dibujada." } },
+      { nombre: "GND", color: CABLE.marron, clase: "fijo", destino: "GND", pinPieza: { sinAnclaje: "pb-bmp180 declara `sinPinesDibujados`: la tira de 4 pines no está dibujada." } },
+      { nombre: "SDA", color: CABLE.azul, clase: "fijo", destino: "SDA", pinPieza: { sinAnclaje: "pb-bmp180 declara `sinPinesDibujados`: la tira de 4 pines no está dibujada." } },
+      { nombre: "SCL", color: CABLE.violeta, clase: "fijo", destino: "SCL", pinPieza: { sinAnclaje: "pb-bmp180 declara `sinPinesDibujados`: la tira de 4 pines no está dibujada." } },
     ],
     advertencia: {
       esp32:
@@ -1462,8 +1645,11 @@ const COMPONENTES: Record<string, Componente> = {
     etiqueta: "Motor DC",
     voltaje: "5V",
     pines: [
-      { nombre: "+ (vía driver)", color: CABLE.rojo, clase: "fijo", destino: afuera("Driver (L298N/ULN2003)") },
-      { nombre: "− (vía driver)", color: CABLE.marron, clase: "fijo", destino: afuera("Driver") },
+      // pb-motor SÍ tiene sus dos lengüetas dibujadas y publicadas (`+` y `-`), así
+      // que se anclan aunque la otra punta caiga afuera de la placa: el que dibuja
+      // resuelve cada punta por separado.
+      { nombre: "+ (vía driver)", color: CABLE.rojo, clase: "fijo", destino: afuera("Driver (L298N/ULN2003)"), pinPieza: "+" },
+      { nombre: "− (vía driver)", color: CABLE.marron, clase: "fijo", destino: afuera("Driver"), pinPieza: "-" },
     ],
     advertencia: {
       esp32:
@@ -1483,10 +1669,10 @@ const COMPONENTES: Record<string, Componente> = {
     // CUATRO de sus seis pines ~ para nada, y el servo del mismo circuito se
     // quedaría sin dónde ir con seis pines PWM libres.
     pines: [
-      { nombre: "IN1", color: CABLE.naranja, clase: "digital", rol: "{0}" },
-      { nombre: "IN2", color: CABLE.amarillo, clase: "digital", rol: "{1}" },
-      { nombre: "IN3", color: CABLE.verde, clase: "digital", rol: "{2}" },
-      { nombre: "IN4", color: CABLE.azul, clase: "digital", rol: "{3}" },
+      { nombre: "IN1", color: CABLE.naranja, clase: "digital", rol: "{0}", pinPieza: { sinAnclaje: "pb-driver declara `sinPinesDibujados`: los cuatro círculos verdes son los LED indicadores, la tira IN1..IN4 no está dibujada." } },
+      { nombre: "IN2", color: CABLE.amarillo, clase: "digital", rol: "{1}", pinPieza: { sinAnclaje: "pb-driver declara `sinPinesDibujados`: la tira IN1..IN4 no está dibujada." } },
+      { nombre: "IN3", color: CABLE.verde, clase: "digital", rol: "{2}", pinPieza: { sinAnclaje: "pb-driver declara `sinPinesDibujados`: la tira IN1..IN4 no está dibujada." } },
+      { nombre: "IN4", color: CABLE.azul, clase: "digital", rol: "{3}", pinPieza: { sinAnclaje: "pb-driver declara `sinPinesDibujados`: la tira IN1..IN4 no está dibujada." } },
     ],
     advertencia: {
       esp32:
@@ -1502,8 +1688,8 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "5V",
     attrs: () => `encendido`,
     pines: [
-      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé ← Red 220V") },
-      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", destino: afuera("Red 220V") },
+      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé ← Red 220V"), pinPieza: { sinAnclaje: "pb-lampara declara `sinPinesDibujados`: no tiene terminales dibujados, tiene casquillo de rosca E27." } },
+      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", destino: afuera("Red 220V"), pinPieza: { sinAnclaje: "pb-lampara declara `sinPinesDibujados`: casquillo E27, sin terminales dibujados." } },
     ],
     advertencia:
       "⚡ PELIGRO 220V: la lámpara de red NUNCA se conecta al ESP32. El ESP32 manda un relé, y el relé conmuta los 220V. La parte de red la conecta un adulto/profesor con todo apagado.",
@@ -1516,8 +1702,8 @@ const COMPONENTES: Record<string, Componente> = {
     voltaje: "5V",
     attrs: () => `encendido`,
     pines: [
-      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé ← Red 220V") },
-      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", destino: afuera("Red 220V") },
+      { nombre: "Fase (vía relé)", color: CABLE.rojo, clase: "fijo", destino: afuera("Relé ← Red 220V"), pinPieza: { sinAnclaje: "pb-calefactor declara `sinPinesDibujados`: no tiene bornera ni cables dibujados." } },
+      { nombre: "Neutro", color: CABLE.marron, clase: "fijo", destino: afuera("Red 220V"), pinPieza: { sinAnclaje: "pb-calefactor declara `sinPinesDibujados`: no tiene bornera ni cables dibujados." } },
     ],
     advertencia:
       "⚡ PELIGRO 220V: el radiador eléctrico va por un relé, igual que la lámpara. El ESP32 solo controla el relé; los 220V los maneja un adulto.",
@@ -2048,8 +2234,16 @@ function armarCircuito(pedidos: Pedido[], placa: Placa, umbral?: number): Result
 
     // columna de conexiones: cada pin = nodo + etiqueta en cajita + cable CSS (flex).
     // El cable no tiene coordenadas: vive en la misma fila flex que su etiqueta, nunca se desalinea.
+    // Las dos puntas de cada cable, con los nombres que la PIEZA y la PLACA usan
+    // en el navegador. Acá sólo se emiten como atributos: el que dibuja los lee de
+    // `el.pinInfo` y le pregunta a la pieza viva dónde cae ese agujero. Si un
+    // atributo no está, ese cable se dibuja como hoy — el fallback es por cable.
+    const filasIdx = indicesDeFila(def.pines)
     const conex = def.pines
-      .map((pin) => {
+      .map((pin, fila) => {
+        const anclas = anclajesDeCable(pin, filasIdx[fila] ?? null, pines, placa)
+        const dPlaca = anclas.placa ? ` data-placa="${anclas.placa.join(" ")}"` : ""
+        const dPieza = anclas.pieza ? ` data-pieza="${anclas.pieza.join(" ")}"` : ""
         const destino = etiquetaDe(pin, pines)
         // R en serie: solo cuando "(con XΩ)" CIERRA la etiqueta (LED, RGB). El caso
         // "7 pines (cada segmento con 220Ω)" no matchea a proposito (una sola R para 7 pines mentiria).
@@ -2061,7 +2255,7 @@ function armarCircuito(pedidos: Pedido[], placa: Placa, umbral?: number): Result
         const cable = valorR
           ? `<span class="cable"></span><span class="res" title="Resistencia de ${valorR}Ω en serie">${valorR}Ω</span><span class="cable"></span>`
           : `<span class="cable"></span>`
-        return `          <div class="pin" style="--c:${pin.color}">
+        return `          <div class="pin" style="--c:${pin.color}"${dPlaca}${dPieza}>
             <span class="nodo"></span>
             <span class="label"><span class="nom">${pin.nombre}</span><span class="gpio">${etiqueta}</span></span>
             ${cable}
@@ -2588,6 +2782,12 @@ async function copiarBiblioteca(dir: string, bundle: string): Promise<void> {
   const extra = extraPath()
   const extraLocal = join(dir, "componentes-extra.js")
   if (existsSync(extra) && hayQueCopiar(extra, extraLocal)) await Bun.write(extraLocal, Bun.file(extra))
+  // Mismo criterio que `componentes-extra.js`: si no está, la hoja sale con los cables
+  // CSS de siempre. El <script> queda igual y el 404 no rompe nada — es el único asset
+  // que se puede perder sin consecuencias, y por eso no entra en `faltanPiezasDibujadas`.
+  const cables = cablesPath()
+  const cablesLocal = join(dir, "cables.js")
+  if (existsSync(cables) && hayQueCopiar(cables, cablesLocal)) await Bun.write(cablesLocal, Bun.file(cables))
 }
 
 /**
@@ -2751,6 +2951,7 @@ function construirHTML(p: Plantilla, scriptSrc: string): string {
 <title>Tecnia Bot — ${p.titulo}</title>
 <script src="${scriptSrc}"></script>
 <script src="componentes-extra.js"></script>
+<script src="cables.js"></script>
 <style>${ESTILO}</style>
 </head>
 <body>
