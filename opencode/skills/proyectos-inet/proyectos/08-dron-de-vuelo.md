@@ -6,6 +6,9 @@
 ## De qué se trata
 Es un **proyecto de kit/app**: no hay nada que cablear, soldar ni montar en una placa. El dron **DJI Tello** se controla íntegramente desde el celular o la tablet, conectándose a la red WiFi que el propio dron genera. Se usan dos apps: **Tello EDU** (programación por bloques) y **Tello** (vuelo manual con cámara). No hay Arduino UNO ni ESP32, ni código C++, ni tabla de pines.
 
+## Seguridad antes de volar ⚠️
+> ⚠️ **SEGURIDAD:** las hélices giran a alta velocidad y cortan si tocan un dedo. Antes de CADA despegue hay que despejar la zona de vuelo (mesas, mochilas, compañeros circulando) y volar solo dentro del área marcada con cinta. Nadie se para debajo del dron ni en su trayectoria, y el vuelo va siempre a la altura de la cintura o más abajo — NUNCA a la altura de la cara/ojos de un compañero. Un/a profesor/a supervisa cada vuelo desde el despegue y tiene la app abierta con el botón de **Emergency Stop** a mano (corta los motores al instante) para cortar el vuelo ante cualquier imprevisto.
+
 ## Los niveles
 - **Inicial — Primeros vuelos: manual y por bloques**: instalar Tello EDU, conectar el dispositivo a la red del dron, volar manualmente con los joysticks en pantalla (despegar, recorrer, aterrizar en una zona marcada con cinta), y luego repetir ese recorrido por bloques (Take Off → movimientos → Land).
 - **Intermedio — Repetir el recorrido y medir la temperatura**: usar el bloque **Repeat n times** para no copiar y pegar bloques, y crear variables (`Min`, `Max`) que se asignan con bloques `Set` a partir de `Min Temperature`/`Max Temperature` del sensor de a bordo del dron.
