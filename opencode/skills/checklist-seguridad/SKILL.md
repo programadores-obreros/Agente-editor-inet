@@ -1,18 +1,40 @@
 ---
 name: checklist-seguridad
-description: Chequeo de seguridad ANTES de dar corriente o cargar código - los 3.3V del ESP32, polaridad del LED, componentes que van a 5V (VIN), cables pelados, GND común. Evita quemar la placa o los componentes. Es el "pará, revisemos antes de prender" que salva el hardware del aula.
+description: Chequeo de seguridad ANTES de dar corriente o cargar código - incluye el peligro de la RED ELÉCTRICA (220V) en relé, lámpara, bomba, calefactor o cualquier carga enchufada, y además los 3.3V del ESP32, polaridad del LED, componentes que van a 5V (VIN), cables pelados, GND común. Protege primero a la persona y después al equipo. Es el "pará, revisemos antes de prender" del aula, e impone que el lado de 220V lo cablee SIEMPRE un adulto con todo desenergizado.
 ---
 
 # Checklist de seguridad — revisá ANTES de dar corriente
 
-Este skill es PREVENTIVO: se usa **antes** de que el alumno conecte el USB, cargue el código o alimente el circuito. La otra cara del `gotchas-hardware` (que es para cuando algo YA falló). Acá el objetivo es que **no se queme nada** — una placa quemada frena la clase y cuesta plata que la escuela no siempre tiene.
+Este skill es PREVENTIVO: se usa **antes** de que el alumno conecte el USB, cargue el código o alimente el circuito. La otra cara del `gotchas-hardware` (que es para cuando algo YA falló). Acá el objetivo es doble, y en este orden: **que no se lastime nadie** y **que no se queme nada**. Una placa quemada frena la clase y cuesta plata que la escuela no siempre tiene; la red eléctrica no da revancha.
 
 **Cuándo activar este skill:**
 - Cuando el alumno está por **cargar código a la placa** o **darle corriente** al circuito.
 - Cuando pregunta "¿puedo prenderlo?", "¿está bien conectado?", "¿lo conecto?", "¿le doy USB?".
+- **Y SIEMPRE que aparezca la red eléctrica**, aunque no lo pregunte así: "¿le doy corriente a la lámpara?", "¿conecto el relé al 220?", "¿enchufo la bomba?", "¿lo conecto al toma?", "¿lo enchufo?". Si hay un enchufe en la historia, este skill se activa.
 - Cuando terminan de armar un circuito (después de usar el tool `circuito`), antes de energizarlo.
 
-**Cómo usarlo:** NO le tires las 8 verificaciones de golpe (lo abrumás). Armá un checklist CORTO y a medida del circuito que están haciendo — 3 o 4 ítems, los que apliquen a SUS componentes. Presentalo como una lista simple de "sí/no" y esperá que confirme antes de decir "dale, prendé". Con calidez: no es un examen, es cuidar el trabajo.
+**Cómo usarlo:** NO le tires las 9 verificaciones de golpe (lo abrumás). Armá un checklist CORTO y a medida del circuito que están haciendo — 3 o 4 ítems, los que apliquen a SUS componentes. Presentalo como una lista simple de "sí/no" y esperá que confirme antes de decir "dale, prendé". Con calidez: no es un examen, es cuidar el trabajo.
+
+**La única excepción a "elegí 3 o 4":** si en el circuito hay red eléctrica, el **ítem 9 no es opcional y va primero**. No se tilda solo, no se asume, y hasta que no esté respondido no se dice "dale, prendé".
+
+## 🛑 ALTO — si hay 220V, esto se chequea PRIMERO
+
+Todo lo que sigue en este skill protege **la placa**. Esto protege **al pibe**, así que va antes.
+
+Si el circuito toca la red eléctrica —un relé que enciende una lámpara, una bomba, un calefactor, una resistencia, cualquier cosa que termine en un enchufe— **el lado de 220V lo conecta SIEMPRE un adulto/profesor, con todo desenergizado y los cables bien aislados. La red eléctrica mata. Esto no es negociable.**
+
+Antes de dar corriente, estas cuatro tienen que estar respondidas. No se asumen:
+
+1. **¿Está desenchufado AHORA?** Nada del lado de 220V se toca con el circuito enchufado. Ni para "acomodar un cable".
+2. **¿Lo cableó un adulto?** El alumno arma el lado de baja tensión (la placa, el módulo relé por el lado de 5V). El lado de red lo hace el docente.
+3. **¿No hay cobre a la vista del lado de red?** Ni bornera abierta, ni cable pelado, ni ficha a medio armar. Aislado y cerrado.
+4. **¿El relé aguanta la carga?** Mirá lo impreso en el módulo (un SRD-05VDC-SL-C típico dice 10A/250VAC) contra lo que vas a enchufar. Un calefactor de 2000W tira ~9A: está al borde. Si no te da el número, no lo enchufes.
+
+**Y la regla que no cambia nunca:** el micro **NO toca los 220V jamás**. El micro maneja el relé por el lado de 5V, y el relé es el único que conmuta la red. Si en el dibujo hay un cable que va del GPIO a algo enchufado, está mal y no se prende.
+
+Para el detalle por componente (lámpara, calefactor, bomba) está el skill `actuadores`, que trae los diagramas con la zona segura y la zona peligrosa separadas. Pero **el permiso para prender se da acá**, no allá.
+
+**Para el alumno:** "Esta parte no la armás vos, y no es porque no sepas: es porque la corriente del enchufe no perdona un error. Vos hacés todo el lado de 5 voltios, que es donde está lo interesante, y el profe conecta los 220 con todo desenchufado. Cuando esté cerrado y aislado, recién ahí le damos corriente."
 
 ## ⚡ El check que MÁS quema placas: 3.3V vs 5V
 
@@ -34,6 +56,7 @@ Este skill es PREVENTIVO: se usa **antes** de que el alumno conecte el USB, carg
 6. **¿Señal de 5V entrando a un GPIO del ESP32?** (ej: ECHO del HC-SR04) → tiene que pasar por un divisor de tensión primero. Nunca directo. **Este ítem es sólo del ESP32:** si estás en un **Arduino UNO**, saltealo — la placa entera es de 5V y sus entradas toleran 5V, así que el ECHO va directo al pin y el divisor sobra.
 7. **¿La placa correcta seleccionada?** Antes de cargar, que el proyecto apunte a tu placa (UNO / ESP32) y al puerto correcto. Cargar el binario equivocado no rompe el hardware, pero no va a andar.
 8. **¿Strapping pins libres al arrancar?** En el ESP32, GPIO0, 2, 12 y 15 son "strapping": el chip les mira el nivel en el instante del encendido para decidir **cómo** arranca. El más peligroso es **GPIO12**: si está en HIGH al dar corriente, configura la memoria flash a 1,8V y la placa **no bootea** — sin mensaje de error, sin nada. Usá los pines seguros: **GPIO4, 5, 18, 19, 21, 22, 23, 25, 26, 27**.
+9. 🛑 **¿Hay 220V en el circuito?** Si la respuesta es sí, **este ítem va primero y no es opcional** (ver la sección ALTO al principio): desenchufado ahora, lado de red cableado por un adulto, sin cobre a la vista, y el relé con amperaje suficiente para la carga. El micro nunca toca la red. Si algo de esto no está, **no se prende**.
 
 ## Por componente — quién necesita 5V (VIN)
 
@@ -46,7 +69,7 @@ Este skill es PREVENTIVO: se usa **antes** de que el alumno conecte el USB, carg
 | PIR (movimiento) | **VIN (5V)** | OUT = 3.3V en el HC-SR501 (trae regulador), OK directo; sólo módulos mini sin regulador pueden dar 5V: medí antes |
 | LCD 16x2 (I2C) | **UNO: 5V y listo.** ESP32: ⚠️ **no hay respuesta simple** — leé la nota de abajo | SDA/SCL **NO** son tolerantes a 5V en el ESP32. En **UNO el problema no existe**: la placa ya es de 5V, no hace falta conversor de nivel |
 | DHT11/22 | 3.3V | la plaqueta de 3 pines **ya trae** su pull-up; sólo el sensor pelado de 4 patas necesita uno externo |
-| Relé | según módulo (muchos 5V → VIN) | separá la potencia de la lógica |
+| Relé | según módulo (muchos 5V → VIN) | separá la potencia de la lógica. 🛑 **Si el otro lado va a 220V, leé la sección ALTO del principio antes de conectar nada**: lo cablea un adulto, desenergizado y aislado |
 
 ## ⚠️ El LCD 16x2 con mochila I2C — el que parecía fácil y no lo es
 
