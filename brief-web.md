@@ -33,6 +33,16 @@ Es un sitio **estático** (HTML + CSS + JS, sin backend), pensado para publicars
 | **Hardware que enseña** | Arduino UNO, ESP32, sensores y actuadores del kit escolar |
 | **País** | Argentina 🇦🇷 |
 
+> ⚠️ **Aviso obligatorio sobre la fila "Costo" — no lo omitas al armar el sitio.**
+> El "gratis, sin API keys" es real pero tiene una cláusula que el README ya avisa
+> (secciones "Tecnologías" e "Instalación") y que la web tiene que avisar también,
+> con el mismo texto, sin suavizarlo: Es gratis **por tiempo limitado**, y ⚠️
+> mientras dure esa etapa **OpenCode puede usar lo que se escribe en el chat para
+> mejorar el modelo**: no pongas datos personales ni nombres de alumnos en la
+> conversación. Esto es sobre el **modelo de lenguaje** (Big Pickle, el que se usa
+> sin API key de Google) — no confundir con el aviso de privacidad de la web en sí
+> (sección 8, "No pedir datos personales"), que es otro tema.
+
 ### Comandos de instalación (reales, no los cambies)
 
 **Windows** (no necesita permisos de administrador):
