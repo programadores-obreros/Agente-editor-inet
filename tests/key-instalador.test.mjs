@@ -311,12 +311,35 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
  * hace dot-sourcing de otro: cada uno se copia y corre solo), igual que la
  * búsqueda de PlatformIO. Lo que las mantiene honestas es este test.
  */
+/**
+ * Corta el bloque que va de `desde` hasta `hasta`, buscando el cierre SIEMPRE
+ * DESPUÉS de la apertura.
+ *
+ * Los cinco cortes buscaban el marcador de cierre desde el principio del
+ * archivo, y eso es una bomba de tiempo: el día que aparezca una ocurrencia del
+ * marcador ANTES del bloque, `slice()` devuelve "" y el test se cae con un
+ * "¿se renombró?" que manda a buscar el problema al lugar equivocado. Pasó de
+ * verdad: al hacer atómica la escritura de `clave.ts` se agregó un `} catch (e) {`
+ * en la línea 205, y el clasificador vive en la 433 — el corte quedó invertido.
+ *
+ * Y falla RUIDOSO a propósito si no encuentra alguna de las dos puntas, en vez
+ * de devolver un bloque cortado a medias que después pase los assert de abajo
+ * por casualidad.
+ */
+function bloqueEntre(codigo, desde, hasta, nombre) {
+  const ini = codigo.indexOf(desde)
+  assert.ok(ini !== -1, `${nombre}: no encontré la apertura ${JSON.stringify(desde)} (¿se renombró?)`)
+  const fin = codigo.indexOf(hasta, ini + desde.length)
+  assert.ok(fin !== -1, `${nombre}: no encontré el cierre ${JSON.stringify(hasta)} DESPUÉS de la apertura`)
+  return codigo.slice(ini, fin)
+}
+
 const CLASIFICADORES = [
-  ["install.ps1 (PowerShell)", ps1Codigo.slice(ps1Codigo.indexOf("function Clasificar-RespuestaGoogle"), ps1Codigo.indexOf("function Probar-KeyGoogle"))],
-  ["install.sh (python3)", shCodigo.slice(shCodigo.indexOf("def clasificar(codigo, cuerpo)"), shCodigo.indexOf("cuerpo = json.dumps"))],
-  ["install.sh (bash + curl)", shCodigo.slice(shCodigo.indexOf("clasificar_respuesta_google() {"), shCodigo.indexOf("probar_key_google() {"))],
-  ["opencode/tool/clave.ts", claveCodigo.slice(claveCodigo.indexOf("if (res.ok) return"), claveCodigo.indexOf("} catch (e) {"))],
-  ["install/chequear-clave.ps1 (lanzador)", chequeoCodigo.slice(chequeoCodigo.indexOf("function Clasificar-RespuestaGoogle"), chequeoCodigo.indexOf("function Probar-KeyGoogle"))],
+  ["install.ps1 (PowerShell)", bloqueEntre(ps1Codigo, "function Clasificar-RespuestaGoogle", "function Probar-KeyGoogle", "install.ps1 (PowerShell)")],
+  ["install.sh (python3)", bloqueEntre(shCodigo, "def clasificar(codigo, cuerpo)", "cuerpo = json.dumps", "install.sh (python3)")],
+  ["install.sh (bash + curl)", bloqueEntre(shCodigo, "clasificar_respuesta_google() {", "probar_key_google() {", "install.sh (bash + curl)")],
+  ["opencode/tool/clave.ts", bloqueEntre(claveCodigo, "if (res.ok) return", "} catch (e) {", "opencode/tool/clave.ts")],
+  ["install/chequear-clave.ps1 (lanzador)", bloqueEntre(chequeoCodigo, "function Clasificar-RespuestaGoogle", "function Probar-KeyGoogle", "install/chequear-clave.ps1 (lanzador)")],
 ]
 
 test("hay CUATRO clasificaciones en los scripts (más la del tool) y ninguna se perdió", () => {

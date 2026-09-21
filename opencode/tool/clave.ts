@@ -1,7 +1,7 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -167,14 +167,51 @@ function leerJson(ruta: string): Lectura {
 }
 
 /**
- * Escribe JSON en UTF-8 PLANO, sin BOM (ver el comentario de leerJson).
- * `writeFileSync(..., "utf8")` de Node/Bun no agrega BOM: la trampa era de
- * PowerShell. Lo que sí hay que cuidar es no ARRASTRAR el BOM que ya estaba, y
- * eso lo resuelve la lectura de arriba, que lo saca del texto antes de parsear.
+ * Escribe JSON en UTF-8 PLANO, sin BOM (ver el comentario de leerJson), y de
+ * forma ATÓMICA.
+ *
+ * POR QUÉ ATÓMICA. Un `writeFileSync` directo sobre `ruta` TRUNCA el archivo y
+ * lo va llenando de a poco. Si el proceso muere en el medio —la notebook de una
+ * escuela se apaga por batería, alguien cierra la tapa, corte de luz— el
+ * archivo queda A MEDIAS. `leerJson()` lo detecta como "no-parsea", pero recién
+ * la PRÓXIMA VEZ que alguien llame a `/clave`: mientras tanto NINGUNA
+ * credencial funciona, no sólo la de Google.
+ *
+ * La cura es el patrón clásico: escribir en un archivo temporal y hacer
+ * `renameSync` sobre el destino. `rename()` es atómico en POSIX y en NTFS — en
+ * el destino siempre queda o el archivo VIEJO entero, o el NUEVO entero, nunca
+ * una mezcla de los dos.
+ *
+ * EL TEMPORAL TIENE QUE QUEDAR EN EL MISMO DIRECTORIO QUE EL DESTINO. No se te
+ * ocurra "simplificarlo" a `os.tmpdir()`: `rename()` entre sistemas de archivos
+ * distintos tira EXDEV (falla), y ahí el "arreglo" termina perdiendo justo el
+ * archivo que se quería proteger. El nombre de acá abajo se arma pegado a
+ * `ruta` a propósito, no al lado.
  */
-function escribirJsonSinBom(ruta: string, datos: unknown): void {
+function escribirJsonSinBom(ruta: string, datos: unknown, opts?: { soloDueño?: boolean }): void {
   mkdirSync(dirname(ruta), { recursive: true })
-  writeFileSync(ruta, `${JSON.stringify(datos, null, 2)}\n`, "utf8")
+  const temp = `${ruta}.${process.pid}.tmp` // ← mismo directorio que `ruta`, ver comentario de arriba
+  try {
+    writeFileSync(temp, `${JSON.stringify(datos, null, 2)}\n`, "utf8")
+    // auth.json tiene una credencial adentro: el temporal se pone en 0600 ANTES
+    // del rename, para que nunca exista una ventana en la que el archivo sea
+    // legible por cualquier otra cuenta de la compu. `rename` trae los permisos
+    // del TEMPORAL, no los del archivo que reemplaza — por eso el chmod va acá
+    // y no después. (En Windows `chmodSync` sólo puede tocar el bit de
+    // solo-lectura: no hay ACL por cuenta que tapar desde acá, pero tampoco
+    // rompe nada.)
+    if (opts?.soloDueño) chmodSync(temp, 0o600)
+    renameSync(temp, ruta)
+  } catch (e) {
+    // No dejar el `.tmp` tirado en la carpeta de config del docente si algo
+    // falló en el medio (disco lleno, permiso denegado, antivirus).
+    try {
+      unlinkSync(temp)
+    } catch {
+      // El temporal ni llegó a crearse, o ya no está: no hay nada que limpiar.
+    }
+    throw e
+  }
 }
 
 /** La key de Google guardada en auth.json, o "" si no hay. NUNCA se imprime. */
@@ -210,7 +247,8 @@ function escribirClaveEnAuth(clave: string | null): Escritura {
   else datos["google"] = { type: "api", key: clave }
 
   try {
-    escribirJsonSinBom(ruta, datos)
+    // soloDueño: auth.json guarda una credencial, ver el comentario de escribirJsonSinBom.
+    escribirJsonSinBom(ruta, datos, { soloDueño: true })
   } catch {
     return { ok: false, motivo: "no-escribio" }
   }

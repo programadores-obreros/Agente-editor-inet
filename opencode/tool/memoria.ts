@@ -1,8 +1,8 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import { homedir } from "node:os"
-import { join } from "node:path"
-import { existsSync, readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 
 // Memoria de progreso de ESTA computadora/grupo. NO es un perfil personal:
 // no guarda el nombre ni nada que identifique a un alumno (Ley 25.326 — en las
@@ -86,6 +86,50 @@ function renderMemoria(memoria: Memoria): string {
 `
 }
 
+/**
+ * Escribe un archivo de texto de forma ATÓMICA: pasa por un temporal y un
+ * `renameSync`, nunca un `writeFileSync` directo sobre `ruta`.
+ *
+ * POR QUÉ. `writeFileSync` sola trunca el archivo y lo va llenando de a poco.
+ * Si el proceso muere en el medio (notebook de escuela que se queda sin
+ * batería, tapa que se cierra, corte de luz) `tecnia-memoria.md` queda A
+ * MEDIAS, y se pierde el progreso pedagógico de la máquina sin que nadie se
+ * entere hasta la próxima lectura. `rename()` es atómico en POSIX y en NTFS:
+ * en el destino siempre queda el archivo VIEJO entero o el NUEVO entero.
+ *
+ * Está duplicada, igual que `escribirJsonSinBom` en `clave.ts` y que
+ * `comoUrl` en `ayuda.ts`/`ficha.ts`/`imprimible.ts`/`circuito.ts`: este repo
+ * no tiene carpeta de código compartido entre tools, y una docena de líneas
+ * repetidas sale más barato que inventar esa capa.
+ *
+ * EL TEMPORAL VA AL LADO DEL DESTINO, EN EL MISMO DIRECTORIO — nunca
+ * `os.tmpdir()`. `rename()` entre sistemas de archivos distintos tira EXDEV
+ * (falla), y ahí se pierde justo el archivo que se quería proteger.
+ *
+ * Se usa `node:fs` y no `Bun.write`: la razón de `Bun.write` en este archivo
+ * era escribir sin pasar por el permiso 'write' del AGENTE (el gate de
+ * OpenCode para las tools del modelo), y `node:fs` llamado desde acá adentro
+ * lo evita exactamente igual — es código del tool, no una invocación del tool
+ * `write`. Lo que sí hace falta acá es `renameSync`, que Bun no ofrece con un
+ * nombre propio: mezclar `Bun.write` para el temporal y `node:fs` para el
+ * rename sería dos APIs para una sola operación, sin ninguna ventaja.
+ */
+function escribirArchivoAtomico(ruta: string, contenido: string): void {
+  mkdirSync(dirname(ruta), { recursive: true })
+  const temp = `${ruta}.${process.pid}.tmp` // ← mismo directorio que `ruta`, ver comentario de arriba
+  try {
+    writeFileSync(temp, contenido, "utf8")
+    renameSync(temp, ruta)
+  } catch (e) {
+    try {
+      unlinkSync(temp) // no dejar basura en la carpeta de config si algo falló en el medio
+    } catch {
+      // el temporal ni llegó a crearse, o ya no está: no hay nada que limpiar.
+    }
+    throw e
+  }
+}
+
 export default tool({
   description: `Memoria de progreso de ESTA computadora/grupo (NO es un perfil personal: no guarda nombre ni datos de ningun alumno). Recuerda entre sesiones el nivel, los proyectos hechos, el ultimo proyecto y el proyecto EN CURSO (uno guiado paso a paso), para adaptar como explicas y retomar exacto donde quedaron.
 
@@ -147,8 +191,7 @@ Acciones:
 
     const ruta = memoriaPath()
     try {
-      // Bun.write escribe directo, sin depender del permiso 'write' del agente.
-      await Bun.write(ruta, renderMemoria(actual))
+      escribirArchivoAtomico(ruta, renderMemoria(actual))
     } catch (e) {
       return `No pude guardar el progreso (${e instanceof Error ? e.message : "error"}). Igual seguimos.`
     }

@@ -27,7 +27,7 @@
 import { test, before, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
@@ -565,6 +565,89 @@ test("la key viaja en el header, no en la URL (una URL termina adentro de los er
   assert.ok(!String(url).includes(KEY), "la key va en el query string: se filtra en cualquier mensaje de error")
   assert.equal(opts.headers["x-goog-api-key"], KEY, "la key no viaja en el header de Google")
   assert.ok(opts.signal, "sin AbortSignal el chat se cuelga esperando a Google")
+})
+
+// ---------------------------------------------------------------------------
+// 6b. Escritura atomica (temp + rename). Ver el comentario de
+// escribirJsonSinBom en clave.ts: sin esto, un corte de luz a mitad de
+// escritura deja auth.json truncado, y NINGUNA credencial funciona (no sólo la
+// de Google) hasta la próxima vez que alguien llame a /clave.
+// ---------------------------------------------------------------------------
+
+// El modulo corre EN ESTE MISMO proceso (se importa dinamicamente), asi que
+// puede predecirse el nombre exacto del temporal que usa: `${ruta}.${pid}.tmp`.
+const tempDeAuth = () => `${authPath()}.${process.pid}.tmp`
+const tempDeConfig = () => `${configPath()}.${process.pid}.tmp`
+
+test("atomico: guardar bien no deja ningun .tmp huerfano ni en auth.json ni en opencode.json", async () => {
+  escribirAuth({})
+  googleContesta("anda")
+  await mod.execute({ accion: "guardar", clave: KEY }, {})
+  assert.deepEqual(
+    readdirSync(dirname(authPath())).filter((f) => f.endsWith(".tmp")),
+    [],
+    "quedo un temporal sin limpiar al lado de auth.json",
+  )
+  assert.deepEqual(
+    readdirSync(dirname(configPath())).filter((f) => f.endsWith(".tmp")),
+    [],
+    "quedo un temporal sin limpiar al lado de opencode.json",
+  )
+})
+
+test("atomico: los temporales quedan en el MISMO directorio que su destino (no os.tmpdir())", () => {
+  assert.equal(dirname(tempDeAuth()), dirname(authPath()), "el temporal de auth.json no queda al lado del destino")
+  assert.equal(dirname(tempDeConfig()), dirname(configPath()), "el temporal de opencode.json no queda al lado del destino")
+})
+
+test("atomico: si falla a mitad de escribir auth.json, la key VIEJA sobrevive intacta", async () => {
+  escribirAuth({ google: { type: "api", key: OTRA_KEY } })
+  const antes = authBytes()
+  googleContesta("anda")
+
+  // Se ocupa el path exacto del temporal ANTES de que el modulo lo use: al
+  // existir como directorio, el writeFileSync(temp, ...) de adentro de
+  // escribirJsonSinBom falla con EISDIR — una falla real del sistema de
+  // archivos, sin mockear nada del modulo. Simula "murio a mitad de escribir".
+  mkdirSync(tempDeAuth(), { recursive: true })
+
+  const r = await mod.execute({ accion: "guardar", clave: KEY }, {})
+
+  assert.match(r, /no pude guardar la key en/i, "no avisa que la escritura fallo")
+  assert.match(r, /no quedó/i, "no aclara que NO quedó guardada")
+  assert.deepEqual(authBytes(), antes, "la key vieja se perdio o se corrompio")
+  assert.equal(configJson().agent, undefined, "cambio el modelo del agente aunque auth.json no se pudo escribir")
+
+  rmSync(tempDeAuth(), { recursive: true, force: true })
+})
+
+test("atomico: si falla a mitad de escribir opencode.json, el modelo VIEJO sobrevive (y la key SI quedo guardada)", async () => {
+  escribirAuth({})
+  escribirConfig({ $schema: "https://opencode.ai/config.json", default_agent: "tecnia-bot" })
+  const antesConfig = readFileSync(configPath(), "utf8")
+  googleContesta("anda")
+
+  mkdirSync(tempDeConfig(), { recursive: true })
+
+  const r = await mod.execute({ accion: "guardar", clave: KEY }, {})
+
+  assert.match(r, /no pude escribir/i, "no avisa que no pudo escribir opencode.json")
+  assert.equal(readFileSync(configPath(), "utf8"), antesConfig, "opencode.json se perdio o se corrompio")
+  // La escritura de auth.json ocurre ANTES que la de opencode.json (ver aplicar()
+  // en clave.ts): que una falle no puede tirar a la basura lo que la otra ya logró.
+  assert.equal(authJson().google.key, KEY, "la key deberia haber quedado guardada aunque el modelo no cambiara")
+
+  rmSync(tempDeConfig(), { recursive: true, force: true })
+})
+
+test("atomico: auth.json queda con permisos solo-dueño (0600), por la credencial adentro", { skip: process.platform === "win32" }, async () => {
+  // En Windows chmodSync solo puede tocar el bit de solo-lectura (no hay ACL por
+  // cuenta que restringir desde node:fs), asi que este test no aplica ahi.
+  escribirAuth({})
+  googleContesta("anda")
+  await mod.execute({ accion: "guardar", clave: KEY }, {})
+  const modo = statSync(authPath()).mode & 0o777
+  assert.equal(modo, 0o600, `auth.json quedo con permisos ${modo.toString(8)}, esperaba 600`)
 })
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@
 
 import { test, before, beforeEach } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
@@ -21,7 +21,8 @@ const perfilFile = join(cfg, "opencode", "tecnia-perfil.md")
 
 let mod
 
-globalThis.Bun = { write: async (ruta, contenido) => writeFileSync(ruta, contenido) }
+// La escritura la hace el propio modulo con node:fs (escribirArchivoAtomico):
+// no hace falta mockear Bun.write, se ejercita el codigo real de escritura.
 
 before(async () => {
   mkdirSync(join(cfg, "opencode"), { recursive: true })
@@ -111,4 +112,43 @@ test("grupo: actualizar a la misma persona NO la duplica", async () => {
   assert.equal(cuenta, 1, "Marta debe aparecer una sola vez")
   assert.match(g, /mujer/, "conserva el género del guardado anterior")
   assert.match(g, /ESP32/, "y suma la placa nueva")
+})
+
+// ---------------------------------------------------------------------------
+// Escritura atomica (temp + rename). Ver el comentario de escribirArchivoAtomico
+// en perfil.ts: sin esto, un corte de luz a mitad de escritura deja el archivo
+// truncado y se pierde (o se corrompe) el perfil guardado sin aviso.
+// ---------------------------------------------------------------------------
+
+// El modulo corre EN ESTE MISMO proceso (se importa dinamicamente), asi que
+// puede predecirse el nombre exacto del temporal que usa: `${ruta}.${pid}.tmp`.
+const tempDePerfil = () => `${perfilFile}.${process.pid}.tmp`
+
+test("atomico: una escritura exitosa no deja ningun .tmp huerfano al lado del archivo", async () => {
+  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Marta" }, {})
+  const huerfanos = readdirSync(dirname(perfilFile)).filter((f) => f.endsWith(".tmp"))
+  assert.deepEqual(huerfanos, [], "quedo un temporal sin limpiar tras una escritura exitosa")
+})
+
+test("atomico: el temporal se arma en el MISMO directorio que el destino (no os.tmpdir())", () => {
+  assert.equal(dirname(tempDePerfil()), dirname(perfilFile), "el temporal no queda al lado del destino")
+})
+
+test("atomico: si la escritura falla en el medio, el perfil VIEJO sobrevive intacto", async () => {
+  await mod.execute({ accion: "guardar", modo: "personal", nombre: "Sofia", genero: "mujer" }, {})
+  const antes = readFileSync(perfilFile, "utf8")
+
+  // Se ocupa el path exacto del temporal ANTES de que el modulo lo use: al
+  // existir como directorio, el writeFileSync(temp, ...) de adentro de
+  // escribirArchivoAtomico falla con EISDIR — una falla real del sistema de
+  // archivos, sin mockear nada del modulo. Simula "murio a mitad de escribir".
+  mkdirSync(tempDePerfil(), { recursive: true })
+
+  const r = await mod.execute({ accion: "guardar", modo: "personal", nombre: "Otro nombre que no deberia entrar" }, {})
+  assert.match(r, /no pude guardar/i, "no avisa que la escritura fallo")
+
+  assert.equal(readFileSync(perfilFile, "utf8"), antes, "el perfil viejo se perdio o se corrompio")
+  assert.doesNotMatch(antes, /Otro nombre que no deberia entrar/, "el test no armo bien el caso")
+
+  rmSync(tempDePerfil(), { recursive: true, force: true })
 })
