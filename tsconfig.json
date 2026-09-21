@@ -10,7 +10,9 @@
     "skipLibCheck": true,
     "types": ["node", "bun"],
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": false,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid"
   },
-  "include": ["opencode/tool/**/*.ts"]
+  "include": ["opencode/tool/**/*.ts", "opencode/plugins/**/*.ts", "opencode/plugins/**/*.tsx"]
 }
