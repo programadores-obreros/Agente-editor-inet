@@ -278,10 +278,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-          cache: pip
+      # SIN `cache: pip`, y no es un olvido: setup-python arma la clave del cache
+      # a partir de un requirements.txt o un pyproject.toml, y si no encuentra
+      # ninguno FALLA EL PASO ("No file matched to [**/requirements.txt or
+      # **/pyproject.toml]"). Aca no hay ninguno de los dos a proposito -es una
+      # sola dependencia, PyYAML- asi que pedir cache tiraba abajo el job entero
+      # antes de validar una sola skill. Se descubrio en el primer runner real:
+      # localmente el YAML parsea igual, el error solo existe en Actions.
+      #
       # PyYAML puro, sin requirements.txt: es el mismo parser que rompio con las
       # dos description sin comillas de la auditoria v0.4.1, y se instala en
-      # segundos (wheel precompilado, sin toolchain).
+      # segundos (wheel precompilado, sin toolchain), asi que el cache tampoco
+      # ahorraba nada que valga la pena.
       - name: Instalar PyYAML
         run: pip install --quiet pyyaml
       # Parsea el frontmatter de cada SKILL.md como lo haria un runtime con YAML
