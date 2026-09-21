@@ -191,13 +191,47 @@ Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
 ;
 ; Es seguro barrer {app} entero: es %LOCALAPPDATA%\TecniaBot y ahí no hay nada
 ; del docente. Sus proyectos viven en Documentos\Tecnia Bot, que no se toca.
+;
+; Este borrado se lleva puesto install\uninstall.ps1 -está adentro de {app}-,
+; así que TIENE que pasar después de que [UninstallRun] ya lo corrió. Es el
+; orden por defecto de Inno (las entradas de [UninstallRun] se ejecutan al
+; entrar a usUninstall, antes de que se borren los archivos de esta sección y
+; los de [Files]), y es el mismo orden que ya usaba la versión vieja de esta
+; sección: si estuviera al revés, la sola línea `-Conservar` de más abajo ya
+; hubiera estado fallando con "no se encontró uninstall.ps1" desde siempre.
 Type: filesandordirs; Name: "{app}"
 
 [UninstallRun]
-; Quita solo la capa de la config de OpenCode (no toca OpenCode ni los proyectos del docente).
+; Dos entradas para la MISMA operación, no una condicional: Inno no permite
+; variar los Flags (mostrar consola o no) en runtime dentro de una sola línea,
+; así que se listan las dos ramas y cada una se prende con su Check. Nunca
+; corren las dos: PurgarDatosPersonales (ver [Code]) ya quedó decidido antes de
+; que Inno evalúe estos Check, porque se fija en CurUninstallStepChanged al
+; ENTRAR a usUninstall -- el mismo paso en el que Inno procesa esta sección.
+;
+; RAMA CONSERVAR (default seguro, y la única que corría antes de este cambio):
+; sigue oculta como siempre. No hay nada nuevo que confirmar acá.
 Filename: "powershell.exe"; \
   Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"" -Conservar"; \
-  Flags: runhidden; RunOnceId: "quitarcapa"
+  Flags: runhidden; RunOnceId: "quitarcapa"; Check: not PurgarDatosPersonalesElegido
+; RunOnceId DISTINTO al de la rama de arriba, a propósito: Inno ejecuta una
+; sola entrada por RunOnceId, y con el mismo id la rama que borra podría no
+; correr nunca aunque su Check diera verdadero. Serían dos ramas mutuamente
+; excluyentes por Check, así que compartir id no aporta nada y sí arriesga
+; dejar muerta en silencio justo la rama que borra datos de menores: un cartel
+; que promete borrar y no borra es peor que no ofrecer la opción. No las
+; unifiques bajo un mismo id.
+;
+; RAMA PURGAR: a propósito SIN runhidden. uninstall.ps1 relee cada borrado
+; antes de afirmarlo (ver su encabezado) y si un archivo está tomado -por
+; ejemplo OpenCode abierto- lo dice por consola y explica qué hacer. Ocultar
+; esa consola justo en el único camino que borra datos de menores (Ley
+; 25.326) volvería a la desinstalación tan muda como el bug que se está
+; arreglando: el docente creería que se borró sin haberlo verificado.
+Filename: "powershell.exe"; \
+  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"" -Borrar"; \
+  StatusMsg: "Quitando el perfil, la memoria del aula y la key de Google..."; \
+  RunOnceId: "quitarcapaborrar"; Check: PurgarDatosPersonalesElegido
 
 [Messages]
 ; Textos branded del asistente.
@@ -281,4 +315,68 @@ begin
     queda puesta y el lanzador espera de gusto hasta agotar su techo. }
   if MarcaInstalando <> '' then
     DeleteFile(MarcaInstalando);
+end;
+
+{ ── Preguntar si se purgan los datos personales al desinstalar ────────────────
+
+  Antes de este cambio, [UninstallRun] llamaba SIEMPRE a uninstall.ps1 con
+  -Conservar: el desinstalador estándar de Windows (Panel de control > Agregar
+  o quitar programas) nunca ofrecía la alternativa, y el perfil del aula, la
+  memoria (datos de MENORES, Ley 25.326, ver opencode/tool/perfil.ts) y la key
+  de Google quedaban siempre en la máquina. Una notebook que se reasigna o se
+  dona por ese camino se iba con eso adentro. }
+var
+  PurgarDatosPersonales: Boolean;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  { usUninstall: se dispara al ENTRAR a ese paso, antes de que Inno procese
+    [UninstallDelete] y [UninstallRun] (ver el porqué en [UninstallDelete]).
+    Preguntar acá y no en InitializeUninstall es a propósito: InitializeUninstall
+    corre ANTES del cartel de confirmación propio de Inno ("¿Seguro que querés
+    quitar Tecnia Bot?"), y preguntar por datos personales antes de que el
+    docente confirme siquiera que quiere desinstalar es un orden que no cierra. }
+  if CurUninstallStep = usUninstall then
+  begin
+    if UninstallSilent() then
+      { /SILENT o /VERYSILENT: nadie va a leer un cartel. Mismo default seguro
+        que ya usa uninstall.ps1 cuando nadie contesta su propia pregunta: se
+        conserva. Un despliegue desatendido (ej. limpiar veinte notebooks con un
+        script) NO puede terminar borrando datos de menores porque nadie
+        estaba mirando la pantalla. }
+      PurgarDatosPersonales := False
+    else
+      { MB_DEFBUTTON2 deja "No" resaltado: quien aprieta Enter sin leer, o
+        cierra el cartel con la X (que en Windows equivale a "No" cuando no hay
+        botón Cancelar), se queda en el mismo default seguro que el modo
+        silencioso. Se compara contra IDYES a propósito, no contra <> IDNO: así
+        CUALQUIER respuesta que no sea un "Sí" explícito conserva los datos,
+        sin tener que enumerar cada variante de "no elegí nada".
+        Por qué el default es CONSERVAR y no BORRAR, con las dos lecturas de
+        "seguro" en la cabeza: borrar es IRREVERSIBLE y con más facilidad se
+        dispara sin querer (un clic de más en un desinstalador corrido en
+        tanda), y conservar sigue siendo corregible después a mano o volviendo
+        a correr el desinstalador y eligiendo borrar. Perder la memoria de un
+        aula armada durante meses por default es un costo más alto y más
+        silencioso que dejarla en una compu que igual ya no tiene más Tecnia
+        Bot instalado. }
+      PurgarDatosPersonales := (MsgBox(
+        'Además de Tecnia Bot, esta compu tiene guardado el perfil y la memoria ' +
+        'del aula (lo que el asistente aprendió de quien lo usó) y, si cargaste ' +
+        'una, tu API key de Google.' + #13#10 + #13#10 +
+        'Son datos PERSONALES -de menores, en el modo "grupo" (Ley 25.326)- y una ' +
+        'credencial tuya. Si esta compu se va a donar, reasignar o resetear, ' +
+        'conviene borrarlos.' + #13#10 + #13#10 +
+        '¿Los querés borrar también, junto con el programa? Esto NO se puede deshacer.' +
+        #13#10 + '(Si elegís "No", quedan en la compu; los podés borrar después a mano ' +
+        'o volviendo a correr este desinstalador.)',
+        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES);
+  end;
+end;
+
+function PurgarDatosPersonalesElegido: Boolean;
+begin
+  { Función puente para el Check: de [UninstallRun] -- Check: necesita el
+    NOMBRE de una función, no puede evaluar la variable directamente. }
+  Result := PurgarDatosPersonales;
 end;
