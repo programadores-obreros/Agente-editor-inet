@@ -6,6 +6,9 @@
 ## De qué se trata
 Un servomotor acciona el gatillo de un pulverizador de agua (botella con gatillo estándar). El nivel inicial lo hace disparar a intervalos fijos (temporizador). El nivel avanzado suma un sensor PIR: cuando detecta movimiento (un cliente retirando productos), espera un tiempo prudencial para no mojar a la persona y después hace 3 pulverizaciones seguidas. Las piezas del mecanismo sobre el gatillo se imprimen en 3D.
 
+## Seguridad con el gatillo ⚠️
+> ⚠️ **SEGURIDAD:** el servo empuja el gatillo contra el resorte durante todo el segundo que dura cada disparo. No metas los dedos en el mecanismo del gatillo mientras el pulverizador esté energizado o en medio de un ciclo.
+
 ## Los niveles
 - **Inicial — Temporizado**: el servo repite un ciclo fijo — 90° (dispara/pulveriza) → 1s → 0° (reposo) → 5s. Sin sensores, con `delay()`. Concepto clave: control de servo con dos posiciones y temporización simple.
 - **Avanzado — Sensor PIR**: al detectar movimiento, espera `TIEMPO_ESPERA_MS` (60s en el original, para que la persona se aleje) y después hace 3 ciclos de pulverización cortos. Concepto clave: secuenciar una espera + una ráfaga de acciones a partir de un evento de sensor.

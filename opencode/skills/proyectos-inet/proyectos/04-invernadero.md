@@ -6,6 +6,8 @@
 ## De qué se trata
 Se construye una maqueta de invernadero (estructura cubierta con material translúcido, con una abertura para ventilar) con un sensor DHT11 que mide temperatura y humedad. Cuando la temperatura supera un umbral, un LED avisa que hay que ventilar. Con display y luego con IoT, el sistema se vuelve cada vez más informativo.
 
+<!-- sin-riesgo-fisico: la unica mencion de `Servo.h` en este archivo esta en la lista de MITOS de librerias, no hay servo ni ningun actuador con partes moviles; tampoco calor ni red electrica. Si algun dia este proyecto suma un actuador, borrar esta linea y agregar el bloque de seguridad. -->
+
 ## Los niveles
 - **Inicial — Avisar cuándo ventilar por temperatura**: DHT11 + LED que parpadea al superar el umbral de temperatura (un LED titilando llama más la atención que uno fijo).
 - **Intermedio — Ver temperatura y humedad en un display LCD**: se agrega un LCD 1602 (Keypad Shield paralelo en UNO / I2C en ESP32) que muestra temperatura y humedad en pantalla.

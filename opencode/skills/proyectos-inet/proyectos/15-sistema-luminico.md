@@ -6,6 +6,9 @@
 ## De qué se trata
 Un sistema de iluminación domiciliario con encendido automático. El nivel inicial usa un sensor PIR: si detecta movimiento, un relé enciende la lámpara con un tiempo de cortesía antes de apagarla. El nivel avanzado suma un sensor LDR que mide la luz del ambiente: si está oscureciendo (lectura por debajo de un umbral), enciende la lámpara. Es el proyecto más simple de la colección (dificultad 1) y buena puerta de entrada para introducir relé + sensor.
 
+## Seguridad con la lámpara ⚠️
+> ⚠️ **SEGURIDAD:** en el aula la práctica va con una lámpara LED de baja tensión. La lámpara de 220 V real **no se cablea sobre la protoboard ni la conecta el alumno**: esa instalación es tarea exclusiva del/de la docente, con todo desenergizado y los cables aislados. La red eléctrica mata, esto no es negociable. Y si se hace la instalación real, mirá el **amperaje** del relé además de la tensión (ver Gotchas).
+
 ## Los niveles
 - **Inicial — Movimiento (PIR)**: relé según el sensor PIR, con un tiempo de cortesía de 10 minutos tras la última detección. Incluye además un sketch de prueba del relé y uno de lectura/calibración del PIR por consola serial. Concepto clave: cómo calibrar un sensor observando su salida cruda antes de programar la lógica final.
 - **Avanzado — Luz ambiente (LDR)**: relé según un umbral de luz medido con el LDR (`analogRead < umbral` → enciende). Incluye un sketch de lectura del LDR para calibrar el umbral en el lugar real. Concepto clave: la resolución del ADC cambia el umbral necesario entre placas.

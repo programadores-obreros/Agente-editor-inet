@@ -6,6 +6,9 @@
 ## De qué se trata
 Un brazo robótico de 6 servomotores (6 grados de libertad: base, hombro, codo, muñeca, rotación y pinza) que simula operaciones de un proceso productivo. Se arma con el kit del brazo (UNO usa el IO Expansion Shield DFRobot que apila sobre la placa y agrupa señal+VCC+GND por servo; ESP32 no tiene shield compatible y cablea cada servo directo a los GPIO). El nivel inicial calibra los 6 servos; el intermedio los comanda con 6 potenciómetros como mando a distancia; el avanzado ejecuta una secuencia pick-and-place automática que traslada objetos de una cinta a otra.
 
+## Seguridad con el brazo en movimiento ⚠️
+> ⚠️ **SEGURIDAD:** el brazo tiene 6 grados de libertad y barre un área amplia, y al energizar los servos saltan a 90° de golpe. Despejá la zona antes de dar corriente —no dejes manos, caras ni objetos dentro del alcance— y prestá especial atención en el nivel avanzado, donde se mueve solo y de forma continua.
+
 ## Los niveles
 - **Inicial — Calibración**: los 6 servos se llevan a 90° (centro del recorrido 0°–180°). `loop()` vacío a propósito (posición estática). Concepto clave: por qué 90° es el punto de partida seguro (rango simétrico en ambos sentidos).
 - **Intermedio — Mando por potenciómetros**: cada potenciómetro comanda un servo en tiempo real. Se lee el ADC y se convierte a ángulo con una regla de tres: `ángulo = lectura * 180 / ADC_MAX`. Concepto clave: la resolución del ADC cambia según la placa (10 bits UNO vs 12 bits ESP32) y hay que ajustar la conversión.

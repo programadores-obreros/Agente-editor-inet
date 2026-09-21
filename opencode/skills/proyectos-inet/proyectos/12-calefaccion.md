@@ -6,6 +6,9 @@
 ## De qué se trata
 Un módulo relé conmuta un radiador eléctrico de 220V. El nivel inicial lo enciende y apaga por tiempos fijos (sin sensores). El intermedio suma un sensor DHT11 y un potenciómetro que fija la temperatura objetivo: el relé actúa como termostato real (enciende si hace frío) y un LCD muestra los valores. El avanzado es no bloqueante (`millis()`) y agrega IoT para monitorear temperatura y humedad a distancia. Es casi gemelo del proyecto 04 (Invernadero): mismo DHT11 + LCD, pero con relé en vez de LED y una carga de 220V.
 
+## Seguridad con el radiador caliente ⚠️
+> ⚠️ **SEGURIDAD:** además de la electricidad de 220V (que conecta siempre el/la docente), la superficie del radiador ENCENDIDO quema al tacto — es un riesgo térmico distinto al eléctrico. No tocar el radiador mientras funciona ni apenas se apaga; dejarlo enfriar antes de manipularlo.
+
 ## Los niveles
 - **Inicial — Temporizador**: relé enciende el radiador 10 min ON / 15 min OFF con `delay()`, sin sensores.
 - **Intermedio — Termostato con LCD**: DHT11 mide temperatura; el potenciómetro fija el objetivo (0–30°C); el relé enciende si `temperatura < objetivo`; el LCD muestra ambos valores.

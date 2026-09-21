@@ -6,6 +6,9 @@
 ## De qué se trata
 Un estacionamiento necesita saber en todo momento cuántos lugares le quedan. Se arma la maqueta con dos servomotores (barreras de entrada y salida), dos pulsadores (detectan ingreso/egreso) y dos LED (verde = hay lugar, rojo = completo). Después los LED se reemplazan por un display de 7 segmentos que muestra el número exacto, y por último se monitorea todo por IoT.
 
+## Seguridad con la barrera ⚠️
+> ⚠️ **SEGURIDAD:** la barrera baja y apoya contra su tope mecánico en cada operación normal, cada vez que pasa un auto. No metas los dedos debajo de la barrera mientras sube o baja — esperá a que termine el recorrido antes de tocarla.
+
 ## Los niveles
 - **Inicial — Barreras automáticas y conteo de plazas**: al presionar el pulsador de entrada (si hay lugar), el servo sube a 90° la barrera, espera y baja a 0°, y se descuenta un lugar; el pulsador de salida hace lo inverso.
 - **Intermedio — Mostrar las plazas libres en un display de 7 segmentos**: reemplaza los 2 LED por un display de 7 segmentos (cada segmento a-g con su propia salida digital + resistencia 220 Ω), con una función `escribir_numero()` apoyada en una tabla de segmentos.

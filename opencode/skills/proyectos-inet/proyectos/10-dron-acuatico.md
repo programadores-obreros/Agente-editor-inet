@@ -6,6 +6,9 @@
 ## De qué se trata
 Un dron que se desplaza por la **superficie** del agua (no sumergido) movido por dos motores DC con paletas, comandados por un módulo ULN2003 (que solo puede prenderlos o apagarlos — dirección "tanque": frenar un motor para girar hacia ese lado). El nivel inicial ejecuta una vez un recorrido de barrido en "S" programado de antemano; el nivel avanzado suma tres sensores ultrasónicos (frente, izquierda, derecha) para detectar boyas y esquivarlas. El casco y las piezas se imprimen en 3D.
 
+## Seguridad con las paletas ⚠️
+> ⚠️ **SEGURIDAD:** los dos motores DC giran las paletas a 1500 rpm y cortan si tocan un dedo. Mantené las manos lejos de las paletas mientras el dron esté energizado, sobre todo al probarlo FUERA del agua — ahí quedan expuestas y sin el agua que frena el giro.
+
 ## Los niveles
 - **Inicial — Recorrido programado**: trayectoria de barrido fija (boustrofedón, 14 pasos) que se ejecuta una sola vez en `setup()` con `delay()` y después el dron queda detenido. Concepto clave: control diferencial de dos motores unidireccionales.
 - **Avanzado — Esquiva de obstáculos**: mide continuamente 3 ultrasónicos; si detecta una boya a menos de 40 cm, gira hacia el lado con más espacio libre usando una máquina de estados no bloqueante (`millis()`, sin `delay()`). Concepto clave: interpretar la lectura 0 del HC-SR04 como "fuera de rango", no como obstáculo pegado.
