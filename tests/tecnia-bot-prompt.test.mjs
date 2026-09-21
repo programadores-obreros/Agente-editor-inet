@@ -116,7 +116,15 @@ test("la placa se resuelve ANTES de responder de hardware", () => {
   const inicio = prompt.indexOf("## Inicio de sesión")
   assert.ok(i < inicio, "la regla quedó después del inicio de sesión: nadie la va a aplicar")
 
-  const regla = prompt.slice(i, i + 2600)
+  // El bloque se corta hasta el PRÓXIMO ENCABEZADO, no con una ventana de N
+  // caracteres. Antes decía `slice(i, i + 2600)` y eso es frágil por
+  // construcción: agregar tres líneas ADENTRO del bloque empuja el final afuera
+  // de la ventana y el test falla señalando una regla que sí está escrita. Pasó
+  // de verdad al documentar `analogWrite` en esta misma sección. El límite
+  // semántico se mueve con el texto; el numérico no.
+  const finBloque = prompt.slice(i).search(/\n#{1,3} /)
+  assert.ok(finBloque > 0, "no encontré dónde termina el bloque de la placa")
+  const regla = prompt.slice(i, i + finBloque)
   assert.match(regla, /perfil/, "no dice que primero mire el perfil")
   assert.match(regla, /diagnostico/i, "no ofrece detectar lo que hay conectado")
   assert.match(regla, /pregunt/i, "no dice que pregunte cuando no sabe")
