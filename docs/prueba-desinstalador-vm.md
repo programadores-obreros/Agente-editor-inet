@@ -70,12 +70,26 @@ Esperado:
 - al elegir "No" **no aparece consola** (esa rama sí va oculta);
 - **los tres archivos siguen estando.**
 
-### (c) Cerrar el cartel con la X (o Esc)
+### (c) Cerrar el cartel con la X — INALCANZABLE POR DISEÑO, no lo busques
 
-Esperado: **idéntico a (b)**. Los tres archivos siguen.
+**Este escenario no se puede ejecutar, y está bien así.** Comprobado en la VM el
+2026-09-22: la **✕ del cartel aparece en gris**, y ni `Esc` ni `Alt+F4` lo cierran.
 
-Esto es deliberado: el código compara contra `IDYES`, no contra `<> IDNO`, así que
-cualquier cosa que no sea un "Sí" explícito conserva.
+El motivo es Windows, no nuestro código: el `MsgBox` se arma con `MB_YESNO`, que
+**no tiene botón Cancelar**, y sin Cancelar el sistema deshabilita el cierre del
+cuadro de diálogo. No hay forma de salir del cartel sin elegir "Sí" o "No".
+
+Eso es **mejor** que el comportamiento que este documento esperaba originalmente
+(que la ✕ conservara): el camino del accidente directamente no existe. Nadie
+cierra el cartel sin querer y se va creyendo que decidió algo. La elección es
+obligatoriamente explícita.
+
+El código igual está escrito a prueba de eso: compara contra `IDYES` y no contra
+`<> IDNO`, así que si algún día el cartel cambia a `MB_YESNOCANCEL` y la ✕ se
+habilita, cerrar sin elegir seguiría conservando. La defensa está, sólo que hoy
+es inalcanzable.
+
+**Con esto la matriz queda completa: (a), (b) y (d) probados; (c) inalcanzable.**
 
 ### (d) Desinstalación silenciosa
 
