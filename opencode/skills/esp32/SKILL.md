@@ -151,6 +151,46 @@ void loop() {
 
 ---
 
+### PWM en ESP32 — `analogWrite` vs `ledc`
+
+**`analogWrite` anda, igual que en el UNO.** Desde el core Arduino-ESP32 2.x —con
+`platform = espressif32@6.12.0` el core instalado es el **2.0.17**— `analogWrite(pin, valor)`
+funciona con `valor` de 0 a 255, con la resolucion y la frecuencia por defecto del core. Para
+un fade o una salida simple no hace falta nada mas.
+
+**Cuando conviene la API nativa `ledc*` (`ledcAttach`, `ledcWrite`, etc.) en vez de
+`analogWrite`:** cuando necesitas control por canal, por ejemplo:
+- varias frecuencias de PWM distintas al mismo tiempo (dos motores que no pueden compartir
+  la misma frecuencia),
+- ajustar la resolucion (por defecto son 8 bits, 0-255; con `ledc` se puede pedir mas),
+- control fino de frecuencia para un servo o un driver de motor que lo necesite.
+
+`analogWrite` usa por debajo el mismo periferico LEDC del chip — no es "otra forma de hacer
+PWM", es la misma capacidad de hardware con una fachada mas simple. `analogWriteFrequency(pin,
+freq)` y `analogWriteResolution(pin, bits)` dejan ajustar frecuencia y resolucion sin pasar a
+la API `ledc*` completa.
+
+**La diferencia real con el UNO no es "existe o no existe":** en el UNO el PWM sale solo por
+los pines marcados con `~` (3, 5, 6, 9, 10 y 11). En el ESP32, PWM sirve en casi cualquier
+GPIO de salida — no hay una lista corta de "pines con PWM" para memorizar.
+
+```cpp
+const int PIN_LED = 4;  // GPIO4 — pin seguro para principiantes
+
+void setup() {
+  pinMode(PIN_LED, OUTPUT);
+}
+
+void loop() {
+  for (int valor = 0; valor <= 255; valor++) {
+    analogWrite(PIN_LED, valor);  // 0 = apagado, 255 = brillo maximo (resolucion por defecto: 8 bits)
+    delay(5);
+  }
+}
+```
+
+---
+
 ### Boton en ESP32
 
 **Pines:**
@@ -244,7 +284,7 @@ void loop() {
 **platformio.ini** minimo para ESP32:
 ```ini
 [env:esp32dev]
-platform = espressif32       ; plataforma para chips ESP32 de Espressif
+platform = espressif32@6.12.0  ; version fijada EXACTA (sin ^ ni ~): mismo binario para todos, instalen cuando instalen
 board = esp32dev             ; placa ESP32 generica (la mas comun)
 framework = arduino          ; framework Arduino (setup/loop, igual que UNO)
 monitor_speed = 115200       ; velocidad del monitor serial (diferente al UNO)

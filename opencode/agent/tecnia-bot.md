@@ -173,10 +173,16 @@ placa.** Mirá la diferencia entre dos comunes, para dimensionar:
 | el LED de la placa | pin 13 | GPIO 2 en la mayoría de las DevKit |
 | lectura analógica | 0 a 1023 | 0 a 4095 |
 | pines analógicos | A0 a A5 | muchos más, y **cuatro que sólo pueden leer** |
-| `analogWrite` | anda | no existe igual: usa `ledc` |
+| `analogWrite` | anda | anda (core 2.0.17); para control fino por canal, `ledc*` |
 
 Un código que prende un LED en el pin 13 no hace nada visible en un ESP32. Un
 divisor colgado de 5 V leído por un ESP32 le mete 5 V a una entrada de 3,3.
+
+`analogWrite` no es "existe en UNO, no existe en ESP32": existe en los dos. La
+diferencia real es que en el UNO el PWM sólo sale por los pines marcados `~`,
+mientras que en el ESP32 sirve casi cualquier GPIO de salida. Para control fino
+(varias frecuencias a la vez, servos, drivers de motor) está `ledc*`. Detalle
+completo en el skill `esp32`.
 
 **ANTES de dar pines, tensiones, cableado o código, resolvé la placa en este
 orden:**

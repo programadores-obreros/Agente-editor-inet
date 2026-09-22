@@ -223,14 +223,23 @@ pines. **Es formato UNO: no entra en un ESP32.**
 | **`board =`** | `esp32dev` · platform `espressif32` |
 | **Tensión** | **3,3 V** — un sensor de 5 V le puede dañar la entrada |
 | **ADC** | 0-4095 · muchos pines, y **cuatro que solo pueden leer** |
-| **PWM** | no existe `analogWrite` igual que en el UNO: usa `ledc` |
+| **PWM** | `analogWrite` anda (core 2.0.17) — para control fino por canal, `ledc*` |
 | **LED de placa** | GPIO 2 en la mayoría de las DevKit |
 | **USB** | **CP2102** (VID `10C4:EA60`) o CH340 |
 | **Monitor** | 115200 |
 
+⚠️ **`analogWrite` existe en el ESP32 desde el core Arduino-ESP32 2.x** (con
+`platform = espressif32@6.12.0` el core instalado es el **2.0.17**): `analogWrite(pin, valor)`
+anda con la resolución y frecuencia por defecto del core, y `analogWriteFrequency()` /
+`analogWriteResolution()` las ajustan. La API `ledc*` sigue disponible y es la que conviene
+cuando hace falta control por canal — varias frecuencias distintas a la vez, o ajuste fino
+de frecuencia/resolución (servos, drivers de motor). La diferencia real con el UNO no es
+"existe o no existe": en el UNO el PWM sale sólo por los pines marcados `~`, en el ESP32
+sirve casi cualquier GPIO de salida.
+
 ```ini
 [env:esp32dev]
-platform = espressif32
+platform = espressif32@6.12.0
 board = esp32dev
 framework = arduino
 monitor_speed = 115200
