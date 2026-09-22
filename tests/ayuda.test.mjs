@@ -40,7 +40,34 @@ test("ayuda: devuelve el resumen con ejemplos de prompts y comandos", async () =
   assert.match(r, /\/diagnostico/, "menciona los comandos")
 })
 
-test("ayuda: avisa que abrió el manual completo si está instalado", async () => {
-  const r = await mod.execute({}, {})
-  assert.match(r, /manual completo/i, "confirma el manual")
+test("ayuda: si ABRIÓ el manual lo dice, y si no pudo da la ruta para el doble clic", async () => {
+  // EL TEST QUE ESTABA ACÁ NO PROBABA NADA, y falló como fallan los peores: en verde.
+  // Buscaba /manual completo/i, pero LAS DOS ramas del ternario de ayuda.ts lo dicen
+  // ("Te abrí el manual completo en el navegador" y "El manual completo está en ..."),
+  // así que el assert se cumplía pasara lo que pasara. Verificado por mutación antes
+  // de reescribirlo: con abrirEnNavegador() devolviendo siempre false, el test viejo
+  // seguía pasando 2/2. Un assert que no puede distinguir las dos ramas que existen
+  // no es una red, es un adorno.
+  //
+  // Ahora se prueban LAS DOS ramas, y cada una con lo que la otra NO puede decir.
+
+  // (a) el navegador abre: el mensaje tiene que AFIRMAR que lo abrió...
+  globalThis.Bun.spawn = () => ({ unref() {} })
+  const abrio = await mod.execute({}, {})
+  assert.match(abrio, /Te abrí el manual completo en el navegador/, "no avisa que lo abrió")
+  // ...y NO ofrecer el doble clic, que sería mandar a la docente a hacer a mano algo ya hecho.
+  assert.doesNotMatch(abrio, /doble clic/, "ofrece abrir a mano algo que ya abrió")
+
+  // (b) el navegador NO abre (el caso real: PC de escuela sin navegador por defecto).
+  globalThis.Bun.spawn = () => {
+    throw new Error("no hay navegador")
+  }
+  const fallo = await mod.execute({}, {})
+  assert.doesNotMatch(fallo, /Te abrí/, "afirma haber abierto el manual sin haberlo abierto")
+  assert.match(fallo, /doble clic/, "no ofrece el camino manual")
+  // Y si ofrece una ruta, la ruta TIENE que estar: es la misma regla que urls.test.mjs.
+  assert.match(fallo, /file:\/\//, "manda a abrir un archivo sin decir cuál")
+  assert.match(fallo, /index\.html/, "la URL no apunta al micro-sitio")
+
+  globalThis.Bun.spawn = () => ({ unref() {} }) // lo dejo como estaba para los demás tests
 })

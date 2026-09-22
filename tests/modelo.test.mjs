@@ -35,8 +35,28 @@ const readme = leer("README.md")
 const docsKey = leer("docs/api-key-google.md")
 
 const BIG_PICKLE = "opencode/big-pickle"
-/** Una key de Google AI Studio: prefijo "AQ." y una tira larga de base64url. */
-const FORMA_DE_KEY = /AQ\.[A-Za-z0-9_-]{20,}/
+/**
+ * La FORMA de una key de Google, en sus DOS presentaciones reales:
+ *  - AI Studio clásica: `AIzaSy` + 33 caracteres (39 en total). Es la que usa como
+ *    ejemplo la documentación de este mismo repo (docs/key-de-google.md, clave.ts).
+ *  - la nueva de Gemini: prefijo `AQ.` + una tira larga de base64url.
+ *
+ * ANTES ACÁ ESTABA SOLO LA FORMA `AQ.`, Y ESE GUARD NUNCA PUDO FALLAR: en todo el
+ * árbol no hay un solo literal con esa forma, ni siquiera de mentira. O sea que el
+ * barrido anti-fuga daba verde por no encontrar algo que no podía existir, mientras
+ * el único formato que el repo documenta le pasaba por al lado. Un candado que sólo
+ * cierra la puerta que nadie usa. El test de más abajo ("el detector reconoce las
+ * dos formas") existe para que esto no pueda volver a pasar en silencio.
+ */
+const FORMA_DE_KEY = /AIzaSy[A-Za-z0-9_-]{33}|AQ\.[A-Za-z0-9_-]{20,}/
+
+/**
+ * Un literal de DOCUMENTACIÓN no es una fuga. Los ejemplos del repo se autodenuncian
+ * con una palabra que una key de verdad no trae nunca ("FALSA", "SECRETO"...), y sin
+ * esta excepción el barrido marcaría como fuga la hoja que le explica a la docente
+ * cómo se ve una key. Es la única forma de ampliar el detector sin volverlo ruido.
+ */
+const PLACEHOLDER_DOC = /FALSA|SECRETO|EJEMPLO|XXXX|TU[-_ ]?KEY/i
 /** SHA-256 de la key compartida rotada. En el repo vive el hash, nunca el literal. */
 const HASH_KEY_VIEJA = "121163b85b0396edcfcc4840981d823c4f1e9c23aadc72b39c9723fef70cf3b4"
 
@@ -82,7 +102,7 @@ test("ningún archivo de install/ trae una key ni la nombra como respaldo hardco
     const texto = leer(join("install", f))
     for (const p of prohibidos) {
       const m = texto.match(p)
-      if (m) problemas.push(`install/${f}: ${m[0]}`)
+      if (m && !PLACEHOLDER_DOC.test(m[0])) problemas.push(`install/${f}: ${m[0]}`)
     }
   }
   assert.deepEqual(problemas, [], "hay una key (o su nombre) en el instalador:\n" + problemas.join("\n"))
@@ -95,9 +115,29 @@ test("el literal de la key vieja no aparece en ningún archivo del repo", () => 
   const problemas = []
   for (const r of archivosDelRepo()) {
     const m = readFileSync(join(REPO, r), "latin1").match(FORMA_DE_KEY)
-    if (m) problemas.push(`${r}: ${m[0].slice(0, 8)}...`)
+    if (m && !PLACEHOLDER_DOC.test(m[0])) problemas.push(`${r}: ${m[0].slice(0, 8)}...`)
   }
   assert.deepEqual(problemas, [], "hay algo con forma de key de Google en el repo:\n" + problemas.join("\n"))
+})
+
+test("el detector de keys reconoce las dos formas reales, y no confunde un ejemplo", () => {
+  // Este test es el piso que le faltaba al barrido de arriba. Un guard anti-fuga que
+  // nunca se prueba a sí mismo es exactamente el bug que tenía: buscaba "AQ." y daba
+  // verde para siempre. Acá las keys se ARMAN por concatenación a propósito, para que
+  // el literal no quede escrito en este archivo y se autodenuncie en el barrido.
+  const aiStudio = "AIzaSy" + "aB3".repeat(11)
+  const gemini = "AQ." + "xY7".repeat(14)
+  assert.match(aiStudio, FORMA_DE_KEY, "no detecta el formato AIzaSy de AI Studio")
+  assert.match(gemini, FORMA_DE_KEY, "no detecta el formato AQ. de Gemini")
+
+  // Y el borde: una tira corta no es una key, no queremos falsos positivos.
+  assert.doesNotMatch("AIzaSy" + "a".repeat(10), FORMA_DE_KEY, "matchea una tira corta")
+
+  // El ejemplo de la documentación tiene forma de key PERO se autodenuncia.
+  const ejemploDeDocs = "AIzaSy" + "FALSA" + "0".repeat(31)
+  assert.match(ejemploDeDocs, FORMA_DE_KEY, "el ejemplo igual tiene forma de key")
+  assert.ok(PLACEHOLDER_DOC.test(ejemploDeDocs), "y el barrido lo reconoce como ejemplo")
+  assert.ok(!PLACEHOLDER_DOC.test(aiStudio), "pero una key real NO pasa por ejemplo")
 })
 
 // ---------------------------------------------------------------------------

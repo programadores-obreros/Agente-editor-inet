@@ -83,7 +83,10 @@ function estadoDeLaKey(): EstadoKey {
 }
 
 function pick(api: TuiPluginApi, key: string, fallback: RGBA): RGBA {
-  const c = api.theme?.current as Record<string, RGBA> | undefined
+  // TuiThemeCurrent trae campos no-RGBA (p. ej. thinkingOpacity: number), por eso
+  // el cast pasa primero por unknown: es un lookup defensivo por clave, no una
+  // promesa de que TODO el theme sea RGBA.
+  const c = api.theme?.current as unknown as Record<string, RGBA> | undefined
   return (c && c[key]) || fallback
 }
 
@@ -233,7 +236,10 @@ const tui: TuiPlugin = async (api) => {
       : estadoKey === "fallback"
         ? "La key compartida guardada ya no es válida: corré 'Reparar Tecnia Bot' (menú inicio) o /actualizar para quitarla y seguir con Big Pickle"
         : null
-  const tip = avisoKey ?? (TIPS[Math.floor(Math.random() * TIPS.length)] ?? TIPS[0])
+  // Con noUncheckedIndexedAccess, TIPS[i] es "string | undefined": el fallback
+  // final es defensivo por si TIPS quedara vacío alguna vez.
+  const tip =
+    avisoKey ?? TIPS[Math.floor(Math.random() * TIPS.length)] ?? TIPS[0] ?? "Escribí \"hola\" y dejate guiar paso a paso"
   const label = avisoKey ? "Importante" : "Tip"
 
   api.slots.register({
