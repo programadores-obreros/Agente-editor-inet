@@ -6,6 +6,9 @@
 ## De qué se trata
 Automatización (no biológica) de un sistema acuapónico que combina cría de peces con cultivo de plantas en agua, recirculando agua y nutrientes entre la pecera y la batea. Se controlan tres actuadores por tiempo, sin sensores, con un ciclo de 60 segundos: el **aireador** (relé) que oxigena la pecera, la **bomba** (relé) que sube agua a las plantas y —desde el nivel intermedio— un **dosificador de alimento** movido por un motor DC con reducción a través de un ULN2003. El nivel avanzado publica el estado de los tres actuadores por IoT.
 
+## Seguridad con el dosificador y la bomba ⚠️
+> ⚠️ **SEGURIDAD:** el dosificador lo mueve un motor DC con reducción, que tiene fuerza de sobra para atrapar un dedo aunque gire despacio. No metas los dedos en el mecanismo del dosificador mientras esté energizado. Y la bomba mueve agua cerca de la electrónica: antes de tocar cualquier cosa mojada, desconectá la alimentación.
+
 ## Los niveles
 - **Inicial — Aireador y bomba por tiempo**: cada uno con su relé, encendidos y apagados con un cronómetro no bloqueante (`millis() - inicioCiclo`) dentro de un ciclo de 60s. Concepto clave: por qué `delay()` no sirve cuando dos cargas tienen ciclos distintos que corren en simultáneo.
 - **Intermedio — Dosificador**: se suma el motor DC del dosificador (vía ULN2003), mismo cronómetro de 60s. Concepto clave: el ULN2003 como intermediario para controlar un motor que consume más corriente de la que da un pin.

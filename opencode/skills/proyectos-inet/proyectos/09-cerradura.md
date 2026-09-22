@@ -6,6 +6,9 @@
 ## De qué se trata
 Una cerradura de puerta que no necesita llave. Primero se abre y cierra con dos pulsadores y avisa su estado con dos LED (verde = abierta, rojo = cerrada). Después se reemplazan los pulsadores por un teclado matricial 4x4: el usuario ingresa una clave de 4 dígitos y un buzzer confirma si es correcta (pitido agudo) o incorrecta (doble pitido grave). Por último se monitorea el estado de la cerradura a distancia por IoT. El mecanismo (piñón y cremallera) se imprime en 3D.
 
+## Seguridad con el mecanismo de traba ⚠️
+> ⚠️ **SEGURIDAD:** el servo se queda haciendo fuerza contra el fin de carrera cada vez que la cerradura traba o destraba — es su funcionamiento normal, no una falla. No metas el dedo en el mecanismo de piñón y cremallera mientras el servo está operando.
+
 ## Los niveles
 - **Inicial — Pulsadores**: servo + 2 LED movidos por 2 pulsadores (abrir/cerrar). Concepto clave: `INPUT_PULLUP` para no necesitar resistencias externas en los pulsadores, y control básico de un servo con ángulos fijos.
 - **Intermedio — Teclado y clave**: teclado matricial 4x4 (librería Keypad) que arma un buffer de 4 dígitos y lo compara con la clave `1 5 9 D`. Si coincide, la cerradura conmuta (abre/cierra) y suena un pitido de OK; si no, doble pitido de error. Concepto clave: `tone()` para generar frecuencias distintas según el resultado.

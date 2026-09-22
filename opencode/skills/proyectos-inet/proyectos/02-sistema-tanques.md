@@ -6,6 +6,9 @@
 ## De qué se trata
 Se arma una maqueta de un sistema de tanques interconectados, como el suministro de agua de una casa o edificio. El nivel de agua se mide con sensores ultrasónicos (HC-SR04) que comandan una electroválvula y una bomba sumergible a través de relés. En el nivel avanzado se publica el estado por IoT.
 
+## Seguridad con el agua y la bomba ⚠️
+> ⚠️ **SEGURIDAD:** acá hay agua y electricidad en la misma mesa, que es la combinación que más accidentes provoca en el aula. La placa y los relés van SIEMPRE fuera de la zona donde puede salpicar o desbordar, y nada se toca con las manos mojadas. Antes de destapar un tanque, vaciar una manguera o mover la bomba, desconectá la alimentación.
+
 ## Los niveles
 - **Inicial — Controlar el llenado de un tanque**: un HC-SR04 mide la distancia al agua; cuando el tanque llega a la altura de corte, un relé cierra la electroválvula de entrada. Introduce el circuito de potencia (12 V: fuente + relé + electroválvula) separado del circuito de control (5 V: sensor + señal del relé).
 - **Intermedio — Un segundo tanque con bomba sumergible**: se agrega un segundo HC-SR04 (tanque elevado) y una bomba que transfiere agua del primer tanque al segundo, con su propio relé.

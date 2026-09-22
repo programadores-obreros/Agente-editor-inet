@@ -6,6 +6,9 @@
 ## De qué se trata
 Es un **proyecto de kit cerrado**: no se arma ningún circuito en protoboard, no hay Arduino UNO ni ESP32 para elegir, no hay tabla de pines ni firmware `.ino`. Todo se resuelve con el kit **Robobloq Qoopers** (controladora propia + motores + ruedas/orugas + sensor ultrasónico + display LED + LED RGB + zumbador, todos incluidos) y el software **Robobloq**, que programa por bloques. Los periféricos se conectan a **puertos numerados del kit** (no a GPIO): por ejemplo, el display al puerto 7 y el sensor ultrasónico al puerto 6.
 
+## Seguridad con el robot en movimiento ⚠️
+> ⚠️ **SEGURIDAD:** el robot tiene motores y ruedas/orugas girando, sobre todo en el modo autónomo del nivel avanzado. Despejá la mesa antes de arrancar un recorrido (que no se caiga por el borde) y mantené los dedos lejos de las orugas mientras esté andando.
+
 ## Los niveles
 - **Inicial — Armar el robot y programar un recorrido**: ensamblar el robot según el manual del kit, conectarlo por USB, instalar drivers, y programar por bloques un recorrido (avanzar, girar, frenar con tiempos) dentro de un bloque "Por siempre". Se suman los LED RGB como señalización.
 - **Intermedio — Llevar y mostrar un mensaje con el display**: el display LED (puerto 7) muestra un mensaje solo cuando se presiona el botón integrado de la placa, y esa lógica se encadena al recorrido del nivel inicial (el mensaje se habilita recién al llegar a destino).

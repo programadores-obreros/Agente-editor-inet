@@ -6,7 +6,9 @@ name: CI
 #                    Windows PowerShell 5.1 real, corre bootstrap.ps1 de punta a
 #                    punta en un Windows limpio, compila un sketch con el PlatformIO
 #                    que el bootstrap instalo, y desinstala.
-#   - skills:        parsea el frontmatter YAML de cada opencode/skills/*/SKILL.md.
+#   - skills:        parsea el frontmatter YAML de cada opencode/skills/*/SKILL.md, y
+#                    chequea que los proyectos riesgosos de proyectos-inet traigan su
+#                    bloque de seguridad.
 #
 # POR QUE EL JOB DE WINDOWS. 243 tests de Node pasaban en verde y el PowerShell 5.1
 # de una VM encontro dos errores de parseo ("$var: texto") que ninguno podia ver:
@@ -20,6 +22,12 @@ name: CI
 # con parser YAML estandar puede no registrar esa skill - la mejor sustentada de
 # las dos, la de educabot citando paginas exactas del manual, quedaba invisible sin
 # que nadie lo viera en un diff. Este job la agarra antes de mergear.
+#
+# POR QUE TAMBIEN CHEQUEA SEGURIDAD DE PROYECTOS. Una auditoria encontro 15
+# proyectos de proyectos-inet con partes moviles, calor o red electrica y CERO
+# advertencia de seguridad fisica. Se arreglaron a mano; arreglarlos no evita que
+# el proyecto 16 que alguien escriba con un servo vuelva a salir sin advertencia.
+# `scripts/seguridad-proyectos.mjs` corta el PR si eso pasa.
 
 on:
   push:
@@ -341,3 +349,7 @@ jobs:
               sys.exit(1)
           print(f"OK: {len(glob.glob('opencode/skills/*/SKILL.md'))} SKILL.md con frontmatter valido")
           PY
+      # Node puro, sin dependencias: no hace falta setup-node porque ubuntu-latest
+      # ya trae Node instalado (lo usan las propias actions de JS de este workflow).
+      - name: Chequear bloque de seguridad en proyectos-inet
+        run: node scripts/seguridad-proyectos.mjs

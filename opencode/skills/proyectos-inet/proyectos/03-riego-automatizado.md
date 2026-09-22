@@ -6,6 +6,9 @@
 ## De qué se trata
 Se instala un sistema de riego con electroválvula y mangueras (no hace falta huerta: sirve para macetas o canteros). El paso del agua se regula abriendo/cerrando la electroválvula con un relé comandado por la placa. En el nivel avanzado se monitorea de forma remota la humedad del suelo y el estado de la válvula por IoT.
 
+## Seguridad con el riego ⚠️
+> ⚠️ **SEGURIDAD:** en el aula va SOLO la electroválvula de baja tensión (12 V). La de 220 V del proyecto original **no se usa en la práctica de aula**: esa instalación la hace el/la docente, con todo desenergizado y fuera de la protoboard. La red eléctrica mata. Y como el resto del circuito convive con agua, nada se toca con las manos mojadas ni con el sistema energizado.
+
 ## Los niveles
 - **Inicial — Regar por intervalos de tiempo**: la electroválvula abre y cierra durante intervalos definidos con `delay()`. Introduce el circuito de potencia (separado del de control) y las pautas de seguridad agua+electricidad.
 - **Intermedio — Regar según la humedad del suelo**: se conecta un higrómetro FC-28 a la entrada analógica (A0 en UNO / GPIO34 en ESP32); el sistema riega solo cuando la tierra está seca de verdad, con dos umbrales (histéresis natural). Se usa el Monitor Serie a 115200 baudios para calibrar.
