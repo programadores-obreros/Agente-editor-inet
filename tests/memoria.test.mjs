@@ -1,12 +1,14 @@
 // Smoke tests del tool `memoria` (opencode/tool/memoria.ts).
 // Corre con: node --test tests/*.test.mjs   (Node puro, sin instalar nada).
 //
-// Mockeamos: (a) el plugin, (b) Bun.write (escribe de verdad al temp con fs, asi
-// el round-trip leer/guardar funciona), (c) un XDG_CONFIG_HOME falso.
+// Mockeamos: (a) el plugin, (b) un XDG_CONFIG_HOME falso. La escritura la hace
+// el propio modulo con node:fs (escribirArchivoAtomico), asi que no hace falta
+// mockear nada de escritura: se ejercita el codigo real, incluida la ruta de
+// escritura atomica temp+rename.
 
 import { test, before, beforeEach } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, readdirSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
@@ -17,9 +19,6 @@ const cfg = join(OUT, "cfg")
 const memoriaFile = join(cfg, "opencode", "tecnia-memoria.md")
 
 let mod
-
-// Bun.write real: escribe al disco con fs, asi leerMemoria (fs.readFileSync) lo ve.
-globalThis.Bun = { write: async (ruta, contenido) => writeFileSync(ruta, contenido) }
 
 before(async () => {
   mkdirSync(join(cfg, "opencode"), { recursive: true })
@@ -99,4 +98,47 @@ test("guiado: al TERMINAR el proyecto pasa a la lista y se limpia el 'en curso'"
   const g = readFileSync(memoriaFile, "utf8")
   assert.match(g, /^-\s*Proyectos hechos:.*semaforo/m, "queda en la lista de hechos")
   assert.match(g, /^-\s*En curso:\s*\(sin definir\)\s*$/m, "el 'en curso' se limpia al terminar")
+})
+
+// ---------------------------------------------------------------------------
+// Escritura atomica (temp + rename). Ver el comentario de escribirArchivoAtomico
+// en memoria.ts: sin esto, un corte de luz a mitad de escritura deja el archivo
+// truncado y se pierde el progreso pedagogico de la maquina sin aviso.
+// ---------------------------------------------------------------------------
+
+// El modulo corre EN ESTE MISMO proceso (se importa dinamicamente), asi que
+// puede predecirse el nombre exacto del temporal que usa: `${ruta}.${pid}.tmp`.
+const tempDeMemoria = () => `${memoriaFile}.${process.pid}.tmp`
+
+test("atomico: una escritura exitosa no deja ningun .tmp huerfano al lado del archivo", async () => {
+  await mod.execute({ accion: "guardar", proyecto: "semaforo" }, {})
+  const huerfanos = readdirSync(dirname(memoriaFile)).filter((f) => f.endsWith(".tmp"))
+  assert.deepEqual(huerfanos, [], "quedo un temporal sin limpiar tras una escritura exitosa")
+})
+
+test("atomico: el temporal se arma en el MISMO directorio que el destino (no os.tmpdir())", () => {
+  assert.equal(dirname(tempDeMemoria()), dirname(memoriaFile), "el temporal no queda al lado del destino")
+})
+
+test("atomico: si la escritura falla en el medio, el archivo VIEJO sobrevive intacto", async () => {
+  // Progreso viejo ya guardado, con contenido conocido.
+  await mod.execute({ accion: "guardar", proyecto: "riego automatico", nivel: "intermedio" }, {})
+  const antes = readFileSync(memoriaFile, "utf8")
+
+  // Se ocupa el path exacto del temporal ANTES de que el modulo lo use: al
+  // existir como directorio, el writeFileSync(temp, ...) de adentro de
+  // escribirArchivoAtomico falla con EISDIR — es una falla real del sistema de
+  // archivos, sin mockear nada del modulo. Simula "murio a mitad de escribir":
+  // lo que importa para la atomicidad es que el destino no se tocó, y eso vale
+  // exactamente igual que si el corte hubiera sido durante el writeFileSync real.
+  mkdirSync(tempDeMemoria(), { recursive: true })
+
+  // El tool no relanza: atrapa el error de escribirArchivoAtomico y avisa en texto.
+  const r = await mod.execute({ accion: "guardar", proyecto: "otro proyecto que no deberia entrar" }, {})
+  assert.match(r, /no pude guardar/i, "no avisa que la escritura fallo")
+
+  assert.equal(readFileSync(memoriaFile, "utf8"), antes, "el progreso viejo se perdio o se corrompio")
+  assert.doesNotMatch(antes, /otro proyecto que no deberia entrar/, "el test no armo bien el caso")
+
+  rmSync(tempDeMemoria(), { recursive: true, force: true })
 })

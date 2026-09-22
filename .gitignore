@@ -50,3 +50,8 @@ instalacion.log
 # lo que la skill necesita (docs/educabot/*.md, el diagrama PNG) y el permiso de
 # uso (docs/permisos/educabot.md); el PDF se baja o se copia a mano.
 /docs/educabot/*.pdf
+
+# Documentos de seguimiento de trabajo (ver CLAUDE.md, "odd/ es andamio, no producto").
+# Es andamio del proceso: lo que tiene que sobrevivir del trabajo es el codigo, sus
+# tests y el mensaje del commit. La copia de recuperacion vive en Engram, no aca.
+odd/
