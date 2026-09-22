@@ -139,6 +139,47 @@ jobs:
           if ($hallazgos.Count -gt 0) { exit 1 }
           Write-Host "  OK   PSScriptAnalyzer sin hallazgos de severidad Error en install\"
 
+      # COMPILAR EL .iss DE VERDAD, y antes del bootstrap para que falle barato.
+      #
+      # Esto existe porque la auditoria v0.4.1 dejo commiteado un .iss que NO
+      # COMPILABA, con sintaxis "valida", begin/end balanceados 10/10 y los tests
+      # que leen el archivo en verde. Dos errores, los dos de la misma familia:
+      # un renglon que empezaba con "#13#10" (ISPP lo lee como directiva) y otro
+      # que empezaba con "[UninstallDelete]" ADENTRO de un comentario Pascal (el
+      # lexer de secciones no mira si esta comentado). Ninguna capa de chequeo
+      # estatico puede ver eso. Solo ISCC.
+      #
+      # No se publica el .exe que sale de aca: build-installer.yml sigue siendo el
+      # que empaqueta y firma. Este paso solo responde "construye, si o no".
+      - name: Compilar el instalador con ISCC (solo construye, no publica)
+        shell: powershell
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          Write-Host "  Compilando installer\tecnia-bot.iss para la version $version"
+          # Inno Setup viene preinstalado en los runners windows de GitHub; si algun
+          # dia deja de venir, se instala con choco y este paso lo dice en vez de
+          # pasar de largo en verde.
+          $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+                  Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) {
+            choco install innosetup --no-progress -y | Out-Null
+            $iscc = Get-ChildItem "C:\Program Files (x86)\Inno Setup*\ISCC.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $iscc) { Write-Host "::error::no encontre ISCC.exe ni pude instalarlo"; exit 1 }
+          $salida = & $iscc "/DMyAppVersion=$version" "installer\tecnia-bot.iss" 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            # Las lineas de Error de ISCC traen archivo y numero de linea: se emiten
+            # como annotation para que se vean en el PR, no enterradas en el log.
+            $salida | Where-Object { $_ -match "^Error" } | ForEach-Object {
+              Write-Host "::error file=installer/tecnia-bot.iss::$_"
+            }
+            $salida | Select-Object -Last 15 | ForEach-Object { Write-Host $_ }
+            Write-Host "::error::ISCC no pudo compilar el instalador (exit $LASTEXITCODE)"
+            exit 1
+          }
+          Write-Host "  OK   el instalador compila"
+
       # Solo la cache de DESCARGAS de PlatformIO (lo que recomienda su doc de CI:
       # docs.platformio.org/en/latest/integration/ci/github-actions.html), NO
       # ~/.platformio entero: si se restaurara penv\Scripts\pio.exe, el bootstrap

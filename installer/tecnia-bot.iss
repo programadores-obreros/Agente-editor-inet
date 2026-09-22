@@ -191,13 +191,38 @@ Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
 ;
 ; Es seguro barrer {app} entero: es %LOCALAPPDATA%\TecniaBot y ahí no hay nada
 ; del docente. Sus proyectos viven en Documentos\Tecnia Bot, que no se toca.
-Type: filesandordirs; Name: "{app}"
-
-[UninstallRun]
-; Quita solo la capa de la config de OpenCode (no toca OpenCode ni los proyectos del docente).
-Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"" -Conservar"; \
-  Flags: runhidden; RunOnceId: "quitarcapa"
+;
+; Este borrado se lleva puesto install\uninstall.ps1 -está adentro de {app}-,
+; así que TIENE que pasar después de que [UninstallRun]
+; VACIA A PROPOSITO, y esto es el corazon del bug que se arreglo acá.
+;
+; Antes había dos entradas mutuamente excluyentes por `Check`, una con
+; `-Conservar` y otra con `-Borrar`, y la de borrar NUNCA CORRIO. No fallaba:
+; no existía. Verificado leyendo el `unins000.dat` de una instalación real en
+; la VM: sólo estaba grabada la de `-Conservar`, con su `quitarcapa`. De la
+; otra, ni rastro.
+;
+; POR QUE: Inno escribe las entradas de [UninstallRun] en el log de
+; desinstalación DURANTE LA INSTALACION, y evalúa su `Check` AHI. En ese
+; momento `PurgarDatosPersonales` vale False -es su default, y
+; `CurUninstallStepChanged` ni siquiera corre durante el install-, así que
+; `Check: not PurgarDatosPersonalesElegido` daba True y grababa la rama de
+; conservar, mientras `Check: PurgarDatosPersonalesElegido` daba False y la de
+; borrar no se grababa nunca. Al desinstalar, el comando de borrar no existía
+; en ningún lado: de ahí que apretar "Si" no borrara nada y que no apareciera
+; ninguna consola.
+;
+; El comentario que estaba acá afirmaba lo contrario ("ya quedó decidido antes
+; de que Inno evalúe estos Check... el mismo paso en el que Inno procesa esta
+; sección"). Era la creencia equivocada que originó el bug, escrita con
+; confianza al lado del código que rompía.
+;
+; NO VUELVAS A PONER UNA DECISION DE TIEMPO DE DESINSTALACION ACA. Una
+; decisión que se toma cuando el docente aprieta un botón no puede vivir en
+; una sección que se resolvió meses antes, cuando instaló.
+;
+; La ejecución ahora vive en [Code], en CurUninstallStepChanged, que sí corre
+; al desinstalar y sí ve la respuesta del cartel.
 
 [Messages]
 ; Textos branded del asistente.
@@ -281,4 +306,115 @@ begin
     queda puesta y el lanzador espera de gusto hasta agotar su techo. }
   if MarcaInstalando <> '' then
     DeleteFile(MarcaInstalando);
+end;
+
+{ ── Preguntar si se purgan los datos personales al desinstalar ────────────────
+
+  Antes de este cambio, [UninstallRun] llamaba SIEMPRE a uninstall.ps1 con
+  -Conservar: el desinstalador estándar de Windows (Panel de control > Agregar
+  o quitar programas) nunca ofrecía la alternativa, y el perfil del aula, la
+  memoria (datos de MENORES, Ley 25.326, ver opencode/tool/perfil.ts) y la key
+  de Google quedaban siempre en la máquina. Una notebook que se reasigna o se
+  dona por ese camino se iba con eso adentro. }
+var
+  PurgarDatosPersonales: Boolean;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Bandera: String;
+  Ventana: Integer;
+  Codigo: Integer;
+begin
+  { usUninstall: se dispara al ENTRAR a ese paso, antes de que Inno procese
+    las secciones [UninstallDelete] y [UninstallRun] -el porqué está anotado en la
+    primera de las dos-.
+
+    OJO, REGLA DEL ARCHIVO: ningún renglón de un .iss puede EMPEZAR con '#' ni con
+    '[', NI SIQUIERA adentro de un comentario Pascal como éste. ISCC los lee como
+    directiva de preprocesador o como encabezado de sección ANTES de mirar el
+    Pascal, y aborta con "Unknown preprocessor directive" o "Invalid section tag".
+    Las dos cosas pasaron acá y ninguna la vio el chequeo de sintaxis: sólo ISCC.
+    Preguntar acá y no en InitializeUninstall es a propósito: InitializeUninstall
+    corre ANTES del cartel de confirmación propio de Inno ("¿Seguro que querés
+    quitar Tecnia Bot?"), y preguntar por datos personales antes de que el
+    docente confirme siquiera que quiere desinstalar es un orden que no cierra. }
+  if CurUninstallStep = usUninstall then
+  begin
+    if UninstallSilent() then
+      { /SILENT o /VERYSILENT: nadie va a leer un cartel. Mismo default seguro
+        que ya usa uninstall.ps1 cuando nadie contesta su propia pregunta: se
+        conserva. Un despliegue desatendido (ej. limpiar veinte notebooks con un
+        script) NO puede terminar borrando datos de menores porque nadie
+        estaba mirando la pantalla. }
+      PurgarDatosPersonales := False
+    else
+      { MB_DEFBUTTON2 deja "No" resaltado: quien aprieta Enter sin leer, o
+        cierra el cartel con la X (que en Windows equivale a "No" cuando no hay
+        botón Cancelar), se queda en el mismo default seguro que el modo
+        silencioso. Se compara contra IDYES a propósito, no contra <> IDNO: así
+        CUALQUIER respuesta que no sea un "Sí" explícito conserva los datos,
+        sin tener que enumerar cada variante de "no elegí nada".
+        Por qué el default es CONSERVAR y no BORRAR, con las dos lecturas de
+        "seguro" en la cabeza: borrar es IRREVERSIBLE y con más facilidad se
+        dispara sin querer (un clic de más en un desinstalador corrido en
+        tanda), y conservar sigue siendo corregible después a mano o volviendo
+        a correr el desinstalador y eligiendo borrar. Perder la memoria de un
+        aula armada durante meses por default es un costo más alto y más
+        silencioso que dejarla en una compu que igual ya no tiene más Tecnia
+        Bot instalado. }
+      PurgarDatosPersonales := (MsgBox(
+        'Además de Tecnia Bot, esta compu tiene guardado el perfil y la memoria ' +
+        'del aula (lo que el asistente aprendió de quien lo usó) y, si cargaste ' +
+        'una, tu API key de Google.' + #13#10 + #13#10 +
+        'Son datos PERSONALES -de menores, en el modo "grupo" (Ley 25.326)- y una ' +
+        'credencial tuya. Si esta compu se va a donar, reasignar o resetear, ' +
+        'conviene borrarlos.' + #13#10 + #13#10 +
+        '¿Los querés borrar también, junto con el programa? Esto NO se puede deshacer.' + #13#10 +
+        '(Si elegís "No", quedan en la compu; los podés borrar después a mano ' +
+        'o volviendo a correr este desinstalador.)',
+        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES);
+
+    { Y ACA se ejecuta, en el mismo paso, con la respuesta ya en la mano.
+      No en [UninstallRun]: esa sección se resolvió al instalar (ver el
+      comentario largo allá). usUninstall corre ANTES de que se borren los
+      archivos, así que el uninstall.ps1 de la carpeta de instalación todavía
+      existe. (En un comentario Pascal de llaves no se puede nombrar una
+      constante entre llaves: el comentario cierra en el primer cierre de llave
+      y ISCC tira "Syntax error". Tercer caso de la misma familia en este archivo.)
+
+      La consola se MUESTRA sólo en la rama que borra: uninstall.ps1 relee cada
+      borrado antes de afirmarlo, y si un archivo está tomado -OpenCode abierto,
+      por ejemplo- lo dice y explica qué hacer. Ocultar eso justo en el único
+      camino que borra datos de menores dejaría la desinstalación tan muda como
+      el bug que se arregló. La rama que conserva no tiene nada que mostrar. }
+    if PurgarDatosPersonales then
+    begin
+      Bandera := '-Borrar';
+      Ventana := SW_SHOWNORMAL;
+    end
+    else
+    begin
+      Bandera := '-Conservar';
+      Ventana := SW_HIDE;
+    end;
+
+    if not Exec('powershell.exe',
+                '-ExecutionPolicy Bypass -NoProfile -File "'
+                  + ExpandConstant('{app}\install\uninstall.ps1') + '" ' + Bandera,
+                ExpandConstant('{app}'), Ventana, ewWaitUntilTerminated, Codigo) then
+    begin
+      { Un fallo silencioso acá es el peor caso posible: el docente eligió
+        borrar, el cartel se cerró, y los datos siguen en la máquina sin que
+        nadie se lo diga. Si no hay nadie mirando no se puede avisar, pero al
+        menos no se afirma nada. }
+      if (not UninstallSilent()) and PurgarDatosPersonales then
+        MsgBox('No pude correr el limpiador de datos personales.' + #13#10 + #13#10 +
+               'El perfil, la memoria del aula y la key de Google SIGUEN EN ESTA '
+               + 'COMPUTADORA. Si vas a entregar o reasignar la máquina, borralos '
+               + 'a mano de estas dos carpetas de tu usuario:' + #13#10 +
+               '  .config\opencode   (tecnia-perfil.md y tecnia-memoria.md)' + #13#10 +
+               '  .local\share\opencode   (auth.json)',
+               mbError, MB_OK);
+    end;
+  end;
 end;
