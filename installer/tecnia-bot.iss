@@ -331,7 +331,14 @@ var
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   { usUninstall: se dispara al ENTRAR a ese paso, antes de que Inno procese
-    [UninstallDelete] y [UninstallRun] (ver el porqué en [UninstallDelete]).
+    las secciones [UninstallDelete] y [UninstallRun] -el porqué está anotado en la
+    primera de las dos-.
+
+    OJO, REGLA DEL ARCHIVO: ningún renglón de un .iss puede EMPEZAR con '#' ni con
+    '[', NI SIQUIERA adentro de un comentario Pascal como éste. ISCC los lee como
+    directiva de preprocesador o como encabezado de sección ANTES de mirar el
+    Pascal, y aborta con "Unknown preprocessor directive" o "Invalid section tag".
+    Las dos cosas pasaron acá y ninguna la vio el chequeo de sintaxis: sólo ISCC.
     Preguntar acá y no en InitializeUninstall es a propósito: InitializeUninstall
     corre ANTES del cartel de confirmación propio de Inno ("¿Seguro que querés
     quitar Tecnia Bot?"), y preguntar por datos personales antes de que el
@@ -367,8 +374,8 @@ begin
         'Son datos PERSONALES -de menores, en el modo "grupo" (Ley 25.326)- y una ' +
         'credencial tuya. Si esta compu se va a donar, reasignar o resetear, ' +
         'conviene borrarlos.' + #13#10 + #13#10 +
-        '¿Los querés borrar también, junto con el programa? Esto NO se puede deshacer.' +
-        #13#10 + '(Si elegís "No", quedan en la compu; los podés borrar después a mano ' +
+        '¿Los querés borrar también, junto con el programa? Esto NO se puede deshacer.' + #13#10 +
+        '(Si elegís "No", quedan en la compu; los podés borrar después a mano ' +
         'o volviendo a correr este desinstalador.)',
         mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES);
   end;
