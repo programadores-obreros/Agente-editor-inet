@@ -193,45 +193,36 @@ Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
 ; del docente. Sus proyectos viven en Documentos\Tecnia Bot, que no se toca.
 ;
 ; Este borrado se lleva puesto install\uninstall.ps1 -está adentro de {app}-,
-; así que TIENE que pasar después de que [UninstallRun] ya lo corrió. Es el
-; orden por defecto de Inno (las entradas de [UninstallRun] se ejecutan al
-; entrar a usUninstall, antes de que se borren los archivos de esta sección y
-; los de [Files]), y es el mismo orden que ya usaba la versión vieja de esta
-; sección: si estuviera al revés, la sola línea `-Conservar` de más abajo ya
-; hubiera estado fallando con "no se encontró uninstall.ps1" desde siempre.
-Type: filesandordirs; Name: "{app}"
-
-[UninstallRun]
-; Dos entradas para la MISMA operación, no una condicional: Inno no permite
-; variar los Flags (mostrar consola o no) en runtime dentro de una sola línea,
-; así que se listan las dos ramas y cada una se prende con su Check. Nunca
-; corren las dos: PurgarDatosPersonales (ver [Code]) ya quedó decidido antes de
-; que Inno evalúe estos Check, porque se fija en CurUninstallStepChanged al
-; ENTRAR a usUninstall -- el mismo paso en el que Inno procesa esta sección.
+; así que TIENE que pasar después de que [UninstallRun]
+; VACIA A PROPOSITO, y esto es el corazon del bug que se arreglo acá.
 ;
-; RAMA CONSERVAR (default seguro, y la única que corría antes de este cambio):
-; sigue oculta como siempre. No hay nada nuevo que confirmar acá.
-Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"" -Conservar"; \
-  Flags: runhidden; RunOnceId: "quitarcapa"; Check: not PurgarDatosPersonalesElegido
-; RunOnceId DISTINTO al de la rama de arriba, a propósito: Inno ejecuta una
-; sola entrada por RunOnceId, y con el mismo id la rama que borra podría no
-; correr nunca aunque su Check diera verdadero. Serían dos ramas mutuamente
-; excluyentes por Check, así que compartir id no aporta nada y sí arriesga
-; dejar muerta en silencio justo la rama que borra datos de menores: un cartel
-; que promete borrar y no borra es peor que no ofrecer la opción. No las
-; unifiques bajo un mismo id.
+; Antes había dos entradas mutuamente excluyentes por `Check`, una con
+; `-Conservar` y otra con `-Borrar`, y la de borrar NUNCA CORRIO. No fallaba:
+; no existía. Verificado leyendo el `unins000.dat` de una instalación real en
+; la VM: sólo estaba grabada la de `-Conservar`, con su `quitarcapa`. De la
+; otra, ni rastro.
 ;
-; RAMA PURGAR: a propósito SIN runhidden. uninstall.ps1 relee cada borrado
-; antes de afirmarlo (ver su encabezado) y si un archivo está tomado -por
-; ejemplo OpenCode abierto- lo dice por consola y explica qué hacer. Ocultar
-; esa consola justo en el único camino que borra datos de menores (Ley
-; 25.326) volvería a la desinstalación tan muda como el bug que se está
-; arreglando: el docente creería que se borró sin haberlo verificado.
-Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\uninstall.ps1"" -Borrar"; \
-  StatusMsg: "Quitando el perfil, la memoria del aula y la key de Google..."; \
-  RunOnceId: "quitarcapaborrar"; Check: PurgarDatosPersonalesElegido
+; POR QUE: Inno escribe las entradas de [UninstallRun] en el log de
+; desinstalación DURANTE LA INSTALACION, y evalúa su `Check` AHI. En ese
+; momento `PurgarDatosPersonales` vale False -es su default, y
+; `CurUninstallStepChanged` ni siquiera corre durante el install-, así que
+; `Check: not PurgarDatosPersonalesElegido` daba True y grababa la rama de
+; conservar, mientras `Check: PurgarDatosPersonalesElegido` daba False y la de
+; borrar no se grababa nunca. Al desinstalar, el comando de borrar no existía
+; en ningún lado: de ahí que apretar "Si" no borrara nada y que no apareciera
+; ninguna consola.
+;
+; El comentario que estaba acá afirmaba lo contrario ("ya quedó decidido antes
+; de que Inno evalúe estos Check... el mismo paso en el que Inno procesa esta
+; sección"). Era la creencia equivocada que originó el bug, escrita con
+; confianza al lado del código que rompía.
+;
+; NO VUELVAS A PONER UNA DECISION DE TIEMPO DE DESINSTALACION ACA. Una
+; decisión que se toma cuando el docente aprieta un botón no puede vivir en
+; una sección que se resolvió meses antes, cuando instaló.
+;
+; La ejecución ahora vive en [Code], en CurUninstallStepChanged, que sí corre
+; al desinstalar y sí ve la respuesta del cartel.
 
 [Messages]
 ; Textos branded del asistente.
@@ -329,6 +320,10 @@ var
   PurgarDatosPersonales: Boolean;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Bandera: String;
+  Ventana: Integer;
+  Codigo: Integer;
 begin
   { usUninstall: se dispara al ENTRAR a ese paso, antes de que Inno procese
     las secciones [UninstallDelete] y [UninstallRun] -el porqué está anotado en la
@@ -378,12 +373,48 @@ begin
         '(Si elegís "No", quedan en la compu; los podés borrar después a mano ' +
         'o volviendo a correr este desinstalador.)',
         mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES);
-  end;
-end;
 
-function PurgarDatosPersonalesElegido: Boolean;
-begin
-  { Función puente para el Check: de [UninstallRun] -- Check: necesita el
-    NOMBRE de una función, no puede evaluar la variable directamente. }
-  Result := PurgarDatosPersonales;
+    { Y ACA se ejecuta, en el mismo paso, con la respuesta ya en la mano.
+      No en [UninstallRun]: esa sección se resolvió al instalar (ver el
+      comentario largo allá). usUninstall corre ANTES de que se borren los
+      archivos, así que el uninstall.ps1 de la carpeta de instalación todavía
+      existe. (En un comentario Pascal de llaves no se puede nombrar una
+      constante entre llaves: el comentario cierra en el primer cierre de llave
+      y ISCC tira "Syntax error". Tercer caso de la misma familia en este archivo.)
+
+      La consola se MUESTRA sólo en la rama que borra: uninstall.ps1 relee cada
+      borrado antes de afirmarlo, y si un archivo está tomado -OpenCode abierto,
+      por ejemplo- lo dice y explica qué hacer. Ocultar eso justo en el único
+      camino que borra datos de menores dejaría la desinstalación tan muda como
+      el bug que se arregló. La rama que conserva no tiene nada que mostrar. }
+    if PurgarDatosPersonales then
+    begin
+      Bandera := '-Borrar';
+      Ventana := SW_SHOWNORMAL;
+    end
+    else
+    begin
+      Bandera := '-Conservar';
+      Ventana := SW_HIDE;
+    end;
+
+    if not Exec('powershell.exe',
+                '-ExecutionPolicy Bypass -NoProfile -File "'
+                  + ExpandConstant('{app}\install\uninstall.ps1') + '" ' + Bandera,
+                ExpandConstant('{app}'), Ventana, ewWaitUntilTerminated, Codigo) then
+    begin
+      { Un fallo silencioso acá es el peor caso posible: el docente eligió
+        borrar, el cartel se cerró, y los datos siguen en la máquina sin que
+        nadie se lo diga. Si no hay nadie mirando no se puede avisar, pero al
+        menos no se afirma nada. }
+      if (not UninstallSilent()) and PurgarDatosPersonales then
+        MsgBox('No pude correr el limpiador de datos personales.' + #13#10 + #13#10 +
+               'El perfil, la memoria del aula y la key de Google SIGUEN EN ESTA '
+               + 'COMPUTADORA. Si vas a entregar o reasignar la máquina, borralos '
+               + 'a mano de estas dos carpetas de tu usuario:' + #13#10 +
+               '  .config\opencode   (tecnia-perfil.md y tecnia-memoria.md)' + #13#10 +
+               '  .local\share\opencode   (auth.json)',
+               mbError, MB_OK);
+    end;
+  end;
 end;
