@@ -167,11 +167,27 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 
 ## 🧪 Desarrollo
 
-Los tests corren con **Node puro** (sin instalar dependencias) y también en cada push vía GitHub Actions:
+Los tests corren con **Node puro** (sin instalar dependencias) y también en cada push vía GitHub Actions.
+
+**Los cuatro chequeos, y los cuatro tienen que dar verde antes de un commit:**
 
 ```bash
-pnpm test       # o: node --test tests/*.test.mjs
+pnpm test              # la suite (o: node --test tests/*.test.mjs)
+pnpm typecheck         # tsc --noEmit sobre los tools y los plugins
+pnpm fichas:check      # las 17 hojas A4 contra MANIFEST.sha256
+pnpm seguridad:check   # que ningún proyecto con partes móviles, calor o red
+                       # eléctrica se quede sin su bloque de seguridad
 ```
+
+`seguridad:check` es un guardián, no un linter de estilo: si agregás un proyecto a
+`opencode/skills/proyectos-inet/proyectos/` que mencione un servo, un motor, calor o
+220 V, **falla el PR** hasta que tenga su bloque `> ⚠️ **SEGURIDAD:**` — o una exención
+explícita con su motivo, si el riesgo no es real. Corre también en el CI, junto con la
+validación del frontmatter de las skills y la compilación del instalador con ISCC.
+
+> ⚠️ **Los tests NO se pueden correr en paralelo entre sí**: usan rutas temporales con
+> nombre fijo y dos corridas simultáneas se pisan, dando rojos falsos. Si delegás trabajo
+> a varios agentes a la vez, que editen en paralelo pero que la suite la corra uno solo.
 
 > ⚖️ **El gestor de paquetes del proyecto es `pnpm`.** `npm`, `npx` y `yarn` no
 > se usan en ningún repo de Tecnia Lab. Para correr un binario suelto:
