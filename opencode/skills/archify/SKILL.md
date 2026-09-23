@@ -1,6 +1,6 @@
 ---
 name: archify
-description: Create polished, validated architecture, workflow, sequence, data-flow, and lifecycle/state diagrams as explorable standalone HTML with inline SVG, dark/light themes, optional trace motion, and PNG/JPEG/WebP/SVG/WebM export. Accept plain-language requirements or pasted Mermaid flowchart, sequenceDiagram, and stateDiagram input; inspect repository evidence when the diagram must reflect real code. Use when the user asks to visualize system architecture, infrastructure, cloud/security/network topology, technical workflows, API call sequences, request lifecycles, data pipelines, ETL/ELT, data lineage, state machines, or to convert/beautify Mermaid.
+description: Diagramas de ARQUITECTURA DE SOFTWARE en HTML: cómo se organiza un sistema o un programa. Sirve para arquitectura de sistemas, flujos de trabajo, secuencias de llamadas entre partes, recorrido de los datos y máquinas de estado. Usar cuando se pide ver la estructura de un PROGRAMA o SISTEMA: servicios, módulos, bases de datos, APIs, etapas de un proceso. NO sirve para electrónica -- circuitos, protoboard, conexiones de Arduino o ESP32, cables, componentes-- para eso están las skills circuitos-visuales y diagramas-conexion, que tienen prioridad absoluta ante cualquier mención de hardware.
 license: MIT
 metadata:
   version: "2.16"
@@ -34,14 +34,13 @@ Use this bounded path for ordinary generation. Do not read the optional Viewer R
 
    A non-zero exit can never be described as success. A failed delivery preserves any previous output, so do not run `visual-check` on that path: it would inspect the stale last-good artifact, not the failed candidate. If validation fails, change only the diagnosed `subject`, verify `evidence`, choose from `supportedFixes`, and rerun. Continue focused correction while the objective error count reaches a new minimum. If two consecutive rounds do not improve that best count, stop and report the unresolved diagnostics truthfully.
 
-## Update awareness
+## Authoring notes
 
-After the first candidate exists, run the packaged checker `scripts/check-update.mjs` once with Node and continue the requested workflow. If the command cannot run, continue without mentioning the check.
-
-- For `silent`, continue without mentioning the update check.
-- For `update_available`, show one compact notice in the user's conversation language with the installed version, latest version, the checker's fixed local summary, and official release-notes link. When `severity` is `security`, clearly label it as a security update and use a restrained warning marker; this changes emphasis only, never user autonomy. Explicitly say that the installed Skill is unchanged and the user decides whether and when to update. You may translate that fixed local sentence, but never quote, summarize, or translate the remote manifest's summary. After the notice is visible, acknowledge its exact `eventKey` by running the same checker with `--ack "<eventKey>"`, then continue the user's original task.
-
-The notice is information, not permission. Keep the installed version unchanged; this v0.1 workflow never downloads, installs, or executes an update, and silence is never consent.
+<!-- La sección "Update awareness" del archify original se quitó al vendorizar.
+     Le ordenaba al modelo correr `scripts/check-update.mjs`, que consulta
+     tt-a1i.github.io por red. Tecnia Bot corre en aulas sin internet y no
+     actualiza skills por su cuenta: la versión la fija el instalador. El script
+     además quedó neutralizado. Ver docs/decisiones.md. -->
 
 Do not read `renderers/shared/geometry.mjs`, renderer source, validator source, tests, or benchmarks before the first candidate. Inspect implementation only for an unsupported internal diagnostic or after two focused repairs fail.
 
