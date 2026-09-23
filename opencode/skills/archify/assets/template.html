@@ -31,14 +31,17 @@
       } catch (_) {}
     })();
   </script>
-  <!-- Async font load: a blackholed network must not block first paint.
-       The body font stack falls back to system monospace until it lands. -->
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap"
-        rel="stylesheet" media="print" onload="this.media='all'">
-  <noscript>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  </noscript>
+  <!-- Tecnia Bot: the original archify template fetched "JetBrains Mono" from
+       a Google-hosted web font CDN here (two <link> tags plus a <noscript>
+       fallback, one crossorigin preconnect). Tecnia Bot runs on classroom
+       notebooks with no internet access at all, so that request would only
+       stall and then fall back anyway. We removed those <link> tags and rely
+       directly on the system-monospace fallback chain already declared on
+       the `body`/`svg`/canvas font-family rules below (see "Consolas" for
+       Windows 10/11, around line ~354 and the JS-generated copies further
+       down) — same look, zero network. To restore upstream behavior, check
+       `git log -- assets/template.html` on this branch for the removed
+       markup, or diff against the vendored archify 2.16.0 release. -->
   <style>
     /* ==========================================================
        THEME VARIABLES — switch by toggling [data-theme] on <html>

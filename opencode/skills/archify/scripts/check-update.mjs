@@ -1346,6 +1346,17 @@ async function cancelResponseBody(response) {
 
 async function fetchCandidate({ fetchImpl, manifestUrl, timeoutMs }) {
   if (manifestUrl !== DEFAULT_MANIFEST_URL) throw new UpdateContractError('unexpected manifest URL');
+  // Tecnia Bot: this skill runs on school notebooks with no internet access at
+  // all, so it must never phone home to check for archify updates. Cut the
+  // network call here, before the AbortController/fetch setup below, instead
+  // of deleting the real implementation. Throwing a plain Error (not
+  // UpdateContractError) sends this straight into the existing "check-failed"
+  // branch in checkForUpdate(), which already commits a silent, well-formed
+  // { status: 'silent', reason } result and backs off the next check — the
+  // exact same output contract and code path already used for a real offline
+  // failure. To restore upstream behavior, remove this throw.
+  throw new Error('Tecnia Bot: archify update checks are disabled (offline classroom, no network access)');
+  // eslint-disable-next-line no-unreachable -- kept intentionally; see comment above.
   const controller = new AbortController();
   let timer;
   const timeout = new Promise((_resolve, reject) => {

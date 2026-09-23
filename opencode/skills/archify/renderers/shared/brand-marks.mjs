@@ -358,6 +358,42 @@ async function captureRemoteBrand(value, deadline = Date.now() + captureTimeoutM
     sourceUrl: sourceUrl.href,
     reason,
   });
+
+  // MODIFICACION DE TECNIA BOT -- corte de red. Para revertir, borrar este return.
+  //
+  // Esta funcion es el UNICO cuello de botella de red que queda en el skill: por
+  // aca pasan los dos caminos que salen a internet.
+  //
+  //   1. `archify brands capture <url>` (bin/archify.mjs), el comando explicito.
+  //   2. Un render NORMAL. renderers/shared/cli.mjs:46 llama a
+  //      prepareDiagramBrandMarks() en CADA carga de diagrama, y si un nodo trae
+  //      `brand` como objeto {url, sha256} -forma valida segun
+  //      schemas/common.schema.json#/$defs/brandMark- se dispara la descarga para
+  //      reproducir el digest. Ningun ejemplo nuestro usa esa forma, pero el JSON
+  //      de un docente o un alumno si podria.
+  //
+  // Tecnia Bot corre en aulas sin internet. Sin este corte, el caso 2 deja al
+  // render esperando un timeout que nunca va a resolver.
+  //
+  // Se devuelve el `fallback` que esta funcion YA usa para sus propias fallas,
+  // para no inventar un contrato nuevo.
+  //
+  // QUE PASA DESPUES, medido y no supuesto: prepareDiagramBrandMarks lo anota en
+  // `unknown` y al final (linea ~519) eso CORTA el render con
+  // `brand/capture-unavailable`. El diagrama NO se dibuja. Es a proposito y esta
+  // bien: un `brand` pineado trae un sha256 que hay que verificar, y dar por buena
+  // una verificacion que no se pudo hacer seria peor que fallar.
+  //
+  // Lo que cambia es el COMO falla. Antes, en un aula sin internet, `checkedFetch`
+  // se comia el timeout entero y recien despues daba el mismo error, en ingles y
+  // hablando de red. Ahora corta al instante y el motivo que ve el docente esta en
+  // castellano y dice que hacer. Verificado renderizando con `unshare -rn`.
+  //
+  // Las marcas que el aula necesita ya vienen pre-generadas y sin red en
+  // renderers/shared/generated-brand-marks.mjs.
+  return fallback('la captura de logos por internet esta deshabilitada en Tecnia Bot (el aula trabaja sin conexion); usa una marca de las que ya vienen incluidas');
+
+  // eslint-disable-next-line no-unreachable -- se conserva el original intacto; ver arriba.
   try {
     const page = await checkedFetch(sourceUrl, 'text/html,application/xhtml+xml,image/*;q=0.8', deadline);
     const pageType = (page.response.headers.get('content-type') || '').toLocaleLowerCase('en-US');
@@ -497,9 +533,13 @@ export async function prepareDiagramBrandMarks(diagramType, diagram) {
       message,
       subject: { diagramType, collection },
       evidence: {},
-      supportedFixes: message.includes('is an unpinned URL')
-        ? ['run `archify brands capture <url> --json` and author the returned digest-pinned brand object']
-        : ['choose an ID from `archify brands`', 'run `archify brands capture <url> --json` for an unknown official site'],
+      // MODIFICACION DE TECNIA BOT. El original sugeria aca
+      // `archify brands capture <url> --json`, que es EXACTAMENTE el comando que
+      // deshabilitamos mas arriba (ver captureRemoteBrand). Mandar al docente a
+      // correr algo que no funciona es peor que no sugerir nada: se lleva la
+      // culpa de un problema que no es suyo. La unica salida que de verdad
+      // anda sin internet es usar una marca ya incluida.
+      supportedFixes: ['usa una marca ya incluida: corre `archify brands` para ver la lista, y poné ese id como `brand` (por ejemplo "github")'],
     })));
   }
 }
