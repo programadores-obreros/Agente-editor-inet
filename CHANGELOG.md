@@ -4,6 +4,32 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-09-22
+
+**El chequeo de seguridad dejó de mirar sólo la placa y empezó a mirar al pibe.** Hasta acá, el repaso que el bot hace *antes de dar corriente* cuidaba el hardware —los 3,3 V del ESP32, la polaridad, los cortos— y **no decía una palabra sobre los 220 V**. En un aula donde se arma un relé para encender una lámpara, eso es el hueco que importa.
+
+### Agregado
+
+- **El checklist de seguridad ahora frena en la red eléctrica.** Antes se disparaba con "¿puedo prenderlo?" y repasaba cinco cosas, todas sobre el equipo. Ahora, **si hay un enchufe en la historia, el skill se activa** y lo primero que pregunta no es por la placa: es si está desenchufado, si el lado de 220 V lo cableó un adulto, si no hay cobre a la vista y si el relé aguanta la carga. Esas cuatro **bloquean**: hasta que no estén respondidas no se dice "dale, prendé". El texto no se inventó — se reusó el que ya estaba en el skill `actuadores`: *"la red eléctrica mata, esto no es negociable"*.
+- **Los proyectos avisan del riesgo físico, no sólo del eléctrico.** Nueve de los quince tenían partes móviles o calor y ninguna advertencia: el dron con sus hélices, la barrera del estacionamiento apoyando contra el tope cada vez que pasa un auto, las paletas del dron acuático a 1500 rpm —peligrosas justo cuando se prueba fuera del agua—, el servo de la cerradura haciendo fuerza contra el fin de carrera, el gatillo del pulverizador, y el radiador, **que quema al tacto aunque el 220 V esté bien resuelto**. Cada uno nombra el mecanismo, el momento de peligro y la acción que lo evita.
+- **El desinstalador de Windows ofrece borrar los datos personales.** Hasta acá, desinstalar por el Panel de control **siempre conservaba** el perfil del aula, la memoria y la API key: una notebook que se dona o se reasigna se iba con datos de menores adentro (Ley 25.326). Ahora pregunta, con **"No" resaltado por defecto** —borrar no se puede deshacer— y en modo silencioso nunca borra, para que limpiar veinte máquinas con un script no termine en un borrado que nadie pidió.
+- **Un guardián que evita que esto vuelva a pasar.** `pnpm seguridad:check` corta el PR si un proyecto nuevo menciona un servo, un motor, calor o 220 V y no trae su bloque de seguridad. Si el riesgo no es real, se declara con su motivo escrito; **una exención en blanco también falla.**
+
+### Corregido
+
+- **`analogWrite` en ESP32 SÍ existe, y la documentación decía que no.** El catálogo de placas afirmaba *"no existe `analogWrite`, usá `ledc`"* mientras las fichas de actuadores lo usaban en el código. Un alumno que leía las dos cosas no tenía forma de saber cuál valía. **La causa era que ninguna versión de plataforma estaba fija**: sin eso, la respuesta correcta cambiaba con lo que se hubiera bajado ese día. Ahora las plataformas están **fijadas exactas** (`espressif32@6.12.0`, `atmelavr@5.2.0`) y con esa versión —core Arduino-ESP32 2.0.17— `analogWrite` anda, verificado **compilando**. La corrección no borra el tema: explica cuándo conviene cada una, y cuál es la diferencia real con el UNO (allá el PWM sale sólo por los pines `~`; en ESP32 sirve casi cualquier GPIO).
+- **Dos versiones fijas también significan el mismo binario para todos.** Antes, dos alumnos con el mismo código podían obtener compilados distintos según el día en que instalaron. En una escuela eso vale más que tener la última versión.
+- **Los archivos que no se pueden perder ahora se escriben de forma atómica.** El perfil, la memoria y la key se guardaban en el lugar, así que una notebook que se apaga de golpe —batería, tapa cerrada, corte de luz— podía dejarlos cortados a la mitad. Con `auth.json` roto, OpenCode se quedaba sin **ninguna** credencial. Ahora se escribe al lado y se renombra encima: o está el archivo viejo entero, o el nuevo entero.
+- **Dos skills no cargaban.** `educabot` y `librerías` tenían el encabezado mal formado —unos dos puntos sin comillas— y eran justo dos de las mejor documentadas. Ahora el CI valida el encabezado de las 19 en cada cambio.
+- **El puerto serial se valida antes de usarse** en la rama de macOS, con una lista cerrada de formas válidas: sólo puede rechazar, nunca hacer ejecutar algo distinto.
+- **El instalador no compilaba.** Tres errores de sintaxis que ninguna revisión veía porque sólo aparecen al construir el `.exe`. Ahora el CI lo compila en cada cambio.
+- **El README decía "8 herramientas" y son 9** (faltaba `/clave`), y el documento que sirve de fuente para la web pública **omitía el aviso** de que, sin API key, lo que se escribe en el chat puede usarse para mejorar el modelo. Ese aviso ahora está en los dos lados.
+
+### Para quien mantiene el proyecto
+
+Se documentaron en `CLAUDE.md` las reglas que se venían reimprovisando: cómo se verifica que un test o un guardián **prueban algo de verdad**, las tres trampas de sintaxis del instalador, y por qué una decisión de tiempo de desinstalación no puede vivir en una sección que se resuelve al instalar. El `README` ahora documenta los **cuatro** chequeos, no sólo los tests.
+
+
 ## [0.4.1] — 2026-09-15
 
 **El docente con Sensor Shield ve SU placa.** Hasta acá recibía el dibujo del Arduino UNO pelado — eléctricamente correcto y a la vez inservible en la mesa de trabajo, porque **el pibe no mete el cable en el header de la placa: lo mete en la terna de tres**.
