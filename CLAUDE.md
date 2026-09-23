@@ -57,6 +57,45 @@ Por eso todo guard nuevo viene con un test que prueba que **marca lo que tiene q
 marcar**, no sólo que pasa sobre lo que ya está bien. Ver `tests/seguridad-proyectos.test.mjs`
 como modelo.
 
+## Antes de reportar un hallazgo, descartá el instrumento
+
+La lección más cara del proyecto, y la que más veces se repitió: **un verde puede
+significar "pasó" o puede significar "no midió nada", y no se distinguen mirándolos.**
+
+En una sola tanda de trabajo, siete mediciones dieron un resultado falso **y ninguna era
+el producto**:
+
+| Lo que medí | Lo que estaba midiendo en realidad |
+|---|---|
+| `cmd \| tail; echo $?` | el exit code del `tail`, no el del comando |
+| `/^X$/.test("X\n")` | creí que `$` matchea antes de un newline final — eso es Python, no JS |
+| `HKCU:` y `%LOCALAPPDATA%` por `guest-exec` | el perfil de SYSTEM, no el del usuario |
+| la hora de la VM "4 h atrasada" | diferencia de ZONA HORARIA; en UTC coincidían con 2 s |
+| `schtasks /run` + `sleep` | la tarea devolvió `0x800710E0` y **no corrió**; medí un estado que nunca se creó |
+| polling propio con TIMEOUT | la tarea había terminado bien; el roto era mi parser |
+| `Test-Path auth.json` | el archivo debe seguir existiendo: lo correcto es mirar si quedó el bloque `google` |
+
+Las dos primeras casi me hacen borrar un guard que funcionaba; la última, reportar un bug
+de privacidad inexistente.
+
+**Reglas concretas que salen de ahí:**
+
+- **Exit codes sin pipe.** `cmd > /dev/null; echo $?`, nunca `cmd | algo; echo $?`.
+- **Nunca `sleep` a ciegas en la VM.** El `.cmd` escribe un centinela como última línea y
+  se espera ESE archivo. Y después se verifica el estado esperado **antes** de medir
+  comportamiento.
+- **Verificá QUÉ build estás probando** antes de sacar conclusiones: marca única en el
+  código + leerla en el artefacto instalado.
+- **El assert tiene que medir el mundo, no el reporte del mundo.** Si un script dice
+  "borré", mirá el disco; si dice "reparé", mirá el conteo antes y después.
+
+### Familia aparte: leé el `--help` completo
+
+Distinto del instrumento que miente: a veces la herramienta avisa y no leemos. Un comando
+que "no hace nada" puede estar en su modo por defecto documentado — `--dry-run` en vez de
+`--apply`. **Antes de concluir que una herramienta no cumple lo que promete, leé su
+`--help` entero.** A veces el bug es no haber leído el modo por defecto.
+
 ## Seguridad física en los proyectos INET
 
 Todo proyecto de `opencode/skills/proyectos-inet/proyectos/` que tenga **partes móviles,
@@ -102,6 +141,22 @@ que es lo que permite retomar después de una interrupción sin depender del wor
 **Esta decisión ya está tomada. No la vuelvas a discutir cada sesión.** Si alguna vez hay
 que cambiarla, se cambia acá, con el motivo escrito al lado.
 
+**Y una advertencia sobre este documento en particular, aprendida rompiéndola:** es la
+única regla del repo **sin guardián**. El bloque de seguridad tiene un job de CI, el
+frontmatter YAML tiene otro, los tests se verifican por mutación, el `.iss` se compila en
+CI. Éste depende de que alguien se acuerde — y en la v0.4.1 se quedó dos días atrás
+mientras el trabajo seguía, con tareas ya mergeadas sin tildar.
+
+**Un documento de recuperación que miente sobre el estado es peor que no tenerlo**: quien
+lo lea para retomar arranca en el pasado. Dos consecuencias prácticas:
+
+- Cuando el trabajo se vuelve reactivo y aparecen tareas que no están en la checklist,
+  **agregalas antes de hacerlas**. Si no hay nada que tildar, el documento se muere solo.
+- **Cerralo explícitamente** cuando el trabajo termina, con el estado final y los commits.
+  Un documento abierto para siempre es indistinguible de uno abandonado.
+- Si vas a dejar de mantenerlo a propósito (pasa, y a veces está bien), **decilo en el
+  chat**. Soltarlo en silencio es lo único que no se puede hacer.
+
 ## Lo que no se toca sin poder probarlo
 
 `installer/` es Inno Setup y PowerShell: **no se puede verificar desde Linux**. Un cambio
@@ -117,6 +172,41 @@ Hay una excepción acotada y vale entenderla: un validador **fail-closed** —un
 que sólo puede rechazar entrada y nunca hace ejecutar algo distinto— sí se puede agregar
 sin poder probarlo en la plataforma destino, porque el peor caso es rechazar algo válido.
 Un "arreglo" que cambia lo que se ejecuta, no.
+
+## `installer/*.iss`: tres caracteres que ISCC lee como estructura
+
+Costaron tres compilaciones fallidas seguidas, ninguna detectable sin compilar. ISCC lee
+estos caracteres como **estructura del archivo, sin mirar si están comentados**:
+
+| No se puede | Error de ISCC |
+|---|---|
+| Un renglón que **empieza** con `#` (ej. `#13#10` al inicio de línea) | `Unknown preprocessor directive` |
+| Un renglón que **empieza** con `[` — **incluso dentro de un comentario Pascal** | `Invalid section tag` |
+| Un **cierre de llave** dentro de un comentario `{ }` (ej. nombrar `{app}` ahí) | `Syntax error` — el comentario cierra en la primera llave |
+
+Poner ese mismo texto a mitad de renglón está bien; lo que rompe es que abra la línea.
+
+**Y la regla de diseño que sale del mismo archivo:** el `Check` de una entrada de
+`[UninstallRun]` **se evalúa al INSTALAR**, no al desinstalar — Inno graba esas entradas
+en el log de desinstalación durante el install. **Una decisión que se toma cuando el
+usuario aprieta un botón no puede vivir en esa sección.** Va en `[Code]`, en
+`CurUninstallStepChanged`, que sí corre al desinstalar.
+
+El job de Windows del CI compila el `.iss` con ISCC justamente porque nada de esto se ve
+sin construir el `.exe`.
+
+## PRs encadenadas: no borres ramas hasta que toda la cadena esté mergeada
+
+`gh pr merge <n> --merge --delete-branch` en una cadena apilada **cierra automáticamente
+las PRs que tienen esa rama como base**. No las reapunta: las cierra. Y una PR cerrada no
+se repara — no se puede reabrir porque la base no existe, y no se puede cambiar la base
+porque está cerrada.
+
+Las ramas y sus commits sobreviven; lo que se pierde es el hilo de revisión.
+
+**El flujo correcto:** mergear **sin** `--delete-branch`, reapuntar la siguiente con
+`gh pr edit <n> --base main` mientras la rama base todavía exista, mergear, y **recién al
+final** borrar todas las ramas.
 
 ## Commits
 
