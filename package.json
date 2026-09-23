@@ -10,6 +10,7 @@
     "fichas:manifest": "node scripts/fichas-manifest.mjs",
     "fichas:check": "node scripts/fichas-manifest.mjs --check",
     "seguridad:check": "node scripts/seguridad-proyectos.mjs",
+    "notas:release": "node scripts/notas-release.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {

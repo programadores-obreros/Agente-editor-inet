@@ -117,10 +117,25 @@ jobs:
             installer/dist/SHA256SUMS.txt
           if-no-files-found: error
 
+      # `gh api .../releases/tags/vX.Y.Z --jq '.body'` daba 0 caracteres en TODOS
+      # los releases publicados (0.4.1, 0.4.0, 0.3.79 verificados), porque el
+      # paso de abajo no le pasaba body ni body_path. Y el sitio publico
+      # (tecnialab-web) lee justo esas notas de la API de GitHub para la pagina
+      # de versiones — asi que el docente veia notas vacias, mientras el
+      # CHANGELOG nunca salia de este repo. `notas-release.mjs` corta con exit 1
+      # si la version de VERSION no tiene seccion en CHANGELOG.md: falla el job,
+      # no publica sin cuerpo. Node ya viene instalado en windows-latest, igual
+      # que en ubuntu-latest (ver ci.yml), asi que no hace falta setup-node.
+      - name: Extraer las notas de esta version del CHANGELOG
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: node scripts/notas-release.mjs --salida installer\dist\notas-release.md
+
       - name: Adjuntar al release (solo en tags)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          body_path: installer/dist/notas-release.md
           files: |
             installer/dist/Instalar-Tecnia-Bot.exe
             installer/dist/SHA256SUMS.txt

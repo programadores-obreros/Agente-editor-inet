@@ -157,6 +157,21 @@ lo lea para retomar arranca en el pasado. Dos consecuencias prácticas:
 - Si vas a dejar de mantenerlo a propósito (pasa, y a veces está bien), **decilo en el
   chat**. Soltarlo en silencio es lo único que no se puede hacer.
 
+## Publicar una versión
+
+El procedimiento completo está en [`docs/publicar-release.md`](docs/publicar-release.md):
+qué número le toca, los cuatro archivos que se tocan y por qué los demás no, y las dos
+trampas —que el tag va sobre el commit de merge y **pegado** a él, y que las notas del
+release son lo que termina leyendo el docente en el sitio público—.
+
+Las otras dos puntas: [`docs/prueba-rc.md`](docs/prueba-rc.md) para probar el `.exe` en
+una notebook real antes de publicar, y [`docs/rollback.md`](docs/rollback.md) para
+cuando ya salió y salió mal.
+
+**No pegues las notas a mano.** El workflow las saca del `CHANGELOG` con
+`scripts/notas-release.mjs` y **falla si no encuentra la sección de esa versión**: hasta
+la 0.4.1 todos los releases salieron con el cuerpo vacío, y el sitio público lee de ahí.
+
 ## Lo que no se toca sin poder probarlo
 
 `installer/` es Inno Setup y PowerShell: **no se puede verificar desde Linux**. Un cambio
