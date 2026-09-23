@@ -4,7 +4,8 @@
 #   1. Scoop (gestor de paquetes en espacio de usuario)
 #   2. OpenCode (el editor de IA donde vive Tecnia Bot)
 #   3. Python + PlatformIO Core (para compilar y cargar a la placa)
-#   4. Tecnia Bot (la capa educativa)
+#   4. Node.js LTS (para el skill de diagramas de arquitectura, archify)
+#   5. Tecnia Bot (la capa educativa)
 #
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
@@ -129,6 +130,39 @@ if ($PythonVersion -notmatch '^\d+\.\d+\.\d+$') {
     Write-Host "  [!] No se pudo leer la version de Python a instalar ($ArchivoVersionPython)." -ForegroundColor Yellow
     Write-Host "      Se instala la ultima que ofrezca Scoop, sin fijar."
     $PythonVersion = ""
+}
+
+# La version de NODE, con la misma mecanica que Python de aca arriba: archivo
+# propio, mismo regex, mismo aviso amarillo si falta o esta roto -sin cortar-.
+#
+# POR QUE EL BUCKET "nodejs-lts" Y NO "nodejs". Node se instala para que corra el
+# skill de diagramas de arquitectura (archify, en opencode\skills\archify), que se
+# ejecuta con `node bin/archify.mjs`. El bucket main de Scoop trae dos paquetes:
+# "nodejs" (la de punta, 26.8.1 al momento de escribir esto) y "nodejs-lts" (la
+# LTS, 24.20.0) -numeros verificados el 2026-09-23 contra el bucket que ve la VM
+# Windows de pruebas-. Se elige la LTS por el mismo criterio que ya rige a
+# OpenCode y Python en este archivo: en un aula, que las veinte maquinas
+# terminen con el MISMO binario vale mas que tener la version mas nueva del dia
+# en que le toco instalarse a cada una. archify solo exige "node >= 18" en su
+# doctor, asi que cualquiera de las dos alcanza para eso; la LTS gana por
+# previsibilidad, no porque la de punta este rota.
+#
+# DIFERENCIA A PROPOSITO CON Python: aca la falla importa TODAVIA MENOS. Sin
+# Python se pierde PlatformIO, que es la mitad de lo que hace este bot (compilar
+# y cargar codigo). Sin Node se pierde UN skill de veinte (opencode\skills\
+# tiene otros diecinueve que no lo necesitan): el resto de Tecnia Bot -explicar,
+# armar circuitos, repartir fichas, y hasta compilar si Python quedo instalado-
+# sigue andando igual. Por eso, mas abajo, Instalar-Node nunca hace `exit`: como mucho
+# imprime un aviso y sigue.
+$ArchivoVersionNode = Join-Path $PSScriptRoot "NODE_VERSION"
+$NodeVersion = ""
+if (Test-Path $ArchivoVersionNode) {
+    $NodeVersion = (Get-Content $ArchivoVersionNode -Raw).Trim()
+}
+if ($NodeVersion -notmatch '^\d+\.\d+\.\d+$') {
+    Write-Host "  [!] No se pudo leer la version de Node a instalar ($ArchivoVersionNode)." -ForegroundColor Yellow
+    Write-Host "      Se instala la ultima LTS que ofrezca Scoop, sin fijar."
+    $NodeVersion = ""
 }
 
 # TLS 1.2 explicito. Medido en un Windows 10 22H2 con .NET 4.8: el default es
@@ -921,6 +955,102 @@ function Reparar-ScoopPython {
     } finally { $ErrorActionPreference = $prev }
 }
 
+# --- Encontrar un Node DE VERDAD ---------------------------------------------
+#
+# Mismos dos lugares que Buscar-Python (shim de Scoop + carpeta "current"), mas
+# el PATH. Node no tiene documentado el senuelo de la Microsoft Store que tiene
+# Python -no hay evidencia de un "node.exe" falso en WindowsApps-, asi que este
+# bloque no lo filtra: seria inventar un problema que no se vio. Lo que SI se
+# repite es preguntarle --version a cada candidato en vez de suponer que sirve
+# por donde vive, la misma regla que ya usan Buscar-Python y Buscar-Pio.
+function Buscar-Node {
+    $candidatos = @(
+        (Join-Path $env:USERPROFILE "scoop\shims\node.exe"),
+        (Join-Path $env:USERPROFILE "scoop\apps\nodejs-lts\current\node.exe")
+    )
+    foreach ($c in (Get-Command -Name node -All -CommandType Application -ErrorAction SilentlyContinue)) {
+        if ($c.Source) { $candidatos += $c.Source }
+    }
+    foreach ($ruta in $candidatos) {
+        if (-not $ruta) { continue }
+        if (-not (Test-Path $ruta)) { continue }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $global:LASTEXITCODE = 0
+            $v = (& $ruta --version 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -and $v -match "^v\d") { return $ruta }
+        } catch { } finally { $ErrorActionPreference = $prev }
+    }
+    return $null
+}
+
+# Fija Node en la version probada, igual que Fijar-Python y Fijar-OpenCode.
+#
+# Mismo comentario que Fijar-Python, no se repite entero: `scoop hold` NO tira
+# excepcion NI devuelve exit distinto de 0 cuando falla (libexec/scoop-hold.ps1
+# hace `error "..."; continue` y sale con el exit code sin tocar). La unica
+# senal fiable es una linea que empiece con ERROR. Que el hold falle no corta
+# nada: la version ya quedo instalada.
+function Fijar-Node {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $global:LASTEXITCODE = 0
+        $salida = scoop hold nodejs-lts *>&1 | Out-String
+        $errores = @($salida -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^ERROR' })
+        if (($LASTEXITCODE -ne 0) -or ($errores.Count -gt 0)) {
+            $motivo = if ($errores.Count) { $errores[0] } else { "scoop hold devolvio exit $LASTEXITCODE" }
+            Write-Host "  [!] No se pudo fijar Node: $motivo" -ForegroundColor Yellow
+            return $false
+        }
+        Write-Host "  [OK] Node fijado en la version $NodeVersion (scoop hold)."
+        return $true
+    } catch {
+        Write-Host "  [!] No se pudo fijar Node: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    } finally { $ErrorActionPreference = $prev }
+}
+
+# Instala Node (LTS) con Scoop, FIJADO en la version probada, y degrada con
+# gracia -igual que Instalar-Python, con la misma razon de fondo: fijar una
+# version que el bucket ya no resuelve no rompe una sola maquina, rompe TODAS
+# las de la escuela el mismo dia. Si `scoop install nodejs-lts@<version>` falla,
+# se cae a `scoop install nodejs-lts` a secas (se pierde el pin, no el canal
+# LTS) con un aviso claro en el log.
+#
+# Y SI NODE NO QUEDA, NO SE CORTA -esta es la parte que no tiene analogo en
+# Instalar-Python-. Ni siquiera se reintenta con Reparar-ScoopPython: archify es
+# un skill de veinte, no el primer eslabon de nada. El aviso de mas abajo, en la
+# seccion 4, es lo unico que hace falta.
+function Instalar-Node {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $quedoFijada = $false
+    try {
+        if ($NodeVersion) {
+            Write-Host "  [..] Instalando Node $NodeVersion LTS (para el skill de diagramas de arquitectura)..."
+            $global:LASTEXITCODE = 0
+            try { $salida = scoop install nodejs-lts@$NodeVersion *>&1 | Out-String } catch { $salida = "ERROR " + $_.Exception.Message }
+            foreach ($l in @($salida -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) { Write-Host ("      " + $l) }
+            $fallo = ($LASTEXITCODE -ne 0) -or ($salida -match '(?m)^\s*ERROR')
+            if ($fallo -and ($salida -notmatch "already installed")) {
+                Write-Host "  [!] No se pudo instalar Node $NodeVersion (puede no estar mas en el bucket)." -ForegroundColor Yellow
+                Write-Host "      Sigo con la ultima LTS que ofrezca Scoop, SIN fijar."
+            } else {
+                $quedoFijada = $true
+            }
+        }
+        if ($quedoFijada) {
+            [void](Fijar-Node)
+        } else {
+            $global:LASTEXITCODE = 0
+            try { $salida = scoop install nodejs-lts *>&1 | Out-String } catch { $salida = "ERROR " + $_.Exception.Message }
+            foreach ($l in @($salida -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })) { Write-Host ("      " + $l) }
+        }
+    } finally { $ErrorActionPreference = $prev }
+}
+
 # TRES LUGARES DONDE BUSCAR, no uno -- ahora le toca a PlatformIO.
 #
 # Es la MISMA leccion que el lanzador (installer\abrir-tecnia-bot.cmd) aprendio
@@ -1101,7 +1231,55 @@ if ($PioExe) {
     }
 }
 
-# --- 4. Tecnia Bot (capa educativa) ------------------------------------------
+# --- 4. Node (para el skill de diagramas de arquitectura, archify) ----------
+#
+# Va DESPUES de Python/PlatformIO a proposito: de los tres pasos que instalan
+# algo (OpenCode, Python, Node), este es el menos critico -ver el comentario
+# junto a NODE_VERSION mas arriba-, asi que si algo mas temprano en el script
+# se lleva puesto el tiempo del docente, que sea esto lo ultimo en intentarse
+# antes de la capa educativa.
+Write-Host ""
+$NodeExe = Buscar-Node
+if ($NodeExe) {
+    Write-Host "  [OK] Node ya esta instalado ($NodeExe)"
+} else {
+    Instalar-Node
+    Refresh-Path
+    $NodeExe = Buscar-Node
+}
+if (-not $NodeExe) {
+    Write-Host ""
+    Write-Host "  [!] Node no quedo instalado." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "      Esto NO afecta a OpenCode, a PlatformIO ni a los demas skills:"
+    Write-Host "      Tecnia Bot arranca igual y sirve para explicar, dibujar circuitos,"
+    Write-Host "      compilar y repartir fichas. Lo unico que se pierde es UN skill de"
+    Write-Host "      veinte: si le pedis al bot un diagrama de la arquitectura de un"
+    Write-Host "      proyecto de codigo, va a avisar que le falta Node en vez de"
+    Write-Host "      dibujarlo."
+    Write-Host ""
+    # OJO AL REDACTAR ESTE AVISO: aca decia "adentro del bot, /diagnostico te dice
+    # como esta", y era MENTIRA -- install\diagnostico.ps1 no chequea Node (buscar
+    # 'node' en ese archivo: cero coincidencias). Si dice eso para Python y para
+    # PlatformIO es porque ALLA si los chequea; para Node, no.
+    #
+    # Mandar a la docente a correr algo que no le va a contestar es PEOR que no
+    # decirle nada: pierde el tiempo y queda pensando que hizo algo mal. Es la misma
+    # leccion que este repo ya aprendio con "falta PlatformIO": UNA sola
+    # instruccion, y que funcione.
+    #
+    # El unico remedio que HOY existe de verdad es volver a correr este mismo
+    # script, que es exactamente lo que hace "Reparar Tecnia Bot" del menu inicio.
+    #
+    # Agregar Node a diagnostico.ps1 queda PENDIENTE. Cuando este, cambiar esta
+    # linea -- y no antes.
+    Write-Host "      Para reintentar: 'Reparar Tecnia Bot' en el menu inicio."
+    Write-Host ""
+} else {
+    Write-Host "  [OK] Node instalado en $NodeExe (para el skill de diagramas de arquitectura)."
+}
+
+# --- 5. Tecnia Bot (capa educativa) ------------------------------------------
 Write-Host ""
 Write-Host "  [..] Instalando la capa de Tecnia Bot..."
 # powershell.exe POR RUTA, no por nombre. "powershell" a secas depende del PATH del
