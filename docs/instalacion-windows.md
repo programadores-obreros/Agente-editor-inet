@@ -10,6 +10,22 @@ Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en l
 > Windows real». Quedó ahí seis meses después de dejar de ser cierta — que es
 > justo lo que le pasa a las advertencias: envejecen sin que nadie las mire.
 
+## Requisitos
+
+- **Windows 10 versión 1809 (octubre de 2018) o más nueva, o Windows 11, de
+  64 bits.** Para saber cuál tenés: tecla Windows + R, escribí `winver` y Enter;
+  o Configuración > Sistema > Acerca de.
+- Windows 7, 8, 8.1 y un Windows 10 sin actualizar **no sirven**: OpenCode, el
+  programa sobre el que funciona Tecnia Bot, no arranca ahí. No es algo que un
+  instalador pueda arreglar.
+
+Si corrés el `.exe` en una máquina más vieja no rompe nada: te dice **qué
+Windows encontró y por qué no puede seguir**, y ofrece abrir la web de Tecnia
+Bot con las opciones.
+
+> Para escuelas con máquinas de Windows 7 —qué se evaluó y qué alternativas
+> hay— está la decisión [D-05 en `docs/decisiones.md`](decisiones.md#d-05--windows-7-no-se-soporta-y-el-instalador-lo-dice-con-nombre-y-apellido).
+
 ## 🟢 Súper fácil — instalador `.exe` (recomendado para docentes)
 
 Es lo más parecido a instalar cualquier programa: descargás **un** archivo, doble
