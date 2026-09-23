@@ -195,6 +195,9 @@ validación del frontmatter de las skills y la compilación del instalador con I
 
 Para agregar un componente al armador de circuitos o un skill nuevo: `opencode/tool/circuito.ts` (registro `COMPONENTES`) y `opencode/skills/`.
 
+¿Vas a publicar una versión? El procedimiento completo, de punta a punta, está en
+[`docs/publicar-release.md`](docs/publicar-release.md).
+
 **Antes de "arreglar" algo que parezca raro, mirá [`docs/decisiones.md`](docs/decisiones.md).** Ahí están las decisiones que se tomaron a propósito, con su costo medido y su criterio de revisión —por ejemplo, por qué el instalador pesa 7,4 MB y no 2,6—. Si algo está así porque se decidió, conviene saberlo antes de cambiarlo.
 
 ---
