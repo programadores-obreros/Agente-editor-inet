@@ -341,55 +341,13 @@ jobs:
       # ahorraba nada que valga la pena.
       - name: Instalar PyYAML
         run: pip install --quiet pyyaml
-      # Parsea el frontmatter de cada SKILL.md como lo haria un runtime con YAML
-      # estandar, y valida ademas que name coincida con el directorio y que
-      # description exista y sea una sola linea: es la clave de ruteo que decide
-      # si la skill se carga, asi que si se corta o desaparece el PR tiene que
-      # cortar aca, no en produccion.
+      # La logica vive en scripts/validar-skills.py, NO inline aca, y no es prolijidad:
+      # mientras vivio en este archivo solo corria en el runner, y el 2026-09-25 `pnpm
+      # test` dio 607 tests en verde con un skill inservible. Era ademas el unico de los
+      # tres chequeos fuera del patron -- fichas y seguridad ya tenian su script corrible
+      # local. El porque de PyYAML (y por que NO pasarlo a js-yaml) esta en el script.
       - name: Validar frontmatter de opencode/skills/*/SKILL.md
-        run: |
-          python3 - <<'PY'
-          import glob, re, sys
-          import yaml
-
-          rotas = 0
-          patron = re.compile(r"^---\n(.*?)\n---", re.S)
-
-          for ruta in sorted(glob.glob("opencode/skills/*/SKILL.md")):
-              texto = open(ruta, encoding="utf-8").read()
-              match = patron.match(texto)
-              if not match:
-                  rotas += 1
-                  print(f"::error file={ruta}::no tiene bloque frontmatter '---'")
-                  continue
-
-              try:
-                  datos = yaml.safe_load(match.group(1))
-              except yaml.YAMLError as e:
-                  rotas += 1
-                  primera_linea = str(e).splitlines()[0]
-                  print(f"::error file={ruta}::YAML invalido en el frontmatter: {primera_linea}")
-                  continue
-
-              directorio = ruta.split("/")[2]
-              nombre = datos.get("name") if isinstance(datos, dict) else None
-              if nombre != directorio:
-                  rotas += 1
-                  print(f"::error file={ruta}::name '{nombre}' no coincide con el directorio '{directorio}'")
-
-              descripcion = datos.get("description") if isinstance(datos, dict) else None
-              if not descripcion or not isinstance(descripcion, str):
-                  rotas += 1
-                  print(f"::error file={ruta}::falta description (o no es texto)")
-              elif "\n" in descripcion:
-                  rotas += 1
-                  print(f"::error file={ruta}::description ocupa mas de una linea")
-
-          if rotas:
-              print(f"::error::{rotas} skill(s) con frontmatter roto")
-              sys.exit(1)
-          print(f"OK: {len(glob.glob('opencode/skills/*/SKILL.md'))} SKILL.md con frontmatter valido")
-          PY
+        run: python3 scripts/validar-skills.py
       # Node puro, sin dependencias: no hace falta setup-node porque ubuntu-latest
       # ya trae Node instalado (lo usan las propias actions de JS de este workflow).
       - name: Chequear bloque de seguridad en proyectos-inet
