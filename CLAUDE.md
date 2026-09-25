@@ -45,6 +45,35 @@ Varios archivos de `tests/` llevan en su encabezado la historia de cómo fallaro
 primera vez. Eso es a propósito: **cuando arregles un test hueco, dejá escrito por qué
 era hueco**, o alguien lo va a "simplificar" de vuelta.
 
+### Commitear ANTES de mutar
+
+Mutar es romper archivos a propósito y después restaurarlos. Eso exige que exista de
+dónde restaurar.
+
+**Sin un commit previo, la herramienta de restauración y la de destrucción son
+exactamente la misma.** El 2026-09-25, mutando dos archivos que todavía no estaban
+commiteados, un `git checkout -- install/bootstrap.ps1 install/diagnostico.ps1` para
+"limpiar la mutación" borró dos tareas enteras: la sección de Node del diagnóstico y el
+aviso del bootstrap.
+
+Y la segunda mitad, que es la que importa más: **lo salvó una copia en `/tmp` dejada por
+casualidad** minutos antes. Un plan de recuperación que depende de una casualidad no es
+un plan. Si esa copia no estaba, se perdían el validador extraído y el guard cruzado,
+enteros.
+
+Después de recuperar, el orden correcto fue: commitear primero, mutar después. Ahí
+`git checkout` volvió a ser lo que uno cree que es — una herramienta segura.
+
+### Y la precondición operativa que sale de eso
+
+**Antes de correr `git checkout`, `git restore` o `git clean`, mirá QUÉ vas a descartar.**
+Un `M` en `git status` no es ruido de fondo: es trabajo que alguien hizo y que no está en
+ningún commit. La pregunta no es "¿está sucio?" sino **"¿por qué está sucio?"**.
+
+Va junto con las otras precondiciones de la sección del instrumento, más abajo: un
+`git status` que se lee sin leerlo es la misma clase de error que un verde que no midió
+nada.
+
 ## Los guards se prueban a sí mismos
 
 Un chequeo automático que nunca puede fallar es peor que no tenerlo, porque da falsa
@@ -103,6 +132,12 @@ Las precondiciones que más veces faltaron:
   `Último tiempo de ejecución: 30/11/1999`).
 - **El estado inicial es el que creés.** Si se prueba una instalación, que lo instalado
   NO esté antes.
+- **El usuario puede escribir donde le pedís.** Una cuenta de Windows sin elevar NO puede
+  escribir en la raíz `C:\`, aunque esté en Administradores: un `/LOG=C:\algo.log` hizo
+  abortar al instalador sin dejar rastro y la tarea devolvió 1.
+- **Lo que vas a descartar es descartable.** Antes de `git checkout`/`restore`/`clean`,
+  mirá el diff. Un `M` en `git status` puede ser trabajo sin commitear — ver
+  «Commitear ANTES de mutar», arriba.
 
 ### Y el número de artefactos no es la métrica
 

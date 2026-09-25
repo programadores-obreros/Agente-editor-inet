@@ -1258,22 +1258,21 @@ if (-not $NodeExe) {
     Write-Host "      proyecto de codigo, va a avisar que le falta Node en vez de"
     Write-Host "      dibujarlo."
     Write-Host ""
-    # OJO AL REDACTAR ESTE AVISO: aca decia "adentro del bot, /diagnostico te dice
-    # como esta", y era MENTIRA -- install\diagnostico.ps1 no chequea Node (buscar
-    # 'node' en ese archivo: cero coincidencias). Si dice eso para Python y para
-    # PlatformIO es porque ALLA si los chequea; para Node, no.
+    # ORDEN, Y NO ES PROLIJIDAD. Este aviso decia "adentro del bot, /diagnostico te
+    # dice como esta" cuando install\diagnostico.ps1 NO chequeaba Node: cero
+    # menciones, contra 69 de python y platformio. Mandar a la docente a correr algo
+    # que no le va a contestar es PEOR que no decirle nada -- pierde el tiempo y queda
+    # pensando que hizo algo mal.
     #
-    # Mandar a la docente a correr algo que no le va a contestar es PEOR que no
-    # decirle nada: pierde el tiempo y queda pensando que hizo algo mal. Es la misma
-    # leccion que este repo ya aprendio con "falta PlatformIO": UNA sola
-    # instruccion, y que funcione.
+    # Se corrigio apuntando solo a "Reparar Tecnia Bot", y recien DESPUES de agregar
+    # la seccion de Node a diagnostico.ps1 se volvio a mencionar /diagnostico aca.
+    # Si alguna vez esa seccion se saca de diagnostico.ps1, esta linea vuelve atras
+    # EN EL MISMO CAMBIO.
     #
-    # El unico remedio que HOY existe de verdad es volver a correr este mismo
-    # script, que es exactamente lo que hace "Reparar Tecnia Bot" del menu inicio.
-    #
-    # Agregar Node a diagnostico.ps1 queda PENDIENTE. Cuando este, cambiar esta
-    # linea -- y no antes.
-    Write-Host "      Para reintentar: 'Reparar Tecnia Bot' en el menu inicio."
+    # Las dos salidas, en el orden en que sirven: primero saber que pasa, despues
+    # intentar arreglarlo.
+    Write-Host "      Para ver que pasa:   /diagnostico dentro del bot (tiene una seccion de Node)."
+    Write-Host "      Para reintentar:     'Reparar Tecnia Bot' en el menu inicio."
     Write-Host ""
 } else {
     Write-Host "  [OK] Node instalado en $NodeExe (para el skill de diagramas de arquitectura)."

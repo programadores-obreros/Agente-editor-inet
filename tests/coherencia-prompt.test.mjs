@@ -159,3 +159,51 @@ test("«no encuentro el instalador» dice lo mismo en platformio.ts y en /actual
   assert.doesNotMatch(actualizar, /vuelva a descargar el proyecto desde GitHub/, "/actualizar conserva el mensaje viejo")
   assert.doesNotMatch(platformioSrc, /tecnialab\.net\.ar\/tecnia-bot\/ y corrilo/, "platformio.ts conserva el mensaje viejo")
 })
+
+test("si el bootstrap manda a /diagnostico por Node, /diagnostico tiene que saber de Node", () => {
+  // POR QUÉ EXISTE. El aviso de «Node no quedó instalado» del bootstrap decía
+  // «adentro del bot, /diagnostico te dice cómo está» y era FALSO:
+  // install/diagnostico.ps1 tenía CERO menciones de node, contra 69 de python y
+  // platformio. Mandar a una docente a correr algo que no le va a contestar es peor
+  // que no decirle nada: pierde el tiempo y queda pensando que hizo algo mal.
+  //
+  // Se arregló en dos pasos y en ESE orden: primero la sección de Node en el
+  // diagnóstico, después el aviso. Este test es lo que impide que el orden se
+  // invierta de nuevo, o que alguien saque la sección y deje el aviso apuntando al
+  // vacío. No mira el aviso ni el diagnóstico por separado: mira que la PROMESA y
+  // la CAPACIDAD viajen juntas.
+  const bootstrap = leer("install/bootstrap.ps1")
+  const diagnostico = leer("install/diagnostico.ps1")
+
+  // El bloque del aviso: de «Node no quedo instalado» hasta que se cierra el if, y
+  // SIN LOS COMENTARIOS. Eso último no es un detalle de prolijidad: la primera
+  // versión de este test no los sacaba y por eso NO SERVÍA. Se probó por mutación —
+  // borrando «Reparar Tecnia Bot» del texto que ve la docente, el test seguía en
+  // verde, porque el comentario de arriba del aviso también lo menciona (dos veces).
+  // Un guard que lee el comentario en vez del mensaje aprueba un producto roto.
+  const i = bootstrap.indexOf("Node no quedo instalado")
+  assert.ok(i > 0, "no encontré el aviso de «Node no quedo instalado» en bootstrap.ps1")
+  const aviso = bootstrap
+    .slice(i, bootstrap.indexOf("} else {", i))
+    .replace(/^\s*#.*$/gm, "")
+
+  const prometeDiagnostico = /\/diagnostico/.test(aviso)
+  const diagnosticoSabeDeNode = /Titulo "Node/.test(diagnostico) && /NODE_VERSION/.test(diagnostico)
+
+  if (prometeDiagnostico) {
+    assert.ok(diagnosticoSabeDeNode,
+      "el aviso del bootstrap manda a /diagnostico por Node, pero diagnostico.ps1 no tiene " +
+      "sección de Node. O se agrega la sección, o se saca la promesa — en el mismo cambio.")
+  }
+
+  // La otra punta: si el diagnóstico sabe de Node, que el aviso lo aproveche. No es
+  // un error grave, pero es información que la docente necesita y ya está escrita.
+  if (diagnosticoSabeDeNode) {
+    assert.ok(prometeDiagnostico,
+      "diagnostico.ps1 ya tiene sección de Node, pero el aviso del bootstrap no la ofrece")
+  }
+
+  // Y el remedio no se va: saber qué pasa no arregla nada por sí solo.
+  assert.match(aviso, /Reparar Tecnia Bot/,
+    "el aviso perdió el remedio: hay que poder reintentar, no sólo diagnosticar")
+})
