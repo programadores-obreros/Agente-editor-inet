@@ -67,7 +67,7 @@ Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuand
 
 ## 🚀 Instalación
 
-> 🪟 **¿Usás Windows y no sos desarrollador?** Descargá **[`Instalar-Tecnia-Bot.exe`](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)** de la última versión → doble clic → Siguiente → Siguiente → Finalizar. Instala TODO solo (OpenCode + PlatformIO + Tecnia Bot), **sin permisos de administrador**. Guía con capturas: [instalación en Windows](docs/instalacion-windows.md).
+> 🪟 **¿Usás Windows y no sos desarrollador?** Descargá **[`Instalar-Tecnia-Bot.exe`](https://github.com/programadores-obreros/Agente-editor-inet/releases/latest)** de la última versión → doble clic → Siguiente → Siguiente → Finalizar. Instala TODO solo (OpenCode + PlatformIO + Tecnia Bot), **sin permisos de administrador**. Necesita **Windows 10 (versión 1809 o más nueva) o Windows 11, de 64 bits**. Guía con capturas: [instalación en Windows](docs/instalacion-windows.md).
 
 ### ⭐ Instalación fácil (recomendada)
 
@@ -179,6 +179,8 @@ Para agregar un componente al armador de circuitos o un skill nuevo: `opencode/t
 ## 📌 Estado
 
 🚀 **v0.3.75.** Funciona de punta a punta en **Windows y Linux**, validado end-to-end en Windows 10 real. Compila y carga a hardware, dibuja circuitos, guía proyectos paso a paso con memoria, arma hojas para imprimir, trae las 17 fichas A4 de Tecnia Lab y te las abre en el navegador, y trae un onboarding offline (`/ayuda`). Con instalador `.exe` de un doble clic, auto-actualización, smoke tests y CI en verde.
+
+🪟 **Requisitos:** Windows 10 versión 1809 o más nueva, o Windows 11, de 64 bits. En una máquina más vieja el instalador no rompe nada: dice qué Windows encontró y por qué no puede seguir. El porqué (OpenCode se compila con Bun, y Bun no corre en Windows 7) y las opciones para una escuela con Windows 7 están en [D-05 de `docs/decisiones.md`](docs/decisiones.md#d-05--windows-7-no-se-soporta-y-el-instalador-lo-dice-con-nombre-y-apellido).
 
 **Pendiente:**
 - Firmar el `.exe` — hoy sin firma, Windows muestra el aviso de SmartScreen (se saltea con *"Ejecutar de todas formas"*) y, en Windows 11 con **Control Inteligente de Aplicaciones** activado, directamente **bloquea la instalación sin opción de saltear** (confirmado con un caso real del equipo). Aplicación gratuita enviada a [SignPath Foundation](https://signpath.org/) el 2026-08-12, en revisión (proceso estándar: 2-4 semanas). Ver issue [#4](https://github.com/programadores-obreros/Agente-editor-inet/issues/4).

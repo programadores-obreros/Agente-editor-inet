@@ -2,6 +2,13 @@
 
 Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changelog](https://keepachangelog.com/es/).
 
+## [Unreleased]
+
+El instalador le dice a una máquina con Windows 7 qué Windows tiene y por qué no puede seguir, en vez del cartel genérico de Inno Setup.
+
+### Cambiado
+- **El instalador nombra el Windows que encontró cuando no puede instalar**: una escuela pidió un instalador para Windows 7, y no lo hay ni lo va a haber — OpenCode se compila con Bun, y Bun exige Windows 10 versión 1809 (compilación 17763) o más nuevo, de 64 bits; en Windows 7, 8 o un Windows 10 sin actualizar el binario directamente no arranca, y ningún instalador lo arregla (el resto de la cadena tampoco corre ahí: el último Python para Win7 es el 3.8 y PlatformIO pide 3.9+, Scoop necesita PowerShell 5.1 y Win7 trae la 2.0). Hasta ahora el `.exe` cortaba por `MinVersion=10.0` con el mensaje genérico de Inno Setup, que no dice qué Windows tiene la máquina, ni por qué no sirve, ni qué hacer. Ahora `MinVersion` baja a `6.1sp1` para que el `.exe` arranque en Windows 7 SP1, e `InitializeSetup` verifica la regla exacta —64 bits, y Windows 10 compilación 17763 o más nueva, o Windows 11—, nombra el Windows detectado (7, 8, 8.1, 10 u 11, con la compilación), explica el motivo, ofrece abrir la web de Tecnia Bot con las opciones, y escribe la razón al log de Setup también en modo silencioso, que es lo que llega a soporte. Por debajo de Windows 7 SP1 habla Inno, con el mismo requisito traducido en `[Messages]`. El porqué completo y las alternativas para una escuela con Windows 7, en `docs/decisiones.md` D-05. Tests: 152 → 155.
+
 ## [0.3.75] — 2026-08-23
 
 `/reparar` podía avisar que PlatformIO quedó instalado sin haber corrido la reparación.

@@ -368,6 +368,59 @@ test("el lanzador NO arranca apenas aparece opencode", () => {
   assert.doesNotMatch(espera, /where opencode/, "sale antes de que termine la capa educativa")
 })
 
+// ── El instalador dice QUÉ Windows tiene la máquina cuando no sirve ───────────
+//
+// Tecnia Bot corre sobre OpenCode, que es un ejecutable compilado con Bun, y Bun
+// exige Windows 10 versión 1809 (compilación 17763) de 64 bits. En Windows 7, 8
+// o un Windows 10 sin actualizar el binario NO ARRANCA, y ningún instalador lo
+// arregla (docs/decisiones.md, D-05).
+//
+// Con MinVersion=10.0 el .exe ni siquiera arrancaba en Windows 7: Inno cortaba
+// con su cartel genérico, que no dice qué Windows hay, ni por qué no sirve, ni
+// qué hacer. Para una docente en una escuela eso es una llamada de soporte
+// sin datos. Ahora el .exe arranca, mira, y lo dice con nombre y apellido.
+
+test("el .exe arranca en Windows 7 SP1 para poder dar SU mensaje, no el de Inno", () => {
+  const setup = issCodigo.slice(issCodigo.search(/^\[Setup\]/m), issCodigo.search(/^\[Languages\]/m))
+  // 6.1sp1 es el piso de Inno Setup 6.3+. Subirlo devuelve el cartel genérico.
+  assert.match(setup, /^MinVersion=6\.1sp1\s*$/m, "MinVersion corta antes de [Code]: Windows 7 vuelve a ver el cartel genérico")
+  // ArchitecturesAllowed también corta antes de [Code], con el mismo cartel.
+  assert.doesNotMatch(setup, /^ArchitecturesAllowed=/m, "la arquitectura la tiene que verificar InitializeSetup, con mensaje propio")
+  // Pero el modo de 64 bits se mantiene para las máquinas que sí pasan.
+  assert.match(setup, /^ArchitecturesInstallIn64BitMode=x64compatible\s*$/m, "se perdió el modo de instalación de 64 bits")
+})
+
+test("InitializeSetup verifica versión y arquitectura, y frena con el motivo", () => {
+  const code = issCodigo.slice(issCodigo.search(/^\[Code\]/m))
+  assert.match(code, /function InitializeSetup: Boolean/, "no hay InitializeSetup: nada verifica el Windows")
+  assert.match(code, /GetWindowsVersionEx/, "no lee la versión real de Windows")
+  assert.match(code, /IsX64Compatible/, "no verifica 64 bits")
+  // El piso es el de Bun, no uno inventado: 1809 = compilación 17763.
+  assert.match(code, /BuildMinimoWindows10 = 17763;/, "el mínimo tiene que ser Windows 10 1809 (17763), que es lo que exige Bun")
+  assert.match(code, /V\.Major < 10/, "no rechaza Windows 7, 8 y 8.1")
+  assert.match(code, /V\.Build < BuildMinimoWindows10/, "no rechaza un Windows 10 anterior a la 1809")
+  // El mensaje nombra el Windows detectado: una captura del docente tiene que alcanzar.
+  for (const nombre of ["Windows 7", "Windows 8", "Windows 8.1", "Windows 10", "Windows 11"]) {
+    assert.match(code, new RegExp(`'${nombre.replace(".", "\\.")}'`), `el mensaje no sabe nombrar ${nombre}`)
+  }
+  // Y queda en el log de Setup aunque sea silencioso: es lo que llega a soporte.
+  const init = code.slice(code.indexOf("function InitializeSetup"))
+  assert.match(init, /Log\(/, "si no queda en el log de Setup, soporte diagnostica a partir de una foto")
+  assert.match(init, /WizardSilent/, "en modo silencioso (CI) no puede quedar colgado en un MsgBox")
+})
+
+test("por debajo de MinVersion habla Inno, y dice lo mismo que nosotros", () => {
+  // Vista o Windows 7 sin SP1: [Code] no llega a correr. El cartel de Inno
+  // tiene que llevar el requisito y la web, no "no es compatible" a secas.
+  // Anclado a principio de línea, sobre el archivo crudo: los comentarios del
+  // [Setup] nombran "[Code]" para explicar dónde vive la verificación, y un
+  // indexOf encontraba esa cita ANTES de [Messages] y devolvía un trozo vacío.
+  // Quinta vez que muerde en este repo. Probado: el test pasaba en blanco.
+  const mensajes = iss.slice(iss.search(/^\[Messages\]/m), iss.search(/^\[Code\]/m))
+  assert.match(mensajes, /^WindowsVersionNotSupported=.*Windows 10.*1809.*64 bits/m, "el cartel de Inno no dice el requisito")
+  assert.match(mensajes, /^WindowsVersionNotSupported=.*tecnialab\.net\.ar/m, "el cartel de Inno no dice dónde ver las opciones")
+})
+
 // ── Los archivos que lee un runtime de JavaScript NO pueden llevar BOM ────────
 //
 // POR QUÉ ESTE TEST, y es el bug más caro que encontró la auditoría.

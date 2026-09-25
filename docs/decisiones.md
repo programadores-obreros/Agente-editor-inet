@@ -268,3 +268,123 @@ Una captura de pantalla del docente ya alcanza para saber qué está corriendo.
 
 Antes: *"Volvé a correr el instalador"* — a secas. Ahora aclara primero que si el
 instalador está corriendo hay que esperarlo, y **no correrlo dos veces**.
+
+---
+
+## D-05 — Windows 7 no se soporta, y el instalador lo dice con nombre y apellido
+
+**Fecha:** 2026-09-05 · **Versión:** sin publicar · **Issue:** [#5](https://github.com/programadores-obreros/Agente-editor-inet/issues/5)
+
+### El problema
+
+Una escuela pidió un instalador para Windows 7. No es un pedido raro: en las
+escuelas técnicas hay máquinas de diez años que siguen prendiendo, y Windows 7
+es lo que traen.
+
+Hasta acá el `.exe` tenía `MinVersion=10.0`. En Windows 7 arrancaba y cortaba
+con el cartel genérico de Inno Setup, que no dice qué Windows tiene la máquina,
+ni por qué no sirve, ni qué hacer. La docente se quedaba con un "no es
+compatible" y sin ningún dato para pedir ayuda.
+
+### Qué se encontró
+
+Tecnia Bot es OpenCode (el binario de Windows x64 que instala Scoop) más una
+capa educativa. OpenCode se compila como un único ejecutable con Bun
+(`Bun.build({ compile: { target: "bun-windows-x64" } })`), y la documentación
+oficial de Bun es explícita: **"Bun requires Windows 10 version 1809 or
+later"** — compilación 17763, octubre de 2018. En Windows 7, en Windows 8 y en
+un Windows 10 anterior a 1809 el binario **no arranca**. No hay instalador que
+lo arregle: no es un archivo que falta, es el ejecutable que no puede cargar.
+
+Y aunque OpenCode corriera, el resto de la cadena también está muerto en
+Windows 7:
+
+| Eslabón | Lo que necesita | En Windows 7 |
+|---|---|---|
+| OpenCode (Bun) | Windows 10 1809 / compilación 17763, 64 bits | No arranca |
+| Python | PlatformIO Core exige 3.9 o más nuevo | El último Python para Win7 es el 3.8 |
+| PlatformIO Core | Python 3.9+ | Sin Python que lo corra |
+| Scoop | PowerShell 5.1 + .NET 4.5 | Win7 trae PowerShell 2.0 |
+| arduino-cli | Go 1.21, que dejó Windows 7 | Nada posterior a la 0.35.2 corre |
+| Node | — | El último Node para Win7 es el 13.14 |
+
+Windows 7 está fuera de soporte desde enero de 2020, y las actualizaciones de
+seguridad extendidas terminaron en enero de 2023. Ninguna de esas herramientas
+va a volver atrás.
+
+### Qué se decidió
+
+**No hay segundo instalador.** El mismo `.exe` detecta el Windows y, si no
+sirve, lo explica con nombre y apellido.
+
+La regla exacta:
+
+- **64 bits.** OpenCode se distribuye sólo como `opencode-windows-x64.zip`.
+- **Windows 10 versión 1809 (compilación 17763) o más nueva, o Windows 11.**
+  Es el mínimo de Bun, sin margen agregado de nuestro lado.
+
+Cómo quedó en `installer/tecnia-bot.iss`:
+
+- `MinVersion` bajó de `10.0` a `6.1sp1`, el mínimo que admite Inno Setup 6.3+.
+  Suena al revés, pero es a propósito: así el `.exe` **arranca** en Windows 7
+  SP1 y puede dar su propio mensaje en vez del de Inno.
+- `ArchitecturesAllowed=x64compatible` se fue;
+  `ArchitecturesInstallIn64BitMode=x64compatible` queda. La arquitectura ahora
+  la verifica `[Code]`, por el mismo motivo.
+- `InitializeSetup` llama a `GetWindowsVersionEx` e `IsX64Compatible`, nombra el
+  Windows detectado (7 / 8 / 8.1 / 10 / 11, con la compilación) y rechaza tres
+  casos: 32 bits, `Major < 10`, o Windows 10 con compilación menor a
+  `BuildMinimoWindows10 = 17763`. El motivo va **siempre** al log de Setup
+  (también en silencioso: es lo que llega a soporte) y, si hay ventana, se
+  muestra como error crítico con la opción de abrir
+  https://tecnialab.net.ar/tecnia-bot/ para ver qué opciones hay.
+- Por debajo de `MinVersion` (Vista, Windows 7 sin SP1) `[Code]` no llega a
+  correr y habla Inno: el `WindowsVersionNotSupported` de `[Messages]` dice el
+  mismo requisito.
+
+### Qué cuesta
+
+A quien tiene Windows 10 o 11 de 64 bits, **nada**: pasa por `InitializeSetup`
+sin ver ninguna diferencia.
+
+A la escuela con Windows 7, **sigue sin poder usarlo**. Lo que cambió es que
+ahora sabe por qué, y tiene a dónde ir. Es menos de lo que pidió, y más de lo
+que tenía.
+
+### Las alternativas, con su costo
+
+Ninguna está implementada. Están acá para que la próxima vez no haya que
+pensarlas de cero:
+
+1. **Actualizar la PC a Windows 10 de 64 bits.** El único camino donde Tecnia
+   Bot corre completo. Cuesta una licencia y que el hardware lo aguante; es una
+   decisión de la escuela, no del instalador.
+2. **Modo remoto.** Una PC con Windows 10 en el aula corre OpenCode como
+   servidor y las de Windows 7 entran por el navegador (Chrome 109 o Firefox
+   ESR 115 son los últimos que existen para Win7). Puede chatear, pero **no
+   puede compilar ni cargar la placa enchufada en la PC de Windows 7**: el
+   puerto serial queda del lado equivocado. Y la interfaz web no está
+   verificada para esto.
+3. **USB booteable con Linux** y el build de Linux de Tecnia Bot sobre el
+   hardware viejo. Funciona en principio, pero es otra historia de instalación
+   completa: drivers seriales, permisos del puerto, una docente que nunca vio
+   Linux.
+4. **"Tecnia Bot Lite" sin OpenCode para Windows 7.** Descartado: es un segundo
+   producto con doble mantenimiento, y sin OpenCode no queda el bot, queda otra
+   cosa.
+
+### Cuándo volver a mirarla
+
+Cualquiera de estas alcanza:
+
+1. **Bun publica soporte para Windows 7.** Improbable: Windows 7 está fuera de
+   soporte desde 2020, y no hay motivo para que un runtime nuevo vaya hacia
+   atrás. Pero si pasa, el requisito de arriba cae solo.
+2. **OpenCode cambia de runtime.** Si deja de compilarse con Bun, hay que
+   volver a mirar toda la tabla: el mínimo lo pone el runtime, no nosotros.
+3. **Una escuela con N máquinas de Windows 7 que no se pueden actualizar.**
+   Un caso real, con un número. Ahí se evalúa el USB con Linux o el modo remoto
+   como **piloto** en esa escuela, no como producto.
+4. **Bun cambia la compilación mínima de Windows 10** en su documentación. La
+   constante `BuildMinimoWindows10` en `installer/tecnia-bot.iss` y esta
+   decisión tienen que moverse juntas.

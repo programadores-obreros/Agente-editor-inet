@@ -59,17 +59,32 @@ AppSupportURL={#MyAppURL}
 ; rompías. El instalador tiene que IMPEDIRLO, no pedir por favor.
 SetupMutex=TecniaBotSetup,Global\TecniaBotSetup
 
-; ── Sólo 64 bits ─────────────────────────────────────────────────────────────
+; ── Qué Windows sirve, y que lo diga el instalador ───────────────────────────
 ;
-; OpenCode se distribuye únicamente como opencode-windows-x64.zip. Sin esta
-; línea, en una notebook de 32 bits el instalador copiaba toda la capa, corría el
-; bootstrap, y recién ahí fallaba Scoop con un error que no dice "tu Windows no
-; sirve". Mejor decirlo en la primera pantalla y no hacer perder diez minutos.
-ArchitecturesAllowed=x64compatible
+; Tecnia Bot corre sobre OpenCode, y OpenCode es un ejecutable compilado con Bun.
+; Bun exige Windows 10 versión 1809 (compilación 17763) o más nuevo, de 64 bits.
+; No es una elección nuestra: en Windows 7, en Windows 8 o en un Windows 10 sin
+; actualizar el binario directamente NO ARRANCA, y ningún instalador lo arregla.
+; El porqué completo y las alternativas están en docs\decisiones.md, D-05.
+;
+; Antes esto era MinVersion=10.0 + ArchitecturesAllowed=x64compatible. Cortaban
+; bien, pero con el cartel genérico de Inno Setup: no dice qué Windows tiene la
+; máquina, ni por qué no sirve, ni qué hacer. En una escuela eso es una llamada
+; de soporte. Ahora la verificación vive en [Code] (InitializeSetup): nombra el
+; Windows detectado, explica el motivo y ofrece abrir la web con las opciones.
+;
+; MinVersion queda en el mínimo que admite Inno Setup 6.3+ (Windows 7 SP1) para
+; que el .exe ARRANQUE en esas máquinas y pueda dar su propio mensaje. Más viejo
+; que eso (Vista, Windows 7 sin SP1) cae en el cartel de Inno, que se traduce
+; abajo en [Messages] con el mismo requisito.
+MinVersion=6.1sp1
+; 64 bits: OpenCode se distribuye únicamente como opencode-windows-x64.zip. La
+; arquitectura también la verifica [Code] (IsX64Compatible), por el mismo motivo
+; de arriba; esta línea sólo decide el modo de instalación en las máquinas que
+; sí pasan. Sin ella, en una notebook de 32 bits el instalador copiaba toda la
+; capa, corría el bootstrap, y recién ahí fallaba Scoop con un error que no dice
+; "tu Windows no sirve".
 ArchitecturesInstallIn64BitMode=x64compatible
-
-; PowerShell 5.1 y las APIs que usa el bootstrap: Windows 10 para arriba.
-MinVersion=10.0
 
 ; Sin admin: se instala en el espacio del usuario (ideal para PCs de escuela).
 PrivilegesRequired=lowest
@@ -187,8 +202,86 @@ WelcomeLabel1=Bienvenido/a a Tecnia Bot
 WelcomeLabel2=Tecnia Bot es el asistente que te acompaña para enseñar Arduino y ESP32 en la escuela técnica: explica el porqué, da código comentado y traduce los errores.%n%nEl asistente instala TODO lo necesario y no hace falta ser administrador. Tocá Siguiente para empezar.
 FinishedHeadingLabel=¡Tecnia Bot quedó instalado!
 FinishedLabel=¡Listo! Arrancá por la web de Tecnia Bot (tecnialab.net.ar/tecnia-bot) para ver los primeros pasos, y abrilo desde el menú inicio o el escritorio. Recordá instalar los drivers USB de tu placa si todavía no lo hiciste.
+; Red de seguridad para lo que queda por debajo de MinVersion (Vista, Windows 7
+; sin SP1): ahí [Code] no llega a correr y habla Inno. Que diga lo mismo que
+; nosotros, y no "no es compatible con la versión de Windows".
+WindowsVersionNotSupported=Tecnia Bot necesita Windows 10 (versión 1809 o más nueva) o Windows 11, de 64 bits.%n%nEste Windows es más viejo y no puede correr OpenCode, el programa sobre el que funciona Tecnia Bot. Ninguna instalación lo cambia.%n%nOpciones y más información: tecnialab.net.ar/tecnia-bot
 
 [Code]
+const
+  { Windows 10 versión 1809 (octubre de 2018): el mínimo que exige Bun, el
+    runtime con el que se compila OpenCode. Por debajo, el binario no arranca. }
+  BuildMinimoWindows10 = 17763;
+
+function NombreDelWindows: String;
+var
+  V: TWindowsVersion;
+begin
+  GetWindowsVersionEx(V);
+  { Windows 11 se reporta como 10.0 con compilación 22000 o más: no hay otra
+    forma de distinguirlo. }
+  if V.Major >= 10 then
+  begin
+    if V.Build >= 22000 then
+      Result := 'Windows 11'
+    else
+      Result := 'Windows 10';
+  end
+  else if (V.Major = 6) and (V.Minor = 3) then
+    Result := 'Windows 8.1'
+  else if (V.Major = 6) and (V.Minor = 2) then
+    Result := 'Windows 8'
+  else if (V.Major = 6) and (V.Minor = 1) then
+    Result := 'Windows 7'
+  else
+    Result := 'Windows ' + IntToStr(V.Major) + '.' + IntToStr(V.Minor);
+  Result := Result + ' (compilación ' + IntToStr(V.Build) + ')';
+end;
+
+{ Devuelve vacío si este Windows sirve. Si no, el motivo, escrito para la
+  docente que tiene el cartel adelante: qué tiene, qué hace falta y por qué. }
+function MotivoSistemaNoSoportado: String;
+var
+  V: TWindowsVersion;
+  Requisito: String;
+begin
+  Result := '';
+  GetWindowsVersionEx(V);
+  Requisito := 'Tecnia Bot necesita Windows 10 (versión 1809, de octubre de 2018, o más nueva) o Windows 11, de 64 bits.';
+  if not IsX64Compatible then
+    Result := 'Esta computadora tiene un Windows de 32 bits: ' + NombreDelWindows + '.'
+      + #13#10#13#10 + Requisito + #13#10#13#10
+      + 'OpenCode, el programa sobre el que funciona Tecnia Bot, se distribuye sólo para 64 bits.'
+  else if V.Major < 10 then
+    Result := 'Esta computadora tiene ' + NombreDelWindows + '.'
+      + #13#10#13#10 + Requisito + #13#10#13#10
+      + 'No es un capricho del instalador: OpenCode, el programa sobre el que funciona Tecnia Bot, '
+      + 'no puede arrancar en este Windows, y ninguna instalación lo cambia.'
+  else if (V.Major = 10) and (V.Build < BuildMinimoWindows10) then
+    Result := 'Esta computadora tiene ' + NombreDelWindows
+      + ', sin las actualizaciones de Windows 10 posteriores a octubre de 2018.'
+      + #13#10#13#10 + Requisito + #13#10#13#10
+      + 'Actualizá Windows desde Configuración > Actualización y seguridad, y volvé a correr este instalador.';
+end;
+
+function InitializeSetup: Boolean;
+var
+  Motivo: String;
+  ErrorCode: Integer;
+begin
+  Motivo := MotivoSistemaNoSoportado;
+  Result := Motivo = '';
+  if Result then
+    Exit;
+  { Al log de Setup siempre, también en silencioso: es lo que llega a soporte. }
+  Log('Sistema no soportado. ' + Motivo);
+  if WizardSilent then
+    Exit;
+  if MsgBox(Motivo + #13#10#13#10 + '¿Querés abrir la web de Tecnia Bot para ver qué opciones hay?',
+            mbCriticalError, MB_YESNO) = IDYES then
+    ShellExec('open', '{#MyAppURL}', '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
+end;
+
 procedure InitializeWizard;
 begin
   { Presencia de marca en TODAS las paginas (no solo Bienvenida/Final): el header
