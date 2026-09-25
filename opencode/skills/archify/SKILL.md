@@ -1,6 +1,6 @@
 ---
 name: archify
-description: Diagramas de ARQUITECTURA DE SOFTWARE en HTML: cómo se organiza un sistema o un programa. Sirve para arquitectura de sistemas, flujos de trabajo, secuencias de llamadas entre partes, recorrido de los datos y máquinas de estado. Usar cuando se pide ver la estructura de un PROGRAMA o SISTEMA: servicios, módulos, bases de datos, APIs, etapas de un proceso. NO sirve para electrónica -- circuitos, protoboard, conexiones de Arduino o ESP32, cables, componentes-- para eso están las skills circuitos-visuales y diagramas-conexion, que tienen prioridad absoluta ante cualquier mención de hardware.
+description: 'Diagramas de ARQUITECTURA DE SOFTWARE en HTML - cómo se organiza un sistema o un programa. Sirve para arquitectura de sistemas, flujos de trabajo, secuencias de llamadas entre partes, recorrido de los datos y máquinas de estado. Usar cuando se pide ver la estructura de un PROGRAMA o SISTEMA: servicios, módulos, bases de datos, APIs, etapas de un proceso. NO sirve para electrónica -- circuitos, protoboard, conexiones de Arduino o ESP32, cables, componentes-- para eso están las skills circuitos-visuales y diagramas-conexion, que tienen prioridad absoluta ante cualquier mención de hardware.'
 license: MIT
 metadata:
   version: "2.16"
