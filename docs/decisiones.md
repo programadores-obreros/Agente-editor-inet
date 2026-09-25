@@ -274,6 +274,31 @@ instalador está corriendo hay que esperarlo, y **no correrlo dos veces**.
 ## D-05 — Windows 7 no se soporta, y el instalador lo dice con nombre y apellido
 
 **Fecha:** 2026-09-05 · **Versión:** sin publicar · **Issue:** [#5](https://github.com/programadores-obreros/Agente-editor-inet/issues/5)
+· **Estado: decisión tomada, implementación PENDIENTE**
+
+> **Esto NO es soporte de Windows 7. Es rechazo con explicación.** Windows 7 no va a
+> correr Tecnia Bot nunca (ver la tabla de abajo). Lo que se decidió es cómo se le
+> dice que no.
+>
+> **Qué pasa HOY en `main`:** `installer/tecnia-bot.iss` tiene `MinVersion=10.0`
+> (línea 72) y `ArchitecturesAllowed=x64compatible`. En Windows 7 el `.exe` ya se
+> niega a instalar, con el mensaje estándar de Inno en castellano (el `.iss` carga
+> `Spanish.isl` y no lo sobreescribe): *"Este programa requiere Windows versión 10.0 o
+> posterior."* No dice qué Windows detectó, ni por qué, ni qué hacer. La feature es
+> reemplazar eso por un mensaje que lo explique, con las alternativas al lado.
+>
+> **Y hay un agujero que esta feature tapa, no sólo un cartel más lindo:**
+> `MinVersion=10.0` deja pasar **cualquier** Windows 10, incluidos los anteriores a la
+> versión 1809 (compilación 17763). Esas máquinas **instalan sin error y después
+> OpenCode no arranca**, porque Bun exige 1809. El diseño de abajo lo corta en el
+> instalador con `BuildMinimoWindows10 = 17763`.
+>
+> **Dónde está la implementación:** en el árbol de trabajo de la rama
+> `feat/instalador-detecta-win7` (clon aparte), cien commits detrás de `main` y **sin**
+> el trabajo del desinstalador (`CurUninstallStepChanged`, `PurgarDatosPersonales`).
+> **No se puede traer tal cual**: los dos `.iss` difieren en 294 líneas y copiarlo
+> revertiría la purga verificada en la VM. Hay que reimplementarla sobre el `.iss` de
+> hoy, compilarla con ISCC y probarla.
 
 ### El problema
 
@@ -323,7 +348,8 @@ La regla exacta:
 - **Windows 10 versión 1809 (compilación 17763) o más nueva, o Windows 11.**
   Es el mínimo de Bun, sin margen agregado de nuestro lado.
 
-Cómo quedó en `installer/tecnia-bot.iss`:
+Cómo **va a quedar** en `installer/tecnia-bot.iss` — es el diseño; en `main` todavía
+no está (ver el bloque de estado, arriba):
 
 - `MinVersion` bajó de `10.0` a `6.1sp1`, el mínimo que admite Inno Setup 6.3+.
   Suena al revés, pero es a propósito: así el `.exe` **arranca** en Windows 7

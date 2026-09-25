@@ -19,9 +19,17 @@ Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en l
   programa sobre el que funciona Tecnia Bot, no arranca ahí. No es algo que un
   instalador pueda arreglar.
 
-Si corrés el `.exe` en una máquina más vieja no rompe nada: te dice **qué
-Windows encontró y por qué no puede seguir**, y ofrece abrir la web de Tecnia
-Bot con las opciones.
+**Mirá la versión ANTES de instalar**, y es importante por esto: hoy el
+instalador frena a Windows 7, 8 y 8.1 (con el cartel *"Este programa requiere
+Windows versión 10.0 o posterior"*), pero **a un Windows 10 anterior a la 1809 lo
+deja instalar sin quejarse** — y después Tecnia Bot no abre. Si `winver` dice
+"Versión 1803" o menos, actualizá Windows primero.
+
+En cualquier caso, correr el `.exe` en una máquina que no sirve no rompe nada.
+
+<!-- Cuando se implemente D-05, el instalador va a detectar la compilación y
+     explicar qué Windows encontró y qué opciones hay. Recién entonces cambiar
+     este párrafo. Antes de eso, prometerlo acá sería mentirle a la docente. -->
 
 > Para escuelas con máquinas de Windows 7 —qué se evaluó y qué alternativas
 > hay— está la decisión [D-05 en `docs/decisiones.md`](decisiones.md#d-05--windows-7-no-se-soporta-y-el-instalador-lo-dice-con-nombre-y-apellido).
