@@ -351,6 +351,54 @@ if ($plog) {
   Get-Content $plog.FullName -EA SilentlyContinue | Select-Object -Last 8 | ForEach-Object { Write-Host ("     " + $_.Trim()) }
 }
 
+Titulo "Node -- solo lo necesita el skill de diagramas de arquitectura"
+# POR QUE ESTA SECCION EXISTE. El aviso del instalador, cuando Node no queda
+# instalado, mandaba a correr /diagnostico -- y /diagnostico no sabia nada de Node
+# (cero menciones, contra 69 de python y platformio). Mandar a una docente a correr
+# algo que no le va a contestar es peor que no decirle nada: pierde el tiempo y queda
+# pensando que hizo algo mal. Primero se agrego este chequeo; DESPUES se cambio el
+# aviso. Nunca al reves.
+#
+# Node NO es de "Lo que tiene que estar", a proposito: si falta, el bot arranca igual
+# y se pierde UN skill de veinte. Por eso vive en su propia seccion y lo dice.
+#
+# Y OJO CON COMO SE BUSCA: nodejs-lts NO crea shims. Su manifiesto usa
+# `env_add_path: ["bin", "."]`, asi que Scoop agrega las carpetas de la app al PATH de
+# USUARIO en vez de poner un .exe en scoop\shims. Buscar el shim como se hace con
+# opencode daria "FALTA" con Node perfectamente instalado.
+$nodePin = Join-Path $PSScriptRoot "NODE_VERSION"
+$nodeFijada = if (Test-Path $nodePin) { (Get-Content $nodePin -Raw).Trim() } else { "" }
+Dato "fijada (NODE_VERSION)" $(if ($nodeFijada) { $nodeFijada } else { "NO ESTA el archivo install\NODE_VERSION" })
+$nodeCmd = Get-Command node -EA SilentlyContinue
+if ($nodeCmd) {
+  # La ruta, no solo "OK": si node sale de otro lado (un instalador MSI viejo, un
+  # nodejs de chocolatey), no es el que Scoop fija y puede no cumplir el minimo.
+  Dato "node en el PATH" $nodeCmd.Source
+  $nodeVer = ""
+  try { $nodeVer = ("" + (& node --version 2>&1)).Trim() } catch { }
+  Dato "node --version" $(if ($nodeVer) { $nodeVer } else { "el ejecutable esta pero NO contesta --version" })
+  if ($nodeFijada -and $nodeVer -and $nodeVer -ne "v$nodeFijada") {
+    Write-Host "     >> NO COINCIDE con la probada (v$nodeFijada). Los diagramas pueden salir distintos;" -ForegroundColor Yellow
+    Write-Host "        Reparar Tecnia Bot la reinstala fijada." -ForegroundColor Yellow
+  }
+} else {
+  Dato "node en el PATH" "FALTA"
+  Write-Host "     >> Sin Node, el bot arranca igual y sirve para todo lo demas: explicar, dibujar" -ForegroundColor Yellow
+  Write-Host "        circuitos, compilar y repartir fichas. Lo unico que NO va a poder es dibujar un" -ForegroundColor Yellow
+  Write-Host "        diagrama de la arquitectura de un programa (el skill archify)." -ForegroundColor Yellow
+  Write-Host "        Para reintentar: Reparar Tecnia Bot desde el menu inicio." -ForegroundColor Yellow
+}
+$nodeActual = "$U\scoop\apps\nodejs-lts\current"
+$nodeScoop = ""
+try { if (Test-Path "$nodeActual\manifest.json") { $nodeScoop = ("" + (Get-Content "$nodeActual\manifest.json" -Raw | ConvertFrom-Json).version).Trim() } } catch { }
+Dato "instalada (Scoop)" $(if ($nodeScoop) { $nodeScoop } else { "no la administra Scoop en este perfil" })
+$nodeHold = $false
+try { if (Test-Path "$nodeActual\install.json") { $nodeHold = [bool]((Get-Content "$nodeActual\install.json" -Raw | ConvertFrom-Json).hold) } } catch { }
+Dato "scoop hold" $(if ($nodeHold) { "OK (no se actualiza sola)" } elseif (Test-Path "$nodeActual\install.json") { "NO: 'scoop update' la puede cambiar. Reparar Tecnia Bot lo pone." } else { "no se pudo leer current\install.json" })
+# El skill tiene que estar ademas de Node: si la capa se instalo incompleta, Node
+# solo no alcanza y el sintoma es el mismo ("no me dibuja el diagrama").
+Dato "skill archify" $(if (Test-Path "$ocDir\skills\archify\bin\archify.mjs") { "OK" } else { "FALTA en la capa" })
+
 Titulo "Las credenciales -- el bug del BOM"
 # ACA NO SE IMPRIME NADA DEL CONTENIDO DE auth.json. Nunca.
 #
