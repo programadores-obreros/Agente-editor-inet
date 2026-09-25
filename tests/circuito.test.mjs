@@ -2358,53 +2358,248 @@ test("cada placa se dibuja con el ancho de columna que su pieza necesita", async
 // pieza en vivo.
 
 const BUNDLE = join(REPO, "opencode/tecniabot-web/wokwi-bundle.js")
+const EXTRA = join(REPO, "opencode/tecniabot-web/componentes-extra.js")
 
-// Las fábricas de `signals` del bundle, copiadas de su definición literal:
-//   x=l=>({type:"analog",channel:l}), z=(l,t=0)=>({type:"i2c",signal:l,bus:t}),
-//   u=spi, C=usart, v=()=>({type:"power",signal:"GND"}), b=VCC
-function pinesWokwi(tag) {
-  const src = readFileSync(BUNDLE, "utf8")
-  const iTag = src.indexOf(`"${tag}"`)
-  assert.ok(iTag > 0, `la pieza ${tag} ya no está en el bundle`)
-  const iBra = src.indexOf("[", src.lastIndexOf("pinInfo", iTag))
-  assert.ok(iBra > 0, `no se encontró el pinInfo de ${tag}`)
-  // Matcheo de corchetes salteando strings, que el bundle trae SVG con "[" adentro.
-  let prof = 0, fin = iBra, str = null
-  for (; fin < src.length; fin++) {
-    const c = src[fin]
-    if (str) { if (c === "\\") fin++; else if (c === str) str = null; continue }
+// ── POR QUÉ EL EXTRACTOR TUVO QUE CAMBIAR ───────────────────────────────────
+//
+// La primera versión servía para las DOS PLACAS y para nada más. Medido: el UNO
+// daba sus 31 pines, pero `wokwi-lcd1602` devolvía 4 (tiene 16), `wokwi-servo`
+// rebotaba contra la guarda de `>= 25`, y `wokwi-7segment` y `wokwi-led` tiraban
+// `t is not defined`. Con el mapeo de piezas encima, un extractor que sólo sabe
+// de placas no alcanza: el 90% de los cables mal dibujados son de la otra punta.
+//
+// Las tres causas, y qué se hizo con cada una:
+//
+// 1. ANCLAJE. Antes: `src.lastIndexOf("pinInfo", iTag)`, o sea buscar hacia atrás
+//    desde el tag y agarrar el `pinInfo` que aparezca — que puede ser el de OTRA
+//    pieza. Ahora el bundle se lee por donde es uniforme: toda pieza se registra
+//    como `IDENT=dec([d("tag")],IDENT)`. De ahí sale el nombre minificado de la
+//    clase (el 2º argumento, que aguanta la cadena `y0=dt=W0([d("…")],y0)` del
+//    pushbutton), se busca hacia atrás su `IDENT=class`, y la ventana entre las
+//    dos ACOTA el `pinInfo` a esa clase. No hay forma de agarrar el de al lado.
+//
+// 2. EVALUACIÓN. Antes se sliceaba el literal `[...]` y se lo evaluaba suelto.
+//    Eso rompe de dos maneras distintas, y las dos están en el bundle de hoy:
+//    el LED arma sus coordenadas con variables locales (`let t=this.flip?15:25`)
+//    → `t is not defined`; y el LCD tiene DOS listas (`return this.pins==="i2c"
+//    ? [4 pines] : [16 pines]`) → el slice agarraba la PRIMERA, que es la que el
+//    tool no usa. Ahora se corre el CUERPO entero del getter con un `this`.
+//
+// 3. HELPERS. Antes los seis (`x, z, u, C, v, b`) estaban escritos a mano acá.
+//    Ahora se los busca POR SU CUERPO (`=>({type:"analog",channel:`) y se exige
+//    que el bundle los defina UNA sola vez. El día que el minificador los
+//    renombre, esto los sigue encontrando en vez de tirar `t is not defined`.
+//
+// LO QUE NO CAMBIÓ ES QUE FALLA CERRADO, que era lo bueno del diseño viejo. Ante
+// la duda hay excepción con motivo, nunca una lista plausible: identificador
+// libre que el bundle no define (o define dos veces) → excepción; campo que el
+// constructor no dejó puesto → excepción (y NO `undefined`, que elegiría una
+// rama del getter por un hueco); lista que no sale array → excepción.
+//
+// La guarda de `>= 25` se fue porque estaba calibrada para placas y rebotaba a
+// los 34 componentes. La red que la reemplaza es más fuerte y está más abajo:
+// VERDAD_NAVEGADOR fija los nombres EXACTOS de las 36 piezas. Con eso, un
+// extractor vacío o con basura no pasa; con `>= 25` un UNO de 26 pines inventados
+// pasaba.
+
+function bloqueBalanceado(s, desde) {
+  const abre = s[desde], cierra = abre === "{" ? "}" : "]"
+  if (abre !== "{" && abre !== "[") return null
+  let prof = 0, str = null
+  for (let i = desde; i < s.length; i++) {
+    const c = s[i]
+    if (str) { if (c === "\\") i++; else if (c === str) str = null; continue }
     if (c === '"' || c === "'" || c === "`") { str = c; continue }
-    if (c === "[") prof++
-    else if (c === "]" && --prof === 0) break
+    if (c === abre) prof++
+    else if (c === cierra && --prof === 0) return s.slice(desde, i + 1)
   }
-  const lista = new Function(
-    "x", "z", "u", "C", "v", "b",
-    "return " + src.slice(iBra, fin + 1),
-  )(
-    (l) => ({ type: "analog", channel: l }),
-    (l, t = 0) => ({ type: "i2c", signal: l, bus: t }),
-    (l, t = 0) => ({ type: "spi", signal: l, bus: t }),
-    (l, t = 0) => ({ type: "usart", signal: l, bus: t }),
-    () => ({ type: "power", signal: "GND" }),
-    (l) => ({ type: "power", signal: "VCC", voltage: l }),
-  )
-  // El extractor es un parser sobre un archivo minificado: si un día devuelve
-  // basura o vacío, TODOS los tests de abajo pasarían por no tener nada contra
-  // qué comparar. Un test que pasa estando vacío no prueba nada, así que el
-  // parser se valida a sí mismo antes de que nadie lo use.
-  assert.ok(Array.isArray(lista) && lista.length >= 25, `el extractor devolvió ${lista?.length} pines de ${tag}: está roto`)
-  for (const p of lista) {
-    assert.equal(typeof p.name, "string", `un pin de ${tag} salió sin nombre`)
-    assert.ok(p.name.length > 0, `un pin de ${tag} salió con el nombre vacío`)
-    assert.equal(typeof p.x, "number", `el pin ${p.name} de ${tag} salió sin coordenada x`)
-    assert.equal(typeof p.y, "number", `el pin ${p.name} de ${tag} salió sin coordenada y`)
-  }
-  return lista
+  return null
 }
 
+// Corta una expresión-coma por las comas de NIVEL 0 (las que separan sentencias
+// en un constructor minificado), sin romper strings ni paréntesis anidados.
+function porComas(s) {
+  const out = []
+  let prof = 0, str = null, ini = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (str) { if (c === "\\") i++; else if (c === str) str = null; continue }
+    if (c === '"' || c === "'" || c === "`") { str = c; continue }
+    if ("([{".includes(c)) prof++
+    else if (")]}".includes(c)) prof--
+    else if (c === "," && prof === 0) { out.push(s.slice(ini, i)); ini = i + 1 }
+  }
+  out.push(s.slice(ini))
+  return out.filter((x) => x.trim())
+}
+
+let _bundle = null
+const bundleSrc = () => (_bundle ??= readFileSync(BUNDLE, "utf8"))
+
+// Un nombre que el bundle tiene que definir EXACTAMENTE una vez. Cero o dos es
+// excepción y no "elijo el primero": elegir el primero es justo la clase de
+// suposición que después se dibuja prolija y apunta mal.
+function nombreUnico(re, que) {
+  const hits = new Set()
+  let m
+  while ((m = re.exec(bundleSrc()))) hits.add(m[1])
+  assert.equal(hits.size, 1, `el bundle define ${hits.size} veces ${que} (${[...hits]}): el extractor no puede elegir`)
+  return [...hits][0]
+}
+
+let _fabricas = null
+function fabricasDeSenales() {
+  if (_fabricas) return _fabricas
+  const f = (re, fn) => [nombreUnico(re, re.source), fn]
+  _fabricas = Object.fromEntries([
+    f(/([A-Za-z_$][\w$]*)=[\w$(),= ]*=>\(\{type:"analog",channel:/g, (l) => ({ type: "analog", channel: l })),
+    f(/([A-Za-z_$][\w$]*)=[\w$(),= ]*=>\(\{type:"i2c",signal:/g, (l, t = 0) => ({ type: "i2c", signal: l, bus: t })),
+    f(/([A-Za-z_$][\w$]*)=[\w$(),= ]*=>\(\{type:"spi",signal:/g, (l, t = 0) => ({ type: "spi", signal: l, bus: t })),
+    f(/([A-Za-z_$][\w$]*)=[\w$(),= ]*=>\(\{type:"usart",signal:/g, (l, t = 0) => ({ type: "usart", signal: l, bus: t })),
+    f(/([A-Za-z_$][\w$]*)=[\w$(),= ]*=>\(\{type:"power",signal:"GND"\}\)/g, () => ({ type: "power", signal: "GND" })),
+    f(/([A-Za-z_$][\w$]*)=[\w$(),= ]*=>\(\{type:"power",signal:"VCC",voltage:/g, (l) => ({ type: "power", signal: "VCC", voltage: l })),
+  ])
+  return _fabricas
+}
+
+// Una constante de módulo del bundle (`yt=23`, el NEMA del paso a paso). Misma
+// regla: definición única o excepción.
+function constanteDelBundle(nombre) {
+  const re = new RegExp(`[^\\w$.]${nombre.replace(/\$/g, "\\$")}\\s*=\\s*(-?\\d+(?:\\.\\d+)?|"[^"]*"|'[^']*')\\s*[,;)]`, "g")
+  const hits = new Set()
+  let m
+  while ((m = re.exec(bundleSrc()))) hits.add(m[1])
+  assert.equal(hits.size, 1, `\`${nombre}\` queda libre en el cuerpo y el bundle lo define ${hits.size} veces: el extractor no lo adivina`)
+  return JSON.parse([...hits][0].replace(/^'(.*)'$/, '"$1"'))
+}
+
+// Corre un pedazo de cuerpo del bundle. El `with` engancha SÓLO los helpers y las
+// constantes del bundle; todo lo que sea un global de verdad (Math, Uint8Array)
+// pasa de largo al global real, y lo que no es ninguna de las dos cosas explota.
+function correCuerpo(body, self) {
+  const h = fabricasDeSenales()
+  const scope = new Proxy(h, {
+    has: (t, k) => typeof k === "string" && (k in t || !(k in globalThis)),
+    get: (t, k) => (typeof k !== "string" ? undefined : k in t ? t[k] : constanteDelBundle(k)),
+  })
+  return new Function("__s", `with(__s){ return (function(){ ${body} }); }`)(scope).call(self)
+}
+
+// El `this` con el que se corre el getter: los campos que pone el constructor y
+// los getters hermanos que el cuerpo pueda leer (`this.pinPositions` del 7
+// segmentos, `this.panelHeight` del LCD).
+function esteDeLaClase(ventana, tag) {
+  const campos = {}
+  const rg = /(^|[};,)])get ([A-Za-z_$][\w$]*)\(\)\s*\{/g
+  let m
+  while ((m = rg.exec(ventana))) {
+    const nom = m[2]
+    if (nom === "styles") continue
+    const b = bloqueBalanceado(ventana, ventana.indexOf("{", m.index + m[0].length - 1))
+    if (!b) continue
+    Object.defineProperty(campos, nom, { configurable: true, get: () => correCuerpo(b.slice(1, -1), self) })
+  }
+  // FALLA CERRADO: leer un campo que el constructor no dejó puesto NO devuelve
+  // `undefined`, lanza. Si devolviera undefined, el LCD elegiría entre su lista
+  // de 16 y la de 4 según un hueco, y saldría una lista perfectamente plausible.
+  const self = new Proxy(campos, {
+    has: (t, k) => k in t,
+    set: (t, k, v) => ((t[k] = v), true),
+    get(t, k) {
+      if (typeof k === "symbol" || k in t) return t[k]
+      throw new Error(`el pinInfo de ${tag} lee this.${k} y el constructor del bundle no lo dejó puesto: el extractor no lo adivina`)
+    },
+  })
+  const ic = ventana.indexOf("constructor()")
+  if (ic >= 0) {
+    const b = bloqueBalanceado(ventana, ventana.indexOf("{", ic + 13))
+    // SENTENCIA POR SENTENCIA, y no el constructor entero. Los constructores
+    // minificados son una expresión-coma, y hay tres piezas donde UNA sentencia
+    // irrelevante para los pines explota: `this.font=st` (LCD, `st` es una tabla
+    // de otro chunk), `dt.pushbuttonCounter++` (botón) y un `new ImageData`
+    // (OLED). Corriendo el bloque entero, esa sentencia se llevaba puestas TODAS
+    // las de atrás — y en el LCD la de atrás era `this.pins="full"`, que es
+    // justo el campo que elige entre 16 pines y 4. Lo que no se pudo correr queda
+    // SIN PONER, y leerlo explota arriba.
+    if (b) for (const s of porComas(b.slice(1, -1).replace(/super\([^)]*\)\s*,?/, ""))) {
+      try { correCuerpo(s, self) } catch { /* sentencia ajena a los pines */ }
+    }
+  }
+  return self
+}
+
+/**
+ * El pedazo de bundle que va desde `IDENT=class` hasta el `dec([d("tag")],IDENT)` que
+ * la registra: todo el cuerpo de ESA clase y nada de la de al lado.
+ *
+ * Se saca acá afuera porque ahora la usan dos: el que lee `pinInfo` y el que lee el
+ * SVG que la pieza dibuja (la polaridad del buzzer sale del color de una pata). Los
+ * dos tienen que mirar la MISMA ventana, o uno de los dos estaría leyendo otra pieza.
+ */
+function ventanaDeClase(tag) {
+  const src = bundleSrc()
+  const reg = new RegExp(`[A-Za-z_$][\\w$]*\\(\\s*\\[\\s*[A-Za-z_$][\\w$]*\\("${tag}"\\)\\s*\\]\\s*,\\s*([A-Za-z_$][\\w$]*)\\s*\\)`)
+  const m = reg.exec(src)
+  assert.ok(m, `la pieza ${tag} ya no se registra en el bundle`)
+  const id = m[1]
+  const decl = new RegExp(`[^\\w$]${id.replace(/\$/g, "\\$")}\\s*=\\s*class\\b`, "g")
+  let d, ini = -1
+  while ((d = decl.exec(src)) && d.index < m.index) ini = d.index
+  assert.ok(ini >= 0, `no se encontró la clase \`${id}\` de ${tag} en el bundle`)
+  return src.slice(ini, m.index)
+}
+
+function pinesDelBundle(tag) {
+  return esteDeLaClase(ventanaDeClase(tag), tag).pinInfo
+}
+
+// Las piezas NUESTRAS no se parsean: se EJECUTA `componentes-extra.js` con un
+// shim de dos líneas y se le pregunta a la clase, que es lo mismo que hace el
+// navegador. Un parser sobre un archivo que podemos correr sería inventar riesgo.
+let _extra = null
+function piezasExtra() {
+  if (_extra) return _extra
+  const reg = new Map()
+  new Function("HTMLElement", "customElements", readFileSync(EXTRA, "utf8"))(
+    class {},
+    { get: (n) => reg.get(n), define: (n, C) => reg.set(n, C) },
+  )
+  _extra = reg
+  return _extra
+}
+
+/**
+ * El `pinInfo` de CUALQUIERA de las 36 piezas que el tool dibuja, sin navegador.
+ *
+ * Devuelve `{ pines, motivo }`: `motivo` es el `sinPinesDibujados` que la pieza
+ * declara cuando no tiene los conectores dibujados — o sea que "vacío" acá es un
+ * estado DECLARADO por la pieza y no un extractor roto.
+ */
+function pinesDePieza(tag) {
+  let pines, motivo = null
+  if (tag.startsWith("pb-")) {
+    const C = piezasExtra().get(tag)
+    assert.ok(C, `la pieza ${tag} no se registra en componentes-extra.js`)
+    pines = Object.create(C.prototype).pinInfo
+    motivo = C.sinPinesDibujados ?? null
+  } else {
+    pines = pinesDelBundle(tag)
+  }
+  assert.ok(Array.isArray(pines), `el pinInfo de ${tag} no salió una lista`)
+  for (const p of pines) {
+    assert.equal(typeof p.name, "string", `un pin de ${tag} salió sin nombre`)
+    assert.ok(p.name.length > 0, `un pin de ${tag} salió con el nombre vacío`)
+    assert.ok(Number.isFinite(p.x), `el pin ${p.name} de ${tag} salió con x = ${p.x}`)
+    assert.ok(Number.isFinite(p.y), `el pin ${p.name} de ${tag} salió con y = ${p.y}`)
+  }
+  return { pines, motivo }
+}
+
+const nombresDePieza = (tag) => pinesDePieza(tag).pines.map((p) => p.name)
+
 const WOKWI = {
-  esp32: () => pinesWokwi("wokwi-esp32-devkit-v1"),
-  uno: () => pinesWokwi("wokwi-arduino-uno"),
+  esp32: () => pinesDePieza("wokwi-esp32-devkit-v1").pines,
+  uno: () => pinesDePieza("wokwi-arduino-uno").pines,
 }
 const tieneSenal = (p, tipo, senal) =>
   (p.signals ?? []).some((s) => s.type === tipo && (senal === undefined || s.signal === senal))
@@ -2646,6 +2841,80 @@ test("wokwi: cada riel cae en un pin real, y la masa es la MÁS CERCANA al pin d
   }
 })
 
+// ── el shield: la masa y la tensión salen de SU PROPIA terna ────────────────
+//
+// EL HALLAZGO QUE LO MOTIVA: `conCaraDeShield` clonaba el UNO cambiándole nada más la
+// cara, así que `rielWokwi` seguía contestando los nombres del UNO PELADO — `GND.1`,
+// `GND.3`, `5V`, `3.3V` — y NINGUNO de los cuatro existe en `pb-sensor-shield`. Medido
+// sobre las hojas generadas: 25 de 74 cables pedían un riel que la pieza dibujada no
+// tiene y volvían a nacer de la barra gris, con el barrido de nombres en verde porque
+// verificaba contra el UNO en vez de contra la pieza que se dibuja.
+//
+// LA FUENTE ES LA PIEZA, no una tabla escrita acá. `pb-sensor-shield` publica en su
+// `pinInfo` que `<pin>.G` declara `power/GND` y `<pin>.V` declara `power/VCC`, y el
+// PREFIJO del nombre dice de qué terna es. Las dos cosas se verifican contra el
+// `pinInfo` real; este archivo no repite el sufijo como dato, lo LEE del nombre que
+// devolvió el tool y le pregunta a la pieza qué es ese pin.
+//
+// MUTACIONES QUE MATAN:
+//   · en `conCaraDeShield`, devolver `` `${terna}.V` `` para el caso `GND` (y `.G` para
+//     la tensión): los dos nombres EXISTEN, así que el barrido de nombres no los ve.
+//   · borrar el `override` entero y volver a heredar el `rielWokwi` del UNO.
+//   · ignorar el `ref` y devolver siempre la terna del primer pin.
+//   · devolver `` `${terna}.V` `` para `V3`: alimentaría con los 5 V de la terna un
+//     módulo de 3,3 V, dibujado prolijo.
+test("wokwi: con sensor shield, la masa y la tensión salen de la TERNA de ese pin", () => {
+  const { PLACAS, conCaraDeShield } = ns
+  assert.ok(conCaraDeShield, "`conCaraDeShield` dejó de exportarse y el shield se quedó sin red")
+  const shield = conCaraDeShield(PLACAS.uno, { tag: "pb-sensor-shield", escala: 1, anchoColumna: 260 })
+  const dePieza = new Map(pinesDePieza("pb-sensor-shield").pines.map((p) => [p.name, p]))
+  const declara = (nombre, senal) => (dePieza.get(nombre)?.signals ?? []).some((s) => s.type === "power" && s.signal === senal)
+
+  let verificados = 0
+  for (const { pin } of pinesQueElToolReparte(PLACAS.uno).values()) {
+    const terna = shield.pinWokwi(pin)
+    if (terna == null) continue
+    assert.ok(dePieza.has(terna), `el shield reparte ${PLACAS.uno.etiquetaPin(pin)} como "${terna}" y la pieza no tiene ese pin`)
+    verificados++
+
+    const masa = shield.rielWokwi("GND", pin)
+    assert.ok(dePieza.has(masa), `${PLACAS.uno.etiquetaPin(pin)}: la masa del shield apunta a "${masa}", que no existe en pb-sensor-shield`)
+    assert.ok(declara(masa, "GND"), `${PLACAS.uno.etiquetaPin(pin)}: la masa del shield apunta a "${masa}", y la pieza NO lo declara power/GND`)
+    assert.equal(masa.split(".")[0], terna, `${PLACAS.uno.etiquetaPin(pin)}: la señal va a la terna "${terna}" y la masa a la de "${masa.split(".")[0]}". En el shield el módulo entra DERECHO en un conector: las tres vías son del mismo.`)
+
+    for (const r of ["V5", "VLOGICA"]) {
+      const v = shield.rielWokwi(r, pin)
+      assert.ok(dePieza.has(v), `${PLACAS.uno.etiquetaPin(pin)}: el riel ${r} del shield apunta a "${v}", que no existe en pb-sensor-shield`)
+      assert.ok(declara(v, "VCC"), `${PLACAS.uno.etiquetaPin(pin)}: el riel ${r} del shield apunta a "${v}", y la pieza NO lo declara power/VCC`)
+      assert.equal(v.split(".")[0], terna, `${PLACAS.uno.etiquetaPin(pin)}: la señal va a la terna "${terna}" y la tensión a la de "${v.split(".")[0]}"`)
+      assert.notEqual(v, masa, `${PLACAS.uno.etiquetaPin(pin)}: la tensión y la masa del shield cayeron en el MISMO agujero ("${v}")`)
+    }
+
+    // Los 3,3 V NO están, y eso es la respuesta, no un hueco. Las ternas del Sensor
+    // Shield son de 5 V y la pieza no publica ningún pin de 3,3 V: si algún día se
+    // devolviera `<pin>.V` acá, el OLED se alimentaría con 5 V y el dibujo se vería
+    // igual de prolijo. Que quede sin anclar es lo correcto.
+    assert.equal(shield.rielWokwi("V3", pin), null, `el shield contestó un riel de 3,3 V para ${PLACAS.uno.etiquetaPin(pin)}: la pieza no tiene ninguno`)
+  }
+  assert.ok(verificados > 15, `sólo se verificaron ${verificados} ternas del shield: el barrido no está barriendo`)
+  for (const p of pinesDePieza("pb-sensor-shield").pines) {
+    assert.ok(!/^3\.3V$|^5V$|^GND\.\d$/.test(p.name), `pb-sensor-shield ahora TIENE un pin "${p.name}": revisar si el override de rieles sigue haciendo falta`)
+  }
+
+  // Sin `ref` no hay terna de la que hablar, y el shield todavía tiene UN `GND`
+  // nombrable: la vía de señal de la terna que el UNO trae en el bloque del AREF.
+  const sinRef = shield.rielWokwi("GND", null)
+  assert.ok(declara(sinRef, "GND"), `sin ref el shield manda la masa a "${sinRef}" y la pieza no lo declara power/GND`)
+  assert.equal(shield.rielWokwi("V5", null), null, "sin ref el shield inventó una terna para la tensión")
+
+  // Y el I2C no cambia: A4/A5 son vías de SEÑAL y se llaman igual que en el UNO.
+  for (const r of ["SDA", "SCL"]) {
+    const n = shield.rielWokwi(r, null)
+    assert.equal(n, PLACAS.uno.rielWokwi(r, null), `el shield movió el ${r}: los pines "no cambian ni un número"`)
+    assert.ok(dePieza.has(n), `el ${r} del shield apunta a "${n}", que no existe en pb-sensor-shield`)
+  }
+})
+
 // ════════════════════════════════════════════════════════════════════════════
 // EL REGALO: `signals` como TERCERA voz sobre nuestro hardware
 // ════════════════════════════════════════════════════════════════════════════
@@ -2764,5 +3033,1087 @@ test("signals: los GPIO que Wokwi NO marca pwm son los solo-entrada del tool", (
   assert.equal(esp.poolPwm, undefined, "el ESP32 declaró un poolPwm: si de verdad hay pines sin PWM, este test tiene que decir cuáles")
   for (const p of esp.poolDigital) {
     assert.ok(!sinPwm.includes(p.n), `GPIO${p.n} está en el pool digital del ESP32 y Wokwi dice que no hace PWM`)
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// LOS CABLES AL PIN: que el dibujo pueda saber a qué agujero va cada punta
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Hoy los cables salen de una barra gris al costado de la placa. Para anclarlos
+// al pin de verdad, `armarCircuito` emite dos atributos por cable en el
+// `<div class="pin">`:
+//
+//   data-placa="3"     ← placa.pinWokwi(pin) / placa.rielWokwi(riel, ref)
+//   data-pieza="PWM"   ← pin.pinPieza, el mapeo del lado del componente
+//
+// Si uno de los dos no se puede resolver, ESE atributo no se emite y ese cable
+// queda como hoy. El fallback es por cable, no por hoja.
+//
+// Y todo esto se prueba contra el `pinInfo` REAL de cada pieza, que es fuente
+// EXTERNA. Comparar el mapeo contra una copia del mapeo no prueba nada: los dos
+// lados se editan juntos y siempre coinciden.
+
+// ── LA VERDAD DEL NAVEGADOR ────────────────────────────────────────────────
+//
+// Los nombres que las 36 piezas publican en `el.pinInfo` LEÍDOS EN CHROME, no
+// sacados del extractor. Es la única fuente de acá que no pasa por el parser, y
+// existe para una cosa: si el extractor se rompe o miente, esto lo delata.
+//
+// NO ES UNA COPIA DEL MAPEO, y la diferencia importa. El extractor parsea el
+// bundle minificado; esta tabla se transcribió de instanciar cada pieza en un
+// navegador de verdad. Son dos caminos independientes hasta el mismo dato: el
+// día que Wokwi renombre un pin al actualizar el bundle, el extractor cambia y
+// esta tabla no, y el test se pone rojo — que es el único lugar barato donde
+// enterarse.
+//
+// CÓMO SE REGENERA (sin instalar nada, con el Chrome que ya está):
+//
+//   1. una página con <script src="wokwi-bundle.js"> y <script
+//      src="componentes-extra.js">, que cree cada tag, lo cuelgue del DOM,
+//      espere ~100 ms y escriba JSON.stringify(el.pinInfo) en un <pre>;
+//   2. chromium --headless --disable-gpu --virtual-time-budget=8000 \
+//        --dump-dom file://…/index.html
+//   3. del DOM volcado se saca el JSON y de ahí los nombres.
+//
+// OJO: `pinInfo` es un getter de INSTANCIA. Leerlo de la clase da undefined.
+// El volcado en prosa, con coordenadas y signals, vive en docs/wokwi-pinout-dump.md.
+const VERDAD_NAVEGADOR = {
+  "pb-bmp180": [],
+  "pb-bomba": [],
+  "pb-calefactor": [],
+  "pb-driver": [],
+  "pb-higrometro": [],
+  "pb-lampara": [],
+  "pb-lluvia": [],
+  "pb-motor": ["+", "-"],
+  "pb-relay": ["IN", "VCC", "GND"],
+  "pb-sensor-shield": [
+     "AREF.G", "AREF.V", "AREF", "GND.G", "GND.V", "GND", "13.G", "13.V", "13", "12.G", "12.V", "12", "11.G",
+     "11.V", "11", "10.G", "10.V", "10", "9.G", "9.V", "9", "8.G", "8.V", "8", "7.G", "7.V", "7", "6.G",
+     "6.V", "6", "5.G", "5.V", "5", "4.G", "4.V", "4", "3.G", "3.V", "3", "2.G", "2.V", "2", "1.G", "1.V",
+     "1", "0.G", "0.V", "0", "A0.G", "A0.V", "A0", "A1.G", "A1.V", "A1", "A2.G", "A2.V", "A2", "A3.G",
+     "A3.V", "A3", "A4.G", "A4.V", "A4", "A5.G", "A5.V", "A5", "URF01.VCC", "URF01.A0", "URF01.A1",
+     "URF01.GND",
+  ],
+  "pb-valvula": [],
+  "wokwi-7segment": ["COM.1", "COM.2", "A", "B", "C", "D", "E", "F", "G", "DP"],
+  "wokwi-analog-joystick": ["VCC", "VERT", "HORZ", "SEL", "GND"],
+  "wokwi-arduino-uno": [
+     "A5.2", "A4.2", "AREF", "GND.1", "13", "12", "11", "10", "9", "8", "7", "6", "5", "4", "3", "2", "1",
+     "0", "IOREF", "RESET", "3.3V", "5V", "GND.2", "GND.3", "VIN", "A0", "A1", "A2", "A3", "A4", "A5",
+  ],
+  "wokwi-buzzer": ["1", "2"],
+  "wokwi-dht22": ["VCC", "SDA", "NC", "GND"],
+  "wokwi-esp32-devkit-v1": [
+     "VIN", "GND.2", "D13", "D12", "D14", "D27", "D26", "D25", "D33", "D32", "D35", "D34", "VN", "VP", "EN",
+     "3V3", "GND.1", "D15", "D2", "D4", "RX2", "TX2", "D5", "D18", "D19", "D21", "RX0", "TX0", "D22", "D23",
+  ],
+  "wokwi-flame-sensor": ["VCC", "GND", "DOUT", "AOUT"],
+  "wokwi-hc-sr04": ["VCC", "TRIG", "ECHO", "GND"],
+  "wokwi-ir-receiver": ["GND", "VCC", "DAT"],
+  "wokwi-lcd1602": [
+     "VSS", "VDD", "V0", "RS", "RW", "E", "D0", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "A", "K",
+  ],
+  "wokwi-led": ["A", "C"],
+  "wokwi-membrane-keypad": ["R1", "R2", "R3", "R4", "C1", "C2", "C3", "C4"],
+  "wokwi-mpu6050": ["INT", "AD0", "XCL", "XDA", "SDA", "SCL", "GND", "VCC"],
+  "wokwi-neopixel": ["VDD", "DOUT", "VSS", "DIN"],
+  "wokwi-ntc-temperature-sensor": ["GND", "VCC", "OUT"],
+  "wokwi-photoresistor-sensor": ["VCC", "GND", "DO", "AO"],
+  "wokwi-pir-motion-sensor": ["VCC", "OUT", "GND"],
+  "wokwi-potentiometer": ["GND", "SIG", "VCC"],
+  "wokwi-pushbutton": ["1.l", "2.l", "1.r", "2.r"],
+  "wokwi-rgb-led": ["R", "COM", "G", "B"],
+  "wokwi-servo": ["GND", "V+", "PWM"],
+  "wokwi-small-sound-sensor": ["AOUT", "GND", "VCC", "DOUT"],
+  "wokwi-ssd1306": ["DATA", "CLK", "DC", "RST", "CS", "3V3", "VIN", "GND"],
+  "wokwi-stepper-motor": ["A-", "A+", "B+", "B-"],
+  "wokwi-tilt-switch": ["GND", "VCC", "OUT"],
+}
+
+// El catálogo entero, tal como lo lee el tool. Se importa del módulo REAL y no se
+// copia: una lista de componentes escrita acá se desactualiza el día que alguien
+// agregue el 34º y este barrido dejaría de mirarlo sin decir nada.
+const TIPOS = () => Object.keys(ns.COMPONENTES)
+/** El componente que dibuja cada pieza. Los tags son únicos: 33 tipos, 33 tags. */
+const POR_TAG = () => Object.fromEntries(Object.values(ns.COMPONENTES).map((c) => [c.tag, c]))
+const TAGS_DEL_TOOL = () =>
+  [...new Set([...Object.values(ns.COMPONENTES).map((c) => c.tag), ...Object.values(ns.PLACAS).map((p) => p.tag), "pb-sensor-shield"])].sort()
+
+// ── 1. EL EXTRACTOR CONTRA LA VERDAD DEL NAVEGADOR ─────────────────────────
+//
+// MUTACIÓN QUE MATA: en `pinesDePieza`, devolver `[]` en vez de `pines`. O en
+// `pinesDelBundle`, volver al `lastIndexOf("pinInfo", …)` de antes (el LCD pasa
+// de 16 nombres a 4 y este test lo dice con nombre y apellido).
+//
+// Sin este test el barrido de más abajo recorre listas vacías y pasa en verde:
+// es literalmente el bug de los siete tests que pasaban sin probar nada. Por eso
+// el extractor se ancla a mano contra una fuente que NO es él.
+test("wokwi: el extractor saca de las 36 piezas los mismos nombres que el navegador", () => {
+  const tags = TAGS_DEL_TOOL()
+  assert.deepEqual(
+    tags,
+    Object.keys(VERDAD_NAVEGADOR).sort(),
+    "las piezas que el tool dibuja ya no son las que tiene medidas VERDAD_NAVEGADOR: hay que volver a volcarlas del navegador (ver la receta de arriba)",
+  )
+  for (const tag of tags) {
+    assert.deepEqual(
+      nombresDePieza(tag),
+      VERDAD_NAVEGADOR[tag],
+      `el extractor y el navegador NO dicen lo mismo de ${tag}. O cambió el bundle (y hay que revisar el mapeo de esa pieza entera) o se rompió el extractor.`,
+    )
+  }
+  // Anclas concretas, por si alguien "arregla" el test de arriba copiándole la
+  // salida al extractor: éstas son las cuatro piezas que el extractor VIEJO no
+  // sabía leer, con el número que las delataba.
+  assert.equal(nombresDePieza("wokwi-lcd1602").length, 16, "el LCD volvió a salir con la lista I2C de 4: el getter se está evaluando por la rama equivocada")
+  assert.equal(nombresDePieza("wokwi-servo").length, 3, "el servo dejó de dar sus 3 pines")
+  assert.deepEqual(nombresDePieza("wokwi-led"), ["A", "C"], "el LED volvió a romperse (antes: `t is not defined`)")
+  assert.equal(nombresDePieza("wokwi-7segment").length, 10, "el 7 segmentos volvió a romperse (antes: `t is not defined`)")
+})
+
+// ── 2. CIERRE DE NOMBRES: lo que se emite EXISTE en la pieza ───────────────
+//
+// La red que atrapa el 90% de los cables mal dibujados. Se genera la hoja de
+// VERDAD (no se mira el catálogo) para cada componente en cada placa, se leen los
+// `data-placa` / `data-pieza` que salieron, y cada nombre tiene que estar en el
+// `pinInfo` de la pieza que le corresponde — la placa para uno, el componente
+// para el otro. Contra el extractor, que es fuente externa.
+//
+// MUTACIONES QUE MATAN:
+//   · `PLACAS.uno.pinWokwi`: devolver `` `D${p.n}` `` en vez de `String(p.n)`.
+//     Los 14 digitales del UNO dejan de existir en la pieza de golpe.
+//   · el servo: cambiar `pinPieza: "PWM"` por `"SIG"` (SIG existe, pero en el
+//     potenciómetro, no en el servo).
+//   · `PLACAS.esp32.rielWokwi`: devolver "3.3V" en vez de "3V3" para V3.
+//
+// EL SHIELD SE VERIFICA CONTRA LA PIEZA QUE SE DIBUJA, que es `pb-sensor-shield`.
+//
+// Esto CAMBIÓ, y el comentario anterior decía que este test era el que se iba a poner
+// rojo el día que pasara. Se puso rojo. Antes acá decía `wokwi-arduino-uno`, con el
+// argumento de que el shield "saca los mismos pines a ternas": eso es cierto para la
+// vía de SEÑAL (la `S` de cada terna se llama igual que el pin pelado, y por eso
+// `pinWokwi` sigue sirviendo tal cual) y es FALSO para los rieles. El UNO pelado
+// contesta `GND.1`, `GND.3`, `5V` y `3.3V`, y ninguno de esos cuatro nombres existe en
+// `pb-sensor-shield`. Verificando contra el UNO, esos cables pasaban el test y en la
+// pantalla de la docente se quedaban sin anclar: 25 de 74 volvían a la barra gris.
+//
+// La pieza contra la que se verifica tiene que ser LA QUE SE DIBUJA, siempre. Si no,
+// el test mide una hoja que nadie abre.
+const PLACAS_BARRIDAS = [
+  { arg: "esp32", tagPlaca: "wokwi-esp32-devkit-v1" },
+  { arg: "uno", tagPlaca: "wokwi-arduino-uno" },
+  { arg: "uno con sensor shield", tagPlaca: "pb-sensor-shield" },
+]
+
+// Las filas de la hoja: cada una es UN componente con su pieza y sus cables.
+//
+// La pieza se saca del HTML y no del catálogo a propósito. Además de ser más
+// corto, así se verifica contra la pieza que SE DIBUJÓ: el tool inyecta
+// componentes solo (pedir "stepper" agrega el driver ULN2003), y mirando nada
+// más el tipo pedido esos cables inyectados no se controlarían nunca.
+function filasDe(html) {
+  return html
+    .split('<div class="fila">')
+    .slice(1)
+    .map((chunk) => {
+      const tags = [...chunk.matchAll(/<((?:wokwi|pb)-[a-z0-9-]+) id="/g)].map((m) => m[1])
+      assert.equal(tags.length, 1, `una fila de la hoja dibuja ${tags.length} piezas (${tags}): el parser de este test quedó viejo`)
+      return {
+        tag: tags[0],
+        cables: [...chunk.matchAll(/<div class="pin"[^>]*>/g)].map((m) => ({
+          nom: chunk.slice(m.index).match(/<span class="nom">(.*?)<\/span>/)?.[1] ?? "?",
+          placa: m[0].match(/data-placa="([^"]*)"/)?.[1]?.split(" ") ?? null,
+          pieza: m[0].match(/data-pieza="([^"]*)"/)?.[1]?.split(" ") ?? null,
+        })),
+      }
+    })
+}
+
+// Los tres totales del barrido, medidos. No son un piso: son la cuenta.
+//
+// `CABLES_CON_PLACA` bajó de 248 a 244 con los rieles del shield, y eso es el arreglo,
+// no una pérdida: los cuatro que se dejaron de emitir son los VCC de los módulos I2C
+// (lcd, oled, mpu6050, bmp180), que no tienen ninguna fila de señal y por lo tanto no
+// tienen terna de la que hablar. Antes emitían `5V` y `3.3V`, que NO EXISTEN en
+// `pb-sensor-shield`: el navegador ya los dejaba sin anclar. Ahora el tool lo dice.
+const CABLES_DEL_BARRIDO = 264
+const CABLES_CON_PLACA = 244
+const CABLES_CON_PIEZA = 178
+
+test("cables: todo data-placa/data-pieza emitido EXISTE en el pinInfo de su pieza", async () => {
+  let mirados = 0, conPlaca = 0, conPieza = 0
+  for (const { arg, tagPlaca } of PLACAS_BARRIDAS) {
+    const dePlaca = new Set(nombresDePieza(tagPlaca))
+    for (const tipo of TIPOS()) {
+      const { r, html } = await gen({ componentes: tipo, placa: arg }, `cable-${arg.replace(/\W+/g, "")}-${tipo}`)
+      // Un componente que esta placa no soporta se RECHAZA, y eso ya lo prueban
+      // otros tests. Acá no hay hoja que mirar: se saltea y no se cuenta.
+      if (!r.startsWith("Listo")) continue
+      const filas = filasDe(html)
+      assert.ok(filas.length >= 1, `${tipo} en ${arg}: la hoja salió sin ninguna fila de componente`)
+      for (const fila of filas) {
+        const dePieza = new Set(nombresDePieza(fila.tag))
+        // CUÁNTOS data-pieza TIENE QUE HABER, sin ningún número mágico: el catálogo
+        // dice qué filas están ancladas, y cada fila de la tabla es UN <div class="pin">
+        // (una fila que consume siete pines emite UN div con siete nombres adentro).
+        //
+        // Esto reemplaza al piso de `>= 100` que había acá abajo, que estaba flojo:
+        // los reales eran 264/248/178 y con `>= 150 / >= 100 / >= 100` se podía dejar
+        // de emitir el 44% de los `data-pieza` y la suite seguía verde. El atributo no
+        // se emite "bastante": se emite para TODA fila que el catálogo ancló.
+        const def = POR_TAG()[fila.tag]
+        assert.ok(def, `${tipo} en ${arg}: la hoja dibuja ${fila.tag} y no hay ningún componente del catálogo con esa pieza`)
+        assert.equal(
+          fila.cables.length,
+          def.pines.length,
+          `${tipo} en ${arg}, ${fila.tag}: la hoja emitió ${fila.cables.length} cables y el catálogo declara ${def.pines.length} filas`,
+        )
+        assert.equal(
+          fila.cables.filter((c) => c.pieza).length,
+          def.pines.filter((p) => ns.anclajesDe(p) != null).length,
+          `${tipo} en ${arg}, ${fila.tag}: el catálogo ancla ${def.pines.filter((p) => ns.anclajesDe(p) != null).length} filas de este componente y la hoja emitió ${fila.cables.filter((c) => c.pieza).length} data-pieza. Una fila anclada que no emite el atributo es un cable que vuelve a nacer de la barra gris.`,
+        )
+        for (const c of fila.cables) {
+          mirados++
+          const donde = `${tipo} en ${arg}, ${fila.tag}/"${c.nom}"`
+          if (c.placa) {
+            conPlaca++
+            for (const n of c.placa)
+              assert.ok(dePlaca.has(n), `${donde}: data-placa dice "${n}" y ${tagPlaca} NO tiene ningún pin así. El cable se dibujaría igual de prolijo en el agujero equivocado.`)
+          }
+          if (c.pieza) {
+            conPieza++
+            for (const n of c.pieza)
+              assert.ok(dePieza.has(n), `${donde}: data-pieza dice "${n}" y ${fila.tag} NO tiene ningún pin así.`)
+          }
+          // Dos listas de largo distinto aparearían el cable 2 con el agujero 3.
+          if (c.placa && c.pieza)
+            assert.equal(c.placa.length, c.pieza.length, `${donde}: ${c.placa.length} puntas de placa contra ${c.pieza.length} de pieza`)
+        }
+      }
+    }
+  }
+  // Que el barrido haya barrido, y CUÁNTO. Los pisos de antes (`>= 150 / >= 100 /
+  // >= 100`) estaban tan por debajo de lo real que dejaban tirar casi la mitad de los
+  // atributos sin ponerse rojos. Son cuentas exactas: si cambian, es porque cambió el
+  // catálogo o el mapeo, y en los dos casos hay que MIRAR el número nuevo antes de
+  // escribirlo acá — igual que con los 31 pines del UNO.
+  assert.equal(mirados, CABLES_DEL_BARRIDO, `el barrido miró ${mirados} cables y esperaba ${CABLES_DEL_BARRIDO}: cambió el catálogo o se está salteando hojas`)
+  assert.equal(conPlaca, CABLES_CON_PLACA, `${conPlaca} cables trajeron data-placa y esperaba ${CABLES_CON_PLACA}`)
+  assert.equal(conPieza, CABLES_CON_PIEZA, `${conPieza} cables trajeron data-pieza y esperaba ${CABLES_CON_PIEZA}`)
+})
+
+// ── 3. COMPLETITUD DECLARADA ───────────────────────────────────────────────
+//
+// Un pin sin mapeo Y sin motivo no compila (`pinPieza` es obligatorio en el tipo,
+// no opcional), así que esa mitad la ataja `tsc`. Lo que este test agrega es que
+// el motivo sea VERDAD y no una excusa: si la pieza tiene un pin que se llama
+// igual que la fila, no hay nada que declarar, hay que mapearlo.
+//
+// MUTACIONES QUE MATAN:
+//   · cambiar el `pinPieza: "IN"` del relay por `{ sinAnclaje: "después lo veo" }`
+//     — `pb-relay` SÍ tiene un pin `IN`.
+//   · dejar un motivo vacío o de tres letras.
+//
+// EL NOMBRE SE COMPARA NORMALIZADO, y eso lo encontró una prueba de mutación, no
+// el diseño. La primera versión comparaba el nombre tal cual, así que tapar el
+// pin `IN` del relay con un `{ sinAnclaje }` SOBREVIVÍA: la fila se llama
+// "IN (señal)" y el pin `IN`, y un `Set.has` literal no los junta. La mitad del
+// catálogo lleva la aclaración entre paréntesis, o sea que la red no agarraba a
+// la mitad del catálogo.
+//
+// Y EL MENOS TIPOGRÁFICO TAMBIÉN, que lo encontró otra prueba de mutación. El regex
+// final (`[^A-Z0-9+.-]`) deja pasar el `+` y el `-` de la tecla (U+002D) pero NO el
+// `−` de verdad (U+2212, el menos matemático), que es el que usa el catálogo en
+// "Cátodo (−)", "Negativo (−)" y "− (potencia)". Medido sobre dos filas PEGADAS del
+// `pb-motor`: tapar el `pinPieza: "+"` con un `{ sinAnclaje }` moría, y tapar el `"-"`
+// de la línea de abajo sobrevivía — porque "− (potencia)" normalizaba a la cadena
+// vacía y no coincidía con ningún pin. Dos líneas contiguas, una con red y otra sin.
+const unGuion = (s) => s.replace(/[‐‑‒–—―−]/g, "-")
+/** A lo que se puede llamar "nombre de pin": sin acentos, sin espacios, sin adornos. */
+const soloPinable = (s) =>
+  unGuion(s.normalize("NFD").replace(/[̀-ͯ]/g, "")).toUpperCase().replace(/[^A-Z0-9+.-]/g, "")
+const normNombre = (s) => soloPinable(s.replace(/\(.*?\)/g, "").split("/")[0])
+/**
+ * Las formas en que la fila se NOMBRA a sí misma, aparte del nombre pelado.
+ *
+ * "OUT / AO" son dos rótulos para la misma pata (la hoja los imprime juntos porque la
+ * plaquita trae los dos serigrafiados) y "Señal (PWM)" o "Rojo (R)" meten el nombre
+ * del pin entre paréntesis. Las tres formas nombran un pin, y el que las escribió
+ * sabía cuál. Si la pieza tiene uno que se llama así, ES ÉSE.
+ */
+const aliasDeFila = (s) => {
+  const sinParen = s.replace(/\(.*?\)/g, "")
+  const enParen = [...s.matchAll(/\(([^)]*)\)/g)].map((m) => m[1])
+  return [...new Set([...sinParen.split("/"), ...enParen].map(soloPinable).filter((x) => x.length > 0))]
+}
+
+/**
+ * LAS FILAS QUE HOY VAN SIN ANCLAJE, una por una. Es una lista EXACTA, no un piso.
+ *
+ * Los criterios de abajo desmienten un `{ sinAnclaje }` cuando la pieza NOMBRA el pin,
+ * y ésa es la única mitad que una máquina puede juzgar. La otra mitad — "esta pieza
+ * dibuja otro conector" — no se puede verificar desde acá: es lo que le pasa al LCD y
+ * al tilt, y por eso se declara en prosa. Lo que esta lista garantiza es que esa prosa
+ * no pueda APARECER sin que nadie la mire: convertir un anclaje en un `{ sinAnclaje }`
+ * plausible pone este test rojo con nombre y apellido, que es lo que el guard del largo
+ * (`>= 30`) no hacía — medía cuánto se escribió, no si era verdad.
+ */
+const SIN_ANCLAJE_DECLARADOS = [
+  'bmp180/"GND"', 'bmp180/"SCL"', 'bmp180/"SDA"', 'bmp180/"VCC"',
+  'bomba/"+ (potencia)"', 'bomba/"− (potencia)"',
+  'calefactor/"Fase (vía relé)"', 'calefactor/"Neutro"',
+  'driver/"IN1"', 'driver/"IN2"', 'driver/"IN3"', 'driver/"IN4"',
+  'higrometro/"AO (analógico)"', 'higrometro/"GND"', 'higrometro/"VCC"',
+  'lampara/"Fase (vía relé)"', 'lampara/"Neutro"',
+  'lcd/"GND"', 'lcd/"SCL"', 'lcd/"SDA"', 'lcd/"VCC"',
+  'lluvia/"AO (analógico)"', 'lluvia/"GND"', 'lluvia/"VCC"',
+  'stepper/"Bobinas (4 hilos)"', 'stepper/"Común (hilo rojo)"',
+  'tilt/"Pata 1"', 'tilt/"Pata 2"',
+  'valvula/"+ (potencia)"', 'valvula/"− (potencia)"',
+]
+
+test("cables: todo pin sin anclaje tiene un motivo escrito, y ninguno tapa un pin que sí existe", () => {
+  let declarados = 0, anclados = 0
+  const listaDeclarada = []
+  for (const tipo of TIPOS()) {
+    const def = ns.COMPONENTES[tipo]
+    const dePieza = new Set(nombresDePieza(def.tag).map(normNombre))
+    for (const pin of def.pines) {
+      const anclas = ns.anclajesDe(pin)
+      const motivo = ns.motivoSinAnclaje(pin)
+      assert.ok(
+        (anclas == null) !== (motivo == null),
+        `${tipo}/"${pin.nombre}": pinPieza tiene que ser O los nombres de la pieza O un { sinAnclaje: "motivo" }, no las dos cosas ni ninguna`,
+      )
+      if (motivo != null) {
+        declarados++
+        listaDeclarada.push(`${tipo}/${JSON.stringify(pin.nombre)}`)
+        assert.ok(motivo.length >= 30, `${tipo}/"${pin.nombre}": el motivo de sinAnclaje es "${motivo}". Tiene que explicar POR QUÉ no hay pin, que es lo que el próximo va a leer antes de inventar uno.`)
+        assert.ok(
+          !dePieza.has(normNombre(pin.nombre)),
+          `${tipo}/"${pin.nombre}": está declarado sin anclaje, pero ${def.tag} TIENE un pin que se llama "${normNombre(pin.nombre)}". No hay nada que declarar: mapealo.`,
+        )
+        // Y LO MISMO CON LOS OTROS CRITERIOS QUE NOMBRAN UN PIN. El `Set.has` de arriba
+        // sólo agarra cuando el rótulo de la fila normaliza EXACTAMENTE al nombre del
+        // pin. Medido: el relay ("IN (señal)" → `IN`) moría, y el servo ("Señal (PWM)"
+        // → `SENAL` contra un pin `PWM`) sobrevivía. Los criterios de más abajo miran
+        // además el alias entre paréntesis, la abreviatura serigrafiada (`DO`/`DOUT`),
+        // lo que la pieza DICE de cada pin (`description: "Anode"`) y el color con que
+        // lo PINTA (la pata roja del buzzer).
+        //
+        // SÓLO LOS QUE NOMBRAN EL PIN, y eso es deliberado. Los `signals` dicen qué es
+        // ese pin ELÉCTRICAMENTE, y eso no alcanza para desmentir a nadie: el LCD del
+        // catálogo es el módulo con mochila I2C y la pieza instanciada es el display
+        // paralelo, cuyos `VDD`/`VSS` son alimentación y masa DE VERDAD — del header
+        // que la mochila tapa. El `tilt` es el mismo caso con nombre y apellido: la
+        // pieza tiene un pin llamado `GND` y NO es la segunda pata del interruptor, es
+        // la masa de alimentación del módulo. Refutar con `signals` daría rojo en esos
+        // dos, que son justo los que están bien declarados.
+        const { pines } = pinesDePieza(def.tag)
+        if (pines.length > 0 && (pin.cantidad ?? 1) === 1) {
+          const { posibles, porQue } = posiblesDe(pin, pines, def, true)
+          assert.ok(
+            porQue.length === 0 || posibles.length !== 1,
+            `${tipo}/"${pin.nombre}": está declarado sin anclaje y ${def.tag} SÍ tiene el pin: es "${posibles[0]}", y lo dice ${porQue.join(" + ")}. No hay nada que declarar: mapealo.`,
+          )
+        }
+      } else {
+        anclados++
+        const n = pin.cantidad ?? 1
+        assert.equal(anclas.length, n, `${tipo}/"${pin.nombre}": la fila consume ${n} pines y declara ${anclas.length} anclajes. Una etiqueta que vale por siete pines necesita siete nombres.`)
+        assert.equal(new Set(anclas).size, anclas.length, `${tipo}/"${pin.nombre}": repite un anclaje`)
+      }
+    }
+  }
+  assert.ok(declarados > 0 && anclados > 0, "el barrido no encontró ni anclajes ni declaraciones: está mirando un catálogo vacío")
+  assert.deepEqual(
+    listaDeclarada.sort(),
+    [...SIN_ANCLAJE_DECLARADOS].sort(),
+    "cambió la lista de filas que van SIN anclar. Un `{ sinAnclaje }` es una afirmación sobre el hardware " +
+      "(«esta pieza no dibuja ese contacto») y se revisa de a una: si agregaste uno, escribilo en " +
+      "SIN_ANCLAJE_DECLARADOS; si sacaste uno porque ahora se puede mapear, borralo de ahí.",
+  )
+})
+
+// ── 4. LOS ÍNDICES DE LA FILA SON LOS MISMOS QUE LOS DEL RÓTULO ───────────
+//
+// `indicesDeFila` decide a qué pin de la placa se ancla cada cable; los `{0}` y
+// `{0-6}` del `rol` deciden qué pin IMPRIME la hoja al lado. Son dos cuentas
+// distintas sobre el mismo dato, y si se separan el cable va a un agujero y el
+// rótulo de al lado dice otro — las dos cosas perfectamente escritas. Ése es el
+// bug de `plantilla-semaforo-protoboard.html`, y acá se ataja antes de existir.
+//
+// MUTACIÓN QUE MATA: en `indicesDeFila`, no sumar `cantidad` (usar `k++`). El
+// teclado pasa a anclar sus columnas a {4..7} según el rótulo y a {1..4} según
+// el índice, y este test lo dice.
+test("cables: los índices con que se ancla cada fila son los mismos que los del rótulo", () => {
+  for (const tipo of TIPOS()) {
+    const def = ns.COMPONENTES[tipo]
+    const idx = ns.indicesDeFila(def.pines)
+    def.pines.forEach((pin, i) => {
+      if (pin.clase === "fijo") {
+        assert.equal(idx[i], null, `${tipo}/"${pin.nombre}": es un pin fijo y no debería consumir pines de la placa`)
+        return
+      }
+      const rango = pin.rol.match(/\{(\d+)-(\d+)\}/)
+      const solo = pin.rol.match(/\{(\d+)\}/)
+      const delRotulo = rango
+        ? Array.from({ length: Number(rango[2]) - Number(rango[1]) + 1 }, (_, j) => Number(rango[1]) + j)
+        : solo
+          ? [Number(solo[1])]
+          : null
+      assert.ok(delRotulo, `${tipo}/"${pin.nombre}": es un pin de señal y su rol "${pin.rol}" no nombra ningún {n}`)
+      assert.deepEqual(
+        [...idx[i]],
+        delRotulo,
+        `${tipo}/"${pin.nombre}": el cable se ancla a los pines ${idx[i]} y el rótulo de al lado imprime los ${delRotulo}`,
+      )
+    })
+  }
+})
+
+// ── 5. EL ANCLAJE NO PUEDE CONTRADECIR LOS `signals` DE LA PIEZA ──────────
+//
+// Los tests de arriba prueban que el nombre EXISTA. Éste prueba que sea el que
+// va, en la única dimensión que una máquina puede juzgar: las piezas publican
+// `signals` — su propia declaración de qué ES cada pin — y el catálogo publica a
+// qué RIEL va cada fila. Son dos fuentes independientes sobre lo mismo.
+//
+// La regla es "no contradecir", no "confirmar", y la diferencia es a propósito:
+// un montón de pines legítimos vienen con `signals: []` (el cátodo del LED, las
+// patas del buzzer, el COM del RGB). Exigir confirmación ahí obligaría a
+// declarar sin anclaje una docena de cables que están perfectos. Silencio no es
+// contradicción.
+//
+// MUTACIONES QUE MATAN: cambiar el OLED para que "SDA" ancle a `CLK` y "SCL" a
+// `DATA` (los dos nombres existen, así que el test 2 no los ve). O anclar la
+// "Alimentación" del servo a `GND` en vez de `V+`.
+const CONTRADICE = {
+  GND: (s) => s.type === "power" && s.signal === "VCC",
+  V5: (s) => s.type === "power" && s.signal === "GND",
+  V3: (s) => s.type === "power" && s.signal === "GND",
+  VLOGICA: (s) => s.type === "power" && s.signal === "GND",
+  SDA: (s) => s.type === "i2c" && s.signal === "SCL",
+  SCL: (s) => s.type === "i2c" && s.signal === "SDA",
+}
+
+test("cables: el pin de la pieza no contradice el riel al que va la fila", () => {
+  let comparados = 0
+  for (const tipo of TIPOS()) {
+    const def = ns.COMPONENTES[tipo]
+    const porNombre = new Map(pinesDePieza(def.tag).pines.map((p) => [p.name, p]))
+    for (const pin of def.pines) {
+      const anclas = ns.anclajesDe(pin)
+      // Sólo las filas fijas dicen a qué riel van; las de señal van al pin que
+      // les tocó, que no tiene un rol eléctrico fijo.
+      if (!anclas || pin.clase !== "fijo" || typeof pin.destino !== "string") continue
+      const rompe = CONTRADICE[pin.destino]
+      if (!rompe) continue
+      for (const n of anclas) {
+        const p = porNombre.get(n)
+        assert.ok(p, `${tipo}/"${pin.nombre}": ancla a "${n}" y ${def.tag} no lo tiene`)
+        const senales = p.signals ?? []
+        if (senales.length === 0) continue // la pieza no dice nada: no contradice
+        comparados++
+        const mala = senales.find(rompe)
+        assert.ok(
+          !mala,
+          `${tipo}/"${pin.nombre}": la fila va al riel ${pin.destino} y el pin "${n}" de ${def.tag} se declara ${JSON.stringify(mala)}. Una de las dos fuentes está mal, y el cable se dibuja prolijo igual.`,
+        )
+      }
+    }
+  }
+  assert.ok(comparados >= 15, `sólo se compararon ${comparados} pines con signals: el barrido se está salteando todo`)
+})
+
+// ── 6. EN UN MÓDULO I2C, EL ANCLAJE ES TODO O NADA ───────────────────────
+//
+// Éste es el que ataja el caso que más me costó, y vale la pena el párrafo.
+//
+// El LCD del catálogo es el módulo CON MOCHILA I2C: cuatro cables, VCC GND SDA
+// SCL, que salen de UN header de cuatro pines pegado atrás. La pieza que se
+// instancia es el display PARALELO, con sus 16 pines. Ahora bien: `VDD` y `VSS`
+// SÍ existen en esa pieza, y son alimentación y masa de verdad. O sea que anclar
+// "VCC"→`VDD` y "GND"→`VSS` pasa el test 2 (los nombres existen) y pasa el test
+// 5 (los signals dicen power/VCC y power/GND, que es justo lo que la fila pide).
+// Y sin embargo manda al pibe al pin 2 del header paralelo, que es el header que
+// la mochila TAPA: los cuatro cables no van ahí.
+//
+// Lo que sí se puede afirmar sin adivinar: los cuatro cables de un módulo I2C
+// salen del MISMO conector. Si dos se pueden nombrar en la pieza y dos no, no es
+// que falten dos nombres — es que la pieza dibuja otro conector, y los dos que
+// "cerraron" cerraron por casualidad de nombre. Todo o nada.
+//
+// MUTACIÓN QUE MATA: cambiar el `{ sinAnclaje }` del "VCC" del LCD por "VDD".
+test("cables: en un componente I2C se anclan las cuatro puntas o ninguna", () => {
+  let modulos = 0
+  for (const tipo of TIPOS()) {
+    const def = ns.COMPONENTES[tipo]
+    const bus = def.pines.filter((p) => p.clase === "fijo" && (p.destino === "SDA" || p.destino === "SCL"))
+    if (bus.length === 0) continue
+    modulos++
+    assert.equal(bus.length, 2, `${tipo}: un módulo I2C tiene UN SDA y UN SCL, y éste declara ${bus.length} filas de bus`)
+    // Las cuatro puntas del conector: el bus más la alimentación y la masa.
+    const conector = def.pines.filter(
+      (p) => p.clase === "fijo" && typeof p.destino === "string" && ["SDA", "SCL", "GND", "V5", "V3", "VLOGICA"].includes(p.destino),
+    )
+    const anclados = conector.filter((p) => ns.anclajesDe(p) != null)
+    assert.ok(
+      anclados.length === 0 || anclados.length === conector.length,
+      `${tipo}: de las ${conector.length} puntas del conector I2C hay ${anclados.length} ancladas (${anclados.map((p) => p.nombre).join(", ")}) y el resto declaradas sin anclaje. Los cuatro cables de un módulo I2C salen del MISMO header: si dos se pueden nombrar en ${def.tag} y dos no, los dos que cerraron cerraron por casualidad de nombre y apuntan a otro conector.`,
+    )
+  }
+  assert.ok(modulos >= 3, `el barrido encontró ${modulos} componentes I2C: se está salteando el catálogo`)
+})
+
+// ── 7. QUE EL NOMBRE EXISTA NO ES QUE SEA EL QUE VA ────────────────────────
+//
+// EL HALLAZGO. Todo lo de arriba comprueba que el nombre que el catálogo ancla
+// EXISTA en la pieza. Ninguno comprueba que sea EL QUE VA. Y `"A"` y `"C"` existen
+// los dos; `"1"` y `"2"` también. Medido sobre la suite de 598 en verde:
+//
+//   · invertir el `pinPieza` del ánodo y el cátodo del LED  → 598 verdes
+//   · mandar el "Positivo" del buzzer al pin `"1"`          → 598 verdes
+//   · invertir dos nombres del array de 7 segmentos         → 598 verdes
+//
+// El cable naranja del ánodo se dibuja EN LA PATA DEL CÁTODO, con la misma prolijidad.
+// Es exactamente el defecto que este trabajo vino a matar: `plantilla-semaforo-
+// protoboard.html` tenía tres coordenadas a mano, las tres al agujero equivocado, con
+// el rótulo correcto al lado. La docente proyectaba un dibujo impecable y el circuito
+// no prendía.
+//
+// ── CÓMO SE DECIDE, Y CON QUÉ FUENTE ───────────────────────────────────────
+//
+// Cada CRITERIO mira una fila del catálogo y la pieza, y contesta qué pines PODRÍA ser
+// esa fila — nunca "cuál es". Se intersecan todas las respuestas; si queda uno solo,
+// la fila está decidida y el anclaje tiene que ser ése. La fuerza está en que ningún
+// criterio lee el `pinPieza`: si lo leyeran, esto sería un espejo del mapeo y no
+// probaría nada. Lo que arbitra es siempre algo de AFUERA de `circuito.ts`:
+//
+//   nombre      · los nombres que la pieza publica en `pinInfo` (bundle de Wokwi /
+//                 `componentes-extra.js`). La fila se llama "TRIG" y la pieza tiene un
+//                 pin `TRIG`: no hay nada que elegir.
+//   prefijo     · ídem, cuando el rótulo de la fila es la abreviatura serigrafiada y
+//                 el pin trae el nombre largo ("DO" y `DOUT`), y hay UNO solo así.
+//   descripción · lo que la pieza DICE que es cada pin (`description: "Anode"`). Es la
+//                 pieza hablando de sí misma, igual de fuerte que el nombre.
+//   dibujo      · el color con que la pieza PINTA cada pata en su SVG. Es el precedente
+//                 del buzzer, que ya estaba razonado en `circuito.ts` y sin red.
+//   señales     · los `signals` de la pieza: qué ES eléctricamente ese pin. Confirma el
+//                 riel al que va la fila.
+//   descarte    · si todos los OTROS pines de la pieza ya están decididos por alguno de
+//                 los criterios de arriba, al que sobra no le queda otra. Ojo que esto
+//                 NO es "son los dos que sobran en el header" — el error de VP/VN —:
+//                 acá el resto está decidido POSITIVAMENTE, uno por uno.
+//
+// Y LO QUE NO SE DECIDE SE DECLARA. `SIN_FUENTE` es la lista exacta de las filas que
+// ninguno de los seis criterios puede pinchar, cada una con el motivo. Se compara con
+// `deepEqual`: si mañana alguien agrega un componente cuyo mapeo nadie puede arbitrar,
+// este test se pone rojo y lo obliga a escribirlo acá. Cinco declarados sin red son
+// mejor que uno con un test que no prueba nada.
+
+/** El factor de CSS, no un número mágico: 1 in = 96 px = 25,4 mm. */
+const PX_POR_MM = 96 / 25.4
+
+/**
+ * Las patas que la pieza PINTA, con su color. Sale del SVG de ESA clase del bundle.
+ *
+ * El precedente es el buzzer, y está razonado en `circuito.ts`: la pieza llama `1` y
+ * `2` a sus patas y no publica ni `description` ni `signals`, así que el NÚMERO no dice
+ * la polaridad. Lo dice el dibujo — `<path d="m7.23 16.5v3.5" stroke="#000">` es negra
+ * y `<path d="m9.77 16.5v3.5" fill="#f00" stroke="#f00">` es ROJA. Ese razonamiento
+ * estaba escrito y no lo protegía nada: si alguien mapea "Positivo" al `1` porque suena
+ * a primero, se dibuja perfecto.
+ *
+ * FALLA CERRADO: si no encuentra exactamente una pata roja y una negra, devuelve `null`
+ * y el criterio no opina. Nunca devuelve una pata "probable".
+ */
+function patasPintadas(tag) {
+  const ventana = ventanaDeClase(tag)
+  const svg = ventana.match(/<svg[\s\S]*?<\/svg>/)
+  if (!svg) return null
+  const vb = svg[0].match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/)
+  const mm = svg[0].match(/width="([\d.]+)mm"/)
+  // Sólo sirve si el SVG está en MILÍMETROS y el viewBox es 1:1 con ellos: es la única
+  // forma de que `x` del dibujo y `x` de `pinInfo` hablen de lo mismo.
+  if (!vb || !mm || Number(vb[1]) !== Number(mm[1])) return null
+  const COLOR = { rojo: /#f00\b|#ff0000\b|"red"/i, negro: /#000\b|#000000\b|"black"/i }
+  const salida = {}
+  for (const p of svg[0].match(/<path[^>]*>/g) ?? []) {
+    // Una pata: un trazo vertical suelto (`m<x> <y>v<largo>`), no un contorno.
+    const d = p.match(/\sd="m([\d.]+) [\d.]+v[\d.]+"/)
+    if (!d) continue
+    const stroke = p.match(/stroke="([^"]+)"/)
+    if (!stroke) continue
+    for (const [color, re] of Object.entries(COLOR)) {
+      if (!re.test(`"${stroke[1]}"`)) continue
+      ;(salida[color] ??= []).push(Number(d[1]) * PX_POR_MM)
+    }
+  }
+  if (salida.rojo?.length !== 1 || salida.negro?.length !== 1) return null
+  return { rojo: salida.rojo[0], negro: salida.negro[0] }
+}
+
+/** El pin de la pieza que cae en esa x, si hay uno solo y no hay ninguno cerca. */
+function pinEnX(pines, x) {
+  const ordenados = [...pines].sort((a, b) => Math.abs(a.x - x) - Math.abs(b.x - x))
+  const cerca = ordenados[0]
+  if (!cerca || Math.abs(cerca.x - x) > 2) return null
+  // Y el segundo tiene que estar LEJOS, o la asignación es una moneda al aire.
+  if (ordenados[1] && Math.abs(ordenados[1].x - x) < 4) return null
+  return cerca.name
+}
+
+/**
+ * Lo que la pieza DICE de sus pines, en el idioma de la pieza, contra lo que la fila
+ * dice en el nuestro. No es un mapeo de pines: es un diccionario de dos palabras.
+ */
+const VOCABULARIO = [
+  { fila: /\b(ANODO|POSITIVO)\b/, dice: /\banode\b/i },
+  { fila: /\b(CATODO|NEGATIVO)\b/, dice: /\bcathode\b/i },
+  { fila: /\bCOMUN\b/, dice: /\bcommon\b/i },
+]
+
+const senalesDe = (p) => p.signals ?? []
+const esAnalogico = (p) => senalesDe(p).some((s) => s.type === "analog")
+const tension = (p) => senalesDe(p).some((s) => s.type === "power" && s.signal === "VCC")
+const aVolts = (v) => (p) => senalesDe(p).some((s) => s.type === "power" && s.signal === "VCC" && s.voltage === v)
+
+/**
+ * A qué pin de la pieza puede ir cada riel, en filtros SUCESIVOS de menor a mayor
+ * exigencia. Un filtro que deja la lista vacía no se aplica: la pieza no tenía ese dato
+ * y callarse no es contradecir.
+ *
+ * El escalón del voltaje no es un adorno: el OLED saca DOS pines de alimentación
+ * (`3V3` y `VIN`) y los dos declaran `power/VCC`. Sin ese segundo filtro, la fila que
+ * va al riel de 3,3 V queda empatada entre los dos — y mandarla a `VIN` alimenta con
+ * 5 V un módulo de 3,3 V, dibujado prolijo. `3V3` es el único que declara `voltage: 3.3`.
+ */
+const CONFIRMA_RIEL = {
+  GND: [(p) => senalesDe(p).some((s) => s.type === "power" && s.signal === "GND")],
+  V5: [tension, aVolts(5)],
+  V3: [tension, aVolts(3.3)],
+  VLOGICA: [tension],
+  SDA: [(p) => senalesDe(p).some((s) => s.type === "i2c" && s.signal === "SDA")],
+  SCL: [(p) => senalesDe(p).some((s) => s.type === "i2c" && s.signal === "SCL")],
+}
+
+/**
+ * Los criterios. Cada uno devuelve los nombres que esa fila PODRÍA ser, o `null` si de
+ * esa fila no puede opinar. NINGUNO mira `pin.pinPieza`.
+ *
+ * `nombreDelPin` separa los que arbitran por CÓMO SE LLAMA o CÓMO SE DIBUJA el pin (y
+ * por lo tanto pueden desmentir un `{ sinAnclaje }`) de los que arbitran por lo que el
+ * pin ES eléctricamente (que no pueden: ver el LCD, más abajo).
+ */
+const CRITERIOS = [
+  {
+    id: "nombre",
+    nombreDelPin: true,
+    opina(fila, pines) {
+      const porNombre = new Map()
+      for (const p of pines) {
+        const k = normNombre(p.name)
+        porNombre.set(k, [...(porNombre.get(k) ?? []), p.name])
+      }
+      const elegidos = new Set()
+      for (const alias of aliasDeFila(fila.nombre)) {
+        const hits = porNombre.get(alias) ?? []
+        if (hits.length === 1) elegidos.add(hits[0])
+      }
+      return elegidos.size === 1 ? [...elegidos] : null
+    },
+  },
+  {
+    id: "prefijo",
+    nombreDelPin: true,
+    opina(fila, pines) {
+      const elegidos = new Set()
+      for (const alias of aliasDeFila(fila.nombre)) {
+        // Dos letras como mínimo: con una, "A" sería prefijo de media pieza.
+        if (alias.length < 2) continue
+        if (pines.some((p) => normNombre(p.name) === alias)) continue // hay exacto: manda el otro criterio
+        const hits = pines.filter((p) => normNombre(p.name).startsWith(alias))
+        if (hits.length === 1) elegidos.add(hits[0].name)
+      }
+      return elegidos.size === 1 ? [...elegidos] : null
+    },
+  },
+  {
+    id: "descripción",
+    nombreDelPin: true,
+    opina(fila, pines) {
+      if (!pines.some((p) => p.description)) return null
+      const dicho = VOCABULARIO.find((v) => v.fila.test(normNombreConEspacios(fila.nombre)))
+      if (!dicho) return null
+      const hits = pines.filter((p) => p.description && dicho.dice.test(p.description))
+      return hits.length > 0 ? hits.map((p) => p.name) : null
+    },
+  },
+  {
+    id: "dibujo",
+    nombreDelPin: true,
+    opina(fila, pines, def) {
+      if (!def.tag.startsWith("wokwi-")) return null
+      const patas = patasPintadas(def.tag)
+      if (!patas) return null
+      const n = normNombreConEspacios(fila.nombre)
+      // Rojo es el positivo y negro el negativo: es la convención que el propio repo
+      // le enseña al pibe (`skills/diagramas-conexion`: "rojo y negro NUNCA para
+      // señales, se reservan para alimentación").
+      const x = /\b(ANODO|POSITIVO)\b/.test(n) ? patas.rojo : /\b(CATODO|NEGATIVO)\b/.test(n) ? patas.negro : null
+      if (x == null) return null
+      const pin = pinEnX(pines, x)
+      return pin ? [pin] : null
+    },
+  },
+  {
+    id: "señales",
+    nombreDelPin: false,
+    opina(fila, pines) {
+      const acotar = (filtro) => {
+        const hits = pines.filter(filtro)
+        return hits.length > 0 ? hits.map((p) => p.name) : null
+      }
+      if (fila.clase === "fijo" && typeof fila.destino === "string") {
+        const filtros = CONFIRMA_RIEL[fila.destino]
+        if (!filtros) return null
+        let quedan = null
+        for (const f of filtros) {
+          const paso = (quedan ?? pines.map((p) => p.name)).filter((n) => f(pines.find((p) => p.name === n)))
+          if (paso.length > 0) quedan = paso
+        }
+        return quedan
+      }
+      if (fila.clase === "analogico") return acotar(esAnalogico)
+      // Una fila digital NO puede caer en un canal del ADC si la pieza marca alguno:
+      // no se afirma cuál es, se descarta el que seguro no es.
+      if (fila.clase === "digital" && pines.some(esAnalogico)) {
+        if (fila.requierePwm && pines.some((p) => senalesDe(p).some((s) => s.type === "pwm")))
+          return acotar((p) => senalesDe(p).some((s) => s.type === "pwm"))
+        return acotar((p) => !esAnalogico(p))
+      }
+      if (fila.requierePwm) return acotar((p) => senalesDe(p).some((s) => s.type === "pwm"))
+      return null
+    },
+  },
+]
+
+/** El nombre de la fila sin acentos y en mayúsculas, PERO con los espacios. */
+const normNombreConEspacios = (s) =>
+  unGuion(s.normalize("NFD").replace(/[̀-ͯ]/g, "")).toUpperCase()
+
+/** Los pines que esa fila podría ser según los criterios, sin mirar el `pinPieza`. */
+function posiblesDe(fila, pines, def, soloPorNombre = false) {
+  let posibles = pines.map((p) => p.name)
+  const porQue = []
+  for (const c of CRITERIOS) {
+    if (soloPorNombre && !c.nombreDelPin) continue
+    const dice = c.opina(fila, pines, def)
+    if (dice == null) continue
+    porQue.push(c.id)
+    posibles = posibles.filter((n) => dice.includes(n))
+  }
+  return { posibles, porQue }
+}
+
+/**
+ * Las filas que NINGÚN criterio puede pinchar, con el motivo. Es una lista EXACTA.
+ *
+ * No es una lista de pendientes: es el resultado de haber buscado fuente y no haberla
+ * encontrado. Preferimos declararlo a inventar un test que compara el mapeo contra una
+ * copia del mapeo y da verde para siempre.
+ */
+const SIN_FUENTE = {
+  'dht22/"DATA"':
+    "la pieza llama `SDA` a la pata de datos y `NC` a la de al lado, y no publica ni " +
+    "descripción ni signals para ninguna de las dos. El SVG del DHT22 rotula sólo el " +
+    "modelo, no las patas. Lo único que las distingue es el `number` (1..4) del pinInfo, " +
+    "que sin la hoja de datos del fabricante no dice cuál de las cuatro es el dato — y " +
+    "esa hoja no está en el repo. Deducirlo de que `SDA` suena a datos es adivinar.",
+  'joystick/"VRx (eje X)"':
+    "la pieza llama `HORZ` y `VERT` a sus dos ejes y marca las DOS como analógicas, " +
+    "en canales 0 y 1. Que el eje X sea el horizontal es evidente para una persona y " +
+    "no lo dice ninguna fuente del repo: ni descripción, ni serigrafía, ni skill.",
+  'joystick/"VRy (eje Y)"':
+    "el otro lado del mismo empate: `VERT` y `HORZ` son las dos analógicas y nada del " +
+    "repo dice que el eje Y es el vertical. Se declaran las dos filas, no una, porque " +
+    "el empate es entre ellas: decidir una decidiría la otra por descarte.",
+  'boton/"Una pata"':
+    "`wokwi-pushbutton` saca CUATRO contactos para DOS polos: `1.l`/`1.r` son el mismo " +
+    "nodo sacado a izquierda y derecha, y `2.l`/`2.r` el otro. Ninguna de las cuatro " +
+    "reasignaciones posibles cambia el circuito — el pulsador no tiene polaridad y los " +
+    "dos lados del mismo polo están unidos adentro — así que acá no hay nada que " +
+    "acertar: lo único que se mueve es de qué lado del dibujo sale el cable.",
+  'boton/"Otra pata"':
+    "el otro lado del mismo pulsador. La pieza no publica ni descripción ni signals " +
+    "para sus cuatro contactos, y tampoco hace falta: el pulsador no tiene polaridad, " +
+    "así que no hay ninguna inversión que pueda dibujar mal el circuito.",
+  '7segmentos/"Común"':
+    "la pieza saca el común DOS VECES (`COM.1` abajo, `COM.2` arriba) y describe a los " +
+    "dos como `Common`, porque adentro del display están unidos: es el mismo nodo, como " +
+    "`GND.1/.2/.3` en el UNO. Los criterios llegan hasta 'es un común' y ahí se acaba el " +
+    "dato; cuál de los dos se elige es una decisión de dibujo (el de abajo, que es el " +
+    "header donde también caen C, D, E y DP), no un hecho a verificar.",
+}
+
+test("cables: el anclaje no puede ser sólo un nombre que existe, tiene que ser EL QUE VA", () => {
+  const sinFuente = []
+  let decididas = 0
+  for (const tipo of TIPOS()) {
+    const def = ns.COMPONENTES[tipo]
+    const { pines } = pinesDePieza(def.tag)
+    if (pines.length === 0) continue
+
+    // Las filas que valen por VARIOS pines las decide el test del rango, que es otro.
+    const filas = def.pines.filter((p) => (p.cantidad ?? 1) === 1 && ns.anclajesDe(p) != null)
+    const estado = filas.map((fila) => ({ fila, ...posiblesDe(fila, pines, def) }))
+
+    // Cada criterio por separado no puede CONTRADECIR el anclaje. Esto corre incluso
+    // en las filas que quedan sin decidir: que no se sepa cuál es no habilita a que sea
+    // una que la pieza desmiente.
+    for (const { fila, posibles, porQue } of estado) {
+      const anclado = ns.anclajesDe(fila)[0]
+      assert.ok(
+        posibles.includes(anclado),
+        `${tipo}/"${fila.nombre}": el catálogo lo ancla a "${anclado}" y ${def.tag} dice que ese pin no puede ser ` +
+          `(criterios que opinaron: ${porQue.join(", ") || "ninguno"}; los que podrían ser: ${posibles.join(", ") || "ninguno"}). ` +
+          `El cable se dibujaría igual de prolijo en el agujero equivocado.`,
+      )
+    }
+
+    // DESCARTE. Lo que otra fila ya tiene decidido POSITIVAMENTE deja de ser candidato
+    // para las demás: dos cables del mismo componente no van al mismo agujero.
+    for (let vuelta = 0; vuelta < filas.length; vuelta++) {
+      const fijos = new Set(estado.filter((e) => e.posibles.length === 1).map((e) => e.posibles[0]))
+      let cambio = false
+      for (const e of estado) {
+        if (e.posibles.length === 1) continue
+        const queda = e.posibles.filter((n) => !fijos.has(n))
+        if (queda.length > 0 && queda.length < e.posibles.length) {
+          e.posibles = queda
+          e.porQue = [...e.porQue, "descarte"]
+          cambio = true
+        }
+      }
+      if (!cambio) break
+    }
+
+    for (const { fila, posibles, porQue } of estado) {
+      const clave = `${tipo}/${JSON.stringify(fila.nombre)}`
+      if (posibles.length !== 1) { sinFuente.push(clave); continue }
+      decididas++
+      assert.equal(
+        ns.anclajesDe(fila)[0],
+        posibles[0],
+        `${clave}: ${def.tag} dice que esa fila es el pin "${posibles[0]}" (por ${porQue.join(" + ")}) y el catálogo la ancla a "${ns.anclajesDe(fila)[0]}".`,
+      )
+    }
+  }
+
+  assert.ok(decididas > 40, `sólo ${decididas} filas quedaron decididas por una fuente: el barrido no está barriendo`)
+  assert.deepEqual(
+    sinFuente.sort(),
+    Object.keys(SIN_FUENTE).sort(),
+    "cambió la lista de filas que ninguna fuente puede arbitrar. Si apareció una nueva, " +
+      "buscá la fuente (el nombre del pin, su descripción, sus signals, el color con que " +
+      "la pieza lo pinta) y si de verdad no hay, agregala a SIN_FUENTE con el motivo. " +
+      "Si desapareció una, borrala de SIN_FUENTE: ya tiene red.",
+  )
+  for (const [clave, motivo] of Object.entries(SIN_FUENTE)) {
+    assert.ok(motivo.trim().length >= 80, `${clave}: el motivo de SIN_FUENTE no explica nada`)
+  }
+})
+
+// ── 8. UNA FILA QUE VALE POR SIETE AGUJEROS ANCLA EL RANGO QUE ROTULA ──────
+//
+// El test de arriba se saltea las filas de `cantidad > 1` porque ahí no hay UN pin que
+// decidir, hay una LISTA — y el orden de esa lista es lo que se puede romper en
+// silencio. Medido: invertir dos nombres del array de 7 segmentos dejaba la suite de
+// 598 en verde. Los dos existen, los dos son segmentos, y el display dibuja la `C`
+// donde va la `D`: un 8 que se ve como un 0.
+//
+// DOS FUENTES, Y LAS DOS EXTERNAS AL `pinPieza`:
+//
+//   1. EL RÓTULO. La fila se llama "Segmentos A-G" y "Filas (R1-R4)": eso es lo que la
+//      hoja le IMPRIME a la docente al lado del cable. Un rango rotulado tiene un orden
+//      y no hay dos formas de leerlo. Es la misma idea que el test de los índices — el
+//      cable y el rótulo de al lado tienen que decir lo mismo — pero sobre los nombres
+//      de la pieza en vez de sobre los pines de la placa.
+//   2. LA DESCRIPCIÓN DE LA PIEZA. `wokwi-7segment` publica `description: "Segment A"`
+//      pin por pin. Ahí ya no queda nada que interpretar.
+//
+// MUTACIONES QUE MATAN: invertir dos nombres cualesquiera del array de 7 segmentos, o
+// del teclado. Rotar el array entero. Cambiar el rótulo a "Segmentos A-F" sin tocar el
+// array (o al revés: sacar un nombre del array sin tocar el rótulo).
+test("cables: una fila que vale por varios pines ancla EXACTAMENTE el rango que rotula", () => {
+  let barridas = 0
+  for (const tipo of TIPOS()) {
+    const def = ns.COMPONENTES[tipo]
+    const { pines } = pinesDePieza(def.tag)
+    for (const fila of def.pines) {
+      const anclas = ns.anclajesDe(fila)
+      if (anclas == null || (fila.cantidad ?? 1) === 1) continue
+      barridas++
+
+      // El rango que el rótulo declara. Hay dos formas y nada más que dos: numerada con
+      // el prefijo repetido en las dos puntas (`R1-R4`, `C1-C4`) o por letra corrida
+      // (`A-G`). Lo que no sea ninguna de las dos no es un rango y no se adivina.
+      const numerado = unGuion(fila.nombre).match(/\b([A-Z]+)(\d+)-\1(\d+)\b/)
+      const porLetra = unGuion(fila.nombre).match(/\b([A-Z])-([A-Z])\b/)
+      assert.ok(
+        numerado || porLetra,
+        `${tipo}/"${fila.nombre}": la fila consume ${fila.cantidad} pines y su rótulo no declara ningún rango. ` +
+          `La docente lee ese rótulo al lado del cable: si no dice de dónde a dónde, el orden del array no lo puede verificar nadie.`,
+      )
+      const seq = (desde, hasta, hacer) => {
+        assert.ok(hasta >= desde, `${tipo}/"${fila.nombre}": el rótulo declara un rango que va para atrás`)
+        return Array.from({ length: hasta - desde + 1 }, (_, i) => hacer(desde + i))
+      }
+      const esperados = numerado
+        ? seq(Number(numerado[2]), Number(numerado[3]), (n) => `${numerado[1]}${n}`)
+        : seq(porLetra[1].charCodeAt(0), porLetra[2].charCodeAt(0), (c) => String.fromCharCode(c))
+      assert.deepEqual(
+        [...anclas],
+        esperados,
+        `${tipo}/"${fila.nombre}": el rótulo declara el rango ${esperados.join(", ")} y el catálogo ancla ${[...anclas].join(", ")}. ` +
+          `Los dos textos se ven perfectos y el cable va al agujero de al lado.`,
+      )
+      assert.equal(anclas.length, fila.cantidad, `${tipo}/"${fila.nombre}": el rango rotulado tiene ${anclas.length} pines y la fila consume ${fila.cantidad}`)
+
+      // Y si la pieza describe sus pines, que cada uno diga lo que el rango dice.
+      const porNombre = new Map(pines.map((p) => [p.name, p]))
+      for (const [i, n] of anclas.entries()) {
+        const p = porNombre.get(n)
+        assert.ok(p, `${tipo}/"${fila.nombre}": ancla a "${n}" y ${def.tag} no lo tiene`)
+        if (!p.description) continue
+        assert.match(
+          p.description,
+          new RegExp(`\\b${esperados[i]}\\b`),
+          `${tipo}/"${fila.nombre}": el ${i + 1}º cable va a "${n}", que ${def.tag} describe como ${JSON.stringify(p.description)}, ` +
+            `y el rótulo dice que ahí va ${esperados[i]}.`,
+        )
+      }
+    }
+  }
+  assert.ok(barridas >= 3, `el barrido encontró ${barridas} filas de varios pines: se está salteando el catálogo`)
+})
+
+// ── 9. `anclajesDeCable` CON LAS DOS LISTAS DESPAREJAS: LAS DOS PUNTAS EN null ──
+//
+// La guarda de `circuito.ts` (`enPlaca.length !== pieza.length`) NO SE DISPARA con el
+// catálogo de hoy: medido, en los 264 cables del barrido no salta ni una vez, y el
+// assert que la acompaña allá arriba (el de "N puntas de placa contra M de pieza")
+// tampoco puede fallar nunca. Una guarda que nadie sabe si funciona es peor que no
+// tenerla, así que había que decidir: sacarla o ejercerla.
+//
+// SE QUEDA, Y SE EJERCE ACÁ. `anclajesDeCable` es una función EXPORTADA y esto es su
+// contrato: si las dos puntas no aparean, el que dibuja engancharía el cable 2 en el
+// agujero 3 — el defecto de `plantilla-semaforo-protoboard.html` otra vez, tres cables
+// prolijos y los tres mal. La respuesta correcta es dejar el cable como hoy, no
+// "algo es mejor que nada", y eso es lo que se prueba: LAS DOS puntas en `null`, no
+// sólo la que sobra.
+//
+// La fila se construye a mano a propósito. El catálogo no puede producir este caso
+// (otro test exige que los anclajes de una fila sean exactamente `cantidad`), así que
+// ir a buscarlo ahí sería esperar a que otra red falle.
+//
+// MUTACIÓN QUE MATA: borrar la línea de la guarda. También: devolver
+// `{ placa: enPlaca, pieza: null }` — dejar una punta anclada y la otra no suena
+// prudente y es justo lo que aparea mal.
+test("cables: si las dos puntas no aparean, `anclajesDeCable` no ancla NINGUNA", () => {
+  const { anclajesDeCable, PLACAS } = ns
+  const uno = PLACAS.uno
+  const asignados = [{ banco: "D", n: 2 }, { banco: "D", n: 3 }]
+
+  // Sano: dos índices y dos anclajes → las dos puntas salen, apareadas.
+  const bien = anclajesDeCable(
+    { nombre: "Dos cosas", color: "#000", clase: "digital", rol: "{0-1}", cantidad: 2, pinPieza: ["TRIG", "ECHO"] },
+    [0, 1], asignados, uno,
+  )
+  assert.deepEqual([...bien.placa], ["2", "3"], "el caso sano dejó de anclar la punta de la placa")
+  assert.deepEqual([...bien.pieza], ["TRIG", "ECHO"], "el caso sano dejó de anclar la punta de la pieza")
+
+  // Desparejo por el lado de la pieza: dos agujeros en la placa, uno en el componente.
+  const cortoEnPieza = anclajesDeCable(
+    { nombre: "Dos cosas", color: "#000", clase: "digital", rol: "{0-1}", cantidad: 2, pinPieza: ["TRIG"] },
+    [0, 1], asignados, uno,
+  )
+  assert.equal(cortoEnPieza.placa, null, "quedó anclada la punta de la PLACA con las listas desparejas: ese cable aparea mal")
+  assert.equal(cortoEnPieza.pieza, null, "quedó anclada la punta de la PIEZA con las listas desparejas")
+
+  // Y al revés: un solo pin de placa y dos nombres de pieza.
+  const cortoEnPlaca = anclajesDeCable(
+    { nombre: "Una cosa", color: "#000", clase: "digital", rol: "{0}", pinPieza: ["TRIG", "ECHO"] },
+    [0], asignados, uno,
+  )
+  assert.equal(cortoEnPlaca.placa, null, "quedó anclada la punta de la PLACA con las listas desparejas")
+  assert.equal(cortoEnPlaca.pieza, null, "quedó anclada la punta de la PIEZA con las listas desparejas")
+
+  // Una punta sola NO arrastra a la otra: si la placa no resuelve (pool agotado, el
+  // `n < 0`), la de la pieza se ancla igual. El fallback es por atributo, no por cable.
+  const sinPlaca = anclajesDeCable(
+    { nombre: "Una cosa", color: "#000", clase: "digital", rol: "{0}", pinPieza: "TRIG" },
+    [0], [{ banco: "D", n: -1 }], uno,
+  )
+  assert.equal(sinPlaca.placa, null, "el pin sin asignar ancló una punta de placa que no existe")
+  assert.deepEqual([...sinPlaca.pieza], ["TRIG"], "la punta de la pieza se cayó por culpa de la otra: el fallback es POR ATRIBUTO")
+})
+
+// ── 10. LAS DOS FUENTES FINAS, ANCLADAS A MANO ────────────────────────────
+//
+// El test 7 decide por intersección de criterios, y eso tiene un riesgo: si mañana uno
+// de los criterios deja de opinar, el DESCARTE puede tapar el hueco y la fila sigue
+// decidida — por un motivo mucho más flojo, y en silencio. Igual que el extractor, que
+// se ancla contra VERDAD_NAVEGADOR para que no pueda mentir.
+//
+// Así que las dos fuentes que más trabajo costaron se anclan acá con el número.
+//
+// LA DEL BUZZER es la que este archivo le debía a `circuito.ts`. El razonamiento ya
+// estaba escrito allá (líneas 1139-1148) y no lo protegía NADA: la pieza llama `1` y
+// `2` a sus patas, no publica ni descripción ni `signals`, y el número no dice la
+// polaridad. Lo dice el dibujo. Mapear "Positivo" al `1` porque suena a primero es
+// exactamente el error que se ve perfecto.
+//
+// MUTACIONES QUE MATAN: en `patasPintadas`, cambiar el regex del rojo por el del negro.
+// Sacarle la conversión de milímetros a píxeles (o cambiar el factor). En `pinEnX`,
+// devolver el primer pin en vez del más cercano.
+test("cables: la polaridad del buzzer sale del COLOR de la pata, y el LED de su descripción", () => {
+  // ── el buzzer: el SVG pinta una pata negra y una roja ──
+  const patas = patasPintadas("wokwi-buzzer")
+  assert.ok(patas, "ya no se pueden leer las dos patas pintadas del buzzer: el criterio del dibujo se quedó mudo y la polaridad se decidiría por descarte")
+  // 7,23 mm y 9,77 mm del SVG, a 96/25,4 px por mm. Los pines caen en x=27 y x=37.
+  assert.ok(Math.abs(patas.negro - 27.33) < 0.1, `la pata negra del buzzer cae en ${patas.negro} px y se esperaba 27,3`)
+  assert.ok(Math.abs(patas.rojo - 36.93) < 0.1, `la pata roja del buzzer cae en ${patas.rojo} px y se esperaba 36,9`)
+  const { pines: delBuzzer } = pinesDePieza("wokwi-buzzer")
+  assert.equal(pinEnX(delBuzzer, patas.rojo), "2", "la pata ROJA del buzzer dejó de caer en el pin `2`: si se invierte, el cable del positivo va a la pata negativa y el dibujo se ve igual")
+  assert.equal(pinEnX(delBuzzer, patas.negro), "1", "la pata NEGRA del buzzer dejó de caer en el pin `1`")
+  // Y que la pieza siga sin decir nada por las otras vías: si algún día publica
+  // `description` o `signals`, hay una fuente mejor que el color y conviene usarla.
+  for (const p of delBuzzer)
+    assert.ok(!p.description && (p.signals ?? []).length === 0, `el buzzer ahora declara algo en el pin ${p.name}: hay una fuente más directa que el color de la pata`)
+
+  // ── el LED: la pieza DICE cuál es cuál ──
+  const { pines: delLed } = pinesDePieza("wokwi-led")
+  assert.deepEqual(
+    delLed.map((p) => [p.name, p.description]),
+    [["A", "Anode"], ["C", "Cathode"]],
+    "`wokwi-led` dejó de publicar la descripción de sus dos patas, que es la ÚNICA fuente que dice cuál es el ánodo",
+  )
+  // Y NO la geometría, aunque tiente: `pinInfo` del LED mira `this.flip` y con eso las
+  // dos coordenadas se INTERCAMBIAN (`let t=this.flip?15:25`). O sea que "el ánodo está
+  // a la derecha" es verdad para el LED que este tool dibuja y falso para el mismo
+  // componente con un atributo puesto. La descripción no se da vuelta.
+  assert.match(ventanaDeClase("wokwi-led"), /flip\?15:25|flip\?25:15/, "el LED dejó de tener el `flip` que intercambia las coordenadas: si ya no lo tiene, la geometría vuelve a ser una fuente válida para la polaridad")
+
+  // ── el 7 segmentos: cada segmento se describe a sí mismo ──
+  const { pines: del7 } = pinesDePieza("wokwi-7segment")
+  for (const letra of ["A", "B", "C", "D", "E", "F", "G"]) {
+    const p = del7.find((x) => x.name === letra)
+    assert.ok(p, `wokwi-7segment dejó de tener el segmento ${letra}`)
+    assert.equal(p.description, `Segment ${letra}`, `el segmento ${letra} dejó de describirse, y es lo que impide que el array se dé vuelta en silencio`)
   }
 })
