@@ -414,3 +414,107 @@ Cualquiera de estas alcanza:
 4. **Bun cambia la compilación mínima de Windows 10** en su documentación. La
    constante `BuildMinimoWindows10` en `installer/tecnia-bot.iss` y esta
    decisión tienen que moverse juntas.
+
+---
+
+## D-06 — El camino "sin key" está roto, y por ahora no lo arreglamos con otro gratuito
+
+**Fecha:** 2026-09-25 · **Versión:** sin publicar · **Estado: DEUDA TÉCNICA, no implementado**
+
+### El problema, visto en campo
+
+Una docente con v0.4.1 y **sin API key de Google** escribió `hola` y recibió:
+
+```
+Error from provider (Console): OpenCode's free tier can only be used from within OpenCode
+```
+
+No es la VM ni un caso raro: **hoy cualquier docente que instale sin key ve una pared en
+su primer mensaje.** El modelo de respaldo `opencode/big-pickle` dejó de aceptar el acceso
+anónimo.
+
+### Lo que se verificó, y lo que NO era
+
+Se probaron los **33 modelos con costo 0** del catálogo contra el endpoint real
+(`https://opencode.ai/zen/v1/chat/completions`) con `Authorization: Bearer public`, que es
+la key literal que manda OpenCode sin autenticar (`provider.ts:198`).
+
+**No cerraron el tier gratuito.** La compuerta es **por modelo**:
+
+| Resultado | Modelos |
+|---|---|
+| Contestó | `space-bunny-free` |
+| Compuerta | `big-pickle`, `ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `mimo-v2.6-flash-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free` |
+| No existen en el endpoint | ~20 más que el catálogo lista pero el servidor rechaza |
+
+Tampoco es una compuerta de versión: el bloque del proveedor `opencode` es **byte a byte
+idéntico** entre la v1.18.18 (la que corre el aula) y la v1.18.29. Subir el pin de
+`install/OPENCODE_VERSION` no arregla nada.
+
+### El candidato que sí anda, medido con el cliente real en Windows
+
+`opencode/space-bunny-free`. Control y prueba con `opencode run -m ...` en la VM:
+
+- `big-pickle` → el error exacto de la docente (control reproducido)
+- `space-bunny-free` → contesta, **carga el agente `tecnia-bot`** y respeta su prompt
+  (insistió con la pregunta del perfil antes de dar la ayuda)
+- Respuesta técnica correcta: explicó bien por qué el ESP32 no tolera 5 V
+- **Hace tool calls**: con un tool `platformio` declarado devolvió
+  `{"action": "compilar", "placa": "esp32"}`
+- **~11 segundos por pregunta**
+
+Comparado con lo que había:
+
+| | `big-pickle` | `space-bunny-free` |
+|---|---|---|
+| Retención de datos | *"OpenCode puede usar lo que se escribe para mejorar el modelo"* | **cero retención, no entrena con tus datos** (docs de Zen) |
+| Tool calls | sí | sí |
+| Contexto | 200.000 | 1.048.576 |
+| Adjuntos | no | sí |
+| Costo | 0 | 0 |
+
+**En privacidad es mejor**, que con menores de por medio (Ley 25.326) no es un detalle.
+
+### Por qué NO se cambió
+
+**1. Es un modelo anónimo de dos días.** El catálogo lo describe como
+*"Anonymous preview reasoning model"*, `release_date: 2026-09-23`, `open_weights: False`,
+y la documentación de Zen lo llama textualmente *"a **stealth model** that's free on
+OpenCode **for a limited time**"*. No se sabe de quién es ni con qué se entrenó. Ponerlo
+frente a alumnos de secundaria es una decisión de producto, no técnica.
+
+**2. Cambia una dependencia frágil por otra más frágil.** `big-pickle` llevaba meses;
+éste salió anteayer y ya avisa que se termina. El mismo problema volvería a pasar.
+
+**3. No es el cambio de una línea que parecía.** `big pickle` aparece **139 veces en 26
+archivos**: `opencode/tool/clave.ts` (14), los tres instaladores, seis archivos de tests
+—hay uno que exige que `clave.ts`, `install.ps1` e `install.sh` digan lo mismo—, el plugin
+del logo, el README, el CHANGELOG y ocho documentos. Y el aviso de privacidad hay que
+reescribirlo entero, porque el de `big-pickle` afirma lo contrario de lo que aplica acá.
+
+### Qué se hace mientras tanto
+
+**La key de Google es el camino, y no es un parche:** es gratis, sin tarjeta, de un
+proveedor conocido, más rápida, y no depende de que nadie decida nada mañana. Con key el
+agente usa `google/gemini-3.5-flash-lite`, que **no toca Zen**.
+
+A una docente bloqueada se le dice: sacar la key en
+`https://aistudio.google.com/apikey` y correr **«Reparar Tecnia Bot»** del menú inicio,
+que la pide por consola. **`/clave` y `/actualizar` NO sirven ahí**: son comandos que
+pasan por el modelo, y el modelo es justamente lo que está caído.
+
+> ⚠️ Al mandar a alguien a «Reparar Tecnia Bot» hay que avisarle que **pegue la key y
+> apriete Enter, nada más**. El bug del NUL de `install/install.ps1:200` sigue vivo: una
+> flecha o una tecla de función durante los 60 s de espera graba un `\u0000` como key y la
+> deja peor que antes.
+
+### Cuándo volver sobre esto
+
+- Si `space-bunny-free` sobrevive unas semanas y deja de ser "stealth", el trabajo está
+  medido y listo para hacerse.
+- Si aparece un gratuito de proveedor conocido, mejor todavía.
+- Si se decide que la key de Google pasa a ser **obligatoria**, entonces el camino sin key
+  se saca del producto en vez de arreglarse, y este documento se cierra al revés.
+
+**Lo que no se puede dejar como está indefinidamente es la pared**: una docente que instala
+y no puede escribir una sola frase.
