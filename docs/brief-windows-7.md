@@ -59,6 +59,14 @@ cuántas máquinas con Windows 7 tiene.
 
 ## 3. Lo que YA está hecho (repo, rama sin publicar)
 
+> **Nota del 2026-09-25, al traer este brief a `main`:** la tabla de abajo es una foto
+> del 5 de septiembre y describe el árbol de trabajo de una rama que **nunca se
+> commiteó**. De esa lista, a `main` llegaron **sólo los documentos** (este brief, D-05
+> y la sección «Requisitos» de la guía). **El `.iss`, los tests, el README y el
+> CHANGELOG NO están en `main`**, y el `.iss` no se puede traer tal cual — ver el
+> bloque de estado de D-05 en `docs/decisiones.md`. «Hecho» acá quiere decir «escrito
+> en esa rama», no «publicado».
+
 | Pieza | Archivo | Estado |
 |---|---|---|
 | Detección y mensaje en el instalador | `installer/tecnia-bot.iss` (`InitializeSetup`, `[Messages]`) | Escrito. Falta compilar y probar en VM Win7 y Win10 |
