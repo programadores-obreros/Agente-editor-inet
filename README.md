@@ -132,7 +132,7 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
 - **9 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género), `memoria` (progreso de la compu) y `clave` (ver, probar contra Google y cambiar la API key de esta compu).
-- **19 bases de conocimiento** (skills) — ver abajo.
+- **20 bases de conocimiento** (skills) — ver abajo.
 - **5 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/clave`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
 
@@ -140,7 +140,7 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Digitales / INET-EDUCAR): cada uno con sus niveles, pinout exacto UNO/ESP32, cableado, código clave y *gotchas* verificados. Así el bot guía cualquiera de los 15 sin depender de internet.
 
-**Los 19 skills:** `placas` · `arduino` · `esp32` · `educabot` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `errores-del-bot` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado`
+**Los 20 skills:** `placas` · `arduino` · `esp32` · `educabot` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `errores-del-bot` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado` · `archify`
 
 ---
 
@@ -150,7 +150,7 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
 │   ├── tool/               # 9 herramientas .ts (platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria, clave)
-│   ├── skills/             # 19 bases de conocimiento
+│   ├── skills/             # 20 bases de conocimiento
 │   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca

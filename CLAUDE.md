@@ -57,10 +57,61 @@ Por eso todo guard nuevo viene con un test que prueba que **marca lo que tiene q
 marcar**, no sólo que pasa sobre lo que ya está bien. Ver `tests/seguridad-proyectos.test.mjs`
 como modelo.
 
-## Antes de reportar un hallazgo, descartá el instrumento
+## El instrumento se revisa DOS veces: antes de medir y antes de reportar
 
 La lección más cara del proyecto, y la que más veces se repitió: **un verde puede
 significar "pasó" o puede significar "no midió nada", y no se distinguen mirándolos.**
+
+Son dos preguntas distintas, en dos momentos distintos, y hacen falta las dos:
+
+| Momento | Pregunta | Qué se chequea |
+|---|---|---|
+| **ANTES de medir** | ¿el instrumento **PUEDE** medir? | las precondiciones |
+| **ANTES de reportar** | ¿el instrumento **MINTIÓ**? | el resultado |
+
+La segunda estaba escrita desde hace tiempo. La primera se agregó el 2026-09-24, después
+de una sesión con **diez** artefactos de medición: el patrón no era no aplicar la regla,
+era aplicarla *después* de haber montado mal la medición. El caso que lo hizo obvio: un
+`.cmd` empujado a la VM **antes** de un `snapshot-revert` deja de existir después; lo
+corrí igual, el wrapper devolvió exit 0 con salida vacía, y estuve a punto de leer eso
+como "el instalador no hizo nada".
+
+### Antes de medir: enumerá las precondiciones y verificá CADA una
+
+No "debería estar": `Test-Path`, y que se vea en la salida. Un ejemplo real de esa sesión,
+que fue la primera corrida limpia:
+
+```
+1. el .cmd existe:          True
+2. el .exe existe:          True
+3. archify en el payload:   73 archivos
+4. NODE_VERSION:            24.20.0
+5. node ANTES:              no esta (bien)
+6. log viejo borrado:       True
+```
+
+Las precondiciones que más veces faltaron:
+
+- **Lo que empujaste a la VM sigue ahí.** Un `snapshot-revert` se lo lleva todo. Y
+  `virsh destroy` es un corte de energía: las escrituras sin flushear se pierden — para
+  cerrar, `virsh shutdown`.
+- **El caché está limpio.** Un chequeo con caché contesta `cache-valid` y no prueba nada.
+- **Estás en el perfil correcto.** El puente `guest-exec` corre como **SYSTEM**. Si lo que
+  se prueba es "por usuario" —Scoop, `env_add_path`, `HKCU:`— medir como SYSTEM no prueba
+  nada del usuario: hay que correrlo con `schtasks /ru <usuario> /it`, que **exige sesión
+  interactiva** (sin nadie logueado la tarea no corre y `schtasks /query` lo dice:
+  `Último tiempo de ejecución: 30/11/1999`).
+- **El estado inicial es el que creés.** Si se prueba una instalación, que lo instalado
+  NO esté antes.
+
+### Y el número de artefactos no es la métrica
+
+Diez artefactos cazados no es un mal resultado: es el resultado de mirar. **Lo que hay que
+minimizar es HALLAZGOS FALSOS REPORTADOS.** La alternativa a "diez cazados" no es "cero
+artefactos", es "tres reportados como bugs" — y ahí alguien sale a arreglar código que
+estaba bien.
+
+### Antes de reportar: ¿el instrumento mintió?
 
 En una sola tanda de trabajo, siete mediciones dieron un resultado falso **y ninguna era
 el producto**:
