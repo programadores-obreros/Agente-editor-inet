@@ -147,6 +147,69 @@ test("orden-de-array-no-afecta-forma-canonica", () => {
   assert.equal(canonicalizar(rA.proyecto), canonicalizar(rB.proyecto), "el orden de entrada del array no debe cambiar la forma canónica cargada")
 })
 
+test("documento-barajado: misma forma canónica Y cada entidad conserva su contenido intacto", () => {
+  // Fixture con 3 componentes, 2 conexiones, 2 comportamientos — con 1 elemento por
+  // array "orden-de-array-no-afecta-forma-canonica" ya alcanza, pero acá hace falta
+  // más de uno por array para que "barajar" signifique algo real, y comportamientos
+  // con umbral+unidad para probar que el CONTENIDO (no sólo el id) sobrevive intacto.
+  const docOrdenado = {
+    id: "proy-barajado",
+    schemaVersion: SCHEMA_VERSION_SOPORTADA,
+    catalogoVersion: "1.0.0",
+    catalogoHash: "hash-de-prueba",
+    revision: 0,
+    siguienteIdLocal: 5,
+    placa: "esp32-devkit-v1",
+    componentes: [
+      { id: "cmp-0", tipo: "led", pines: { anodo: "GPIO23" }, propiedades: {} },
+      { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} },
+      { id: "cmp-2", tipo: "ntc", pines: { senal: "GPIO34" }, propiedades: { nota: "segundo sensor" } },
+    ],
+    conexiones: [
+      { id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "senal" } },
+      { id: "conn-1", desde: { componente: "cmp-1", terminal: "senal" }, hasta: { componente: "cmp-2", terminal: "senal" } },
+    ],
+    comportamientos: [
+      { id: "beh-0", cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } },
+      { id: "beh-1", cuando: { sensor: "cmp-2", capacidad: "temperatura", comparador: "<=", umbral: { valor: 10.5, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "apagar" } },
+    ],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }
+  const docBarajado = {
+    ...docOrdenado,
+    componentes: [docOrdenado.componentes[2], docOrdenado.componentes[0], docOrdenado.componentes[1]],
+    conexiones: [docOrdenado.conexiones[1], docOrdenado.conexiones[0]],
+    comportamientos: [docOrdenado.comportamientos[1], docOrdenado.comportamientos[0]],
+  }
+
+  const rOrdenado = cargarProyecto(docOrdenado)
+  const rBarajado = cargarProyecto(docBarajado)
+  assert.equal(rOrdenado.ok, true)
+  assert.equal(rBarajado.ok, true)
+
+  // 1. Misma forma canónica pase lo que pase el orden de entrada.
+  assert.equal(canonicalizar(rOrdenado.proyecto), canonicalizar(rBarajado.proyecto))
+
+  // 2. Cada entidad conserva su CONTENIDO exacto (no sólo el conjunto de ids): se
+  // busca por id (no por posición) y se compara campo a campo, incluida la unidad
+  // del umbral de comportamiento — lo que "orden de array no afecta forma canónica"
+  // por sí solo no prueba (esa forma canónica podría coincidir por casualidad si
+  // algo se mezclara mal entre entidades).
+  const porId = (arr, id) => arr.find((x) => x.id === id)
+  for (const id of ["cmp-0", "cmp-1", "cmp-2"]) {
+    assert.deepEqual(porId(rBarajado.proyecto.componentes, id), porId(rOrdenado.proyecto.componentes, id), `componente ${id} debe conservar su contenido exacto`)
+  }
+  for (const id of ["conn-0", "conn-1"]) {
+    assert.deepEqual(porId(rBarajado.proyecto.conexiones, id), porId(rOrdenado.proyecto.conexiones, id), `conexion ${id} debe conservar su contenido exacto`)
+  }
+  for (const id of ["beh-0", "beh-1"]) {
+    const original = porId(rOrdenado.proyecto.comportamientos, id)
+    const barajado = porId(rBarajado.proyecto.comportamientos, id)
+    assert.deepEqual(barajado, original, `comportamiento ${id} debe conservar su contenido exacto`)
+    assert.equal(barajado.cuando.umbral.unidad, original.cuando.umbral.unidad, "la unidad del umbral no se pierde ni se reinterpreta al reordenar")
+  }
+})
+
 // ───────────────────────────────── 8. round-trip literal ─────────────────────────────
 
 test("round-trip: canonicalizar(cargar(canonicalizar(p))) === canonicalizar(p)", () => {
