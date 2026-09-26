@@ -119,3 +119,26 @@ destino y los efectos derivados que las reglas exigen" se testea a nivel de IR e
 Gate 5, con un fixture de 2 componentes no relacionados y assert de igualdad profunda
 del componente no tocado. No se resuelve en Gate 1 (no hay operaciones todavía); se
 deja anotado para no perder la decisión.
+
+## Corrección: el comentario de `canonico.ts` mentía sobre el orden de array
+
+**Hallazgo (revisión externa del orquestador, Gate 2):** el comentario original de
+`canonico.ts` decía "el motor/loader nunca reordena los arrays de entrada" — falso:
+`cargarProyecto()` (cargador.ts) SÍ los reordena, por id local, antes de congelar.
+Corregido en el propio archivo y documentado en detalle en `IR-SPEC.md` §3 (qué hace
+`canonicalizar()` vs. qué hace `cargarProyecto()`, y por qué el orden de array no
+importa de todas formas: coincide con el orden de creación porque los ids salen de un
+contador monotónico). Regla del repo aplicada literalmente: "un OK falso es peor que
+un error" — un comentario incorrecto sobre el propio código es la misma clase de
+falla que un test que no prueba nada.
+
+## Prioridad/conflicto entre reglas de comportamiento — DIFERIDA a Fase 3
+
+**Decisión del orquestador:** cuando dos `ComportamientoRegla` apuntan al mismo
+`entonces.actuador` con condiciones que podrían dispararse a la vez (ej. una dice
+"encender", otra "apagar", ambas verdaderas), Fase 1 **no define** cómo se resuelve
+— y en particular, el orden del array `Proyecto.comportamientos` NO decide (§3 de
+`IR-SPEC.md`: el orden no lleva semántica en Fase 1, es un derivado del id de
+creación). La composición/ejecución de reglas en vivo es del motor de reglas de Fase
+3 (brief §27), posterior a Blockly/codegen — `nucleo/` en Fase 1 sólo modela y valida
+la IR, nunca la ejecuta. Documentado en `IR-SPEC.md` §3.1.
