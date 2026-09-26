@@ -1,10 +1,16 @@
 > **Origen de esta copia:** producida durante el freeze de Phase 0 de "Programación por
-> Intención" (sha256 del freeze: `f272b0d9b6aaaf4dbd28bee297a99332be19af38eac1fdce4e1296b76badb24d`),
-> describe el baseline auditado `b506e81` (commit `b506e81cedf89e4905af92be1415b077a600971f`).
-> Fuente original: `/home/manjarodesktop/tecnia-bot-docs/phase0/CURRENT-ARCHITECTURE.md`
-> (no versionada en ningún repo, preparada fuera del árbol). Esta copia se trae al repo
-> en Gate 1 de Fase 1 tal como ya preveía su propio encabezado ("Ubicación prevista
-> final: `docs/programacion-intencion/CURRENT-ARCHITECTURE.md`"). Contenido sin cambios
+> Intención". `f272b0d9b6aaaf4dbd28bee297a99332be19af38eac1fdce4e1296b76badb24d` es el
+> sha256 del **ZIP del freeze completo** de Phase 0 (el paquete con todos los
+> documentos de esa fase, no de este archivo aislado). El sha256 de **este archivo
+> puntual**, tal como quedó extraído de ese freeze, es
+> `f236e463d88c723fe041fa865b600a3283112aa62d24313d52523310c7b699d8` — verificado con
+> `sha256sum /home/manjarodesktop/tecnia-bot-docs/phase0/CURRENT-ARCHITECTURE.md` antes
+> de traer esta copia. Describe el baseline auditado `b506e81` (commit
+> `b506e81cedf89e4905af92be1415b077a600971f`). Fuente original:
+> `/home/manjarodesktop/tecnia-bot-docs/phase0/CURRENT-ARCHITECTURE.md` (no versionada
+> en ningún repo, preparada fuera del árbol). Esta copia se trae al repo en Gate 1 de
+> Fase 1 tal como ya preveía su propio encabezado ("Ubicación prevista final:
+> `docs/programacion-intencion/CURRENT-ARCHITECTURE.md`"). Contenido sin cambios
 > respecto del original salvo esta nota.
 
 ---
