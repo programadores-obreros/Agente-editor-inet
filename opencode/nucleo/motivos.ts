@@ -46,3 +46,35 @@ export type Motivo = {
   readonly entidad?: EntidadMotivo
   readonly datos?: Readonly<Record<string, unknown>>
 }
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Orden estable — Gate 4 (validar.ts lo usa para agregar sin mezclar el orden entre
+// corridas: (prioridad fija de categoría) → entidad.id (lexicográfico) → código).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** Prioridad fija: el índice en este array ES la prioridad (0 = primero). */
+export const ORDEN_CATEGORIAS: readonly CategoriaMotivo[] = [
+  "estructural",
+  "referencial",
+  "tecnica",
+  "componente",
+  "semantica",
+  "readiness",
+  "pedagogica",
+  "operacion",
+  "motor",
+  "almacen",
+]
+
+/** Comparador estable para `Array.prototype.sort` — nunca cambia entre corridas para
+ * el mismo conjunto de motivos (determinista, sin depender de `Date.now()`/random). */
+export function compararMotivos(a: Motivo, b: Motivo): number {
+  const pa = ORDEN_CATEGORIAS.indexOf(a.categoria)
+  const pb = ORDEN_CATEGORIAS.indexOf(b.categoria)
+  if (pa !== pb) return pa - pb
+  const idA = a.entidad?.id ?? ""
+  const idB = b.entidad?.id ?? ""
+  if (idA !== idB) return idA < idB ? -1 : 1
+  if (a.codigo !== b.codigo) return a.codigo < b.codigo ? -1 : 1
+  return 0
+}
