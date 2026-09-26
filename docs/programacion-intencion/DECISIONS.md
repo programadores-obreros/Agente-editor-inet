@@ -142,3 +142,21 @@ falla que un test que no prueba nada.
 creación). La composición/ejecución de reglas en vivo es del motor de reglas de Fase
 3 (brief §27), posterior a Blockly/codegen — `nucleo/` en Fase 1 sólo modela y valida
 la IR, nunca la ejecuta. Documentado en `IR-SPEC.md` §3.1.
+
+## Gate 7 (`almacen.ts`) — límites de durabilidad documentados
+
+**Sin `fsync`/`fdatasync`:** igual que el patrón ya existente en `memoria.ts`/
+`perfil.ts`/`clave.ts` (`CURRENT-ARCHITECTURE.md` §9) — la durabilidad ante un corte
+de luz depende del filesystem/SO, no está mitigada por la app. No es una omisión de
+Gate 7: es el mismo criterio que el repo ya usa en los tres precedentes reales.
+
+**`renameSync` en Windows:** no probado en este gate — CI corre `tests/*.test.mjs`
+sólo en el job Linux (igual que el resto de la suite, `CURRENT-ARCHITECTURE.md` §11).
+Un `renameSync` sobre un destino que YA EXISTE puede comportarse distinto entre
+POSIX y Windows según el filesystem/permisos (en NTFS, con el archivo destino abierto
+por otro proceso, puede fallar donde en Linux no); queda como límite conocido, a
+confirmar si Fase 2+ corre este núcleo bajo Windows de verdad.
+
+**Sin locks, un solo escritor:** mismo modelo implícito que `memoria.ts` (no
+declarado como asunción explícita ahí tampoco). `Almacen.list()` y la detección de
+modificación externa quedan fuera de Fase 1 (decisión ya registrada arriba, Gate 1).

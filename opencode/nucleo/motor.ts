@@ -27,7 +27,9 @@ import { aplicarOperacion, type ResultadoOperacion, type SobreOperacion } from "
 // ════════════════════════════════════════════════════════════════════════════════════
 
 export type ResultadoGuardar = { readonly ok: true } | { readonly ok: false; readonly motivo: Motivo }
-export type ResultadoCargaAlmacen = { readonly ok: true; readonly proyecto: Proyecto } | { readonly ok: false; readonly motivos: readonly Motivo[] }
+export type ResultadoCargaAlmacen =
+  | { readonly ok: true; readonly proyecto: Proyecto; readonly diagnostico?: readonly Motivo[] }
+  | { readonly ok: false; readonly motivos: readonly Motivo[] }
 
 export interface Almacen {
   guardar(proyecto: Proyecto): ResultadoGuardar
