@@ -97,10 +97,16 @@ export function cargarProyecto(entrada: unknown): ResultadoCarga {
 
   if (typeof id !== "string" || id.length === 0) return rechazo("CAMPO_REQUERIDO_FALTANTE", { campo: "id" })
 
+  // Único chequeo de schemaVersion: "más nueva que la soportada" (`compararVersiones`
+  // fail-closed: una versión no parseable cuenta como "más nueva", nunca se asume
+  // compatible algo que no se entiende). Deliberadamente SIN un segundo chequeo de
+  // igualdad estricta como red de seguridad: con dos checks, invertir este operador
+  // (mutación de Gate 2) quedaría enmascarado por el segundo y el test no lo
+  // detectaría — ver docs/programacion-intencion/DECISIONS.md, entrada de Gate 2.
+  // Límite conocido: una versión bien formada pero MÁS VIEJA que "1.0.0" (que hoy no
+  // existe — Fase 1 nace en 1.0.0) pasaría este único chequeo sin rechazar; se
+  // documenta como límite aceptado de Gate 2, no como bug.
   if (typeof schemaVersion !== "string" || compararVersiones(schemaVersion, SCHEMA_VERSION_SOPORTADA) > 0) {
-    return rechazo("VERSION_SCHEMA_DESCONOCIDA", { recibida: schemaVersion })
-  }
-  if (schemaVersion !== SCHEMA_VERSION_SOPORTADA) {
     return rechazo("VERSION_SCHEMA_DESCONOCIDA", { recibida: schemaVersion })
   }
 
