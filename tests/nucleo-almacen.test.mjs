@@ -167,7 +167,12 @@ test("cargar-inexistente-da-motivo-estructurado", () => {
   const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
   const r = almacen.cargar("no-existe")
   assert.equal(r.ok, false)
-  assert.ok(r.motivos.length > 0)
+  // Código específico, no cualquier rechazo: "no existe" y "existe pero está
+  // corrupto" son dos diagnósticos distintos (el test de JSON corrupto de arriba
+  // cubre el otro) — si se chequeara sólo `motivos.length > 0`, un almacén que
+  // saltee el existsSync() y deje que readFileSync tire ENOENT (capturado como
+  // DOCUMENTO_MALFORMADO) pasaría este test igual, sin distinguir los dos casos.
+  assert.equal(r.motivos[0].codigo, "PROYECTO_INEXISTENTE")
 })
 
 // ───────────────────── 8. idempotencia load→save→load, no-op byte a byte ────────────
