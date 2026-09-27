@@ -118,6 +118,33 @@ test("quitarcomponente-inexistente-rechaza", () => {
   assert.equal(r.motivos[0].codigo, "REFERENCIA_INEXISTENTE")
 })
 
+// ──── mutante M22: el contador de ids locales NUNCA retrocede al quitar un componente
+// (PHASE_1_EXTERNAL_FINDINGS.md — mutante sobre `aplicarQuitarComponente` que
+// decrementara `siguienteIdLocal` sobrevivía sin este test: Agregar → cmp-0, Quitar,
+// Agregar de nuevo → sin esta regresión nada probaba que el segundo `AgregarComponente`
+// no reutilizara "cmp-0"). ──────────────────────────────────────────────────────────
+
+test("quitar-luego-agregar: el contador nunca retrocede, el nuevo id nunca reusa uno ya usado (M22)", () => {
+  let p = proyectoBase()
+
+  let r = ejecutarOperacion(p, nuevaOperacion("AgregarComponente", { tipo: "led" }), catalogo)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.componentes[0].id, "cmp-0")
+  assert.equal(r.proyecto.siguienteIdLocal, 1)
+  p = r.proyecto
+
+  r = ejecutarOperacion(p, nuevaOperacion("QuitarComponente", { componente: "cmp-0" }), catalogo)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.componentes.length, 0)
+  assert.equal(r.proyecto.siguienteIdLocal, 1, "el contador NO retrocede al quitar un componente")
+  p = r.proyecto
+
+  r = ejecutarOperacion(p, nuevaOperacion("AgregarComponente", { tipo: "led" }), catalogo)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.componentes[0].id, "cmp-1", "el nuevo id NUNCA coincide con uno ya usado (cmp-0)")
+  assert.equal(r.proyecto.siguienteIdLocal, 2)
+})
+
 // ───────────────────── 7/8/9. AsignarPin — rechazo y representable ──────────────────
 
 test("asignarpin-terminal-no-declarado-rechaza", () => {
