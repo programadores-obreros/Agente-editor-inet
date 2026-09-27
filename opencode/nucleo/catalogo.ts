@@ -16,7 +16,7 @@
 import type { Placa, RegistroPin } from "./placas.ts"
 import type { ComportamientoRegla } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
-import { canonicalizar } from "./canonico.ts"
+import { canonicalizar, clonarProfundo, congelarProfundo } from "./canonico.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Tipos (T_diseno_consolidado.md §4.1)
@@ -120,14 +120,40 @@ export function canonicalizarCatalogo(datos: DatosCatalogo): string {
 
 export function construirCatalogo(datos: DatosCatalogo, hasher: (texto: string) => string): Catalogo {
   const hash = hasher(canonicalizarCatalogo(datos))
-  const porTipo = new Map(datos.componentes.map((c) => [c.id, c]))
-  const porPlaca = new Map(datos.placas.map((p) => [p.id, p]))
+
+  // Phase 1.1 (hallazgo externo E3-03, MAJOR, evidencia/e3/scripts/e1_motor_flujo.mjs
+  // TEST 2): antes, `componentes`/`placas` (y sus objetos anidados — `Terminal`,
+  // `Capacidad`, `Requisito`, `RegistroPin`, ...) se exponían por REFERENCIA directa a
+  // `datos`, sin congelar ni clonar. `catalogo-datos.ts` exporta constantes de módulo
+  // (`LED`, `DHT22`, ...) que MUCHOS catálogos distintos importan y comparten — nada
+  // impedía que un llamador retuviera esa referencia (la propia `datos`, o el objeto
+  // que `obtenerComponente()` devuelve) y mutara un componente YA usado por un motor
+  // en ejecución (`obtenerComponente('led').terminales.push(...)`): el motor lo veía
+  // de inmediato en el próximo `validarProyecto`/`aplicarOperacion`, porque
+  // `catalogo.obtenerComponente()` devolvía la MISMA referencia mutable — el catálogo
+  // sólo era inmutable por convención documental, nunca de hecho.
+  //
+  // Fix: clon defensivo (`clonarProfundo`, `canonico.ts`) + `congelarProfundo` sobre
+  // el CLON — mismo patrón que `motor.ts` usa para aislar su `canonico` de
+  // `proyectoInicial` — nunca sobre `datos` en sí: el llamador conserva su propio
+  // objeto intacto y mutable (los fixtures de test que reusan `LED`/`DHT22` para
+  // construir VARIOS catálogos distintos siguen funcionando igual), pero el catálogo
+  // construido queda TOTALMENTE aislado de cualquier mutación posterior, sea sobre
+  // `datos` o sobre el objeto que devuelve `obtenerComponente()`/`pinesDePlaca()`. La
+  // extensibilidad puramente declarativa (agregar un componente nuevo como DATO en
+  // `datos.componentes` antes de llamar acá) sigue intacta: el freeze corre DESPUÉS,
+  // sobre la copia completa, nunca antes.
+  const componentesAislados = congelarProfundo(clonarProfundo(datos.componentes))
+  const placasAisladas = congelarProfundo(clonarProfundo(datos.placas))
+  const unidadesAisladas = datos.unidades ? congelarProfundo(clonarProfundo(datos.unidades)) : undefined
+  const porTipo = new Map(componentesAislados.map((c) => [c.id, c]))
+  const porPlaca = new Map(placasAisladas.map((p) => [p.id, p]))
   return {
     version: datos.version,
     hash,
-    componentes: datos.componentes,
-    placas: datos.placas,
-    unidades: datos.unidades,
+    componentes: componentesAislados,
+    placas: placasAisladas,
+    unidades: unidadesAisladas,
     obtenerComponente: (tipo) => porTipo.get(tipo),
     tienePlaca: (id) => porPlaca.has(id),
     pinesDePlaca: (id) => porPlaca.get(id)?.pines,

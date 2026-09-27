@@ -127,3 +127,20 @@ tocar el borrador.
   tres tipos de requisito (`capacidad-pin`, `resistencia-pull`, `componente-auxiliar`)
   existen en el vocabulario del tipo pero ningún componente shippeado los declara
   todavía: se implementan cuando haya un requisito real que los ejercite, no antes.
+
+## 8. `construirCatalogo()` es inmutable de HECHO, no sólo de convención (Phase 1.1,
+hallazgo externo E3-03, MAJOR)
+
+`componentes`/`placas`/`unidades` (y `obtenerComponente()`/`pinesDePlaca()`) devuelven
+objetos de un **clon defensivo, congelado** (`clonarProfundo`+`congelarProfundo`,
+`canonico.ts`) de los `datos` recibidos — nunca la referencia original. Antes de este
+fix, `catalogo-datos.ts` exporta constantes de módulo (`LED`, `DHT22`, ...) que MUCHOS
+catálogos distintos importan y comparten, y nada impedía mutar un componente ya usado
+por un motor en ejecución (`obtenerComponente('led').terminales.push(...)`) — el motor
+lo veía de inmediato en la próxima validación (evidencia/e3/scripts/
+e1_motor_flujo.mjs TEST 2). El aislamiento es en ambos sentidos: mutar el objeto que
+devuelve el catálogo explota (frozen, modo estricto), y mutar `datos` DESPUÉS de
+llamar a `construirCatalogo()` nunca se propaga al catálogo ya construido. La
+extensibilidad puramente declarativa (agregar un componente nuevo como DATO en
+`datos.componentes` ANTES de llamar acá) no cambia: el freeze corre sobre la copia
+completa, después de recibir los datos, nunca antes.

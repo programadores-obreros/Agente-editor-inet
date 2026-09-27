@@ -208,6 +208,49 @@ test("catalogo-sin-cambio-de-core-al-agregar-componente", () => {
   assert.equal(asignarPin(zumbadorSintetico.terminales[0], pinCompatible), null)
 })
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E3-03 (MAJOR, evidencia/e3/scripts/e1_motor_flujo.mjs
+// TEST 2): construirCatalogo() devolvía componentes/placas por REFERENCIA directa a
+// `datos` (y sus objetos anidados: Terminal, Capacidad, Requisito, RegistroPin) — sin
+// congelar ni clonar. Un llamador que retuviera la referencia (algo que nada impide:
+// `catalogo-datos.ts` exporta constantes de módulo que muchos catálogos comparten)
+// podía mutar un componente YA usado por un motor en ejecución y el catálogo (y
+// cualquier motor que lo use) lo vería de inmediato en la próxima validación.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("obtenerComponente() devuelve un objeto CONGELADO — mutarlo explota, nunca se propaga en silencio (hallazgo externo E3-03)", () => {
+  const datos = {
+    version: "1.0.0-e303a",
+    componentes: [{ id: "led-e303a", nombreVisible: "LED", clase: "actuador", terminales: [{ id: "anodo", rol: "anodo", electrica: "digital", direccion: "salida" }], capacidades: [], requisitos: [] }],
+    placas: [],
+    unidades: undefined,
+  }
+  const catalogo = construirCatalogo(datos, sha256Hex)
+  const ledDelCatalogo = catalogo.obtenerComponente("led-e303a")
+  assert.ok(Object.isFrozen(ledDelCatalogo), "el componente devuelto por el catalogo debe estar CONGELADO")
+  assert.ok(Object.isFrozen(ledDelCatalogo.terminales), "los arrays anidados (terminales) tambien deben estar congelados")
+  assert.throws(() => {
+    "use strict"
+    ledDelCatalogo.terminales.push({ id: "catodo-fantasma", rol: "catodo", electrica: "digital", direccion: "entrada" })
+  }, "mutar un componente del catalogo debe explotar en modo estricto, no fallar en silencio")
+  assert.equal(catalogo.obtenerComponente("led-e303a").terminales.length, 1, "el catalogo NUNCA debe ver una mutacion intentada sobre el objeto que devolvio")
+})
+
+test("mutar el objeto ORIGINAL retenido DESPUES de construirCatalogo() no afecta al catalogo ya construido (hallazgo externo E3-03)", () => {
+  const led = { id: "led-e303b", nombreVisible: "LED", clase: "actuador", terminales: [{ id: "anodo", rol: "anodo", electrica: "digital", direccion: "salida" }], capacidades: [], requisitos: [] }
+  const datos = { version: "1.0.0-e303b", componentes: [led], placas: [], unidades: undefined }
+  const catalogo = construirCatalogo(datos, sha256Hex)
+
+  // Mutación EN VIVO del array/objeto original que el llamador retiene — mismo
+  // escenario que evidencia/e3/scripts/e1_motor_flujo.mjs TEST 2.
+  datos.componentes.push({ id: "servo-fantasma-e303", nombreVisible: "Servo Fantasma", clase: "actuador", terminales: [], capacidades: [], requisitos: [] })
+  led.terminales.push({ id: "catodo-fantasma", rol: "catodo", electrica: "digital", direccion: "entrada" })
+
+  assert.equal(catalogo.obtenerComponente("servo-fantasma-e303"), undefined, "un componente agregado DESPUES de construir no debe aparecer en el catalogo")
+  assert.equal(catalogo.obtenerComponente("led-e303b").terminales.length, 1, "el catalogo debe seguir viendo la forma ORIGINAL del componente, aislada de la mutacion posterior")
+  assert.equal(catalogo.componentes.length, 1, "catalogo.componentes tampoco debe ver el push posterior sobre el array original")
+})
+
 // ─────────────────────── 13. version-skew: mismo version, hash distinto ──────────────
 
 test("version-skew-catalogo-cambiado-detectado", () => {
