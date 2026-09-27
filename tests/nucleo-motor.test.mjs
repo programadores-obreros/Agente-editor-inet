@@ -413,3 +413,54 @@ test("constructor-rechaza-proyectoInicial-con-umbral-no-finito (hallazgo externo
     "un proyectoInicial con un umbral no finito (bypaseando cargarProyecto Y la operación SetComportamiento) NUNCA debe llegar a construir un motor operable",
   )
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E2-01 (CRÍTICO): "sin auto-conexión (self-loop) / sin
+// conexión duplicada" antes SÓLO existía como chequeo ad-hoc dentro de `aplicarConectar`
+// (`operaciones.ts`, Gate 5) — nunca llegaba a la construcción del motor sobre un
+// `proyectoInicial` armado a mano que bypasea tanto el loader como la operación
+// (evidencia/e2/exp5_motor_acepta_selfloop_inicial.mjs: el motor se construía
+// exitosamente, SIN lanzar `ErrorEstadoInicialInvalido`, falsificando IR-SPEC.md §6).
+// Se cierra vía `validar-estructural.ts` (Gate 4, corrida por `validarProyecto` dentro
+// de la construcción del motor) — mismo criterio que el test E1-03 de arriba.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-selfloop (hallazgo externo E2-01)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-e2-01-selfloop", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    componentes: [{ id: "cmp-0", tipo: "resistencia", pines: {}, propiedades: {} }],
+    conexiones: [{ id: "conn-0", desde: { componente: "cmp-0", terminal: "a" }, hasta: { componente: "cmp-0", terminal: "a" } }],
+    siguienteIdLocal: 1,
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err.motivos?.some((m) => m.codigo === "AUTOCONEXION_INVALIDA" && m.clasificacion === "rechazo"), `el error debe traer el motivo estructurado: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con self-loop (bypaseando cargarProyecto Y la operación Conectar) NUNCA debe llegar a construir un motor operable",
+  )
+})
+
+test("constructor-rechaza-proyectoInicial-con-conexion-duplicada (hallazgo externo E2-01)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-e2-01-duplicada", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    componentes: [{ id: "cmp-0", tipo: "resistencia", pines: {}, propiedades: {} }],
+    conexiones: [
+      { id: "conn-0", desde: { componente: "cmp-0", terminal: "a" }, hasta: { componente: "cmp-0", terminal: "b" } },
+      // MISMO par que conn-0, extremos invertidos — "misma conexión" no depende del orden.
+      { id: "conn-1", desde: { componente: "cmp-0", terminal: "b" }, hasta: { componente: "cmp-0", terminal: "a" } },
+    ],
+    siguienteIdLocal: 2,
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err.motivos?.some((m) => m.codigo === "CONEXION_DUPLICADA" && m.clasificacion === "rechazo"), `el error debe traer el motivo estructurado: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con dos conexiones que conectan el MISMO par (orden invertido) NUNCA debe llegar a construir un motor operable",
+  )
+})

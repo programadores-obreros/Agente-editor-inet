@@ -12,6 +12,7 @@ import { reemplazarSensor } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
 import { formatearIdLocal } from "./id.ts"
 import { validarProyecto } from "./validar.ts"
+import { esAutoconexion, mismaConexion } from "./conexion.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Tipos del sobre (OPERATIONS.md §2). CrearProyecto NO participa de este dispatch
@@ -66,15 +67,6 @@ function tieneTerminalDeclarado(catalogo: Catalogo, tipoComponente: string, term
   const comp = catalogo.obtenerComponente(tipoComponente)
   if (!comp) return true // catálogo desconocido: eso lo valida validar-tecnico.ts, no acá
   return comp.terminales.some((t) => t.id === terminalId)
-}
-
-function mismoPar(a: Conexion, desde: { componente: string; terminal: string }, hasta: { componente: string; terminal: string }): boolean {
-  const ext = (e: { componente: string; terminal: string }) => `${e.componente}:${e.terminal}`
-  const par1 = new Set([ext(a.desde), ext(a.hasta)])
-  const par2 = new Set([ext(desde), ext(hasta)])
-  if (par1.size !== par2.size) return false
-  for (const x of par1) if (!par2.has(x)) return false
-  return true
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -174,10 +166,16 @@ function aplicarConectar(proyecto: Proyecto, payload: { desde: { componente: str
       return { proyecto, motivos: [rechazo("TERMINAL_NO_DECLARADO", { componente: extremo.componente, terminal: extremo.terminal })] }
     }
   }
-  if (payload.desde.componente === payload.hasta.componente && payload.desde.terminal === payload.hasta.terminal) {
+  // Phase 1.1 (hallazgo externo E2-01, CRÍTICO): `esAutoconexion`/`mismaConexion`
+  // (`conexion.ts`) son la ÚNICA implementación de este invariante — reusada también
+  // por `cargador.ts` (Gate 2) y `validar-estructural.ts` (Gate 4, corre en
+  // `validarProyecto`, incluida la construcción del motor sobre `proyectoInicial`).
+  // Antes de Phase 1.1 esta era la ÚNICA puerta que lo chequeaba: un documento/
+  // `proyectoInicial` con self-loop o duplicado bypaseaba esta defensa por completo.
+  if (esAutoconexion(payload.desde, payload.hasta)) {
     return { proyecto, motivos: [rechazo("AUTOCONEXION_INVALIDA", { componente: payload.desde.componente, terminal: payload.desde.terminal })] }
   }
-  if (proyecto.conexiones.some((cx) => mismoPar(cx, payload.desde, payload.hasta))) {
+  if (proyecto.conexiones.some((cx) => mismaConexion(cx, payload))) {
     return { proyecto, motivos: [rechazo("CONEXION_DUPLICADA", { desde: payload.desde, hasta: payload.hasta })] }
   }
   const id = formatearIdLocal("conn", proyecto.siguienteIdLocal)

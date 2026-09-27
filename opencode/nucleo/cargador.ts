@@ -14,6 +14,7 @@ import type { ComportamientoRegla, Componente, Conexion, ExtremoConexion, Proyec
 import type { Motivo } from "./motivos.ts"
 import { canonicalizar, congelarProfundo } from "./canonico.ts"
 import { analizarIdsLocales, compararIdsLocales, generarIdProyectoAleatorio, validarIdsYContador, type GeneradorIdProyecto } from "./id.ts"
+import { analizarConexionesInvalidas } from "./conexion.ts"
 
 export const SCHEMA_VERSION_SOPORTADA = "1.0.0"
 
@@ -182,6 +183,28 @@ export function cargarProyecto(entrada: unknown): ResultadoCarga {
   // loader (IR-SPEC.md §6) — un solo lugar, nunca copiada.
   const motivosIds = validarIdsYContador({ componentes: componentesValidados, conexiones: conexionesValidadas, comportamientos: comportamientosValidados, siguienteIdLocal })
   if (motivosIds.length > 0) return { ok: false, motivos: motivosIds }
+
+  // Phase 1.1 (hallazgo externo E2-01, CRÍTICO — PHASE_1_EXTERNAL_FINDINGS.md): "sin
+  // auto-conexión (self-loop) / sin conexión duplicada" antes SÓLO existía como
+  // chequeo ad-hoc dentro de `aplicarConectar` (`operaciones.ts`) — un documento con
+  // self-loop o con dos conexiones que conectan el MISMO par de terminales (sin
+  // importar el orden, ver `conexion.ts`) cargaba SIN ningún diagnóstico
+  // (evidencia/e2/exp1b_selfloop_listo_true.mjs). `analizarConexionesInvalidas`
+  // (`conexion.ts`) es la MISMA función que reusa `validar-estructural.ts` (Gate 4,
+  // IR-SPEC.md §6.3) para cerrar esta puerta también en `proyectoInicial`/
+  // `validarProyecto` — acá con su propio código, momento de carga (mismo criterio que
+  // `REFERENCIA_ROTA_AL_CARGAR` frente a `REFERENCIA_INEXISTENTE`). Corre DESPUÉS de
+  // `validarIdsYContador`: un documento con ids duplicados (`conn-0` repetido dos
+  // veces, aunque también forme un par eléctrico duplicado) reporta primero
+  // `ID_DUPLICADO` — mismo orden ya establecido y probado por
+  // "id-duplicado-entre-conexiones-rechaza" (E1-02).
+  const analisisConexiones = analizarConexionesInvalidas(conexionesValidadas)
+  if (analisisConexiones.autoconexiones.length > 0) {
+    return rechazo("AUTOCONEXION_INVALIDA_AL_CARGAR", { conexiones: analisisConexiones.autoconexiones })
+  }
+  if (analisisConexiones.duplicadas.length > 0) {
+    return rechazo("CONEXION_DUPLICADA_AL_CARGAR", { conexiones: analisisConexiones.duplicadas })
+  }
 
   // El orden de entrada del array NUNCA afecta la forma canónica cargada: se ordena
   // por id local (numérico sobre el sufijo "-<n>"), no por orden de aparición en el

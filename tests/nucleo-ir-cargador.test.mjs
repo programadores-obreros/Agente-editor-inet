@@ -178,6 +178,52 @@ test("contador-siguienteIdLocal-igual-al-maximo-existente-rechaza (borde estrict
   assert.equal(r.motivos[0].codigo, "CONTADOR_ID_INCONSISTENTE")
 })
 
+// ──────── 5d. self-loop / conexión duplicada al cargar rechaza (hallazgo externo
+// E2-01, CRÍTICO — Phase 1.1: antes de este fix, "sin auto-conexión / sin conexión
+// duplicada" sólo existía como chequeo ad-hoc DENTRO de `aplicarConectar`
+// (`operaciones.ts`); un documento con self-loop o con dos conexiones que conectan el
+// MISMO par de terminales cargaba SIN NINGÚN diagnóstico, llegando a `listo:true`
+// — ver evidencia/e2/exp1b_selfloop_listo_true.mjs) ──────────────────────────────────
+
+test("loader-rechaza-documento-con-selfloop (hallazgo externo E2-01)", () => {
+  const doc = documentoValido()
+  doc.conexiones = [{ id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-0", terminal: "anodo" } }]
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "AUTOCONEXION_INVALIDA_AL_CARGAR")
+  assert.equal("proyecto" in r, false, "un rechazo nunca trae un proyecto parcial")
+})
+
+test("loader-rechaza-documento-con-conexion-duplicada (hallazgo externo E2-01)", () => {
+  const doc = documentoValido()
+  doc.conexiones = [
+    { id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "senal" } },
+    // MISMO par que conn-0, con los extremos invertidos — "misma conexión" no depende
+    // del orden (decisión YA vigente antes de Phase 1.1, ver conexion.ts).
+    { id: "conn-1", desde: { componente: "cmp-1", terminal: "senal" }, hasta: { componente: "cmp-0", terminal: "anodo" } },
+  ]
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CONEXION_DUPLICADA_AL_CARGAR")
+  assert.equal("proyecto" in r, false, "un rechazo nunca trae un proyecto parcial")
+})
+
+// No-regresión (cuidado con sobre-rechazo): dos conexiones DISTINTAS que comparten un
+// terminal (mismo componente/terminal en un extremo, pero el OTRO extremo difiere) no
+// son ni self-loop ni duplicado — tienen que seguir cargando bien.
+test("loader-dos-conexiones-que-comparten-terminal-pero-son-distintas-carga-bien (no regresión, E2-01)", () => {
+  const doc = documentoValido()
+  doc.componentes.push({ id: "cmp-2", tipo: "resistencia", pines: {}, propiedades: {} })
+  doc.siguienteIdLocal = 4
+  doc.conexiones = [
+    { id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "senal" } },
+    { id: "conn-1", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-2", terminal: "a" } },
+  ]
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true, `no debería rechazar dos conexiones distintas que comparten un terminal: ${JSON.stringify(r.ok ? null : r.motivos)}`)
+  assert.equal(r.proyecto.conexiones.length, 2)
+})
+
 // ─────────────────── 6. referencia colgada (conexión/comportamiento) rechaza ─────────
 
 test("referencia-colgada-en-conexion-rechaza", () => {

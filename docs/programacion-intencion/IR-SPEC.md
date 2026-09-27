@@ -231,6 +231,68 @@ ramas ya pasaron auditoría (sin clamp). El chequeo nuevo de `validar-tecnico.ts
 REUSA `propagarMagnitud` como oráculo de compatibilidad — nunca duplica la regla, y
 nunca usa el `valor` convertido que devolvería (sólo diagnostica, no muta).
 
+### 6.3. Ampliación Phase 1.1 (remediación del hallazgo externo E2-01, CRÍTICO)
+
+"Sin auto-conexión (self-loop) / sin conexión duplicada" NO era un invariante
+estructural real de la IR — sólo existía como chequeo ad-hoc DENTRO de
+`aplicarConectar` (`operaciones.ts`, Gate 5). Ni `cargarProyecto()` (Gate 2) ni
+`validarProyecto()` (Gate 4) lo verificaban jamás: un documento cargado directo, o un
+`proyectoInicial` armado a mano que bypasea `Conectar` por completo, llegaba a
+`listo:true` con topología eléctricamente imposible y sin ningún diagnóstico
+(evidencia/e2/exp1b_selfloop_listo_true.mjs — self-loop + duplicado, `motivos:[]`,
+`listo:true`; evidencia/e2/exp5_motor_acepta_selfloop_inicial.mjs —
+`crearMotorDeProyecto({proyectoInicial})` se construye SIN lanzar
+`ErrorEstadoInicialInvalido`, falsificando textualmente este mismo §6 para esta clase
+exacta de rotura).
+
+**Definición de "misma conexión" (decisión con evidencia, NO semántica nueva).** El
+tipo `Conexion`/`ExtremoConexion` (`ir.ts`) no distingue dirección eléctrica —
+`desde`/`hasta` son etiquetas de posición del payload de `Conectar`, no polaridad — y
+el código YA vigente ANTES de Phase 1.1 (`mismoPar`, `operaciones.ts`, más el test
+explícito "conectar-duplicada-rechaza" de `tests/nucleo-operaciones.test.mjs`: "el
+MISMO par, aunque en orden invertido, ya está conectado") ya trataba A→B y B→A como
+la MISMA conexión. Phase 1.1 no reinterpreta ni endurece esa semántica: la extrae a
+`conexion.ts` (`mismaConexion`, comparación por conjunto de 2 elementos, no por
+igualdad posicional de `desde`/`hasta`) para reusarla, y fija el comportamiento con
+tests explícitos en las tres puertas de abajo (además del test ya existente a nivel
+operación). Cuidado con sobre-rechazo: dos conexiones DISTINTAS que comparten un
+único terminal (mismo componente/terminal en UN extremo, pero el OTRO extremo
+difiere) no son ni self-loop ni duplicado — `mismaConexion` compara el PAR completo
+de 2 elementos, nunca un extremo aislado (test de no-regresión en las tres puertas).
+
+**UNA sola implementación (`conexion.ts`: `esAutoconexion`, `mismaConexion`,
+`analizarConexionesInvalidas`), reusada por TODAS las puertas que producen un
+`Proyecto` — nunca una copia divergente:**
+
+- `operaciones.ts` (`aplicarConectar`, Gate 5) — defensa temprana YA existente,
+  reescrita para usar `esAutoconexion`/`mismaConexion` en vez de su copia local
+  (`mismoPar`, eliminada): `AUTOCONEXION_INVALIDA`/`CONEXION_DUPLICADA`, categoría
+  `operacion`, rechaza la operación ANTES de construir el estado nuevo (sin cambio de
+  comportamiento — mismos códigos, misma semántica, Path A `PIN_OCUPADO` intacto).
+- `cargador.ts` (Gate 2, momento de carga) — nuevos códigos
+  `AUTOCONEXION_INVALIDA_AL_CARGAR`/`CONEXION_DUPLICADA_AL_CARGAR`, categoría
+  `estructural`, corre DESPUÉS de `validarIdsYContador` (§6.1): un documento con ids
+  duplicados que ADEMÁS forma un par eléctrico duplicado reporta primero
+  `ID_DUPLICADO` — mismo orden ya establecido y probado por
+  "id-duplicado-entre-conexiones-rechaza" (E1-02).
+- `validar-estructural.ts` (Gate 4, SIN catálogo, corre dentro de `validarProyecto`)
+  — REUSA los códigos YA existentes `AUTOCONEXION_INVALIDA`/`CONEXION_DUPLICADA`, acá
+  con categoría `estructural` en vez de `operacion` (mismo criterio que
+  `UMBRAL_NO_FINITO` de §6.2: mismo código, dos categorías según quién lo emite).
+  Corre sobre CUALQUIER `Proyecto` sin importar la puerta de entrada — a diferencia de
+  §6.1 (unicidad/consistencia de ids), acá SÍ se agrega al pipeline continuo de
+  `validarProyecto`: el pedido explícito de Phase 1.1 para este hallazgo es que
+  corra también en `validarProyecto` directo, no sólo al cargar/construir, y no hay
+  fixture de test existente que dependa de un self-loop o conexión duplicada como
+  estado "sano" armado a mano (a diferencia del contador de ids, que sí tenía
+  fixtures así). Esto además cierra automáticamente la construcción del motor sobre
+  `proyectoInicial` (`motor.ts` ya corre `validarProyecto` ahí, sin cambios propios
+  en `motor.ts`) y la revalidación post-commit.
+
+`docs/programacion-intencion/OPERATIONS.md` §3 documenta la tabla actualizada de
+`Conectar` con esta ampliación; `COMPONENT-CATALOG.md` §6 agrega las filas de
+clasificación correspondientes.
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

@@ -244,6 +244,82 @@ test("comportamiento-valido-bajo-un-catalogo-deja-de-serlo-bajo-otro: revalidaci
   assert.equal(p.comportamientos[0], antes, "el comportamiento NO se reescribe: sigue siendo la MISMA referencia, pidiendo la capacidad vieja")
 })
 
+// ═══ Phase 1.1 (hallazgo externo E2-01, CRÍTICO) — "sin auto-conexión (self-loop) / sin
+// conexión duplicada" antes SÓLO existía como chequeo ad-hoc dentro de `aplicarConectar`
+// (`operaciones.ts`, Gate 5) — nunca llegaba a `validarProyecto`/`validarEstructural`: un
+// `Proyecto` con self-loop o conexión duplicada (armado a mano, o un `proyectoInicial`
+// que bypasea la operación) validaba SIN ningún motivo, hasta `listo:true`
+// (evidencia/e2/exp1b_selfloop_listo_true.mjs). Se cierra reusando la MISMA
+// implementación (`conexion.ts`, `analizarConexionesInvalidas`) que también reusan
+// `cargador.ts` y `operaciones.ts` — nunca una copia divergente. ═══════════════════════
+
+test("validarEstructural-detecta-selfloop-en-conexion (hallazgo externo E2-01)", () => {
+  let p = proyectoBase()
+  p = conResistencia(p, { id: "cmp-0" })
+  p = conConexion(p, { id: "conn-0", desdeCmp: "cmp-0", desdeTerm: "a", hastaCmp: "cmp-0", hastaTerm: "a" })
+  const motivos = validarEstructural(p)
+  const motivo = motivos.find((m) => m.codigo === "AUTOCONEXION_INVALIDA")
+  assert.ok(motivo, `debe aparecer AUTOCONEXION_INVALIDA: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.categoria, "estructural")
+  assert.equal(motivo.severidad, "blocking")
+  assert.equal(motivo.clasificacion, "rechazo")
+  assert.equal(motivo.entidad.tipo, "conexion")
+  assert.equal(motivo.entidad.id, "conn-0")
+})
+
+// Definición de "misma conexión" fijada por contrato (decisión con evidencia, NO nueva
+// semántica): `ExtremoConexion`/`Conexion` (ir.ts) no distinguen dirección, y el código
+// YA vigente ANTES de Phase 1.1 (`mismoPar` en operaciones.ts, y el test
+// "conectar-duplicada-rechaza" de nucleo-operaciones.test.mjs: "el MISMO par, aunque en
+// orden invertido, ya está conectado") ya trataba A→B y B→A como la MISMA conexión —
+// este test fija ese mismo comportamiento también en validar-estructural.ts (Gate 4).
+test("validarEstructural-detecta-conexion-duplicada-con-extremos-invertidos (hallazgo externo E2-01)", () => {
+  let p = proyectoBase()
+  p = conResistencia(p, { id: "cmp-0" })
+  p = conResistencia(p, { id: "cmp-1" })
+  p = conConexion(p, { id: "conn-0", desdeCmp: "cmp-0", desdeTerm: "a", hastaCmp: "cmp-1", hastaTerm: "a" })
+  p = conConexion(p, { id: "conn-1", desdeCmp: "cmp-1", desdeTerm: "a", hastaCmp: "cmp-0", hastaTerm: "a" })
+  const motivos = validarEstructural(p)
+  const motivo = motivos.find((m) => m.codigo === "CONEXION_DUPLICADA")
+  assert.ok(motivo, `debe aparecer CONEXION_DUPLICADA: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.categoria, "estructural")
+  assert.equal(motivo.clasificacion, "rechazo")
+  assert.equal(motivo.entidad.id, "conn-1", "sólo la SEGUNDA aparición del par se reporta, no la primera")
+})
+
+test("validarProyecto-directo-rechaza-selfloop-con-listo-false (hallazgo externo E2-01)", () => {
+  // dht22 (sin `requisitos` de catálogo, a diferencia de led/resistencia-serie): aísla
+  // el self-loop como ÚNICA fuente de blocking, sin ruido de otro motivo representable.
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1", componentes: [...p.componentes, { id: "cmp-0", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conConexion(p, { id: "conn-0", desdeCmp: "cmp-0", desdeTerm: "senal", hastaCmp: "cmp-0", hastaTerm: "senal" })
+  const motivos = validarProyecto(p, catalogo)
+  const readiness = derivarReadiness(p, motivos)
+  assert.ok(
+    motivos.some((m) => m.codigo === "AUTOCONEXION_INVALIDA" && m.clasificacion === "rechazo"),
+    `validarProyecto debe rechazar el self-loop: ${JSON.stringify(motivos)}`,
+  )
+  assert.equal(readiness.incompleto, false, "placa y pin asignados: no debería estar incompleto por esa razón")
+  assert.equal(readiness.listo, false, "un self-loop nunca puede estar listo:true")
+})
+
+// No-regresión (cuidado con sobre-rechazo): dos conexiones DISTINTAS que comparten un
+// terminal (mismo componente/terminal en un extremo, pero el OTRO extremo difiere) no
+// son ni self-loop ni duplicado — tienen que seguir sin ningún motivo.
+test("validarEstructural-no-rechaza-conexiones-distintas-que-comparten-terminal (no regresión, E2-01)", () => {
+  let p = proyectoBase()
+  p = conResistencia(p, { id: "cmp-0" })
+  p = conResistencia(p, { id: "cmp-1" })
+  p = conResistencia(p, { id: "cmp-2" })
+  p = conConexion(p, { id: "conn-0", desdeCmp: "cmp-0", desdeTerm: "a", hastaCmp: "cmp-1", hastaTerm: "a" })
+  p = conConexion(p, { id: "conn-1", desdeCmp: "cmp-0", desdeTerm: "a", hastaCmp: "cmp-2", hastaTerm: "a" })
+  const motivos = validarEstructural(p)
+  assert.ok(
+    !motivos.some((m) => m.codigo === "AUTOCONEXION_INVALIDA" || m.codigo === "CONEXION_DUPLICADA"),
+    `dos conexiones distintas que comparten un terminal NUNCA deben rechazarse: ${JSON.stringify(motivos)}`,
+  )
+})
+
 // ───────────────────────── 6. incompleto + invalido simultáneos ─────────────────────
 
 test("incompleto-e-invalido-simultaneos", () => {

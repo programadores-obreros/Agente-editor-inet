@@ -41,6 +41,22 @@
 //   `validar-tecnico.ts` para diagnosticar, de forma continua (no sólo "al
 //   reemplazar" un sensor), que `umbral.magnitud`/`unidad` no coinciden con la
 //   capacidad real del sensor vigente. Ver `validar-tecnico.ts` para el detalle.
+//
+// Phase 1.1 (hallazgo externo E2-01, CRÍTICO) centraliza en `conexion.ts`
+// (`analizarConexionesInvalidas`) el invariante "sin auto-conexión (self-loop) / sin
+// conexión duplicada", todos con `entidad.tipo: "conexion"` cuando corresponde, ver
+// `docs/programacion-intencion/IR-SPEC.md` §6.3:
+// - `AUTOCONEXION_INVALIDA`/`CONEXION_DUPLICADA` — códigos YA existentes
+//   (`operaciones.ts`, categoria "operacion", rechazo) — Phase 1.1 los REUSA desde
+//   `validar-estructural.ts` (Gate 4, SIN catálogo, categoria "estructural") para que
+//   el invariante corra en TODA puerta que produzca un `Proyecto` (post-carga,
+//   `proyectoInicial`/construcción del motor, post-commit, `validarProyecto` directo)
+//   y no sólo dentro de la operación `Conectar`. Mismo código, dos categorías según
+//   quién lo emite — mismo criterio que `UMBRAL_NO_FINITO`.
+// - `AUTOCONEXION_INVALIDA_AL_CARGAR`/`CONEXION_DUPLICADA_AL_CARGAR` — NUEVOS,
+//   categoria "estructural", clasificacion "rechazo" siempre — `cargador.ts` (Gate 2),
+//   momento de carga: mismo criterio de distinción momento-de-carga vs.
+//   momento-de-operación que ya usa `UMBRAL_NO_FINITO_AL_CARGAR`.
 
 /** Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion". */
 export type CategoriaMotivo =

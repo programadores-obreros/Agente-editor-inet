@@ -105,6 +105,10 @@ se implemente Gate 5):
 | `CAPACIDAD_INEXISTENTE_EN_CATALOGO` (Phase 1.1, E1-03) | blocking | tecnica | **REPRESENTABLE** | `validar-tecnico.ts` (Gate 4) |
 | `UMBRAL_NO_FINITO` (Phase 1.1, E1-03) | blocking | estructural | **RECHAZO** | `validar-estructural.ts` (Gate 4) / `operaciones.ts` (Gate 5, categoría `operacion`) |
 | `UMBRAL_NO_FINITO_AL_CARGAR` (Phase 1.1, E1-03) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
+| `AUTOCONEXION_INVALIDA` (Phase 1.1, E2-01) | blocking | estructural / operacion | **RECHAZO** | `validar-estructural.ts` (Gate 4) / `operaciones.ts` (Gate 5, categoría `operacion`) |
+| `CONEXION_DUPLICADA` (Phase 1.1, E2-01) | blocking | estructural / operacion | **RECHAZO** | `validar-estructural.ts` (Gate 4) / `operaciones.ts` (Gate 5, categoría `operacion`) |
+| `AUTOCONEXION_INVALIDA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
+| `CONEXION_DUPLICADA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
 
 **Regla general que Gate 4 tiene que respetar:** todo lo que este documento clasifica
 `REPRESENTABLE` significa que la operación que lo provoca **COMMITEA** — el motivo

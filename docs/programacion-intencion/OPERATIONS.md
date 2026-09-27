@@ -70,7 +70,7 @@ rango sin esa clasificación sería improvisar sobre un contrato sin cerrar.
 | `AgregarComponente` | `{tipo: string; propiedades?: object}` | `TIPO_CATALOGO_DESCONOCIDO` si el catálogo no reconoce `tipo` | — |
 | `QuitarComponente` | `{componente: string}` | `REFERENCIA_INEXISTENTE` si no existe · `REMOCION_CON_DEPENDIENTES` si tiene conexiones/comportamientos activos (sin cascada implícita) | — |
 | `AsignarPin` | `{componente: string; terminal: string; pin: string \| null}` | `REFERENCIA_INEXISTENTE` (componente) · `TERMINAL_NO_DECLARADO` (terminal no existe en el catálogo del componente) · `PIN_INEXISTENTE_EN_PLACA` (el pin no existe en la placa activa) | `PIN_OCUPADO`, `CAPACIDAD_PIN_INCOMPATIBLE` (los detecta `validarProyecto`/`validar-tecnico.ts`, Gate 4 — la operación en sí NO los chequea, así que un pin ocupado o incompatible SE ASIGNA igual) |
-| `Conectar` | `{desde: Extremo; hasta: Extremo}` | `REFERENCIA_INEXISTENTE` (componente) · `TERMINAL_NO_DECLARADO` (terminal) · `AUTOCONEXION_INVALIDA` (mismo componente+terminal en los dos extremos — decisión del orquestador: dos extremos DISTINTOS es invariante estructural) · `CONEXION_DUPLICADA` (el mismo par exacto ya está conectado — decisión del orquestador: un par de terminales conectado a lo sumo una vez) | — |
+| `Conectar` | `{desde: Extremo; hasta: Extremo}` | `REFERENCIA_INEXISTENTE` (componente) · `TERMINAL_NO_DECLARADO` (terminal) · `AUTOCONEXION_INVALIDA` (mismo componente+terminal en los dos extremos — decisión del orquestador: dos extremos DISTINTOS es invariante estructural) · `CONEXION_DUPLICADA` (el mismo par exacto ya está conectado, sin importar el orden de los extremos — decisión del orquestador: un par de terminales conectado a lo sumo una vez; Phase 1.1, hallazgo E2-01: ambos códigos se REUSAN también desde `validar-estructural.ts`, Gate 4, categoría `estructural`, así que el invariante corre en TODA puerta — loader, `proyectoInicial`/construcción del motor, post-commit, `validarProyecto` directo — no sólo dentro de esta operación) | — |
 | `Desconectar` | `{conexion: string}` | `REFERENCIA_INEXISTENTE` si no existe | — |
 | `SetComportamiento` | `{comportamiento: {id?; cuando; entonces}}` | `REFERENCIA_INEXISTENTE` (sensor/actuador no existen) · `CAPACIDAD_NO_DECLARADA` (la `capacidad` no está en el catálogo del sensor) · `UMBRAL_NO_FINITO` (Phase 1.1, hallazgo E1-03: `umbral.valor` no es `Number.isFinite` — NaN/±Infinity no son representables en el documento JSON persistido) | `CAPACIDAD_INEXISTENTE_EN_CATALOGO`, `MAGNITUD_INCOMPATIBLE` (Phase 1.1, hallazgo E1-03: los detecta `validarProyecto`/`validar-tecnico.ts`, Gate 4 — la operación en sí NO los chequea, así que un comportamiento con capacidad/magnitud/unidad ya incompatibles con el catálogo vigente SE ACEPTA igual, mismo criterio que `PIN_OCUPADO` de `AsignarPin`) |
 | `CambiarComponente` | `{componente: string; tipoNuevo: string}` | `REFERENCIA_INEXISTENTE` (componente) · `TIPO_CATALOGO_DESCONOCIDO` (tipoNuevo no existe) | `RANGO_INCOMPATIBLE_AL_REEMPLAZAR`, `CAPACIDAD_INCOMPATIBLE_AL_REEMPLAZAR`, `UNIDAD_CONVERTIDA` (vía `reemplazarSensor`, Gate 3 — la operación SIEMPRE commitea si `tipoNuevo` existe; lo que cambia por rama es qué motivo deja) |
@@ -79,8 +79,9 @@ Dos códigos son NUEVOS en este documento (no estaban en la tabla de Gate 3/`COM
 porque resuelven los dos puntos que el diseño consolidado dejaba explícitamente
 abiertos en su §9, y que el orquestador cerró antes de este gate):
 
-- `AUTOCONEXION_INVALIDA` — categoría `operacion`, rechazo.
-- `CONEXION_DUPLICADA` — categoría `operacion`, rechazo.
+- `AUTOCONEXION_INVALIDA` — categoría `operacion`, rechazo (Phase 1.1: también
+  emitido, categoría `estructural`, por `validar-estructural.ts` — ver más abajo).
+- `CONEXION_DUPLICADA` — categoría `operacion`, rechazo (Phase 1.1: ídem).
 - `CAPACIDAD_NO_DECLARADA` — categoría `operacion`, rechazo (el "TERMINAL_NO_DECLARADO
   equivalente para capacidad" que el diseño consolidado pedía sin darle nombre final).
 
@@ -103,6 +104,25 @@ nunca miraba `proyecto.comportamientos`, y `aplicarSetComportamiento` aceptaba u
   categoría `semantica`, representable), REUSADO desde `validar-tecnico.ts` para
   diagnosticar de forma continua que `umbral.magnitud`/`unidad` no coinciden con la
   capacidad real del sensor vigente (no sólo "al reemplazar" un sensor).
+
+Phase 1.1 (remediación del hallazgo externo E2-01, CRÍTICO — "sin auto-conexión /
+sin conexión duplicada" nunca era un invariante real de la IR, sólo un chequeo ad-hoc
+dentro de esta misma operación; ver `IR-SPEC.md` §6.3 para el detalle completo)
+agrega:
+
+- `AUTOCONEXION_INVALIDA_AL_CARGAR`/`CONEXION_DUPLICADA_AL_CARGAR` — NUEVOS,
+  categoría `estructural`, rechazo siempre, `cargador.ts` (Gate 2, momento de carga).
+- `AUTOCONEXION_INVALIDA`/`CONEXION_DUPLICADA` — códigos YA existentes de esta tabla,
+  ahora TAMBIÉN emitidos por `validar-estructural.ts` (Gate 4, SIN catálogo, corre
+  dentro de `validarProyecto`) con categoría `estructural` en vez de `operacion` —
+  mismo código, dos categorías según quién lo emite, mismo criterio que
+  `UMBRAL_NO_FINITO`. Cierra la construcción del motor sobre `proyectoInicial` y la
+  revalidación post-commit sin cambios propios en `motor.ts` (`validarProyecto` ya
+  corre ahí).
+- UNA sola implementación (`conexion.ts`: `esAutoconexion`, `mismaConexion`,
+  `analizarConexionesInvalidas`), reusada por las tres puertas de arriba — la
+  defensa temprana de esta operación se reescribió para usar las mismas funciones en
+  vez de una copia local (`mismoPar`, eliminada), sin cambio de comportamiento.
 
 ## 5. Invariante de vista (punto abierto #3 de `DECISIONS.md`, cerrado acá)
 

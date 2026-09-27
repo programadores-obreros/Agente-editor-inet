@@ -23,9 +23,24 @@
 // (`JSON.stringify(NaN)`/`JSON.stringify(Infinity)` → `null`, `canonico.ts`) — a
 // diferencia de una capacidad/magnitud/unidad incompatible con el catálogo vigente
 // (eso SÍ es representable, ver `validar-tecnico.ts`, categoría A del brief §8.1/§9.1).
+//
+// Phase 1.1 (hallazgo externo E2-01, CRÍTICO): "sin auto-conexión (self-loop) / sin
+// conexión duplicada" antes SÓLO existía como chequeo ad-hoc dentro de
+// `aplicarConectar` (`operaciones.ts`) — nunca llegaba a `validarProyecto`, así que un
+// `proyectoInicial` armado a mano (o cualquier `Proyecto` que bypasee la operación)
+// quedaba con topología eléctricamente imposible sin ningún diagnóstico, hasta
+// `listo:true` (evidencia/e2/exp5_motor_acepta_selfloop_inicial.mjs). Se cierra acá
+// con la MISMA implementación (`conexion.ts`, `analizarConexionesInvalidas`) que
+// reusan `cargador.ts` (Gate 2, momento de carga, códigos `*_AL_CARGAR`) y
+// `operaciones.ts` (defensa temprana de la operación, categoría `operacion`) — nunca
+// una copia divergente. Corre acá con los mismos códigos que `operaciones.ts` ya
+// usaba (`AUTOCONEXION_INVALIDA`/`CONEXION_DUPLICADA`), categoría `estructural` en vez
+// de `operacion`: mismo criterio que `UMBRAL_NO_FINITO` de arriba (mismo código, dos
+// categorías según quién lo emite, IR-SPEC.md §6.2/§6.3).
 
 import type { Proyecto } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
+import { analizarConexionesInvalidas } from "./conexion.ts"
 
 export function validarEstructural(proyecto: Proyecto): readonly Motivo[] {
   const motivos: Motivo[] = []
@@ -43,6 +58,18 @@ export function validarEstructural(proyecto: Proyecto): readonly Motivo[] {
   for (const cx of proyecto.conexiones) {
     if (!idsComponentes.has(cx.desde.componente)) motivos.push(refRota("conexion", cx.id, cx.desde.componente))
     if (!idsComponentes.has(cx.hasta.componente)) motivos.push(refRota("conexion", cx.id, cx.hasta.componente))
+  }
+
+  // Phase 1.1 (hallazgo externo E2-01, CRÍTICO) — ver nota de arriba: corre sobre
+  // TODO el array de conexiones, no dentro del loop de referencias de arriba (una
+  // conexión con referencia colgada además self-loop/duplicada reporta AMBOS motivos,
+  // nunca se pisan entre sí).
+  const analisisConexiones = analizarConexionesInvalidas(proyecto.conexiones)
+  for (const idAutoconexion of analisisConexiones.autoconexiones) {
+    motivos.push({ codigo: "AUTOCONEXION_INVALIDA", categoria: "estructural", severidad: "blocking", clasificacion: "rechazo", entidad: { tipo: "conexion", id: idAutoconexion } })
+  }
+  for (const idDuplicada of analisisConexiones.duplicadas) {
+    motivos.push({ codigo: "CONEXION_DUPLICADA", categoria: "estructural", severidad: "blocking", clasificacion: "rechazo", entidad: { tipo: "conexion", id: idDuplicada } })
   }
   for (const b of proyecto.comportamientos) {
     if (!idsComponentes.has(b.cuando.sensor)) motivos.push(refRota("comportamiento", b.id, b.cuando.sensor))
