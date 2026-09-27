@@ -5,6 +5,29 @@
 // reusando por REFERENCIA cualquier entidad no tocada (`Array.prototype.map`, nunca
 // `structuredClone` de todo el árbol). En rechazo, el `Proyecto` devuelto es la MISMA
 // referencia de entrada, nunca un objeto parcialmente mutado.
+//
+// Phase 1.1 (hallazgo externo E2-02, CRÍTICO, PHASE_1_EXTERNAL_FINDINGS.md): el
+// `switch` de `aplicarOperacion` no tenía `default`, y no existía ninguna validación
+// de FORMA en runtime del sobre (`SobreOperacion`) ni del `payload` antes del
+// despacho — el cast `operacion.payload as {...}` de cada rama es sólo de
+// compilación (TypeScript, "sintaxis borrable"): en runtime, cualquier JSON crudo
+// (agente LLM, futuro transporte HTTP, brief §37) llega tal cual. Un `tipo`
+// desconocido caía por el switch sin `default` y devolvía `undefined` en vez de un
+// `ResultadoAplicacion`, que el llamador (`ejecutarOperacion`/`motor.ts`)
+// desestructuraba crudo (`TypeError: Cannot destructure property 'proyecto' of
+// undefined`); un `payload` null/undefined/con forma incorrecta hacía explotar un
+// `TypeError` leyendo una propiedad de `null`/`undefined` dentro del `aplicarXxx`
+// correspondiente. Ninguno de los dos devolvía un `Motivo` estructurado — violaba
+// brief §12 ("resultado estructurado tanto en éxito como en error") — y el crash se
+// propagaba SIN capturar hasta `motor.aplicar()` (evidencia/e2/
+// exp2_malformed_operations.mjs, exp2b_motor_crash_propagation.mjs). `analizarSobreOperacion`/
+// `validarFormaPayload` (más abajo) cierran esto ANTES del switch — que además suma un
+// `default` de defensa en profundidad (mismo criterio de "doble defensa" que E1-03/
+// E2-01) — para las 3 puertas públicas del motor (`proponer`/`aplicar`/
+// `aplicarTransaccion`, que llaman a `aplicarOperacion` una vez por operación dentro
+// del lote) y para quien invoque `aplicarOperacion`/`ejecutarOperacion` directo. Ver
+// `docs/programacion-intencion/OPERATIONS.md` §9 para el contrato completo, incluida
+// la decisión de E2-03 (campo extra desconocido en el sobre).
 
 import type { Componente, ComportamientoRegla, Conexion, Proyecto } from "./ir.ts"
 import type { Catalogo } from "./catalogo.ts"
@@ -70,11 +93,142 @@ function tieneTerminalDeclarado(catalogo: Catalogo, tipoComponente: string, term
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// Validación de FORMA del sobre y del payload — Phase 1.1, hallazgo externo E2-02
+// (CRÍTICO). Corre ANTES del switch/dispatch. Nunca valida referencias contra
+// `proyecto`/`catalogo` (eso lo siguen haciendo los `aplicarXxx` de siempre) ni
+// valores de enum sintácticamente válidos pero inventados (`comparador`/`accion`/
+// `pin` con un string no vacío que no es uno de los valores reales — eso es
+// responsabilidad de la validación técnica/referencial existente, no de acá): sólo
+// la forma mínima que cada `aplicarXxx` necesita para no explotar en runtime.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const TIPOS_OPERACION_VALIDOS: readonly TipoOperacion[] = ["SetPlaca", "AgregarComponente", "QuitarComponente", "AsignarPin", "Conectar", "Desconectar", "SetComportamiento", "CambiarComponente"]
+const ACTORES_VALIDOS: readonly string[] = ["agente", "navegador"]
+/** Claves conocidas del sobre (`SobreOperacion`, §2 de OPERATIONS.md) — mismo criterio
+ * fail-closed que `CLAVES_PROYECTO` en `cargador.ts` (Gate 2, hallazgo E2-03). */
+const CLAVES_SOBRE_VALIDAS: readonly string[] = ["idOperacion", "idTransaccion", "actor", "baseRevision", "tipo", "payload"]
+
+function esObjetoPlano(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+}
+
+function esStringNoVacio(v: unknown): v is string {
+  return typeof v === "string" && v.length > 0
+}
+
+/** Sólo TIPO — a diferencia de `esStringNoVacio`, un string VACÍO pasa. Se usa para
+ * los identificadores DENTRO de `payload` (`componente`/`terminal`/`conexion`/
+ * `placa`/`tipo`/`sensor`/`capacidad`/...): un string vacío ahí nunca explota (es un
+ * valor leído, no destructurado más), sólo falla la búsqueda referencial que el
+ * `aplicarXxx` correspondiente ya hace (`REFERENCIA_INEXISTENTE`/
+ * `TERMINAL_NO_DECLARADO`/`PLACA_DESCONOCIDA`/etc., ver `tests/nucleo-adversarial.
+ * test.mjs`, "AsignarPin con terminal vacío"/"Conectar con componente vacío") — exigir
+ * acá no-vacío sería sobre-rechazar un caso que el resto del pipeline YA diagnostica
+ * bien, con un código más específico. `esStringNoVacio` queda sólo para el SOBRE
+ * (`idOperacion`/`idTransaccion`, más abajo), donde no hay ninguna otra defensa. */
+function esString(v: unknown): v is string {
+  return typeof v === "string"
+}
+
+function esExtremoConexion(v: unknown): v is { componente: string; terminal: string } {
+  return esObjetoPlano(v) && esString(v.componente) && esString(v.terminal)
+}
+
+/**
+ * Valida la FORMA del sobre (`idOperacion`/`idTransaccion`/`actor`/`tipo` — nunca
+ * `baseRevision`, que sigue siendo exclusivamente responsabilidad de `motor.ts`, ver
+ * OPERATIONS.md §2/§9) y devuelve el primer `Motivo` de rechazo, o `null` si es
+ * válido.
+ *
+ * Phase 1.1 (hallazgo externo E2-03, MENOR): una clave desconocida en el sobre (ej.
+ * `extraField`) se rechaza con `CLAVE_DESCONOCIDA` — MISMO código que ya usa
+ * `cargador.ts` para un documento con claves desconocidas, categoría `operacion` acá
+ * en vez de `estructural` (mismo criterio ya establecido por `AUTOCONEXION_INVALIDA`/
+ * `UMBRAL_NO_FINITO`: mismo código, dos categorías según quién lo emite) — cierra la
+ * inconsistencia fail-closed entre las dos puertas de entrada del núcleo sin inventar
+ * un código nuevo para lo mismo.
+ */
+function analizarSobreOperacion(operacion: unknown): Motivo | null {
+  if (!esObjetoPlano(operacion)) {
+    return rechazo("SOBRE_OPERACION_INVALIDO", { razon: "el sobre de operación no es un objeto" })
+  }
+  const clavesDesconocidas = Object.keys(operacion).filter((k) => !CLAVES_SOBRE_VALIDAS.includes(k))
+  if (clavesDesconocidas.length > 0) {
+    return rechazo("CLAVE_DESCONOCIDA", { claves: clavesDesconocidas })
+  }
+  if (!esStringNoVacio(operacion.idOperacion)) {
+    return rechazo("SOBRE_OPERACION_INVALIDO", { razon: "idOperacion ausente o no es un string no vacío" })
+  }
+  if ("idTransaccion" in operacion && operacion.idTransaccion !== undefined && !esStringNoVacio(operacion.idTransaccion)) {
+    return rechazo("SOBRE_OPERACION_INVALIDO", { razon: "idTransaccion presente pero no es un string no vacío" })
+  }
+  if (!ACTORES_VALIDOS.includes(operacion.actor as string)) {
+    return rechazo("SOBRE_OPERACION_INVALIDO", { razon: "actor ausente o no es 'agente'/'navegador'", actorRecibido: operacion.actor })
+  }
+  if (!esStringNoVacio(operacion.tipo) || !TIPOS_OPERACION_VALIDOS.includes(operacion.tipo as TipoOperacion)) {
+    return rechazo("TIPO_OPERACION_DESCONOCIDO", { tipoRecibido: operacion.tipo })
+  }
+  return null
+}
+
+/**
+ * Valida que `payload` tenga, como mínimo, la forma que el `aplicarXxx` de `tipo`
+ * necesita para no explotar leyendo una propiedad de `null`/`undefined`/un array.
+ * Devuelve una razón en texto (para `datos.razon`) o `null` si la forma alcanza.
+ */
+function validarFormaPayload(tipo: TipoOperacion, payload: unknown): string | null {
+  switch (tipo) {
+    case "SetPlaca":
+      return esObjetoPlano(payload) && esString(payload.placa) ? null : "se espera {placa: string}"
+    case "AgregarComponente": {
+      if (!esObjetoPlano(payload) || !esString(payload.tipo)) return "se espera {tipo: string}"
+      if (payload.propiedades !== undefined && !esObjetoPlano(payload.propiedades)) return "propiedades debe ser un objeto si está presente"
+      return null
+    }
+    case "QuitarComponente":
+      return esObjetoPlano(payload) && esString(payload.componente) ? null : "se espera {componente: string}"
+    case "AsignarPin": {
+      if (!esObjetoPlano(payload) || !esString(payload.componente) || !esString(payload.terminal)) return "se espera {componente, terminal: string}"
+      if (payload.pin !== null && !esString(payload.pin)) return "pin debe ser string o null"
+      return null
+    }
+    case "Conectar":
+      return esObjetoPlano(payload) && esExtremoConexion(payload.desde) && esExtremoConexion(payload.hasta) ? null : "se espera {desde, hasta: {componente, terminal}}"
+    case "Desconectar":
+      return esObjetoPlano(payload) && esString(payload.conexion) ? null : "se espera {conexion: string}"
+    case "SetComportamiento": {
+      if (!esObjetoPlano(payload) || !esObjetoPlano(payload.comportamiento)) return "se espera {comportamiento: {...}}"
+      const c = payload.comportamiento
+      if (c.id !== undefined && !esString(c.id)) return "comportamiento.id debe ser string si está presente"
+      if (!esObjetoPlano(c.cuando) || !esString(c.cuando.sensor) || !esString(c.cuando.capacidad) || !esString(c.cuando.comparador)) {
+        return "comportamiento.cuando incompleto (se esperan sensor/capacidad/comparador)"
+      }
+      if (!esObjetoPlano(c.cuando.umbral) || typeof c.cuando.umbral.valor !== "number" || !esString(c.cuando.umbral.unidad) || !esString(c.cuando.umbral.magnitud)) {
+        return "comportamiento.cuando.umbral incompleto (se esperan valor numérico/unidad/magnitud)"
+      }
+      if (!esObjetoPlano(c.entonces) || !esString(c.entonces.actuador) || !esString(c.entonces.accion)) {
+        return "comportamiento.entonces incompleto (se esperan actuador/accion)"
+      }
+      return null
+    }
+    case "CambiarComponente":
+      return esObjetoPlano(payload) && esString(payload.componente) && esString(payload.tipoNuevo) ? null : "se espera {componente, tipoNuevo: string}"
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // aplicarOperacion — el dispatch, switch por tipo (nunca por id de componente)
 // ════════════════════════════════════════════════════════════════════════════════════
 
 export function aplicarOperacion(proyecto: Proyecto, operacion: SobreOperacion, catalogo: Catalogo): ResultadoAplicacion {
-  switch (operacion.tipo) {
+  const motivoSobre = analizarSobreOperacion(operacion)
+  if (motivoSobre) return { proyecto, motivos: [motivoSobre] }
+
+  const tipo = operacion.tipo
+  const razonPayload = validarFormaPayload(tipo, operacion.payload)
+  if (razonPayload) return { proyecto, motivos: [rechazo("PAYLOAD_OPERACION_INVALIDO", { tipo, razon: razonPayload })] }
+
+  switch (tipo) {
     case "SetPlaca":
       return aplicarSetPlaca(proyecto, operacion.payload as { placa: string }, catalogo)
     case "AgregarComponente":
@@ -91,6 +245,13 @@ export function aplicarOperacion(proyecto: Proyecto, operacion: SobreOperacion, 
       return aplicarSetComportamiento(proyecto, operacion.payload as { comportamiento: Omit<ComportamientoRegla, "id"> & { id?: string } }, catalogo)
     case "CambiarComponente":
       return aplicarCambiarComponente(proyecto, operacion.payload as { componente: string; tipoNuevo: string }, catalogo)
+    default:
+      // Defensa en profundidad (nunca alcanzable hoy: `analizarSobreOperacion` ya
+      // rechazó cualquier `tipo` fuera de `TIPOS_OPERACION_VALIDOS` más arriba) —
+      // mismo criterio de "doble defensa" que E1-03/E2-01: si una regla futura
+      // agranda `TipoOperacion` sin agregar su rama acá, esto sigue devolviendo un
+      // `Motivo` estructurado en vez de `undefined`.
+      return { proyecto, motivos: [rechazo("TIPO_OPERACION_DESCONOCIDO", { tipoRecibido: tipo })] }
   }
 }
 

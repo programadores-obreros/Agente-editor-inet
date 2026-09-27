@@ -464,3 +464,43 @@ test("constructor-rechaza-proyectoInicial-con-conexion-duplicada (hallazgo exter
     "un proyectoInicial con dos conexiones que conectan el MISMO par (orden invertido) NUNCA debe llegar a construir un motor operable",
   )
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E2-02 (CRÍTICO): confirma, en la FRONTERA PÚBLICA del
+// motor (`aplicar`/`aplicarTransaccion`/`proponer`, no sólo `aplicarOperacion` en
+// aislamiento — ver tests/nucleo-operaciones.test.mjs), que una operación malformada
+// NUNCA propaga una excepción cruda. Reproducción original:
+// evidencia/e2/exp2b_motor_crash_propagation.mjs.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan una excepcion cruda ante una operacion malformada (hallazgo externo E2-02)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const revisionAntes = motor.getProyecto().revision
+  const llamadasAntes = almacen.llamadasGuardar.length
+  const operacionMalformada = { idOperacion: "op-crash", actor: "agente", baseRevision: 0, tipo: "Conectar", payload: {} }
+
+  let r1
+  assert.doesNotThrow(() => {
+    r1 = motor.aplicar(operacionMalformada)
+  }, "motor.aplicar NUNCA debe lanzar una excepcion cruda")
+  assert.equal(r1.ok, false)
+  assert.equal(r1.motivos[0].codigo, "PAYLOAD_OPERACION_INVALIDO")
+
+  let r2
+  assert.doesNotThrow(() => {
+    r2 = motor.aplicarTransaccion([operacionMalformada])
+  }, "motor.aplicarTransaccion NUNCA debe lanzar una excepcion cruda")
+  assert.equal(r2.ok, false)
+  assert.equal(r2.motivos[0].codigo, "PAYLOAD_OPERACION_INVALIDO")
+
+  let r3
+  assert.doesNotThrow(() => {
+    r3 = motor.proponer([operacionMalformada])
+  }, "motor.proponer NUNCA debe lanzar una excepcion cruda")
+  assert.equal(r3.ok, false)
+  assert.equal(r3.motivos[0].codigo, "PAYLOAD_OPERACION_INVALIDO")
+
+  assert.equal(motor.getProyecto().revision, revisionAntes, "el canonico no cambio con ninguno de los 3 intentos")
+  assert.equal(almacen.llamadasGuardar.length, llamadasAntes, "ninguno de los 3 intentos llamo a guardar")
+  assert.equal(motor.obtenerBufferUndo().length, 0, "el buffer de undo no se toco")
+})

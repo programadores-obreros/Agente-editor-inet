@@ -480,3 +480,82 @@ test("ejecutarOperacion rechaza si la validacion post-aplicacion trae un motivo 
   )
   assert.equal(r.proyecto, roto, "el proyecto devuelto debe ser el ORIGINAL (sin el componente agregado) — nunca un resultado aceptado a medias")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E2-02 (CRÍTICO, PHASE_1_EXTERNAL_FINDINGS.md): el
+// `switch` de `aplicarOperacion` no tenía `default`, y no existía ninguna validación
+// de FORMA en runtime del sobre (`SobreOperacion`) ni del `payload` antes del
+// despacho — el cast `operacion.payload as {...}` de cada rama es sólo de
+// compilación. Un `tipo` desconocido, un `payload` null/undefined/con forma
+// incorrecta, o un `actor`/`idOperacion`/`idTransaccion` inválidos hacían explotar un
+// `TypeError` crudo (nunca un `Motivo` estructurado — brief §12), que se propagaba
+// SIN capturar hasta `motor.aplicar()`. Reproducción original:
+// evidencia/e2/exp2_malformed_operations.mjs, exp2b_motor_crash_propagation.mjs. Ver
+// docs/programacion-intencion/OPERATIONS.md §9 para el contrato completo (sobre +
+// códigos nuevos).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("aplicarOperacion/ejecutarOperacion NUNCA lanzan una excepcion cruda ante un sobre/payload malformado — siempre un Motivo estructurado (hallazgo externo E2-02)", () => {
+  const p = proyectoBase()
+  const casos = [
+    { nombre: "tipo desconocido (string arbitrario)", operacion: { idOperacion: "op-a", actor: "agente", baseRevision: 0, tipo: "TipoQueNoExiste", payload: {} }, codigoEsperado: "TIPO_OPERACION_DESCONOCIDO" },
+    { nombre: "tipo es null", operacion: { idOperacion: "op-b", actor: "agente", baseRevision: 0, tipo: null, payload: {} }, codigoEsperado: "TIPO_OPERACION_DESCONOCIDO" },
+    { nombre: "payload null en SetPlaca", operacion: { idOperacion: "op-c", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: null }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "payload undefined en AgregarComponente", operacion: { idOperacion: "op-d", actor: "agente", baseRevision: 0, tipo: "AgregarComponente", payload: undefined }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "Conectar con payload {} (sin desde/hasta)", operacion: { idOperacion: "op-e", actor: "agente", baseRevision: 0, tipo: "Conectar", payload: {} }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "Conectar con desde=null", operacion: { idOperacion: "op-f", actor: "agente", baseRevision: 0, tipo: "Conectar", payload: { desde: null, hasta: { componente: "x", terminal: "y" } } }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "Conectar con payload array en vez de objeto", operacion: { idOperacion: "op-g", actor: "agente", baseRevision: 0, tipo: "Conectar", payload: [] }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "actor faltante (campo requerido ausente)", operacion: { idOperacion: "op-h", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }, codigoEsperado: "SOBRE_OPERACION_INVALIDO" },
+    { nombre: "actor con valor invalido", operacion: { idOperacion: "op-i", actor: "hacker", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }, codigoEsperado: "SOBRE_OPERACION_INVALIDO" },
+    { nombre: "idOperacion faltante", operacion: { actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }, codigoEsperado: "SOBRE_OPERACION_INVALIDO" },
+    { nombre: "idOperacion vacio", operacion: { idOperacion: "", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }, codigoEsperado: "SOBRE_OPERACION_INVALIDO" },
+    { nombre: "idTransaccion invalido (numero en vez de string)", operacion: { idOperacion: "op-j", idTransaccion: 123, actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }, codigoEsperado: "SOBRE_OPERACION_INVALIDO" },
+    { nombre: "QuitarComponente payload null", operacion: { idOperacion: "op-k", actor: "agente", baseRevision: 0, tipo: "QuitarComponente", payload: null }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "Desconectar payload undefined", operacion: { idOperacion: "op-l", actor: "agente", baseRevision: 0, tipo: "Desconectar", payload: undefined }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "SetComportamiento payload {}", operacion: { idOperacion: "op-m", actor: "agente", baseRevision: 0, tipo: "SetComportamiento", payload: {} }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "SetComportamiento comportamiento sin cuando/entonces", operacion: { idOperacion: "op-n", actor: "agente", baseRevision: 0, tipo: "SetComportamiento", payload: { comportamiento: {} } }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "CambiarComponente payload {}", operacion: { idOperacion: "op-o", actor: "agente", baseRevision: 0, tipo: "CambiarComponente", payload: {} }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    { nombre: "AsignarPin payload {} (sin componente/terminal)", operacion: { idOperacion: "op-p", actor: "agente", baseRevision: 0, tipo: "AsignarPin", payload: {} }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+  ]
+  for (const { nombre, operacion, codigoEsperado } of casos) {
+    let directo
+    assert.doesNotThrow(() => {
+      directo = aplicarOperacion(p, operacion, catalogo)
+    }, `aplicarOperacion NUNCA debe lanzar una excepcion cruda — caso "${nombre}"`)
+    assert.equal(directo.proyecto, p, `caso "${nombre}": el proyecto devuelto debe ser la MISMA referencia — nada se mutó`)
+    assert.equal(directo.motivos.length, 1, `caso "${nombre}": debe traer exactamente un motivo`)
+    assert.equal(directo.motivos[0].codigo, codigoEsperado, `caso "${nombre}": codigo esperado ${codigoEsperado}, recibido ${directo.motivos[0].codigo}`)
+    assert.equal(directo.motivos[0].clasificacion, "rechazo", `caso "${nombre}": debe ser clasificacion rechazo`)
+
+    let viaEjecutar
+    assert.doesNotThrow(() => {
+      viaEjecutar = ejecutarOperacion(p, operacion, catalogo)
+    }, `ejecutarOperacion NUNCA debe lanzar una excepcion cruda — caso "${nombre}"`)
+    assert.equal(viaEjecutar.ok, false, `caso "${nombre}": ejecutarOperacion debe rechazar`)
+    assert.equal(viaEjecutar.proyecto, p, `caso "${nombre}": el proyecto devuelto por ejecutarOperacion debe ser la MISMA referencia`)
+  }
+})
+
+// Phase 1.1 — hallazgo externo E2-03 (MENOR): el sobre aceptaba campos extra
+// desconocidos sin rechazo, a diferencia de `cargarProyecto()` (fail-closed ante
+// `CLAVE_DESCONOCIDA`). Mismo código, categoría `operacion` en vez de `estructural`.
+test("el sobre de operacion rechaza una clave extra desconocida con CLAVE_DESCONOCIDA (hallazgo externo E2-03)", () => {
+  const p = proyectoBase()
+  const operacion = { idOperacion: "op-extra", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" }, extraField: "sorpresa" }
+  const r = aplicarOperacion(p, operacion, catalogo)
+  assert.equal(r.proyecto, p)
+  assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+  assert.equal(r.motivos[0].categoria, "operacion")
+  assert.equal(r.motivos[0].clasificacion, "rechazo")
+  assert.deepEqual(r.motivos[0].datos.claves, ["extraField"])
+})
+
+// No-regresión: un string VACÍO DENTRO de `payload` (no en el sobre) nunca es "forma
+// inválida" — sigue siendo el mismo REFERENCIA_INEXISTENTE de siempre (mismo criterio
+// que ya fija tests/nucleo-adversarial.test.mjs contra el motor real, acá fijado
+// directo contra `aplicarOperacion`).
+test("un string vacio DENTRO de payload no es forma invalida — sigue siendo REFERENCIA_INEXISTENTE, no PAYLOAD_OPERACION_INVALIDO (no regresion, E2-02)", () => {
+  const p = proyectoBase()
+  const r = aplicarOperacion(p, nuevaOperacion("QuitarComponente", { componente: "" }), catalogo)
+  assert.equal(r.motivos[0].codigo, "REFERENCIA_INEXISTENTE")
+})

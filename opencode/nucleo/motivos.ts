@@ -57,6 +57,30 @@
 //   categoria "estructural", clasificacion "rechazo" siempre — `cargador.ts` (Gate 2),
 //   momento de carga: mismo criterio de distinción momento-de-carga vs.
 //   momento-de-operación que ya usa `UMBRAL_NO_FINITO_AL_CARGAR`.
+//
+// Phase 1.1 (hallazgo externo E2-02, CRÍTICO) agrega, todos categoria "operacion",
+// clasificacion "rechazo" siempre, emitidos por `operaciones.ts` ANTES del
+// switch/dispatch de `aplicarOperacion` (ver `docs/programacion-intencion/
+// OPERATIONS.md` §9):
+// - `SOBRE_OPERACION_INVALIDO` — el sobre (`SobreOperacion`) no es un objeto, o
+//   `idOperacion`/`idTransaccion`/`actor` no tienen la forma exigida por el contrato
+//   (`idOperacion`: string no vacío; `idTransaccion`, si está presente: string no
+//   vacío; `actor`: "agente"|"navegador").
+// - `TIPO_OPERACION_DESCONOCIDO` — `operacion.tipo` no es uno de los 8 tipos válidos
+//   (`OPERATIONS.md` §4) — también lo emite el `default` del switch de
+//   `aplicarOperacion`, como defensa en profundidad (nunca alcanzable hoy).
+// - `PAYLOAD_OPERACION_INVALIDO` — el payload no tiene la forma mínima que el
+//   `aplicarXxx` del tipo necesita (null/undefined/array en vez de objeto, campo
+//   requerido ausente o de tipo incorrecto) — `datos.razon` describe la forma
+//   esperada. Nunca valida REFERENCIAS (eso lo sigue haciendo cada `aplicarXxx`) ni
+//   valores de enum sintácticamente válidos pero inventados.
+// - `CLAVE_DESCONOCIDA` — código YA existente (`cargador.ts`, categoria
+//   "estructural") REUSADO acá con categoria "operacion" (hallazgo externo E2-03,
+//   MENOR): una clave extra desconocida en el sobre (ej. "extraField") se rechaza,
+//   mismo criterio fail-closed que ya aplica el loader — mismo código, dos
+//   categorías según quién lo emite, mismo criterio que `AUTOCONEXION_INVALIDA`/
+//   `UMBRAL_NO_FINITO`.
+//
 
 /** Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion". */
 export type CategoriaMotivo =

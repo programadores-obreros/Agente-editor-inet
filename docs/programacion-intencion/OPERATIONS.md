@@ -210,3 +210,70 @@ por fuera del loader, o si una regla de validación futura gana esa clasificaci�
 forma alcanzable. Ambos puntos usan la MISMA función `validarProyecto` (inyectable
 sólo para tests, nunca en producción) — ver `DECISIONS.md`, entrada "hallazgo
 adversarial Gate 8".
+
+## 9. Phase 1.1 — validación de FORMA en runtime (hallazgos externos E2-02/E2-03/E3-01/E3-05)
+
+`PHASE_1_EXTERNAL_FINDINGS.md` (auditoría externa) encontró que ni el sobre
+(`SobreOperacion`) ni `baseRevision` tenían ninguna validación de FORMA en runtime
+antes de Phase 1.1 — los `as {...}` de `operaciones.ts` y el `??` de `motor.ts` son
+sólo de compilación (TypeScript, "sintaxis borrable"): cualquier JSON crudo (agente
+LLM, futuro transporte HTTP, brief §37) llega tal cual. Esta sección documenta el
+contrato que cierra ambos hallazgos.
+
+### 9.1. Forma del sobre y del payload (`aplicarOperacion`, hallazgo E2-02, CRÍTICO)
+
+Antes del switch/dispatch, `aplicarOperacion` corre dos validaciones de forma, en
+este orden, ambas ANTES de tocar `proyecto` (nunca lo mutan, nunca corren
+`validarProyecto`):
+
+1. **Forma del sobre** (`idOperacion`/`idTransaccion`/`actor`/`tipo` — NUNCA
+   `baseRevision`, que sigue siendo exclusivamente responsabilidad de `motor.ts`,
+   §2 de arriba):
+   - `idOperacion` ausente o no es un string no vacío → `SOBRE_OPERACION_INVALIDO`.
+   - `idTransaccion`, si está presente, no es un string no vacío →
+     `SOBRE_OPERACION_INVALIDO`.
+   - `actor` ausente o no es `"agente"`/`"navegador"` → `SOBRE_OPERACION_INVALIDO`.
+   - `tipo` ausente o no es uno de los 8 tipos válidos de §4 →
+     `TIPO_OPERACION_DESCONOCIDO`.
+   - Una clave EXTRA desconocida en el sobre (ej. `extraField`) →
+     `CLAVE_DESCONOCIDA` (hallazgo E2-03, MENOR — ver 9.2 más abajo).
+2. **Forma del payload** (por `tipo`, sólo lo mínimo para que el `aplicarXxx`
+   correspondiente no explote leyendo una propiedad de `null`/`undefined`/un array —
+   NUNCA valida referencias contra `proyecto`/`catalogo`, eso lo sigue haciendo cada
+   `aplicarXxx`; NUNCA valores de enum sintácticamente válidos pero inventados —
+   `comparador`/`accion`/`pin` con un string no vacío que no es un valor real sigue
+   siendo responsabilidad de la validación referencial/técnica existente, no de
+   acá): payload no es un objeto (o es `null`/`undefined`/un array) para un tipo que
+   espera objeto, o falta un campo requerido, o un campo requerido tiene el tipo
+   incorrecto → `PAYLOAD_OPERACION_INVALIDO` (`datos.razon` describe la forma
+   esperada).
+
+Un string VACÍO **dentro** de `payload` (`componente: ""`, `terminal: ""`, etc.) NO
+es "forma inválida" — sigue siendo el mismo `REFERENCIA_INEXISTENTE`/
+`TERMINAL_NO_DECLARADO`/`PLACA_DESCONOCIDA` de siempre (el resto del pipeline ya lo
+diagnostica bien, sin explotar); exigir no-vacío ahí sería sobre-rechazar. La
+exigencia de "no vacío" es sólo para `idOperacion`/`idTransaccion` del SOBRE, donde
+no hay ninguna otra defensa aguas abajo.
+
+El `switch` de `aplicarOperacion` también suma un `default` de defensa en
+profundidad (mismo criterio que E1-03/E2-01): nunca alcanzable hoy (la validación
+del sobre ya rechazó cualquier `tipo` desconocido antes), pero si una regla futura
+agranda `TipoOperacion` sin agregar su rama, sigue devolviendo `Motivo` estructurado
+en vez de `undefined`.
+
+Estas dos validaciones corren para las 3 puertas públicas del motor
+(`proponer`/`aplicar`/`aplicarTransaccion`, que invocan `aplicarOperacion` una vez
+por operación dentro del lote) y para quien invoque `aplicarOperacion`/
+`ejecutarOperacion` directo — un único punto de aplicación, nunca copiado.
+
+### 9.2. Clave extra desconocida en el sobre (hallazgo E2-03, MENOR)
+
+El sobre rechaza fail-closed una clave extra desconocida (ej. `{..., extraField:
+"sorpresa"}`) con `CLAVE_DESCONOCIDA` — el MISMO código que ya usa `cargarProyecto()`
+(`cargador.ts`, Gate 2) para un documento con claves desconocidas, categoría
+`operacion` acá en vez de `estructural` (mismo criterio ya establecido en este
+documento para `AUTOCONEXION_INVALIDA`/`UMBRAL_NO_FINITO`: mismo código, dos
+categorías según quién lo emite). Cierra la inconsistencia de filosofía fail-closed
+entre las dos puertas de entrada del núcleo (antes, el sobre aceptaba cualquier
+campo extra en silencio) sin inventar un código nuevo para lo mismo.
+
