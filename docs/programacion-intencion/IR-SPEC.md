@@ -293,6 +293,42 @@ de 2 elementos, nunca un extremo aislado (test de no-regresión en las tres puer
 `Conectar` con esta ampliación; `COMPONENT-CATALOG.md` §6 agrega las filas de
 clasificación correspondientes.
 
+### 6.4. Ampliación Phase 1.1 (remediación del hallazgo externo CP-01, checkpoint de T5,
+tratado como CRÍTICO)
+
+`crearMotorDeProyecto({ proyectoInicial })` (Gate 6, `motor.ts`) corría
+`validarProyecto` (Gate 4) y `validarIdsYContador` (§6.1) al construirse, pero
+NINGUNA de las dos mira la FORMA/SCHEMA del `proyectoInicial` — ambas asumen un
+`Proyecto` YA bien tipado (TypeScript es sólo sintaxis borrable: no hay protección
+de tipos en runtime) y sólo leen `componentes`/`conexiones`/`comportamientos`/
+`siguienteIdLocal`. Un `proyectoInicial` con una clave desconocida en la raíz,
+`revision`/`siguienteIdLocal` con el tipo o el valor incorrecto (`-5`, `"7"`), un
+`schemaVersion` no soportado, o un componente con `tipo`/`pines` de tipo basura
+(`tipo:123`, `pines:"x"`) construía un motor "operable" SIN ningún diagnóstico —
+exactamente el documento que `cargarProyecto()` (Gate 2) rechazaría de entrada.
+Peor: con `proyectoInicial` `undefined`/`null`/`{}`/`[]` ninguna de las dos llegaba
+siquiera a un `Motivo` — explotaban con un `TypeError` crudo apenas tocaban
+`proyecto.componentes` (evidencia/T5/CP01_proyectoInicial_forma.txt,
+evidencia/T6/CP01_repro.mjs). Esto falsificaba el principio central de este mismo
+§6: "el motor corre su PROPIA validación al construirse y se niega a operar sobre
+un estado ya roto" — un `proyectoInicial` es una puerta de entrada con los MISMOS
+invariantes que el loader (Brief, Phase 1.1 §13/§31), nunca una vía más permisiva.
+
+**Fix: `validarFormaProyecto` (`cargador.ts`) — la MISMA función que
+`cargarProyecto()` usa tras `JSON.parse`, extraída para no copiarla — corre en la
+construcción del motor.** Si la forma ya está rota, sus motivos
+(`CLAVE_DESCONOCIDA`/`CAMPO_REQUERIDO_FALTANTE`/`VERSION_SCHEMA_DESCONOCIDA`/
+`DOCUMENTO_MALFORMADO`, todos `clasificacion:"rechazo"`) alcanzan por sí solos para
+tirar `ErrorEstadoInicialInvalido` — nunca un `TypeError`. `validarProyecto`/
+`validarIdsYContador` se intentan igual en ese caso, protegidos (`try/catch`: si el
+objeto es tan ajeno a un `Proyecto` que también explotan ahí, la excepción se
+descarta sin propagar), para no perder — en fixtures que violan un invariante de
+Gate 4 pero conservan la forma mínima que Gate 4 lee (self-loop, umbral no finito,
+id duplicado, referencia colgada) — el código de Gate 4 que esos tests ya prueban:
+`validarFormaProyecto` detecta ALGUNOS de esos mismos casos también, pero con su
+propio código de momento-de-carga (mismo criterio que §6.1/§6.2/§6.3) — nunca se
+pisan entre sí, sólo se UNEN.
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

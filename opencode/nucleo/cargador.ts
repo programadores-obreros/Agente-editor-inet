@@ -77,7 +77,36 @@ export function cargarProyecto(entrada: unknown): ResultadoCarga {
       return rechazo("DOCUMENTO_MALFORMADO", { razon: "el string no es JSON válido" })
     }
   }
+  return validarFormaProyecto(doc)
+}
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// validarFormaProyecto — Phase 1.1, hallazgo externo CP-01 (checkpoint de T5, tratado
+// como CRÍTICO, evidencia/T5/CP01_proyectoInicial_forma.txt).
+//
+// Ésta es la MISMA validación de forma/schema que `cargarProyecto()` aplica tras
+// `JSON.parse` — extraída a su propia función exportada para que `crearMotorDeProyecto`
+// (`motor.ts`, Gate 6) la reuse contra `proyectoInicial` sin copiarla. Antes de este
+// fix, `crearMotorDeProyecto({ proyectoInicial })` construía un motor "operable" sobre
+// un objeto que este mismo módulo rechazaría de entrada si llegara como documento: una
+// clave desconocida en la raíz, `revision`/`siguienteIdLocal` con el tipo o el valor
+// incorrecto (`-5`, `"7"`), un `schemaVersion` no soportado, o un componente con
+// `tipo`/`pines` de tipo basura (`tipo:123`, `pines:"x"`) — ninguno de estos lo mira
+// `validarProyecto`/`validarIdsYContador` (Gate 4, `validar.ts`/`id.ts`: ambos asumen
+// un `Proyecto` YA bien tipado, TypeScript es sólo sintaxis borrable, sin protección en
+// runtime). Peor: con `proyectoInicial` `undefined`/`null`/`{}`/`[]` esas dos funciones
+// ni siquiera llegan a un `Motivo` — explotan con un `TypeError` crudo apenas tocan
+// `proyecto.componentes`. IR-SPEC.md §6 exige que "el motor corre su PROPIA validación
+// al construirse y se niega a operar sobre un estado ya roto" — un `proyectoInicial`
+// es una puerta de entrada con los MISMOS invariantes que el loader (Brief, Phase 1.1
+// §13/§31), nunca una vía más permisiva.
+//
+// Recibe un documento YA PARSEADO (`unknown`, nunca un string JSON — eso es
+// responsabilidad exclusiva de `cargarProyecto`, que hace el `JSON.parse` y delega
+// acá). Devuelve el mismo `ResultadoCarga` de siempre.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+export function validarFormaProyecto(doc: unknown): ResultadoCarga {
   if (!esObjeto(doc)) {
     return rechazo("DOCUMENTO_MALFORMADO", { razon: "el documento no es un objeto" })
   }

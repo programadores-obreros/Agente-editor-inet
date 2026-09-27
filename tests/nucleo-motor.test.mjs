@@ -466,6 +466,82 @@ test("constructor-rechaza-proyectoInicial-con-conexion-duplicada (hallazgo exter
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo CP-01 (checkpoint de T5, tratado como CRÍTICO,
+// evidencia/T5/CP01_proyectoInicial_forma.txt): `crearMotorDeProyecto({ proyectoInicial })`
+// NO aplicaba la validación de FORMA/SCHEMA que `cargarProyecto()` sí aplica — un
+// `proyectoInicial` con una clave desconocida en la raíz, `revision`/`siguienteIdLocal`
+// con tipo o valor incorrecto, un `schemaVersion` no soportado, o un componente con
+// `tipo`/`pines` de tipo basura construía un motor "operable" SIN ningún diagnóstico; y
+// con `undefined`/`null`/`{}`/`[]` el constructor explotaba con un `TypeError` crudo en
+// vez de `ErrorEstadoInicialInvalido`. `validarFormaProyecto` (`cargador.ts`) — la MISMA
+// función que usa `cargarProyecto()` tras `JSON.parse`, nunca una copia — corre ahora
+// también en la construcción del motor (`motor.ts`).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-forma-invalida (hallazgo externo CP-01) — table-driven", () => {
+  const base = crearProyecto({ generadorId: () => "proy-cp01", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+
+  const casos = [
+    { nombre: "clave desconocida en la raiz", proyectoInicial: { ...base, claveInventada: "x" }, codigoEsperado: "CLAVE_DESCONOCIDA" },
+    { nombre: "revision negativa", proyectoInicial: { ...base, revision: -5 }, codigoEsperado: "CAMPO_REQUERIDO_FALTANTE" },
+    { nombre: "revision string", proyectoInicial: { ...base, revision: "7" }, codigoEsperado: "CAMPO_REQUERIDO_FALTANTE" },
+    {
+      nombre: "componente basura (tipo/pines con tipo incorrecto)",
+      proyectoInicial: { ...base, componentes: [{ id: "cmp-0", tipo: 123, pines: "x", extra: true }], siguienteIdLocal: 1 },
+      codigoEsperado: "CAMPO_REQUERIDO_FALTANTE",
+    },
+    { nombre: "schemaVersion desconocida", proyectoInicial: { ...base, schemaVersion: "99.0.0" }, codigoEsperado: "VERSION_SCHEMA_DESCONOCIDA" },
+  ]
+
+  for (const { nombre, proyectoInicial, codigoEsperado } of casos) {
+    assert.throws(
+      () => crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() }),
+      (err) => {
+        assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `caso "${nombre}": debe lanzar ErrorEstadoInicialInvalido, no otra cosa: ${err}`)
+        assert.ok(
+          err.motivos?.some((m) => m.codigo === codigoEsperado && m.clasificacion === "rechazo"),
+          `caso "${nombre}": el error debe traer el motivo ${codigoEsperado}: ${JSON.stringify(err.motivos)}`,
+        )
+        return true
+      },
+      `caso "${nombre}": un proyectoInicial con forma invalida NUNCA debe construir un motor operable`,
+    )
+  }
+})
+
+test("constructor-rechaza-proyectoInicial-undefined-null-vacio-o-array-sin-TypeError-crudo (hallazgo externo CP-01)", () => {
+  const casos = [
+    { nombre: "undefined", proyectoInicial: undefined },
+    { nombre: "null", proyectoInicial: null },
+    { nombre: "objeto vacio", proyectoInicial: {} },
+    { nombre: "array vacio", proyectoInicial: [] },
+  ]
+  for (const { nombre, proyectoInicial } of casos) {
+    assert.throws(
+      () => crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() }),
+      (err) => {
+        assert.ok(
+          err instanceof Error && err.name === "ErrorEstadoInicialInvalido",
+          `caso "${nombre}": debe lanzar ErrorEstadoInicialInvalido — NUNCA un TypeError crudo: ${err?.stack ?? err}`,
+        )
+        assert.ok(
+          Array.isArray(err.motivos) && err.motivos.length > 0 && err.motivos.every((m) => m.clasificacion === "rechazo"),
+          `caso "${nombre}": el error debe traer motivos estructurados: ${JSON.stringify(err.motivos)}`,
+        )
+        return true
+      },
+      `caso "${nombre}": un proyectoInicial asi NUNCA debe propagar un TypeError crudo`,
+    )
+  }
+})
+
+test("constructor-sigue-construyendo-con-un-proyectoInicial-de-crearProyecto (control, hallazgo externo CP-01)", () => {
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-cp01-control", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() })
+  assert.equal(motor.getProyecto().id, "proy-cp01-control")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // Phase 1.1 — hallazgo externo E2-02 (CRÍTICO): confirma, en la FRONTERA PÚBLICA del
 // motor (`aplicar`/`aplicarTransaccion`/`proponer`, no sólo `aplicarOperacion` en
 // aislamiento — ver tests/nucleo-operaciones.test.mjs), que una operación malformada

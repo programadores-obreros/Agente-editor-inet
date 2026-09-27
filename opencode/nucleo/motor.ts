@@ -73,6 +73,7 @@ import type { Motivo } from "./motivos.ts"
 import { clonarProfundo, congelarProfundo } from "./canonico.ts"
 import { validarProyecto as validarProyectoReal } from "./validar.ts"
 import { validarIdsYContador } from "./id.ts"
+import { validarFormaProyecto } from "./cargador.ts"
 import { aplicarOperacion, type ResultadoOperacion, type SobreOperacion } from "./operaciones.ts"
 
 /** Mismo criterio que `cargador.ts` (Gate 2) para `revision`/`siguienteIdLocal`:
@@ -208,7 +209,43 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   // — el contador, una vez consistente al construirse, se mantiene consistente por
   // inducción (los 3 aplicadores que generan un id local sólo lo INCREMENTAN, nunca lo
   // decrementan — ver M22, regresión en `tests/nucleo-operaciones.test.mjs`).
-  const motivosIniciales = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
+  //
+  // Phase 1.1 (hallazgo externo CP-01, checkpoint de T5, tratado como CRÍTICO):
+  // ninguna de las dos validaciones de arriba mira la FORMA/SCHEMA del
+  // `proyectoInicial` — ambas asumen un `Proyecto` YA bien tipado y sólo leen
+  // `componentes`/`conexiones`/`comportamientos`/`siguienteIdLocal`. Una clave
+  // desconocida en la raíz, `revision`/`siguienteIdLocal` con tipo o valor
+  // incorrecto, un `schemaVersion` no soportado, o un componente con `tipo`/`pines`
+  // de tipo basura pasaban SIN diagnóstico; con `undefined`/`null`/`{}`/`[]` ninguna
+  // de las dos llegaba siquiera a un `Motivo` — explotaban con un `TypeError` crudo.
+  // `validarFormaProyecto` (`cargador.ts`) es la MISMA función que usa
+  // `cargarProyecto()` tras `JSON.parse` — nunca una copia — y corre PRIMERO acá.
+  // Si la forma ya está rota, sus motivos (todos `clasificacion:"rechazo"`) alcanzan
+  // por sí solos para tirar `ErrorEstadoInicialInvalido`, nunca un `TypeError`.
+  // `validarProyecto`/`validarIdsYContador` de todos modos se INTENTAN igual en ese
+  // caso (protegidos con `try/catch`: si el objeto es tan ajeno a un `Proyecto` que
+  // también explotan acá — ej. `{}`, sin `componentes` — la excepción se descarta sin
+  // propagar, los motivos de forma ya alcanzan) para no perder, en fixtures que violan
+  // un invariante de Gate 4 pero conservan la forma mínima que Gate 4 lee (self-loop,
+  // umbral no finito, id duplicado, referencia colgada — los "roto" de los tests de
+  // más abajo), el código de Gate 4 (`AUTOCONEXION_INVALIDA`, `UMBRAL_NO_FINITO`,
+  // `REFERENCIA_INEXISTENTE`, ...) que esos tests ya prueban: `validarFormaProyecto`
+  // detecta ALGUNOS de esos mismos casos también, pero con su propio código
+  // "_AL_CARGAR"/de forma (mismo criterio momento-de-carga vs. Gate 4 que ya usa el
+  // resto del núcleo) — nunca se pisan entre sí, sólo se UNEN.
+  const resultadoForma = validarFormaProyecto(deps.proyectoInicial as unknown)
+  let motivosIniciales: Motivo[]
+  if (resultadoForma.ok) {
+    motivosIniciales = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
+  } else {
+    let motivosGate4: readonly Motivo[] = []
+    try {
+      motivosGate4 = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
+    } catch {
+      motivosGate4 = []
+    }
+    motivosIniciales = [...resultadoForma.motivos, ...motivosGate4]
+  }
   const rechazosIniciales = motivosIniciales.filter((m) => m.clasificacion === "rechazo")
   if (rechazosIniciales.length > 0) {
     throw new ErrorEstadoInicialInvalido(rechazosIniciales)
