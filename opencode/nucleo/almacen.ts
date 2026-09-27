@@ -51,6 +51,16 @@ export interface DependenciasAlmacen {
 
 let contadorTemp = 0
 
+/**
+ * Construye el puerto de persistencia contra disco. Phase 1.1 (hallazgo externo
+ * E3-04b, MAJOR — `DECISIONS.md`, entrada "Almacen es un puerto interno del
+ * composition root", `motor.ts` tiene el mismo aviso sobre la interfaz `Almacen`):
+ * el consumidor construye ESTE almacén UNA vez y lo inyecta a
+ * `crearMotorDeProyecto({ almacen })` — no lo retiene para llamar `guardar()`/
+ * `cargar()` por su cuenta. El `MotorDeProyecto` es la única autoridad de mutación
+ * (brief §9.4/§10); usar esta misma instancia como una segunda vía de escritura,
+ * aunque el type-checker no lo impida, es un uso NO CONTRACTUAL.
+ */
 export function crearAlmacen(deps: DependenciasAlmacen): Almacen {
   const fs = deps.fs ?? fsReal
   fs.mkdirSync(deps.directorio, { recursive: true })

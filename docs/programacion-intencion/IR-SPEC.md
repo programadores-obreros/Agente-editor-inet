@@ -361,3 +361,6 @@ de todo `opencode/nucleo/` (el otro import de `node:fs` autorizado, para Gate 7,
   Windows sobre `rename` se documentan en la entrada de Gate 7 de `DECISIONS.md`
   cuando ese gate se implemente — este documento (IR-SPEC) es sobre la IR en
   memoria, no sobre persistencia en disco.
+- `Almacen`/`crearAlmacen()` (Gate 7) es un PUERTO INTERNO del composition root, nunca
+  una segunda autoridad de escritura (Phase 1.1, hallazgo externo E3-04b — ver
+  `DECISIONS.md`, entrada "Almacen es un puerto interno del composition root").

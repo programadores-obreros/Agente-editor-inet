@@ -92,6 +92,20 @@ export type ResultadoCargaAlmacen =
   | { readonly ok: true; readonly proyecto: Proyecto; readonly diagnostico?: readonly Motivo[] }
   | { readonly ok: false; readonly motivos: readonly Motivo[] }
 
+/**
+ * Puerto de persistencia (Gate 7, `almacen.ts`, contra disco) — es un puerto INTERNO
+ * del composition root, NUNCA una segunda autoridad de escritura (Phase 1.1,
+ * hallazgo externo E3-04b, MAJOR — `DECISIONS.md`, entrada "Almacen es un puerto
+ * interno del composition root"). El `MotorDeProyecto` es "la única autoridad de
+ * mutación" (brief §9.4/§10): quien construye un `Almacen` (`crearAlmacen()`) lo
+ * inyecta UNA vez en `crearMotorDeProyecto({ almacen })` y DEJA de tocarlo — retener
+ * esa misma referencia para llamar `guardar()`/`cargar()` por fuera del motor es un
+ * uso NO CONTRACTUAL: nada valida `baseRevision`, nada corre `validarProyecto`, no se
+ * genera ningún `ResultadoTransaccion`, y el motor en memoria queda desincronizado de
+ * lo persistido sin ningún aviso (evidencia/e3/scripts/e1_motor_flujo.mjs TEST 5).
+ * TypeScript no impide este uso (es un contrato de USO, no de tipos) — documentado
+ * acá, en el mismo lugar donde un consumidor futuro lee esta interfaz, a propósito.
+ */
 export interface Almacen {
   guardar(proyecto: Proyecto): ResultadoGuardar
   cargar(id: string): ResultadoCargaAlmacen

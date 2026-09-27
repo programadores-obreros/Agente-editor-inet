@@ -248,3 +248,37 @@ convenía cerrar ANTES de que exista un consumidor de Fase 2.
 
 Ver `motor.ts` (docstring actualizado), `OPERATIONS.md` §7-8, y
 `tests/nucleo-motor.test.mjs`/`tests/nucleo-operaciones.test.mjs` (tests + mutación).
+
+## Almacen es un puerto interno del composition root (Phase 1.1, hallazgo externo E3-04b, MAJOR)
+
+**Qué encontró la auditoría externa:** `Almacen`/`crearAlmacen()` (Gate 7) es una
+interfaz PÚBLICA e independiente del motor. Cualquier código que retenga la MISMA
+instancia de `Almacen` (algo estructuralmente posible hoy: el consumidor la crea con
+`crearAlmacen()` y se la INYECTA a `crearMotorDeProyecto({ almacen })`) puede llamar
+`guardar()` DIRECTO — sin pasar por `validarProyecto`, sin respetar `baseRevision`,
+sin generar un `ResultadoTransaccion` — y el motor en memoria queda desincronizado de
+lo persistido, sin ningún aviso (evidencia/e3/scripts/e1_motor_flujo.mjs TEST 5). Esto
+rompe "el Project Engine es la única autoridad de mutación" (brief §9.4/§10) a nivel
+de PERSISTENCIA, aunque el `canonico` del motor en memoria siga intacto.
+
+**Decisión del orquestador (Phase 1.1):** la opción MÁS PEQUEÑA que hace no-contractual
+usar `Almacen` como segunda autoridad — documentarlo como PUERTO INTERNO del
+composition root, nunca encapsularlo con un subsistema nuevo (proxy, permisos,
+wrapper). No hay hoy, en este repo, ningún código de producción que construya
+`crearAlmacen()` y lo inyecte al motor (Fase 2, fuera de alcance) — encapsular ahora
+sería inventar una superficie de API sin un consumidor real que la ejercite. En su
+lugar: `Almacen`/`crearAlmacen()` llevan JSDoc explícito (`motor.ts`/`almacen.ts`)
+que dice, en el mismo lugar donde un futuro consumidor los lee, que se construyen UNA
+vez, se inyectan al motor, y DEJAN de tocarse — retener la referencia para llamar
+`guardar()`/`cargar()` por fuera del motor es un uso NO CONTRACTUAL, aunque el
+type-checker no lo impida. Sin test nuevo: esta decisión no cambia ningún
+comportamiento observable (el bypass sigue siendo posible en runtime, como cualquier
+violación de un contrato de USO en TypeScript/JavaScript — mismo límite que, por
+ejemplo, mutar un objeto `readonly` con un cast) — un test no protegería nada real,
+sólo simularía haber "cerrado" algo que la documentación, no el código, es lo que
+cierra acá.
+
+**Revisitar en Fase 2** cuando exista un composition root real: ahí sí evaluar si
+encapsular (ej. que el motor exponga su propio `guardar`/`cargar` internamente y
+`crearAlmacen()` deje de exportarse desde el punto de entrada público) vale la pena
+contra el costo de la superficie de API nueva.
