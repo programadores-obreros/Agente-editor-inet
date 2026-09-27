@@ -633,6 +633,35 @@ test("baseRevision AUSENTE (campo omitido del todo) en la primera operacion rech
   assert.equal(almacen.llamadasGuardar.length, 0, "nunca llamo a guardar")
 })
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo CP-02 (checkpoint, MENOR): con `baseRevision` invalido
+// (ej. `null`), el `ResultadoTransaccion` ecoaba `baseRevision: Number.NaN` —un valor
+// FABRICADO, que ningún cliente pidió y que no describe nada real. El dato crudo
+// recibido ya viaja en `motivos[0].datos.baseRevisionRecibida` (E3-01): el campo
+// `baseRevision` del resultado es sólo un ECO de correlación, y el criterio de Phase
+// 1.1 para "no hay un baseRevision real que ecoar" YA está establecido en este mismo
+// archivo para el lote vacío (E3-05, más abajo): ecoar la revisión CANÓNICA vigente
+// (mismo valor que `revisionActual`), nunca un valor fabricado. `ResultadoTransaccion.
+// baseRevision` sigue siendo `number` (OPERATIONS.md §2, `SobreOperacion.baseRevision:
+// number`) — no se amplía a `number | null` para no propagar `null` a un campo que el
+// resto del contrato trata como un número real.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("ResultadoTransaccion con baseRevision invalido ecoa la revision canonica vigente — NUNCA fabrica NaN (hallazgo externo CP-02)", () => {
+  const { motor } = crearMotorDePrueba()
+  motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  const revisionVigente = motor.getProyecto().revision
+  assert.equal(revisionVigente, 1)
+
+  const operacion = { idOperacion: "op-cp02", actor: "agente", baseRevision: null, tipo: "AgregarComponente", payload: { tipo: "led" } }
+  const r = motor.aplicarTransaccion([operacion])
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "BASE_REVISION_INVALIDA")
+  assert.ok(!Number.isNaN(r.baseRevision), `baseRevision del resultado NUNCA debe ser NaN: recibido ${r.baseRevision}`)
+  assert.equal(r.baseRevision, revisionVigente, "el eco debe ser la revision CANONICA vigente, no un valor fabricado")
+  assert.equal(r.revisionActual, revisionVigente, "revisionActual y el eco de baseRevision coinciden, igual que en el no-op de lote vacio (E3-05)")
+})
+
 // No-regresión explícita (E3-01): `baseRevision:0` es la revisión inicial REAL, nunca
 // "falsy"/"ausente" — tiene que seguir commiteando igual que antes del fix.
 test("baseRevision-cero-es-valido-commitea-igual-que-antes-del-fix (no regresion, E3-01)", () => {

@@ -314,3 +314,17 @@ no-op — ambas opciones son defendibles y ninguna arriesga datos (ninguna persi
 sube revisión). Phase 1.1 elige el no-op exitoso porque es la lectura más simple de
 "pedí cero cambios, no pasó nada" y evita inventar un código de rechazo para un caso
 que no es realmente un error del llamador.
+
+### 9.5. El eco de `baseRevision` en el rechazo nunca fabrica un valor (hallazgo CP-02, MENOR)
+
+Cuando `BASE_REVISION_INVALIDA` (§9.3) rechaza la transacción, el `ResultadoTransaccion.
+baseRevision` **ecoa la revisión CANÓNICA vigente** (el mismo valor que
+`revisionActual` en ese resultado) — nunca `Number.NaN`. El dato crudo e inválido que
+mandó el cliente sigue viajando íntegro en `motivos[0].datos.baseRevisionRecibida`
+(§9.3): el campo `baseRevision` del resultado es sólo un ECO de correlación para quien
+lo lee, nunca la única fuente del dato original, así que no se pierde información al
+dejar de fabricar `NaN`. `ResultadoTransaccion.baseRevision` sigue siendo `number` (§2)
+— Phase 1.1 no lo amplía a `number | null` para no propagar `null` a un campo que el
+resto del contrato trata como un número real, y porque el criterio de "no hay un
+`baseRevision` real que ecoar" ya está establecido en §9.4 (lote vacío): ecoar la
+revisión canónica vigente, igual que acá.

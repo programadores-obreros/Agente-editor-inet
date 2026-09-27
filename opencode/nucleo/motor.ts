@@ -296,7 +296,15 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     // "desactualizado" (`motivoBaseRevisionInvalida`, no `motivoRevisionObsoleta`).
     const baseRevisionRecibida = operaciones[0]!.baseRevision
     if (!esEnteroNoNegativo(baseRevisionRecibida)) {
-      return { ok: false, baseRevision: Number.NaN, revisionActual: canonico.revision, motivos: [motivoBaseRevisionInvalida(baseRevisionRecibida)], resultadosOperaciones: [] }
+      // Phase 1.1 (hallazgo externo CP-02, MENOR): el dato crudo e inválido que mandó
+      // el cliente ya viaja íntegro en `motivos[0].datos.baseRevisionRecibida` — este
+      // campo `baseRevision` del resultado es sólo un ECO de correlación para quien
+      // lo lee, y no hay ningún `baseRevision` real que ecoar acá (el que llegó nunca
+      // fue válido). Antes se fabricaba `Number.NaN`, un valor que nadie pidió y que
+      // no describe nada real. Mismo criterio que el no-op de lote vacío (E3-05,
+      // arriba): se ecoa la revisión CANÓNICA vigente — el mismo valor que
+      // `revisionActual` — nunca un valor inventado.
+      return { ok: false, baseRevision: canonico.revision, revisionActual: canonico.revision, motivos: [motivoBaseRevisionInvalida(baseRevisionRecibida)], resultadosOperaciones: [] }
     }
     const baseRevision = baseRevisionRecibida
 
