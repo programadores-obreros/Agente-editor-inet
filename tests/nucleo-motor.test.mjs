@@ -134,10 +134,15 @@ test("baseRevision-obsoleta-rechaza-sin-clonar", () => {
     return clonarProfundo(v)
   }
   const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen, clonar: clonarEspiado })
+  // La construcción llama a `clonar` UNA vez, para el centinela que valida que
+  // aísla referencias (revisión de arquitectura Gate 8, §77) — es una llamada
+  // nueva y deliberada, distinta de la que hace `ejecutarLote`. Lo que este test
+  // prueba sigue intacto: que una baseRevision obsoleta NO agrega una llamada más.
+  const llamadasTrasConstruir = llamadasClonar
   const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 99)) // 99 != revision real (0)
   assert.equal(r.ok, false)
   assert.equal(r.motivos[0].codigo, "BASE_REVISION_DESACTUALIZADA")
-  assert.equal(llamadasClonar, 0, "una baseRevision obsoleta corta ANTES de clonar")
+  assert.equal(llamadasClonar, llamadasTrasConstruir, "una baseRevision obsoleta corta ANTES de clonar: ninguna llamada NUEVA respecto de la construcción")
 })
 
 // ──────────── 7. stale por §47: cliente A commitea, cliente B (base vieja) rechaza ───
@@ -241,20 +246,23 @@ test("constructor-rechaza-proyectoInicial-con-motivo-clasificacion-rechazo (hall
   )
 })
 
-test("defensa-en-profundidad: motivo clasificacion=rechazo desde validarProyecto post-lote descarta el commit entero", () => {
-  // Estado inicial LIMPIO (pasa el chequeo del constructor) — el validador se
-  // inyecta (nunca se toca validar-estructural.ts/validar-tecnico.ts reales) para
-  // simular, sin inventar un escenario explotable de verdad hoy, que una validación
-  // futura o distinta encuentre un motivo "rechazo" DESPUÉS de aplicar el lote.
+test("defensa-en-profundidad: motivo clasificacion=rechazo desde la validacion post-lote descarta el commit entero", () => {
+  // Estado inicial LIMPIO (pasa el chequeo del constructor) — se inyecta una
+  // validación ADICIONAL (nunca se toca validar-estructural.ts/validar-tecnico.ts
+  // reales) para simular, sin inventar un escenario explotable de verdad hoy, que
+  // una validación futura o distinta encuentre un motivo "rechazo" DESPUÉS de
+  // aplicar el lote. La real SIEMPRE corre en paralelo (unión, no reemplazo, ver
+  // revisión de arquitectura Gate 8) — acá la real da `[]` porque el estado es
+  // válido, así que el único motivo que aparece es el que agrega el fixture.
   const proyectoInicial = crearProyecto({ generadorId: () => "proy-defensa", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
   let llamadas = 0
-  const validarProyectoFalso = () => {
+  const validacionAdicionalFalsa = () => {
     llamadas++
     if (llamadas === 1) return [] // la llamada de construcción ve un estado limpio
     return [{ codigo: "MOTIVO_FIXTURE_RECHAZO", categoria: "referencial", severidad: "blocking", clasificacion: "rechazo" }]
   }
   const almacen = crearAlmacenFalso()
-  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen, validarProyecto: validarProyectoFalso })
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen, validacionAdicionalSoloTests: validacionAdicionalFalsa })
   const antes = motor.getProyecto()
 
   const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
@@ -262,4 +270,61 @@ test("defensa-en-profundidad: motivo clasificacion=rechazo desde validarProyecto
   assert.ok(r.motivos.some((m) => m.codigo === "MOTIVO_FIXTURE_RECHAZO"))
   assert.equal(motor.getProyecto(), antes, "el canonico no cambia")
   assert.equal(almacen.llamadasGuardar.length, 0, "nunca se llega a persistir")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Revisión de arquitectura Gate 8 (§77, PASS_WITH_NOTE): `validarProyecto`/`clonar`
+// inyectables en `DependenciasMotor` eran un backdoor potencial — nada en runtime
+// impedía que un consumidor futuro inyectara `() => []` (aprueba todo) o un `clonar`
+// identidad (rompe el aislamiento borrador/canónico). Cerrado acá:
+//   - la validación REAL siempre corre; lo inyectable (renombrado
+//     `validacionAdicionalSoloTests` para que grite su propósito) sólo puede AGREGAR
+//     motivos (unión), nunca reemplazar ni vaciar el resultado real.
+//   - `clonar` inyectado se valida con un centinela al construir: si
+//     `clonar(x) === x` para un objeto de prueba, el motor tira `ErrorClonadoInvalido`
+//     en vez de aceptar un "clon" que en realidad comparte referencia.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("validacionAdicionalSoloTests que devuelve [] NO abre una puerta trasera en la construcción", () => {
+  const base = crearProyecto({ generadorId: () => "proy-backdoor-1", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    placa: "esp32-devkit-v1",
+    componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: "GPIO23" }, propiedades: {} }],
+    conexiones: [{ id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-NO-EXISTE", terminal: "a" } }],
+    siguienteIdLocal: 1,
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso(), validacionAdicionalSoloTests: () => [] }),
+    (err) => {
+      assert.ok(err.motivos?.some((m) => m.codigo === "REFERENCIA_INEXISTENTE" && m.clasificacion === "rechazo"))
+      return true
+    },
+    "inyectar una validacion adicional vacia NO debe anular la validacion REAL — el estado roto se rechaza igual",
+  )
+})
+
+test("validacionAdicionalSoloTests que devuelve [] NO abre una puerta trasera en el commit (motivos representables reales siguen apareciendo)", () => {
+  const { motor } = crearMotorDePrueba()
+  const motorConAdicionalVacia = crearMotorDeProyecto({ proyectoInicial: motor.getProyecto(), catalogo, almacen: crearAlmacenFalso(), validacionAdicionalSoloTests: () => [] })
+  motorConAdicionalVacia.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  motorConAdicionalVacia.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 1))
+  motorConAdicionalVacia.aplicar(nuevaOperacion("AsignarPin", { componente: "cmp-0", terminal: "anodo", pin: "GPIO23" }, 2))
+  motorConAdicionalVacia.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 3))
+  const r = motorConAdicionalVacia.aplicar(nuevaOperacion("AsignarPin", { componente: "cmp-1", terminal: "anodo", pin: "GPIO23" }, 4)) // PIN_OCUPADO real
+  assert.equal(r.ok, true, "PIN_OCUPADO es representable: sigue commiteando")
+  assert.ok(
+    r.motivos.some((m) => m.codigo === "PIN_OCUPADO"),
+    "la validacion tecnica REAL corrio igual: una validacion adicional que devuelve [] no la reemplaza ni la esconde",
+  )
+})
+
+test("clonar inyectado que devuelve la MISMA referencia (identidad) hace que el motor se niegue a construirse", () => {
+  const clonarIdentidad = (valor) => valor
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-clonar-identidad", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso(), clonar: clonarIdentidad }),
+    /ErrorClonadoInvalido|no aísla|mismo objeto/i,
+    "un clonar que no aisla referencias debe rechazarse en la construcción, antes de que rompa el aislamiento borrador/canónico",
+  )
 })

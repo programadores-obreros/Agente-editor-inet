@@ -29,6 +29,14 @@
 // `REFERENCIA_ROTA_AL_CARGAR`) y empuje un `Proyecto` ya roto directo a
 // `crearMotorDeProyecto` obtenía un motor "operable" que terminaba commiteando esa
 // rotura en la primera transacción trivial — ver OPERATIONS.md §8.
+//
+// Revisión de arquitectura Gate 8 (§77) cerró dos backdoors potenciales en
+// `DependenciasMotor`: `validacionAdicionalSoloTests` (antes `validarProyecto`) ya
+// NO reemplaza la validación real — sólo puede AGREGARLE motivos (unión); y `clonar`
+// inyectado se valida con un centinela al construir (`ErrorClonadoInvalido` si no
+// aísla referencias). Ninguno de los dos es explotable en producción hoy porque
+// nada los inyecta fuera de los tests, pero antes de que exista un consumidor de
+// Fase 2 era el momento de cerrarlos.
 
 import type { Proyecto } from "./ir.ts"
 import type { Catalogo } from "./catalogo.ts"
@@ -81,19 +89,43 @@ export class ErrorEstadoInicialInvalido extends Error {
   }
 }
 
+/**
+ * El `clonar` inyectado devolvió la MISMA referencia que recibió, para un valor de
+ * prueba — significa que NO aísla (una función identidad, por ejemplo). Aceptarlo
+ * compartiría el mismo objeto en memoria entre el borrador y el canónico, rompiendo
+ * el invariante central del motor (revisión de arquitectura Gate 8, §77).
+ */
+export class ErrorClonadoInvalido extends Error {
+  constructor() {
+    super('El "clonar" inyectado no aísla referencias: clonar(x) === x para un valor de prueba. Compartiría el mismo objeto entre el borrador y el canónico.')
+    this.name = "ErrorClonadoInvalido"
+  }
+}
+
 export interface DependenciasMotor {
   readonly proyectoInicial: Proyecto
   readonly catalogo: Catalogo
   readonly almacen: Almacen
   /** Inyectable para poder espiar en tests que "baseRevision obsoleta corta ANTES de
-   * clonar" (T_diseno_consolidado.md §7, G6) — default: `clonarProfundo` real. */
+   * clonar" (T_diseno_consolidado.md §7, G6) — default: `clonarProfundo` real. El
+   * motor valida, al construirse, que `clonar(x) !== x` para un centinela de prueba
+   * (revisión de arquitectura Gate 8, §77): un `clonar` que no aísla referencias
+   * (ej. una función identidad) tira `ErrorClonadoInvalido` en vez de aceptarse en
+   * silencio — cerraría el aislamiento borrador/canónico que este archivo existe
+   * para sostener. */
   readonly clonar?: <T>(valor: T) => T
-  /** Inyectable SOLO para tests de defensa en profundidad (hallazgo adversarial
-   * Gate 8, item 4) — default: `validarProyecto` real de `validar.ts`. Nunca se
-   * inyecta en producción: existe para poder probar el corte por
-   * `clasificacion:"rechazo"` post-lote sin tener que fabricar un escenario
-   * explotable de verdad con las 8 operaciones públicas. */
-  readonly validarProyecto?: (proyecto: Proyecto, catalogo: Catalogo) => readonly Motivo[]
+  /**
+   * SOLO para tests (revisión de arquitectura Gate 8, §77 — antes se llamaba
+   * `validarProyecto` y RESEMPLAZABA la validación real, lo cual era un backdoor
+   * potencial: un consumidor podía inyectar `() => []` y obtener un motor que
+   * "aprueba todo"). La validación REAL (`validar.ts`) SIEMPRE corre, tanto al
+   * construirse como en cada commit — esta función, si se inyecta, sólo puede
+   * AGREGAR motivos al resultado real (unión, nunca reemplazo): sirve para simular,
+   * sin fabricar un escenario explotable de verdad con las 8 operaciones públicas,
+   * que una validación futura o distinta encuentre un motivo `clasificacion:"rechazo"`
+   * post-lote. Nunca se inyecta en producción — el nombre lo dice.
+   */
+  readonly validacionAdicionalSoloTests?: (proyecto: Proyecto, catalogo: Catalogo) => readonly Motivo[]
 }
 
 export interface MotorDeProyecto {
@@ -107,7 +139,25 @@ export interface MotorDeProyecto {
 
 export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   const clonar = deps.clonar ?? clonarProfundo
-  const validarProyecto = deps.validarProyecto ?? validarProyectoReal
+
+  // Centinela: `clonar` inyectado tiene que aislar de verdad. Si `clonar(x) === x`
+  // para un objeto de prueba descartable, es una función identidad (u otra que no
+  // clona) — se rechaza en la construcción, antes de que comparta referencias entre
+  // el borrador y el canónico (revisión de arquitectura Gate 8, §77).
+  const centinelaClonado = { __centinelaClonar: true }
+  if (clonar(centinelaClonado) === centinelaClonado) {
+    throw new ErrorClonadoInvalido()
+  }
+
+  // La validación REAL siempre corre — `validacionAdicionalSoloTests` (si se
+  // inyecta) sólo puede AGREGAR motivos, nunca reemplazar ni esconder el resultado
+  // real (revisión de arquitectura Gate 8, §77: la versión anterior reemplazaba en
+  // vez de unir, lo cual era un backdoor potencial).
+  const validarProyecto = (proyecto: Proyecto, catalogo: Catalogo): readonly Motivo[] => {
+    const motivosReales = validarProyectoReal(proyecto, catalogo)
+    const motivosAdicionales = deps.validacionAdicionalSoloTests?.(proyecto, catalogo) ?? []
+    return [...motivosReales, ...motivosAdicionales]
+  }
 
   // El motor se NIEGA a construirse sobre un estado ya roto — misma validación que
   // corre después de cada lote (ver ejecutarLote más abajo), corrida una vez acá.
