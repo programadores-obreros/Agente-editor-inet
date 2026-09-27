@@ -272,6 +272,26 @@ export function ejecutarOperacion(proyecto: Proyecto, operacion: SobreOperacion,
   }
 
   const motivosValidacion = validarProyecto(proyectoAplicado, catalogo)
+
+  // Defensa en profundidad (revisión de arquitectura Gate 8, §77 — misma clase de
+  // gap que tenía motor.ts antes de su fix, ver DECISIONS.md): un motivo
+  // `clasificacion:"rechazo"` que aparezca recién en la validación POST-aplicación
+  // (hoy sólo `validar-estructural.ts` puede emitir uno así) tumba el resultado
+  // igual que un rechazo por la operación misma — nunca se devuelve un
+  // `proyectoAplicado` como aceptado si la validación del estado resultante lo
+  // rechaza.
+  if (motivosValidacion.some((m) => m.clasificacion === "rechazo")) {
+    return {
+      ok: false,
+      idOperacion: operacion.idOperacion,
+      idTransaccion: operacion.idTransaccion,
+      baseRevision: operacion.baseRevision,
+      revisionActual: operacion.baseRevision,
+      motivos: [...motivosPropios, ...motivosValidacion],
+      proyecto,
+    }
+  }
+
   return {
     ok: true,
     idOperacion: operacion.idOperacion,

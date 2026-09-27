@@ -113,24 +113,35 @@ objeto parcialmente mutado.
 1. corre `aplicarOperacion`;
 2. si algún motivo devuelto tiene `clasificacion: "rechazo"` → devuelve
    `{ok:false, proyecto original, motivos}` sin llamar a `validarProyecto`;
-3. si no hay rechazo → corre `validarProyecto(proyectoNuevo, catalogo)` (Gate 4) y
-   agrega esos motivos (los representables/técnicos/estructurales/semánticos del
-   ESTADO RESULTANTE) a los propios de la operación, devuelve `{ok:true, proyecto
-   nuevo, motivos combinados}`.
+3. si no hay rechazo → corre `validarProyecto(proyectoNuevo, catalogo)` (Gate 4);
+4. **si ESA validación post-aplicación TAMBIÉN trae un motivo `clasificacion:
+   "rechazo"`** (revisión de arquitectura Gate 8, §77 — hoy sólo
+   `validar-estructural.ts` puede emitir uno así) → devuelve `{ok:false, proyecto
+   ORIGINAL (nunca el aplicado), motivos combinados}`, IGUAL que un rechazo de la
+   operación misma;
+5. si no hay rechazo en ningún punto → agrega esos motivos (los
+   representables/técnicos/estructurales/semánticos del ESTADO RESULTANTE) a los
+   propios de la operación, devuelve `{ok:true, proyecto nuevo, motivos
+   combinados}`.
 
 Es el punto de composición que el `MotorDeProyecto` (Gate 6) va a envolver con
 revisión + persistencia — no reimplementa nada de eso, sólo junta "¿la operación en sí
 es válida?" con "¿el estado resultante es válido?", que son dos preguntas distintas
 (la primera decide si se aplica; la segunda decide si el resultado queda `invalido`).
 
-**Nota (hallazgo adversarial Gate 8, item 4):** el motor (`motor.ts`) NO reusa
-`ejecutarOperacion` tal cual — implementa su propio pipeline equivalente
-(`aplicarOperacion` por operación + `validarProyecto` una vez por lote), porque
-necesita acumular motivos de VARIAS operaciones antes de decidir si el lote entero
-commitea. Esa duplicación de estructura (dos lugares que combinan "rechazo de
-operación" + "validación del estado resultante") es exactamente donde apareció el
-bug: el motor revisaba `clasificacion:"rechazo"` sólo en los motivos por operación,
-nunca en los de la validación post-lote. Corregido en `motor.ts` — ver §8.
+**Nota (hallazgo adversarial Gate 8, item 4 + revisión de arquitectura Gate 8, §77):**
+el motor (`motor.ts`) NO reusa `ejecutarOperacion` tal cual — implementa su propio
+pipeline equivalente (`aplicarOperacion` por operación + `validarProyecto` una vez
+por lote), porque necesita acumular motivos de VARIAS operaciones antes de decidir
+si el lote entero commitea. Esa duplicación de estructura (dos lugares que combinan
+"rechazo de operación" + "validación del estado resultante") es exactamente donde
+aparecieron DOS bugs de la misma clase: primero en `motor.ts` (corregido, ver §8),
+y después la revisión de arquitectura de Gate 8 encontró que `ejecutarOperacion`
+tenía el MISMO gap — devolvía `ok:true` sin revisar `clasificacion:"rechazo"` en la
+validación post-aplicación. Corregido acá también (paso 4 de la lista de arriba):
+ahora los dos puntos de composición (`motor.ts` y `ejecutarOperacion`) aplican la
+MISMA regla de forma independiente — no porque uno reuse al otro, sino porque cada
+uno la implementa correctamente por su cuenta.
 
 ## 8. Contrato de construcción del motor (`crearMotorDeProyecto`) — hallazgo adversarial Gate 8
 

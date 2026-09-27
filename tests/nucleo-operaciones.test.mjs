@@ -334,3 +334,32 @@ test("aplicarOperacion es pura: misma entrada da el mismo resultado dos veces", 
   assert.deepEqual(r1.motivos, r2.motivos)
   assert.deepEqual(r1.proyecto, r2.proyecto)
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Revisión de arquitectura Gate 8 (§77, PASS_WITH_NOTE): `ejecutarOperacion` tenía la
+// MISMA clase de gap que motor.ts antes de su fix — devolvía `ok:true` sin revisar si
+// `motivosValidacion` (validarProyecto post-aplicación) traía un motivo
+// `clasificacion:"rechazo"` (sólo miraba `motivosPropios`). No explotable hoy vía las 8
+// operaciones públicas (todas re-chequean referencias antes de mutar), pero es una
+// trampa latente si un futuro consumidor llama `ejecutarOperacion` creyendo que
+// replica el contrato completo del motor. Repro: `proyecto` de entrada YA roto
+// (bypaseando `cargarProyecto`) + una operación trivial no relacionada.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("ejecutarOperacion rechaza si la validacion post-aplicacion trae un motivo clasificacion=rechazo (hallazgo revision arquitectura Gate 8, §77)", () => {
+  const base = proyectoBase()
+  const roto = {
+    ...base,
+    placa: "esp32-devkit-v1",
+    componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: "GPIO23" }, propiedades: {} }],
+    conexiones: [{ id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-NO-EXISTE", terminal: "a" } }],
+    siguienteIdLocal: 1,
+  }
+  const r = ejecutarOperacion(roto, nuevaOperacion("AgregarComponente", { tipo: "resistencia" }, 0), catalogo)
+  assert.equal(r.ok, false, "un rechazo en la validacion post-aplicacion debe tumbar el resultado, aunque la operacion en si misma fuera valida")
+  assert.ok(
+    r.motivos.some((m) => m.codigo === "REFERENCIA_INEXISTENTE" && m.clasificacion === "rechazo"),
+    `debe traer el motivo de rechazo real: ${JSON.stringify(r.motivos)}`,
+  )
+  assert.equal(r.proyecto, roto, "el proyecto devuelto debe ser el ORIGINAL (sin el componente agregado) — nunca un resultado aceptado a medias")
+})

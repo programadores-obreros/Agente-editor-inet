@@ -203,3 +203,48 @@ de Agente X (mutante M16) sin que ninguna de las 143 pruebas existentes lo notar
 Se agregó el test faltante (`tests/nucleo-catalogo.test.mjs` + incorporado también
 en `tests/nucleo-adversarial.test.mjs`), sin tocar la lógica de producción (ya era
 correcta, sólo le faltaba cobertura).
+
+## Revisión de arquitectura independiente Gate 8 (§77) — 2 trampas latentes cerradas
+
+**Qué encontró:** una segunda revisión independiente (arquitectura, no adversarial —
+12/12 ítems del checklist PASS, 0 FAIL/CONTRADICTION) marcó 2 hallazgos
+`PASS_WITH_NOTE`: riesgos arquitectónicos latentes, no explotables hoy, pero que
+convenía cerrar ANTES de que exista un consumidor de Fase 2.
+
+1. **`DependenciasMotor.validarProyecto` (motor.ts) era un backdoor potencial.** El
+   campo era público, opcional, y REEMPLAZABA la validación real — nada en runtime
+   impedía que un consumidor futuro construyera el motor con
+   `validarProyecto: () => []` y obtuviera un motor que "aprueba todo", anulando
+   exactamente la garantía representable-vs-rechazo que Gate 8 protege. Única
+   barrera: un comentario ("nunca se inyecta en producción") — honor system, sin
+   assert en runtime.
+   - **Arreglo:** el campo se renombra `validacionAdicionalSoloTests` (el nombre
+     grita su propósito) y cambia de semántica: la validación REAL (`validar.ts`)
+     SIEMPRE corre, tanto al construirse como en cada commit; lo inyectado sólo
+     puede AGREGAR motivos al resultado real (unión), nunca reemplazarlo ni
+     vaciarlo. Un `() => []` inyectado ahora no tiene ningún efecto sobre la
+     validación real — se probó explícitamente que un estado roto se sigue
+     rechazando y que un motivo representable real (`PIN_OCUPADO`) sigue
+     apareciendo, aunque se inyecte esa función vacía.
+   - Mismo razonamiento aplicado a `clonar` (menor severidad: romper el clonado no
+     anula representable-vs-rechazo, sólo el aislamiento de referencias) — se
+     agregó un centinela en la construcción: si `clonar(x) === x` para un objeto de
+     prueba descartable (o sea, no aísla — una función identidad, por ejemplo), el
+     motor tira `ErrorClonadoInvalido` en vez de aceptar un "clon" que en realidad
+     comparte referencia. No se sacó el seam porque un test real lo necesita
+     (espiar cuántas veces se llama `clonar` para probar "baseRevision obsoleta
+     corta ANTES de clonar").
+2. **`operaciones.ts::ejecutarOperacion` tenía la MISMA clase de gap que motor.ts
+   antes de su fix** (ver la entrada de arriba, "hallazgo adversarial Gate 8"):
+   devolvía `ok:true` sin revisar `clasificacion:"rechazo"` en
+   `validarProyecto(proyectoAplicado, catalogo)`. Mitigante real: `ejecutarOperacion`
+   NO se usa en producción (sólo en tests; `motor.ts` implementa su propio
+   pipeline y no la reusa) — pero es una trampa latente para un futuro consumidor
+   que la llame directo creyendo que replica el contrato completo del motor.
+   - **Arreglo:** alineado con el mismo contrato — un motivo `clasificacion:"rechazo"`
+     en la validación post-aplicación tumba el resultado (`ok:false`, se devuelve el
+     `proyecto` ORIGINAL, nunca el aplicado a medias), igual que un rechazo de la
+     operación misma. Documentado en `OPERATIONS.md` §7.
+
+Ver `motor.ts` (docstring actualizado), `OPERATIONS.md` §7-8, y
+`tests/nucleo-motor.test.mjs`/`tests/nucleo-operaciones.test.mjs` (tests + mutación).
