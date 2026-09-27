@@ -112,6 +112,72 @@ test("id-duplicado-entre-componentes-rechaza", () => {
   assert.equal(r.motivos[0].codigo, "ID_DUPLICADO")
 })
 
+// ──────── 5b. id duplicado entre conexiones/comportamientos rechaza (hallazgo externo
+// E1-02 — Phase 1.1: antes de este fix, `cargador.ts` sólo comparaba ids DENTRO de
+// `componentes[]`; dos conexiones (o dos comportamientos) con el MISMO id cargaban
+// ambas sin problema, y `Desconectar({conexion:"conn-0"})` habría borrado las DOS de
+// una — pérdida silenciosa de intención, brief §8.1) ─────────────────────────────────
+
+test("id-duplicado-entre-conexiones-rechaza (hallazgo externo E1-02)", () => {
+  const doc = documentoValido()
+  doc.conexiones = [
+    { id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "senal" } },
+    { id: "conn-0", desde: { componente: "cmp-1", terminal: "senal" }, hasta: { componente: "cmp-0", terminal: "anodo" } },
+  ]
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "ID_DUPLICADO")
+  assert.equal("proyecto" in r, false, "un rechazo nunca trae un proyecto parcial")
+})
+
+test("id-duplicado-entre-comportamientos-rechaza (hallazgo externo E1-02)", () => {
+  const doc = documentoValido()
+  doc.comportamientos = [
+    { id: "beh-0", cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } },
+    { id: "beh-0", cuando: { sensor: "cmp-0", capacidad: "temperatura", comparador: "<", umbral: { valor: 10, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-1", accion: "apagar" } },
+  ]
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "ID_DUPLICADO")
+  assert.equal("proyecto" in r, false, "un rechazo nunca trae un proyecto parcial")
+})
+
+// ──────── 5c. contador de ids locales inconsistente rechaza (hallazgo externo E1-01 —
+// Phase 1.1: antes de este fix, `cargador.ts` sólo validaba que `siguienteIdLocal`
+// fuera un entero >= 0, nunca que fuera mayor que cualquier id local YA presente —
+// un documento con `cmp-0` y `siguienteIdLocal:0` cargaba igual, y la PRÓXIMA
+// `AgregarComponente` reproducía "cmp-0" — ver evidencia/e1/exp_contador_inconsistente.mjs) ──
+
+test("contador-siguienteIdLocal-inconsistente-con-id-existente-rechaza (hallazgo externo E1-01)", () => {
+  const doc = {
+    id: "p1",
+    schemaVersion: SCHEMA_VERSION_SOPORTADA,
+    catalogoVersion: "1.0.0",
+    catalogoHash: "h",
+    revision: 0,
+    siguienteIdLocal: 0, // desincronizado: cmp-0 YA existe, así que el próximo id colisionaría
+    placa: null,
+    componentes: [{ id: "cmp-0", tipo: "led", pines: {}, propiedades: {} }],
+    conexiones: [],
+    comportamientos: [],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CONTADOR_ID_INCONSISTENTE")
+  assert.equal("proyecto" in r, false, "un rechazo nunca trae un proyecto parcial")
+})
+
+test("contador-siguienteIdLocal-igual-al-maximo-existente-rechaza (borde estricto, E1-01)", () => {
+  // El máximo id local real en documentoValido() es 1 (cmp-1) — el contador tiene que
+  // ser ESTRICTAMENTE mayor, no sólo "no menor".
+  const doc = documentoValido()
+  doc.siguienteIdLocal = 1
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CONTADOR_ID_INCONSISTENTE")
+})
+
 // ─────────────────── 6. referencia colgada (conexión/comportamiento) rechaza ─────────
 
 test("referencia-colgada-en-conexion-rechaza", () => {

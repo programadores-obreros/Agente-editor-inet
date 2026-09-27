@@ -328,3 +328,54 @@ test("clonar inyectado que devuelve la MISMA referencia (identidad) hace que el 
     "un clonar que no aisla referencias debe rechazarse en la construcción, antes de que rompa el aislamiento borrador/canónico",
   )
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgos externos E1-01/E1-02: `cargarProyecto()` (Gate 2) no es la
+// ÚNICA puerta de entrada de un `Proyecto` — un `proyectoInicial` armado a mano
+// (bypaseando el loader, IR-SPEC.md §6) también tiene que rechazar un contador de ids
+// locales inconsistente o ids duplicados entre conexiones/comportamientos, exactamente
+// igual que el hallazgo adversarial Gate 8 (item 4, arriba) ya hace para referencias
+// colgadas. Misma regla que `cargarProyecto.ts` (`validarIdsYContador`, id.ts), un solo
+// lugar reusado — no una copia paralela acá.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-contador-id-inconsistente (hallazgo externo E1-01)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-e1-01", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} }],
+    siguienteIdLocal: 0, // desincronizado: cmp-0 YA existe — bypasea cargarProyecto directo
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err.motivos?.some((m) => m.codigo === "CONTADOR_ID_INCONSISTENTE" && m.clasificacion === "rechazo"), `el error debe traer el motivo estructurado: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con el contador de ids desincronizado NUNCA debe llegar a construir un motor operable",
+  )
+})
+
+test("constructor-rechaza-proyectoInicial-con-ids-duplicados-entre-conexiones (hallazgo externo E1-02)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-e1-02", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    componentes: [
+      { id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} },
+      { id: "cmp-1", tipo: "resistencia", pines: {}, propiedades: {} },
+    ],
+    conexiones: [
+      { id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "a" } },
+      { id: "conn-0", desde: { componente: "cmp-1", terminal: "a" }, hasta: { componente: "cmp-0", terminal: "anodo" } },
+    ],
+    siguienteIdLocal: 2, // consistente con los ids (max=1) — el ÚNICO problema es el id duplicado
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err.motivos?.some((m) => m.codigo === "ID_DUPLICADO" && m.clasificacion === "rechazo"), `el error debe traer el motivo estructurado: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con dos conexiones con el MISMO id NUNCA debe llegar a construir un motor operable",
+  )
+})

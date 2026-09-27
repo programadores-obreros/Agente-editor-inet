@@ -130,6 +130,41 @@ entrada para documentos EXTERNOS; el chequeo de construcción del motor es la pu
 de entrada para `Proyecto` que llegan por cualquier otro camino (in-memory, tests,
 futuros consumidores que no pasen por disco).
 
+### 6.1. Ampliación Phase 1.1 (remediación de hallazgos externos E1-01/E1-02)
+
+La garantía "ids duplicados" de §6 antes SÓLO cubría `componentes[]`; se extiende
+explícitamente a `conexiones[]` y `comportamientos[]` (mismo código `ID_DUPLICADO`,
+categoría `estructural`) — sin esto, dos conexiones (o dos comportamientos) con el
+MISMO id cargaban ambas sin problema, y `Desconectar`/`SetComportamiento` por ese id
+habría operado sobre AMBAS entidades a la vez (pérdida silenciosa de intención, brief
+§8.1). Decisión con evidencia sobre el alcance de esta unicidad: es exacta por STRING
+sobre el conjunto combinado cmp+conn+beh, NO además una exigencia de que el NÚMERO de
+sufijo sea disjunto entre tipos (`cmp-0` y `conn-0` coexistiendo no se rechaza por eso
+solo) — esa lectura más estricta del "único contador compartido" de §2 rompería
+fixtures de test ya establecidas y probadas (`documentoValido()` en
+`tests/nucleo-ir-cargador.test.mjs`, entre otras) que usan intencionalmente cmp-0/
+conn-0/beh-0 simultáneos como documento VÁLIDO.
+
+Además, el loader (y la construcción de `crearMotorDeProyecto({ proyectoInicial })`
+de arriba) ahora rechazan (`CONTADOR_ID_INCONSISTENTE`, categoría `estructural`) un
+documento donde `siguienteIdLocal` no sea ESTRICTAMENTE mayor que el número más alto
+ya usado entre `cmp-`/`conn-`/`beh-` combinados: sin este chequeo, un documento
+"estructuralmente representable" podía dejar que la PRÓXIMA operación que genera un id
+local (`AgregarComponente`/`Conectar`/`SetComportamiento`, comparten un único contador
+— §2) reprodujera un id ya existente (`AgregarComponente` produciendo dos veces
+`cmp-0`, con `ok:true` — hallazgo E1-01).
+
+Ambas reglas viven en UN SOLO lugar (`id.ts`, `analizarIdsLocales`/
+`validarIdsYContador`), reusado por `cargador.ts` y por la construcción del motor —
+deliberadamente NO se agregaron al pipeline continuo de `validar-estructural.ts`/
+`validarProyecto` (que corre también después de cada commit, Gate 4): esa validación
+corre sobre cualquier `Proyecto`, incluidos fixtures de test armados a mano que no
+pretenden simular el contador real (`tests/nucleo-validacion.test.mjs`) — una vez
+consistente al construirse, el contador se mantiene consistente por inducción, porque
+los 3 aplicadores que generan un id local sólo lo INCREMENTAN, nunca lo decrementan
+(cerrado además por regresión de cobertura, hallazgo M22, en
+`tests/nucleo-operaciones.test.mjs`).
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

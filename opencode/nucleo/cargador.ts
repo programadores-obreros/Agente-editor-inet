@@ -13,7 +13,7 @@
 import type { ComportamientoRegla, Componente, Conexion, ExtremoConexion, Proyecto } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
 import { canonicalizar, congelarProfundo } from "./canonico.ts"
-import { compararIdsLocales, generarIdProyectoAleatorio, type GeneradorIdProyecto } from "./id.ts"
+import { analizarIdsLocales, compararIdsLocales, generarIdProyectoAleatorio, validarIdsYContador, type GeneradorIdProyecto } from "./id.ts"
 
 export const SCHEMA_VERSION_SOPORTADA = "1.0.0"
 
@@ -129,11 +129,17 @@ export function cargarProyecto(entrada: unknown): ResultadoCarga {
     componentesValidados.push(r.valor)
   }
 
-  const idsComponentes = new Set<string>()
-  for (const c of componentesValidados) {
-    if (idsComponentes.has(c.id)) return rechazo("ID_DUPLICADO", { id: c.id })
-    idsComponentes.add(c.id)
+  // Duplicados DENTRO de componentes se chequean ACÁ, antes de construir el Set de
+  // referencia para conexiones/comportamientos: si dos componentes comparten id, el
+  // Set los pisaría uno al otro y dejaría pasar una referencia a un id que en
+  // realidad NO identifica a una única entidad (`analizarIdsLocales`, id.ts — misma
+  // función que el chequeo combinado de más abajo, no una copia).
+  const analisisComponentes = analizarIdsLocales(componentesValidados.map((c) => c.id))
+  if (analisisComponentes.duplicados.length > 0) {
+    return rechazo("ID_DUPLICADO", { ids: analisisComponentes.duplicados })
   }
+
+  const idsComponentes = new Set<string>(componentesValidados.map((c) => c.id))
 
   const conexionesValidadas: Conexion[] = []
   for (const cx of conexiones) {
@@ -164,6 +170,18 @@ export function cargarProyecto(entrada: unknown): ResultadoCarga {
       return rechazo("REFERENCIA_ROTA_AL_CARGAR", { comportamiento: b.id, componente: b.entonces.actuador })
     }
   }
+
+  // Unicidad de ids MÁS ALLÁ de componentes + consistencia del contador (Phase 1.1,
+  // hallazgos externos E1-01/E1-02 — PHASE_1_EXTERNAL_FINDINGS.md, regla completa en
+  // `id.ts`, `validarIdsYContador`): un documento puede ser referencialmente sano y
+  // aun así traer ids repetidos entre conexiones/comportamientos, o un
+  // `siguienteIdLocal` que dejaría a la PRÓXIMA operación que genera un id local
+  // (`AgregarComponente`/`Conectar`/`SetComportamiento`, comparten un único contador,
+  // `id.ts`) reproducir un id que ya existe. La MISMA regla corre también al construir
+  // `crearMotorDeProyecto` (motor.ts) para la puerta de un `Proyecto` que bypasea este
+  // loader (IR-SPEC.md §6) — un solo lugar, nunca copiada.
+  const motivosIds = validarIdsYContador({ componentes: componentesValidados, conexiones: conexionesValidadas, comportamientos: comportamientosValidados, siguienteIdLocal })
+  if (motivosIds.length > 0) return { ok: false, motivos: motivosIds }
 
   // El orden de entrada del array NUNCA afecta la forma canónica cargada: se ordena
   // por id local (numérico sobre el sufijo "-<n>"), no por orden de aparición en el

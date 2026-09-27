@@ -43,6 +43,7 @@ import type { Catalogo } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
 import { clonarProfundo, congelarProfundo } from "./canonico.ts"
 import { validarProyecto as validarProyectoReal } from "./validar.ts"
+import { validarIdsYContador } from "./id.ts"
 import { aplicarOperacion, type ResultadoOperacion, type SobreOperacion } from "./operaciones.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -160,8 +161,18 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   }
 
   // El motor se NIEGA a construirse sobre un estado ya roto — misma validación que
-  // corre después de cada lote (ver ejecutarLote más abajo), corrida una vez acá.
-  const motivosIniciales = validarProyecto(deps.proyectoInicial, deps.catalogo)
+  // corre después de cada lote (ver ejecutarLote más abajo), corrida una vez acá. Se
+  // le suma `validarIdsYContador` (Phase 1.1, hallazgos externos E1-01/E1-02): la
+  // MISMA regla que corre en `cargarProyecto()` (Gate 2), acá para la puerta de un
+  // `Proyecto` que bypasea el loader (`proyectoInicial` armado a mano o importado de
+  // otra fuente, IR-SPEC.md §6). Deliberadamente NO se agrega al pipeline continuo de
+  // `validarProyecto` de abajo (que TAMBIÉN corre después de cada commit): esa
+  // validación corre sobre cualquier `Proyecto`, incluidos fixtures de test armados a
+  // mano que no pretenden simular el contador real (`tests/nucleo-validacion.test.mjs`)
+  // — el contador, una vez consistente al construirse, se mantiene consistente por
+  // inducción (los 3 aplicadores que generan un id local sólo lo INCREMENTAN, nunca lo
+  // decrementan — ver M22, regresión en `tests/nucleo-operaciones.test.mjs`).
+  const motivosIniciales = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
   const rechazosIniciales = motivosIniciales.filter((m) => m.clasificacion === "rechazo")
   if (rechazosIniciales.length > 0) {
     throw new ErrorEstadoInicialInvalido(rechazosIniciales)

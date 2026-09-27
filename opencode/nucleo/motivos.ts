@@ -9,6 +9,13 @@
 //
 // Todos los identificadores en español rioplatense, siguiendo la decisión de nomenclatura
 // de §0 del diseño consolidado (`docs/programacion-intencion/DECISIONS.md`, entrada OD-01).
+//
+// Phase 1.1 (remediación de hallazgos externos, PHASE_1_EXTERNAL_FINDINGS.md) agrega un
+// código nuevo al vocabulario ya existente (`ID_DUPLICADO` se reusa, ver `id.ts`):
+// `CONTADOR_ID_INCONSISTENTE` — categoria "estructural", clasificacion "rechazo" siempre
+// — cuando `Proyecto.siguienteIdLocal` no es estrictamente mayor que el número más alto
+// entre los ids locales (`cmp-`/`conn-`/`beh-`) ya presentes. Ver `id.ts`
+// (`validarIdsYContador`) y `docs/programacion-intencion/IR-SPEC.md` §6.1.
 
 /** Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion". */
 export type CategoriaMotivo =
