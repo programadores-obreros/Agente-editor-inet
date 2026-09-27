@@ -122,3 +122,40 @@ Es el punto de composición que el `MotorDeProyecto` (Gate 6) va a envolver con
 revisión + persistencia — no reimplementa nada de eso, sólo junta "¿la operación en sí
 es válida?" con "¿el estado resultante es válido?", que son dos preguntas distintas
 (la primera decide si se aplica; la segunda decide si el resultado queda `invalido`).
+
+**Nota (hallazgo adversarial Gate 8, item 4):** el motor (`motor.ts`) NO reusa
+`ejecutarOperacion` tal cual — implementa su propio pipeline equivalente
+(`aplicarOperacion` por operación + `validarProyecto` una vez por lote), porque
+necesita acumular motivos de VARIAS operaciones antes de decidir si el lote entero
+commitea. Esa duplicación de estructura (dos lugares que combinan "rechazo de
+operación" + "validación del estado resultante") es exactamente donde apareció el
+bug: el motor revisaba `clasificacion:"rechazo"` sólo en los motivos por operación,
+nunca en los de la validación post-lote. Corregido en `motor.ts` — ver §8.
+
+## 8. Contrato de construcción del motor (`crearMotorDeProyecto`) — hallazgo adversarial Gate 8
+
+El motor (Gate 6, `motor.ts`) es quien realmente aplica esta regla en dos puntos:
+
+1. **Al construirse**: `crearMotorDeProyecto(deps)` corre `validarProyecto(deps.proyectoInicial, deps.catalogo)`
+   una vez. Si algún motivo devuelto tiene `clasificacion:"rechazo"`, el factory
+   **lanza** `ErrorEstadoInicialInvalido` (con `.motivos` estructurado, nunca una
+   excepción cruda sin datos) en vez de devolver un motor "operable". Motivo: un
+   consumidor que bypasea `cargarProyecto()` (que sí rechazaría un documento roto
+   con `REFERENCIA_ROTA_AL_CARGAR`) y empuja un `Proyecto` ya inconsistente directo
+   como `proyectoInicial` no debe poder obtener un motor que después commitee esa
+   rotura en la primera transacción trivial.
+2. **En cada commit** (defensa en profundidad): después de aplicar el lote entero y
+   correr `validarProyecto(borrador, catalogo)`, si CUALQUIERA de esos motivos trae
+   `clasificacion:"rechazo"` (hoy sólo `validar-estructural.ts` puede emitir uno así,
+   `REFERENCIA_INEXISTENTE` — `validar-tecnico.ts` nunca usa esa clasificación), el
+   lote entero se descarta: sin persistencia, sin subir la revisión, canónico
+   idéntico. Antes de este fix, el motor sólo miraba los motivos por-operación
+   (`aplicarOperacion`) y dejaba pasar cualquier rechazo que apareciera recién en la
+   validación post-lote.
+
+No explotable hoy por las 8 operaciones públicas de este documento (todas re-chequean
+existencia de referencias antes de mutar), pero sí si el estado inicial llega roto
+por fuera del loader, o si una regla de validación futura gana esa clasificación de
+forma alcanzable. Ambos puntos usan la MISMA función `validarProyecto` (inyectable
+sólo para tests, nunca en producción) — ver `DECISIONS.md`, entrada "hallazgo
+adversarial Gate 8".

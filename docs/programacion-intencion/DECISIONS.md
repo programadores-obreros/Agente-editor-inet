@@ -160,3 +160,46 @@ confirmar si Fase 2+ corre este núcleo bajo Windows de verdad.
 **Sin locks, un solo escritor:** mismo modelo implícito que `memoria.ts` (no
 declarado como asunción explícita ahí tampoco). `Almacen.list()` y la detección de
 modificación externa quedan fuera de Fase 1 (decisión ya registrada arriba, Gate 1).
+
+## Hallazgo adversarial Gate 8 (Agente X) — motor.ts no filtraba rechazo post-lote
+
+**Qué encontró:** una revisión adversarial independiente (Agente X, sobre una copia
+aislada del worktree, nunca sobre el original) reportó que `motor.ts` cortaba el
+lote ANTES de commitear sólo mirando los motivos `clasificacion:"rechazo"` que
+produce `aplicarOperacion` por operación (`operaciones.ts`) — nunca revisaba si
+`validarProyecto(borrador, catalogo)`, corrida DESPUÉS de aplicar todo el lote,
+también traía un motivo `clasificacion:"rechazo"`. `validar-estructural.ts` sí puede
+emitir uno (`REFERENCIA_INEXISTENTE`); `validar-tecnico.ts` nunca usa esa
+clasificación. Repro: construir el motor con un `proyectoInicial` ya roto (una
+conexión colgando, bypaseando `cargarProyecto`) + una operación trivial no
+relacionada → `motor.aplicar()` devolvía `ok:true`, persistía, y subía la revisión.
+
+**Severidad real:** no explotable hoy por las 8 operaciones públicas de Fase 1
+(todas re-chequean referencias antes de mutar) — era una violación LATENTE del
+contrato representable-vs-rechazo, alcanzable sólo si alguien bypasea el loader para
+construir el motor, o si una regla de validación futura gana esa clasificación de
+forma alcanzable vía las operaciones normales.
+
+**Decisión y arreglo (dos capas, ambas necesarias):**
+1. `crearMotorDeProyecto` corre `validarProyecto(proyectoInicial, catalogo)` una vez
+   al construirse y **lanza** `ErrorEstadoInicialInvalido` (con `.motivos`
+   estructurado) si encuentra un rechazo — el motor directamente no se deja
+   construir sobre un estado ya roto.
+2. Defensa en profundidad: el pipeline de commit ahora también corta el lote si
+   `validarProyecto()` post-aplicación trae un rechazo — aunque (1) ya cierre el
+   único camino conocido para llegar a ese estado, la segunda capa protege contra
+   una regla de validación futura que lo vuelva alcanzable sin que alguien se
+   acuerde de revisar el pipeline de commit.
+
+Ver `OPERATIONS.md` §8 (contrato de construcción del motor) e `IR-SPEC.md` §6 (el
+loader sólo cubre documentos que pasan por `cargarProyecto()`, no un `Proyecto`
+armado a mano). Tests y mutación: `tests/nucleo-motor.test.mjs` (2 tests nuevos) +
+`tests/nucleo-adversarial.test.mjs` (suite completa de Agente X incorporada).
+
+**Otro hallazgo, menor (mismo informe):** `asignarPin` (catalogo.ts) tenía una rama
+(`terminal.requierePwm && !pin.capacidades.pwm`) implementada correctamente desde
+Gate 3 pero sin NINGÚN test que la ejercitara — sobrevivió a la campaña de mutación
+de Agente X (mutante M16) sin que ninguna de las 143 pruebas existentes lo notara.
+Se agregó el test faltante (`tests/nucleo-catalogo.test.mjs` + incorporado también
+en `tests/nucleo-adversarial.test.mjs`), sin tocar la lógica de producción (ya era
+correcta, sólo le faltaba cobertura).

@@ -203,3 +203,63 @@ test("buffer-undo-acotado-a-50", () => {
   }
   assert.equal(motor.obtenerBufferUndo().length, 50)
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Hallazgo adversarial Gate 8 (item 4, Agente X): motor.ts sólo cortaba el lote por
+// `motivosPropios` (los que emite `aplicarOperacion` por operación) — nunca revisaba
+// si `validarProyecto(borrador, catalogo)`, corrida DESPUÉS de aplicar todo el lote,
+// traía un motivo `clasificacion:"rechazo"` (que `validar-estructural.ts` SÍ puede
+// emitir, `REFERENCIA_INEXISTENTE`, a diferencia de `validar-tecnico.ts`, que nunca
+// usa esa clasificación). No explotable hoy vía las 8 operaciones públicas (todas
+// re-chequean referencias antes de mutar), pero SÍ si `proyectoInicial` ya llega roto
+// (bypaseando `cargarProyecto`) o si una regla nueva de validación gana esa
+// clasificación en el futuro. Dos arreglos, ambos probados acá:
+//
+//   (a) el motor se NIEGA a construirse sobre un `proyectoInicial` que ya trae un
+//       motivo `clasificacion:"rechazo"` — lanza `ErrorEstadoInicialInvalido`.
+//   (b) defensa en profundidad: en el pipeline de commit, CUALQUIER motivo
+//       `clasificacion:"rechazo"` que aparezca en `validarProyecto()` post-lote
+//       corta la transacción entera, igual que un rechazo por operación.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-motivo-clasificacion-rechazo (hallazgo adversarial Gate 8, item 4)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-roto", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    placa: "esp32-devkit-v1",
+    componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: "GPIO23" }, propiedades: {} }],
+    conexiones: [{ id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-NO-EXISTE", terminal: "a" } }],
+    siguienteIdLocal: 1,
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err.motivos?.some((m) => m.codigo === "REFERENCIA_INEXISTENTE" && m.clasificacion === "rechazo"), `el error debe traer el motivo estructurado: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con una referencia colgada NUNCA debe llegar a construir un motor operable",
+  )
+})
+
+test("defensa-en-profundidad: motivo clasificacion=rechazo desde validarProyecto post-lote descarta el commit entero", () => {
+  // Estado inicial LIMPIO (pasa el chequeo del constructor) — el validador se
+  // inyecta (nunca se toca validar-estructural.ts/validar-tecnico.ts reales) para
+  // simular, sin inventar un escenario explotable de verdad hoy, que una validación
+  // futura o distinta encuentre un motivo "rechazo" DESPUÉS de aplicar el lote.
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-defensa", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  let llamadas = 0
+  const validarProyectoFalso = () => {
+    llamadas++
+    if (llamadas === 1) return [] // la llamada de construcción ve un estado limpio
+    return [{ codigo: "MOTIVO_FIXTURE_RECHAZO", categoria: "referencial", severidad: "blocking", clasificacion: "rechazo" }]
+  }
+  const almacen = crearAlmacenFalso()
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen, validarProyecto: validarProyectoFalso })
+  const antes = motor.getProyecto()
+
+  const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  assert.equal(r.ok, false, "un rechazo post-lote debe tumbar la transaccion entera, aunque la operacion en si misma fuera valida")
+  assert.ok(r.motivos.some((m) => m.codigo === "MOTIVO_FIXTURE_RECHAZO"))
+  assert.equal(motor.getProyecto(), antes, "el canonico no cambia")
+  assert.equal(almacen.llamadasGuardar.length, 0, "nunca se llega a persistir")
+})

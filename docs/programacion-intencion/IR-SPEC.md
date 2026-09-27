@@ -121,6 +121,15 @@ parcial (R2). **Deliberadamente NO valida catálogo**: un `Componente.tipo` que 
 catálogo activo reconozca, o una `placa` que el catálogo activo ya no tenga, CARGAN
 bien — ver §7.
 
+**Esta garantía sólo cubre documentos que pasan por `cargarProyecto()`.** Un `Proyecto`
+armado a mano (o empujado directo a `crearMotorDeProyecto({ proyectoInicial, ... })`,
+Gate 6) bypasea el loader por completo — por eso el motor corre su PROPIA validación
+al construirse y se niega a operar sobre un estado ya roto (hallazgo adversarial
+Gate 8, item 4 — ver `OPERATIONS.md` §8 y `DECISIONS.md`). El loader es la puerta de
+entrada para documentos EXTERNOS; el chequeo de construcción del motor es la puerta
+de entrada para `Proyecto` que llegan por cualquier otro camino (in-memory, tests,
+futuros consumidores que no pasen por disco).
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:
