@@ -504,3 +504,125 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan una excepcion cru
   assert.equal(almacen.llamadasGuardar.length, llamadasAntes, "ninguno de los 3 intentos llamo a guardar")
   assert.equal(motor.obtenerBufferUndo().length, 0, "el buffer de undo no se toco")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E3-01 (CRÍTICO, PHASE_1_EXTERNAL_FINDINGS.md):
+// `motor.ts` — `operaciones[0]?.baseRevision ?? canonico.revision` trataba
+// `baseRevision:null`/campo ausente/de OTRO TIPO en la PRIMERA operación de un lote NO
+// VACÍO exactamente igual que "lote vacío": el `??` lo sustituía por la revisión
+// ACTUAL, y el chequeo de stale write se auto-satisfacía siempre — un cliente con una
+// vista vieja que mandara `baseRevision:null` (campo perdido en un serializador, o un
+// cliente que "siempre gana") pasaba como si hubiera confirmado conocer la revisión
+// vigente. Reproducción original: evidencia/e3/scripts/e3_null_baserevision_repro.mjs.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("baseRevision invalido en la PRIMERA operacion rechaza con BASE_REVISION_INVALIDA — NUNCA se sustituye por la revision actual (hallazgo externo E3-01)", () => {
+  const casos = [
+    { nombre: "null", valor: null },
+    { nombre: "string numerico", valor: "1" },
+    { nombre: "NaN", valor: Number.NaN },
+    { nombre: "Infinity", valor: Number.POSITIVE_INFINITY },
+    { nombre: "-Infinity", valor: Number.NEGATIVE_INFINITY },
+    { nombre: "negativo", valor: -1 },
+    { nombre: "no entero (1.5)", valor: 1.5 },
+  ]
+  for (const { nombre, valor } of casos) {
+    const { motor, almacen } = crearMotorDePrueba()
+    // Cliente A legítimo commitea primero: revision pasa a 1 — así "usar la revision
+    // actual en vez del dato inválido" (el bug original) sería DETECTABLE: si el fix
+    // fallara y cayera de nuevo en `?? canonico.revision`, esto commitearía con
+    // ok:true en vez de rechazar.
+    const rA = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+    assert.equal(rA.ok, true)
+    const revisionTrasA = motor.getProyecto().revision
+    assert.equal(revisionTrasA, 1)
+
+    const operacion = { idOperacion: "op-invalida", actor: "agente", baseRevision: valor, tipo: "AgregarComponente", payload: { tipo: "led" } }
+    const r = motor.aplicarTransaccion([operacion])
+    assert.equal(r.ok, false, `caso baseRevision=${nombre}: debe rechazar`)
+    assert.equal(r.motivos[0].codigo, "BASE_REVISION_INVALIDA", `caso baseRevision=${nombre}: codigo esperado BASE_REVISION_INVALIDA, recibido ${r.motivos[0]?.codigo}`)
+    assert.notEqual(r.motivos[0].codigo, "BASE_REVISION_DESACTUALIZADA", `caso baseRevision=${nombre}: NUNCA debe confundirse con "desactualizado" — el dato en si nunca fue valido`)
+    assert.equal(motor.getProyecto().revision, revisionTrasA, `caso baseRevision=${nombre}: el canonico se queda en la revision de A, sin tocar`)
+    assert.equal(almacen.llamadasGuardar.length, 1, `caso baseRevision=${nombre}: sólo el commit de A llamó a guardar — el intento invalido NUNCA persiste`)
+  }
+})
+
+test("baseRevision AUSENTE (campo omitido del todo) en la primera operacion rechaza con BASE_REVISION_INVALIDA (hallazgo externo E3-01)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const operacionSinBaseRevision = { idOperacion: "op-sin-base", actor: "agente", tipo: "AgregarComponente", payload: { tipo: "led" } }
+  const r = motor.aplicarTransaccion([operacionSinBaseRevision])
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "BASE_REVISION_INVALIDA")
+  assert.equal(motor.getProyecto().revision, 0, "el canonico no cambio")
+  assert.equal(almacen.llamadasGuardar.length, 0, "nunca llamo a guardar")
+})
+
+// No-regresión explícita (E3-01): `baseRevision:0` es la revisión inicial REAL, nunca
+// "falsy"/"ausente" — tiene que seguir commiteando igual que antes del fix.
+test("baseRevision-cero-es-valido-commitea-igual-que-antes-del-fix (no regresion, E3-01)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  assert.equal(r.ok, true, "baseRevision:0 sobre una revision inicial real=0 tiene que commitear")
+  assert.equal(motor.getProyecto().revision, 1)
+  assert.equal(almacen.llamadasGuardar.length, 1)
+})
+
+// No-regresión explícita (E3-01): revision N -> op(base N) commit -> N+1; una SEGUNDA
+// op con base N (ahora stale de verdad, valor VÁLIDO pero desactualizado) sigue
+// rechazando BASE_REVISION_DESACTUALIZADA (nunca BASE_REVISION_INVALIDA) — el
+// canónico se queda en N+1, nunca last-write-wins.
+test("segunda-operacion-con-baseRevision-valido-pero-stale-sigue-siendo-BASE_REVISION_DESACTUALIZADA (no regresion, E3-01)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const rA = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  assert.equal(rA.ok, true)
+  assert.equal(motor.getProyecto().revision, 1)
+  const rB = motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 0)) // baseRevision VALIDO (entero >= 0), pero stale
+  assert.equal(rB.ok, false)
+  assert.equal(rB.motivos[0].codigo, "BASE_REVISION_DESACTUALIZADA")
+  assert.equal(motor.getProyecto().revision, 1, "el canonico se queda en N+1 — nunca last-write-wins")
+  assert.equal(almacen.llamadasGuardar.length, 1, "sólo el commit de A persistio")
+})
+
+// Contrato (OPERATIONS.md §2/§9): en un lote con VARIAS operaciones, sólo la
+// baseRevision de la PRIMERA se contrasta contra el canónico — las siguientes viajan
+// en el sobre pero el motor nunca las compara (E3-01, "verificá cómo se trata
+// baseRevision de las operaciones 2..n").
+test("lote-con-varias-operaciones-solo-la-baseRevision-de-la-PRIMERA-se-valida-y-se-contrasta (contrato OPERATIONS.md §2/§9, E3-01)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const r = motor.aplicarTransaccion([
+    nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0), // primera: coincide con el canonico real (0)
+    { idOperacion: "op-segunda", actor: "agente", baseRevision: 999, tipo: "AgregarComponente", payload: { tipo: "led" } }, // segunda: baseRevision disparatado — NUNCA se compara
+  ])
+  assert.equal(r.ok, true, "sólo la baseRevision de la PRIMERA operación del lote se contrasta contra el canónico; la de la segunda viaja pero nunca se chequea")
+  assert.equal(motor.getProyecto().revision, 1)
+  assert.equal(almacen.llamadasGuardar.length, 1)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E3-05 (MENOR, misma raíz que E3-01): un lote vacío
+// commiteaba igual (`ok:true`, revisión sube, persiste una copia idéntica). Decisión
+// Phase 1.1 (el contrato no lo determina, ambas opciones son defendibles): no-op
+// explícito que NUNCA compromete nada — ni revisión, ni persistencia, ni buffer de
+// undo. Reproducción original: evidencia/e3/scripts/e3_null_baserevision_repro.mjs.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("aplicarTransaccion-con-lote-vacio-es-un-no-op-explicito-nunca-sube-revision-ni-persiste (hallazgo externo E3-05)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const antes = motor.getProyecto()
+  const r = motor.aplicarTransaccion([])
+  assert.equal(r.ok, true, "lote vacio es un no-op EXITOSO (decision Phase 1.1), no un rechazo")
+  assert.equal(r.motivos.length, 0)
+  assert.equal(motor.getProyecto(), antes, "el canonico es la MISMA referencia: nada cambio")
+  assert.equal(motor.getProyecto().revision, 0, "la revision NUNCA sube por un lote vacio")
+  assert.equal(almacen.llamadasGuardar.length, 0, "un lote vacio NUNCA llama a guardar")
+  assert.equal(motor.obtenerBufferUndo().length, 0, "un lote vacio NUNCA se agrega al buffer de undo")
+})
+
+test("proponer-con-lote-vacio-tambien-es-no-op (hallazgo externo E3-05)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const r = motor.proponer([])
+  assert.equal(r.ok, true)
+  assert.equal(r.motivos.length, 0)
+  assert.equal(motor.getProyecto().revision, 0)
+  assert.equal(almacen.llamadasGuardar.length, 0)
+})

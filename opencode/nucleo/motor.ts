@@ -37,6 +37,35 @@
 // aísla referencias). Ninguno de los dos es explotable en producción hoy porque
 // nada los inyecta fuera de los tests, pero antes de que exista un consumidor de
 // Fase 2 era el momento de cerrarlos.
+//
+// Phase 1.1 (hallazgo externo E3-01, CRÍTICO, PHASE_1_EXTERNAL_FINDINGS.md):
+// `operaciones[0]?.baseRevision ?? canonico.revision` trataba "no hay primera
+// operación" (lote vacío) y "la primera operación trae `baseRevision:null`/ausente/de
+// otro tipo" exactamente IGUAL — en ambos casos el `??` sustituía por la revisión
+// ACTUAL, así que el chequeo de stale write (`baseRevision !== canonico.revision`) se
+// auto-satisfacía SIEMPRE. Un cliente con una vista vieja que mandara
+// `baseRevision:null` (campo perdido en un serializador, o un cliente malicioso que
+// "siempre gana") pasaba como si hubiera confirmado conocer la revisión vigente —
+// lost update silencioso, exactamente lo que brief §9.3/§33 prohíben. `ejecutarLote`
+// ahora separa los dos casos: lote vacío es un no-op explícito ANTES de mirar
+// `baseRevision` (hallazgo E3-01, MENOR, comparte la misma raíz — ver más abajo), y
+// recién con al menos una operación se exige que su `baseRevision` sea un ENTERO NO
+// NEGATIVO de verdad (`esEnteroNoNegativo`, mismo criterio que ya usa `cargador.ts`
+// para `revision`/`siguienteIdLocal`) — `null`/ausente/string/NaN/±Infinity/negativo/
+// no entero rechazan con `BASE_REVISION_INVALIDA` (nuevo, categoría `motor`), un
+// código DISTINTO de `BASE_REVISION_DESACTUALIZADA`: el primero es "el sobre no trae
+// un dato válido", el segundo es "el dato es válido pero ya no coincide con lo
+// vigente" — nunca deben confundirse ni fusionarse en el mismo código.
+//
+// Phase 1.1 (hallazgo externo E3-05, MENOR, misma raíz que E3-01): un lote vacío
+// (`aplicarTransaccion([])`) commiteaba igual — `ok:true`, revisión sube, se persiste
+// una copia idéntica del proyecto sin cambio semántico alguno (ruido de historial/
+// undo/disco). El contrato (OPERATIONS.md/IR-SPEC.md) no determina si "cero
+// operaciones" debe ser rechazo o no-op — ambas opciones son defendibles y ninguna
+// arriesga datos — así que Phase 1.1 elige la que NUNCA compromete nada: un no-op
+// explícito (`ok:true`, sin subir revisión, sin llamar a `almacen.guardar`, sin
+// agregar al buffer de undo), documentado y testeado (ver OPERATIONS.md §9 y
+// `tests/nucleo-motor.test.mjs`).
 
 import type { Proyecto } from "./ir.ts"
 import type { Catalogo } from "./catalogo.ts"
@@ -45,6 +74,13 @@ import { clonarProfundo, congelarProfundo } from "./canonico.ts"
 import { validarProyecto as validarProyectoReal } from "./validar.ts"
 import { validarIdsYContador } from "./id.ts"
 import { aplicarOperacion, type ResultadoOperacion, type SobreOperacion } from "./operaciones.ts"
+
+/** Mismo criterio que `cargador.ts` (Gate 2) para `revision`/`siguienteIdLocal`:
+ * `0` es un entero no negativo perfectamente válido — nunca "falsy"/"ausente". Phase
+ * 1.1, hallazgo externo E3-01. */
+function esEnteroNoNegativo(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Interfaz de almacén — implementada en Gate 7 (almacen.ts, contra disco)
@@ -191,8 +227,41 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     }
   }
 
+  /** Phase 1.1 (hallazgo externo E3-01, CRÍTICO): `baseRevision` inválido (tipo
+   * incorrecto, no entero, negativo) es un motivo DISTINTO de "está desactualizado" —
+   * nunca se sustituye por la revisión actual (eso era el bug: el `??` original). */
+  function motivoBaseRevisionInvalida(baseRevisionRecibida: unknown): Motivo {
+    return {
+      codigo: "BASE_REVISION_INVALIDA",
+      categoria: "motor",
+      severidad: "blocking",
+      clasificacion: "rechazo",
+      datos: { baseRevisionRecibida },
+    }
+  }
+
   function ejecutarLote(operaciones: readonly SobreOperacion[], comprometer: boolean): ResultadoTransaccion {
-    const baseRevision = operaciones[0]?.baseRevision ?? canonico.revision
+    // Phase 1.1 (hallazgo externo E3-05, MENOR): lote vacío es un no-op explícito,
+    // ANTES de mirar `baseRevision` — nunca sube revisión, nunca persiste, nunca
+    // agrega al buffer de undo. Separado a propósito del chequeo de abajo: "no hay
+    // primera operación" y "la primera operación trae un baseRevision inválido" son
+    // dos causas distintas (E3-01 exige no confundirlas — antes, el mismo `??` las
+    // trataba igual).
+    if (operaciones.length === 0) {
+      return { ok: true, baseRevision: canonico.revision, revisionActual: canonico.revision, motivos: [], resultadosOperaciones: [] }
+    }
+
+    // Phase 1.1 (hallazgo externo E3-01, CRÍTICO): la PRIMERA operación del lote
+    // tiene que traer un `baseRevision` ENTERO NO NEGATIVO de verdad — `0` es
+    // perfectamente válido (no es "falsy" acá, es la revisión inicial real) y NUNCA
+    // se puede confundir con "ausente". `null`/campo ausente/string/NaN/±Infinity/
+    // negativo/no entero rechazan ACÁ, antes de clonar, con un motivo DISTINTO de
+    // "desactualizado" (`motivoBaseRevisionInvalida`, no `motivoRevisionObsoleta`).
+    const baseRevisionRecibida = operaciones[0]!.baseRevision
+    if (!esEnteroNoNegativo(baseRevisionRecibida)) {
+      return { ok: false, baseRevision: Number.NaN, revisionActual: canonico.revision, motivos: [motivoBaseRevisionInvalida(baseRevisionRecibida)], resultadosOperaciones: [] }
+    }
+    const baseRevision = baseRevisionRecibida
 
     // 1. baseRevision stale corta ANTES de clonar.
     if (baseRevision !== canonico.revision) {

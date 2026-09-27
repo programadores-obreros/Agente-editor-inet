@@ -82,6 +82,18 @@
 //   `UMBRAL_NO_FINITO`.
 //
 
+// Phase 1.1 (hallazgo externo E3-01, CRÍTICO) agrega, categoria "motor",
+// clasificacion "rechazo" siempre, emitido por `motor.ts` (`ejecutarLote`, ANTES de
+// clonar):
+// - `BASE_REVISION_INVALIDA` — la PRIMERA operación de un lote NO VACÍO trae un
+//   `baseRevision` que no es un entero no negativo (null/ausente/string/NaN/
+//   ±Infinity/negativo/no entero) — DISTINTO de `BASE_REVISION_DESACTUALIZADA` (que
+//   es "el dato es válido pero ya no coincide con lo vigente"): acá el dato en sí
+//   nunca fue válido, así que nunca se sustituye por la revisión actual (ese era el
+//   bug: un `??` que trataba "sin dato" como "usá la revisión de ahora"). Ver
+//   `docs/programacion-intencion/OPERATIONS.md` §9 para el detalle, incluida la
+//   decisión de E3-05 (lote vacío: no-op explícito, sin motivo, `ok:true`).
+
 /** Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion". */
 export type CategoriaMotivo =
   | "estructural"

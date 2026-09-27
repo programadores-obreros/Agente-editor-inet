@@ -277,3 +277,40 @@ categorías según quién lo emite). Cierra la inconsistencia de filosofía fail
 entre las dos puertas de entrada del núcleo (antes, el sobre aceptaba cualquier
 campo extra en silencio) sin inventar un código nuevo para lo mismo.
 
+### 9.3. `baseRevision` inválido vs. desactualizado (hallazgo E3-01, CRÍTICO)
+
+`motor.ts` exige que la **primera** operación de un lote NO VACÍO traiga un
+`baseRevision` que sea un **entero no negativo** (`Number.isInteger(v) && v >= 0` —
+`0` es un valor perfectamente válido, la revisión inicial real, NUNCA "falsy"/
+"ausente"). Si no lo es (`null`, campo ausente, string, `NaN`, `±Infinity`,
+negativo, no entero), la transacción entera rechaza con `BASE_REVISION_INVALIDA`
+(categoría `motor`) **antes de clonar** — este código es DISTINTO de
+`BASE_REVISION_DESACTUALIZADA` (§1 de arriba): el primero significa "el sobre no
+trae un dato válido", el segundo "el dato es válido pero ya no coincide con lo
+vigente" — nunca se confunden ni se fusionan en el mismo código, y `baseRevision`
+inválido NUNCA se sustituye silenciosamente por la revisión actual (ese era el bug:
+`operaciones[0]?.baseRevision ?? canonico.revision` trataba "sin dato" como "usá la
+revisión de ahora", auto-satisfaciendo siempre el chequeo de stale write).
+
+**Operaciones 2..n de un lote:** el contrato de `motor.ts` sólo contrasta el
+`baseRevision` de la PRIMERA operación contra el canónico (§1 de arriba, "Pipeline
+de `aplicarTransaccion`" — una sola `baseRevision` por transacción, no una por
+operación). El `baseRevision` de las operaciones 2..n viaja en el sobre pero el
+motor nunca lo compara ni lo valida — esto es intencional (no un descuido de Phase
+1.1) y está testeado explícitamente en `tests/nucleo-motor.test.mjs`.
+
+### 9.4. Lote vacío (hallazgo E3-05, MENOR, misma raíz que E3-01)
+
+`aplicarTransaccion([])`/`proponer([])` (cero operaciones) es un **no-op explícito**:
+`ok:true`, sin motivos, `revisionActual` igual a la revisión vigente (nunca sube),
+sin llamar a `almacen.guardar`, sin agregar al buffer de undo. Este chequeo corre
+ANTES de mirar `baseRevision` (que no tiene sentido sin una primera operación) —
+separado a propósito del de 9.3, para no confundir "no hay primera operación" con
+"la primera operación trae un dato inválido" (la misma confusión, con el mismo `??`,
+producía tanto E3-01 como E3-05).
+
+Ni este documento ni `IR-SPEC.md` determinan si un lote vacío debe ser rechazo o
+no-op — ambas opciones son defendibles y ninguna arriesga datos (ninguna persiste ni
+sube revisión). Phase 1.1 elige el no-op exitoso porque es la lectura más simple de
+"pedí cero cambios, no pasó nada" y evita inventar un código de rechazo para un caso
+que no es realmente un error del llamador.
