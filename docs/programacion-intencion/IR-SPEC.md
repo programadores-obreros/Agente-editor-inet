@@ -165,6 +165,72 @@ los 3 aplicadores que generan un id local sólo lo INCREMENTAN, nunca lo decreme
 (cerrado además por regresión de cobertura, hallazgo M22, en
 `tests/nucleo-operaciones.test.mjs`).
 
+### 6.2. Ampliación Phase 1.1 (remediación del hallazgo externo E1-03, CRÍTICO)
+
+`aplicarSetComportamiento` (`operaciones.ts`, Gate 5) sólo validaba que `cuando.
+capacidad` estuviera declarada en el catálogo del sensor — nunca que `umbral.
+magnitud`/`unidad` coincidieran con esa capacidad real, ni que `umbral.valor` fuera
+`Number.isFinite`. Y `validar-tecnico.ts` (Gate 4, corre en CADA `validarProyecto`,
+incluida la revalidación tras cambio de catálogo) nunca miraba `proyecto.
+comportamientos` en absoluto — un comportamiento semánticamente basura podía entrar
+por el loader, por un `proyectoInicial` armado a mano, o sobrevivir a una
+revalidación con otro catálogo, y quedar sin diagnóstico, incluso `listo:true`.
+
+Dos clases de defecto, con clasificación (A/B, brief §9.1) distinta y evidencia
+propia — NO se inventó acá, se leyó del contrato:
+
+1. **Un `umbral.valor` no finito (NaN/±Infinity) — RECHAZO, nivel estructural.** Un
+   valor así no es representable en el documento JSON persistido
+   (`JSON.stringify(NaN)`/`JSON.stringify(Infinity)` dan `null`, `canonico.ts`):
+   aceptarlo deja la memoria (con el número real) desincronizada del disco (con
+   `null`) apenas se persiste una vez — exactamente la clase de problema que §9.1
+   categoría B describe ("intenta un estado que el modelo no puede representar
+   coherentemente"). Se cierra en TRES puertas, cada una con su propio código, mismo
+   criterio de distinción momento-de-carga vs. momento-de-operación que ya usa §7 de
+   abajo para `REFERENCIA_ROTA_AL_CARGAR` vs. `REFERENCIA_INEXISTENTE`:
+   - `aplicarSetComportamiento` (`operaciones.ts`, Gate 5) — `UMBRAL_NO_FINITO`,
+     categoría `operacion`: rechaza la operación ANTES de construir el estado nuevo.
+   - `cargador.ts` (Gate 2, momento de carga) — `UMBRAL_NO_FINITO_AL_CARGAR`,
+     categoría `estructural`: cierra el caso de un documento (o un `unknown` ya
+     parseado, no necesariamente un string JSON real) que trae el valor directo, sin
+     pasar por la operación.
+   - `validar-estructural.ts` (Gate 4, SIN catálogo, `UMBRAL_NO_FINITO`, categoría
+     `estructural`) — corre sobre CUALQUIER `Proyecto`: cierra el `proyectoInicial`
+     armado a mano que bypasea tanto el loader como la operación (mismo criterio que
+     §6 de arriba ya usa para `CONTADOR_ID_INCONSISTENTE`/`ID_DUPLICADO`). Un
+     documento JSON real, parseado con `JSON.parse`, NUNCA puede producir NaN/
+     Infinity (no son tokens JSON válidos) — pero `cargarProyecto(entrada: unknown)`
+     acepta un objeto ya parseado directo, así que la puerta de Gate 2 sigue siendo
+     necesaria como defensa en profundidad, no redundancia inútil.
+2. **Capacidad/magnitud/unidad incompatible con el catálogo vigente — REPRESENTABLE,
+   nivel técnico (con catálogo).** Brief §8.1 lo dice explícito: "capability
+   incompatible... puede ser un error representable (§9.1, categoría A)": el
+   requisito se marca incompatible, NUNCA se reinterpreta ni se borra en silencio.
+   `validar-tecnico.ts` agrega un chequeo por `ComportamientoRegla` (nuevo código
+   `CAPACIDAD_INEXISTENTE_EN_CATALOGO` si la `capacidad` ya no existe para ese tipo
+   de sensor; reusa el código YA existente `MAGNITUD_INCOMPATIBLE` — vía
+   `propagarMagnitud`, sin cambios — si `magnitud`/`unidad` no coinciden). Corre
+   dentro de `validarTecnico`/`validarProyecto`, así que se ejercita igual sin
+   importar la puerta de entrada, INCLUIDA la revalidación con un catálogo distinto
+   al que se usó para crear el comportamiento — y esa revalidación sólo diagnostica,
+   JAMÁS reescribe el comportamiento del estudiante (P8 del diseño consolidado sigue
+   diferida, sin resolver acá).
+
+`SetComportamiento` (Gate 5) NO agrega un rechazo temprano nuevo por magnitud/unidad
+incompatible: son representables por contrato (arriba), así que se deja pasar y
+`validarTecnico` los diagnostica después de commitear — mismo criterio que
+`AsignarPin` ya usa para `PIN_OCUPADO`/`CAPACIDAD_PIN_INCOMPATIBLE` (§4 de
+`OPERATIONS.md`). El código YA existente `CAPACIDAD_NO_DECLARADA` (rechazo,
+categoría `operacion`, Gate 5) NO se tocó: es una decisión previa a Phase 1.1 sobre
+CÓMO llega el payload a la operación (una capacidad que ni siquiera aparece en el
+`payload` recibido en el momento de la operación), distinta de "el catálogo cambió
+DESPUÉS" que resuelve el punto 2 de arriba.
+
+`reemplazarSensor`/`propagarMagnitud` (`catalogo.ts`, Gate 3) NO se tocaron: sus 4
+ramas ya pasaron auditoría (sin clamp). El chequeo nuevo de `validar-tecnico.ts`
+REUSA `propagarMagnitud` como oráculo de compatibilidad — nunca duplica la regla, y
+nunca usa el `valor` convertido que devolvería (sólo diagnostica, no muta).
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

@@ -22,7 +22,9 @@ const { validarEstructural } = await import(join(REPO, "opencode/nucleo/validar-
 const { validarTecnico } = await import(join(REPO, "opencode/nucleo/validar-tecnico.ts"))
 const { validarProyecto, derivarReadiness } = await import(join(REPO, "opencode/nucleo/validar.ts"))
 const { lintPedagogico } = await import(join(REPO, "opencode/nucleo/lint-pedagogico.ts"))
-const { construirCatalogoMinimoReal } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
+const { construirCatalogoMinimoReal, sha256Hex } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
+const { construirCatalogo } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
+const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, LED, RESISTENCIA, PULSADOR, DHT22, NTC } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
 
 const catalogo = construirCatalogoMinimoReal()
 
@@ -131,6 +133,115 @@ test("referencia-inexistente-en-validar-estructural", () => {
 test("validar-estructural: proyecto sano da []", () => {
   const motivos = validarEstructural(proyectoCompletoYValido())
   assert.deepEqual(motivos, [])
+})
+
+// ═══ Phase 1.1 (hallazgo externo E1-03, CRÍTICO) — DOBLE defensa: `validar-estructural.ts`
+// (SIN catálogo) rechaza un `umbral.valor` no finito para CUALQUIER `Proyecto`, sin
+// importar la puerta de entrada; `validar-tecnico.ts` (CON catálogo) diagnostica
+// capacidad/magnitud/unidad incompatible con el catálogo VIGENTE — representable,
+// nunca rechazo, nunca reescribe el comportamiento del estudiante (P8 sigue
+// diferida). Antes de este fix ninguna de las dos puertas miraba
+// `proyecto.comportamientos` en absoluto (validar-tecnico.ts) o el valor del umbral
+// (validar-estructural.ts): un comportamiento con capacidad inexistente, magnitud/
+// unidad bogus, o un umbral NaN/Infinity quedaba SIN diagnóstico, hasta `listo:true`. ═══
+
+function conComportamiento(proyecto, { id = "beh-0", sensor, capacidad, comparador = ">", valor, unidad, magnitud, actuador }) {
+  return { ...proyecto, comportamientos: [...proyecto.comportamientos, { id, cuando: { sensor, capacidad, comparador, umbral: { valor, unidad, magnitud } }, entonces: { actuador, accion: "encender" } }] }
+}
+
+test("umbral-no-finito-rechaza-en-validar-estructural (hallazgo externo E1-03)", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: Infinity, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarEstructural(p)
+  const motivo = motivos.find((m) => m.codigo === "UMBRAL_NO_FINITO")
+  assert.ok(motivo, `debe aparecer UMBRAL_NO_FINITO: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.categoria, "estructural")
+  assert.equal(motivo.severidad, "blocking")
+  assert.equal(motivo.clasificacion, "rechazo")
+})
+
+test("umbral-nan-rechaza-en-validar-estructural (NaN pasa typeof === 'number', hallazgo externo E1-03)", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: NaN, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarEstructural(p)
+  assert.ok(motivos.some((m) => m.codigo === "UMBRAL_NO_FINITO" && m.clasificacion === "rechazo"))
+})
+
+test("capacidad-inexistente-en-catalogo-representable (hallazgo externo E1-03)", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "pulsador", pines: { senal: "GPIO4" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "capacidad-que-no-existe", valor: 1, unidad: "ninguna", magnitud: "estadoBooleano", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  const motivo = motivos.find((m) => m.codigo === "CAPACIDAD_INEXISTENTE_EN_CATALOGO")
+  assert.ok(motivo, `debe aparecer CAPACIDAD_INEXISTENTE_EN_CATALOGO: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.severidad, "blocking")
+  assert.equal(motivo.clasificacion, "representable")
+  assert.equal(p.comportamientos.length, 1, "el comportamiento NO se borra")
+})
+
+test("sensor-sin-la-capacidad-requerida-representable (hallazgo externo E1-03)", () => {
+  // El pulsador SOLO declara "estadoBooleano" (catalogo-datos.ts) — pedirle
+  // "temperatura" es "sensor sin la capacidad requerida": mismo chequeo/código que
+  // "capacidad inexistente" de arriba (buscar la capacidad DECLARADA por el tipo
+  // real del sensor, no una lista de casos especiales por componente).
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "pulsador", pines: { senal: "GPIO4" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 30, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  const motivo = motivos.find((m) => m.codigo === "CAPACIDAD_INEXISTENTE_EN_CATALOGO")
+  assert.ok(motivo, `debe aparecer CAPACIDAD_INEXISTENTE_EN_CATALOGO: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.clasificacion, "representable")
+})
+
+test("umbral-magnitud-incompatible-representable (hallazgo externo E1-03)", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 30, unidad: "celsius", magnitud: "magnitud-bogus", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  const motivo = motivos.find((m) => m.codigo === "MAGNITUD_INCOMPATIBLE")
+  assert.ok(motivo, `debe aparecer MAGNITUD_INCOMPATIBLE: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.severidad, "blocking")
+  assert.equal(motivo.clasificacion, "representable")
+  assert.equal(p.comportamientos[0].cuando.umbral.magnitud, "magnitud-bogus", "el comportamiento NO se reescribe: sigue con el dato bogus, el motivo viaja al lado")
+})
+
+test("umbral-unidad-incompatible-representable (sin conversion declarada, hallazgo externo E1-03)", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 30, unidad: "unidad-bogus", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  const motivo = motivos.find((m) => m.codigo === "MAGNITUD_INCOMPATIBLE")
+  assert.ok(motivo, `debe aparecer MAGNITUD_INCOMPATIBLE (unidad sin conversion declarada): ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.clasificacion, "representable")
+})
+
+test("comportamiento-valido-bajo-un-catalogo-deja-de-serlo-bajo-otro: revalidacion diagnostica, NUNCA reescribe (hallazgo externo E1-03)", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 30, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+
+  const motivosConCatalogoOriginal = validarTecnico(p, catalogo)
+  assert.ok(
+    !motivosConCatalogoOriginal.some((m) => m.codigo === "CAPACIDAD_INEXISTENTE_EN_CATALOGO" || m.codigo === "MAGNITUD_INCOMPATIBLE"),
+    `bajo el catálogo real el comportamiento es compatible: ${JSON.stringify(motivosConCatalogoOriginal)}`,
+  )
+
+  // Catálogo "otro": el dht22 pierde la capacidad "temperatura" (renombrada) — misma
+  // clase de version-skew que el resto de Gate 4 ya maneja para tipo/placa
+  // (IR-SPEC.md §7), acá aplicada a comportamientos.
+  const dht22Renombrado = { ...DHT22, capacidades: [{ id: "temperatura-v2", magnitud: "temperatura", unidad: "celsius" }] }
+  const catalogoOtro = construirCatalogo(
+    { version: "otro", componentes: [LED, RESISTENCIA, PULSADOR, dht22Renombrado, NTC], placas: PLACAS_CATALOGO_MINIMO, unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS } },
+    sha256Hex,
+  )
+  const antes = p.comportamientos[0]
+  const motivosConCatalogoOtro = validarTecnico(p, catalogoOtro)
+  const motivo = motivosConCatalogoOtro.find((m) => m.codigo === "CAPACIDAD_INEXISTENTE_EN_CATALOGO")
+  assert.ok(motivo, `la revalidación con OTRO catálogo debe diagnosticar: ${JSON.stringify(motivosConCatalogoOtro)}`)
+  assert.equal(motivo.clasificacion, "representable")
+  assert.equal(p.comportamientos[0], antes, "el comportamiento NO se reescribe: sigue siendo la MISMA referencia, pidiendo la capacidad vieja")
 })
 
 // ───────────────────────── 6. incompleto + invalido simultáneos ─────────────────────

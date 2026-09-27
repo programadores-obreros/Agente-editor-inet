@@ -379,3 +379,37 @@ test("constructor-rechaza-proyectoInicial-con-ids-duplicados-entre-conexiones (h
     "un proyectoInicial con dos conexiones con el MISMO id NUNCA debe llegar a construir un motor operable",
   )
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E1-03 (CRÍTICO): un `proyectoInicial` armado a mano
+// bypasea TANTO `cargarProyecto()` (Gate 2) COMO `aplicarSetComportamiento`
+// (Gate 5) — las dos puertas donde este fix también rechaza un `umbral.valor` no
+// finito. `validar-estructural.ts` (Gate 4, SIN catálogo, corrida por
+// `validarProyecto` dentro de la construcción del motor) es la TERCERA puerta,
+// la que cierra este caso — mismo criterio que ya usan los tests E1-01/E1-02 de
+// arriba para el contador de ids/ids duplicados.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-umbral-no-finito (hallazgo externo E1-03)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-e1-03", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    placa: "esp32-devkit-v1",
+    componentes: [
+      { id: "cmp-0", tipo: "led", pines: { anodo: "GPIO23" }, propiedades: {} },
+      { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} },
+    ],
+    comportamientos: [
+      { id: "beh-0", cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: Infinity, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } },
+    ],
+    siguienteIdLocal: 2,
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err.motivos?.some((m) => m.codigo === "UMBRAL_NO_FINITO" && m.clasificacion === "rechazo"), `el error debe traer el motivo estructurado: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con un umbral no finito (bypaseando cargarProyecto Y la operación SetComportamiento) NUNCA debe llegar a construir un motor operable",
+  )
+})

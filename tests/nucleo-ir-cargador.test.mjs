@@ -198,6 +198,57 @@ test("referencia-colgada-en-comportamiento-rechaza", () => {
   assert.equal(r.motivos[0].codigo, "REFERENCIA_ROTA_AL_CARGAR")
 })
 
+// ═══ Phase 1.1 (hallazgo externo E1-03, CRÍTICO) — `typeof umbral.valor !== "number"`
+// NO alcanza: `typeof NaN === "number"` y `typeof Infinity === "number"` son ciertos
+// los dos, así que el chequeo de forma existente los dejaba pasar. Ninguno de los
+// dos es representable en el documento JSON persistido (`JSON.stringify(NaN)`/
+// `JSON.stringify(Infinity)` dan `null`, `canonico.ts`) — `cargarProyecto()` acepta
+// `unknown` ya parseado (no sólo un string JSON real, que jamás podría producir
+// NaN/Infinity), así que esta puerta sigue siendo necesaria como defensa en
+// profundidad, no redundancia inútil (ver IR-SPEC.md §6.2). ═══════════════════════
+
+test("umbral-nan-al-cargar-rechaza (hallazgo externo E1-03)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].cuando.umbral.valor = NaN
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "UMBRAL_NO_FINITO_AL_CARGAR")
+})
+
+test("umbral-infinito-positivo-al-cargar-rechaza (hallazgo externo E1-03)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].cuando.umbral.valor = Infinity
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "UMBRAL_NO_FINITO_AL_CARGAR")
+})
+
+test("umbral-infinito-negativo-al-cargar-rechaza (hallazgo externo E1-03)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].cuando.umbral.valor = -Infinity
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "UMBRAL_NO_FINITO_AL_CARGAR")
+})
+
+// No-regresión: 0 y una temperatura negativa (-40°C) son umbrales finitos y válidos
+// — el documento tiene que seguir cargando bien, nunca rechazarse por esto.
+test("umbral-cero-al-cargar-carga-bien (no regresión, E1-03)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].cuando.umbral.valor = 0
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.comportamientos[0].cuando.umbral.valor, 0)
+})
+
+test("umbral-temperatura-negativa-al-cargar-carga-bien (no regresión, E1-03)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].cuando.umbral.valor = -40
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.comportamientos[0].cuando.umbral.valor, -40)
+})
+
 // ────────────────────────── 7. orden de array no afecta forma canónica ───────────────
 
 test("orden-de-array-no-afecta-forma-canonica", () => {

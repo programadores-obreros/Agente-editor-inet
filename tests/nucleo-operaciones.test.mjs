@@ -256,6 +256,96 @@ test("setcomportamiento-regla-valida-commitea", () => {
   assert.equal(r.proyecto.comportamientos[0].id, "beh-0")
 })
 
+// ═══ Phase 1.1 (hallazgo externo E1-03, CRÍTICO) — SetComportamiento aceptaba un
+// `umbral.valor` NaN/±Infinity con `ok:true` y lo commiteaba: ninguno de los tres es
+// representable en el documento JSON persistido (`JSON.stringify(NaN)` y
+// `JSON.stringify(Infinity)` dan `null`, ver `canonico.ts`) — la memoria (con el
+// número real) quedaba desincronizada del disco (con `null`) apenas se persistía una
+// vez. Se rechaza ACÁ, ANTES de crear ningún estado nuevo (Camino B, §9.1) — a
+// diferencia de una capacidad/magnitud/unidad incompatible con el catálogo, que SÍ
+// es representable (ver tests/nucleo-validacion.test.mjs). ═══════════════════════
+
+function proyectoConSensorPulsador() {
+  let p = proyectoBase()
+  p = conLed(p, "cmp-0", "GPIO23")
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "pulsador", pines: { senal: "GPIO4" }, propiedades: {} }] }
+  return p
+}
+
+test("setcomportamiento-umbral-nan-rechaza EN LA OPERACIÓN MISMA, antes de validarProyecto (hallazgo externo E1-03)", () => {
+  const p = proyectoConSensorPulsador()
+  const payload = { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "estadoBooleano", comparador: ">", umbral: { valor: NaN, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }
+  // `aplicarOperacion` (sin `ejecutarOperacion` alrededor) sólo corre los chequeos
+  // PROPIOS de la operación — NUNCA `validarProyecto` (Gate 4). Si esto rechaza, es
+  // la operación misma (Camino A del brief, "rechaza ANTES de construir el
+  // estado"), no la defensa en profundidad de Gate 4.
+  const directo = aplicarOperacion(p, nuevaOperacion("SetComportamiento", payload), catalogo)
+  assert.equal(directo.proyecto, p, "nada se muta: el rechazo corre ANTES de tocar el estado")
+  assert.equal(directo.motivos[0].codigo, "UMBRAL_NO_FINITO")
+  assert.equal(directo.motivos[0].categoria, "operacion", "lo rechaza la OPERACIÓN misma, no la validación post-aplicación")
+  assert.equal(directo.motivos[0].clasificacion, "rechazo")
+
+  const r = ejecutarOperacion(p, nuevaOperacion("SetComportamiento", payload), catalogo)
+  assert.equal(r.ok, false, "NaN pasa typeof === 'number', pero Number.isFinite(NaN) === false: se rechaza igual")
+  assert.equal(r.proyecto, p)
+})
+
+test("setcomportamiento-umbral-infinito-positivo-rechaza EN LA OPERACIÓN MISMA (hallazgo externo E1-03)", () => {
+  const p = proyectoConSensorPulsador()
+  // Capacidad REAL ("estadoBooleano" del pulsador) — el bug original aceptaba esto
+  // con ok:true incluso con magnitud/unidad bogus además de Infinity.
+  const payload = { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "estadoBooleano", comparador: ">", umbral: { valor: Infinity, unidad: "unidad-bogus", magnitud: "magnitud-bogus" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }
+  const directo = aplicarOperacion(p, nuevaOperacion("SetComportamiento", payload), catalogo)
+  assert.equal(directo.proyecto, p)
+  assert.equal(directo.motivos[0].codigo, "UMBRAL_NO_FINITO")
+  assert.equal(directo.motivos[0].categoria, "operacion")
+
+  const r = ejecutarOperacion(p, nuevaOperacion("SetComportamiento", payload), catalogo)
+  assert.equal(r.ok, false)
+  assert.equal(r.proyecto, p)
+})
+
+test("setcomportamiento-umbral-infinito-negativo-rechaza (hallazgo externo E1-03)", () => {
+  const p = proyectoConSensorPulsador()
+  const r = ejecutarOperacion(
+    p,
+    nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "estadoBooleano", comparador: "<", umbral: { valor: -Infinity, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }),
+    catalogo,
+  )
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "UMBRAL_NO_FINITO")
+})
+
+// No-regresión: un umbral 0 (falsy en JS, pero un número finito perfectamente
+// válido) NUNCA se puede confundir con "faltante" ni rechazarse por esto.
+test("setcomportamiento-umbral-cero-commitea (no regresión, E1-03)", () => {
+  const p = proyectoConSensorPulsador()
+  const r = ejecutarOperacion(
+    p,
+    nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 0, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }),
+    catalogo,
+  )
+  assert.equal(r.ok, true, "0 es un umbral valido: Number.isFinite(0) === true")
+  assert.equal(r.proyecto.comportamientos[0].cuando.umbral.valor, 0)
+})
+
+// No-regresión: temperatura negativa (ej. -40°C) es un umbral físicamente válido —
+// finito y con magnitud/unidad reales del catálogo — nunca se rechaza ni se marca
+// blocking por esto.
+test("setcomportamiento-temperatura-negativa-commitea (no regresión, E1-03)", () => {
+  let p = proyectoBase()
+  p = conLed(p, "cmp-0", "GPIO23")
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  const r = ejecutarOperacion(
+    p,
+    nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: "<", umbral: { valor: -40, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }),
+    catalogo,
+  )
+  assert.equal(r.ok, true, "-40 es finito y coincide con magnitud/unidad reales del dht22: nunca se rechaza")
+  assert.ok(!r.motivos.some((m) => m.codigo === "UMBRAL_NO_FINITO" || m.codigo === "MAGNITUD_INCOMPATIBLE" || m.codigo === "CAPACIDAD_INEXISTENTE_EN_CATALOGO"), `no debe aparecer ningun motivo de E1-03 por esto: ${JSON.stringify(r.motivos)}`)
+  assert.equal(r.proyecto.comportamientos[0].cuando.umbral.valor, -40)
+})
+
 // ─────────────────── 17-21. CambiarComponente — inexistente + ramas A-D ─────────────
 
 test("cambiarcomponente-tipo-nuevo-inexistente-rechaza", () => {

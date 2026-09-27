@@ -268,6 +268,21 @@ function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRe
   if (!esObjeto(umbral) || typeof umbral.valor !== "number" || typeof umbral.unidad !== "string" || typeof umbral.magnitud !== "string") {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral" } }
   }
+  // Phase 1.1 (hallazgo externo E1-03): `typeof umbral.valor !== "number"` NO alcanza
+  // — `typeof NaN === "number"` y `typeof Infinity === "number"` son ciertos los dos,
+  // así que el chequeo de arriba solo los deja pasar. Ninguno de los dos es
+  // representable en el documento JSON persistido (`JSON.stringify(NaN)` y
+  // `JSON.stringify(Infinity)` dan `null`, ver `canonico.ts`): aceptar acá dejaría a
+  // la memoria (con el número real) desincronizada del disco (con `null`) apenas se
+  // persistiera una vez — rechazo ESTRUCTURAL de forma, no un problema
+  // técnico/semántico de catálogo (eso es `validar-tecnico.ts`, representable).
+  // Código distinto del que usa la segunda línea de defensa de Gate 4
+  // (`UMBRAL_NO_FINITO`, `validar-estructural.ts`) — mismo criterio de distinción
+  // momento-de-carga vs. momento-de-operación que ya usa `REFERENCIA_ROTA_AL_CARGAR`
+  // frente a `REFERENCIA_INEXISTENTE` más abajo en este mismo archivo.
+  if (!Number.isFinite(umbral.valor)) {
+    return { ok: false, codigo: "UMBRAL_NO_FINITO_AL_CARGAR", datos: { entidad: "comportamiento", comportamiento: id, valor: String(umbral.valor) } }
+  }
   if (!esObjeto(entonces)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces" } }
   const { actuador, accion } = entonces
   if (typeof actuador !== "string" || typeof accion !== "string" || !ACCIONES.has(accion)) {

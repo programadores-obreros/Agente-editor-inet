@@ -201,6 +201,20 @@ function aplicarDesconectar(proyecto: Proyecto, payload: { conexion: string }): 
 
 function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento: Omit<ComportamientoRegla, "id"> & { id?: string } }, catalogo: Catalogo): ResultadoAplicacion {
   const { cuando, entonces } = payload.comportamiento
+  // Phase 1.1 (hallazgo externo E1-03, CRÍTICO): un `umbral.valor` NaN/±Infinity
+  // nunca es representable en el documento JSON persistido (`JSON.stringify` de
+  // cualquiera de los tres da `null` — ver `canonico.ts`/`cargador.ts`), así que
+  // aceptar la operación dejaría la memoria (con el número real) desincronizada del
+  // disco (con `null`) apenas se persistiera una vez. Se rechaza ACÁ, ANTES de tocar
+  // el estado, en vez de esperar a que `validarProyecto` (Gate 4, en
+  // `ejecutarOperacion`/`motor.ts`) lo agarre recién después de aplicar la
+  // operación — a diferencia de una capacidad/magnitud/unidad incompatible con el
+  // catálogo (eso SÍ se deja pasar y se diagnostica representable/blocking más
+  // abajo, categoría A del brief §8.1/§9.1, mismo criterio que `PIN_OCUPADO` en
+  // `AsignarPin`).
+  if (!Number.isFinite(cuando.umbral.valor)) {
+    return { proyecto, motivos: [rechazo("UMBRAL_NO_FINITO", { valor: String(cuando.umbral.valor) })] }
+  }
   const sensor = proyecto.componentes.find((c) => c.id === cuando.sensor)
   if (!sensor) return { proyecto, motivos: [rechazo("REFERENCIA_INEXISTENTE", { componente: cuando.sensor })] }
   const actuador = proyecto.componentes.find((c) => c.id === entonces.actuador)

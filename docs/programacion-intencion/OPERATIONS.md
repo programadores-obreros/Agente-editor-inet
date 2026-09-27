@@ -72,7 +72,7 @@ rango sin esa clasificación sería improvisar sobre un contrato sin cerrar.
 | `AsignarPin` | `{componente: string; terminal: string; pin: string \| null}` | `REFERENCIA_INEXISTENTE` (componente) · `TERMINAL_NO_DECLARADO` (terminal no existe en el catálogo del componente) · `PIN_INEXISTENTE_EN_PLACA` (el pin no existe en la placa activa) | `PIN_OCUPADO`, `CAPACIDAD_PIN_INCOMPATIBLE` (los detecta `validarProyecto`/`validar-tecnico.ts`, Gate 4 — la operación en sí NO los chequea, así que un pin ocupado o incompatible SE ASIGNA igual) |
 | `Conectar` | `{desde: Extremo; hasta: Extremo}` | `REFERENCIA_INEXISTENTE` (componente) · `TERMINAL_NO_DECLARADO` (terminal) · `AUTOCONEXION_INVALIDA` (mismo componente+terminal en los dos extremos — decisión del orquestador: dos extremos DISTINTOS es invariante estructural) · `CONEXION_DUPLICADA` (el mismo par exacto ya está conectado — decisión del orquestador: un par de terminales conectado a lo sumo una vez) | — |
 | `Desconectar` | `{conexion: string}` | `REFERENCIA_INEXISTENTE` si no existe | — |
-| `SetComportamiento` | `{comportamiento: {id?; cuando; entonces}}` | `REFERENCIA_INEXISTENTE` (sensor/actuador no existen) · `CAPACIDAD_NO_DECLARADA` (la `capacidad` no está en el catálogo del sensor) | — |
+| `SetComportamiento` | `{comportamiento: {id?; cuando; entonces}}` | `REFERENCIA_INEXISTENTE` (sensor/actuador no existen) · `CAPACIDAD_NO_DECLARADA` (la `capacidad` no está en el catálogo del sensor) · `UMBRAL_NO_FINITO` (Phase 1.1, hallazgo E1-03: `umbral.valor` no es `Number.isFinite` — NaN/±Infinity no son representables en el documento JSON persistido) | `CAPACIDAD_INEXISTENTE_EN_CATALOGO`, `MAGNITUD_INCOMPATIBLE` (Phase 1.1, hallazgo E1-03: los detecta `validarProyecto`/`validar-tecnico.ts`, Gate 4 — la operación en sí NO los chequea, así que un comportamiento con capacidad/magnitud/unidad ya incompatibles con el catálogo vigente SE ACEPTA igual, mismo criterio que `PIN_OCUPADO` de `AsignarPin`) |
 | `CambiarComponente` | `{componente: string; tipoNuevo: string}` | `REFERENCIA_INEXISTENTE` (componente) · `TIPO_CATALOGO_DESCONOCIDO` (tipoNuevo no existe) | `RANGO_INCOMPATIBLE_AL_REEMPLAZAR`, `CAPACIDAD_INCOMPATIBLE_AL_REEMPLAZAR`, `UNIDAD_CONVERTIDA` (vía `reemplazarSensor`, Gate 3 — la operación SIEMPRE commitea si `tipoNuevo` existe; lo que cambia por rama es qué motivo deja) |
 
 Dos códigos son NUEVOS en este documento (no estaban en la tabla de Gate 3/`COMPONENT-CATALOG.md`,
@@ -83,6 +83,26 @@ abiertos en su §9, y que el orquestador cerró antes de este gate):
 - `CONEXION_DUPLICADA` — categoría `operacion`, rechazo.
 - `CAPACIDAD_NO_DECLARADA` — categoría `operacion`, rechazo (el "TERMINAL_NO_DECLARADO
   equivalente para capacidad" que el diseño consolidado pedía sin darle nombre final).
+
+Phase 1.1 (remediación del hallazgo externo E1-03, CRÍTICO — `validar-tecnico.ts`
+nunca miraba `proyecto.comportamientos`, y `aplicarSetComportamiento` aceptaba un
+`umbral.valor` NaN/±Infinity, ver `IR-SPEC.md` §6.2 para el detalle completo) agrega:
+
+- `UMBRAL_NO_FINITO` — categoría `operacion` en `aplicarSetComportamiento` (rechazo,
+  ANTES de construir el estado nuevo), categoría `estructural` en
+  `validar-estructural.ts` (rechazo, Gate 4, defensa en profundidad para
+  `proyectoInicial`/cualquier `Proyecto` que bypasee la operación). Mismo código, dos
+  categorías según quién lo emite — no dos reglas distintas.
+- `CAPACIDAD_INEXISTENTE_EN_CATALOGO` — categoría `tecnica`, **representable**
+  (`validar-tecnico.ts`, Gate 4): la `capacidad` de un comportamiento ya no existe
+  para el `tipo` del sensor en el catálogo VIGENTE (distinto de `CAPACIDAD_NO_
+  DECLARADA` de arriba, que rechaza en el momento de la operación misma con el
+  payload recibido — este código cubre "el catálogo cambió DESPUÉS", diagnosticado
+  sin importar la puerta de entrada, incluida la revalidación).
+- `MAGNITUD_INCOMPATIBLE` — código YA existente (`catalogo.ts`, `propagarMagnitud`,
+  categoría `semantica`, representable), REUSADO desde `validar-tecnico.ts` para
+  diagnosticar de forma continua que `umbral.magnitud`/`unidad` no coinciden con la
+  capacidad real del sensor vigente (no sólo "al reemplazar" un sensor).
 
 ## 5. Invariante de vista (punto abierto #3 de `DECISIONS.md`, cerrado acá)
 
