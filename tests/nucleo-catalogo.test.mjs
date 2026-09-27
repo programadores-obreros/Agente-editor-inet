@@ -109,6 +109,26 @@ test("asignar-pin-capacidad-incompatible", () => {
   assert.equal(asignarPin(terminalDigital, pinNormal), null, "GPIO23 sí debe ser compatible")
 })
 
+// Hallazgo adversarial Gate 8 (Agente X, mutante M16): la rama `requierePwm` de
+// `asignarPin` está implementada correctamente desde Gate 3 pero NINGÚN componente
+// del catálogo mínimo shippeado la declara (`led`/`resistencia`/`pulsador`/`dht22`/
+// `ntc` no tienen ningún terminal con `requierePwm:true`) y ningún test la
+// ejercitaba — sobrevivió a la campaña de mutación de Agente X sin que las 143
+// pruebas existentes lo notaran. Terminal + pin son un fixture de test (D2 del
+// arduino-uno, que existe pero NO está en `UNO_POOL_PWM`, Gate 1).
+test("asignar-pin-detecta-capacidad-pin-incompatible-por-requierePwm (hallazgo adversarial Gate 8, mutante M16)", () => {
+  const terminalConPwm = { id: "t-pwm", rol: "senal", electrica: "digital", direccion: "salida", requierePwm: true }
+  const pinSinPwm = REGISTRO_PLACAS["arduino-uno"].pines.find((p) => p.id === "D2")
+  assert.ok(pinSinPwm && pinSinPwm.capacidades.pwm === false, "fixture: D2 del UNO no tiene PWM")
+  const motivo = asignarPin(terminalConPwm, pinSinPwm)
+  assert.ok(motivo, "un terminal que requiere PWM sobre un pin sin PWM debe ser incompatible")
+  assert.equal(motivo.codigo, "CAPACIDAD_PIN_INCOMPATIBLE")
+
+  const pinConPwm = REGISTRO_PLACAS["arduino-uno"].pines.find((p) => p.id === "D3")
+  assert.ok(pinConPwm && pinConPwm.capacidades.pwm === true, "fixture: D3 del UNO SÍ tiene PWM")
+  assert.equal(asignarPin(terminalConPwm, pinConPwm), null, "D3 sí debe ser compatible con un terminal que pide PWM")
+})
+
 // ───────────────────────────── 6. magnitud-dimension-incompatible ─────────────────────
 
 test("magnitud-dimension-incompatible", () => {
