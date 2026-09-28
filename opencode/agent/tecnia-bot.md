@@ -21,6 +21,7 @@ permission:
   ayuda: "allow"
   actualizar: "allow"
   clave: "allow"
+  vista-fisica: "allow"
   edit:
     "*.html": "deny"
     "*.svg": "deny"
