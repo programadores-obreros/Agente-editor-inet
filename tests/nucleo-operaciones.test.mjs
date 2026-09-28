@@ -363,6 +363,22 @@ test("setcomportamiento-umbral-cero-commitea (no regresión, E1-03)", () => {
   assert.equal(r.proyecto.comportamientos[0].cuando.umbral.valor, 0)
 })
 
+// Phase 1.1 (RX4, NOTE — puerta Operation): `-0` es finito (`Number.isFinite(-0) ===
+// true`) y no cambia ningun veredicto — pero, materializado por `aplicarOperacion`
+// (`datos-planos.ts`), queda normalizado a `Object.is(v,0)` en el proyecto resultante,
+// nunca `-0`, para que memoria y disco coincidan siempre.
+test("setcomportamiento-umbral-menos-cero-commitea y se normaliza a 0 (hallazgo RX4, NOTE)", () => {
+  const p = proyectoConSensorPulsador()
+  const r = ejecutarOperacion(
+    p,
+    nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: -0, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }),
+    catalogo,
+  )
+  assert.equal(r.ok, true, "-0 es un umbral valido, igual que 0: Number.isFinite(-0) === true")
+  assert.ok(Object.is(r.proyecto.comportamientos[0].cuando.umbral.valor, 0), "normalizado a 0 en memoria, nunca -0")
+  assert.ok(!Object.is(r.proyecto.comportamientos[0].cuando.umbral.valor, -0))
+})
+
 // No-regresión: temperatura negativa (ej. -40°C) es un umbral físicamente válido —
 // finito y con magnitud/unidad reales del catálogo — nunca se rechaza ni se marca
 // blocking por esto.

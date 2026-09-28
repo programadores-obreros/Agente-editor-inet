@@ -29,7 +29,7 @@ function aceptado(valor) {
 
 // ─────────────────────────────── datos planos aceptados ──────────────────────────────
 
-test("acepta strings, booleans, null y numbers (incluidos NaN/±Infinity/-0) tal cual", () => {
+test("acepta strings, booleans, null y numbers (incluidos NaN/±Infinity) tal cual", () => {
   assert.equal(aceptado("hola"), "hola")
   assert.equal(aceptado(true), true)
   assert.equal(aceptado(false), false)
@@ -39,7 +39,33 @@ test("acepta strings, booleans, null y numbers (incluidos NaN/±Infinity/-0) tal
   assert.ok(Number.isNaN(aceptado(Number.NaN)), "NaN se copia tal cual — la finitud la deciden los validadores existentes")
   assert.equal(aceptado(Number.POSITIVE_INFINITY), Number.POSITIVE_INFINITY)
   assert.equal(aceptado(Number.NEGATIVE_INFINITY), Number.NEGATIVE_INFINITY)
-  assert.ok(Object.is(aceptado(-0), -0), "-0 se copia tal cual, distinguible de +0")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX4, NOTE — cuarta revisión adversarial independiente, RX4_REPORT.md):
+// `JSON.parse("-0")` produce `-0` en memoria (`Object.is` distingue el signo), pero
+// `JSON.stringify(-0)` da el string `"0"` — en disco el signo SIEMPRE se pierde. Antes
+// de este fix, `materializarDatosPlanos` preservaba `-0` tal cual en memoria (mismo
+// criterio que NaN/±Infinity: "la finitud/representación la deciden los validadores
+// existentes"), lo que dejaba una divergencia REAL memoria↔disco para un valor
+// numérico — el gate de Phase 1.1 exige que no haya divergencia memoria/disco. A
+// diferencia de NaN/±Infinity (que SÍ tienen decisiones de negocio reales atadas,
+// `UMBRAL_NO_FINITO`), `-0` y `0` son el MISMO valor con `===`/`>=`/cualquier
+// comparación aritmética — normalizar `-0` a `0` en la frontera de datos planos es
+// una normalización de REPRESENTACIÓN (nunca de significado, brief: "nunca reparar en
+// silencio" no aplica acá porque no hay dos significados distintos que confundir).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("normaliza -0 a 0 en la materializacion — nunca una divergencia de representacion memoria/disco (hallazgo RX4, NOTE)", () => {
+  assert.ok(Object.is(aceptado(-0), 0), "-0 se normaliza a 0 — JSON no puede persistir -0, y son el mismo valor con ===")
+  assert.ok(!Object.is(aceptado(-0), -0), "control: ya NO queda -0 en memoria")
+  // -0 anidado (valor de propiedad, elemento de array) tambien se normaliza — la
+  // normalizacion corre en el mismo punto que procesa CUALQUIER number, sin importar
+  // la posicion.
+  const copia = aceptado({ a: -0, b: [-0, 1, -0] })
+  assert.ok(Object.is(copia.a, 0))
+  assert.ok(Object.is(copia.b[0], 0))
+  assert.ok(Object.is(copia.b[2], 0))
 })
 
 test("acepta objetos planos anidados y arrays densos, produciendo una copia INDEPENDIENTE (nunca comparte referencia)", () => {

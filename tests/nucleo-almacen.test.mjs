@@ -339,3 +339,40 @@ test("round-trip formal (guardar en almacen real con fs falso, cargar de vuelta)
   assert.equal(({}).pwned, undefined, "Object.prototype global NUNCA se contamina, ni siquiera tras pasar por disco real")
   assert.equal(({}).pwned2, undefined, "Object.prototype global NUNCA se contamina, ni siquiera tras pasar por disco real")
 })
+
+// ──── 11. round-trip formal con -0 (hallazgo RX4, NOTE): `JSON.parse("-0")` produce
+// `-0` en memoria, pero `JSON.stringify(-0)` da el string `"0"` — en disco el signo
+// SIEMPRE se pierde. Antes de este fix eso era una divergencia REAL memoria/disco
+// (Object.is(v,-0) en memoria, "0" en disco); con la normalizacion en
+// `materializarDatosPlanos`, memoria/disco/canonico coinciden siempre en
+// `Object.is(v,0)`.
+test("round-trip formal (guardar en almacen real con fs falso, cargar de vuelta): -0 se normaliza a 0 en memoria, en disco y en el canonico — nunca una divergencia de representacion (hallazgo RX4, NOTE)", () => {
+  const fs = crearFsFalso()
+  const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+  const base = proyectoDePrueba("proy-rx4-menos-cero-roundtrip")
+  const proyectoConUmbral = {
+    ...base,
+    siguienteIdLocal: 2,
+    componentes: [
+      { id: "cmp-0", tipo: "dht22", pines: {}, propiedades: {} },
+      { id: "cmp-1", tipo: "led", pines: {}, propiedades: {} },
+    ],
+    comportamientos: [{ id: "beh-0", cuando: { sensor: "cmp-0", capacidad: "temperatura", comparador: ">", umbral: { valor: -0, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-1", accion: "encender" } }],
+  }
+  assert.ok(Object.is(proyectoConUmbral.comportamientos[0].cuando.umbral.valor, -0), "control: el objeto en memoria ANTES de guardar trae -0 real")
+
+  const rGuardar = almacen.guardar(proyectoConUmbral)
+  assert.equal(rGuardar.ok, true, `el guardado debe aceptar el proyecto: ${JSON.stringify(rGuardar)}`)
+
+  const textoEnDisco = fs._archivos.get("/proyectos/" + proyectoConUmbral.id + ".json")
+  assert.ok(textoEnDisco.includes('"valor":0'), "en disco nunca puede quedar -0 (JSON.stringify(-0) === '0') — control de que el texto persistido es '0'")
+  assert.ok(!textoEnDisco.includes('"valor":-0'), "control negativo: el texto persistido NUNCA contiene '-0'")
+
+  const rCargar = almacen.cargar(proyectoConUmbral.id)
+  assert.equal(rCargar.ok, true, `la carga debe aceptar: ${JSON.stringify(rCargar)}`)
+  const valorCargado = rCargar.proyecto.comportamientos[0].cuando.umbral.valor
+  assert.ok(Object.is(valorCargado, 0), "en memoria, tras cargar de vuelta, queda 0 — nunca -0")
+  assert.ok(!Object.is(valorCargado, -0))
+
+  assert.equal(canonicalizar(rCargar.proyecto), canonicalizar(proyectoConUmbral), "canonica-cargada === canonica-guardada — round-trip identico (canonicalizar ya usaba JSON.stringify, así que esto también valía ANTES del fix; lo que cambia es que memoria ahora coincide con esa misma representación)")
+})

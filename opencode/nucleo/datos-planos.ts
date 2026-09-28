@@ -24,10 +24,13 @@
 // hace UNA sola pasada sobre la entrada, ANTES de que cualquier otro código del
 // núcleo la toque, y produce una copia PROFUNDA hecha ÚNICAMENTE de datos planos
 // compatibles con JSON (objetos con prototipo `Object.prototype`/`null`, arrays
-// densos, strings, booleans, `null`, numbers — incluidos NaN/±Infinity/-0, que
-// SIGUEN siendo responsabilidad de los validadores existentes, `UMBRAL_NO_FINITO`
-// etc. — este módulo nunca decide finitud). Cada propiedad se lee EXACTAMENTE una
-// vez, y NUNCA invocando un getter: se lee por DESCRIPTOR
+// densos, strings, booleans, `null`, numbers — incluidos NaN/±Infinity, que SIGUEN
+// siendo responsabilidad de los validadores existentes, `UMBRAL_NO_FINITO` etc. —
+// este módulo nunca decide finitud; Phase 1.1 RX4, NOTE: `-0` es la ÚNICA
+// excepción — se NORMALIZA a `0` acá mismo, nunca se preserva el signo, porque
+// `JSON.stringify(-0)` pierde el signo igual y preservarlo en memoria sería una
+// divergencia real memoria↔disco, no una decisión de negocio como la finitud).
+// Cada propiedad se lee EXACTAMENTE una vez, y NUNCA invocando un getter: se lee por DESCRIPTOR
 // (`Object.getOwnPropertyDescriptor`), no por acceso (`v.campo`/`v[i]`) — si el
 // descriptor es un accessor (`get`/`set`), se rechaza SIN invocarlo. Esto tiene un
 // efecto secundario deliberado y correcto: un Proxy cuyo ÚNICO trap "malicioso" es
@@ -188,7 +191,21 @@ export function materializarDatosPlanos<T = unknown>(valor: unknown, ruta: strin
     }
 
     if (v === null) return null
-    if (typeof v === "string" || typeof v === "boolean" || typeof v === "number") return v
+    if (typeof v === "string" || typeof v === "boolean") return v
+    if (typeof v === "number") {
+      // Phase 1.1 (RX4, NOTE): `JSON.parse("-0")` produce `-0` en memoria
+      // (`Object.is` distingue el signo), pero `JSON.stringify(-0)` da el string
+      // `"0"` — en disco el signo SIEMPRE se pierde. Preservar `-0` tal cual en
+      // memoria (como antes) dejaba una divergencia REAL memoria↔disco para un
+      // valor numérico. A diferencia de NaN/±Infinity (que sí tienen decisiones de
+      // negocio reales atadas, `UMBRAL_NO_FINITO`, y siguen sin normalizarse acá —
+      // la finitud sigue siendo responsabilidad exclusiva de los validadores
+      // existentes), `-0` y `0` son el MISMO valor con `===`/cualquier comparación
+      // aritmética: normalizar acá es una normalización de REPRESENTACIÓN, nunca
+      // de significado — no hay dos significados distintos que la regla de "nunca
+      // reparar en silencio" pudiera estar confundiendo.
+      return Object.is(v, -0) ? 0 : v
+    }
     if (typeof v === "undefined") {
       if (permiteUndefinedAca) return undefined
       throw new RechazoMaterializacion(rutaActual, "undefined como elemento de array — JSON.stringify lo convertiria en null silenciosamente")

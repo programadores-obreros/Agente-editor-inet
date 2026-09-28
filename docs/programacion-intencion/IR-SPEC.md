@@ -681,6 +681,34 @@ Con ambos fixes, el reproductor original de RX4-02 ("cargar un documento con
 operable — no existe ningún canónico con esa revisión sobre el cual commitear
 encima.
 
+### 6.10. Phase 1.1 (RX4, NOTE) — `-0` se normaliza a `0` en `materializarDatosPlanos`
+
+`JSON.parse("-0")` produce `-0` en memoria (`Object.is` distingue el signo),
+pero `JSON.stringify(-0)` da el string `"0"` — en disco el signo SIEMPRE se
+pierde. Antes de este fix, `materializarDatosPlanos` preservaba `-0` tal cual
+en memoria (mismo criterio que NaN/±Infinity: "la finitud/representación la
+deciden los validadores existentes"), lo que dejaba una divergencia REAL
+memoria↔disco para un valor numérico — el gate de Phase 1.1 exige que no haya
+divergencia memoria/disco.
+
+A diferencia de NaN/±Infinity (que sí tienen decisiones de negocio reales
+atadas — `UMBRAL_NO_FINITO`, y siguen sin normalizarse: la finitud sigue
+siendo responsabilidad exclusiva de los validadores existentes), `-0` y `0`
+son el MISMO valor con `===`/`>=`/cualquier comparación aritmética — no hay
+dos SIGNIFICADOS distintos que la regla dura de "nunca reparar en silencio"
+pudiera estar confundiendo. Normalizar `-0` a `0` en la frontera de datos
+planos es, por tanto, una normalización de REPRESENTACIÓN, no de significado.
+
+**Fix:** `materializarDatosPlanos` normaliza cualquier `-0` (raíz, valor de
+propiedad, elemento de array) a `0` (`Object.is(v, -0) ? 0 : v`), en el mismo
+punto que procesa cualquier `number`. Con esto, memoria/disco/canónico
+coinciden siempre en `Object.is(v, 0)` — nunca `-0` sobrevive a la
+materialización. No cambia ningún veredicto ni código de rechazo existente:
+`-40`/`0`/NaN/±Infinity siguen exactamente igual (`-0` y `0` ya se comportaban
+idéntico en toda comparación aritmética del núcleo, antes y después de este
+fix — lo único que cambia es la REPRESENTACIÓN en memoria, nunca una
+decisión).
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

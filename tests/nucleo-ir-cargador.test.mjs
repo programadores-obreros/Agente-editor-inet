@@ -657,6 +657,21 @@ test("umbral-temperatura-negativa-al-cargar-carga-bien (no regresión, E1-03)", 
   assert.equal(r.proyecto.comportamientos[0].cuando.umbral.valor, -40)
 })
 
+// Phase 1.1 (RX4, NOTE): `-0` al cargar sobrevive como `Object.is(v, 0)` en memoria
+// — no como `-0` (que se persiste igual como "0" en disco, así que preservar `-0` en
+// memoria era una divergencia real memoria/disco). `-40` (arriba) y `0` no cambian de
+// comportamiento — control expreso de que la normalizacion NO afecta ningun otro
+// veredicto.
+test("umbral -0 al cargar carga bien y se normaliza a 0 — Object.is(v,0), no Object.is(v,-0) (hallazgo RX4, NOTE)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].cuando.umbral.valor = -0
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true)
+  assert.ok(Object.is(r.proyecto.comportamientos[0].cuando.umbral.valor, 0), "en memoria queda 0, nunca -0")
+  assert.ok(!Object.is(r.proyecto.comportamientos[0].cuando.umbral.valor, -0))
+  assert.equal(canonicalizar(r.proyecto).includes('"valor":-0'), false, "el canonico nunca serializa -0")
+})
+
 // ────────────────────────── 7. orden de array no afecta forma canónica ───────────────
 
 test("orden-de-array-no-afecta-forma-canonica", () => {
