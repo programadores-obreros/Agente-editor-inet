@@ -4,6 +4,18 @@ Registro vivo, una entrada por decisión, en orden de aparición. Referencia el 
 consolidado (`T_diseno_consolidado.md`, fuera del repo) y el brief congelado
 (`BRIEF.md`) por número de sección, nunca los transcribe.
 
+**Phase 1.1 (hallazgo externo E4-01, MAYOR):** "fuera del repo" arriba refería, en el
+momento en que se escribió, al scratchpad efímero de la sesión de Fase 1 — una
+ubicación que desaparece al cerrarse la sesión, dejando cada cita `§N` embebida en el
+código huérfana e inverificable. El original está ahora archivado de forma durable,
+byte a byte, en `~/tecnia-bot-docs/phase1/evidencia_original_sesion/T_diseno_consolidado.md`
+(sha256 `3ac6d546649725d2356db6dd4e0d0a7774e59174732367fc9cd90ff44e63193e`, verificado
+— ver `PROVENANCE.txt` en esa misma carpeta para la cadena de custodia completa,
+incluida la de `X_adversarial_g8.md`/`ARQ_revision_g8.md`/`LISTA_ADVERSARIAL_30.md`/
+`x_trabajo/mutation_results.txt`, citados como evidencia primaria en
+`PHASE_1_TRACEABILITY.md`/`PHASE_1_AUDIT_REPORT.md`, hallazgo externo E4-02, mismo
+patrón).
+
 ---
 
 ## OD-01 — Schema mínimo de placa (contrato de placa)
