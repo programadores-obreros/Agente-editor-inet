@@ -75,20 +75,27 @@ import { validarProyecto as validarProyectoReal } from "./validar.ts"
 import { validarIdsYContador } from "./id.ts"
 import { validarFormaProyecto, esEnteroNoNegativo } from "./cargador.ts"
 import { aplicarOperacion, type ResultadoOperacion, type SobreOperacion } from "./operaciones.ts"
+import { materializarDatosPlanos, motivoEntradaNoPlano } from "./datos-planos.ts"
 
-/** Phase 1.1 (hallazgo externo RX-02, CRÍTICO): lee un campo del sobre de operación
- * para el ECO de `ResultadoOperacion` (`idOperacion`/`idTransaccion`/`baseRevision`,
- * ya leídos una vez, protegidos, dentro de `aplicarOperacion`/`analizarSobreOperacion`
- * — `operaciones.ts`) — si esa lectura misma lanza (un getter que explota), devuelve
- * el `porDefecto` en vez de propagar una excepción cruda. Nunca decide validez: eso ya
- * corrió antes, protegido. */
-function leerSeguro<T>(fn: () => T, porDefecto: T): T {
-  try {
-    return fn()
-  } catch {
-    return porDefecto
-  }
-}
+// Phase 1.1 (RX2, hallazgo externo RX2-01, CRÍTICO — revisión adversarial
+// independiente #2): la función puntual `leerSeguro` (RX-02, `try/catch` alrededor
+// de UNA lectura) que vivía acá se ELIMINÓ — `ejecutarLote` (más abajo) ahora
+// materializa el LOTE COMPLETO de `SobreOperacion[]` en datos planos, una sola vez,
+// ANTES de leer siquiera `baseRevision` de la primera operación. Sobre esa copia ya
+// materializada, CUALQUIER lectura (`operacion.idOperacion`/`.idTransaccion`/
+// `.baseRevision` para el eco de `ResultadoOperacion`, o `.baseRevision` para el
+// chequeo de revisión stale) es una lectura de datos planos, garantizada segura —
+// no puede lanzar, así que no hay nada que "leer con seguridad": envolver una
+// lectura que ya no puede fallar en un `try/catch` sería un segundo mecanismo que
+// compite sin aportar nada. Ver `opencode/nucleo/datos-planos.ts` para el detalle
+// completo de por qué esto cierra la clase entera (no sólo la instancia que RX-02
+// había parchado) del defecto que RX2-01 reabrió: `aplicarOperacion`
+// (`operaciones.ts`) leía `operacion.payload` DOS veces — una protegida (la
+// validación de forma), otra sin proteger (el switch de despacho) — un getter
+// válido-en-la-1ª-lectura-y-que-explota-en-la-2ª atravesaba igual. Con el sobre ya
+// materializado ANTES de llegar a `aplicarOperacion`, no existe una "segunda
+// lectura": todo el pipeline (acá y en `operaciones.ts`) trabaja sobre la MISMA
+// copia plana.
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Interfaz de almacén — implementada en Gate 7 (almacen.ts, contra disco)
@@ -280,45 +287,57 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   // puertas — cerrado también extendiendo `cargador.ts` para rechazar claves
   // anidadas desconocidas, ver arriba en este mismo commit). (b) ninguna lectura de
   // `deps.proyectoInicial` estaba protegida: un getter que lanza en CUALQUIER campo
-  // (declarado o no) propagaba un `Error` crudo en vez de `ErrorEstadoInicialInvalido`
-  // — el mismo síntoma que CP-01 ya había cerrado, por una lectura distinta. El
-  // motor ahora SIEMPRE construye desde el resultado VALIDADO (nunca desde el
-  // objeto crudo, igual que `cargarProyecto()`), y CUALQUIER excepción al leer
-  // `proyectoInicial` se convierte en `ErrorEstadoInicialInvalido` con un motivo
-  // estructurado, nunca en un `Error` crudo (brief §12).
+  // (declarado o no) propagaba un `Error` crudo en vez de `ErrorEstadoInicialInvalido`.
+  //
+  // Phase 1.1 (RX2, hallazgo externo M2/R06 — mutación ronda 2 sobre este mismo
+  // fix): el `try/catch` EXTERIOR que envolvía este bloque (capturaba CUALQUIER
+  // excepción leyendo `deps.proyectoInicial` en `EXCEPCION_INESPERADA_LEYENDO_
+  // PROYECTO_INICIAL`) quedó DEMOSTRADO como una segunda autoridad que podía
+  // enmascarar una regresión: si `validarFormaProyecto` (`cargador.ts`) alguna vez
+  // dejara de materializar su entrada, un getter en un campo RAÍZ DECLARADO
+  // (`componentes`, `revision`, `placa`, ...) seguía convirtiéndose en
+  // `ErrorEstadoInicialInvalido` igual — vía ESTE catch, con OTRO código — y
+  // ningún test lo notaba (mutante R06, `M2/MUTATION_RESULTS_R2.md`). Se eliminó:
+  // `validarFormaProyecto` YA materializa su entrada como PRIMER paso
+  // (`opencode/nucleo/datos-planos.ts`) — lee cada propiedad UNA vez, por
+  // descriptor, sin invocar ningún getter, y NUNCA lanza (siempre devuelve un
+  // `ResultadoCarga` estructurado). Un getter/Proxy en cualquier campo, declarado o
+  // no, se detecta ahí (código `ENTRADA_NO_ES_DATO_PLANO`) y `resultadoForma.ok`
+  // sale `false` con un motivo `clasificacion:"rechazo"` — el mismo camino de abajo
+  // que ya tira `ErrorEstadoInicialInvalido(rechazosIniciales)`, sin necesitar un
+  // segundo mecanismo que compita. `proyectoParaConstruir = deps.proyectoInicial`
+  // en la rama `else` (más abajo) sigue siendo una lectura CRUDA a propósito (Gate
+  // 4 corrida igual, protegida por su PROPIO `try/catch` puntual, sin cambios) —
+  // pero ese valor NUNCA llega a `congelarProfundo(clonarProfundo(...))` de abajo:
+  // `rechazosIniciales.length > 0` corta antes (el motivo de forma ya alcanza).
   let motivosIniciales: Motivo[]
   let proyectoParaConstruir: Proyecto
-  try {
-    const resultadoForma = validarFormaProyecto(deps.proyectoInicial as unknown)
-    if (resultadoForma.ok) {
-      proyectoParaConstruir = resultadoForma.proyecto
-      motivosIniciales = [...validarProyecto(proyectoParaConstruir, deps.catalogo), ...validarIdsYContador(proyectoParaConstruir)]
-    } else {
-      proyectoParaConstruir = deps.proyectoInicial
-      let motivosGate4: readonly Motivo[] = []
-      try {
-        motivosGate4 = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
-      } catch {
-        motivosGate4 = []
-      }
-      motivosIniciales = [...resultadoForma.motivos, ...motivosGate4]
+  const resultadoForma = validarFormaProyecto(deps.proyectoInicial as unknown)
+  if (resultadoForma.ok) {
+    proyectoParaConstruir = resultadoForma.proyecto
+    motivosIniciales = [...validarProyecto(proyectoParaConstruir, deps.catalogo), ...validarIdsYContador(proyectoParaConstruir)]
+  } else {
+    proyectoParaConstruir = deps.proyectoInicial
+    let motivosGate4: readonly Motivo[] = []
+    try {
+      motivosGate4 = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
+    } catch {
+      motivosGate4 = []
     }
-  } catch (error) {
-    throw new ErrorEstadoInicialInvalido([
-      {
-        codigo: "EXCEPCION_INESPERADA_LEYENDO_PROYECTO_INICIAL",
-        categoria: "estructural",
-        severidad: "blocking",
-        clasificacion: "rechazo",
-        datos: { error: error instanceof Error ? error.message : String(error) },
-      },
-    ])
+    motivosIniciales = [...resultadoForma.motivos, ...motivosGate4]
   }
   const rechazosIniciales = motivosIniciales.filter((m) => m.clasificacion === "rechazo")
   if (rechazosIniciales.length > 0) {
     throw new ErrorEstadoInicialInvalido(rechazosIniciales)
   }
 
+  // Backstop defensivo (no compite con lo de arriba: acá `proyectoParaConstruir`
+  // YA es `resultadoForma.proyecto` — datos planos, validados, congelados una vez
+  // dentro de `validarFormaProyecto` — nunca el objeto crudo del llamador, que
+  // corta antes por el `throw` de arriba si trae algún rechazo). `clonarProfundo`/
+  // `congelarProfundo` no deberían poder fallar sobre un valor así; se conserva el
+  // `try/catch` como red de seguridad ante un fallo inesperado del propio
+  // `structuredClone`, no como mecanismo de validación de entrada.
   let canonico: Proyecto
   try {
     canonico = congelarProfundo(clonarProfundo(proyectoParaConstruir))
@@ -358,7 +377,33 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     }
   }
 
-  function ejecutarLote(operaciones: readonly SobreOperacion[], comprometer: boolean): ResultadoTransaccion {
+  function ejecutarLote(operacionesCrudas: readonly SobreOperacion[], comprometer: boolean): ResultadoTransaccion {
+    // Phase 1.1 (RX2, hallazgo externo RX2-01, CRÍTICO — revisión adversarial
+    // independiente #2): materializa el LOTE COMPLETO en datos planos, UNA sola
+    // vez, ANTES de leer NADA — ni siquiera el `baseRevision` de la primera
+    // operación, más abajo. Antes de este fix, `operaciones[0]!.baseRevision` era
+    // una lectura CRUDA, sin proteger: un `SobreOperacion` cuyo propio
+    // `baseRevision` fuera un getter que lanza crasheaba ACÁ, antes incluso de
+    // llegar a `aplicarOperacion` (que sí se había protegido en RX-02/6822c5a, pero
+    // sólo para lo que lee puertas adentro). Con el lote ya materializado, ninguna
+    // lectura posterior (acá o en el bucle de abajo) puede divergir de otra — cierra
+    // por construcción el mismo TOCTOU que RX2-01 encontró en la SEGUNDA lectura de
+    // `payload` dentro de `aplicarOperacion` (`operaciones.ts`): ya no hay una
+    // "segunda lectura", ambas leen la MISMA copia plana. Si CUALQUIER operación del
+    // lote no es un dato plano, el lote ENTERO se rechaza — no hay forma segura de
+    // procesar unas sí y otras no si una de ellas podría mentir en una relectura.
+    const materializado = materializarDatosPlanos<readonly SobreOperacion[]>(operacionesCrudas, "operaciones")
+    if (!materializado.ok) {
+      return congelarProfundo({
+        ok: false,
+        baseRevision: canonico.revision,
+        revisionActual: canonico.revision,
+        motivos: [motivoEntradaNoPlano("motor", materializado)],
+        resultadosOperaciones: [],
+      })
+    }
+    const operaciones = materializado.valor
+
     // Phase 1.1 (hallazgo externo E3-05, MENOR): lote vacío es un no-op explícito,
     // ANTES de mirar `baseRevision` — nunca sube revisión, nunca persiste, nunca
     // agrega al buffer de undo. Separado a propósito del chequeo de abajo: "no hay
@@ -375,6 +420,7 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     // se puede confundir con "ausente". `null`/campo ausente/string/NaN/±Infinity/
     // negativo/no entero rechazan ACÁ, antes de clonar, con un motivo DISTINTO de
     // "desactualizado" (`motivoBaseRevisionInvalida`, no `motivoRevisionObsoleta`).
+    // Lectura ya segura (dato plano materializado arriba).
     const baseRevisionRecibida = operaciones[0]!.baseRevision
     if (!esEnteroNoNegativo(baseRevisionRecibida)) {
       // Phase 1.1 (hallazgo externo CP-02, MENOR): el dato crudo e inválido que mandó
@@ -406,11 +452,12 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
       motivosPropios.push(...motivos)
       resultadosOperaciones.push({
         ok: !motivos.some((m) => m.clasificacion === "rechazo"),
-        // Phase 1.1 (hallazgo externo RX-02): sólo el ECO del sobre — la FORMA ya se
-        // validó, protegida, dentro de `aplicarOperacion` de arriba.
-        idOperacion: leerSeguro(() => operacion.idOperacion, ""),
-        idTransaccion: leerSeguro(() => operacion.idTransaccion, undefined),
-        baseRevision: leerSeguro(() => operacion.baseRevision, baseRevision),
+        // Phase 1.1 (RX2): sólo el ECO del sobre — sobre una copia YA materializada
+        // (dato plano, leída una sola vez arriba), esta lectura no puede lanzar —
+        // ver el comentario de `ejecutarLote` más arriba.
+        idOperacion: operacion.idOperacion,
+        idTransaccion: operacion.idTransaccion,
+        baseRevision: operacion.baseRevision,
         revisionActual: baseRevision,
         motivos,
         proyecto: siguiente,

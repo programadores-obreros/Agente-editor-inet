@@ -165,6 +165,164 @@ test("propiedades-de-componente-sigue-siendo-bolsa-abierta-no-regresion-RX-01", 
   assert.deepEqual(r.proyecto.componentes.find((c) => c.id === "cmp-0").propiedades, { cualquierCosa: 1, otraMas: "x" })
 })
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX2, hallazgo externo RX2-03, CRÍTICO — revisión adversarial
+// independiente #2, RX2_REPORT.md): `cargarProyecto(unknown)` documenta que acepta
+// un documento YA PARSEADO (no sólo un string JSON) — pero, antes de este fix, no
+// tenía NINGÚN `try/catch` propio (a diferencia de `crearMotorDeProyecto`, que sí
+// se había protegido en RX-01). Un Proxy/getter en `componentes[i].propiedades`/
+// `pines` crasheaba crudo `cargarProyecto()`. Peor: `validarComponente` validaba
+// `pines` con `Object.values(pines).every(...)` y LUEGO copiaba con un spread
+// INDEPENDIENTE (`{...pines}`) — dos recorridos del MISMO objeto, un TOCTOU real:
+// un Proxy que devuelve un string válido en la 1ª pasada y `42` en la 2ª colaba un
+// valor fuera de schema, rompiendo el round-trip
+// (`cargar(guardar(canonicalizar(p)))===canonicalizar(p)` que `canonico.ts` exige).
+// Cerrado materializando `doc` (datos-planos.ts) UNA sola vez, dentro de
+// `validarFormaProyecto`, antes de leer nada — ver `cargador.ts`.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+// Un Proxy cuyo ÚNICO trap es `get` NUNCA dispara ese trap acá — la
+// materialización lee por DESCRIPTOR (`getOwnPropertyDescriptor`), nunca por
+// acceso (`get`); sin un trap `getOwnPropertyDescriptor` propio, la lectura cae al
+// comportamiento default (el descriptor REAL del target) y el dato real se acepta
+// intacto, sin ejecutar el trap malicioso. Documentado como comportamiento POR
+// DISEÑO (no un crash, tampoco un rechazo espurio).
+test("cargarProyecto(objetoJS) con un Proxy cuyo UNICO trap 'get' lanza nunca dispara ese trap — el dato real del target se acepta (hallazgo externo RX2-03a, defensa por diseño)", () => {
+  const doc = documentoValido()
+  doc.componentes[0].propiedades = new Proxy({ color: "rojo" }, { get() { throw new Error("proxy-get-boom") } })
+  let r
+  assert.doesNotThrow(() => {
+    r = cargarProyecto(doc)
+  }, "cargarProyecto NUNCA debe propagar el trap del Proxy")
+  assert.equal(r.ok, true, "el trap 'get' nunca se invoca — el descriptor real del target (color:'rojo') se acepta tal cual")
+  assert.deepEqual(r.proyecto.componentes[0].propiedades, { color: "rojo" })
+})
+
+// Acá sí: un Proxy que miente/lanza en `ownKeys` o `getOwnPropertyDescriptor` —
+// los traps que la materialización SÍ invoca — se rechaza, nunca crashea crudo.
+test("cargarProyecto(objetoJS) con un Proxy que lanza en 'ownKeys' en propiedades de un componente nunca crashea crudo, se rechaza (hallazgo externo RX2-03a)", () => {
+  const doc = documentoValido()
+  doc.componentes[0].propiedades = new Proxy(
+    { color: "rojo" },
+    {
+      ownKeys() {
+        throw new Error("proxy-ownKeys-boom")
+      },
+    },
+  )
+  let r
+  assert.doesNotThrow(() => {
+    r = cargarProyecto(doc)
+  }, "cargarProyecto NUNCA debe propagar el trap del Proxy")
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  assert.equal(r.motivos[0].categoria, "estructural")
+  assert.equal(r.motivos[0].clasificacion, "rechazo")
+})
+
+test("cargarProyecto(objetoJS) con un Proxy que lanza en 'getOwnPropertyDescriptor' en propiedades de un componente nunca crashea crudo, se rechaza (hallazgo externo RX2-03a)", () => {
+  const doc = documentoValido()
+  doc.componentes[0].propiedades = new Proxy(
+    { color: "rojo" },
+    {
+      getOwnPropertyDescriptor() {
+        throw new Error("proxy-getOwnPropertyDescriptor-boom")
+      },
+    },
+  )
+  let r
+  assert.doesNotThrow(() => {
+    r = cargarProyecto(doc)
+  }, "cargarProyecto NUNCA debe propagar el trap del Proxy")
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+})
+
+test("cargarProyecto(objetoJS) con un getter (accessor real, no Proxy) que explota en la 2a lectura de pines nunca crashea crudo (hallazgo externo RX2-03a, variante TOCTOU)", () => {
+  const doc = documentoValido()
+  let lecturas = 0
+  const pinesConGetterTOCTOU = {}
+  Object.defineProperty(pinesConGetterTOCTOU, "anodo", {
+    enumerable: true,
+    get() {
+      lecturas++
+      if (lecturas === 1) return "GPIO1"
+      throw new Error("getter boom en pines, 2a lectura")
+    },
+  })
+  doc.componentes[0].pines = pinesConGetterTOCTOU
+  let r
+  assert.doesNotThrow(() => {
+    r = cargarProyecto(doc)
+  }, "cargarProyecto NUNCA debe propagar el getter, ni siquiera si la 1a lectura fue valida")
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  // La materializacion lee por DESCRIPTOR: un accessor (get/set) se rechaza SIN
+  // invocarlo nunca — nunca llega a haber una "2a lectura" que pueda divergir.
+  assert.equal(lecturas, 0, "el getter NUNCA debe invocarse — se rechaza por ser un accessor, sin leerlo")
+})
+
+// RX2-03(b): el TOCTOU original usaba un Proxy con SÓLO el trap `get` (nunca
+// `ownKeys`/`getOwnPropertyDescriptor` propios) — la materialización lee por
+// DESCRIPTOR, nunca invocando `get`, así que este Proxy en particular NUNCA
+// dispara su trap malicioso: la lectura por descriptor cae al comportamiento
+// default (el descriptor REAL del target), y el dato termina aceptado tal cual
+// está en el target — nunca el valor "cambiado" que el trap `get` hubiera
+// devuelto. Documenta el comportamiento correcto (no un crash, tampoco una
+// sustitución de valor) del mecanismo elegido.
+test("Proxy con 'get' que cambia de valor entre llamadas nunca contamina la copia materializada — nunca se invoca 'get' (hallazgo externo RX2-03b, defensa por diseño)", () => {
+  const doc = documentoValido()
+  let llamadasGet = 0
+  doc.componentes[0].pines = new Proxy(
+    { anodo: "GPIO1" },
+    {
+      get(t, p) {
+        llamadasGet++
+        return llamadasGet <= 1 ? "GPIO1" : 42
+      },
+    },
+  )
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true, "un Proxy cuyo UNICO trap es 'get' nunca dispara ese trap — se acepta el dato real del target")
+  assert.equal(r.proyecto.componentes[0].pines.anodo, "GPIO1")
+  assert.equal(llamadasGet, 0, "la materializacion lee por descriptor, nunca invoca 'get'")
+})
+
+// Mutación ronda 2 (M2/MUTATION_RESULTS_R2.md, R06): el mismo ataque de arriba,
+// pero en un campo RAÍZ DECLARADO del documento (`componentes`, no un campo
+// anidado/desconocido dentro de un componente) — el gap que R06 encontró era
+// específico de `proyectoInicial` (ver nucleo-motor.test.mjs), pero el mismo
+// principio se verifica acá para `cargarProyecto(objeto)`: la materialización
+// corre sobre el documento COMPLETO, sin importar en qué nivel esté el accessor.
+test("cargarProyecto(objetoJS) con un accessor en un campo RAIZ DECLARADO del documento (componentes) nunca crashea crudo (hallazgo externo RX2-03, campo raiz)", () => {
+  const doc = documentoValido()
+  const componentesReales = doc.componentes
+  delete doc.componentes
+  Object.defineProperty(doc, "componentes", {
+    enumerable: true,
+    get() {
+      throw new Error("getter boom en campo raiz declarado (componentes)")
+    },
+  })
+  let r
+  assert.doesNotThrow(() => {
+    r = cargarProyecto(doc)
+  }, "cargarProyecto NUNCA debe propagar un Error crudo por un accessor en un campo raiz declarado")
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  assert.equal(r.motivos[0].clasificacion, "rechazo")
+  void componentesReales // referencia retenida sólo para dejar constancia de qué se reemplazó
+})
+
+test("round-trip: todo lo que cargarProyecto acepta, serializado a JSON y recargado, se acepta igual y queda canonicamente identico (no-regresion round-trip, RX2-03)", () => {
+  const r1 = cargarProyecto(documentoValido())
+  assert.equal(r1.ok, true)
+  const serializado = JSON.stringify(r1.proyecto)
+  const r2 = cargarProyecto(serializado)
+  assert.equal(r2.ok, true, "el mismo documento, ya cargado una vez y vuelto a serializar/cargar, debe aceptarse igual")
+  assert.equal(canonicalizar(r1.proyecto), canonicalizar(r2.proyecto), "round-trip debe ser canonicamente identico")
+})
+
 // ─────────────────────────── 5. id duplicado entre componentes rechaza ───────────────
 
 test("id-duplicado-entre-componentes-rechaza", () => {

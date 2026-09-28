@@ -688,11 +688,18 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan una excepcion cru
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
-// Phase 1.1 (hallazgo externo RX-02, CRÍTICO — reabre E2-02): la MISMA función que
-// cierra E2-02 (`analizarSobreOperacion`/`validarFormaPayload`, `operaciones.ts`) lanza
-// una excepcion cruda cuando cualquier campo que lee es un getter que explota — algo
+// Phase 1.1 (hallazgo externo RX-02, CRÍTICO — reabre E2-02; REABIERTO por RX2-01,
+// revisión adversarial independiente #2): la MISMA función que cierra E2-02
+// (`analizarSobreOperacion`/`validarFormaPayload`, `operaciones.ts`) lanzaba una
+// excepcion cruda cuando cualquier campo que lee es un getter que explota — algo
 // que ningún JSON real produce, pero que un llamador en proceso sí puede construir
 // (brief §37: "cualquier futura UI son clientes/adaptadores del Project Engine").
+// RX2-01 encontró que el fix de RX-02 (un `try/catch` puntual) protegía la
+// PRIMERA lectura de `operacion.payload` pero no la SEGUNDA (el switch de
+// despacho, sin proteger) — esta ronda (RX2) cierra la clase completa
+// materializando el sobre en datos planos UNA sola vez, antes de leer nada
+// (`opencode/nucleo/datos-planos.ts`): el código de rechazo pasa a ser
+// `ENTRADA_NO_ES_DATO_PLANO`, único y estable para toda esta clase de defecto.
 // Reproducido a través de las 3 puertas públicas del motor (T9/scripts/
 // 03_e2_getter_via_motor.mjs de la revisión adversarial RX): `motor.aplicar` (SetPlaca,
 // getter en `payload.placa`), `motor.aplicarTransaccion` (lote de 2, la SEGUNDA
@@ -701,7 +708,7 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan una excepcion cru
 // sobre.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-explota del sobre/payload (hallazgo externo RX-02, reabre E2-02)", () => {
+test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-explota del sobre/payload (hallazgo externo RX-02/RX2-01)", () => {
   function payloadConGetterQueExplota(campo, mensaje) {
     const payload = {}
     Object.defineProperty(payload, campo, {
@@ -721,7 +728,7 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-exp
       r = motor.aplicar({ idOperacion: "op1", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: payloadConGetterQueExplota("placa", "getter boom en placa") })
     }, "motor.aplicar NUNCA debe propagar el getter (caso 1)")
     assert.equal(r.ok, false)
-    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
     assert.equal(almacen.llamadasGuardar.length, 0, "el intento con getter nunca persiste")
   }
 
@@ -736,7 +743,7 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-exp
       ])
     }, "motor.aplicarTransaccion NUNCA debe propagar el getter (caso 2)")
     assert.equal(r.ok, false, "el lote entero rechaza — el getter en la operacion 2 no deja pasar la 1")
-    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
     assert.equal(almacen.llamadasGuardar.length, 0, "ningun lote con un getter que explota persiste")
   }
 
@@ -748,7 +755,7 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-exp
       r = motor.proponer([{ idOperacion: "op1", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: payloadConGetterQueExplota("placa", "getter boom en placa") }])
     }, "motor.proponer NUNCA debe propagar el getter (caso 3)")
     assert.equal(r.ok, false)
-    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
   }
 
   // Caso 4: SetComportamiento con getter en un campo MAS anidado (umbral.valor).
@@ -770,7 +777,7 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-exp
       r = motor.aplicar(nuevaOperacion("SetComportamiento", { comportamiento }, 3))
     }, "motor.aplicar NUNCA debe propagar el getter anidado (caso 4)")
     assert.equal(r.ok, false)
-    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
   }
 
   // Caso 5: getter en el propio `actor` del sobre.
@@ -788,7 +795,44 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-exp
       r = motor.aplicar(operacion)
     }, "motor.aplicar NUNCA debe propagar el getter del sobre (caso 5)")
     assert.equal(r.ok, false)
-    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  }
+
+  // Caso 6: getter en el propio `baseRevision` del sobre — específico de
+  // `ejecutarLote` (`motor.ts`), que lee `operaciones[0].baseRevision` ANTES de
+  // llamar a `aplicarOperacion` (que también materializa, pero puertas adentro:
+  // esta lectura ocurre ANTES de eso). Sin la materialización del LOTE COMPLETO
+  // en `ejecutarLote`, este caso específico crashea crudo aunque
+  // `aplicarOperacion` ya esté protegido — es la superficie que la
+  // materialización a nivel de `motor.ts` cierra y que ningún otro mecanismo
+  // cubre (ver `motor.ts`, comentario de `ejecutarLote`).
+  {
+    const { motor } = crearMotorDePrueba()
+    const operacion = { idOperacion: "op1", actor: "agente", tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }
+    Object.defineProperty(operacion, "baseRevision", {
+      enumerable: true,
+      get() {
+        throw new Error("getter boom en baseRevision")
+      },
+    })
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicar(operacion)
+    }, "motor.aplicar NUNCA debe propagar el getter de baseRevision (caso 6)")
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+
+    let r2
+    assert.doesNotThrow(() => {
+      r2 = motor.aplicarTransaccion([operacion])
+    }, "motor.aplicarTransaccion NUNCA debe propagar el getter de baseRevision (caso 6)")
+    assert.equal(r2.ok, false)
+
+    let r3
+    assert.doesNotThrow(() => {
+      r3 = motor.proponer([operacion])
+    }, "motor.proponer NUNCA debe propagar el getter de baseRevision (caso 6)")
+    assert.equal(r3.ok, false)
   }
 })
 
@@ -1160,6 +1204,148 @@ test("equivalencia-cargarProyecto-vs-proyectoInicial: el mismo documento da el M
   const viaProyectoInicial = motor.getProyecto()
 
   assert.equal(canonicalizar(viaLoader.proyecto), canonicalizar(viaProyectoInicial), "cargarProyecto(JSON) y crearMotorDeProyecto({proyectoInicial}) deben producir el MISMO Proyecto canonico para el mismo documento")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX2, mutación ronda 2 — M2/MUTATION_RESULTS_R2.md, hallazgo R06):
+// el `try/catch` EXTERIOR de `crearMotorDeProyecto` (RX-01 parte b) sólo se había
+// probado con un getter en un campo NO DECLARADO de un `Componente` anidado —
+// `CLAVE_DESCONOCIDA` lo interceptaba ANTES de necesitar ese catch para nada. Si se
+// quitaba el catch, ningún test lo notaba. Este test ataca un campo RAÍZ DECLARADO
+// de `Proyecto` (`componentes`) directamente en `proyectoInicial` — el gap real que
+// R06 encontró. Con la materialización de datos planos (RX2), este caso se cierra
+// por construcción DENTRO de `validarFormaProyecto` (nunca necesita el catch
+// exterior, que esta ronda eliminó por quedar muerto — ver `motor.ts`): el mutante
+// "desactivar la materialización de `proyectoInicial`" tiene que matar ESTE test.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-accessor-en-un-campo-RAIZ-DECLARADO (hallazgo R06, mutacion ronda 2)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-r06", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = { ...base }
+  Object.defineProperty(roto, "componentes", {
+    enumerable: true,
+    get() {
+      throw new Error("getter boom en campo raiz declarado (componentes) de proyectoInicial")
+    },
+  })
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `debe lanzar ErrorEstadoInicialInvalido, NUNCA un Error crudo: ${err?.stack ?? err}`)
+      assert.ok(Array.isArray(err.motivos) && err.motivos.length > 0 && err.motivos.every((m) => m.clasificacion === "rechazo"), `el error debe traer motivos estructurados: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un accessor en un campo RAIZ DECLARADO de proyectoInicial (no anidado, no desconocido) NUNCA debe propagar un Error crudo",
+  )
+})
+
+test("constructor-rechaza-proyectoInicial-con-accessor-en-revision-o-placa (hallazgo R06, variantes adicionales de campo raiz)", () => {
+  for (const campo of ["revision", "placa"]) {
+    const base = crearProyecto({ generadorId: () => `proy-r06-${campo}`, ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+    const roto = { ...base }
+    Object.defineProperty(roto, campo, {
+      enumerable: true,
+      get() {
+        throw new Error(`getter boom en campo raiz declarado (${campo})`)
+      },
+    })
+    assert.throws(
+      () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+      (err) => {
+        assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `campo "${campo}": debe lanzar ErrorEstadoInicialInvalido, NUNCA un Error crudo: ${err?.stack ?? err}`)
+        assert.ok(Array.isArray(err.motivos) && err.motivos.length > 0 && err.motivos.every((m) => m.clasificacion === "rechazo"), `campo "${campo}": motivos estructurados: ${JSON.stringify(err.motivos)}`)
+        return true
+      },
+      `campo "${campo}": un accessor en un campo raiz declarado NUNCA debe propagar un Error crudo`,
+    )
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX2, hallazgo externo RX2-02, CRÍTICO — revisión adversarial
+// independiente #2): `payload.propiedades` (la bolsa abierta de
+// `AgregarComponente`, NUNCA validada en forma) se incrustaba SIN copiar en el
+// borrador — `congelarProfundo` (canonico.ts, en el commit/dry-run de
+// `ejecutarLote`) recorre `Object.values()` de cualquier objeto anidado, lo que SÍ
+// dispara el trap `get` de un Proxy. Un Proxy que miente/lanza en los traps que la
+// materialización invoca (`ownKeys`/`getOwnPropertyDescriptor`) crasheaba
+// `motor.proponer`/`aplicar`/`aplicarTransaccion` — una superficie que ningún fix
+// anterior (RX-01/RX-02) tocaba. Cerrado por construcción: `aplicarOperacion`
+// (`operaciones.ts`) materializa el SOBRE completo (incluido `payload.propiedades`)
+// ANTES de construir el `Componente` — `congelarProfundo` en `motor.ts` ya nunca ve
+// un objeto vivo.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("motor.proponer/aplicar/aplicarTransaccion NUNCA crashean con un Proxy que lanza en propiedades de AgregarComponente (hallazgo externo RX2-02)", () => {
+  function payloadConPropiedadesProxyMaligno() {
+    return {
+      tipo: "led",
+      propiedades: new Proxy(
+        { color: "rojo" },
+        {
+          ownKeys() {
+            throw new Error("proxy-ownKeys-boom en propiedades")
+          },
+        },
+      ),
+    }
+  }
+
+  // Caso A: dry-run.
+  {
+    const { motor } = (() => {
+      const proyectoInicial = crearProyecto({ generadorId: () => "proy-rx2-02-a", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+      return { motor: crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() }) }
+    })()
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.proponer([nuevaOperacion("AgregarComponente", payloadConPropiedadesProxyMaligno(), 0)])
+    }, "motor.proponer NUNCA debe crashear con un Proxy malicioso en propiedades")
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  }
+
+  // Caso B: commit real — el canonico/almacen no deben tocarse.
+  {
+    const proyectoInicial = crearProyecto({ generadorId: () => "proy-rx2-02-b", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+    const almacen = crearAlmacenFalso()
+    const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen })
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicar(nuevaOperacion("AgregarComponente", payloadConPropiedadesProxyMaligno(), 0))
+    }, "motor.aplicar NUNCA debe crashear con un Proxy malicioso en propiedades")
+    assert.equal(r.ok, false)
+    assert.equal(almacen.llamadasGuardar.length, 0, "un intento rechazado nunca persiste")
+    assert.equal(motor.getProyecto().componentes.length, 0, "el canonico no cambio")
+  }
+
+  // Caso C: lote de 2 — una operacion inocua ANTES, la maliciosa despues; el lote
+  // entero rechaza, la inocua tampoco queda aplicada.
+  {
+    const proyectoInicial = crearProyecto({ generadorId: () => "proy-rx2-02-c", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+    const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() })
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicarTransaccion([nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0), nuevaOperacion("AgregarComponente", payloadConPropiedadesProxyMaligno(), 0)])
+    }, "motor.aplicarTransaccion NUNCA debe crashear")
+    assert.equal(r.ok, false)
+    assert.equal(motor.getProyecto().placa, null, "el lote entero rechaza — ni siquiera la operacion inocua anterior queda aplicada")
+  }
+})
+
+// No-regresión: `propiedades` sigue siendo una bolsa abierta de forma libre — un
+// objeto PLANO común (no un Proxy/getter) con cualquier forma sigue aceptándose y
+// commiteando sin problema, y queda AISLADO del objeto original que el llamador
+// retiene (nunca comparte referencia con el borrador congelado).
+test("AgregarComponente con propiedades como objeto plano comun sigue commiteando y queda aislado del original (no regresion, RX2-02)", () => {
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-rx2-02-control", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() })
+  const propiedadesOriginales = { color: "rojo", brillo: 3 }
+  const r = motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led", propiedades: propiedadesOriginales }, 0))
+  assert.equal(r.ok, true)
+  assert.deepEqual(motor.getProyecto().componentes[0].propiedades, { color: "rojo", brillo: 3 })
+  propiedadesOriginales.color = "azul"
+  assert.equal(motor.getProyecto().componentes[0].propiedades.color, "rojo", "el canonico nunca comparte referencia con el objeto que el llamador retuvo")
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════

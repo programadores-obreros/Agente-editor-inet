@@ -15,6 +15,7 @@ import type { Motivo } from "./motivos.ts"
 import { canonicalizar, congelarProfundo } from "./canonico.ts"
 import { analizarIdsLocales, compararIdsLocales, generarIdProyectoAleatorio, validarIdsYContador, type GeneradorIdProyecto } from "./id.ts"
 import { analizarConexionesInvalidas } from "./conexion.ts"
+import { materializarDatosPlanos, motivoEntradaNoPlano } from "./datos-planos.ts"
 
 export const SCHEMA_VERSION_SOPORTADA = "1.0.0"
 
@@ -104,9 +105,34 @@ export function cargarProyecto(entrada: unknown): ResultadoCarga {
 // Recibe un documento YA PARSEADO (`unknown`, nunca un string JSON — eso es
 // responsabilidad exclusiva de `cargarProyecto`, que hace el `JSON.parse` y delega
 // acá). Devuelve el mismo `ResultadoCarga` de siempre.
+//
+// Phase 1.1 (RX2, hallazgo externo RX2-03, CRÍTICO — revisión adversarial
+// independiente #2): ésta es la ÚNICA puerta de entrada de un `Proyecto` no
+// confiable — la usan tanto `cargarProyecto()` (Gate 2, documento externo) como
+// `crearMotorDeProyecto({ proyectoInicial })` (Gate 6, motor.ts) — así que
+// materializar ACÁ, una sola vez, ANTES de leer nada más, protege las dos puertas
+// con un único mecanismo (nunca una copia por puerta). Antes de este fix,
+// `cargarProyecto(objetoJS)` no tenía NINGÚN try/catch propio (a diferencia de
+// `crearMotorDeProyecto`, que sí se había protegido en RX-01/6822c5a): un Proxy/
+// getter en `componentes[i].propiedades`/`pines` crasheaba crudo. Peor, el doble
+// recorrido de `pines` más abajo (`validarComponente`: `Object.values(...).every`
+// para validar, `{...pines}` independiente para copiar) era un TOCTOU real — un
+// Proxy que devuelve un string válido en la 1ª pasada y `42` en la 2ª colaba un
+// valor fuera de schema que rompía el round-trip (`cargar(guardar(...))` volvía a
+// rechazar el MISMO documento). Con `doc` ya materializado acá, todo el resto de
+// esta función trabaja sobre una copia PLANA, congelable, leída una única vez —
+// ninguna lectura posterior puede divergir de otra, así que el TOCTOU desaparece
+// por construcción (ver `opencode/nucleo/datos-planos.ts` para el detalle
+// completo). Ver `docs/programacion-intencion/IR-SPEC.md` §6.6.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-export function validarFormaProyecto(doc: unknown): ResultadoCarga {
+export function validarFormaProyecto(docCrudo: unknown): ResultadoCarga {
+  const materializado = materializarDatosPlanos<unknown>(docCrudo, "proyecto")
+  if (!materializado.ok) {
+    return { ok: false, motivos: [motivoEntradaNoPlano("estructural", materializado)] }
+  }
+  const doc = materializado.valor
+
   if (!esObjeto(doc)) {
     return rechazo("DOCUMENTO_MALFORMADO", { razon: "el documento no es un objeto" })
   }
@@ -308,13 +334,26 @@ function validarComponente(c: unknown): ResultadoValidacion<Componente> {
   if (typeof tipo !== "string" || tipo.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", componente: id, campo: "tipo" } }
   }
-  if (!esObjeto(pines) || !Object.values(pines).every((v) => v === null || typeof v === "string")) {
+  if (!esObjeto(pines)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", componente: id, campo: "pines" } }
+  }
+  // Phase 1.1 (RX2, hallazgo externo RX2-03b): un ÚNICO recorrido — antes había dos
+  // (`Object.values(pines).every(...)` para validar, `{...pines}` independiente
+  // para copiar), un TOCTOU real sobre un objeto vivo. Con `doc` ya materializado
+  // (plano, leído una sola vez) el TOCTOU ya no es alcanzable, pero dos pasadas
+  // sobre el MISMO dato siguen siendo dos fuentes de verdad — se valida y se copia
+  // en el mismo paso, nunca por separado.
+  const pinesCopiados: Record<string, string | null> = {}
+  for (const [clave, valorPin] of Object.entries(pines)) {
+    if (valorPin !== null && typeof valorPin !== "string") {
+      return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", componente: id, campo: "pines" } }
+    }
+    pinesCopiados[clave] = valorPin
   }
   if (!esObjeto(propiedades)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", componente: id, campo: "propiedades" } }
   }
-  return { ok: true, valor: { id, tipo, pines: { ...pines } as Record<string, string | null>, propiedades: { ...propiedades } } }
+  return { ok: true, valor: { id, tipo, pines: pinesCopiados, propiedades: { ...propiedades } } }
 }
 
 function validarExtremoConexion(e: unknown, conexionId: string, lado: "desde" | "hasta"): ResultadoValidacion<ExtremoConexion> {
