@@ -1221,3 +1221,64 @@ test("defensa-en-profundidad-post-lote: contador de ids inconsistente en el comm
   assert.equal(motor.getProyecto().siguienteIdLocal, 1, "el canonico NO cambia — el commit inconsistente se descarta completo")
   assert.equal(almacen.llamadasGuardar.length, 1, "sólo el primer commit (sano) llegó a persistir")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Gap de la campaña de mutación T8 (mutantes M10-adaptado/M11-adaptado, sobrevivientes):
+// desactivar la defensa TEMPRANA de `aplicarConectar` (self-loop/duplicado, dentro de
+// la operación misma) no lo detectaba ningún test existente cuando esa operación es la
+// PRIMERA de un lote MULTI-operación — porque la defensa en profundidad de
+// `validar-estructural.ts` (post-lote, RX-02/E2-01) "salva" el resultado FINAL del
+// lote entero (`r.ok:false` igual), pero ningún test verificaba `resultadosOperaciones[]`
+// granularmente para confirmar que el lote corta en la operación 1 y la operación 2
+// NUNCA llega a correr. Contrato (comentario propio de `motor.ts`, "Pipeline de
+// aplicarTransaccion"): "si aparece un motivo `clasificacion:'rechazo'` (el de una
+// operación individual)... se corta el LOTE ENTERO" — el test de acá fija ese
+// comportamiento explícitamente (mismo criterio que ya usa
+// `tests/nucleo-adversarial.test.mjs`, test "7.", para el caso simétrico "rechazo al
+// FINAL del lote"). Verificado con los mutantes M10-adaptado/M11-adaptado
+// (`T8/diffs/M10-adaptado.diff`, `M11-adaptado.diff`): desactivar el chequeo temprano
+// de `aplicarConectar` hace que la operación 1 "pase" a nivel de operación (así que el
+// lote NO corta ahí) y la operación 2 SÍ llega a correr — `resultadosOperaciones.length`
+// pasa de 1 a 2.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("lote multi-operacion con Conectar self-loop en la operacion 1 corta el lote ahi — la operacion 2 NUNCA corre (gap T8, mutante M11-adaptado)", () => {
+  const { motor } = crearMotorDePrueba()
+  motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "resistencia" }, 0)) // cmp-0
+  const revisionVigente = motor.getProyecto().revision
+
+  const r = motor.aplicarTransaccion([
+    nuevaOperacion("Conectar", { desde: { componente: "cmp-0", terminal: "a" }, hasta: { componente: "cmp-0", terminal: "a" } }, revisionVigente), // op 1: self-loop, RECHAZO
+    nuevaOperacion("AgregarComponente", { tipo: "led" }, revisionVigente), // op 2: NUNCA debe correr
+  ])
+
+  assert.equal(r.ok, false, "el lote entero rechaza")
+  assert.equal(r.resultadosOperaciones.length, 1, "el lote corta en la operacion 1 — la operacion 2 nunca se intenta")
+  assert.equal(r.resultadosOperaciones[0].ok, false)
+  assert.equal(r.resultadosOperaciones[0].motivos.length, 1)
+  assert.equal(r.resultadosOperaciones[0].motivos[0].codigo, "AUTOCONEXION_INVALIDA")
+  assert.equal(r.resultadosOperaciones[0].motivos[0].categoria, "operacion", "el rechazo temprano de la OPERACION (no la defensa en profundidad post-lote, que seria categoria estructural)")
+  assert.equal(motor.getProyecto().componentes.length, 1, "ningun componente de la operacion 2 se agrego — el canonico no cambio")
+})
+
+test("lote multi-operacion con Conectar duplicada en la operacion 1 corta el lote ahi — la operacion 2 NUNCA corre (gap T8, mutante M10-adaptado)", () => {
+  const { motor } = crearMotorDePrueba()
+  motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "resistencia" }, 0)) // cmp-0
+  motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "resistencia" }, 1)) // cmp-1
+  motor.aplicar(nuevaOperacion("Conectar", { desde: { componente: "cmp-0", terminal: "a" }, hasta: { componente: "cmp-1", terminal: "b" } }, 2)) // conn-0
+  const revisionVigente = motor.getProyecto().revision
+
+  const r = motor.aplicarTransaccion([
+    // MISMO par que conn-0, extremos invertidos — "misma conexión" no depende del orden.
+    nuevaOperacion("Conectar", { desde: { componente: "cmp-1", terminal: "b" }, hasta: { componente: "cmp-0", terminal: "a" } }, revisionVigente), // op 1: duplicada, RECHAZO
+    nuevaOperacion("AgregarComponente", { tipo: "led" }, revisionVigente), // op 2: NUNCA debe correr
+  ])
+
+  assert.equal(r.ok, false, "el lote entero rechaza")
+  assert.equal(r.resultadosOperaciones.length, 1, "el lote corta en la operacion 1 — la operacion 2 nunca se intenta")
+  assert.equal(r.resultadosOperaciones[0].ok, false)
+  assert.equal(r.resultadosOperaciones[0].motivos.length, 1)
+  assert.equal(r.resultadosOperaciones[0].motivos[0].codigo, "CONEXION_DUPLICADA")
+  assert.equal(r.resultadosOperaciones[0].motivos[0].categoria, "operacion", "el rechazo temprano de la OPERACION (no la defensa en profundidad post-lote, que seria categoria estructural)")
+  assert.equal(motor.getProyecto().componentes.length, 2, "ningun componente de la operacion 2 se agrego — el canonico no cambio")
+})
