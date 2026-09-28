@@ -1459,6 +1459,50 @@ test("motor.proponer/aplicar/aplicarTransaccion rechazan '__proto__' en propieda
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX3, hallazgo externo RX3-02, MAJOR — revisión adversarial independiente
+// #3): en la rama `else` de `crearMotorDeProyecto` (cuando `validarFormaProyecto`
+// rechaza), el código corría IGUAL `validarProyecto`/`validarIdsYContador` sobre
+// `deps.proyectoInicial` CRUDO — invocando un getter/Proxy que la materialización YA
+// había detectado y rechazado, hasta 3 VECES (`validarEstructural`, `validarTecnico`,
+// `validarIdsYContador`). El resultado final seguía siendo correcto (el motivo de
+// forma ya alcanza para rechazar), pero el getter SÍ se ejecutaba — reintroduciendo
+// exactamente el patrón de superficie que `datos-planos.ts` existe para eliminar. Fix:
+// después de intentar la materialización, NUNCA se vuelve a tocar el objeto CRUDO. Si
+// la materialización falla, sólo se devuelven sus motivos (0 invocaciones adicionales).
+// Si tuvo éxito pero la FORMA es inválida, los chequeos adicionales de Gate 4 corren
+// sobre la COPIA YA MATERIALIZADA (nunca el crudo).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor NUNCA vuelve a invocar un getter del proyectoInicial una vez que la materializacion ya lo rechazo — 0 invocaciones, no 3 (hallazgo externo RX3-02)", () => {
+  let lecturas = 0
+  const proyectoInicialMalicioso = {
+    id: "proy-rx3-02",
+    schemaVersion: "1.0.0",
+    catalogoVersion: catalogo.version,
+    catalogoHash: catalogo.hash,
+    revision: 0,
+    siguienteIdLocal: 0,
+    placa: null,
+    get componentes() {
+      lecturas++
+      return lecturas === 1 ? [] : [{ id: "cmp-inyectado", tipo: "led", pines: {}, propiedades: {} }]
+    },
+    conexiones: [],
+    comportamientos: [],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }
+
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: proyectoInicialMalicioso, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `debe lanzar ErrorEstadoInicialInvalido: ${err?.stack ?? err}`)
+      return true
+    },
+  )
+  assert.equal(lecturas, 0, "un getter en un proyectoInicial que ya rechaza por forma NUNCA debe invocarse — ni una sola vez, y mucho menos 3")
+})
+
 // Phase 1.1 (hallazgo externo RX-03, MAYOR — revisión adversarial independiente):
 // `validarIdsYContador` (id.ts, hallazgos E1-01/E1-02) corre en el Loader y en la
 // construcción del motor (`proyectoInicial`) — pero NUNCA dentro del pipeline continuo

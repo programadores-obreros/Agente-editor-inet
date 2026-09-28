@@ -305,11 +305,37 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   // no, se detecta ahí (código `ENTRADA_NO_ES_DATO_PLANO`) y `resultadoForma.ok`
   // sale `false` con un motivo `clasificacion:"rechazo"` — el mismo camino de abajo
   // que ya tira `ErrorEstadoInicialInvalido(rechazosIniciales)`, sin necesitar un
-  // segundo mecanismo que compita. `proyectoParaConstruir = deps.proyectoInicial`
-  // en la rama `else` (más abajo) sigue siendo una lectura CRUDA a propósito (Gate
-  // 4 corrida igual, protegida por su PROPIO `try/catch` puntual, sin cambios) —
-  // pero ese valor NUNCA llega a `congelarProfundo(clonarProfundo(...))` de abajo:
-  // `rechazosIniciales.length > 0` corta antes (el motivo de forma ya alcanza).
+  // segundo mecanismo que compita.
+  //
+  // Phase 1.1 (RX3, hallazgo externo RX3-02, MAJOR — revisión adversarial
+  // independiente #3, RX3_REPORT.md): la rama `else` de abajo, ANTES de este fix,
+  // corría igual `validarProyecto`/`validarIdsYContador` sobre `deps.proyectoInicial`
+  // CRUDO — invocando cualquier getter/Proxy que la materialización de arriba YA
+  // había detectado y rechazado, hasta 3 VECES (`validarEstructural`,
+  // `validarTecnico`, `validarIdsYContador`, confirmado por stack trace,
+  // `RX3/scripts/06b_regresion_getter_stack.mjs`). El resultado final seguía siendo
+  // correcto (`resultadoForma.motivos` solo ya alcanza para rechazar, protegido
+  // además por el `try/catch` puntual de acá abajo) — pero el getter SÍ se
+  // ejecutaba, reintroduciendo exactamente el patrón de superficie que
+  // `datos-planos.ts` existe para eliminar (un getter/Proxy con efectos
+  // secundarios NO idempotentes — un fetch lazy, un contador que decrementa, una
+  // telemetría — se dispara 3 veces por un solo intento de construcción rechazada).
+  //
+  // Fix: después de intentar la materialización, NUNCA se vuelve a tocar el objeto
+  // CRUDO del llamador.
+  // - Si la materialización falló (getter, Proxy, ciclo, `__proto__`, ...): sólo se
+  //   devuelven sus motivos — CERO invocaciones adicionales sobre el original.
+  // - Si tuvo éxito pero la FORMA es inválida (ids duplicados, `schemaVersion` no
+  //   soportada, ...) — un caso que SÍ puede materializar sin problema, `deps.
+  //   proyectoInicial` es JSON-plano, sólo viola un invariante de Gate 4 — los
+  //   chequeos adicionales de Gate 4 corren sobre una materialización PROPIA e
+  //   INDEPENDIENTE (nunca sobre el crudo), para no perder, en fixtures de test que
+  //   rompen un invariante de Gate 4 pero conservan forma mínima (self-loop, umbral
+  //   no finito, id duplicado, referencia colgada), el código de Gate 4 que esos
+  //   tests ya prueban. Si ESA materialización también falla (imposible si
+  //   `resultadoForma` falló por otra razón que no sea `ENTRADA_NO_ES_DATO_PLANO`,
+  //   pero fail-closed de todos modos), los chequeos de Gate 4 simplemente se
+  //   omiten — nunca se cae de vuelta a leer el crudo.
   let motivosIniciales: Motivo[]
   let proyectoParaConstruir: Proyecto
   const resultadoForma = validarFormaProyecto(deps.proyectoInicial as unknown)
@@ -319,10 +345,13 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   } else {
     proyectoParaConstruir = deps.proyectoInicial
     let motivosGate4: readonly Motivo[] = []
-    try {
-      motivosGate4 = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
-    } catch {
-      motivosGate4 = []
+    const materializadoParaGate4 = materializarDatosPlanos<Proyecto>(deps.proyectoInicial, "proyecto")
+    if (materializadoParaGate4.ok) {
+      try {
+        motivosGate4 = [...validarProyecto(materializadoParaGate4.valor, deps.catalogo), ...validarIdsYContador(materializadoParaGate4.valor)]
+      } catch {
+        motivosGate4 = []
+      }
     }
     motivosIniciales = [...resultadoForma.motivos, ...motivosGate4]
   }
