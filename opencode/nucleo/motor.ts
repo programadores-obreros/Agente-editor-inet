@@ -275,25 +275,71 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   // detecta ALGUNOS de esos mismos casos también, pero con su propio código
   // "_AL_CARGAR"/de forma (mismo criterio momento-de-carga vs. Gate 4 que ya usa el
   // resto del núcleo) — nunca se pisan entre sí, sólo se UNEN.
-  const resultadoForma = validarFormaProyecto(deps.proyectoInicial as unknown)
+  //
+  // Phase 1.1 (RX) — hallazgo externo RX-01, CRÍTICO (revisión adversarial
+  // independiente, reabre CP-01): dos defectos en esta puerta. (a) cuando
+  // `resultadoForma.ok` era `true`, el código de abajo usaba `deps.proyectoInicial`
+  // CRUDO (no `resultadoForma.proyecto`, la copia YA SANEADA que la misma función
+  // devuelve) tanto para validar como para construir `canonico` — una propiedad
+  // anidada NO declarada en un Componente/Conexion/ComportamientoRegla sobrevivía
+  // intacta al canónico persistido, aunque el LOADER (`cargarProyecto`) la
+  // descartara/rechazara al recargar el MISMO documento (memoria != disco entre
+  // puertas — cerrado también extendiendo `cargador.ts` para rechazar claves
+  // anidadas desconocidas, ver arriba en este mismo commit). (b) ninguna lectura de
+  // `deps.proyectoInicial` estaba protegida: un getter que lanza en CUALQUIER campo
+  // (declarado o no) propagaba un `Error` crudo en vez de `ErrorEstadoInicialInvalido`
+  // — el mismo síntoma que CP-01 ya había cerrado, por una lectura distinta. El
+  // motor ahora SIEMPRE construye desde el resultado VALIDADO (nunca desde el
+  // objeto crudo, igual que `cargarProyecto()`), y CUALQUIER excepción al leer
+  // `proyectoInicial` se convierte en `ErrorEstadoInicialInvalido` con un motivo
+  // estructurado, nunca en un `Error` crudo (brief §12).
   let motivosIniciales: Motivo[]
-  if (resultadoForma.ok) {
-    motivosIniciales = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
-  } else {
-    let motivosGate4: readonly Motivo[] = []
-    try {
-      motivosGate4 = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
-    } catch {
-      motivosGate4 = []
+  let proyectoParaConstruir: Proyecto
+  try {
+    const resultadoForma = validarFormaProyecto(deps.proyectoInicial as unknown)
+    if (resultadoForma.ok) {
+      proyectoParaConstruir = resultadoForma.proyecto
+      motivosIniciales = [...validarProyecto(proyectoParaConstruir, deps.catalogo), ...validarIdsYContador(proyectoParaConstruir)]
+    } else {
+      proyectoParaConstruir = deps.proyectoInicial
+      let motivosGate4: readonly Motivo[] = []
+      try {
+        motivosGate4 = [...validarProyecto(deps.proyectoInicial, deps.catalogo), ...validarIdsYContador(deps.proyectoInicial)]
+      } catch {
+        motivosGate4 = []
+      }
+      motivosIniciales = [...resultadoForma.motivos, ...motivosGate4]
     }
-    motivosIniciales = [...resultadoForma.motivos, ...motivosGate4]
+  } catch (error) {
+    throw new ErrorEstadoInicialInvalido([
+      {
+        codigo: "EXCEPCION_INESPERADA_LEYENDO_PROYECTO_INICIAL",
+        categoria: "estructural",
+        severidad: "blocking",
+        clasificacion: "rechazo",
+        datos: { error: error instanceof Error ? error.message : String(error) },
+      },
+    ])
   }
   const rechazosIniciales = motivosIniciales.filter((m) => m.clasificacion === "rechazo")
   if (rechazosIniciales.length > 0) {
     throw new ErrorEstadoInicialInvalido(rechazosIniciales)
   }
 
-  let canonico: Proyecto = congelarProfundo(clonarProfundo(deps.proyectoInicial))
+  let canonico: Proyecto
+  try {
+    canonico = congelarProfundo(clonarProfundo(proyectoParaConstruir))
+  } catch (error) {
+    throw new ErrorEstadoInicialInvalido([
+      {
+        codigo: "EXCEPCION_INESPERADA_LEYENDO_PROYECTO_INICIAL",
+        categoria: "estructural",
+        severidad: "blocking",
+        clasificacion: "rechazo",
+        datos: { error: error instanceof Error ? error.message : String(error) },
+      },
+    ])
+  }
   const bufferUndo: ResultadoTransaccion[] = []
 
   function motivoRevisionObsoleta(baseRevision: number): Motivo {

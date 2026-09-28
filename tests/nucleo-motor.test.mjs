@@ -12,8 +12,8 @@ import { fileURLToPath } from "node:url"
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 const { crearMotorDeProyecto } = await import(join(REPO, "opencode/nucleo/motor.ts"))
-const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
-const { clonarProfundo } = await import(join(REPO, "opencode/nucleo/canonico.ts"))
+const { crearProyecto, cargarProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
+const { clonarProfundo, canonicalizar } = await import(join(REPO, "opencode/nucleo/canonico.ts"))
 const { construirCatalogoMinimoReal } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
 // Phase 1.1 (hallazgo externo E3-07): estos tests, a diferencia del resto del
 // archivo, necesitan el `Almacen` REAL de Gate 7 (no el falso en memoria de más
@@ -585,8 +585,15 @@ test("constructor-rechaza-proyectoInicial-con-forma-invalida (hallazgo externo C
     { nombre: "revision negativa", proyectoInicial: { ...base, revision: -5 }, codigoEsperado: "CAMPO_REQUERIDO_FALTANTE" },
     { nombre: "revision string", proyectoInicial: { ...base, revision: "7" }, codigoEsperado: "CAMPO_REQUERIDO_FALTANTE" },
     {
+      // Nota (hallazgo externo RX-01): este caso ya NO lleva una clave extra
+      // (`extra: true`) — desde RX-01, cargador.ts rechaza TAMBIÉN claves anidadas
+      // desconocidas con CLAVE_DESCONOCIDA, y esa clave hubiera cambiado el código
+      // esperado de este caso (que quiere ejercitar específicamente tipo/pines con
+      // tipo incorrecto, no la detección de claves extra — eso ya tiene su propio
+      // test dedicado, ver más abajo "constructor-rechaza-proyectoInicial-con-clave-
+      // anidada-desconocida-en-componente").
       nombre: "componente basura (tipo/pines con tipo incorrecto)",
-      proyectoInicial: { ...base, componentes: [{ id: "cmp-0", tipo: 123, pines: "x", extra: true }], siguienteIdLocal: 1 },
+      proyectoInicial: { ...base, componentes: [{ id: "cmp-0", tipo: 123, pines: "x" }], siguienteIdLocal: 1 },
       codigoEsperado: "CAMPO_REQUERIDO_FALTANTE",
     },
     { nombre: "schemaVersion desconocida", proyectoInicial: { ...base, schemaVersion: "99.0.0" }, codigoEsperado: "VERSION_SCHEMA_DESCONOCIDA" },
@@ -1051,4 +1058,106 @@ test("dry-run-nunca-toca-el-disco-ni-siquiera-para-el-chequeo-de-conflicto-de-E3
   assert.equal(r.ok, true)
   assert.equal(llamadasWrite, 0, "un dry-run NUNCA debe escribir en disco")
   assert.equal(llamadasExists, 0, "un dry-run NUNCA debe siquiera consultar el disco para el chequeo de conflicto de E3-07 (proponer no llega a llamar guardar())")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (hallazgo externo RX-01, CRÍTICO — revisión adversarial independiente,
+// reabre CP-01): `crearMotorDeProyecto` corría `validarFormaProyecto` para DECIDIR si
+// rechazar, pero cuando el resultado era `ok:true` usaba el objeto CRUDO
+// (`deps.proyectoInicial`) — no la copia YA SANEADA que la misma función devuelve
+// (`resultadoForma.proyecto`) — tanto para `validarProyecto`/`validarIdsYContador` como
+// para construir el `canonico` (`clonarProfundo`). Una propiedad NO declarada en un
+// `Componente`/`Conexion`/`ComportamientoRegla` anidado (a) sobrevivía intacta al
+// canónico en memoria/persistido, aunque el LOADER (`cargarProyecto`) la descartara al
+// recargar el MISMO documento — memoria != disco entre puertas — y (b) si esa
+// propiedad era un getter que lanza, hacía tronar `clonarProfundo` con un `Error`
+// crudo, en vez de `ErrorEstadoInicialInvalido` (falsificando el mismo contrato que
+// CP-01 ya había cerrado: "el motor corre su PROPIA validación... nunca una excepción
+// cruda"). Cerrado extendiendo `validarFormaProyecto`/`validarComponente`/
+// `validarConexion`/`validarComportamiento` (`cargador.ts`) para rechazar TAMBIÉN
+// claves anidadas desconocidas (§6 de IR-SPEC.md no decía nada sobre el caso anidado —
+// se aplica el mismo criterio fail-closed que ya rige a nivel raíz) y haciendo que el
+// motor construya SIEMPRE desde `resultadoForma.proyecto` (la copia validada), nunca
+// desde el objeto crudo del llamador — igual que ya hace `cargarProyecto()`.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-clave-anidada-desconocida-en-componente (hallazgo externo RX-01, parte a)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-rx01-a", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const roto = {
+    ...base,
+    componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {}, campoSorpresa: "dato no declarado" }],
+    siguienteIdLocal: 1,
+  }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `debe lanzar ErrorEstadoInicialInvalido: ${err}`)
+      assert.ok(err.motivos?.some((m) => m.codigo === "CLAVE_DESCONOCIDA" && m.clasificacion === "rechazo"), `el error debe traer CLAVE_DESCONOCIDA: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con un campo anidado NO declarado NUNCA debe construir un motor operable que lo persista en silencio",
+  )
+})
+
+test("constructor-nunca-usa-el-objeto-crudo-para-el-canonico-un-campo-plano-extra-no-sobrevive (hallazgo externo RX-01, parte a, control)", () => {
+  // Control: un proyectoInicial con FORMA válida (sin campos anidados extra) sigue
+  // construyendo igual que antes — el fix no cambia el caso sano.
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-rx01-control", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() })
+  assert.equal(motor.getProyecto().id, "proy-rx01-control")
+})
+
+test("constructor-convierte-cualquier-excepcion-al-leer-proyectoInicial-en-ErrorEstadoInicialInvalido-nunca-un-Error-crudo (hallazgo externo RX-01, parte b)", () => {
+  const base = crearProyecto({ generadorId: () => "proy-rx01-b", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const componente = { id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} }
+  Object.defineProperty(componente, "campoTrampa", {
+    enumerable: true,
+    get() {
+      throw new Error("getter boom en campo no declarado de Componente")
+    },
+  })
+  const roto = { ...base, componentes: [componente], siguienteIdLocal: 1 }
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: roto, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `debe lanzar ErrorEstadoInicialInvalido, NUNCA un Error crudo: ${err?.stack ?? err}`)
+      assert.ok(Array.isArray(err.motivos) && err.motivos.length > 0 && err.motivos.every((m) => m.clasificacion === "rechazo"), `el error debe traer motivos estructurados: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un getter que explota leyendo un campo anidado (declarado o no) del proyectoInicial NUNCA debe propagar un Error crudo",
+  )
+})
+
+test("equivalencia-cargarProyecto-vs-proyectoInicial: el mismo documento da el MISMO Proyecto por las dos puertas (hallazgo externo RX-01)", () => {
+  // Componentes/conexiones/comportamientos a propósito FUERA de orden ascendente de
+  // id local — `cargarProyecto()` los reordena (compararIdsLocales, IR-SPEC.md §3);
+  // si `crearMotorDeProyecto({ proyectoInicial })` construyera desde el objeto CRUDO
+  // en vez de la copia YA SANEADA (y por lo tanto YA ORDENADA) que devuelve
+  // `validarFormaProyecto`, el orden de array divergiría entre las dos puertas —
+  // observable en `canonicalizar()` (IR-SPEC.md §3: preserva orden de array).
+  const documento = {
+    id: "proy-rx01-equiv",
+    schemaVersion: "1.0.0",
+    catalogoVersion: catalogo.version,
+    catalogoHash: catalogo.hash,
+    revision: 0,
+    siguienteIdLocal: 3,
+    placa: "esp32-devkit-v1",
+    componentes: [
+      { id: "cmp-2", tipo: "resistencia", pines: {}, propiedades: {} },
+      { id: "cmp-0", tipo: "led", pines: { anodo: "GPIO23" }, propiedades: {} },
+      { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} },
+    ],
+    conexiones: [],
+    comportamientos: [],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }
+
+  const viaLoader = cargarProyecto(structuredClone(documento))
+  assert.equal(viaLoader.ok, true)
+
+  const motor = crearMotorDeProyecto({ proyectoInicial: structuredClone(documento), catalogo, almacen: crearAlmacenFalso() })
+  const viaProyectoInicial = motor.getProyecto()
+
+  assert.equal(canonicalizar(viaLoader.proyecto), canonicalizar(viaProyectoInicial), "cargarProyecto(JSON) y crearMotorDeProyecto({proyectoInicial}) deben producir el MISMO Proyecto canonico para el mismo documento")
 })

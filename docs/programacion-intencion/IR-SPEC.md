@@ -329,6 +329,66 @@ id duplicado, referencia colgada) — el código de Gate 4 que esos tests ya pru
 propio código de momento-de-carga (mismo criterio que §6.1/§6.2/§6.3) — nunca se
 pisan entre sí, sólo se UNEN.
 
+### 6.5. Ampliación Phase 1.1 (RX) — hallazgo externo RX-01, CRÍTICO (revisión adversarial independiente, reabre CP-01)
+
+§6.4 (arriba) cerró la FORMA/SCHEMA a nivel del documento completo, pero dos defectos
+sobrevivieron en la MISMA puerta:
+
+1. **El motor usaba el objeto CRUDO, no la copia saneada.** Cuando
+   `validarFormaProyecto(deps.proyectoInicial)` daba `ok:true`, `crearMotorDeProyecto`
+   seguía usando `deps.proyectoInicial` — nunca `resultadoForma.proyecto`, la copia
+   YA VALIDADA que la misma función devuelve — tanto para `validarProyecto`/
+   `validarIdsYContador` como para construir `canonico`
+   (`congelarProfundo(clonarProfundo(...))`). Esto no cambiaba nada mientras las dos
+   copias fueran equivalentes, pero `cargarProyecto()` SÍ hace algo más con esa copia
+   antes de congelarla: reordena `componentes`/`conexiones`/`comportamientos` por id
+   local (§3) y — con la ampliación de abajo — rechaza claves anidadas desconocidas.
+   Usar el objeto crudo rompía la equivalencia
+   `canonicalizar(cargarProyecto(doc).proyecto) === canonicalizar(crearMotorDeProyecto({proyectoInicial: doc}).getProyecto())`
+   para cualquier documento cuyos arrays no llegaran ya en orden ascendente de id
+   local — un `proyectoInicial` armado a mano con un `siguienteIdLocal` monotónico
+   pero ids "fuera de orden" (perfectamente válido: §3 dice que el orden de array no
+   lleva significado en Fase 1) construía un canónico con OTRO orden de array que el
+   mismo documento cargado por `cargarProyecto()`.
+
+2. **Ninguna lectura de `proyectoInicial` estaba protegida contra excepciones.** Un
+   getter que lanza en CUALQUIER campo — declarado o no, en la raíz o anidado —
+   propagaba un `Error` crudo en vez de `ErrorEstadoInicialInvalido`, falsificando el
+   mismo principio que CP-01 (§6.4) ya había cerrado por otra lectura.
+
+**Fix:** `crearMotorDeProyecto` ahora SIEMPRE construye desde `resultadoForma.proyecto`
+(cuando `ok:true`) — nunca desde `deps.proyectoInicial` crudo — igual que
+`cargarProyecto()`. Toda la secuencia de lectura (`validarFormaProyecto`,
+`validarProyecto`/`validarIdsYContador`, y la construcción de `canonico` vía
+`clonarProfundo`) corre dentro de un `try/catch`: cualquier excepción se convierte en
+`ErrorEstadoInicialInvalido` con el motivo `EXCEPCION_INESPERADA_LEYENDO_PROYECTO_INICIAL`
+(categoría `estructural`, rechazo siempre — `motivos.ts`), nunca un `Error` crudo.
+
+**Además (mismo hallazgo, parte del análisis de contrato):** §6 (arriba) sólo describe
+fail-closed ante claves desconocidas a nivel TOP-LEVEL del documento — no dice nada
+sobre una clave desconocida DENTRO de un `Componente`/`Conexion`/`ComportamientoRegla`
+anidado. Antes de este fix, `validarComponente`/`validarConexion`/
+`validarComportamiento` (`cargador.ts`) sólo desestructuraban los campos que conocían
+— una clave extra anidada se descartaba en silencio (nunca se rechazaba NI se
+reportaba), violando la regla dura de "nunca reparar en silencio". Dado el silencio
+del contrato sobre este caso específico, se aplica el MISMO criterio fail-closed que
+ya rige a nivel raíz: `validarComponente`/`validarExtremoConexion`/`validarConexion`/
+`validarComportamiento` (y sus sub-objetos `cuando`/`cuando.umbral`/`entonces`) ahora
+rechazan también con `CLAVE_DESCONOCIDA` (categoría `estructural`) — en la MISMA
+función compartida por el loader y por la construcción del motor, así que ninguna de
+las dos puertas repara en silencio. `Componente.propiedades` (§1, "bolsa abierta") es
+la ÚNICA excepción a propósito: sigue siendo de forma libre, nunca se valida por
+clave. Se revisaron los fixtures de test existentes: ninguno usaba una clave anidada
+extra como parte de un documento VÁLIDO — el único caso encontrado
+(`tests/nucleo-motor.test.mjs`, tabla de CP-01, "componente basura") era un fixture ya
+ROTO por otra razón (tipo/pines con tipo incorrecto) que además llevaba una clave
+extra incidental (`extra: true`) sin relación con lo que ese caso decía probar; se
+quitó esa clave incidental para no confundir dos causas de rechazo en un mismo caso.
+
+Con estos dos fixes, cualquier documento — cargado por `cargarProyecto()` o empujado
+directo como `proyectoInicial` — produce el MISMO `Proyecto` canónico (probado en
+`tests/nucleo-motor.test.mjs::equivalencia-cargarProyecto-vs-proyectoInicial`).
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

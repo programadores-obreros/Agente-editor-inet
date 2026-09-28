@@ -117,6 +117,16 @@
 //   incluida la excepción de re-guardado canónicamente idéntico y el límite conocido
 //   de detección por revisión, no por contenido).
 //
+// Phase 1.1 (RX) — hallazgo externo RX-01, CRÍTICO (revisión adversarial
+// independiente, reabre CP-01) agrega, categoria "estructural", clasificacion
+// "rechazo" siempre, emitido por `motor.ts` (`crearMotorDeProyecto`):
+// - `EXCEPCION_INESPERADA_LEYENDO_PROYECTO_INICIAL` — leer `deps.proyectoInicial`
+//   (al validar su forma, al construir el canónico, o cualquier lectura intermedia)
+//   lanzó una excepción en vez de devolver un valor — un getter que explota en un
+//   campo, declarado o no, de un Componente/Conexion/ComportamientoRegla anidado.
+//   Nunca un `Error` crudo: se convierte acá en `ErrorEstadoInicialInvalido` con
+//   este motivo. Ver `docs/programacion-intencion/IR-SPEC.md` §6.5.
+
 // Phase 1.1 (hallazgo externo E3-08, barato) agrega, categoria "almacen",
 // clasificacion "rechazo" siempre, emitido por `almacen.ts` (`cargar()`):
 // - `ID_DOCUMENTO_NO_COINCIDE` — el `Proyecto.id` del documento leído bajo

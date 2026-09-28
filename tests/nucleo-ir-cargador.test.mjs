@@ -102,6 +102,69 @@ test("clave-top-level-desconocida-rechaza", () => {
   assert.ok(r.motivos[0].datos.claves.includes("campoInventado"))
 })
 
+// ──── 4b. clave ANIDADA desconocida rechaza (hallazgo externo RX-01, CRÍTICO,
+// revisión adversarial independiente, reabre CP-01): §6 de IR-SPEC.md sólo describe
+// fail-closed ante claves desconocidas a nivel TOP-LEVEL del documento — el contrato
+// no dice nada sobre claves desconocidas DENTRO de un Componente/Conexion/
+// ComportamientoRegla. Antes de este fix, `validarComponente`/`validarConexion`/
+// `validarComportamiento` (cargador.ts) sólo DESESTRUCTURABAN los campos que conocían
+// — una clave extra ahí ni se rechazaba ni se reportaba, simplemente se descartaba en
+// silencio (la "copia saneada" en realidad no excluía nada, sólo reconstruía con spread
+// selectivo). Se cierra con el mismo criterio fail-closed que ya usa `CLAVES_PROYECTO`
+// a nivel raíz — mismo código `CLAVE_DESCONOCIDA`, categoría `estructural`. `propiedades`
+// (bolsa abierta, `ir.ts`) NUNCA se valida así: es a propósito una bolsa de forma libre.
+test("clave-anidada-desconocida-en-componente-rechaza (hallazgo externo RX-01)", () => {
+  const doc = documentoValido()
+  doc.componentes[0].campoSorpresa = "dato no declarado"
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+  assert.ok(r.motivos[0].datos.claves.includes("campoSorpresa"), JSON.stringify(r.motivos[0].datos))
+})
+
+test("clave-anidada-desconocida-en-conexion-rechaza (hallazgo externo RX-01)", () => {
+  const doc = documentoValido()
+  doc.conexiones[0].campoSorpresa = "dato no declarado"
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+})
+
+test("clave-anidada-desconocida-en-extremo-de-conexion-rechaza (hallazgo externo RX-01)", () => {
+  const doc = documentoValido()
+  doc.conexiones[0].desde.campoSorpresa = "dato no declarado"
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+})
+
+test("clave-anidada-desconocida-en-comportamiento-rechaza (hallazgo externo RX-01)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].campoSorpresa = "dato no declarado"
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+})
+
+test("clave-anidada-desconocida-en-umbral-de-comportamiento-rechaza (hallazgo externo RX-01)", () => {
+  const doc = documentoValido()
+  doc.comportamientos[0].cuando.umbral.campoSorpresa = "dato no declarado"
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+})
+
+// No-regresión: `propiedades` sigue siendo una bolsa ABIERTA — cualquier clave ahí
+// dentro nunca es "clave desconocida" (ir.ts: "el catálogo valida forma y rango, la
+// IR no").
+test("propiedades-de-componente-sigue-siendo-bolsa-abierta-no-regresion-RX-01", () => {
+  const doc = documentoValido()
+  doc.componentes[0].propiedades = { cualquierCosa: 1, otraMas: "x" }
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true)
+  assert.deepEqual(r.proyecto.componentes.find((c) => c.id === "cmp-0").propiedades, { cualquierCosa: 1, otraMas: "x" })
+})
+
 // ─────────────────────────── 5. id duplicado entre componentes rechaza ───────────────
 
 test("id-duplicado-entre-componentes-rechaza", () => {

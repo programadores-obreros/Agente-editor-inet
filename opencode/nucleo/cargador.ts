@@ -265,8 +265,42 @@ export function validarFormaProyecto(doc: unknown): ResultadoCarga {
 
 type ResultadoValidacion<T> = { readonly ok: true; readonly valor: T } | { readonly ok: false; readonly codigo: string; readonly datos?: Record<string, unknown> }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX) — hallazgo externo RX-01, CRÍTICO (revisión adversarial independiente,
+// reabre CP-01): §6 de IR-SPEC.md sólo describe fail-closed ante claves desconocidas a
+// nivel TOP-LEVEL del documento ("claves top-level... fail-closed: una clave
+// desconocida rechaza") — el contrato NO dice nada sobre una clave desconocida DENTRO
+// de un `Componente`/`Conexion`/`ComportamientoRegla` anidado. Antes de este fix,
+// `validarComponente`/`validarConexion`/`validarComportamiento` (de acá abajo) sólo
+// DESESTRUCTURABAN los campos que conocían — una clave extra en el objeto anidado ni se
+// rechazaba ni se reportaba, se descartaba en silencio (la "copia saneada" que
+// devuelven en realidad nunca excluía nada: sólo reconstruía por spread selectivo
+// desde los campos que sabía leer). Dado el silencio del contrato, se aplica el MISMO
+// criterio fail-closed que ya rige a nivel raíz (mismo código `CLAVE_DESCONOCIDA`,
+// categoría `estructural`) — nunca reparar en silencio (regla dura del brief).
+// `propiedades` (`Componente`, `ir.ts`: "Bolsa abierta; el catálogo valida forma y
+// rango, la IR no") es la ÚNICA excepción a propósito: es de forma libre por diseño,
+// nunca se valida así.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const CLAVES_COMPONENTE = ["id", "tipo", "pines", "propiedades"] as const
+const CLAVES_CONEXION = ["id", "desde", "hasta"] as const
+const CLAVES_EXTREMO_CONEXION = ["componente", "terminal"] as const
+const CLAVES_COMPORTAMIENTO = ["id", "cuando", "entonces"] as const
+const CLAVES_CUANDO_COMPORTAMIENTO = ["sensor", "capacidad", "comparador", "umbral"] as const
+const CLAVES_UMBRAL_COMPORTAMIENTO = ["valor", "unidad", "magnitud"] as const
+const CLAVES_ENTONCES_COMPORTAMIENTO = ["actuador", "accion"] as const
+
+function clavesDesconocidasDe(obj: Record<string, unknown>, conocidas: readonly string[]): readonly string[] {
+  return Object.keys(obj).filter((k) => !conocidas.includes(k))
+}
+
 function validarComponente(c: unknown): ResultadoValidacion<Componente> {
   if (!esObjeto(c)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", razon: "no es un objeto" } }
+  const clavesDesconocidas = clavesDesconocidasDe(c, CLAVES_COMPONENTE)
+  if (clavesDesconocidas.length > 0) {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "componente", claves: clavesDesconocidas } }
+  }
   const { id, tipo, pines, propiedades } = c
   if (typeof id !== "string" || id.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", campo: "id" } }
@@ -284,7 +318,12 @@ function validarComponente(c: unknown): ResultadoValidacion<Componente> {
 }
 
 function validarExtremoConexion(e: unknown, conexionId: string, lado: "desde" | "hasta"): ResultadoValidacion<ExtremoConexion> {
-  if (!esObjeto(e) || typeof e.componente !== "string" || typeof e.terminal !== "string") {
+  if (!esObjeto(e)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "conexion", conexion: conexionId, campo: lado } }
+  const clavesDesconocidas = clavesDesconocidasDe(e, CLAVES_EXTREMO_CONEXION)
+  if (clavesDesconocidas.length > 0) {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "conexion", conexion: conexionId, campo: lado, claves: clavesDesconocidas } }
+  }
+  if (typeof e.componente !== "string" || typeof e.terminal !== "string") {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "conexion", conexion: conexionId, campo: lado } }
   }
   return { ok: true, valor: { componente: e.componente, terminal: e.terminal } }
@@ -292,6 +331,10 @@ function validarExtremoConexion(e: unknown, conexionId: string, lado: "desde" | 
 
 function validarConexion(cx: unknown): ResultadoValidacion<Conexion> {
   if (!esObjeto(cx)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "conexion", razon: "no es un objeto" } }
+  const clavesDesconocidas = clavesDesconocidasDe(cx, CLAVES_CONEXION)
+  if (clavesDesconocidas.length > 0) {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "conexion", claves: clavesDesconocidas } }
+  }
   const { id, desde, hasta } = cx
   if (typeof id !== "string" || id.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "conexion", campo: "id" } }
@@ -308,16 +351,29 @@ const ACCIONES = new Set(["encender", "apagar"])
 
 function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRegla> {
   if (!esObjeto(b)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", razon: "no es un objeto" } }
+  const clavesDesconocidasRaiz = clavesDesconocidasDe(b, CLAVES_COMPORTAMIENTO)
+  if (clavesDesconocidasRaiz.length > 0) {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", claves: clavesDesconocidasRaiz } }
+  }
   const { id, cuando, entonces } = b
   if (typeof id !== "string" || id.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", campo: "id" } }
   }
   if (!esObjeto(cuando)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando" } }
+  const clavesDesconocidasCuando = clavesDesconocidasDe(cuando, CLAVES_CUANDO_COMPORTAMIENTO)
+  if (clavesDesconocidasCuando.length > 0) {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando", claves: clavesDesconocidasCuando } }
+  }
   const { sensor, capacidad, comparador, umbral } = cuando
   if (typeof sensor !== "string" || typeof capacidad !== "string" || typeof comparador !== "string" || !COMPARADORES.has(comparador)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando" } }
   }
-  if (!esObjeto(umbral) || typeof umbral.valor !== "number" || typeof umbral.unidad !== "string" || typeof umbral.magnitud !== "string") {
+  if (!esObjeto(umbral)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral" } }
+  const clavesDesconocidasUmbral = clavesDesconocidasDe(umbral, CLAVES_UMBRAL_COMPORTAMIENTO)
+  if (clavesDesconocidasUmbral.length > 0) {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral", claves: clavesDesconocidasUmbral } }
+  }
+  if (typeof umbral.valor !== "number" || typeof umbral.unidad !== "string" || typeof umbral.magnitud !== "string") {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral" } }
   }
   // Phase 1.1 (hallazgo externo E1-03): `typeof umbral.valor !== "number"` NO alcanza
@@ -336,6 +392,10 @@ function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRe
     return { ok: false, codigo: "UMBRAL_NO_FINITO_AL_CARGAR", datos: { entidad: "comportamiento", comportamiento: id, valor: String(umbral.valor) } }
   }
   if (!esObjeto(entonces)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces" } }
+  const clavesDesconocidasEntonces = clavesDesconocidasDe(entonces, CLAVES_ENTONCES_COMPORTAMIENTO)
+  if (clavesDesconocidasEntonces.length > 0) {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces", claves: clavesDesconocidasEntonces } }
+  }
   const { actuador, accion } = entonces
   if (typeof actuador !== "string" || typeof accion !== "string" || !ACCIONES.has(accion)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces" } }
