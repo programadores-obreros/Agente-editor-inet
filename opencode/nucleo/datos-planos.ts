@@ -144,6 +144,30 @@
 // causa.md` documenta el análisis completo (por qué ocurre, qué invariante rompe, qué
 // puertas afecta, entrada de reproducción, resultado incorrecto) hecho ANTES de fijar
 // este fix de raíz.
+//
+// Phase 1.2 (hallazgo externo REA-03, MAYOR — re-auditoría externa AUD-B-01): el
+// párrafo de arriba ("no puede existir una 'segunda lectura' que diverja de la
+// primera... el eco del resultado... trabaja SIEMPRE sobre la copia, nunca sobre el
+// objeto original") describía la intención correcta, pero `ejecutarOperacion`
+// (`operaciones.ts`) no la cumplía en los hechos: llamaba a `aplicarOperacion` (que
+// materializa su propia copia PUERTAS ADENTRO, nunca expuesta) y LUEGO volvía a
+// invocar este módulo por su cuenta, de forma INDEPENDIENTE, sobre el MISMO parámetro
+// `operacion` crudo — sólo para armar el eco (`idOperacion`/`idTransaccion`/
+// `baseRevision`). Eran DOS pasadas de materialización distintas sobre el mismo
+// objeto de entrada, nunca "la copia" (singular) que este comentario promete. Un
+// sobre que es un Proxy con `ownKeys`/`getOwnPropertyDescriptor` ESTATOSOS (devuelven
+// algo distinto en la 2ª pasada completa que en la 1ª) podía hacer que la pasada que
+// decide la aplicación divergiera de la pasada que arma el eco — el `Proyecto`
+// resultante en sí no se corrompía, pero el `idOperacion`/`baseRevision` devuelto al
+// llamador podía describir una operación DISTINTA de la que realmente se aplicó.
+// Cerrado agregando un núcleo interno (`aplicarOperacionMaterializada`,
+// `operaciones.ts`) que recibe el sobre YA MATERIALIZADO y nunca vuelve a
+// materializar — tanto `aplicarOperacion` como `ejecutarOperacion` materializan UNA
+// vez, cada uno en su propia frontera, y alimentan esa MISMA copia a ese núcleo y (en
+// el caso de `ejecutarOperacion`) también al eco. Con esto, el párrafo de arriba
+// vuelve a ser exacto: hay UNA sola pasada por llamador público, nunca dos que puedan
+// divergir. Ver `docs/programacion-intencion/IR-SPEC.md` §6.6 y la fila 15 de
+// `INVARIANTES-ENTRYPOINTS.md`.
 
 import type { CategoriaMotivo, Motivo } from "./motivos.ts"
 

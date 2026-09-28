@@ -270,12 +270,36 @@ export function aplicarOperacion(proyecto: Proyecto, operacionCruda: SobreOperac
   // abierta de `AgregarComponente`, viaja de acá en más como copia plana, nunca
   // como el objeto vivo del llamador — `congelarProfundo`, en `motor.ts`, ya no
   // puede toparse con un Proxy que lanza).
+  //
+  // Phase 1.2 (hallazgo externo REA-03, MAYOR — re-auditoría externa AUD-B-01): esta
+  // es ahora la ÚNICA materialización del sobre en TODO este módulo — la frontera
+  // pública, corrida UNA sola vez, ANTES de leer nada. El núcleo de aplicación
+  // (`aplicarOperacionMaterializada`, más abajo) recibe la copia YA MATERIALIZADA y
+  // nunca vuelve a materializar — `ejecutarOperacion` (más abajo) también pasa por
+  // esta MISMA disciplina: materializa UNA vez, en su propia frontera, y alimenta esa
+  // única copia tanto al núcleo de aplicación como al eco. Antes de este fix,
+  // `ejecutarOperacion` materializaba una SEGUNDA copia, independiente de la que esta
+  // función calculaba puertas adentro, sólo para el eco — ver el comentario de
+  // `ejecutarOperacion` para el detalle completo del defecto.
   const materializado = materializarDatosPlanos<SobreOperacion>(operacionCruda, "operacion")
   if (!materializado.ok) {
     return { proyecto, motivos: [motivoEntradaNoPlano("operacion", materializado)] }
   }
-  const operacion = materializado.valor
+  return aplicarOperacionMaterializada(proyecto, materializado.valor, catalogo)
+}
 
+/**
+ * Phase 1.2 (hallazgo externo REA-03, MAYOR): núcleo de aplicación — recibe el sobre
+ * YA MATERIALIZADO (dato plano, leído una sola vez por el llamador) y NUNCA vuelve a
+ * materializar. Tiene exactamente dos llamadores en todo el núcleo:
+ * `aplicarOperacion` (arriba, frontera pública para quien sólo necesita el resultado
+ * de aplicación) y `ejecutarOperacion` (más abajo, que además necesita esa MISMA
+ * copia para el eco). Que ambos consuman la copia de su PROPIA materialización — nunca
+ * una función interna que materialice por su cuenta una tercera vez — es lo que
+ * garantiza, por construcción, que nunca puede haber dos pasadas independientes sobre
+ * el mismo sobre crudo dentro de este módulo.
+ */
+function aplicarOperacionMaterializada(proyecto: Proyecto, operacion: SobreOperacion, catalogo: Catalogo): ResultadoAplicacion {
   const motivoSobre = analizarSobreOperacion(operacion)
   if (motivoSobre) return { proyecto, motivos: [motivoSobre] }
   const tipo = operacion.tipo
@@ -525,31 +549,45 @@ function aplicarCambiarComponente(proyecto: Proyecto, payload: { componente: str
 // ════════════════════════════════════════════════════════════════════════════════════
 
 export function ejecutarOperacion(proyecto: Proyecto, operacion: SobreOperacion, catalogo: Catalogo): ResultadoOperacion {
-  const { proyecto: proyectoAplicado, motivos: motivosPropios } = aplicarOperacion(proyecto, operacion, catalogo)
-
-  // Phase 1.1 (RX2, hallazgo externo RX2-01): estos son sólo el ECO del sobre en el
-  // resultado — la FORMA ya se materializó/validó dentro de `aplicarOperacion` de
-  // arriba. `ejecutarOperacion` recibe el mismo `operacion` CRUDO como parámetro
-  // propio (no el que `aplicarOperacion` ya materializó puertas adentro — esa copia
-  // no se expone fuera de esa función), así que materializa su PROPIA copia acá,
-  // sólo para poder leer estos tres campos sin arriesgar una segunda lectura sin
-  // proteger (el defecto exacto que reabrió RX2-01: el fix anterior, RX-02, envolvía
-  // esta misma lectura en un `try/catch` puntual — `leerSeguro` — que protegía UNA
-  // lectura pero no la clase entera). Si la materialización falla, no hay ningún
-  // campo seguro que ecoar: se usan los mismos valores por defecto de siempre.
+  // Phase 1.2 (hallazgo externo REA-03, MAYOR — re-auditoría externa AUD-B-01,
+  // `reaudit/AUD-B/scripts/04_toctou_eco_ejecutarOperacion.mjs`): materializa el sobre
+  // UNA SOLA VEZ, ACÁ, en la frontera — la MISMA copia alimenta tanto el núcleo de
+  // aplicación (`aplicarOperacionMaterializada`, que decide qué se aplica de VERDAD
+  // al proyecto) como el eco (`idOperacion`/`idTransaccion`/`baseRevision`) más abajo.
+  //
+  // Antes de este fix, esta función llamaba a `aplicarOperacion` (que materializaba
+  // su PROPIA copia puertas adentro, nunca expuesta) y LUEGO materializaba, de forma
+  // INDEPENDIENTE, el MISMO parámetro `operacion` crudo una segunda vez, sólo para
+  // leer estos tres campos del eco — dos pasadas de materialización sobre el mismo
+  // objeto de entrada, nunca la misma copia reusada. Un sobre que es un Proxy cuyos
+  // traps `ownKeys`/`getOwnPropertyDescriptor` son ESTATOSOS (devuelven algo distinto
+  // en la 2ª pasada completa que en la 1ª) hacía que la pasada que decide la
+  // aplicación divergiera de la pasada que arma el eco: el llamador veía un
+  // `ResultadoOperacion.idOperacion`/`baseRevision` que NO correspondía a la
+  // operación que realmente se aplicó — exactamente lo que la cabecera de
+  // `datos-planos.ts` (IR-SPEC.md §6.6) prohíbe: "no puede existir una 'segunda
+  // lectura' que diverja de la primera". Con la materialización UNIFICADA acá, no hay
+  // ninguna segunda pasada que pueda divergir: `aplicarOperacionMaterializada` y el
+  // eco de abajo leen exactamente el mismo objeto ya materializado.
+  //
+  // Si la materialización falla, no hay ningún campo seguro que ecoar: se usan los
+  // mismos valores por defecto de siempre (Phase 1.1 RX2-01).
   // Phase 1.1 (RX4, hallazgo externo RX4-01, CRITICO — cuarta revision adversarial
   // independiente, RX4_REPORT.md): `materializarDatosPlanos` acepta legitimamente un
   // `null` (o cualquier otro dato plano no-objeto) como valor RAIZ — es JSON valido,
-  // y este modulo nunca decide si esa es la forma correcta para el consumidor. Antes
-  // de este fix, `materializado.ok` sólo confirmaba "es un dato plano", nunca "es un
-  // OBJETO" — con `operacion === null` (el sobre entero, no un campo interno),
-  // `materializado.valor === null` y `.idOperacion` explotaba con un TypeError
-  // crudo, DESPUES de que `aplicarOperacion` (arriba) ya habia clasificado el mismo
-  // `null` correctamente (`SOBRE_OPERACION_INVALIDO`, sin crash). El eco sólo tiene
-  // sentido si el sobre materializado es, de hecho, un objeto plano — si no lo es,
-  // no hay ningun campo real que ecoar (mismos valores por defecto que cuando la
-  // materializacion falla del todo).
+  // y este modulo nunca decide si esa es la forma correcta para el consumidor. El eco
+  // sólo tiene sentido si el sobre materializado es, de hecho, un objeto plano — si no
+  // lo es, no hay ningun campo real que ecoar (mismos valores por defecto que cuando
+  // la materializacion falla del todo); el sobre no-objeto se deja pasar igual a
+  // `aplicarOperacionMaterializada`, que lo clasifica con `SOBRE_OPERACION_INVALIDO`
+  // vía `analizarSobreOperacion` (mismo camino que tomaba `aplicarOperacion` antes de
+  // este fix).
   const materializado = materializarDatosPlanos<unknown>(operacion, "operacion")
+
+  const { proyecto: proyectoAplicado, motivos: motivosPropios } = materializado.ok
+    ? aplicarOperacionMaterializada(proyecto, materializado.valor as SobreOperacion, catalogo)
+    : { proyecto, motivos: [motivoEntradaNoPlano("operacion", materializado)] }
+
   const sobreMaterializado = materializado.ok && esObjetoPlano(materializado.valor) ? materializado.valor : null
   const idOperacionEco = sobreMaterializado ? (sobreMaterializado.idOperacion as SobreOperacion["idOperacion"]) : ""
   const idTransaccionEco = sobreMaterializado ? (sobreMaterializado.idTransaccion as SobreOperacion["idTransaccion"]) : undefined

@@ -475,6 +475,22 @@ ya establecido en todo el núcleo (`CLAVE_DESCONOCIDA`/`AUTOCONEXION_INVALIDA`/
   también RX2-02: `payload.propiedades` llega a `aplicarAgregarComponente` como copia
   plana, nunca como el objeto vivo del llamador — `congelarProfundo` ya no puede
   toparse con un Proxy que lanza.
+  **Phase 1.2 (hallazgo externo REA-03, MAYOR — re-auditoría externa AUD-B-01):**
+  `ejecutarOperacion` (mismo archivo, combina el resultado de aplicación con la
+  validación post-aplicación y el eco del sobre) materializaba una SEGUNDA copia,
+  INDEPENDIENTE de la que `aplicarOperacion` ya calculaba puertas adentro, sólo para
+  leer `idOperacion`/`idTransaccion`/`baseRevision` para el eco — dos pasadas sobre
+  el mismo objeto de entrada, nunca "la misma copia" que el párrafo de arriba
+  promete. Un sobre que es un Proxy con traps `ownKeys`/`getOwnPropertyDescriptor`
+  ESTATOSOS podía hacer que esas dos pasadas divergieran: el `ResultadoOperacion`
+  devuelto podía ecoar `idOperacion`/`baseRevision` que NO correspondían a la
+  operación que realmente se aplicó (el `Proyecto` resultante en sí no se
+  corrompía). Cerrado extrayendo un núcleo interno,
+  `aplicarOperacionMaterializada`, que recibe el sobre YA MATERIALIZADO y nunca
+  vuelve a materializar — `aplicarOperacion` (frontera pública) y `ejecutarOperacion`
+  (que además necesita esa copia para el eco) son sus DOS únicos llamadores, cada
+  uno materializa UNA vez en su propia frontera. Ver `datos-planos.ts` (cabecera) y
+  la fila 15 de `INVARIANTES-ENTRYPOINTS.md`.
 - `ejecutarLote` (`motor.ts`) materializa el LOTE COMPLETO de operaciones antes de
   leer siquiera el `baseRevision` de la primera — una superficie que ni RX-01 ni
   RX-02 habían tocado (un getter en el propio `baseRevision` del sobre crasheaba acá,

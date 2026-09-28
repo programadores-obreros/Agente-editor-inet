@@ -1109,3 +1109,66 @@ test("aplicarOperacion/ejecutarOperacion usan SIEMPRE el payload MATERIALIZADO e
     verificarAceptado(viaEjecutar)
   }
 })
+
+// ─────────────────── REA-03 (Phase 1.2, MAYOR — re-auditoría externa AUD-B-01) ──────
+//
+// `04_toctou_eco_ejecutarOperacion.mjs` (reaudit/AUD-B/scripts/): antes de este fix,
+// `ejecutarOperacion` materializaba el sobre DOS VECES, de forma INDEPENDIENTE — una
+// vez PUERTAS ADENTRO de `aplicarOperacion` (esa pasada decide qué operación se aplica
+// de VERDAD al proyecto) y otra, propia, acá mismo, sólo para armar el eco
+// (`idOperacion`/`idTransaccion`/`baseRevision`). Un sobre que es un Proxy cuyos traps
+// `ownKeys`/`getOwnPropertyDescriptor` son ESTATOSOS (devuelven algo distinto en la 2ª
+// pasada completa que en la 1ª) podía hacer que la pasada que decide la aplicación
+// divergiera de la pasada que arma el eco — el llamador veía un
+// `ResultadoOperacion.idOperacion`/`baseRevision` que NO correspondía a la operación
+// que realmente se aplicó. Exactamente lo que la cabecera de `datos-planos.ts`
+// (IR-SPEC.md §6.6) prohíbe: "no puede existir una 'segunda lectura' que diverja de la
+// primera".
+test("ejecutarOperacion materializa el sobre UNA sola vez: el eco (idOperacion/baseRevision) y el efecto REALMENTE aplicado siempre describen la MISMA operación — nunca dos pasadas de materialización independientes que puedan divergir (hallazgo externo REA-03)", () => {
+  const p = proyectoBase()
+
+  // Envoltorio ESTATOSO: cuenta las invocaciones a `getOwnPropertyDescriptor` sobre
+  // las 5 claves del sobre (idOperacion/actor/baseRevision/tipo/payload). Las
+  // primeras 5 (1ª pasada completa de materialización) devuelven los datos REALES;
+  // cualquier invocación ADICIONAL (evidencia de una 2ª pasada sobre el MISMO objeto
+  // crudo) devuelve datos FALSOS — para dejar a la vista si hay más de una pasada, y
+  // cuál de las dos termina ganando en cada camino (aplicación vs. eco).
+  let totalLlamadasGOPD = 0
+  const claves = ["idOperacion", "actor", "baseRevision", "tipo", "payload"]
+  const datosReales = { idOperacion: "OP-REAL-APLICADA", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }
+  const datosFalsosEco = { idOperacion: "OP-FALSA-NUNCA-APLICADA", actor: "agente", baseRevision: 999999, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }
+
+  const operacionProxy = new Proxy(
+    {},
+    {
+      ownKeys: () => claves,
+      getOwnPropertyDescriptor(_t, prop) {
+        totalLlamadasGOPD++
+        const fuente = totalLlamadasGOPD <= claves.length ? datosReales : datosFalsosEco
+        if (!claves.includes(prop)) return undefined
+        return { value: fuente[prop], enumerable: true, configurable: true, writable: true }
+      },
+    },
+  )
+
+  const resultado = ejecutarOperacion(p, operacionProxy, catalogo)
+
+  // Contrato de raíz: UNA sola pasada completa sobre el sobre crudo — nunca dos
+  // independientes (aunque el resultado "por casualidad" coincidiera, dos pasadas
+  // significan dos oportunidades de divergir).
+  assert.equal(
+    totalLlamadasGOPD,
+    claves.length,
+    `materializarDatosPlanos debe leer el sobre UNA sola vez (${claves.length} claves) — se detectaron ${totalLlamadasGOPD} invocaciones de getOwnPropertyDescriptor, evidencia de una segunda pasada de materialización independiente`,
+  )
+
+  // Coherencia: el eco tiene que describir SIEMPRE la misma operación que
+  // efectivamente se aplicó al proyecto — nunca una divergencia entre "lo que se
+  // aplicó" (proyecto/motivos) y "lo que se ecoa" (idOperacion/baseRevision).
+  assert.equal(resultado.ok, true, `debe aceptar la operación REAL — motivos: ${JSON.stringify(resultado.motivos)}`)
+  assert.deepEqual(resultado.motivos, [], "no debe haber ningún motivo de rechazo (ninguna segunda pasada con datos FALSOS debe intervenir)")
+  assert.equal(resultado.idOperacion, "OP-REAL-APLICADA", "el eco de idOperacion debe corresponder a la operación REALMENTE aplicada, nunca a una segunda materialización independiente")
+  assert.equal(resultado.baseRevision, 0, "el eco de baseRevision debe corresponder a la operación REALMENTE aplicada, nunca a una segunda materialización independiente")
+  assert.equal(resultado.revisionActual, 0)
+  assert.equal(resultado.proyecto.placa, "esp32-devkit-v1", "el efecto REALMENTE aplicado (placa) debe corresponder al MISMO dato que describe el eco")
+})
