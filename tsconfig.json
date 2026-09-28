@@ -14,5 +14,5 @@
     "jsx": "preserve",
     "jsxImportSource": "@opentui/solid"
   },
-  "include": ["opencode/tool/**/*.ts", "opencode/plugins/**/*.ts", "opencode/plugins/**/*.tsx", "opencode/nucleo/**/*.ts"]
+  "include": ["opencode/tool/**/*.ts", "opencode/plugins/**/*.ts", "opencode/plugins/**/*.tsx", "opencode/nucleo/**/*.ts", "opencode/vista-fisica/**/*.ts"]
 }
