@@ -35,8 +35,8 @@ real encontrado, reportado, NO corregido acá).
 
 | # | Invariante | Owner canónico | Loader | Project initial | Operation | Batch | Dry-run | Store load | Catalog revalidation | Reason code(s) | Representable/reject | Tests |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | IDs únicos (cmp+conn+beh, string exacto) | `analizarIdsLocales`/`validarIdsYContador` (`id.ts`) | refuerza | refuerza | por construcción [a] | por construcción [a] | por construcción [a] | refuerza (vía `cargarProyecto`) | N/A [b] | `ID_DUPLICADO` | reject | `nucleo-ir-cargador.test.mjs::id-duplicado-entre-componentes-rechaza`, `::id-duplicado-entre-conexiones-rechaza`, `::id-duplicado-entre-comportamientos-rechaza`; `nucleo-motor.test.mjs::constructor-rechaza-proyectoInicial-con-ids-duplicados-entre-conexiones` |
-| 2 | Contador (`siguienteIdLocal`) monotónico / consistente | `contadorEsConsistente`/`validarIdsYContador` (`id.ts`) | refuerza | refuerza | por construcción [c] | por construcción [c] | por construcción [c] | refuerza (vía `cargarProyecto`) | N/A [b] | `CONTADOR_ID_INCONSISTENTE` | reject | `nucleo-ir-cargador.test.mjs::contador-siguienteIdLocal-inconsistente-con-id-existente-rechaza`, `::contador-siguienteIdLocal-igual-al-maximo-existente-rechaza`; `nucleo-motor.test.mjs::constructor-rechaza-proyectoInicial-con-contador-id-inconsistente`; `nucleo-operaciones.test.mjs::quitar-luego-agregar: el contador nunca retrocede... (M22)` |
+| 1 | IDs únicos (cmp+conn+beh, string exacto) | `analizarIdsLocales`/`validarIdsYContador` (`id.ts`) | refuerza | refuerza | por construcción [a] | refuerza (defensa en profundidad post-lote, Phase 1.1 RX, hallazgo RX-03) [a] | refuerza (mismo pipeline que Batch, sin persistir) [a] | refuerza (vía `cargarProyecto`) | N/A [b] | `ID_DUPLICADO` | reject | `nucleo-ir-cargador.test.mjs::id-duplicado-entre-componentes-rechaza`, `::id-duplicado-entre-conexiones-rechaza`, `::id-duplicado-entre-comportamientos-rechaza`; `nucleo-motor.test.mjs::constructor-rechaza-proyectoInicial-con-ids-duplicados-entre-conexiones`, `::defensa-en-profundidad-post-lote: contador de ids inconsistente en el commit se rechaza (RX-03)` |
+| 2 | Contador (`siguienteIdLocal`) monotónico / consistente | `contadorEsConsistente`/`validarIdsYContador` (`id.ts`) | refuerza | refuerza | por construcción [c] | refuerza (defensa en profundidad post-lote, Phase 1.1 RX, hallazgo RX-03) [c] | refuerza (mismo pipeline que Batch, sin persistir) [c] | refuerza (vía `cargarProyecto`) | N/A [b] | `CONTADOR_ID_INCONSISTENTE` | reject | `nucleo-ir-cargador.test.mjs::contador-siguienteIdLocal-inconsistente-con-id-existente-rechaza`, `::contador-siguienteIdLocal-igual-al-maximo-existente-rechaza`; `nucleo-motor.test.mjs::constructor-rechaza-proyectoInicial-con-contador-id-inconsistente`, `::defensa-en-profundidad-post-lote: contador de ids inconsistente en el commit se rechaza (RX-03)`; `nucleo-operaciones.test.mjs::quitar-luego-agregar: el contador nunca retrocede... (M22)` |
 | 3 | Referencias válidas (conexión/comportamiento → componente existente) | `cargador.ts` (carga) + `validarEstructural` (post-construcción) — DOS implementaciones a propósito, IR-SPEC §7 | refuerza | refuerza (vía `validarProyecto` al construirse) | refuerza (cada `aplicarXxx` re-chequea antes de mutar) | refuerza (hereda Operation + defensa en profundidad post-lote) [d] | refuerza (mismo pipeline que Batch, sin persistir) | refuerza (vía `cargarProyecto`) | refuerza | `REFERENCIA_ROTA_AL_CARGAR` (carga) / `REFERENCIA_INEXISTENTE` (cualquier `Proyecto`) | reject (ambos) | `nucleo-ir-cargador.test.mjs::referencia-colgada-en-conexion-rechaza`, `::referencia-colgada-en-comportamiento-rechaza`; `nucleo-validacion.test.mjs::referencia-inexistente-en-validar-estructural`; `nucleo-operaciones.test.mjs::quitarcomponente-inexistente-rechaza`, `::desconectar-inexistente-rechaza`, `::setcomportamiento-sensor-inexistente-rechaza`; `nucleo-adversarial.test.mjs::14. referencia rota da REFERENCIA_ROTA_AL_CARGAR al cargar y REFERENCIA_INEXISTENTE en validar-estructural, nunca el mismo codigo` |
 | 4 | Sin auto-conexión (self-loop) | `esAutoconexion`/`analizarConexionesInvalidas` (`conexion.ts`) | refuerza | refuerza (vía `validarProyecto`) | refuerza (`aplicarConectar`) | refuerza (hereda + defensa en profundidad) [d] | refuerza | refuerza (vía `cargarProyecto`) | refuerza | `AUTOCONEXION_INVALIDA` (operacion/estructural) / `AUTOCONEXION_INVALIDA_AL_CARGAR` (carga) | reject (siempre) | `nucleo-operaciones.test.mjs::conectar-autoconexion-rechaza`; `nucleo-ir-cargador.test.mjs::loader-rechaza-documento-con-selfloop`; `nucleo-validacion.test.mjs::validarEstructural-detecta-selfloop-en-conexion`, `::validarProyecto-directo-rechaza-selfloop-con-listo-false`; `nucleo-motor.test.mjs::constructor-rechaza-proyectoInicial-con-selfloop` |
 | 5 | Sin conexión duplicada (A→B ≡ B→A) | `mismaConexion`/`analizarConexionesInvalidas` (`conexion.ts`) | refuerza | refuerza (vía `validarProyecto`) | refuerza (`aplicarConectar`) | refuerza (hereda + defensa en profundidad) [d] | refuerza | refuerza (vía `cargarProyecto`) | refuerza | `CONEXION_DUPLICADA` (operacion/estructural) / `CONEXION_DUPLICADA_AL_CARGAR` (carga) | reject (siempre) | `nucleo-operaciones.test.mjs::conectar-duplicada-rechaza`; `nucleo-ir-cargador.test.mjs::loader-rechaza-documento-con-conexion-duplicada`; `nucleo-validacion.test.mjs::validarEstructural-detecta-conexion-duplicada-con-extremos-invertidos`, `::validarEstructural-no-rechaza-conexiones-distintas-que-comparten-terminal` (no-regresión); `nucleo-motor.test.mjs::constructor-rechaza-proyectoInicial-con-conexion-duplicada` |
@@ -54,7 +54,7 @@ real encontrado, reportado, NO corregido acá).
 
 ## Notas por fila (detalle que no entra en la celda)
 
-**[a] Fila 1, Operation/Batch/Dry-run — "por construcción":** `aplicarOperacion` nunca
+**[a] Fila 1, columna Operation — "por construcción":** `aplicarOperacion` nunca
 verifica explícitamente que un id nuevo no colisione — genera el id con
 `formatearIdLocal(prefijo, proyecto.siguienteIdLocal)` y confía en que
 `proyecto.siguienteIdLocal` YA es consistente (garantía que entra por Loader/Project
@@ -64,6 +64,20 @@ reemplazo, cuando coincide con un `id` YA existente) — así que un cliente no 
 forzar una colisión ni aunque lo intente. Se mantiene consistente por INDUCCIÓN: los 3
 aplicadores que generan un id local sólo lo INCREMENTAN, nunca lo decrementan (cerrado
 con regresión de cobertura en el hallazgo M22, `tests/nucleo-operaciones.test.mjs`).
+
+**Phase 1.1 (RX) — columnas Batch/Dry-run YA NO son "por construcción" (hallazgo
+externo RX-03, MAYOR):** `ejecutarLote` (`motor.ts`) ahora corre `validarIdsYContador`
+sobre el `borrador` DESPUÉS de aplicar el lote entero, como defensa en profundidad
+exclusiva del camino de commit/dry-run del motor — si un aplicador futuro (Fase 2+)
+rompiera la disciplina "sólo incrementa" que hoy sostiene el contador únicamente por
+inducción, el lote entero se rechaza acá con `CONTADOR_ID_INCONSISTENTE`/
+`ID_DUPLICADO`, en vez de colar el estado roto sin ningún diagnóstico. Con las 8
+operaciones públicas actuales esto NUNCA dispara (siguen siendo consistentes por
+construcción — RX confirmó activamente que no hay forma de romperlo vía la API
+pública) — la defensa es prospectiva, mismo patrón que ya usan las filas 3-5 para
+`REFERENCIA_INEXISTENTE`/`AUTOCONEXION_INVALIDA`/`CONEXION_DUPLICADA`. Deliberadamente
+NO se agregó a `validarProyecto`/`validar-estructural.ts` (nota [b] sigue vigente para
+la columna Catalog revalidation) — sólo al pipeline exclusivo del motor.
 
 **GAP encontrado (fila 1, columna Batch):** ningún test de
 `tests/nucleo-motor.test.mjs`/`tests/nucleo-adversarial.test.mjs` afirma EXPLÍCITAMENTE
@@ -77,14 +91,25 @@ hoy se sostiene sólo "por construcción". No se agregó el test acá (fuera del
 de la Parte 4 de T7, que pide reportar un GAP, no corregirlo en silencio) — reportado
 para que Phase 1.1/Fase 2 decida si amerita un test dedicado.
 
-**Phase 1.1 — GAP cerrado:** se agregó el test dedicado
+**Phase 1.1 — GAP cerrado (commit 79da20a):** se agregó el test dedicado
 `tests/nucleo-motor.test.mjs::lote-con-varias-altas-genera-ids-distintos-y-consecutivos`
 (tres altas en un lote → `cmp-0`/`cmp-1`/`cmp-2`, `siguienteIdLocal` 3). Mutante
 verificado: si `aplicarAgregarComponente` no avanza el contador, el test falla con
-`['cmp-0','cmp-0','cmp-0']`. Ese mutante muestra además un límite a registrar: dentro
-de un lote, la unicidad de ids depende de la monotonía de los aplicadores. La
-validación post-lote (`validarProyecto`) no re-chequea ids duplicados
-(nota [b]), así que este test es hoy la única red para esa puerta.
+`['cmp-0','cmp-0','cmp-0']`. Ese mutante muestra además un límite que en ese momento
+quedó registrado: dentro de un lote, la unicidad de ids dependía SÓLO de la monotonía
+de los aplicadores, porque la validación post-lote (`validarProyecto`) no re-chequeaba
+ids duplicados/contador — ese test era, en ese momento, la única red para esa puerta.
+
+**Actualización Phase 1.1 (RX), hallazgo externo RX-03:** esa afirmación ya NO es
+exacta — `ejecutarLote` ahora corre `validarIdsYContador` (nota [a] de arriba,
+defensa en profundidad exclusiva del camino de commit/dry-run del motor, NUNCA
+agregada a `validarProyecto`/`validar-estructural.ts`). El test de
+`lote-con-varias-altas-genera-ids-distintos-y-consecutivos` sigue siendo la
+regresión de COBERTURA correcta para "las 8 operaciones públicas nunca rompen esto
+por construcción" — pero ya no es la ÚNICA red: si algo SÍ lo rompiera (un aplicador
+futuro de Fase 2+, o el mutante de `clonar` inyectado en
+`tests/nucleo-motor.test.mjs::defensa-en-profundidad-post-lote...`), el commit
+entero se rechaza con un motivo estructurado en vez de colarse sin diagnóstico.
 
 **[b] Filas 1-2, columna Catalog revalidation — N/A, por diseño explícito:**
 `validarIdsYContador` deliberadamente NO se agregó al pipeline continuo de
@@ -140,6 +165,16 @@ explícito de que 2+ operaciones generadoras de id, dentro del MISMO lote
 tarea (T7, Parte 4 pide reportar, no corregir en silencio).
 
 **Phase 1.1 — cerrado** con el test dedicado citado en la nota [a].
+
+**Phase 1.1 (RX) — segundo GAP encontrado y cerrado (hallazgo externo RX-03, MAYOR):**
+`validarIdsYContador` corría en el Loader y en la construcción del motor, pero NUNCA
+en el pipeline continuo de commit (filas 1-2, columnas Batch/Dry-run) — un gap
+arquitectónico de PROFUNDIDAD DE DEFENSA (no explotable hoy vía las 8 operaciones
+públicas, confirmado activamente por RX), a diferencia de su hallazgo gemelo E2-01
+(filas 4-5), que sí se agregó al pipeline continuo. Cerrado agregando
+`validarIdsYContador` al camino de commit de `ejecutarLote` (`motor.ts`) — nunca a
+`validarProyecto`/`validar-estructural.ts`, para no romper los fixtures manuales de
+`nucleo-validacion.test.mjs` (nota [a]/[b] arriba).
 
 Ningún otro invariante de los 14 relevados carece de refuerzo real en alguna puerta
 donde el contrato (Brief/IR-SPEC/OPERATIONS) lo exige — las celdas `N/A` de arriba

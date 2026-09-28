@@ -1161,3 +1161,63 @@ test("equivalencia-cargarProyecto-vs-proyectoInicial: el mismo documento da el M
 
   assert.equal(canonicalizar(viaLoader.proyecto), canonicalizar(viaProyectoInicial), "cargarProyecto(JSON) y crearMotorDeProyecto({proyectoInicial}) deben producir el MISMO Proyecto canonico para el mismo documento")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (hallazgo externo RX-03, MAYOR — revisión adversarial independiente):
+// `validarIdsYContador` (id.ts, hallazgos E1-01/E1-02) corre en el Loader y en la
+// construcción del motor (`proyectoInicial`) — pero NUNCA dentro del pipeline continuo
+// de commit (`ejecutarLote`). Hoy esto no es explotable vía las 8 operaciones públicas
+// (los 3 aplicadores que generan un id local sólo INCREMENTAN el contador, nunca lo
+// decrementan — M22), pero es un hueco de PROFUNDIDAD DE DEFENSA: un aplicador futuro
+// (Fase 2+) que rompiera esa disciplina dejaría ids duplicados/contador inconsistente
+// sin ningún diagnóstico hasta la próxima reconstrucción completa del motor. Mismo
+// patrón de causa raíz que E1-01/E1-02, pero corregido con MENOS rigor que su hallazgo
+// gemelo E2-01 (que sí se agregó a `validar-estructural.ts`/`validarProyecto`, así que
+// corre en TODA puerta incluido el pipeline continuo).
+//
+// Test: se fuerza el caso con el mecanismo de test YA EXISTENTE (`clonar` inyectable
+// en `DependenciasMotor`, pensado para simular exactamente este tipo de escenario sin
+// tocar producción) — un `clonar` que, al clonar un `Proyecto`, deja `siguienteIdLocal`
+// desincronizado (simula un aplicador futuro que rompe la disciplina "sólo
+// incrementa"). Deliberadamente NO se agrega este chequeo a `validarProyecto`/
+// `validar-estructural.ts` (IR-SPEC.md §6.1: ahí rompería fixtures manuales de
+// `nucleo-validacion.test.mjs` que usan ids no numerados/fuera de secuencia a
+// propósito) — sólo al camino de commit exclusivo del motor (`ejecutarLote`).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("defensa-en-profundidad-post-lote: contador de ids inconsistente en el commit se rechaza (hallazgo externo RX-03)", () => {
+  // `clonar` inyectado: clona de verdad (aisla referencias, pasa el centinela de
+  // construcción) pero, para un valor con forma de `Proyecto`, fuerza
+  // `siguienteIdLocal` de vuelta a 0 — simulando que un aplicador futuro rompió la
+  // disciplina "el contador nunca retrocede" DESPUÉS de que el motor ya se construyó
+  // sobre un estado sano.
+  const clonarQueRompeElContador = (valor) => {
+    const clon = clonarProfundo(valor)
+    if (clon !== null && typeof clon === "object" && "siguienteIdLocal" in clon && Array.isArray(clon.componentes)) {
+      return { ...clon, siguienteIdLocal: 0 }
+    }
+    return clon
+  }
+
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-rx03", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const almacen = crearAlmacenFalso()
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen, clonar: clonarQueRompeElContador })
+
+  // Primer commit: agrega cmp-0 — el canonico real termina con siguienteIdLocal:1,
+  // consistente (esto usa el `clonar` roto para clonar el canonico VACÍO, que no
+  // tiene componentes, así que el chequeo de forma de arriba no dispara — no cambia
+  // nada acá, el contador arranca en 0 legítimamente).
+  const r1 = motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 0))
+  assert.equal(r1.ok, true, "el primer commit sigue sano")
+  assert.equal(motor.getProyecto().siguienteIdLocal, 1)
+
+  // Segundo commit: una operación que NO toca ids (SetPlaca) — pero el `clonar`
+  // inyectado, al clonar el canonico (que YA tiene cmp-0 y siguienteIdLocal:1) para
+  // construir el borrador, lo deja con siguienteIdLocal:0 — inconsistente (cmp-0 ya
+  // existe, 0 no es > 0). Nada en el pipeline de operación lo toca ni lo repara.
+  const r2 = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, motor.getProyecto().revision))
+  assert.equal(r2.ok, false, "el commit con contador de ids inconsistente debe rechazarse (defensa en profundidad, RX-03)")
+  assert.ok(r2.motivos.some((m) => m.codigo === "CONTADOR_ID_INCONSISTENTE" && m.clasificacion === "rechazo"), `debe traer CONTADOR_ID_INCONSISTENTE: ${JSON.stringify(r2.motivos)}`)
+  assert.equal(motor.getProyecto().siguienteIdLocal, 1, "el canonico NO cambia — el commit inconsistente se descarta completo")
+  assert.equal(almacen.llamadasGuardar.length, 1, "sólo el primer commit (sano) llegó a persistir")
+})

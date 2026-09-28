@@ -437,14 +437,30 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     // 5. Lote representable a nivel de operación: se valida el estado resultante UNA
     // vez (no por operación).
     const motivosValidacion = validarProyecto(borrador, deps.catalogo)
-    const motivosFinales = [...motivosPropios, ...motivosValidacion]
+
+    // Phase 1.1 (hallazgo externo RX-03, MAYOR — revisión adversarial independiente):
+    // `validarIdsYContador` (id.ts, hallazgos E1-01/E1-02) corría sólo en el loader y
+    // en la construcción del motor (`proyectoInicial`) — nunca en el pipeline
+    // CONTINUO de commit. No explotable hoy vía las 8 operaciones públicas (los 3
+    // aplicadores que generan un id local sólo INCREMENTAN el contador, nunca lo
+    // decrementan — M22), pero es un hueco de PROFUNDIDAD DE DEFENSA: un aplicador
+    // futuro (Fase 2+) que rompiera esa disciplina dejaría ids duplicados/contador
+    // inconsistente sin ningún diagnóstico hasta la próxima reconstrucción completa
+    // del motor. Se corre ACÁ (defensa en profundidad exclusiva del camino de
+    // commit/dry-run del motor) — deliberadamente NO se agrega a `validarProyecto`/
+    // `validar-estructural.ts` (IR-SPEC.md §6.1: ahí rompería fixtures manuales de
+    // `nucleo-validacion.test.mjs` que usan ids no numerados/fuera de secuencia a
+    // propósito, `tests/nucleo-validacion.test.mjs`).
+    const motivosIdsPostLote = validarIdsYContador(borrador)
+    const motivosFinales = [...motivosPropios, ...motivosValidacion, ...motivosIdsPostLote]
 
     // 5b. Defensa en profundidad (hallazgo adversarial Gate 8, item 4): si la
     // validación POST-lote encuentra igual un motivo `clasificacion:"rechazo"`
     // (hoy sólo `validar-estructural.ts` puede emitir uno así, `REFERENCIA_INEXISTENTE`
-    // — `validar-tecnico.ts` nunca usa esa clasificación), el lote se descarta IGUAL
-    // que un rechazo por operación: nada se persiste, el canónico no cambia.
-    if (motivosValidacion.some((m) => m.clasificacion === "rechazo")) {
+    // — `validar-tecnico.ts` nunca usa esa clasificación — o `validarIdsYContador`,
+    // RX-03), el lote se descarta IGUAL que un rechazo por operación: nada se
+    // persiste, el canónico no cambia.
+    if (motivosValidacion.some((m) => m.clasificacion === "rechazo") || motivosIdsPostLote.some((m) => m.clasificacion === "rechazo")) {
       return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones })
     }
 
