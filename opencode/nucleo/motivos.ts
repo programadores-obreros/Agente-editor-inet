@@ -104,6 +104,14 @@
 //   nunca un lock (`docs/programacion-intencion/OPERATIONS.md` §10 para el detalle,
 //   incluida la excepción de re-guardado canónicamente idéntico y el límite conocido
 //   de detección por revisión, no por contenido).
+//
+// Phase 1.1 (hallazgo externo E3-08, barato) agrega, categoria "almacen",
+// clasificacion "rechazo" siempre, emitido por `almacen.ts` (`cargar()`):
+// - `ID_DOCUMENTO_NO_COINCIDE` — el `Proyecto.id` del documento leído bajo
+//   `<id>.json` NO coincide con el `id` que se pidió cargar (documento escrito/
+//   movido/copiado a la ruta equivocada) — se rechaza ANTES de devolverlo, nunca se
+//   "repara" reasignando el id en silencio. Ver
+//   `docs/programacion-intencion/OPERATIONS.md` §10.1.
 
 /** Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion". */
 export type CategoriaMotivo =

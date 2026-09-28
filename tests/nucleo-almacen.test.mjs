@@ -173,6 +173,26 @@ test("cargar-json-corrupto-da-motivos-estructurados", () => {
   assert.equal(r.motivos[0].codigo, "DOCUMENTO_MALFORMADO")
 })
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E3-08 (barato, integridad del mismo almacén):
+// `cargar(id)` leía el archivo `<id>.json` y confiaba en que su `Proyecto.id` interno
+// coincidiera con el `id` pedido, sin verificarlo — un documento escrito/movido a la
+// ruta equivocada cargaba igual bajo una identidad que no era la suya.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("cargar-rechaza-si-el-id-del-documento-no-coincide-con-el-id-pedido (hallazgo externo E3-08)", () => {
+  const fs = crearFsFalso()
+  const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+  // El archivo "otro-id.json" contiene, por error (o por una copia manual), un
+  // Proyecto cuyo campo `id` interno es "proy-1", no "otro-id".
+  const proyectoConIdDistinto = proyectoDePrueba("proy-1")
+  fs._archivos.set("/proyectos/otro-id.json", canonicalizar(proyectoConIdDistinto))
+  const r = almacen.cargar("otro-id")
+  assert.equal(r.ok, false, "cargar() NUNCA debe devolver un documento cuyo id interno no es el pedido")
+  assert.equal(r.motivos[0].codigo, "ID_DOCUMENTO_NO_COINCIDE")
+  assert.equal(r.motivos[0].clasificacion, "rechazo")
+})
+
 test("cargar-inexistente-da-motivo-estructurado", () => {
   const fs = crearFsFalso()
   const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })

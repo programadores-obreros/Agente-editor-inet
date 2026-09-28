@@ -364,3 +364,16 @@ fix NO reabre `Almacen.list()` ni una detección GENERAL de modificación extern
 (`DECISIONS.md`, Gate 1/Gate 7): el alcance es estrictamente la colisión de escritura
 por id, sin base de datos, sin locks distribuidos, sin fusión automática de escrituras
 concurrentes, sin servidor.
+
+### 10.1. `cargar(id)` verifica que el documento sea el que se pidió (hallazgo E3-08, barato)
+
+`almacen.cargar(id)` leía el archivo `<id>.json` y confiaba en que su campo
+`Proyecto.id` interno coincidiera con el `id` pedido, sin verificarlo — un documento
+mal escrito a mano, o movido/copiado a la ruta equivocada, cargaba igual bajo una
+identidad que no era la suya. Ahora `cargar()` rechaza con
+`ID_DOCUMENTO_NO_COINCIDE` (categoría `almacen`, `clasificacion:"rechazo"`) si
+`proyecto.id !== id`, ANTES de devolver el documento — mismo criterio fail-closed que
+el resto de Gate 7 (nunca reparar en silencio, nunca devolver un documento con una
+identidad que no es la pedida). Distinto en alcance de E3-07 (que protege la
+ESCRITURA): esto es una verificación de integridad sobre la LECTURA, del mismo
+almacén, independiente de si hay o no otro escritor concurrente.

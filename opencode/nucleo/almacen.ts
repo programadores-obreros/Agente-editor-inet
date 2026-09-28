@@ -173,6 +173,21 @@ export function crearAlmacen(deps: DependenciasAlmacen): Almacen {
     const resultado = cargarProyecto(contenido)
     if (!resultado.ok) return resultado
 
+    // Phase 1.1 (hallazgo externo E3-08, barato — integridad del mismo almacén, no
+    // detección de modificación externa): `cargar(id)` leía el archivo `<id>.json` y
+    // confiaba en que su `Proyecto.id` interno coincidiera con el `id` PEDIDO, sin
+    // verificarlo — un documento escrito/movido/copiado a la ruta equivocada (un bug
+    // de escritura, o un archivo tocado a mano) cargaba igual bajo una identidad que
+    // no era la suya. Mismo criterio fail-closed que el resto de Gate 7: rechazo
+    // estructurado ANTES de devolver el documento, nunca "repararlo" reasignando el id
+    // en silencio.
+    if (resultado.proyecto.id !== id) {
+      return {
+        ok: false,
+        motivos: [{ codigo: "ID_DOCUMENTO_NO_COINCIDE", categoria: "almacen", severidad: "blocking", clasificacion: "rechazo", datos: { idPedido: id, idDelDocumento: resultado.proyecto.id } }],
+      }
+    }
+
     // Version-skew (R11/R2): el catálogo activo cambió desde que se guardó — se
     // AVISA, nunca se muta el proyecto ni se rechaza la carga.
     if (resultado.proyecto.catalogoHash !== deps.catalogo.hash) {
