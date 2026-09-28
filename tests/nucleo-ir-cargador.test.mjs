@@ -325,6 +325,20 @@ test("cargarProyecto(objetoJS) con un accessor en un campo RAIZ DECLARADO del do
 // clave ya no aparecía en `Object.keys`) y hacía desaparecer datos en silencio dentro
 // de `propiedades` (bolsa abierta) — la "reparación silenciosa" que el brief prohíbe.
 //
+// FIX DE RAÍZ (ver DECISIONS.md, entrada RX3-01, y evidencia/RX3fix/causa.md): el
+// contenedor (`copia`/`pinesCopiados`) se construye con `Object.defineProperty`, nunca
+// asignación por corchetes — con eso, NINGÚN nombre de clave tiene efecto especial.
+// Los tests de acá abajo demuestran las DOS mitades del contrato resultante:
+// - Una entidad de forma CERRADA (raíz del documento, `Componente`/`Conexion`/
+//   `ComportamientoRegla`) rechaza `"__proto__"`/`"constructor"`/`"prototype"` con
+//   `CLAVE_DESCONOCIDA` — EXACTAMENTE el mismo mecanismo que rechaza cualquier otra
+//   clave no declarada (`clavesDesconocidasDe`/`Object.keys` contra la lista
+//   conocida), nunca un código especial por el nombre de la clave.
+// - Una bolsa ABIERTA (`propiedades` de un `Componente`, y `pines` — que tampoco
+//   valida nombres de terminal, sólo tipos de valor) ACEPTA esas mismas claves como
+//   dato ORDINARIO: preservado exacto, sin cambiar el prototipo del objeto que las
+//   contiene, indistinguible de cualquier otra clave.
+//
 // NOTA METODOLÓGICA (del propio RX3_REPORT): el ataque se construye como TEXTO JSON
 // crudo + `JSON.parse` — NUNCA un literal de objeto JS `{"__proto__": x}`, que la
 // gramática del LENGUAJE interpreta como prototipo en tiempo de parseo del código
@@ -333,10 +347,10 @@ test("cargarProyecto(objetoJS) con un accessor en un campo RAIZ DECLARADO del do
 // mandaría un cliente HTTP real, sin ningún truco in-process.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-function conProtoInyectado(objetoBase, ancla, protoValorJSON = '{"pwned":true}') {
+function conClaveInyectada(objetoBase, ancla, clave, valorJSON) {
   const json = JSON.stringify(objetoBase)
   assert.ok(json.includes(ancla), `ancla de prueba no encontrada en el JSON generado: ${ancla}`)
-  return json.replace(ancla, `${ancla},"__proto__":${protoValorJSON}`)
+  return json.replace(ancla, `${ancla},${JSON.stringify(clave)}:${valorJSON}`)
 }
 
 function documentoConPropiedades() {
@@ -345,37 +359,65 @@ function documentoConPropiedades() {
   return doc
 }
 
-const CASOS_PROTO_RX3_01 = [
-  { nombre: "raiz del documento", ancla: '"id":"proy-doc-1"', doc: documentoValido, nodo: (o) => o },
-  { nombre: "un componente", ancla: '"id":"cmp-0"', doc: documentoValido, nodo: (o) => o.componentes[0] },
-  { nombre: "pines de un componente", ancla: '"anodo":"GPIO23"', doc: documentoValido, nodo: (o) => o.componentes[0].pines },
-  { nombre: "propiedades de un componente (bolsa abierta)", ancla: '"color":"rojo"', doc: documentoConPropiedades, nodo: (o) => o.componentes[0].propiedades },
-  { nombre: "extremo 'desde' de una conexion", ancla: '"componente":"cmp-0","terminal":"anodo"', doc: documentoValido, nodo: (o) => o.conexiones[0].desde },
-  { nombre: "un comportamiento", ancla: '"id":"beh-0"', doc: documentoValido, nodo: (o) => o.comportamientos[0] },
+const CLAVES_PELIGROSAS = ["__proto__", "constructor", "prototype"]
+
+// ── Grupo 1: forma CERRADA — rechaza con CLAVE_DESCONOCIDA, igual que cualquier otra
+// clave no declarada, sin importar el nombre.
+const CASOS_CERRADOS = [
+  { nombre: "raiz del documento", ancla: '"id":"proy-doc-1"', doc: documentoValido },
+  { nombre: "un componente", ancla: '"id":"cmp-0"', doc: documentoValido },
+  { nombre: "extremo 'desde' de una conexion", ancla: '"componente":"cmp-0","terminal":"anodo"', doc: documentoValido },
+  { nombre: "un comportamiento", ancla: '"id":"beh-0"', doc: documentoValido },
 ]
 
-for (const caso of CASOS_PROTO_RX3_01) {
-  test(`cargarProyecto(string) rechaza "__proto__" como clave en ${caso.nombre} — entrada NO plana, mismo veredicto que una clave desconocida cualquiera (hallazgo externo RX3-01)`, () => {
-    const jsonTexto = conProtoInyectado(caso.doc(), caso.ancla)
-    const r = cargarProyecto(jsonTexto)
-    assert.equal(r.ok, false, `se esperaba rechazo para "__proto__" en ${caso.nombre}`)
-    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
-  })
+for (const caso of CASOS_CERRADOS) {
+  for (const clave of CLAVES_PELIGROSAS) {
+    test(`cargarProyecto(string) rechaza "${clave}" como clave en ${caso.nombre} con CLAVE_DESCONOCIDA — mismo mecanismo que cualquier clave no declarada (hallazgo externo RX3-01)`, () => {
+      const jsonTexto = conClaveInyectada(caso.doc(), caso.ancla, clave, '{"pwned":true}')
+      const r = cargarProyecto(jsonTexto)
+      assert.equal(r.ok, false, `se esperaba rechazo para "${clave}" en ${caso.nombre}`)
+      assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA", `codigo real: ${r.motivos[0].codigo} — datos: ${JSON.stringify(r.motivos[0].datos)}`)
+    })
 
-  test(`cargarProyecto(objeto ya parseado) rechaza "__proto__" en ${caso.nombre} — MISMO veredicto que la puerta string (hallazgo externo RX3-01)`, () => {
-    const jsonTexto = conProtoInyectado(caso.doc(), caso.ancla)
-    const objetoParseado = JSON.parse(jsonTexto)
-    assert.ok(
-      Object.prototype.hasOwnProperty.call(caso.nodo(objetoParseado), "__proto__"),
-      "control: JSON.parse debe producir '__proto__' como OWN key, nunca alterar el prototipo real (gotcha documentado en el header de datos-planos.ts)",
-    )
-    const r = cargarProyecto(objetoParseado)
-    assert.equal(r.ok, false, `se esperaba rechazo para "__proto__" en ${caso.nombre}`)
-    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
-  })
+    test(`cargarProyecto(objeto ya parseado) rechaza "${clave}" en ${caso.nombre} — MISMO veredicto que la puerta string (hallazgo externo RX3-01)`, () => {
+      const jsonTexto = conClaveInyectada(caso.doc(), caso.ancla, clave, '{"pwned":true}')
+      const r = cargarProyecto(JSON.parse(jsonTexto))
+      assert.equal(r.ok, false, `se esperaba rechazo para "${clave}" en ${caso.nombre}`)
+      assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+    })
+  }
 }
 
-test("control: una clave desconocida COMUN en la raiz sigue rechazando con CLAVE_DESCONOCIDA (nunca ENTRADA_NO_ES_DATO_PLANO) — sólo '__proto__' toma el camino nuevo", () => {
+// ── Grupo 2: bolsa ABIERTA — acepta como dato ordinario, preservado exacto, sin
+// corromper el prototipo del contenedor.
+const CASOS_ABIERTOS = [
+  { nombre: "propiedades de un componente (bolsa abierta)", ancla: '"color":"rojo"', doc: documentoConPropiedades, nodo: (p) => p.componentes[0].propiedades, valorJSON: '{"pwned":true}', valorEsperado: { pwned: true } },
+  { nombre: "pines de un componente (nombre de terminal no validado por Gate 2/4)", ancla: '"anodo":"GPIO23"', doc: documentoValido, nodo: (p) => p.componentes[0].pines, valorJSON: '"GPIO99"', valorEsperado: "GPIO99" },
+]
+
+for (const caso of CASOS_ABIERTOS) {
+  for (const clave of CLAVES_PELIGROSAS) {
+    test(`cargarProyecto(string) ACEPTA "${clave}" en ${caso.nombre} como dato ORDINARIO — prototipo intacto, valor preservado (hallazgo externo RX3-01, fix de raiz)`, () => {
+      const jsonTexto = conClaveInyectada(caso.doc(), caso.ancla, clave, caso.valorJSON)
+      const r = cargarProyecto(jsonTexto)
+      assert.equal(r.ok, true, `se esperaba aceptación para "${clave}" en ${caso.nombre}: ${r.ok ? "" : JSON.stringify(r.motivos)}`)
+      const nodo = caso.nodo(r.proyecto)
+      assert.equal(Object.getPrototypeOf(nodo), Object.prototype, `el prototipo de ${caso.nombre} nunca puede cambiar por el nombre de una clave`)
+      assert.deepEqual(nodo[clave], caso.valorEsperado, `"${clave}" debe preservarse EXACTO, nunca perderse en silencio`)
+    })
+
+    test(`cargarProyecto(objeto ya parseado) ACEPTA "${clave}" en ${caso.nombre} — MISMO veredicto que la puerta string (hallazgo externo RX3-01, fix de raiz)`, () => {
+      const jsonTexto = conClaveInyectada(caso.doc(), caso.ancla, clave, caso.valorJSON)
+      const objetoParseado = JSON.parse(jsonTexto)
+      const r = cargarProyecto(objetoParseado)
+      assert.equal(r.ok, true, `se esperaba aceptación para "${clave}" en ${caso.nombre}`)
+      const nodo = caso.nodo(r.proyecto)
+      assert.deepEqual(nodo[clave], caso.valorEsperado)
+    })
+  }
+}
+
+test("control: una clave desconocida COMUN en la raiz sigue rechazando con CLAVE_DESCONOCIDA — mismo codigo que '__proto__'/'constructor'/'prototype', sin ningun caso especial por nombre", () => {
   const doc = documentoValido()
   doc.hackeado = true
   const r = cargarProyecto(doc)
@@ -383,26 +425,34 @@ test("control: una clave desconocida COMUN en la raiz sigue rechazando con CLAVE
   assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
 })
 
-test("regresion (adaptado de phase1_auditoria_externa/evidencia/e1/exp_proto_pollution.mjs): documento con '__proto__' en pines Y en propiedades (con 'constructor.prototype' anidado) se rechaza COMPLETO, nunca pierde datos en silencio ni contamina Object.prototype global", () => {
+test("regresion (adaptado de phase1_auditoria_externa/evidencia/e1/exp_proto_pollution.mjs): '__proto__' en pines Y en propiedades (con 'constructor.prototype' anidado) se ACEPTA como dato ordinario, preservado exacto, nunca contamina Object.prototype global", () => {
   const raw =
     '{"id":"p1","schemaVersion":"' +
     SCHEMA_VERSION_SOPORTADA +
-    '","catalogoVersion":"1.0.0","catalogoHash":"h","revision":0,"siguienteIdLocal":1,"placa":null,"componentes":[{"id":"cmp-0","tipo":"led","pines":{"__proto__":{"polluted":true}},"propiedades":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted2":true}}}}],"conexiones":[],"comportamientos":[],"metadata":{"creadoEn":"x"}}'
+    '","catalogoVersion":"1.0.0","catalogoHash":"h","revision":0,"siguienteIdLocal":1,"placa":null,"componentes":[{"id":"cmp-0","tipo":"led","pines":{"__proto__":"GPIO1"},"propiedades":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted2":true}}}}],"conexiones":[],"comportamientos":[],"metadata":{"creadoEn":"x"}}'
   const r = cargarProyecto(raw)
-  assert.equal(r.ok, false, "un documento con '__proto__' anidado se rechaza COMPLETO — nunca 'ok:true' con pérdida silenciosa de datos")
-  assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  assert.equal(r.ok, true, `se esperaba aceptacion: ${r.ok ? "" : JSON.stringify(r.motivos)}`)
+  const comp = r.proyecto.componentes[0]
+  assert.equal(Object.getPrototypeOf(comp.pines), Object.prototype)
+  assert.equal(Object.getPrototypeOf(comp.propiedades), Object.prototype)
+  assert.equal(comp.pines.__proto__, "GPIO1", "el dato se preserva, nunca desaparece en silencio")
+  assert.deepEqual(comp.propiedades.__proto__, { polluted: true })
+  assert.equal(comp.propiedades.constructor.prototype.polluted2, true)
   assert.equal(({}).polluted, undefined, "Object.prototype global NUNCA se contamina")
   assert.equal(({}).polluted2, undefined, "Object.prototype global NUNCA se contamina")
 
-  // '__proto__' como clave TOP-LEVEL del documento: antes de este fix desaparecía de
-  // Object.keys(doc) y bypaseaba CLAVE_DESCONOCIDA en silencio.
+  // '__proto__' como clave TOP-LEVEL del documento: rechaza con CLAVE_DESCONOCIDA,
+  // el MISMO mecanismo fail-closed que cualquier otra clave de raíz no declarada —
+  // antes de este fix (primera version, ver commit anterior) desaparecía de
+  // Object.keys(doc) y bypaseaba esa puerta en silencio.
   const raw2 =
     '{"__proto__": {"x":1}, "id":"p1","schemaVersion":"' +
     SCHEMA_VERSION_SOPORTADA +
     '","catalogoVersion":"1.0.0","catalogoHash":"h","revision":0,"siguienteIdLocal":0,"placa":null,"componentes":[],"conexiones":[],"comportamientos":[],"metadata":{"creadoEn":"x"}}'
   const r2 = cargarProyecto(raw2)
-  assert.equal(r2.ok, false, "un documento con '__proto__' como clave RAIZ se rechaza — ya NO bypasea CLAVE_DESCONOCIDA en silencio")
-  assert.equal(r2.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  assert.equal(r2.ok, false, "un documento con '__proto__' como clave RAIZ se rechaza — CLAVE_DESCONOCIDA, igual que cualquier otra clave de raiz no declarada")
+  assert.equal(r2.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+  assert.ok(r2.motivos[0].datos.claves.includes("__proto__"))
 })
 
 test("round-trip: todo lo que cargarProyecto acepta, serializado a JSON y recargado, se acepta igual y queda canonicamente identico (no-regresion round-trip, RX2-03)", () => {

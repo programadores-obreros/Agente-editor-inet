@@ -1355,12 +1355,20 @@ test("AgregarComponente con propiedades como objeto plano comun sigue commiteand
 // cerró: la copia de `materializarDatosPlanos` se construía con asignación por
 // corchetes sobre un objeto `{}`, que dispara el setter heredado
 // `Object.prototype.__proto__` y corrompe el PROTOTIPO de la copia en vez de crear una
-// propiedad propia — bypaseando `CLAVE_DESCONOCIDA` en la raíz. Confirmado consistente
-// entre `crearMotorDeProyecto({proyectoInicial})` (Gate 6) y `cargarProyecto()` (Gate 2)
-// — ambas comparten `validarFormaProyecto` — mismo veredicto de rechazo en las dos.
+// propiedad propia — bypaseando `CLAVE_DESCONOCIDA` en la raíz.
+//
+// FIX DE RAÍZ (ver DECISIONS.md/causa.md): el contenedor se construye con
+// `Object.defineProperty`, nunca asignación por corchetes — con eso, NINGÚN nombre de
+// clave (ni "__proto__"/"constructor"/"prototype") tiene efecto especial. Una entidad
+// de forma CERRADA (raíz del `Proyecto`, el SOBRE de una operación — ambos con su
+// propio chequeo de claves conocidas) rechaza esas claves con `CLAVE_DESCONOCIDA`,
+// igual que cualquier otra clave no declarada. Una bolsa ABIERTA (`propiedades` de
+// `AgregarComponente`) las ACEPTA como dato ordinario, preservado exacto. Confirmado
+// consistente entre `crearMotorDeProyecto({proyectoInicial})` (Gate 6) y
+// `cargarProyecto()` (Gate 2) — ambas comparten `validarFormaProyecto`.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("constructor-rechaza-proyectoInicial-con-clave-'__proto__'-en-la-raiz — MISMO veredicto que cargarProyecto del mismo texto (hallazgo externo RX3-01)", () => {
+test("constructor-rechaza-proyectoInicial-con-clave-'__proto__'-en-la-raiz-con-CLAVE_DESCONOCIDA — MISMO veredicto que cargarProyecto del mismo texto (hallazgo externo RX3-01)", () => {
   const jsonTexto = JSON.stringify({
     id: "proy-rx3-01",
     schemaVersion: "1.0.0",
@@ -1378,83 +1386,80 @@ test("constructor-rechaza-proyectoInicial-con-clave-'__proto__'-en-la-raiz — M
   const proyectoInicial = JSON.parse(jsonTexto)
   assert.ok(Object.prototype.hasOwnProperty.call(proyectoInicial, "__proto__"), "control: JSON.parse produce '__proto__' como OWN key")
 
-  let excepcion = null
   assert.throws(
     () => {
       crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() })
     },
     (err) => {
-      excepcion = err
       assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `debe lanzar ErrorEstadoInicialInvalido, NUNCA construirse: ${err?.stack ?? err}`)
-      assert.ok(err.motivos.some((m) => m.codigo === "ENTRADA_NO_ES_DATO_PLANO"), `motivos: ${JSON.stringify(err.motivos)}`)
+      assert.ok(err.motivos.some((m) => m.codigo === "CLAVE_DESCONOCIDA"), `motivos: ${JSON.stringify(err.motivos)}`)
       return true
     },
     "un proyectoInicial con '__proto__' en la raiz NUNCA debe construir un motor operable",
   )
-  void excepcion
 
   const rCarga = cargarProyecto(jsonTexto)
   assert.equal(rCarga.ok, false, "misma puerta compartida (validarFormaProyecto) -> mismo veredicto que cargarProyecto, nunca uno acepta y el otro rechaza")
-  assert.equal(rCarga.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  assert.equal(rCarga.motivos[0].codigo, "CLAVE_DESCONOCIDA")
 })
 
-test("motor.proponer/aplicar/aplicarTransaccion rechazan '__proto__' en el SOBRE de la operacion — mismo veredicto en las 3 puertas (hallazgo externo RX3-01)", () => {
-  function sobreConProtoEnEnvoltorio(baseRevision) {
+test("motor.proponer/aplicar/aplicarTransaccion rechazan '__proto__'/'constructor'/'prototype' en el SOBRE de la operacion con CLAVE_DESCONOCIDA — mismo mecanismo que cualquier clave no declarada, mismo veredicto en las 3 puertas (hallazgo externo RX3-01)", () => {
+  function sobreConClaveEnEnvoltorio(clave, baseRevision) {
     const jsonTexto = JSON.stringify({ idOperacion: "op-x", actor: "agente", baseRevision, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }).replace(
       '"actor":"agente"',
-      '"actor":"agente","__proto__":{"pwned":true}',
+      `"actor":"agente",${JSON.stringify(clave)}:{"pwned":true}`,
     )
     return JSON.parse(jsonTexto)
   }
 
-  {
-    const { motor } = crearMotorDePrueba()
-    const r = motor.proponer([sobreConProtoEnEnvoltorio(0)])
-    assert.equal(r.ok, false)
-    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
-  }
-  {
-    const { motor, almacen } = crearMotorDePrueba()
-    const r = motor.aplicar(sobreConProtoEnEnvoltorio(0))
-    assert.equal(r.ok, false)
-    assert.equal(almacen.llamadasGuardar.length, 0)
-  }
-  {
-    const { motor } = crearMotorDePrueba()
-    const r = motor.aplicarTransaccion([sobreConProtoEnEnvoltorio(0)])
-    assert.equal(r.ok, false)
-    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  for (const clave of ["__proto__", "constructor", "prototype"]) {
+    {
+      const { motor } = crearMotorDePrueba()
+      const r = motor.proponer([sobreConClaveEnEnvoltorio(clave, 0)])
+      assert.equal(r.ok, false, `clave "${clave}": se esperaba rechazo`)
+      assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA", `clave "${clave}": codigo real ${r.motivos[0].codigo}`)
+    }
+    {
+      const { motor, almacen } = crearMotorDePrueba()
+      const r = motor.aplicar(sobreConClaveEnEnvoltorio(clave, 0))
+      assert.equal(r.ok, false, `clave "${clave}": se esperaba rechazo`)
+      assert.equal(almacen.llamadasGuardar.length, 0)
+    }
+    {
+      const { motor } = crearMotorDePrueba()
+      const r = motor.aplicarTransaccion([sobreConClaveEnEnvoltorio(clave, 0)])
+      assert.equal(r.ok, false, `clave "${clave}": se esperaba rechazo`)
+      assert.equal(r.motivos[0].codigo, "CLAVE_DESCONOCIDA")
+    }
   }
 })
 
-test("motor.proponer/aplicar/aplicarTransaccion rechazan '__proto__' en propiedades de AgregarComponente (bolsa abierta) — MISMO veredicto en las 3 puertas, nunca pierde el dato en silencio (hallazgo externo RX3-01)", () => {
-  function payloadConProtoEnPropiedades() {
-    return JSON.parse('{"tipo":"led","propiedades":{"color":"rojo","__proto__":{"pwned":true,"secreto":"fuga-via-operacion"}}}')
+test("motor.proponer/aplicar/aplicarTransaccion ACEPTAN '__proto__'/'constructor'/'prototype' en propiedades de AgregarComponente (bolsa abierta) como dato ORDINARIO — MISMO veredicto en las 3 puertas, nunca pierde el dato en silencio ni corrompe el prototipo (hallazgo externo RX3-01, fix de raiz)", () => {
+  function payloadConClaveEnPropiedades(clave) {
+    return JSON.parse(`{"tipo":"led","propiedades":{"color":"rojo",${JSON.stringify(clave)}:{"pwned":true,"secreto":"dato-normal"}}}`)
   }
 
-  {
-    const { motor } = crearMotorDePrueba()
-    const r = motor.proponer([nuevaOperacion("AgregarComponente", payloadConProtoEnPropiedades(), 0)])
-    assert.equal(r.ok, false)
-    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
-    assert.match(
-      r.motivos[0].datos.razon,
-      /__proto__/,
-      `hallazgo externo RX3-01 (Repro 3): el diagnostico debe nombrar la causa real ('__proto__'), nunca el mensaje FALSO "instancia de clase u objeto exotico" que salia sobre JSON puro antes de este fix: ${r.motivos[0].datos.razon}`,
-    )
-  }
-  {
-    const { motor, almacen } = crearMotorDePrueba()
-    const r = motor.aplicar(nuevaOperacion("AgregarComponente", payloadConProtoEnPropiedades(), 0))
-    assert.equal(r.ok, false)
-    assert.equal(almacen.llamadasGuardar.length, 0, "un intento rechazado nunca persiste")
-    assert.equal(motor.getProyecto().componentes.length, 0, "el canonico no cambio")
-  }
-  {
-    const { motor } = crearMotorDePrueba()
-    const r = motor.aplicarTransaccion([nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0), nuevaOperacion("AgregarComponente", payloadConProtoEnPropiedades(), 0)])
-    assert.equal(r.ok, false)
-    assert.equal(motor.getProyecto().placa, null, "el lote entero rechaza — ni siquiera la operacion inocua anterior queda aplicada")
+  for (const clave of ["__proto__", "constructor", "prototype"]) {
+    {
+      const { motor } = crearMotorDePrueba()
+      const r = motor.proponer([nuevaOperacion("AgregarComponente", payloadConClaveEnPropiedades(clave), 0)])
+      assert.equal(r.ok, true, `clave "${clave}": se esperaba aceptacion: ${r.ok ? "" : JSON.stringify(r.motivos)}`)
+    }
+    {
+      const { motor, almacen } = crearMotorDePrueba()
+      const r = motor.aplicar(nuevaOperacion("AgregarComponente", payloadConClaveEnPropiedades(clave), 0))
+      assert.equal(r.ok, true, `clave "${clave}": se esperaba aceptacion: ${r.ok ? "" : JSON.stringify(r.motivos)}`)
+      assert.equal(almacen.llamadasGuardar.length, 1, "un intento aceptado SI persiste")
+      const propiedades = motor.getProyecto().componentes[0].propiedades
+      assert.equal(Object.getPrototypeOf(propiedades), Object.prototype, `clave "${clave}": el prototipo de propiedades nunca cambia`)
+      assert.deepEqual(propiedades[clave], { pwned: true, secreto: "dato-normal" }, `clave "${clave}": el dato debe preservarse EXACTO, nunca perderse en silencio`)
+    }
+    {
+      const { motor } = crearMotorDePrueba()
+      const r = motor.aplicarTransaccion([nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0), nuevaOperacion("AgregarComponente", payloadConClaveEnPropiedades(clave), 0)])
+      assert.equal(r.ok, true, `clave "${clave}": se esperaba aceptacion del lote completo`)
+      assert.equal(motor.getProyecto().placa, "esp32-devkit-v1", "el lote completo se aplica, incluida la operacion anterior")
+    }
   }
 })
 

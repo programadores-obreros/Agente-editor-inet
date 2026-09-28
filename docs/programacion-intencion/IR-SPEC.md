@@ -499,6 +499,102 @@ BACKSTOP defensivo (ese valor ya es la copia validada/plana que
 la materialización de arriba, protege contra un fallo inesperado del propio
 `structuredClone`, no una entrada hostil).
 
+### 6.7. Phase 1.1 (RX3) — "__proto__" como clave rompía la propia frontera de datos planos
+
+Una TERCERA revisión adversarial independiente (RX3, `RX3_REPORT.md`) reabrió, en
+forma PEOR que RX2-01/02/03, la MISMA clase que §6.6 declaró cerrada: alcanzable con
+**JSON PURO**, sin Proxies ni getters in-process.
+
+- **RX3-01 (CRÍTICO)** — la rama objeto de `materializarDatosPlanos` construía su
+  copia con `copia[clave] = valor` sobre un `Record<string, unknown> = {}` — un
+  objeto PLANO que hereda el accessor `Object.prototype.__proto__` (un SETTER
+  mágico, no una propiedad de datos). Con `clave === "__proto__"`, esa asignación
+  por corchetes no crea una propiedad propia: dispara el setter heredado y
+  reemplaza el PROTOTIPO INTERNO de la copia. Es el gotcha clásico "`JSON.parse` es
+  inmune a la contaminación de prototipo, pero un bucle `obj[k]=v` sobre esas
+  mismas claves NO lo es" — y esta función era exactamente ese bucle. Un documento
+  JSON de texto con una clave literal `"__proto__"` en cualquier objeto anidado
+  (algo que un cliente HTTP real puede enviar sin ningún truco in-process, vía
+  `JSON.parse`, que produce esa clave como propiedad OWN real — nunca vía un
+  literal de objeto JS `{"__proto__": x}`, que la gramática del LENGUAJE interpreta
+  como prototipo en tiempo de parseo del código fuente, un mecanismo distinto)
+  bypaseaba `CLAVE_DESCONOCIDA` en la raíz del documento (la clave ya no aparecía
+  en `Object.keys` de la copia) y hacía desaparecer datos EN SILENCIO dentro de
+  `propiedades` (bolsa abierta, forma libre a propósito) — la "reparación
+  silenciosa" que el brief prohíbe. Consecuencia adicional observada: la ruta de
+  operaciones (`motor.ts`/`operaciones.ts`) rechazaba el MISMO ataque, pero por una
+  CASUALIDAD de la materialización redundante (§6.7.1) con un mensaje de
+  diagnóstico FALSO ("instancia de clase u objeto exótico"), mientras
+  `cargarProyecto()` lo aceptaba con pérdida silenciosa — inconsistencia de
+  veredicto entre puertas para el MISMO ataque.
+
+  **Fix DE RAÍZ (revisión posterior a un primer intento — ver `DECISIONS.md` para
+  la historia completa y la evidencia): el defecto real es el CONTENEDOR, no el
+  nombre de la clave.** Cualquier objeto plano fresco construido con asignación por
+  corchetes (`obj[k] = v`) es vulnerable a un accessor heredado, sea cual sea su
+  nombre — la corrección ataca ESO: todo punto del núcleo que copia una clave de
+  USUARIO a un objeto fresco usa `Object.defineProperty` (semántica
+  `[[DefineOwnProperty]]`), NUNCA asignación por corchetes. Se auditó
+  exhaustivamente con `rg` y se corrigieron TRES sitios con la MISMA causa raíz:
+  `datos-planos.ts` (el hallazgo original), `ordenarClavesProfundo` (`canonico.ts`,
+  RX3-04 — con el contenedor de arriba seguro, este sitio pasó de "latente, no
+  explotable" a activamente alcanzable: `propiedades.__proto__` sobrevive como dato
+  legítimo y SÍ llega a `canonicalizar()` en cada `guardar()` real), y
+  `validarComponente` (`cargador.ts`, `pinesCopiados[clave] = valorPin` —
+  encontrado en la misma auditoría, explotable de forma independiente si
+  `pines.__proto__` trae un valor STRING válido). El spread (`{...x}`) y las claves
+  COMPUTADAS dentro de un OBJECT LITERAL fresco (`{ ...c.pines, [payload.terminal]:
+  payload.pin }`, `operaciones.ts`) usan semántica `CreateDataProperty` — nunca
+  `[[Set]]` — así que son seguros por construcción, verificado empíricamente, sin
+  necesitar ningún cambio.
+
+  **Con el contenedor seguro en los tres sitios, NINGÚN nombre de clave tiene
+  efecto especial — este módulo NO rechaza ninguna clave por nombre.**
+  `"__proto__"`, igual que `"constructor"`/`"prototype"`/`"toString"`/
+  `"hasOwnProperty"` (ninguno de estos es un accessor real de `Object.prototype`),
+  sobrevive como propiedad propia normal. El rechazo de una entidad de forma
+  CERRADA (raíz del documento, `Componente`/`Conexion`/`ComportamientoRegla`, el
+  SOBRE de una operación) pasa a ser el MISMO `CLAVE_DESCONOCIDA` que ya rechaza
+  cualquier otra clave no declarada — sin un segundo mecanismo especial por
+  nombre. Una bolsa ABIERTA (`propiedades`; `pines`, que tampoco valida nombres de
+  terminal) ACEPTA esas claves como dato ordinario, preservado exacto — lo que el
+  contrato de "bolsa abierta" ya prometía, sin la excepción que un primer intento
+  de este fix había introducido sin necesidad (ver `DECISIONS.md` para por qué esa
+  primera versión se revirtió, con evidencia de mutantes y tests de round-trip).
+
+- **RX3-02 (MAJOR)** — en la rama `else` de `crearMotorDeProyecto` (cuando
+  `validarFormaProyecto` rechaza por forma), el código corría igual
+  `validarProyecto`/`validarIdsYContador` sobre `deps.proyectoInicial` CRUDO —
+  invocando un getter/Proxy que la materialización YA había detectado y
+  rechazado, hasta 3 veces (confirmado por stack trace,
+  `RX3/scripts/06b_regresion_getter_stack.mjs`). El resultado final seguía siendo
+  correcto, pero el getter SÍ se ejecutaba — reintroduciendo el patrón de
+  superficie que `datos-planos.ts` existe para eliminar. Fix: después de
+  intentar la materialización, NUNCA se vuelve a tocar el objeto crudo. Si la
+  materialización falló, sólo se devuelven sus motivos (0 invocaciones
+  adicionales). Si tuvo éxito pero la forma es inválida, los chequeos
+  adicionales de Gate 4 corren sobre una materialización PROPIA e INDEPENDIENTE
+  (nunca sobre el crudo).
+
+#### 6.7.1. Nota de arquitectura — materialización redundante (RX3-03, MINOR/NOTE)
+
+Para una operación, el dato se materializa 2-3 veces (`ejecutarLote` sobre el
+LOTE completo, `aplicarOperacion` sobre el SOBRE individual, `ejecutarOperacion`
+una tercera vez para el eco) — el header de `datos-planos.ts` dice "UNA sola
+pasada", pero en la práctica corre repetido sobre el MISMO dato ya materializado.
+Esto es lo que "protegía" accidentalmente contra RX3-01 en la ruta de
+operaciones ANTES del fix (la 2ª/3ª pasada rechazaba el prototipo ya corrompido
+por la 1ª, con un mensaje de diagnóstico engañoso) — no es una defensa
+intencional, es una casualidad de la redundancia. Con el fix de RX3-01 aplicado,
+`materializarDatosPlanos` es IDEMPOTENTE sobre datos ya planos (materializar una
+copia ya plana produce una copia estructuralmente idéntica), así que la
+redundancia es inocua en términos de corrección — sólo un costo de CPU
+evitable. Se documenta y se ACEPTA (ver `DECISIONS.md`), sin refactor: eliminar
+la redundancia "porque ya se materializó antes" reduciría por sí solo la
+profundidad de defensa si un futuro fix de `datos-planos.ts` tuviera un bug —
+la ronda RX3 mostró que confiar en una única pasada, sin un segundo mecanismo
+independiente, es exactamente el patrón que ya falló una vez.
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

@@ -294,3 +294,48 @@ test("cambio-de-catalogo-al-cargar-dispara-diagnostico-sin-mutar", () => {
   assert.deepEqual(r.proyecto, p, "el proyecto NO se muta por el cambio de catálogo")
   assert.ok(r.diagnostico?.some((m) => m.codigo === "CATALOGO_CAMBIO_DETECTADO"), `debe haber un diagnóstico informativo: ${JSON.stringify(r.diagnostico)}`)
 })
+
+// ──── 10. round-trip formal con claves peligrosas dentro de "propiedades" (hallazgo
+// externo RX3-01, CRÍTICO — revisión adversarial independiente #3): guardar (disco
+// real, `fs` falso) → cargar (pasa por `cargarProyecto`, el MISMO `JSON.parse` +
+// validación completa que un documento externo real) → IR canónica equivalente. Con
+// el fix de raíz (contenedor seguro, `Object.defineProperty` en `datos-planos.ts`/
+// `canonico.ts`/`cargador.ts`), "__proto__"/"constructor"/"prototype" dentro de
+// `propiedades` (bolsa abierta, forma libre a propósito) sobreviven el ciclo completo
+// memoria → disco → memoria como datos ORDINARIOS, sin corromper ningún prototipo ni
+// perderse en silencio — exactamente lo que "IR canónica aceptada → guardar → cargar
+// → canónica equivalente" exige.
+test("round-trip formal (guardar en almacen real con fs falso, cargar de vuelta): '__proto__'/'constructor'/'prototype' dentro de propiedades sobreviven identicos, sin corromper el prototipo (hallazgo externo RX3-01)", () => {
+  const fs = crearFsFalso()
+  const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+  const base = proyectoDePrueba("proy-rx3-01-roundtrip")
+  // IMPORTANTE: se construye via JSON.parse de un TEXTO crudo, nunca con un literal
+  // de objeto JS `{ __proto__: ... }` — ese literal setea el prototipo real en
+  // tiempo de parseo del CÓDIGO FUENTE (gramática Annex B del lenguaje), un
+  // mecanismo distinto que NO prueba lo mismo (ver cabecera de datos-planos.ts).
+  const propiedadesPeligrosas = JSON.parse('{"color":"rojo","__proto__":{"pwned":true},"constructor":{"prototype":{"pwned2":true}},"prototype":"dato-normal"}')
+  assert.ok(Object.prototype.hasOwnProperty.call(propiedadesPeligrosas, "__proto__"), "control: JSON.parse produce '__proto__' como OWN key real")
+  const proyectoConComponente = {
+    ...base,
+    siguienteIdLocal: 1,
+    componentes: [{ id: "cmp-0", tipo: "led", pines: {}, propiedades: propiedadesPeligrosas }],
+  }
+
+  const rGuardar = almacen.guardar(proyectoConComponente)
+  assert.equal(rGuardar.ok, true, `el guardado debe aceptar el proyecto: ${JSON.stringify(rGuardar)}`)
+
+  const rCargar = almacen.cargar(proyectoConComponente.id)
+  assert.equal(rCargar.ok, true, `la carga (via cargarProyecto, JSON.parse + validacion completa) debe aceptar: ${JSON.stringify(rCargar)}`)
+
+  const propiedadesCargadas = rCargar.proyecto.componentes[0].propiedades
+  assert.equal(Object.getPrototypeOf(propiedadesCargadas), Object.prototype, "el prototipo de 'propiedades' nunca cambia, ni tras un ciclo completo por disco")
+  assert.ok(Object.prototype.hasOwnProperty.call(propiedadesCargadas, "__proto__"), "'__proto__' sobrevive como propiedad PROPIA tras el ciclo completo")
+  assert.deepEqual(propiedadesCargadas.__proto__, { pwned: true })
+  assert.equal(propiedadesCargadas.constructor.prototype.pwned2, true)
+  assert.equal(propiedadesCargadas.prototype, "dato-normal")
+  assert.equal(propiedadesCargadas.color, "rojo")
+
+  assert.equal(canonicalizar(rCargar.proyecto), canonicalizar(proyectoConComponente), "canonica-cargada === canonica-guardada — round-trip exacto, incluidas las claves peligrosas")
+  assert.equal(({}).pwned, undefined, "Object.prototype global NUNCA se contamina, ni siquiera tras pasar por disco real")
+  assert.equal(({}).pwned2, undefined, "Object.prototype global NUNCA se contamina, ni siquiera tras pasar por disco real")
+})

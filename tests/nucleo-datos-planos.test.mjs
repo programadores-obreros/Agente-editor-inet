@@ -124,52 +124,72 @@ test("rechaza clave Symbol en un objeto", () => {
 // heredado y reemplaza el PROTOTIPO INTERNO de la copia — el propio postcondicional
 // del módulo ("el resultado tiene Object.prototype") quedaba falso para su propia
 // salida. Alcanzable con JSON PURO (`JSON.parse` produce una propiedad OWN literal
-// "__proto__", nunca dispara el setter — el bucle de copiado sí). Fix de DOS capas:
-// (a) una clave "__proto__" en CUALQUIER nivel es entrada NO plana, rechazo explícito
-// ANTES de copiar nada; (b) defensa en profundidad, la copia se construye con
-// `Object.defineProperty` (semántica `[[DefineOwnProperty]]`, inmune a cualquier
-// setter heredado), nunca con asignación por corchetes.
+// "__proto__", nunca dispara el setter — el bucle de copiado sí).
 //
-// Decisión (ver docs/programacion-intencion/DECISIONS.md): SÓLO "__proto__" se
-// rechaza. "constructor"/"prototype"/"toString"/"hasOwnProperty" NO son accessors de
-// `Object.prototype` (son propiedades de DATOS normales) — asignarlas con corchetes
-// sobre un objeto plano nunca dispara ningún setter, sólo crea/sombrea una propiedad
-// propia común. Sobre-rechazarlas romperia `propiedades` (bolsa abierta, `ir.ts`),
-// que hoy acepta "constructor" como clave de datos legítima (ver batería de controles
-// más abajo) sin ningún riesgo concreto que lo justifique.
+// FIX DE RAÍZ (ver docs/programacion-intencion/DECISIONS.md, entrada RX3-01, y
+// evidencia/RX3fix/causa.md para el análisis completo): el defecto real es el
+// CONTENEDOR (`copia = {}`), no el nombre de la clave. La copia se construye SIEMPRE
+// con `Object.defineProperty` (semántica `[[DefineOwnProperty]]`, inmune a CUALQUIER
+// setter heredado) — NUNCA con asignación por corchetes. Con el contenedor seguro,
+// NINGUNA clave (ni "__proto__", ni "constructor"/"prototype"/"toString"/
+// "hasOwnProperty") tiene efecto especial: todas se preservan como datos propios
+// normales, indistinguibles entre sí. Este módulo NO rechaza ninguna clave por
+// nombre — el rechazo de forma (p.ej. `CLAVE_DESCONOCIDA` para una entidad de forma
+// CERRADA) es responsabilidad de quien conoce el schema (`cargador.ts`), no de esta
+// frontera genérica de "es un dato plano".
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("rechaza clave '__proto__' en un objeto de nivel raiz — entrada NO plana (hallazgo externo RX3-01)", () => {
+test("acepta clave '__proto__' en un objeto de nivel raiz como dato ORDINARIO — nunca cambia el prototipo (hallazgo externo RX3-01, fix de raiz)", () => {
   const jsonTexto = '{"a":1,"__proto__":{"pwned":true}}'
   const objetoAtacante = JSON.parse(jsonTexto)
   assert.ok(Object.prototype.hasOwnProperty.call(objetoAtacante, "__proto__"), "control: JSON.parse produce '__proto__' como OWN key, nunca cambia el prototipo real")
-  const r = rechazo(objetoAtacante)
-  assert.match(r.razon, /__proto__/)
+  const copia = aceptado(objetoAtacante)
+  assert.equal(Object.getPrototypeOf(copia), Object.prototype, "el prototipo de la copia nunca cambia, sin importar el nombre de la clave")
+  assert.ok(Object.prototype.hasOwnProperty.call(copia, "__proto__"), "'__proto__' sobrevive como propiedad PROPIA de la copia")
+  assert.deepEqual(copia.__proto__, { pwned: true }, "el valor se preserva intacto — nunca se pierde en silencio")
+  assert.equal(copia.a, 1)
 })
 
-test("rechaza clave '__proto__' anidada en CUALQUIER nivel — entrada NO plana (hallazgo externo RX3-01)", () => {
+test("acepta clave '__proto__' anidada en CUALQUIER nivel como dato ordinario, preservada en cada nivel (hallazgo externo RX3-01, fix de raiz)", () => {
   const jsonTexto = '{"a":{"b":{"c":1,"__proto__":{"pwned":true}}}}'
   const objetoAtacante = JSON.parse(jsonTexto)
-  const r = rechazo(objetoAtacante)
-  assert.match(r.razon, /__proto__/)
-  assert.equal(r.ruta, "raiz.a.b.__proto__")
+  const copia = aceptado(objetoAtacante)
+  assert.equal(Object.getPrototypeOf(copia.a.b), Object.prototype, "el prototipo del nivel anidado tampoco cambia")
+  assert.ok(Object.prototype.hasOwnProperty.call(copia.a.b, "__proto__"))
+  assert.deepEqual(copia.a.b.__proto__, { pwned: true })
+  assert.equal(copia.a.b.c, 1)
 })
 
-test("invariante (hallazgo externo RX3-01): la salida de materializarDatosPlanos SIEMPRE tiene Object.prototype (objetos) o Array.prototype (arrays), y sus claves propias son EXACTAMENTE las de la entrada", () => {
-  const entrada = JSON.parse('{"a":1,"constructor":{"prototype":{"x":1}},"toString":"dato","hasOwnProperty":"otro-dato","b":[1,2,{"c":3}]}')
+test("invariante (hallazgo externo RX3-01): la salida de materializarDatosPlanos SIEMPRE tiene Object.prototype (objetos) o Array.prototype (arrays), y sus claves propias son EXACTAMENTE las de la entrada — incluida '__proto__'", () => {
+  const entrada = JSON.parse('{"a":1,"__proto__":{"pwned":true},"constructor":{"prototype":{"x":1}},"toString":"dato","hasOwnProperty":"otro-dato","b":[1,2,{"c":3}]}')
   const copia = aceptado(entrada)
   assert.equal(Object.getPrototypeOf(copia), Object.prototype, "el prototipo de la copia nunca puede ser otra cosa")
-  assert.deepEqual(Object.keys(copia).sort(), Object.keys(entrada).sort(), "ninguna clave se pierde ni se convierte en prototipo")
+  assert.deepEqual(Object.keys(copia).sort(), Object.keys(entrada).sort(), "ninguna clave se pierde ni se convierte en prototipo — incluida '__proto__'")
+  assert.deepEqual(copia.__proto__, { pwned: true }, "'__proto__' es una propiedad propia normal, indistinguible de cualquier otra")
   assert.equal(copia.constructor.prototype.x, 1, "'constructor'/'prototype' NO son accessors — se preservan como datos normales, sin heredar comportamiento especial")
   assert.equal(copia.toString, "dato", "'toString' tambien se preserva como dato normal")
   assert.equal(copia.hasOwnProperty, "otro-dato", "'hasOwnProperty' tambien se preserva como dato normal")
   assert.equal(Object.getPrototypeOf(copia.b), Array.prototype)
 })
 
-test("regresion (adaptado de phase1_auditoria_externa/evidencia/e1/exp_proto_pollution.mjs): '__proto__' en pines Y en propiedades (con 'constructor.prototype' anidado) se rechaza, nunca contamina Object.prototype global", () => {
+test("round-trip formal a nivel de modulo: JSON.stringify(materializado) -> JSON.parse -> materializado de nuevo, produce EXACTAMENTE los mismos datos, incluida la clave '__proto__' (hallazgo externo RX3-01)", () => {
+  const entrada = JSON.parse('{"__proto__":{"pwned":true},"constructor":"x","prototype":"y","normal":[1,{"__proto__":2}]}')
+  const copia1 = aceptado(entrada)
+  const textoDisco = JSON.stringify(copia1)
+  const copia2 = aceptado(JSON.parse(textoDisco))
+  assert.deepEqual(copia2, copia1, "materializar -> serializar -> re-parsear -> re-materializar es idempotente, incluida '__proto__'")
+  assert.equal(Object.getPrototypeOf(copia2), Object.prototype)
+  assert.equal(Object.getPrototypeOf(copia2.normal[1]), Object.prototype)
+})
+
+test("regresion (adaptado de phase1_auditoria_externa/evidencia/e1/exp_proto_pollution.mjs): '__proto__' en pines Y en propiedades (con 'constructor.prototype' anidado) se ACEPTA como dato ordinario, preservado exacto, nunca contamina Object.prototype global", () => {
   const raw = '{"pines":{"__proto__":{"polluted":true}},"propiedades":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted2":true}}}}'
-  const r = rechazo(JSON.parse(raw))
-  assert.match(r.razon, /__proto__/)
+  const copia = aceptado(JSON.parse(raw))
+  assert.deepEqual(copia.pines.__proto__, { polluted: true }, "el dato se preserva, nunca desaparece en silencio")
+  assert.deepEqual(copia.propiedades.__proto__, { polluted: true })
+  assert.equal(copia.propiedades.constructor.prototype.polluted2, true)
+  assert.equal(Object.getPrototypeOf(copia.pines), Object.prototype)
+  assert.equal(Object.getPrototypeOf(copia.propiedades), Object.prototype)
   assert.equal(({}).polluted, undefined, "Object.prototype global NUNCA se contamina")
   assert.equal(({}).polluted2, undefined, "Object.prototype global NUNCA se contamina")
 })

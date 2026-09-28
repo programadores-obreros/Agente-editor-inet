@@ -101,36 +101,46 @@
 // y dentro de `propiedades` (bolsa abierta, forma libre a propósito) el dato se
 // perdía en silencio — la "reparación silenciosa" que el brief prohíbe.
 //
-// Fix de DOS capas, ninguna sustituye a la otra:
-// (a) Rechazo EXPLÍCITO: una clave literal `"__proto__"` en CUALQUIER nivel de la
-//     entrada es, por definición, NO un dato plano — se rechaza con
-//     `ENTRADA_NO_ES_DATO_PLANO` ANTES de copiar nada (nunca tiene un uso legítimo en
-//     el IR, y cualquier `JSON.parse` de un cliente real puede producirla).
-// (b) Defensa en profundidad: la copia se construye con `Object.defineProperty`
-//     (semántica `[[DefineOwnProperty]]`), NUNCA con asignación por corchetes
-//     (`[[Set]]`) — inmune a CUALQUIER setter heredado, conocido o futuro, no sólo a
-//     `__proto__`. Si (a) alguna vez se rompiera por un refactor futuro, (b) por sí
-//     sola ya evita que la copia cambie de prototipo (aunque no evita, por diseño, que
-//     la clave sobreviva como dato propio — ver la nota de mutante más abajo).
+// FIX DE RAÍZ (revisión de arquitectura post-RX3-01, ver `docs/programacion-intencion/
+// DECISIONS.md` para el razonamiento completo con evidencia): el defecto real no es
+// "la clave `__proto__` es peligrosa" — es que el CONTENEDOR RECEPTOR (`copia = {}`)
+// tiene semántica mágica por nombre de clave. La corrección ataca esa causa: la copia
+// se construye SIEMPRE con `Object.defineProperty` (semántica `[[DefineOwnProperty]]`),
+// NUNCA con asignación por corchetes (`[[Set]]`) — inmune a CUALQUIER setter heredado
+// de `Object.prototype`, conocido HOY (`__proto__`) o agregado en el futuro por el
+// motor JS/una librería. El MISMO fix de raíz se aplicó en todos los demás lugares del
+// núcleo que copiaban una clave de USUARIO con `obj[k] = v` sobre un objeto fresco:
+// `canonico.ts` (`ordenarClavesProfundo`, RX3-04) y `cargador.ts` (`pinesCopiados[clave]
+// = valorPin`, mismo patrón, encontrado en la misma revisión). El spread (`{...x}`,
+// `cargador.ts: propiedades: {...propiedades}`) y las claves COMPUTADAS dentro de un
+// OBJECT LITERAL (`{ ...c.pines, [payload.terminal]: payload.pin }`, `operaciones.ts`)
+// usan semántica `CreateDataProperty` — nunca `[[Set]]` — así que son seguros por
+// construcción, sin necesitar ningún cambio (verificado empíricamente, no sólo por
+// lectura de spec — ver evidencia/RX3fix/causa.md).
 //
-// Decisión (ver `docs/programacion-intencion/DECISIONS.md`): SÓLO `"__proto__"` se
-// rechaza explícitamente. `"constructor"`/`"prototype"`/`"toString"`/
-// `"hasOwnProperty"` NO son accessors de `Object.prototype` — son propiedades de
-// DATOS comunes (`Object.prototype.constructor` es un dato, no un `get`/`set`) — así
-// que asignarlas con corchetes sobre un objeto plano NUNCA dispara ningún setter,
-// sólo crea/sombrea una propiedad propia normal (confirmado por bacteria de ataque,
-// RX3_REPORT.md, "05_bateria_controles.mjs"). Sobre-rechazarlas sin un riesgo
-// concreto rompería `propiedades` (bolsa abierta, `ir.ts`), que hoy acepta
-// `"constructor"` como clave de datos legítima.
+// Con el CONTENEDOR seguro en todos los puntos de copia, una clave `"__proto__"` deja
+// de tener CUALQUIER efecto especial: sobrevive como una propiedad PROPIA normal, con
+// `Object.getPrototypeOf(copia) === Object.prototype` intacto — exactamente igual que
+// cualquier otra clave string. Por eso este módulo YA NO rechaza `"__proto__"` por
+// NOMBRE (una versión anterior de este fix sí lo hacía, como capa adicional — ver nota
+// de decisión abajo): con el contenedor corregido, esa capa se volvió redundante Y,
+// peor, INCORRECTA para `propiedades` (bolsa abierta, `ir.ts`, forma libre a
+// propósito) — rechazar `"__proto__"` ahí violaba el contrato explícito de esa bolsa
+// sin ninguna razón técnica, ya que la clave es, con el contenedor seguro, un dato
+// tan inofensivo como `"constructor"`/`"prototype"`/`"toString"`/`"hasOwnProperty"`
+// (que este módulo NUNCA rechazó por nombre, y siguen sin rechazarse — ver batería de
+// ataque, `RX3/scripts/05_bateria_controles.mjs`). En la RAÍZ del documento y en
+// cualquier entidad de forma CERRADA (`Componente`/`Conexion`/`ComportamientoRegla`,
+// `cargador.ts`), una clave `"__proto__"` sobrevive como propiedad propia y cae en
+// `CLAVE_DESCONOCIDA` exactamente igual que cualquier otra clave no declarada — el
+// mecanismo EXISTENTE de fail-closed por forma cerrada, sin necesitar un segundo
+// mecanismo especial para este nombre en particular.
 //
-// Nota sobre el mutante "quitar sólo el rechazo explícito de `__proto__`, dejar
-// `defineProperty`": con `defineProperty` solo, `__proto__` sobrevive como clave
-// PROPIA normal de la copia (nunca cambia el prototipo) — en la RAÍZ del documento,
-// `CLAVE_DESCONOCIDA` (`cargador.ts`, `Object.keys(doc)`) la atrapa igual, porque
-// ahora SÍ aparece en `Object.keys`. Pero dentro de `propiedades` (bolsa abierta, sin
-// chequeo de claves) esa clave SOBREVIVE como dato — nunca se rechaza — y
-// `canonicalizar()` (`canonico.ts`, mismo anti-patrón, ver RX3-04) podría corromperse
-// al persistir. El rechazo EXPLÍCITO (a) es necesario, no sólo defensivo.
+// Decisión registrada con evidencia (mutantes, tests de round-trip por las 4 puertas):
+// `docs/programacion-intencion/DECISIONS.md`, entrada RX3-01. `evidencia/RX3fix/
+// causa.md` documenta el análisis completo (por qué ocurre, qué invariante rompe, qué
+// puertas afecta, entrada de reproducción, resultado incorrecto) hecho ANTES de fijar
+// este fix de raíz.
 
 import type { CategoriaMotivo, Motivo } from "./motivos.ts"
 
@@ -237,16 +247,11 @@ export function materializarDatosPlanos<T = unknown>(valor: unknown, ruta: strin
       if (typeof clave === "symbol") {
         throw new RechazoMaterializacion(rutaActual, "clave Symbol no es un dato plano")
       }
-      // Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO): "__proto__" es el ÚNICO
-      // nombre de clave que `Object.prototype` expone como ACCESSOR (setter mágico) en
-      // vez de dato — sobre un objeto plano, `copia["__proto__"] = valor` no crea una
-      // propiedad propia, reemplaza el prototipo interno de `copia`. Alcanzable con
-      // JSON puro (`JSON.parse('{"__proto__":...}')` produce esa clave como propiedad
-      // OWN real, ver cabecera del módulo) — se rechaza ANTES de leer el descriptor,
-      // nunca se intenta "adivinar" si esta instancia en particular sería inofensiva.
-      if (clave === "__proto__") {
-        throw new RechazoMaterializacion(`${rutaActual}.${clave}`, "clave '__proto__' no es un dato plano representable en JSON (previene contaminacion de prototipo, RX3-01)")
-      }
+      // Phase 1.1 (RX3-01): NINGÚN nombre de clave (incluido "__proto__") se rechaza
+      // por sí solo acá — ver cabecera del módulo para el razonamiento completo. El
+      // fix de raíz es que `copia` (más abajo) es un contenedor SEGURO por
+      // construcción (`Object.defineProperty`): ninguna clave, sin importar su
+      // nombre, puede disparar un comportamiento especial al copiarla.
       const desc = Object.getOwnPropertyDescriptor(v, clave)
       if (!desc) {
         throw new RechazoMaterializacion(`${rutaActual}.${clave}`, "descriptor de propiedad inconsistente (posible Proxy que miente)")

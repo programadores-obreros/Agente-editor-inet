@@ -791,16 +791,28 @@ test("aplicarOperacion/ejecutarOperacion NUNCA propagan un getter-que-explota de
 // como prototipo en tiempo de parseo del código fuente), corrompía el prototipo de la
 // copia materializada. Acá, en `aplicarOperacion` (Gate 5), la MISMA forma de ataque en
 // `payload.propiedades` (la bolsa abierta de `AgregarComponente`).
+//
+// FIX DE RAÍZ (ver DECISIONS.md/causa.md): con el contenedor seguro
+// (`Object.defineProperty`), "__proto__" — y, por la misma razón técnica,
+// "constructor"/"prototype" — ya NO tienen ningún efecto especial. `propiedades` es
+// una bolsa ABIERTA por contrato (`ir.ts`): estas claves se ACEPTAN como dato
+// ordinario, preservado exacto, sin corromper el prototipo del objeto que las
+// contiene — nunca se rechazan por su nombre.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("aplicarOperacion rechaza '__proto__' como clave en payload.propiedades (AgregarComponente) — entrada NO plana, JSON puro via JSON.parse (hallazgo externo RX3-01)", () => {
-  const p = proyectoBase()
-  const payload = JSON.parse('{"tipo":"led","propiedades":{"color":"rojo","__proto__":{"pwned":true,"secreto":"fuga-via-operacion"}}}')
-  assert.ok(Object.prototype.hasOwnProperty.call(payload.propiedades, "__proto__"), "control: JSON.parse produce '__proto__' como OWN key")
-  const r = aplicarOperacion(p, nuevaOperacion("AgregarComponente", payload), catalogo)
-  assert.equal(r.proyecto, p, "el proyecto devuelto debe ser la MISMA referencia — un rechazo nunca muta")
-  assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
-  assert.equal(r.motivos[0].clasificacion, "rechazo")
+test("aplicarOperacion ACEPTA '__proto__'/'constructor'/'prototype' como clave en payload.propiedades (AgregarComponente, bolsa abierta) como dato ORDINARIO — JSON puro via JSON.parse, prototipo intacto, valor preservado (hallazgo externo RX3-01, fix de raiz)", () => {
+  for (const clave of ["__proto__", "constructor", "prototype"]) {
+    const p = proyectoBase()
+    const payload = JSON.parse(`{"tipo":"led","propiedades":{"color":"rojo",${JSON.stringify(clave)}:{"pwned":true,"secreto":"dato-normal"}}}`)
+    assert.ok(Object.prototype.hasOwnProperty.call(payload.propiedades, clave), `control: JSON.parse produce "${clave}" como OWN key`)
+    const r = aplicarOperacion(p, nuevaOperacion("AgregarComponente", payload), catalogo)
+    assert.notEqual(r.proyecto, p, `clave "${clave}": una operacion ACEPTADA siempre devuelve un proyecto NUEVO`)
+    assert.equal(r.motivos.filter((m) => m.clasificacion === "rechazo").length, 0, `clave "${clave}": no debe haber ningun motivo de rechazo: ${JSON.stringify(r.motivos)}`)
+    const propiedades = r.proyecto.componentes[0].propiedades
+    assert.equal(Object.getPrototypeOf(propiedades), Object.prototype, `clave "${clave}": el prototipo de propiedades nunca cambia`)
+    assert.deepEqual(propiedades[clave], { pwned: true, secreto: "dato-normal" }, `clave "${clave}": el dato debe preservarse EXACTO, nunca perderse en silencio`)
+    assert.equal(propiedades.color, "rojo")
+  }
 })
 
 // No-regresión: un string VACÍO DENTRO de `payload` (no en el sobre) nunca es "forma

@@ -180,6 +180,23 @@
 //   del switch) y `"motor"` por `motor.ts` (`ejecutarLote`, el LOTE completo antes
 //   de leer siquiera `baseRevision`). Ver
 //   `docs/programacion-intencion/IR-SPEC.md` §6.6.
+//
+// Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO — tercera revisión adversarial
+// independiente, `RX3_REPORT.md`): antes de este fix, una clave literal
+// `"__proto__"` (alcanzable con JSON PURO vía `JSON.parse`, sin Proxies ni
+// getters) corrompía el PROTOTIPO de la copia de `materializarDatosPlanos` en vez
+// de tratarse como un dato — la asignación `copia[clave]=valor` disparaba el
+// setter heredado `Object.prototype.__proto__` sobre un objeto plano `{}`, lo que
+// bypaseaba `CLAVE_DESCONOCIDA` en la raíz en silencio. El fix de RAÍZ (ver
+// `IR-SPEC.md` §6.7, `DECISIONS.md`) arregla el CONTENEDOR (`Object.defineProperty`
+// en vez de asignación por corchetes, en los tres sitios del núcleo que copiaban
+// claves de usuario a un objeto fresco) — con eso, `materializarDatosPlanos` NUNCA
+// rechaza ninguna clave por su nombre, ni siquiera `"__proto__"`: la preserva como
+// dato propio normal, indistinguible de `"constructor"`/`"prototype"`/
+// `"toString"`/`"hasOwnProperty"` (ninguno de estos es un accessor real de
+// `Object.prototype`). El rechazo de una clave desconocida en una entidad de
+// forma CERRADA sigue siendo, como siempre, `CLAVE_DESCONOCIDA` — nunca
+// `ENTRADA_NO_ES_DATO_PLANO` por el NOMBRE de una clave en particular.
 
 // Phase 1.1 (hallazgo externo E3-08, barato) agrega, categoria "almacen",
 // clasificacion "rechazo" siempre, emitido por `almacen.ts` (`cargar()`):

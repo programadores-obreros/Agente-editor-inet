@@ -343,12 +343,25 @@ function validarComponente(c: unknown): ResultadoValidacion<Componente> {
   // (plano, leído una sola vez) el TOCTOU ya no es alcanzable, pero dos pasadas
   // sobre el MISMO dato siguen siendo dos fuentes de verdad — se valida y se copia
   // en el mismo paso, nunca por separado.
+  //
+  // Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO — ver `datos-planos.ts` para
+  // el detalle completo): `pinesCopiados` es un objeto plano `{}` — asignar por
+  // corchetes (`pinesCopiados[clave] = valorPin`) sobre una clave de USUARIO
+  // (`clave` viene de `Object.entries(pines)`, un pin-name arbitrario del
+  // documento) dispara el setter heredado `Object.prototype.__proto__` si
+  // `clave === "__proto__"`, EXACTAMENTE el mismo bug de clase que
+  // `materializarDatosPlanos` tenía. `pines` ya llegó acá materializado de forma
+  // segura (por eso `doc` nunca puede traer un `__proto__` corrompiendo SU
+  // prototipo), pero este bucle propio construye un objeto NUEVO con el mismo
+  // patrón vulnerable — `Object.defineProperty` (semántica
+  // `[[DefineOwnProperty]]`, nunca `[[Set]]`) es inmune a cualquier setter
+  // heredado, conocido o futuro.
   const pinesCopiados: Record<string, string | null> = {}
   for (const [clave, valorPin] of Object.entries(pines)) {
     if (valorPin !== null && typeof valorPin !== "string") {
       return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", componente: id, campo: "pines" } }
     }
-    pinesCopiados[clave] = valorPin
+    Object.defineProperty(pinesCopiados, clave, { value: valorPin, enumerable: true, writable: true, configurable: true })
   }
   if (!esObjeto(propiedades)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", componente: id, campo: "propiedades" } }

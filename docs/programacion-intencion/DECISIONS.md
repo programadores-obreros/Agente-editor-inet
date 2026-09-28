@@ -412,3 +412,105 @@ límite de UX/auditoría, no un bypass de autoridad. Revisitar si Fase 2 introdu
 consumidor real (agente/UI) que arme lotes con ids explícitos adivinados.
 
 Ver `evidencia/T7/` (Phase 1.1) para la evidencia RED/GREEN/mutante de E3-06 y E3-02.
+
+## Phase 1.1 (RX3) — el fix ataca el CONTENEDOR (causa raíz), no el nombre de la clave; "__proto__"/"constructor"/"prototype" NUNCA se rechazan por nombre (hallazgo externo RX3-01, CRÍTICO)
+
+**Qué encontró RX3:** `materializarDatosPlanos` (`datos-planos.ts`) construía su
+copia con `copia[clave] = valor` sobre un objeto plano `{}` — que hereda el setter
+mágico `Object.prototype.__proto__`. Una clave literal `"__proto__"` en un documento
+JSON válido (vía `JSON.parse`, nunca un literal de objeto JS — ver `IR-SPEC.md`
+§6.7) disparaba ese setter y corrompía el prototipo de la copia, en vez de crear una
+propiedad propia. Ver `RX3_REPORT.md` para el detalle completo y el impacto.
+
+**Primer intento (revisado, ver más abajo):** una primera ronda de este mismo fix
+combinó dos capas: (a) rechazo explícito de la clave `"__proto__"` por nombre, (b)
+`Object.defineProperty` como defensa en profundidad. Una revisión posterior (con
+evidencia — ver `evidencia/RX3fix/verif_theory.mjs`/`causa.md`) encontró que la capa
+(a) era, además de redundante, **incorrecta**: rechazaba por nombre una clave que,
+una vez arreglado el contenedor, es tan inofensiva como cualquier otra — violando
+sin necesidad el contrato de `propiedades` ("bolsa abierta: acepta CUALQUIER clave
+como dato"). Esta entrada documenta la decisión FINAL.
+
+**Decisión final: el fix ataca la CAUSA (el contenedor), nunca el síntoma (el
+nombre de la clave).** El defecto real no es "`__proto__` es peligrosa" — es que
+CUALQUIER objeto plano fresco (`{}`) construido con asignación por corchetes
+(`obj[k] = v`, semántica `[[Set]]`) es vulnerable a un accessor heredado, sea cual
+sea su nombre. La corrección: **todo punto del núcleo que copia una clave de
+USUARIO a un objeto fresco usa `Object.defineProperty` (semántica
+`[[DefineOwnProperty]]`), nunca asignación por corchetes.** Se auditó
+exhaustivamente con `rg` (`\[[a-zA-Z_]+\]\s*=`, `Object\.assign`) y se encontraron
+y corrigieron TRES sitios, los tres con la MISMA causa raíz:
+
+1. `datos-planos.ts::materializarDatosPlanos` (rama objeto) — el hallazgo original.
+2. `canonico.ts::ordenarClavesProfundo` (RX3-04) — usado por `canonicalizar()`
+   (`almacen.ts`, persistencia real; `catalogo.ts`, hash). Con el fix de (1) YA NO
+   protege contra un ataque "no explotable hoy": con el contenedor de (1) seguro,
+   `propiedades.__proto__` sobrevive como dato legítimo y SÍ llega a
+   `canonicalizar()` en cada `guardar()` real — este sitio es, con la decisión
+   final, tan alcanzable como (1), y el mutante que lo revierte lo confirma (ver
+   evidencia, `mutante_canonico_resultado.txt`: 1/19 tests muere, el round-trip
+   formal contra almacén real).
+3. `cargador.ts::validarComponente` (`pinesCopiados[clave] = valorPin`) —
+   encontrado en esta misma auditoría, no reportado por RX3: si `pines.__proto__`
+   trae un valor STRING (pasa el chequeo de tipo `string|null` de esa misma
+   función), este bucle propio de `cargador.ts` corrompía el prototipo de
+   `pinesCopiados` de forma INDEPENDIENTE del fix de (1) — porque construye SU
+   PROPIA copia nueva, después de que el dato ya llegó plano y seguro desde (1).
+   Confirmado explotable y corregido con el mismo patrón (mutante lethal, ver
+   evidencia, `mutante_cargador_pines_resultado.txt`).
+
+Se verificó (y se dejó registrado, `evidencia/RX3fix/verif_theory.mjs`) que el
+spread (`{...x}`) y las claves COMPUTADAS dentro de un OBJECT LITERAL fresco
+(`{ ...c.pines, [payload.terminal]: payload.pin }`, `operaciones.ts`) usan semántica
+`CreateDataProperty` — NUNCA `[[Set]]` — así que son seguros por construcción sin
+ningún cambio, incluso cuando la clave computada evalúa a `"__proto__"` en tiempo de
+ejecución. No se encontró ningún `Object.assign` en `opencode/nucleo/*.ts`.
+
+**Con el contenedor seguro en los TRES sitios, NINGÚN nombre de clave tiene efecto
+especial** — confirmado empíricamente (`verif_theory.mjs`): `Object.defineProperty`
+crea una propiedad OWN real, nunca dispara el setter heredado; `Object.keys`/
+`Object.entries`/`JSON.stringify`/`assert.deepStrictEqual`/`Object.freeze` tratan esa
+propiedad exactamente igual que cualquier otra. Por eso:
+
+- **Se retira el rechazo explícito por nombre.** `"__proto__"`, igual que
+  `"constructor"`/`"prototype"`/`"toString"`/`"hasOwnProperty"` (ninguno de estos
+  es un accessor de `Object.prototype` — son propiedades de DATOS comunes,
+  confirmado por la batería de ataque de la auditoría,
+  `RX3/scripts/05_bateria_controles.mjs`), sobrevive como propiedad propia normal.
+- En una entidad de forma **CERRADA** (raíz del `Proyecto`, `Componente`/
+  `Conexion`/`ComportamientoRegla`, el SOBRE de una operación) esa clave cae en
+  `CLAVE_DESCONOCIDA` — el MISMO mecanismo fail-closed que ya existía para
+  cualquier otra clave no declarada, sin necesitar un segundo código especial.
+- En una bolsa **ABIERTA** (`propiedades` de un `Componente`; `pines`, que
+  tampoco valida NOMBRES de terminal, sólo tipos de valor — Gate 4 simplemente
+  nunca lee un terminal que el catálogo no declara, lo deja como dato huérfano
+  inerte, igual que cualquier otra clave de pin desconocida) esa clave se ACEPTA
+  como dato ordinario, preservada exacta — exactamente lo que el contrato de
+  "bolsa abierta" ya prometía, sin la excepción injustificada que la primera
+  ronda de este fix había introducido.
+
+**Evidencia que sostiene esta decisión** (`evidencia/RX3fix/`): `causa.md`
+(análisis de causa raíz completo, escrito ANTES del fix de raíz), tests explícitos
+para `"__proto__"`/`"constructor"`/`"prototype"` en raíz/anidada/`propiedades` por
+las 4 puertas (`nucleo-datos-planos.test.mjs`, `nucleo-ir-cargador.test.mjs`,
+`nucleo-motor.test.mjs`, `nucleo-operaciones.test.mjs`), un round-trip formal contra
+un almacén REAL con `fs` falso (`nucleo-almacen.test.mjs`, guardar → cargar →
+`canonicalizar` idéntica), y tres mutantes letales: **W9-M1** (revertir el
+contenedor a `copia[clave]=valor`, semántica vulnerable — 23/233 tests mueren),
+**W9-M3** (permitir un accessor/getter en un campo declarado sin rechazarlo — 6/233
+tests mueren, ya cubierto por la suite RX2 existente), y un mutante ad-hoc sobre
+`cargador.ts::pinesCopiados` (revertir a asignación por corchetes — 3/80 tests
+mueren). El golden byte-a-byte de M23 (`nucleo-canonico-golden.test.mjs`) se
+verificó intacto tras el cambio en `canonico.ts`.
+
+**Materialización redundante (RX3-03, MINOR) — aceptada, no refactorizada:** para
+una operación, el dato se materializa 2-3 veces (`ejecutarLote`, `aplicarOperacion`,
+`ejecutarOperacion`). `materializarDatosPlanos` es IDEMPOTENTE sobre datos ya
+planos — materializar una copia ya plana produce una copia estructuralmente
+idéntica — así que la redundancia es inocua en términos de corrección, sólo un
+costo de CPU evitable. Se documenta y se ACEPTA sin refactor (ver `IR-SPEC.md`
+§6.7.1 para el razonamiento completo de por qué NO se elimina la redundancia).
+
+Ver `evidencia/RX3fix/` (Phase 1.1) para la evidencia RED/GREEN/mutante completa de
+RX3-01/RX3-02, incluida la conversión a test de regresión del repro original de la
+auditoría externa (`phase1_auditoria_externa/evidencia/e1/exp_proto_pollution.mjs`).
