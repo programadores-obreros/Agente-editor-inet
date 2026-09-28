@@ -77,6 +77,15 @@ hoy se sostiene sólo "por construcción". No se agregó el test acá (fuera del
 de la Parte 4 de T7, que pide reportar un GAP, no corregirlo en silencio) — reportado
 para que Phase 1.1/Fase 2 decida si amerita un test dedicado.
 
+**Phase 1.1 — GAP cerrado:** se agregó el test dedicado
+`tests/nucleo-motor.test.mjs::lote-con-varias-altas-genera-ids-distintos-y-consecutivos`
+(tres altas en un lote → `cmp-0`/`cmp-1`/`cmp-2`, `siguienteIdLocal` 3). Mutante
+verificado: si `aplicarAgregarComponente` no avanza el contador, el test falla con
+`['cmp-0','cmp-0','cmp-0']`. Ese mutante muestra además un límite a registrar: dentro
+de un lote, la unicidad de ids depende de la monotonía de los aplicadores. La
+validación post-lote (`validarProyecto`) no re-chequea ids duplicados
+(nota [b]), así que este test es hoy la única red para esa puerta.
+
 **[b] Filas 1-2, columna Catalog revalidation — N/A, por diseño explícito:**
 `validarIdsYContador` deliberadamente NO se agregó al pipeline continuo de
 `validar-estructural.ts`/`validarProyecto` (IR-SPEC §6.1): esa validación corre sobre
@@ -129,6 +138,8 @@ lectura + repro manual), documentado en la nota **[a]** de la fila 1: falta un t
 explícito de que 2+ operaciones generadoras de id, dentro del MISMO lote
 (`aplicarTransaccion`), producen ids distintos y consecutivos. No corregido en esta
 tarea (T7, Parte 4 pide reportar, no corregir en silencio).
+
+**Phase 1.1 — cerrado** con el test dedicado citado en la nota [a].
 
 Ningún otro invariante de los 14 relevados carece de refuerzo real en alguna puerta
 donde el contrato (Brief/IR-SPEC/OPERATIONS) lo exige — las celdas `N/A` de arriba

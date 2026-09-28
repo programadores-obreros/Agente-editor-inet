@@ -130,6 +130,28 @@ test("revision-sube-exactamente-1-sin-importar-tamano-del-lote", () => {
   assert.equal(motor.getProyecto().revision, 1, "3 operaciones en 1 transaccion => revision sube 1 sola vez")
 })
 
+// Phase 1.1 (GAP de la matriz INVARIANTES-ENTRYPOINTS.md, fila "unique IDs", puerta
+// Batch): varias operaciones que generan id local DENTRO del mismo lote deben producir
+// ids distintos y consecutivos — cada aplicador ve el contador ya avanzado por el
+// anterior, nunca el `siguienteIdLocal` del canónico previo al lote.
+test("lote-con-varias-altas-genera-ids-distintos-y-consecutivos (Phase 1.1, GAP matriz)", () => {
+  const { motor } = crearMotorDePrueba()
+  const r = motor.aplicarTransaccion([
+    nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0),
+    nuevaOperacion("AgregarComponente", { tipo: "led" }, 0),
+    nuevaOperacion("AgregarComponente", { tipo: "resistencia" }, 0),
+    nuevaOperacion("AgregarComponente", { tipo: "led" }, 0),
+  ])
+  assert.equal(r.ok, true)
+  const p = motor.getProyecto()
+  assert.deepEqual(
+    p.componentes.map((c) => c.id),
+    ["cmp-0", "cmp-1", "cmp-2"],
+    "tres altas en un lote => tres ids distintos, en orden",
+  )
+  assert.equal(p.siguienteIdLocal, 3, "el contador avanza una vez por alta, no una vez por lote")
+})
+
 // ──────────────────── 6. baseRevision obsoleta rechaza SIN clonar ────────────────────
 
 test("baseRevision-obsoleta-rechaza-sin-clonar", () => {
