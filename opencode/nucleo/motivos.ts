@@ -205,6 +205,30 @@
 //   movido/copiado a la ruta equivocada) — se rechaza ANTES de devolverlo, nunca se
 //   "repara" reasignando el id en silencio. Ver
 //   `docs/programacion-intencion/OPERATIONS.md` §10.1.
+//
+// Phase 1.1 (RX4, hallazgo externo RX4-01, CRÍTICO — cuarta revisión adversarial
+// independiente, `RX4_REPORT.md`) agrega, emitidos por `motor.ts` (`ejecutarLote`),
+// categoria "motor", `severidad: "blocking"`, `clasificacion: "rechazo"` siempre,
+// justo después de materializar el lote y ANTES de leer ningún campo de ningún
+// elemento (ver `IR-SPEC.md` §6.8/`OPERATIONS.md` §9.8 para el detalle completo):
+// - `LOTE_OPERACIONES_INVALIDO` — NUEVO. El lote (`SobreOperacion[]`) recibido no
+//   es, en sí mismo, un array (`null`/objeto/string) — más allá de lo que el tipo
+//   promete en compilación, sin protección en runtime. `datos: { razon }`.
+// - `SOBRE_OPERACION_INVALIDO` — REUSADO (código ya existente, `operaciones.ts`,
+//   categoria "operacion") con categoria `"motor"`: un ELEMENTO del lote, ya
+//   materializado en datos planos, no es un objeto (`null` es el caso alcanzable
+//   con JSON puro — un array denso con un elemento `null` es JSON perfectamente
+//   válido — pero cualquier otro no-objeto cae en el mismo caso). Detectado ACÁ,
+//   una capa antes de que el elemento llegue a `aplicarOperacion` (que también lo
+//   rechazaría con el mismo código, categoria "operacion", si llegara) — mismo
+//   criterio ya establecido por `CLAVE_DESCONOCIDA`/`AUTOCONEXION_INVALIDA`/
+//   `UMBRAL_NO_FINITO`/`ENTRADA_NO_ES_DATO_PLANO`: mismo código, distinta categoría
+//   según quién lo emite. `datos: { indice, razon }` — el índice del primer
+//   elemento inválido dentro del lote.
+//
+// En ambos casos, el rechazo es del LOTE ENTERO — `resultadosOperaciones: []`,
+// canónico/revisión/disco/buffer de undo intactos, igual que `BASE_REVISION_INVALIDA`
+// (E3-01, arriba).
 
 /**
  * Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion".

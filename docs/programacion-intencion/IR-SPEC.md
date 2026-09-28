@@ -595,6 +595,45 @@ profundidad de defensa si un futuro fix de `datos-planos.ts` tuviera un bug —
 la ronda RX3 mostró que confiar en una única pasada, sin un segundo mecanismo
 independiente, es exactamente el patrón que ya falló una vez.
 
+### 6.8. Phase 1.1 (RX4) — forma del LOTE de operaciones: array denso de objetos no nulos
+
+Hallazgo externo RX4-01, CRÍTICO — cuarta revisión adversarial independiente,
+`RX4_REPORT.md`. `materializarDatosPlanos` (§6.6) acepta legítimamente `null` (u
+otro dato plano no-objeto) tanto en la RAÍZ como en cualquier ELEMENTO de un
+array — son datos JSON perfectamente legítimos, y ese módulo nunca decide si
+son la forma correcta para el consumidor, sólo si son planos. Lo que faltaba
+era una tercera capa de contrato, específica del LOTE de `SobreOperacion[]`
+(`motor.ts::ejecutarLote`, las 3 puertas públicas del motor): el lote
+materializado tiene que ser, además, un **array DENSO DE OBJETOS NO NULOS** —
+esa forma se valida UNA vez, justo después de materializar y ANTES de leer
+ningún campo de ningún elemento (ni siquiera `baseRevision` de la primera
+operación). Dos casos distintos, dos códigos:
+
+- El LOTE mismo no es un array (`null`/objeto/string, más allá de lo que el
+  tipo `SobreOperacion[]` promete en compilación — TypeScript es sintaxis
+  borrable, sin protección en runtime): `LOTE_OPERACIONES_INVALIDO`, categoría
+  `motor`, `datos: { razon }`.
+- Un ELEMENTO del lote (ya materializado) no es un objeto: reusa
+  `SOBRE_OPERACION_INVALIDO` — MISMO código que `operaciones.ts` emite para "el
+  sobre de operación no es un objeto" (categoría `operacion`), acá con
+  categoría `motor` porque lo detecta esta puerta ANTES de que el elemento
+  llegue a `aplicarOperacion` — mismo criterio ya establecido por
+  `CLAVE_DESCONOCIDA`/`AUTOCONEXION_INVALIDA`/`UMBRAL_NO_FINITO`/
+  `ENTRADA_NO_ES_DATO_PLANO`: mismo código, distinta categoría según quién lo
+  emite. `datos: { indice, razon }` — el índice del primer elemento inválido.
+
+En ambos casos, el rechazo es del LOTE ENTERO: canónico, revisión, disco y
+buffer de undo quedan intactos — `resultadosOperaciones: []`, nunca "unas
+operaciones sí, otras no" (mismo contrato que `BASE_REVISION_INVALIDA`,
+§6.6/E3-01).
+
+Ver también `operaciones.ts::ejecutarOperacion` (entry point público de Gate 5,
+`export function ejecutarOperacion`): el ECO de `idOperacion`/`idTransaccion`/
+`baseRevision` en el `ResultadoOperacion` sólo tiene sentido si el sobre
+materializado es, de hecho, un objeto plano — con un sobre `null`, el eco usa
+los mismos valores por defecto que cuando la materialización falla del todo
+(nunca lee `.idOperacion` de un valor que podría no ser un objeto).
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

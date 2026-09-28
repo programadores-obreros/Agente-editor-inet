@@ -1627,3 +1627,129 @@ test("lote multi-operacion con Conectar duplicada en la operacion 1 corta el lot
   assert.equal(r.resultadosOperaciones[0].motivos[0].categoria, "operacion", "el rechazo temprano de la OPERACION (no la defensa en profundidad post-lote, que seria categoria estructural)")
   assert.equal(motor.getProyecto().componentes.length, 2, "ningun componente de la operacion 2 se agrego — el canonico no cambio")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX4, hallazgo externo RX4-01, CRITICO — cuarta revision adversarial
+// independiente, RX4_REPORT.md): `materializarDatosPlanos` acepta legitimamente
+// `null` (dato JSON valido) tanto en la RAIZ como en cualquier ELEMENTO de un array
+// — este modulo nunca decide si esa es la FORMA correcta para el consumidor, solo
+// si es un dato plano. `ejecutarLote` (mas abajo, motor.ts) asumia sin verificar
+// que el lote materializado es un array DENSO DE OBJETOS: `operaciones[0]!.
+// baseRevision` (la PRIMERA lectura del lote, antes de clonar) y
+// `operacion.idOperacion`/`.idTransaccion`/`.baseRevision` (el eco dentro del loop
+// de aplicadores) leian el elemento CRUDO, sin proteccion — un elemento `null` (o
+// cualquier otro no-objeto) hacia explotar un `TypeError` crudo, exactamente lo que
+// el propio comentario de cabecera de este archivo ("el motor TAMBIEN se niega a...
+// nunca una excepcion cruda sin estructura") prohibe. Tambien alcanza un LOTE que
+// en si mismo no es un array (`null`/objeto/string) mas alla de lo que el tipo
+// `SobreOperacion[]` promete en compilacion (TypeScript es sintaxis borrable, sin
+// proteccion en runtime) — ninguna de las 3 puertas publicas del motor puede
+// asumir que su llamador (un futuro transporte HTTP, brief §37) respeta el tipo.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan una excepcion cruda ante un elemento null (u otro no-objeto) en el lote — siempre un rechazo estructurado, canonico/disco/undo intactos (hallazgo externo RX4-01)", () => {
+  const casosElementoUnico = [
+    { nombre: "null", valor: null },
+    { nombre: "undefined", valor: undefined },
+    { nombre: "numero", valor: 42 },
+    { nombre: "string", valor: "no-soy-un-sobre" },
+    { nombre: "array", valor: [] },
+  ]
+  for (const { nombre, valor } of casosElementoUnico) {
+    // motor.aplicar(x) — envuelve x en un lote de 1 puertas adentro.
+    {
+      const { motor, almacen } = crearMotorDePrueba()
+      const revisionAntes = motor.getProyecto().revision
+      let r
+      assert.doesNotThrow(() => {
+        r = motor.aplicar(valor)
+      }, `motor.aplicar NUNCA debe lanzar una excepcion cruda — elemento "${nombre}"`)
+      assert.equal(r.ok, false, `elemento "${nombre}" via aplicar: debe rechazar`)
+      assert.equal(r.resultadosOperaciones.length, 0, `elemento "${nombre}" via aplicar: el corte ocurre ANTES del loop — 0 resultadosOperaciones`)
+      assert.equal(motor.getProyecto().revision, revisionAntes, `elemento "${nombre}" via aplicar: el canonico no cambio`)
+      assert.equal(almacen.llamadasGuardar.length, 0, `elemento "${nombre}" via aplicar: nunca llamo a guardar`)
+      assert.equal(motor.obtenerBufferUndo().length, 0, `elemento "${nombre}" via aplicar: el buffer de undo no se toco`)
+    }
+    // motor.aplicarTransaccion([x]).
+    {
+      const { motor, almacen } = crearMotorDePrueba()
+      let r
+      assert.doesNotThrow(() => {
+        r = motor.aplicarTransaccion([valor])
+      }, `motor.aplicarTransaccion NUNCA debe lanzar una excepcion cruda — elemento "${nombre}"`)
+      assert.equal(r.ok, false, `elemento "${nombre}" via aplicarTransaccion: debe rechazar`)
+      assert.equal(r.resultadosOperaciones.length, 0, `elemento "${nombre}" via aplicarTransaccion: 0 resultadosOperaciones`)
+      assert.equal(almacen.llamadasGuardar.length, 0, `elemento "${nombre}" via aplicarTransaccion: nunca llamo a guardar`)
+    }
+    // motor.proponer([x]) — dry-run, mismo contrato.
+    {
+      const { motor, almacen } = crearMotorDePrueba()
+      let r
+      assert.doesNotThrow(() => {
+        r = motor.proponer([valor])
+      }, `motor.proponer NUNCA debe lanzar una excepcion cruda — elemento "${nombre}"`)
+      assert.equal(r.ok, false, `elemento "${nombre}" via proponer: debe rechazar`)
+      assert.equal(r.resultadosOperaciones.length, 0, `elemento "${nombre}" via proponer: 0 resultadosOperaciones`)
+      assert.equal(almacen.llamadasGuardar.length, 0, `elemento "${nombre}" via proponer: dry-run nunca persiste`)
+    }
+  }
+
+  // Lote de 2: el elemento invalido puede ir primero o segundo — el lote ENTERO se
+  // rechaza en los dos casos, nunca "la operacion valida si, la invalida no".
+  const operacionValida = { idOperacion: "op-valida", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }
+  for (const { nombre, lote } of [
+    { nombre: "[opValida, null]", lote: [operacionValida, null] },
+    { nombre: "[null, opValida]", lote: [null, operacionValida] },
+  ]) {
+    const { motor, almacen } = crearMotorDePrueba()
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicarTransaccion(lote)
+    }, `motor.aplicarTransaccion NUNCA debe lanzar una excepcion cruda — lote ${nombre}`)
+    assert.equal(r.ok, false, `lote ${nombre}: debe rechazar completo`)
+    assert.equal(r.resultadosOperaciones.length, 0, `lote ${nombre}: 0 resultadosOperaciones — el corte es ANTES del loop, ni siquiera la operacion valida se ejecuta`)
+    assert.equal(almacen.llamadasGuardar.length, 0, `lote ${nombre}: nunca llamo a guardar — ni la operacion valida se persistio sola`)
+    assert.equal(motor.getProyecto().placa, null, `lote ${nombre}: la placa NUNCA se seteo — el canonico no cambio`)
+  }
+})
+
+test("motor.aplicarTransaccion/proponer NUNCA propagan una excepcion cruda cuando el LOTE MISMO no es un array (hallazgo externo RX4-01)", () => {
+  const casosLote = [
+    { nombre: "null", valor: null },
+    { nombre: "objeto", valor: {} },
+    { nombre: "string", valor: "no-soy-un-lote" },
+  ]
+  for (const { nombre, valor } of casosLote) {
+    {
+      const { motor, almacen } = crearMotorDePrueba()
+      let r
+      assert.doesNotThrow(() => {
+        r = motor.aplicarTransaccion(valor)
+      }, `motor.aplicarTransaccion NUNCA debe lanzar una excepcion cruda — lote "${nombre}"`)
+      assert.equal(r.ok, false, `lote "${nombre}": debe rechazar`)
+      assert.equal(r.resultadosOperaciones.length, 0, `lote "${nombre}": 0 resultadosOperaciones`)
+      assert.equal(r.motivos[0].codigo, "LOTE_OPERACIONES_INVALIDO", `lote "${nombre}": codigo especifico de lote malformado`)
+      assert.equal(r.motivos[0].categoria, "motor")
+      assert.equal(almacen.llamadasGuardar.length, 0, `lote "${nombre}": nunca llamo a guardar`)
+    }
+    {
+      const { motor, almacen } = crearMotorDePrueba()
+      let r
+      assert.doesNotThrow(() => {
+        r = motor.proponer(valor)
+      }, `motor.proponer NUNCA debe lanzar una excepcion cruda — lote "${nombre}"`)
+      assert.equal(r.ok, false, `lote "${nombre}" via proponer: debe rechazar`)
+      assert.equal(almacen.llamadasGuardar.length, 0)
+    }
+  }
+})
+
+test("elemento null en el lote rechaza con SOBRE_OPERACION_INVALIDO, categoria motor, e incluye el indice (hallazgo externo RX4-01)", () => {
+  const { motor } = crearMotorDePrueba()
+  const operacionValida = { idOperacion: "op-valida", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }
+  const r = motor.aplicarTransaccion([operacionValida, null])
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "SOBRE_OPERACION_INVALIDO")
+  assert.equal(r.motivos[0].categoria, "motor", "mismo codigo que operaciones.ts, distinta categoria — mismo criterio que ENTRADA_NO_ES_DATO_PLANO/BASE_REVISION_INVALIDA")
+  assert.equal(r.motivos[0].datos.indice, 1, "el indice del elemento invalido dentro del lote")
+})

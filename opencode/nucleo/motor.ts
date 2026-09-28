@@ -74,7 +74,7 @@ import { clonarProfundo, congelarProfundo } from "./canonico.ts"
 import { validarProyecto as validarProyectoReal } from "./validar.ts"
 import { validarIdsYContador } from "./id.ts"
 import { validarFormaProyecto, esEnteroNoNegativo } from "./cargador.ts"
-import { aplicarOperacion, type ResultadoOperacion, type SobreOperacion } from "./operaciones.ts"
+import { aplicarOperacion, esObjetoPlano, type ResultadoOperacion, type SobreOperacion } from "./operaciones.ts"
 import { materializarDatosPlanos, motivoEntradaNoPlano } from "./datos-planos.ts"
 
 // Phase 1.1 (RX2, hallazgo externo RX2-01, CRÍTICO — revisión adversarial
@@ -406,6 +406,34 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     }
   }
 
+  /** Phase 1.1 (RX4, hallazgo externo RX4-01, CRITICO): el LOTE recibido, ya
+   * materializado en datos planos, no es en si mismo un array — más allá de lo que
+   * el tipo `SobreOperacion[]` promete en compilación (TypeScript es sintaxis
+   * borrable, sin protección en runtime), nada impide que un llamador en proceso
+   * (o un futuro transporte HTTP, brief §37) le pase `null`/un objeto/un string
+   * directo a `aplicarTransaccion`/`proponer`. Código NUEVO, distinto de
+   * `SOBRE_OPERACION_INVALIDO` (ese es "un ELEMENTO del lote no es un objeto"; este
+   * es "el LOTE mismo no es un array") — nunca deben confundirse. */
+  function motivoLoteInvalido(razon: string): Motivo {
+    return { codigo: "LOTE_OPERACIONES_INVALIDO", categoria: "motor", severidad: "blocking", clasificacion: "rechazo", datos: { razon } }
+  }
+
+  /** Phase 1.1 (RX4, hallazgo externo RX4-01, CRITICO): un ELEMENTO del lote (ya
+   * materializado en datos planos) no es un objeto — `null` es el caso alcanzable
+   * por JSON puro (un array denso con un elemento `null` es JSON perfectamente
+   * válido), pero cualquier otro no-objeto (number/string/boolean/array) cae en el
+   * mismo caso. Reusa `SOBRE_OPERACION_INVALIDO` — MISMO código que
+   * `operaciones.ts::analizarSobreOperacion` emite para "el sobre de operación no
+   * es un objeto" (categoria `operacion`), acá con categoria `motor` porque lo
+   * detecta esta puerta, ANTES de que el elemento llegue siquiera a
+   * `aplicarOperacion` — mismo criterio ya establecido por
+   * `CLAVE_DESCONOCIDA`/`AUTOCONEXION_INVALIDA`/`UMBRAL_NO_FINITO`/
+   * `ENTRADA_NO_ES_DATO_PLANO`: mismo código, distinta categoría según quién lo
+   * emite. */
+  function motivoSobreInvalidoEnLote(indice: number): Motivo {
+    return { codigo: "SOBRE_OPERACION_INVALIDO", categoria: "motor", severidad: "blocking", clasificacion: "rechazo", datos: { indice, razon: "el sobre de operacion no es un objeto" } }
+  }
+
   function ejecutarLote(operacionesCrudas: readonly SobreOperacion[], comprometer: boolean): ResultadoTransaccion {
     // Phase 1.1 (RX2, hallazgo externo RX2-01, CRÍTICO — revisión adversarial
     // independiente #2): materializa el LOTE COMPLETO en datos planos, UNA sola
@@ -421,7 +449,7 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     // "segunda lectura", ambas leen la MISMA copia plana. Si CUALQUIER operación del
     // lote no es un dato plano, el lote ENTERO se rechaza — no hay forma segura de
     // procesar unas sí y otras no si una de ellas podría mentir en una relectura.
-    const materializado = materializarDatosPlanos<readonly SobreOperacion[]>(operacionesCrudas, "operaciones")
+    const materializado = materializarDatosPlanos<unknown>(operacionesCrudas, "operaciones")
     if (!materializado.ok) {
       return congelarProfundo({
         ok: false,
@@ -431,7 +459,45 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
         resultadosOperaciones: [],
       })
     }
-    const operaciones = materializado.valor
+
+    // Phase 1.1 (RX4, hallazgo externo RX4-01, CRITICO — cuarta revision adversarial
+    // independiente, RX4_REPORT.md): `materializarDatosPlanos` acepta legítimamente
+    // `null` (u otro dato plano no-objeto) tanto en la RAIZ como en cualquier
+    // ELEMENTO de un array — son datos JSON perfectamente legítimos, y ESE módulo
+    // nunca decide si son la FORMA correcta para el consumidor, sólo si son planos.
+    // El código de acá abajo asumía sin verificar que el lote materializado es un
+    // ARRAY DENSO DE OBJETOS: `operaciones[0]!.baseRevision` (más abajo, antes de
+    // clonar) y `operacion.idOperacion`/`.idTransaccion`/`.baseRevision` (el eco
+    // dentro del loop de aplicadores) leían el elemento CRUDO sin protección — un
+    // elemento `null` (`motor.aplicar(null)`/`aplicarTransaccion([null])`/
+    // `proponer([null])`) o un lote que en sí mismo no es un array (más allá de lo
+    // que el tipo `SobreOperacion[]` promete en compilación — TypeScript es
+    // sintaxis borrable, sin protección en runtime) hacían explotar un `TypeError`
+    // CRUDO. La FORMA DEL LOTE (array denso de objetos no nulos) se valida ACÁ, una
+    // sola vez, ANTES de leer ningún campo de ningún elemento. Rechazo estructurado
+    // del LOTE ENTERO: canónico, revisión, disco y buffer de undo quedan intactos,
+    // igual que cualquier otro rechazo de esta función — nunca "unas operaciones sí,
+    // otras no".
+    if (!Array.isArray(materializado.valor)) {
+      return congelarProfundo({
+        ok: false,
+        baseRevision: canonico.revision,
+        revisionActual: canonico.revision,
+        motivos: [motivoLoteInvalido("el lote de operaciones no es un array")],
+        resultadosOperaciones: [],
+      })
+    }
+    const indiceInvalido = materializado.valor.findIndex((op) => !esObjetoPlano(op))
+    if (indiceInvalido !== -1) {
+      return congelarProfundo({
+        ok: false,
+        baseRevision: canonico.revision,
+        revisionActual: canonico.revision,
+        motivos: [motivoSobreInvalidoEnLote(indiceInvalido)],
+        resultadosOperaciones: [],
+      })
+    }
+    const operaciones = materializado.valor as readonly SobreOperacion[]
 
     // Phase 1.1 (hallazgo externo E3-05, MENOR): lote vacío es un no-op explícito,
     // ANTES de mirar `baseRevision` — nunca sube revisión, nunca persiste, nunca

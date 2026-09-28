@@ -434,6 +434,34 @@ primera (categoría `motor`) — una superficie que ni RX-01 ni RX-02 habían to
 un getter en el propio `baseRevision` del sobre crasheaba ahí, antes incluso de
 llegar a `aplicarOperacion`.
 
+## 9.8. Phase 1.1 (RX4) — la FORMA DEL LOTE (array denso de objetos no nulos), no sólo la forma de cada sobre (hallazgo externo RX4-01, CRÍTICO)
+
+Una cuarta revisión adversarial independiente (RX4) encontró que materializar el
+lote (§9.7) sólo garantiza "es un dato plano" — `materializarDatosPlanos` acepta
+legítimamente `null` (u otro dato plano no-objeto) tanto en la RAÍZ como en
+cualquier ELEMENTO de un array, porque `null` es JSON perfectamente legítimo y
+ese módulo no decide FORMA, sólo planitud. `ejecutarLote` (`motor.ts`) leía el
+lote ya materializado asumiendo sin verificar que era un array denso de
+objetos: `operaciones[0]!.baseRevision` (antes de clonar) y
+`operacion.idOperacion`/`.idTransaccion`/`.baseRevision` (el eco dentro del
+loop de aplicadores) explotaban con un `TypeError` crudo ante
+`motor.aplicar(null)`/`aplicarTransaccion([null])`/`proponer([null])`, o ante
+`aplicarTransaccion([opVálida, null])` (el crash ocurría DESPUÉS de que
+`aplicarOperacion` ya había clasificado ese mismo elemento `null`
+correctamente). Un lote que en sí mismo no es un array (`null`/objeto/string)
+también crasheaba, por la misma razón.
+
+**Fix:** justo después de materializar y ANTES de leer cualquier campo de
+cualquier elemento, `ejecutarLote` valida que el lote sea un array
+(`LOTE_OPERACIONES_INVALIDO`, categoría `motor`, si no lo es) y que CADA
+elemento sea un objeto plano no nulo (reusa `SOBRE_OPERACION_INVALIDO`,
+categoría `motor` — mismo código que `operaciones.ts` emite para "el sobre no
+es un objeto", detectado acá una capa más arriba). Rechazo del LOTE ENTERO en
+ambos casos — `resultadosOperaciones: []`, canónico/revisión/disco/undo
+intactos. Ver `IR-SPEC.md` §6.8 para el detalle completo, incluida la
+corrección paralela en `ejecutarOperacion` (el ECO del sobre no lee un campo de
+un valor que podría no ser un objeto).
+
 ## 10. Colisión de escritura entre motores que comparten almacén (hallazgo E3-07, MAJOR — resolución humana Phase 1.1, brief §21)
 
 `baseRevision` (§9.3) sólo protege contra un lost update DENTRO de un mismo motor:

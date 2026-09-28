@@ -656,6 +656,18 @@ test("aplicarOperacion/ejecutarOperacion NUNCA lanzan una excepcion cruda ante u
     { nombre: "SetComportamiento comportamiento sin cuando/entonces", operacion: { idOperacion: "op-n", actor: "agente", baseRevision: 0, tipo: "SetComportamiento", payload: { comportamiento: {} } }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
     { nombre: "CambiarComponente payload {}", operacion: { idOperacion: "op-o", actor: "agente", baseRevision: 0, tipo: "CambiarComponente", payload: {} }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
     { nombre: "AsignarPin payload {} (sin componente/terminal)", operacion: { idOperacion: "op-p", actor: "agente", baseRevision: 0, tipo: "AsignarPin", payload: {} }, codigoEsperado: "PAYLOAD_OPERACION_INVALIDO" },
+    // Phase 1.1 (RX4, hallazgo externo RX4-01, CRITICO — cuarta revision adversarial
+    // independiente): el SOBRE ENTERO es `null` (no un campo interno malformado
+    // dentro de un objeto, como los 17 casos de arriba). `aplicarOperacion` ya lo
+    // manejaba bien (`SOBRE_OPERACION_INVALIDO`, `null` nunca invoca ningun getter
+    // porque no hay ninguno) — el defecto real vivia en `ejecutarOperacion`
+    // (`operaciones.ts:480`): el eco de `idOperacion`/`idTransaccion`/`baseRevision`
+    // materializaba su PROPIA copia del sobre crudo y leia `.idOperacion` de ella sin
+    // verificar primero que fuera un objeto — con `operacion === null`, `materializado.
+    // valor === null` (null es un dato plano legitimo, `materializarDatosPlanos` lo
+    // acepta) y `null.idOperacion` explotaba con un TypeError crudo, DESPUES de que
+    // `aplicarOperacion` ya habia clasificado ese mismo `null` correctamente.
+    { nombre: "operacion === null (sobre entero, no un campo interno)", operacion: null, codigoEsperado: "SOBRE_OPERACION_INVALIDO" },
   ]
   for (const { nombre, operacion, codigoEsperado } of casos) {
     let directo

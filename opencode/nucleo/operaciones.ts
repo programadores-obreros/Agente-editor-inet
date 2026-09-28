@@ -109,7 +109,10 @@ const ACTORES_VALIDOS: readonly string[] = ["agente", "navegador"]
  * fail-closed que `CLAVES_PROYECTO` en `cargador.ts` (Gate 2, hallazgo E2-03). */
 const CLAVES_SOBRE_VALIDAS: readonly string[] = ["idOperacion", "idTransaccion", "actor", "baseRevision", "tipo", "payload"]
 
-function esObjetoPlano(v: unknown): v is Record<string, unknown> {
+// Phase 1.1 (RX4): exportada — `motor.ts` la reusa para validar la FORMA DEL LOTE
+// (array denso de objetos no nulos) ANTES de leer ningun elemento, ver
+// hallazgo externo RX4-01. Misma funcion, un solo lugar — nunca copiada.
+export function esObjetoPlano(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v)
 }
 
@@ -476,10 +479,23 @@ export function ejecutarOperacion(proyecto: Proyecto, operacion: SobreOperacion,
   // esta misma lectura en un `try/catch` puntual — `leerSeguro` — que protegía UNA
   // lectura pero no la clase entera). Si la materialización falla, no hay ningún
   // campo seguro que ecoar: se usan los mismos valores por defecto de siempre.
-  const materializado = materializarDatosPlanos<SobreOperacion>(operacion, "operacion")
-  const idOperacionEco = materializado.ok ? materializado.valor.idOperacion : ""
-  const idTransaccionEco = materializado.ok ? materializado.valor.idTransaccion : undefined
-  const baseRevisionEco = materializado.ok ? materializado.valor.baseRevision : 0
+  // Phase 1.1 (RX4, hallazgo externo RX4-01, CRITICO — cuarta revision adversarial
+  // independiente, RX4_REPORT.md): `materializarDatosPlanos` acepta legitimamente un
+  // `null` (o cualquier otro dato plano no-objeto) como valor RAIZ — es JSON valido,
+  // y este modulo nunca decide si esa es la forma correcta para el consumidor. Antes
+  // de este fix, `materializado.ok` sólo confirmaba "es un dato plano", nunca "es un
+  // OBJETO" — con `operacion === null` (el sobre entero, no un campo interno),
+  // `materializado.valor === null` y `.idOperacion` explotaba con un TypeError
+  // crudo, DESPUES de que `aplicarOperacion` (arriba) ya habia clasificado el mismo
+  // `null` correctamente (`SOBRE_OPERACION_INVALIDO`, sin crash). El eco sólo tiene
+  // sentido si el sobre materializado es, de hecho, un objeto plano — si no lo es,
+  // no hay ningun campo real que ecoar (mismos valores por defecto que cuando la
+  // materializacion falla del todo).
+  const materializado = materializarDatosPlanos<unknown>(operacion, "operacion")
+  const sobreMaterializado = materializado.ok && esObjetoPlano(materializado.valor) ? materializado.valor : null
+  const idOperacionEco = sobreMaterializado ? (sobreMaterializado.idOperacion as SobreOperacion["idOperacion"]) : ""
+  const idTransaccionEco = sobreMaterializado ? (sobreMaterializado.idTransaccion as SobreOperacion["idTransaccion"]) : undefined
+  const baseRevisionEco = sobreMaterializado ? (sobreMaterializado.baseRevision as SobreOperacion["baseRevision"]) : 0
 
   if (motivosPropios.some((m) => m.clasificacion === "rechazo")) {
     return {
