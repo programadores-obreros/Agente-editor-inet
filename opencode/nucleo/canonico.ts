@@ -27,7 +27,17 @@ function ordenarClavesProfundo(valor: unknown): unknown {
   if (valor !== null && typeof valor === "object") {
     const entradas = Object.entries(valor as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     const salida: Record<string, unknown> = {}
-    for (const [clave, val] of entradas) salida[clave] = ordenarClavesProfundo(val)
+    // Phase 1.1 (RX3-04, NOTA — RX3_REPORT.md): mismo anti-patrón latente que RX3-01
+    // (`datos-planos.ts`) — `salida[clave] = ...` sobre un objeto `{}` dispara el
+    // setter heredado `Object.prototype.__proto__` si `clave === "__proto__"`. Hoy no
+    // es explotable (las únicas llamadas a `canonicalizar()`, `almacen.ts`/
+    // `catalogo.ts`, reciben siempre un `Proyecto`/catálogo ya reconstruido
+    // campo-a-campo por `cargador.ts` — nunca un documento crudo con claves
+    // atacante-controladas sobreviviendo como propias), pero `Object.defineProperty`
+    // (semántica `[[DefineOwnProperty]]`, inmune a cualquier setter heredado) es
+    // defensa en profundidad trivial y no cambia la salida para ninguna entrada
+    // normal (mismos atributos enumerable/writable/configurable que la asignación).
+    for (const [clave, val] of entradas) Object.defineProperty(salida, clave, { value: ordenarClavesProfundo(val), enumerable: true, writable: true, configurable: true })
     return salida
   }
   return valor

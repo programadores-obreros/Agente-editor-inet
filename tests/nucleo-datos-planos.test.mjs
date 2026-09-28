@@ -116,6 +116,64 @@ test("rechaza clave Symbol en un objeto", () => {
   rechazo(obj)
 })
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO — revisión adversarial independiente
+// #3, RX3_REPORT.md): la copia se construía con `copia[clave] = valor` sobre un objeto
+// `{}` — que HEREDA el setter mágico `Object.prototype.__proto__`. Con `clave ===
+// "__proto__"`, esa asignación no crea una propiedad propia: dispara el setter
+// heredado y reemplaza el PROTOTIPO INTERNO de la copia — el propio postcondicional
+// del módulo ("el resultado tiene Object.prototype") quedaba falso para su propia
+// salida. Alcanzable con JSON PURO (`JSON.parse` produce una propiedad OWN literal
+// "__proto__", nunca dispara el setter — el bucle de copiado sí). Fix de DOS capas:
+// (a) una clave "__proto__" en CUALQUIER nivel es entrada NO plana, rechazo explícito
+// ANTES de copiar nada; (b) defensa en profundidad, la copia se construye con
+// `Object.defineProperty` (semántica `[[DefineOwnProperty]]`, inmune a cualquier
+// setter heredado), nunca con asignación por corchetes.
+//
+// Decisión (ver docs/programacion-intencion/DECISIONS.md): SÓLO "__proto__" se
+// rechaza. "constructor"/"prototype"/"toString"/"hasOwnProperty" NO son accessors de
+// `Object.prototype` (son propiedades de DATOS normales) — asignarlas con corchetes
+// sobre un objeto plano nunca dispara ningún setter, sólo crea/sombrea una propiedad
+// propia común. Sobre-rechazarlas romperia `propiedades` (bolsa abierta, `ir.ts`),
+// que hoy acepta "constructor" como clave de datos legítima (ver batería de controles
+// más abajo) sin ningún riesgo concreto que lo justifique.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("rechaza clave '__proto__' en un objeto de nivel raiz — entrada NO plana (hallazgo externo RX3-01)", () => {
+  const jsonTexto = '{"a":1,"__proto__":{"pwned":true}}'
+  const objetoAtacante = JSON.parse(jsonTexto)
+  assert.ok(Object.prototype.hasOwnProperty.call(objetoAtacante, "__proto__"), "control: JSON.parse produce '__proto__' como OWN key, nunca cambia el prototipo real")
+  const r = rechazo(objetoAtacante)
+  assert.match(r.razon, /__proto__/)
+})
+
+test("rechaza clave '__proto__' anidada en CUALQUIER nivel — entrada NO plana (hallazgo externo RX3-01)", () => {
+  const jsonTexto = '{"a":{"b":{"c":1,"__proto__":{"pwned":true}}}}'
+  const objetoAtacante = JSON.parse(jsonTexto)
+  const r = rechazo(objetoAtacante)
+  assert.match(r.razon, /__proto__/)
+  assert.equal(r.ruta, "raiz.a.b.__proto__")
+})
+
+test("invariante (hallazgo externo RX3-01): la salida de materializarDatosPlanos SIEMPRE tiene Object.prototype (objetos) o Array.prototype (arrays), y sus claves propias son EXACTAMENTE las de la entrada", () => {
+  const entrada = JSON.parse('{"a":1,"constructor":{"prototype":{"x":1}},"toString":"dato","hasOwnProperty":"otro-dato","b":[1,2,{"c":3}]}')
+  const copia = aceptado(entrada)
+  assert.equal(Object.getPrototypeOf(copia), Object.prototype, "el prototipo de la copia nunca puede ser otra cosa")
+  assert.deepEqual(Object.keys(copia).sort(), Object.keys(entrada).sort(), "ninguna clave se pierde ni se convierte en prototipo")
+  assert.equal(copia.constructor.prototype.x, 1, "'constructor'/'prototype' NO son accessors — se preservan como datos normales, sin heredar comportamiento especial")
+  assert.equal(copia.toString, "dato", "'toString' tambien se preserva como dato normal")
+  assert.equal(copia.hasOwnProperty, "otro-dato", "'hasOwnProperty' tambien se preserva como dato normal")
+  assert.equal(Object.getPrototypeOf(copia.b), Array.prototype)
+})
+
+test("regresion (adaptado de phase1_auditoria_externa/evidencia/e1/exp_proto_pollution.mjs): '__proto__' en pines Y en propiedades (con 'constructor.prototype' anidado) se rechaza, nunca contamina Object.prototype global", () => {
+  const raw = '{"pines":{"__proto__":{"polluted":true}},"propiedades":{"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted2":true}}}}'
+  const r = rechazo(JSON.parse(raw))
+  assert.match(r.razon, /__proto__/)
+  assert.equal(({}).polluted, undefined, "Object.prototype global NUNCA se contamina")
+  assert.equal(({}).polluted2, undefined, "Object.prototype global NUNCA se contamina")
+})
+
 // RX2-04: una clave NO enumerable se rechaza fail-closed — nunca se ignora en
 // silencio (antes de esta ronda, ni se copiaba ni se reportaba: quedaba invisible).
 test("rechaza propiedad NO enumerable (hallazgo externo RX2-04)", () => {

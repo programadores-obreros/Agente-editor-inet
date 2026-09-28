@@ -83,6 +83,54 @@
 // `materializarDatosPlanos`) porque un Proxy puede mentir o lanzar en CUALQUIER
 // trap que este módulo invoca (`ownKeys`, `getOwnPropertyDescriptor`) — nunca
 // propaga una excepción cruda: siempre un `ResultadoMaterializacion` estructurado.
+//
+// Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO — revisión adversarial independiente
+// #3, RX3_REPORT.md): reabre, en forma PEOR (alcanzable con JSON PURO, sin Proxies ni
+// getters in-process), la MISMA clase que RX2 (arriba) declaró cerrada. La rama objeto
+// construía la copia con `copia[clave] = recorrer(...)` sobre un `Record<string,
+// unknown> = {}` — un objeto PLANO que HEREDA el accessor
+// `Object.prototype.__proto__` (un setter mágico, no una propiedad de datos común).
+// Cuando `clave === "__proto__"`, esa asignación por corchetes NO crea una propiedad
+// propia: dispara el setter heredado y reemplaza el PROTOTIPO INTERNO de `copia` por
+// el valor recorrido — el propio postcondicional de este módulo ("el resultado tiene
+// `Object.prototype`") quedaba falso para su propia salida. Es el gotcha clásico
+// "`JSON.parse` es inmune a la contaminación de prototipo, pero un bucle `obj[k]=v`
+// sobre esas mismas claves NO lo es" — y esta función era exactamente ese bucle.
+// Consecuencias observadas (RX3_REPORT.md): la clave desaparecía de `Object.keys` de
+// la copia (bypaseando `CLAVE_DESCONOCIDA` en la raíz del documento, `cargador.ts`),
+// y dentro de `propiedades` (bolsa abierta, forma libre a propósito) el dato se
+// perdía en silencio — la "reparación silenciosa" que el brief prohíbe.
+//
+// Fix de DOS capas, ninguna sustituye a la otra:
+// (a) Rechazo EXPLÍCITO: una clave literal `"__proto__"` en CUALQUIER nivel de la
+//     entrada es, por definición, NO un dato plano — se rechaza con
+//     `ENTRADA_NO_ES_DATO_PLANO` ANTES de copiar nada (nunca tiene un uso legítimo en
+//     el IR, y cualquier `JSON.parse` de un cliente real puede producirla).
+// (b) Defensa en profundidad: la copia se construye con `Object.defineProperty`
+//     (semántica `[[DefineOwnProperty]]`), NUNCA con asignación por corchetes
+//     (`[[Set]]`) — inmune a CUALQUIER setter heredado, conocido o futuro, no sólo a
+//     `__proto__`. Si (a) alguna vez se rompiera por un refactor futuro, (b) por sí
+//     sola ya evita que la copia cambie de prototipo (aunque no evita, por diseño, que
+//     la clave sobreviva como dato propio — ver la nota de mutante más abajo).
+//
+// Decisión (ver `docs/programacion-intencion/DECISIONS.md`): SÓLO `"__proto__"` se
+// rechaza explícitamente. `"constructor"`/`"prototype"`/`"toString"`/
+// `"hasOwnProperty"` NO son accessors de `Object.prototype` — son propiedades de
+// DATOS comunes (`Object.prototype.constructor` es un dato, no un `get`/`set`) — así
+// que asignarlas con corchetes sobre un objeto plano NUNCA dispara ningún setter,
+// sólo crea/sombrea una propiedad propia normal (confirmado por bacteria de ataque,
+// RX3_REPORT.md, "05_bateria_controles.mjs"). Sobre-rechazarlas sin un riesgo
+// concreto rompería `propiedades` (bolsa abierta, `ir.ts`), que hoy acepta
+// `"constructor"` como clave de datos legítima.
+//
+// Nota sobre el mutante "quitar sólo el rechazo explícito de `__proto__`, dejar
+// `defineProperty`": con `defineProperty` solo, `__proto__` sobrevive como clave
+// PROPIA normal de la copia (nunca cambia el prototipo) — en la RAÍZ del documento,
+// `CLAVE_DESCONOCIDA` (`cargador.ts`, `Object.keys(doc)`) la atrapa igual, porque
+// ahora SÍ aparece en `Object.keys`. Pero dentro de `propiedades` (bolsa abierta, sin
+// chequeo de claves) esa clave SOBREVIVE como dato — nunca se rechaza — y
+// `canonicalizar()` (`canonico.ts`, mismo anti-patrón, ver RX3-04) podría corromperse
+// al persistir. El rechazo EXPLÍCITO (a) es necesario, no sólo defensivo.
 
 import type { CategoriaMotivo, Motivo } from "./motivos.ts"
 
@@ -189,6 +237,16 @@ export function materializarDatosPlanos<T = unknown>(valor: unknown, ruta: strin
       if (typeof clave === "symbol") {
         throw new RechazoMaterializacion(rutaActual, "clave Symbol no es un dato plano")
       }
+      // Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO): "__proto__" es el ÚNICO
+      // nombre de clave que `Object.prototype` expone como ACCESSOR (setter mágico) en
+      // vez de dato — sobre un objeto plano, `copia["__proto__"] = valor` no crea una
+      // propiedad propia, reemplaza el prototipo interno de `copia`. Alcanzable con
+      // JSON puro (`JSON.parse('{"__proto__":...}')` produce esa clave como propiedad
+      // OWN real, ver cabecera del módulo) — se rechaza ANTES de leer el descriptor,
+      // nunca se intenta "adivinar" si esta instancia en particular sería inofensiva.
+      if (clave === "__proto__") {
+        throw new RechazoMaterializacion(`${rutaActual}.${clave}`, "clave '__proto__' no es un dato plano representable en JSON (previene contaminacion de prototipo, RX3-01)")
+      }
       const desc = Object.getOwnPropertyDescriptor(v, clave)
       if (!desc) {
         throw new RechazoMaterializacion(`${rutaActual}.${clave}`, "descriptor de propiedad inconsistente (posible Proxy que miente)")
@@ -201,7 +259,14 @@ export function materializarDatosPlanos<T = unknown>(valor: unknown, ruta: strin
       }
       // Valor de propiedad de OBJETO: `undefined` SÍ se permite acá (ver comentario
       // de cabecera — mismo criterio que el resto del núcleo ya usa para "ausente").
-      copia[clave] = recorrer(desc.value, `${rutaActual}.${String(clave)}`, profundidad + 1, siguientesAncestros, true)
+      const valorRecorrido = recorrer(desc.value, `${rutaActual}.${String(clave)}`, profundidad + 1, siguientesAncestros, true)
+      // Phase 1.1 (RX3-01): `Object.defineProperty` (semántica `[[DefineOwnProperty]]`)
+      // en vez de `copia[clave] = ...` (semántica `[[Set]]`) — defensa en profundidad,
+      // inmune a CUALQUIER setter heredado de `Object.prototype`, conocido o futuro,
+      // no sólo a `__proto__`. Mismos atributos que produciría la asignación normal
+      // (enumerable/writable/configurable), así que no cambia la forma de la copia
+      // para ninguna entrada que ya aceptaba este módulo.
+      Object.defineProperty(copia, clave, { value: valorRecorrido, enumerable: true, writable: true, configurable: true })
     }
     return copia
   }

@@ -1349,6 +1349,116 @@ test("AgregarComponente con propiedades como objeto plano comun sigue commiteand
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO — revisión adversarial independiente
+// #3, RX3_REPORT.md): "__proto__" como clave literal (alcanzable con JSON PURO, vía
+// JSON.parse — nunca un literal de objeto JS) reabría, en forma PEOR, la clase que RX2
+// cerró: la copia de `materializarDatosPlanos` se construía con asignación por
+// corchetes sobre un objeto `{}`, que dispara el setter heredado
+// `Object.prototype.__proto__` y corrompe el PROTOTIPO de la copia en vez de crear una
+// propiedad propia — bypaseando `CLAVE_DESCONOCIDA` en la raíz. Confirmado consistente
+// entre `crearMotorDeProyecto({proyectoInicial})` (Gate 6) y `cargarProyecto()` (Gate 2)
+// — ambas comparten `validarFormaProyecto` — mismo veredicto de rechazo en las dos.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("constructor-rechaza-proyectoInicial-con-clave-'__proto__'-en-la-raiz — MISMO veredicto que cargarProyecto del mismo texto (hallazgo externo RX3-01)", () => {
+  const jsonTexto = JSON.stringify({
+    id: "proy-rx3-01",
+    schemaVersion: "1.0.0",
+    catalogoVersion: catalogo.version,
+    catalogoHash: catalogo.hash,
+    revision: 0,
+    siguienteIdLocal: 0,
+    placa: null,
+    componentes: [],
+    conexiones: [],
+    comportamientos: [],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }).replace('"placa":null', '"placa":null,"__proto__":{"pwned":true}')
+
+  const proyectoInicial = JSON.parse(jsonTexto)
+  assert.ok(Object.prototype.hasOwnProperty.call(proyectoInicial, "__proto__"), "control: JSON.parse produce '__proto__' como OWN key")
+
+  let excepcion = null
+  assert.throws(
+    () => {
+      crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso() })
+    },
+    (err) => {
+      excepcion = err
+      assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `debe lanzar ErrorEstadoInicialInvalido, NUNCA construirse: ${err?.stack ?? err}`)
+      assert.ok(err.motivos.some((m) => m.codigo === "ENTRADA_NO_ES_DATO_PLANO"), `motivos: ${JSON.stringify(err.motivos)}`)
+      return true
+    },
+    "un proyectoInicial con '__proto__' en la raiz NUNCA debe construir un motor operable",
+  )
+  void excepcion
+
+  const rCarga = cargarProyecto(jsonTexto)
+  assert.equal(rCarga.ok, false, "misma puerta compartida (validarFormaProyecto) -> mismo veredicto que cargarProyecto, nunca uno acepta y el otro rechaza")
+  assert.equal(rCarga.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+})
+
+test("motor.proponer/aplicar/aplicarTransaccion rechazan '__proto__' en el SOBRE de la operacion — mismo veredicto en las 3 puertas (hallazgo externo RX3-01)", () => {
+  function sobreConProtoEnEnvoltorio(baseRevision) {
+    const jsonTexto = JSON.stringify({ idOperacion: "op-x", actor: "agente", baseRevision, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }).replace(
+      '"actor":"agente"',
+      '"actor":"agente","__proto__":{"pwned":true}',
+    )
+    return JSON.parse(jsonTexto)
+  }
+
+  {
+    const { motor } = crearMotorDePrueba()
+    const r = motor.proponer([sobreConProtoEnEnvoltorio(0)])
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  }
+  {
+    const { motor, almacen } = crearMotorDePrueba()
+    const r = motor.aplicar(sobreConProtoEnEnvoltorio(0))
+    assert.equal(r.ok, false)
+    assert.equal(almacen.llamadasGuardar.length, 0)
+  }
+  {
+    const { motor } = crearMotorDePrueba()
+    const r = motor.aplicarTransaccion([sobreConProtoEnEnvoltorio(0)])
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  }
+})
+
+test("motor.proponer/aplicar/aplicarTransaccion rechazan '__proto__' en propiedades de AgregarComponente (bolsa abierta) — MISMO veredicto en las 3 puertas, nunca pierde el dato en silencio (hallazgo externo RX3-01)", () => {
+  function payloadConProtoEnPropiedades() {
+    return JSON.parse('{"tipo":"led","propiedades":{"color":"rojo","__proto__":{"pwned":true,"secreto":"fuga-via-operacion"}}}')
+  }
+
+  {
+    const { motor } = crearMotorDePrueba()
+    const r = motor.proponer([nuevaOperacion("AgregarComponente", payloadConProtoEnPropiedades(), 0)])
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+    assert.match(
+      r.motivos[0].datos.razon,
+      /__proto__/,
+      `hallazgo externo RX3-01 (Repro 3): el diagnostico debe nombrar la causa real ('__proto__'), nunca el mensaje FALSO "instancia de clase u objeto exotico" que salia sobre JSON puro antes de este fix: ${r.motivos[0].datos.razon}`,
+    )
+  }
+  {
+    const { motor, almacen } = crearMotorDePrueba()
+    const r = motor.aplicar(nuevaOperacion("AgregarComponente", payloadConProtoEnPropiedades(), 0))
+    assert.equal(r.ok, false)
+    assert.equal(almacen.llamadasGuardar.length, 0, "un intento rechazado nunca persiste")
+    assert.equal(motor.getProyecto().componentes.length, 0, "el canonico no cambio")
+  }
+  {
+    const { motor } = crearMotorDePrueba()
+    const r = motor.aplicarTransaccion([nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0), nuevaOperacion("AgregarComponente", payloadConProtoEnPropiedades(), 0)])
+    assert.equal(r.ok, false)
+    assert.equal(motor.getProyecto().placa, null, "el lote entero rechaza — ni siquiera la operacion inocua anterior queda aplicada")
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // Phase 1.1 (hallazgo externo RX-03, MAYOR — revisión adversarial independiente):
 // `validarIdsYContador` (id.ts, hallazgos E1-01/E1-02) corre en el Loader y en la
 // construcción del motor (`proyectoInicial`) — pero NUNCA dentro del pipeline continuo

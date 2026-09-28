@@ -784,6 +784,25 @@ test("aplicarOperacion/ejecutarOperacion NUNCA propagan un getter-que-explota de
   }
 })
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX3, hallazgo externo RX3-01, CRÍTICO — revisión adversarial independiente
+// #3, RX3_REPORT.md): "__proto__" como clave literal, alcanzable con JSON PURO (vía
+// JSON.parse — NUNCA un literal de objeto JS, que la gramática del lenguaje interpreta
+// como prototipo en tiempo de parseo del código fuente), corrompía el prototipo de la
+// copia materializada. Acá, en `aplicarOperacion` (Gate 5), la MISMA forma de ataque en
+// `payload.propiedades` (la bolsa abierta de `AgregarComponente`).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("aplicarOperacion rechaza '__proto__' como clave en payload.propiedades (AgregarComponente) — entrada NO plana, JSON puro via JSON.parse (hallazgo externo RX3-01)", () => {
+  const p = proyectoBase()
+  const payload = JSON.parse('{"tipo":"led","propiedades":{"color":"rojo","__proto__":{"pwned":true,"secreto":"fuga-via-operacion"}}}')
+  assert.ok(Object.prototype.hasOwnProperty.call(payload.propiedades, "__proto__"), "control: JSON.parse produce '__proto__' como OWN key")
+  const r = aplicarOperacion(p, nuevaOperacion("AgregarComponente", payload), catalogo)
+  assert.equal(r.proyecto, p, "el proyecto devuelto debe ser la MISMA referencia — un rechazo nunca muta")
+  assert.equal(r.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO")
+  assert.equal(r.motivos[0].clasificacion, "rechazo")
+})
+
 // No-regresión: un string VACÍO DENTRO de `payload` (no en el sobre) nunca es "forma
 // inválida" — sigue siendo el mismo REFERENCIA_INEXISTENTE de siempre (mismo criterio
 // que ya fija tests/nucleo-adversarial.test.mjs contra el motor real, acá fijado
