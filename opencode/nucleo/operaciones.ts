@@ -36,6 +36,7 @@ import type { Motivo } from "./motivos.ts"
 import { formatearIdLocal } from "./id.ts"
 import { validarProyecto } from "./validar.ts"
 import { esAutoconexion, mismaConexion } from "./conexion.ts"
+import { materializarDatosPlanos, motivoEntradaNoPlano } from "./datos-planos.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Tipos del sobre (OPERATIONS.md §2). CrearProyecto NO participa de este dispatch
@@ -220,31 +221,35 @@ function validarFormaPayload(tipo: TipoOperacion, payload: unknown): string | nu
 // aplicarOperacion — el dispatch, switch por tipo (nunca por id de componente)
 // ════════════════════════════════════════════════════════════════════════════════════
 
-export function aplicarOperacion(proyecto: Proyecto, operacion: SobreOperacion, catalogo: Catalogo): ResultadoAplicacion {
-  // Phase 1.1 (hallazgo externo RX-02, CRÍTICO — revisión adversarial independiente,
-  // reabre E2-02): `analizarSobreOperacion`/`validarFormaPayload` LEEN campos del
-  // sobre/payload que el LLAMADOR controla (`operacion.actor`, `payload.placa`,
-  // `payload.comportamiento.cuando.umbral.valor`, etc.) — el fix de E2-02 (arriba)
-  // razonó sólo sobre "JSON crudo" (que nunca produce getters), no sobre "cualquier
-  // valor JS que un llamador en proceso pueda construir" (un adaptador futuro, un
-  // wrapper de test, un ORM con propiedades lazy). Un getter que lanza en cualquiera
-  // de esos campos propagaba una excepción cruda a través de las 3 puertas públicas
-  // del motor Y de `aplicarOperacion` directo — exactamente la clase de defecto que
-  // E2-02 ya había cerrado para otro caso. La lectura de FORMA (nunca el dispatch real
-  // de abajo, que si falla es un problema del núcleo, no de "entrada inválida") se
-  // envuelve acá, una sola vez, en un único try/catch — brief §12: "resultado
-  // estructurado también en error", nunca una excepción cruda al consumidor.
-  let motivoSobre: Motivo | null
-  let tipo: TipoOperacion
-  let razonPayload: string | null
-  try {
-    motivoSobre = analizarSobreOperacion(operacion)
-    if (motivoSobre) return { proyecto, motivos: [motivoSobre] }
-    tipo = operacion.tipo
-    razonPayload = validarFormaPayload(tipo, operacion.payload)
-  } catch (error) {
-    return { proyecto, motivos: [rechazo("EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA", { razon: "una lectura de forma del sobre/payload lanzo una excepcion en vez de devolver un valor", error: error instanceof Error ? error.message : String(error) })] }
+export function aplicarOperacion(proyecto: Proyecto, operacionCruda: SobreOperacion, catalogo: Catalogo): ResultadoAplicacion {
+  // Phase 1.1 (RX2, hallazgo externo RX2-01, CRÍTICO — revisión adversarial
+  // independiente #2, reabre E2-02/RX-02): el fix anterior (RX-02, 6822c5a)
+  // envolvía `analizarSobreOperacion`/`validarFormaPayload` en un único try/catch
+  // — pero el `switch` de despacho, DEBAJO de ese try/catch, volvía a escribir
+  // `operacion.payload as {...}` en CADA `case`: una SEGUNDA lectura, sin proteger,
+  // del MISMO campo. Un getter válido en la 1ª lectura (pasa la validación de
+  // forma) que lanza en la 2ª (el dispatch) atravesaba igual, crudo. El fix de
+  // esta ronda no agrega una tercera lectura protegida más: materializa el sobre
+  // COMPLETO (envoltorio + payload anidado) en datos planos, UNA sola vez, ANTES
+  // de leer nada — `analizarSobreOperacion`, `validarFormaPayload` y el `switch`
+  // de abajo trabajan TODOS sobre la MISMA copia (`operacion`, ya plana) — no hay
+  // una "segunda lectura" que pueda divergir de la primera, porque no hay una
+  // función (getter) que decida devolver algo distinto la segunda vez. Ver
+  // `opencode/nucleo/datos-planos.ts` para el detalle completo (incluida la razón
+  // por la que esto también cierra RX2-02: `payload.propiedades`, la bolsa
+  // abierta de `AgregarComponente`, viaja de acá en más como copia plana, nunca
+  // como el objeto vivo del llamador — `congelarProfundo`, en `motor.ts`, ya no
+  // puede toparse con un Proxy que lanza).
+  const materializado = materializarDatosPlanos<SobreOperacion>(operacionCruda, "operacion")
+  if (!materializado.ok) {
+    return { proyecto, motivos: [motivoEntradaNoPlano("operacion", materializado)] }
   }
+  const operacion = materializado.valor
+
+  const motivoSobre = analizarSobreOperacion(operacion)
+  if (motivoSobre) return { proyecto, motivos: [motivoSobre] }
+  const tipo = operacion.tipo
+  const razonPayload = validarFormaPayload(tipo, operacion.payload)
   if (razonPayload) return { proyecto, motivos: [rechazo("PAYLOAD_OPERACION_INVALIDO", { tipo, razon: razonPayload })] }
 
   switch (tipo) {
@@ -458,28 +463,23 @@ function aplicarCambiarComponente(proyecto: Proyecto, payload: { componente: str
 // ejecutarOperacion — combina rechazo propio + validación del estado resultante
 // ════════════════════════════════════════════════════════════════════════════════════
 
-/** Phase 1.1 (hallazgo externo RX-02, CRÍTICO): lee un campo del sobre para el ECO del
- * resultado (`idOperacion`/`idTransaccion`/`baseRevision`, ya leídos una vez, protegidos,
- * dentro de `aplicarOperacion`/`analizarSobreOperacion`) — si esa lectura misma lanza
- * (un getter que explota), devuelve el `porDefecto` en vez de propagar. Nunca decide
- * validez: eso ya corrió antes, protegido. */
-function leerSeguro<T>(fn: () => T, porDefecto: T): T {
-  try {
-    return fn()
-  } catch {
-    return porDefecto
-  }
-}
-
 export function ejecutarOperacion(proyecto: Proyecto, operacion: SobreOperacion, catalogo: Catalogo): ResultadoOperacion {
   const { proyecto: proyectoAplicado, motivos: motivosPropios } = aplicarOperacion(proyecto, operacion, catalogo)
 
-  // Estos son sólo el ECO del sobre en el resultado — la FORMA ya se validó,
-  // protegida, dentro de `aplicarOperacion` de arriba. Leerlos de nuevo acá para
-  // construir el resultado nunca debe poder propagar una excepción cruda (RX-02).
-  const idOperacionEco = leerSeguro(() => operacion.idOperacion, "")
-  const idTransaccionEco = leerSeguro(() => operacion.idTransaccion, undefined)
-  const baseRevisionEco = leerSeguro(() => operacion.baseRevision, 0)
+  // Phase 1.1 (RX2, hallazgo externo RX2-01): estos son sólo el ECO del sobre en el
+  // resultado — la FORMA ya se materializó/validó dentro de `aplicarOperacion` de
+  // arriba. `ejecutarOperacion` recibe el mismo `operacion` CRUDO como parámetro
+  // propio (no el que `aplicarOperacion` ya materializó puertas adentro — esa copia
+  // no se expone fuera de esa función), así que materializa su PROPIA copia acá,
+  // sólo para poder leer estos tres campos sin arriesgar una segunda lectura sin
+  // proteger (el defecto exacto que reabrió RX2-01: el fix anterior, RX-02, envolvía
+  // esta misma lectura en un `try/catch` puntual — `leerSeguro` — que protegía UNA
+  // lectura pero no la clase entera). Si la materialización falla, no hay ningún
+  // campo seguro que ecoar: se usan los mismos valores por defecto de siempre.
+  const materializado = materializarDatosPlanos<SobreOperacion>(operacion, "operacion")
+  const idOperacionEco = materializado.ok ? materializado.valor.idOperacion : ""
+  const idTransaccionEco = materializado.ok ? materializado.valor.idTransaccion : undefined
+  const baseRevisionEco = materializado.ok ? materializado.valor.baseRevision : 0
 
   if (motivosPropios.some((m) => m.clasificacion === "rechazo")) {
     return {

@@ -690,19 +690,26 @@ test("el sobre de operacion rechaza una clave extra desconocida con CLAVE_DESCON
   assert.deepEqual(r.motivos[0].datos.claves, ["extraField"])
 })
 
-// Phase 1.1 (hallazgo externo RX-02, CRÍTICO — reabre E2-02): `analizarSobreOperacion`/
+// Phase 1.1 (hallazgo externo RX-02, CRÍTICO — reabre E2-02; REABIERTO a su vez por
+// RX2-01, revisión adversarial independiente #2): `analizarSobreOperacion`/
 // `validarFormaPayload` LEEN campos del sobre/payload (`operacion.actor`,
-// `payload.placa`, `payload.comportamiento.cuando.umbral.valor`, etc.) sin ningún
-// `try/catch` — un getter que lanza en cualquiera de esos campos (algo que ningún JSON
-// real puede producir, pero que un llamador en proceso — un futuro adaptador, un
-// wrapper de test, un ORM con propiedades lazy — sí puede construir) propagaba una
-// excepción cruda a través de `aplicarOperacion` en vez del `Motivo` estructurado que
-// el propio fix de E2-02 prometía. Los 5 casos de acá son los que reprodujo RX
+// `payload.placa`, `payload.comportamiento.cuando.umbral.valor`, etc.) — un getter
+// que lanza en cualquiera de esos campos (algo que ningún JSON real puede producir,
+// pero que un llamador en proceso — un futuro adaptador, un wrapper de test, un ORM
+// con propiedades lazy — sí puede construir) propagaba una excepción cruda. El fix
+// de RX-02 (`try/catch` puntual alrededor de UNA lectura) no alcanzaba: RX2-01
+// encontró que el `switch` de despacho, más abajo, volvía a leer `operacion.payload`
+// SIN proteger — una SEGUNDA lectura. El fix de esta ronda (RX2) materializa el
+// sobre COMPLETO en datos planos, UNA sola vez, antes de leer nada — no hay una
+// "segunda lectura" que pueda divergir, así que el código de rechazo pasa a ser el
+// único y estable `ENTRADA_NO_ES_DATO_PLANO` (`datos-planos.ts`), no
+// `EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA` (código que esta ronda deja de
+// emitir — ver `operaciones.ts`). Los 5 casos de acá son los que reprodujo RX
 // (T9/scripts/03_e2_getter_via_motor.mjs): getter en el SOBRE (`actor`), en el
 // PAYLOAD de primer nivel (`placa`), y en un campo MÁS anidado del payload
 // (`comportamiento.cuando.umbral.valor`) — más dos casos adicionales para cubrir
 // `idOperacion` (sobre) y un extremo de `Conectar` (payload anidado en otra operación).
-test("aplicarOperacion/ejecutarOperacion NUNCA propagan un getter-que-explota del sobre/payload — siempre un Motivo estructurado (hallazgo externo RX-02, reabre E2-02)", () => {
+test("aplicarOperacion/ejecutarOperacion NUNCA propagan un getter-que-explota del sobre/payload — siempre un Motivo estructurado (hallazgo externo RX-02/RX2-01)", () => {
   const p = proyectoBase()
 
   function conGetterQueExplota(objetoBase, campo, mensaje) {
@@ -765,7 +772,8 @@ test("aplicarOperacion/ejecutarOperacion NUNCA propagan un getter-que-explota de
     assert.equal(directo.proyecto, p, `caso "${nombre}": el proyecto devuelto debe ser la MISMA referencia`)
     assert.equal(directo.motivos.length, 1, `caso "${nombre}": debe traer exactamente un motivo`)
     assert.equal(directo.motivos[0].clasificacion, "rechazo", `caso "${nombre}": debe ser clasificacion rechazo`)
-    assert.equal(directo.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA", `caso "${nombre}": codigo esperado EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA, recibido ${directo.motivos[0].codigo}`)
+    assert.equal(directo.motivos[0].codigo, "ENTRADA_NO_ES_DATO_PLANO", `caso "${nombre}": codigo esperado ENTRADA_NO_ES_DATO_PLANO, recibido ${directo.motivos[0].codigo}`)
+    assert.equal(directo.motivos[0].categoria, "operacion", `caso "${nombre}": categoria esperada operacion`)
 
     let viaEjecutar
     assert.doesNotThrow(() => {
