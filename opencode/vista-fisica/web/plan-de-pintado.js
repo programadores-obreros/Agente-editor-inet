@@ -29,7 +29,14 @@ export function planDePintado(modeloDeVista) {
       tipo: "crearElemento",
       entidad: { tipo: "placa", id: modeloDeVista.placa.id },
       tag: modeloDeVista.placa.elementoWokwi,
-      atributos: {},
+      // `transform:scale()` es puramente cosmético (ModeloDeVista.placa.escala,
+      // `modelo-vista.ts`: "nunca afecta ninguna regla eléctrica") — la pieza Wokwi
+      // reserva su propio tamaño de layout en su Shadow DOM sin importar la escala
+      // (mismo comportamiento que ya documenta circuito.ts:93-99, "El ESP32 reserva
+      // 106,6px aunque se pinte a 133"): sin este estilo la placa se ve igual, sólo
+      // más chica que la escala pensada para el catálogo
+      // (`wokwi-render-datos.ts::ESCALA_WOKWI_POR_PLACA`, citando circuito.ts:641).
+      atributos: { style: `transform:scale(${modeloDeVista.placa.escala});transform-origin:top left` },
     })
   }
 

@@ -237,6 +237,15 @@ test("planDePintado: crea la placa y el LED, filas de cable con sus etiquetas, s
   const crearPlaca = plan.find((i) => i.tipo === "crearElemento" && i.entidad.tipo === "placa")
   assert.ok(crearPlaca)
   assert.equal(crearPlaca.tag, "wokwi-esp32-devkit-v1")
+  // La pieza Wokwi reserva su propio tamaño de layout (fijo, en su Shadow DOM) sin
+  // importar la escala — `transform:scale()` sólo agranda visualmente (mismo
+  // comportamiento documentado en circuito.ts:93-99). Sin este estilo la placa SE VE
+  // (tamaño nativo, no cero), pero más chica que la escala pensada para este catálogo
+  // (`wokwi-render-datos.ts::ESCALA_WOKWI_POR_PLACA`, "esp32-devkit-v1": 1.25, citando
+  // circuito.ts:641) — `vista.placa.escala` ya trae ese dato, plan-de-pintado.js lo
+  // descartaba (`atributos: {}`) en vez de aplicarlo.
+  assert.equal(vista.placa.escala, 1.25)
+  assert.match(crearPlaca.atributos.style, /transform:\s*scale\(1\.25\)/)
 
   const crearLed = plan.find((i) => i.tipo === "crearElemento" && i.entidad.tipo === "componente")
   assert.ok(crearLed)

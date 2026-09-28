@@ -380,6 +380,46 @@ test("GET / sirve la pagina (200, text/html)", async () => {
   }
 })
 
+// CONTRATO (no un grep fragil del nombre exacto del archivo): index.html tiene que
+// referenciar, entre los assets de la lista blanca que SIRVE este mismo servidor, al
+// menos uno cuyo CONTENIDO define los custom elements <wokwi-esp32-devkit-v1> y
+// <wokwi-led> (via customElements.define, verificado por evidencia de texto: ambos
+// nombres literales aparecen en el bundle). Sin ese script cargado, esos tags quedan
+// "undefined custom elements" (HTMLElement generico, invisible/sin tamano real) y la
+// pagina no muestra nada fisico aunque pintar.js/plan-de-pintado.js funcionen bien
+// (los tests de esos modulos usan un document FAKE que nunca ejecuta customElements
+// de verdad - por eso el defecto no se detectaba ahi). Defecto detectado por el
+// orquestador: index.html cargaba solo /assets/app.js (modulo), nunca el bundle Wokwi.
+test("GET / referencia un asset de la lista blanca que define <wokwi-esp32-devkit-v1>/<wokwi-led> (sin este script no se ve nada fisico)", async () => {
+  const dir = nuevoDir("http-index-bundle")
+  const { servicio } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const rHtml = await solicitud(servidor.url, "/")
+    assert.equal(rHtml.estado, 200)
+
+    const srcsDeScript = [...rHtml.cuerpo.matchAll(/<script[^>]+src\s*=\s*["']([^"']+)["']/g)].map((m) => m[1])
+    const assetsReferenciados = srcsDeScript.filter((src) => src.startsWith("/assets/"))
+    assert.ok(assetsReferenciados.length > 0, "index.html no referencia ningun /assets/<algo> como <script src> — no puede definir ningun custom element")
+
+    let algunoDefineLosElementos = false
+    for (const src of assetsReferenciados) {
+      const rAsset = await solicitud(servidor.url, src)
+      assert.equal(rAsset.estado, 200, `${src} esta referenciado por index.html pero el servidor lo da 404 (fuera de la lista blanca)`)
+      if (rAsset.cuerpo.includes("wokwi-esp32-devkit-v1") && rAsset.cuerpo.includes("wokwi-led")) {
+        algunoDefineLosElementos = true
+      }
+    }
+    assert.ok(
+      algunoDefineLosElementos,
+      "ninguno de los assets que index.html referencia define <wokwi-esp32-devkit-v1>/<wokwi-led> — falta cargar el bundle Wokwi (customElements.define nunca corre, los tags quedan indefinidos)",
+    )
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
 test("GET /assets/<nombre-en-la-lista-blanca> sirve el asset (200, JS)", async () => {
   const dir = nuevoDir("http-assets-ok")
   const { servicio } = prepararServicioConLed(dir, nuevoIdProyecto())

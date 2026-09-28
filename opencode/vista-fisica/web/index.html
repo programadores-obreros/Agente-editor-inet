@@ -4,6 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Tecnia Bot — vista física</title>
+<!--
+  Bundle Wokwi Elements — DEFECTO detectado por el orquestador (P2-T6, cierre):
+  esta página nunca cargó este script, así que <wokwi-esp32-devkit-v1>/<wokwi-led>
+  (creados dinámicamente por pintar.js) quedaban como "custom elements indefinidos"
+  (HTMLElement genérico, sin tamaño real) — se veía la página, pero no el circuito.
+
+  Mismo mecanismo que ya usa opencode/tool/circuito.ts (construirHTML, scriptSrc en
+  <head>): un <script> CLÁSICO (no `type="module"`) en <head>, que bloquea el
+  parseo hasta ejecutarse — así customElements.define() ya corrió ANTES de que
+  app.js (`type="module"`, diferido por spec) llegue a crear cualquier elemento vía
+  pintar.js. Mismo origen ('self'), servido por la lista blanca de
+  servidor-proyecto.ts — la CSP (`script-src 'self'`) ya lo permite sin cambios,
+  nunca inline. Verificado por tests/phase2-transporte-http.test.mjs, "GET /
+  referencia un asset de la lista blanca que define <wokwi-esp32-devkit-v1>/
+  <wokwi-led>".
+-->
+<script src="/assets/wokwi-bundle.js"></script>
 <style>
   :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
   * { box-sizing: border-box; }
