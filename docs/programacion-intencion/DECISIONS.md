@@ -595,3 +595,161 @@ save→load con el Almacén real, y reemplazo de sensor (`CambiarComponente`,
 rama C) da la MISMA clasificación de rango y la MISMA readiness en los 4
 casos — cierra exactamente la dependencia-del-camino que motivó el
 hallazgo MAYOR.
+
+## Phase 1.2 — invariante PERSISTIBLE ⇒ RECARGABLE es ESTRUCTURAL, no de readiness (hallazgo externo REA-01, CRÍTICO)
+
+**Qué encontró la re-auditoría externa (AUD-C-01):** `comparador`/`accion` de
+`SetComportamiento` sólo se validaban contra su dominio cerrado al CARGAR un
+documento (`cargador.ts`, Gate 2) — `operaciones.ts` (Gate 5) nunca los
+comprobaba. Un valor sintácticamente válido pero inventado (`"mayorQue"`,
+`"prender"`) commiteaba `ok:true`, se persistía, y al recargar ese mismo
+documento el loader lo rechazaba con `CAMPO_REQUERIDO_FALTANTE` — un
+documento PERSISTIBLE que dejaba de ser RECARGABLE. Como el compare-and-swap
+de `almacen.ts::guardar()` (E3-07) SIEMPRE relee el documento existente antes
+de escribir cualquier commit siguiente, el proyecto entero quedaba bloqueado
+(`PERSIST_FAILED` en cascada), no sólo el comportamiento roto. Detalle
+completo: `PHASE_1_1_EXTERNAL_FINDINGS.md` (REA-01) y
+`PHASE_1_1_EXTERNAL_MERGE_GATE.md`, ambos en
+`~/tecnia-bot-docs/phase1_1_reaudit_externa/`.
+
+**Decisión del orquestador, nombrando el invariante explícitamente:** todo
+`Proyecto` que una puerta pública del núcleo acepta persistir tiene que
+pertenecer al MISMO dominio estructural que el loader acepta al recargarlo —
+**PERSISTIBLE ⇒ RECARGABLE**. Es, a propósito, un invariante puramente
+ESTRUCTURAL (forma, dominio de enums cerrados, referencias sin colgar — el
+mismo nivel que `validarFormaProyecto`, Gate 2), **NO es una pregunta de
+readiness**: nunca responde ni participa en `derivarReadiness` (`validar.ts`,
+que sigue siendo el único dueño de esa pregunta), nunca convierte un motivo
+`clasificacion:"representable"` (warning o `blocking` representable, ej.
+`PIN_OCUPADO`) en rechazo, y nunca exige completitud — un proyecto incompleto
+sigue siendo persistible exactamente igual que antes. Path A (`PIN_OCUPADO` →
+commit + blocking + not-ready + editable) y los proyectos incompletos
+demostraron seguir persistibles sin cambios (regresión focal F4/F5/F18,
+re-auditoría focal ATK-3).
+
+**Fix, dos capas independientes:** (1) dominio normativo único
+(`ir.ts::COMPARADORES`/`ACCIONES`), importado por `cargador.ts` y
+`operaciones.ts` — `aplicarSetComportamiento` rechaza `VALOR_ENUM_DESCONOCIDO`
+ANTES de tocar estado; (2) barrera general en profundidad
+(`motor.ts::ejecutarLote`, ANTES de la bifurcación dry-run/commit) que corre
+`validarFormaProyecto` directo sobre el borrador — rechaza
+`ESTADO_NO_RECARGABLE` si el borrador dejó de ser recargable, aunque las 8
+operaciones públicas de Fase 1 ya no puedan alcanzar ese código (defensa
+PROSPECTIVA para un aplicador futuro de Fase 2+). **Decisión sobre el
+dry-run:** `motor.proponer()` corre la MISMA barrera, en el MISMO punto del
+pipeline que `motor.aplicar()`/`aplicarTransaccion()` — un `proponer()` nunca
+puede "aprobar" un lote que un commit real rechazaría.
+
+Una auditoría exhaustiva "loader-only" (cada invariante estructural del
+loader contra las 8 operaciones públicas + `id.ts` + `datos-planos.ts`,
+`evidencia/T-A2/auditoria_loader_only.md`, fuera de este repositorio)
+confirmó que `comparador`/`accion` era el ÚNICO gap real de esta clase — el
+resto de los campos o coincide exactamente entre loader y operación, o el
+dominio que la operación puede producir es un subconjunto estricto del que
+el loader acepta, o es una bolsa abierta sin dominio cerrado por diseño.
+
+Ver `IR-SPEC.md` §6.11, `OPERATIONS.md` §11 y
+`INVARIANTES-ENTRYPOINTS.md` (fila 18) para el contrato técnico completo;
+`tests/nucleo-operaciones.test.mjs`, `tests/nucleo-motor.test.mjs` y
+`tests/nucleo-persistible-recargable.test.mjs` (round-trip contra Almacén
+real) para tests y regresión; tres mutantes (M-A1/M-A2/M-A3, evidencia fuera
+de este repositorio) MUERTOS, incluido uno que demuestra que sin la capa 2
+la capa 1 sola no alcanza a detectar una divergencia de listas.
+
+## Phase 1.2 — E3-04b/REA-04 (encapsular Almacen): pasa a CONDICIÓN del gate de entrada de Phase 2, no una evaluación opcional
+
+**Qué encontró la re-auditoría externa (REA-04, carry-forward de E3-04b):**
+la entrada "Almacen es un puerto interno del composition root" de arriba
+registraba la decisión de Phase 1.1 como si fuera "decisión humana ya
+tomada" — la re-auditoría externa (`AUD-A-01`, `AUD-C-03`, `AUD-C-07`)
+verificó que eso es **FALSO**: la decisión de no encapsular la tomó un writer
+de Phase 1.1 y la aceptó el orquestador, nunca un humano. Se pondera como
+deuda técnica sin aval humano, no cerrada. `PHASE_1_1_EXTERNAL_MERGE_GATE.md`
+la reclasifica de "recomendado, revisitar" a **"Bloquea Phase 2: SÍ,
+condicionalmente — debe resolverse dentro de la tarea del primer composition
+root de Phase 2"**.
+
+**Decisión del orquestador (Phase 1.2, registrada en
+`odd/tasks/programacion-intencion-fase1-2.md`):** E3-04b/REA-04 **NO se
+implementa en Phase 1.2** (fuera del alcance autorizado: sólo REA-01/02/03) —
+la entrada de arriba ("Almacen es un puerto interno del composition root")
+sigue vigente sin cambios de código, pero su redacción "revisitar en Fase 2...
+ahí sí EVALUAR si encapsular... vale la pena" queda **actualizada de
+evaluación opcional a CONDICIÓN DEL GATE DE ENTRADA DE PHASE 2**, con la
+severidad y la fuente que fija REA-04: **"Encapsular Almacen cuando se
+introduzca el primer composition root real de Phase 2"** no es una mejora
+discrecional — es una condición que Phase 2 tiene que resolver en la MISMA
+tarea que escriba ese composition root, no después, antes de que cualquier
+consumidor retenga la instancia de `Almacen` de forma no contractual. No
+bloquea el merge de Phase 1.2 (confirmado por la re-auditoría focal, ATK-7 —
+el CAS de E3-07 sigue intacto).
+
+## Phase 1.2 — deuda del doble reemplazo intra-lote (REA-05, NONBLOCKING_DEBT) — sin cambios, carry-forward de RX-04
+
+La re-auditoría externa (AUD-C-05, `reaudit/AUD-C/scripts/09_doble_reemplazo.mjs`)
+confirmó con evidencia reproducible el MISMO hallazgo ya registrado arriba
+como "Phase 1.1 (RX) — `SetComportamiento`: reemplazo intra-lote con id
+explícito duplicado (hallazgo externo RX-04, MENOR, residual)": dos
+`SetComportamiento` del mismo lote con el mismo id explícito adivinado hacen
+que la segunda operación descarte silenciosamente la intención de la
+primera (`COMPORTAMIENTO_REEMPLAZADO` sólo documenta la segunda, ninguna
+marca queda en la primera). La re-auditoría lo re-etiqueta **REA-05, MINOR
+(NONBLOCKING_DEBT)** — misma severidad, mismo diagnóstico, ninguna evidencia
+nueva que cambie la decisión ya tomada. **Decisión del orquestador (Phase
+1.2): SIN CAMBIOS respecto de la entrada RX-04 original** — sigue DIFERIDA,
+no corregida; no corrompe la IR canónica, no rompe atomicidad, no bypassea
+`baseRevision`; requiere un llamador que adivine activamente un id que el
+contador va a asignar, sin flujo normal de Fase 1 que lo fomente. No bloquea
+merge ni Phase 2. Revisitar si Fase 2 introduce un consumidor real (agente/UI)
+que arme lotes con ids explícitos adivinados.
+
+## Phase 1.2 — E3-07 (compare-and-swap contra disco): sin rediseño, garantía y límites SIN CAMBIOS
+
+**Decisión del orquestador:** Phase 1.2 NO rediseña `almacen.ts::guardar()`
+ni su compare-and-swap — fuera del alcance autorizado (sólo REA-01/02/03).
+La garantía sigue siendo exactamente la misma que fijó Phase 1.1 (ver
+"`Almacen.list()` y detección de modificación externa — fuera de Fase 1"
+arriba): compara la revisión que YA está en disco contra la que el llamador
+cree reemplazar, sin locks, sin base de datos, sin fusión automática, un solo
+proceso. Los límites conocidos siguen siendo los mismos, sin cambios: la
+detección es por REVISIÓN, no por contenido (dos documentos distintos con la
+misma revisión exacta son indistinguibles de un re-guardado idempotente); sin
+locking real, con TOCTOU teórico entre la lectura y la escritura si un
+segundo escritor real escribe en esa ventana (REA-N5, aceptable para un solo
+proceso/un solo motor por proyecto, **bloquea si Phase 2 usa múltiples
+motores sobre el mismo proyecto**). La re-auditoría focal de Phase 1.2
+(ATK-7/ATK-8, `FR/PHASE_1_2_FOCUSED_REAUDIT.md`) confirmó que el CAS sigue
+funcionando igual después de los 5 commits de esta fase: A gana, B choca con
+`CONFLICTO_REVISION_EN_ALMACEN`, el disco queda con exactamente el commit de
+A, 0 escrituras/renames durante un rechazo (Path B). Ver `OPERATIONS.md` §10.
+
+## Phase 1.2 — hallazgos abiertos (MINOR/NOTE), sin corregir en esta fase
+
+Clasificación sin cambios respecto de la fuente (`PHASE_1_1_EXTERNAL_FINDINGS.md`
+y `FR/PHASE_1_2_FOCUSED_REAUDIT.md`, ambos fuera de este repositorio) — Phase
+1.2 tenía alcance cerrado a REA-01/02/03, así que ninguno de estos se
+implementa ni se reabre sin evidencia nueva:
+
+| Hallazgo | Severidad | Descripción breve | Bloquea merge | Bloquea Phase 2 |
+|---|---|---|---|---|
+| REA-05 | MINOR (NONBLOCKING_DEBT) | Doble reemplazo intra-lote con id adivinado (carry-forward RX-04, ver entrada dedicada arriba) | NO | NO |
+| REA-06 | MINOR | `PIN_OCUPADO` excluye al propio componente del chequeo — hoy irrepresentable (catálogo actual: ≤1 terminal no-riel-fijo por componente) | NO | NO (documentar antes de un catálogo con componente multi-pin) |
+| REA-07 | MINOR | `propagarMagnitud` filtra por magnitud sin test de contrato explícito — hoy no alcanzable por JSON (catálogo construido in-process, una sola conversión shippeada) | NO | NO |
+| REA-N1 | NOTE | `reemplazarSensor` no chequea por sí mismo overflow a `Infinity` en la conversión — la revalidación post-lote (Gate 8) lo atrapa igual | NO | NO |
+| REA-N2 | NOTE | La identidad referencial del invariante de vista no sobrevive el `structuredClone` por transacción de `ejecutarLote` — no es violación de contrato (el contrato es sobre Gate 5) | NO | NO |
+| REA-N3 | NOTE | `construirCatalogo` crashea con `DOMException` crudo si se le pasa un Proxy — frontera de composition root de confianza, fuera del contrato de `datos-planos.ts` | NO | NO |
+| REA-N4 | NOTE (CONCERN) | Crecimiento de `motor.ts`/`operaciones.ts`/`cargador.ts` (+71-157%), mucho conocimiento tácito en comentarios que remiten a documentos externos | NO | NO (riesgo de mantenibilidad a mediano plazo) |
+| REA-N5 | NOTE | Sin locking real en E3-07, TOCTOU teórico (ver entrada dedicada arriba) | NO | Bloquea si Phase 2 usa múltiples motores sobre el mismo proyecto |
+| REA-N6 | NOTE | `crearAlmacen` sin `deps.catalogo` tira `TypeError` crudo — error de configuración del programador, no entrada de usuario | NO | NO |
+| REA-N7 | NOTE | `NODE24_CI_NOT_REPRODUCED` / `WINDOWS_UNVERIFIED` — entorno de auditoría sin Node 24 ni acceso a Windows | NO | NO |
+| REA-N8 | NOTE | Conflicto de interés declarado del orquestador de la re-auditoría (mismo orquestador que la remediación) | NO | NO |
+| REA-N9 | NOTE | 2 TRACE_PARTIAL de trazabilidad (conversión de unidades por magnitud — REA-07; compatibilidad legacy sin test nombrado explícitamente en el alcance de lectura del auditor) | NO | NO |
+| FR-01 | MINOR | Límite de rango NO siempre inclusivo: deriva de punto flotante en conversión de unidad hace que un umbral físicamente en el límite exacto dispare `UMBRAL_FUERA_DE_RANGO` (falso warning, nunca falso OK). Ver `IR-SPEC.md` §6.12 | NO | Recomendado resolver antes de exponer la UI de diagnósticos a usuarios reales (mismo criterio que REA-02) |
+
+## Phase 1.2 — E3-07 y E3-04b no reabren decisiones ya cerradas sin evidencia nueva
+
+Regla aplicada explícitamente en esta fase: ninguna de las entradas de arriba
+reabre un tema ya cerrado por la re-auditoría de Phase 1.1/1.2 sin evidencia
+nueva — cada clasificación (severidad, bloquea/no bloquea) es la que ya fijó
+la fuente externa (`reaudit/CONSOLIDACION.md`, autoridad de la re-auditoría),
+nunca una reinterpretación de este writer.

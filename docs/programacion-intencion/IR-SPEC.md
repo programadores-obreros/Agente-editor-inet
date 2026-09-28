@@ -839,10 +839,17 @@ estudiante.
    fix, la comparación `valor < rango.min.valor || valor > rango.max.valor`
    vivía DUPLICADA como una closure local (`fueraDeRango`) únicamente dentro
    de `reemplazarSensor`. Se extrajo a una función exportada, con la MISMA
-   semántica exacta (límites INCLUSIVOS: `valor === rango.min.valor` o
-   `valor === rango.max.valor` nunca es "fuera de rango"; `rango === undefined`
-   — capacidad sin rango declarado, ej. una capacidad booleana pura — nunca es
-   "fuera de rango" por ausencia de dato). `reemplazarSensor` ahora LLAMA a
+   semántica exacta (límite inclusivo EN LA UNIDAD NATIVA del rango de la
+   capacidad: `valor === rango.min.valor` o `valor === rango.max.valor`
+   nunca es "fuera de rango" cuando `valor` ya está expresado en esa unidad;
+   `rango === undefined` — capacidad sin rango declarado, ej. una capacidad
+   booleana pura — nunca es "fuera de rango" por ausencia de dato). **Nota de
+   precisión (corregido post-freeze de Phase 1.2, hallazgo FR-01, MINOR — ver
+   más abajo, después de "Equivalencia por caminos"): esta afirmación NO es
+   "SIEMPRE inclusivo" sin matices — un umbral que alcanza el límite por
+   CONVERSIÓN de unidad (no en la unidad nativa) puede aterrizar en un valor
+   levemente distinto del límite exacto por redondeo de punto flotante, y
+   entonces sí queda fuera del límite inclusivo.** `reemplazarSensor` ahora LLAMA a
    esta función en vez de declarar su propia closure — ningún cambio de
    comportamiento, sólo se elimina la duplicación (ver
    `tests/nucleo-catalogo.test.mjs`, las 4 ramas de `reemplazarSensor` siguen
@@ -892,6 +899,38 @@ C) — da la MISMA clasificación (`UMBRAL_FUERA_DE_RANGO`, `warning`,
 dentro de rango, rango incompatible, capability incompatible) y de los
 casos borde (límite inclusivo en `min`/`max`, rango ausente, valores
 negativos) en `tests/nucleo-validacion.test.mjs`.
+
+**Corrección post-freeze (hallazgo FR-01, MINOR, re-auditoría focal
+independiente de Phase 1.2 — `FR/PHASE_1_2_FOCUSED_REAUDIT.md`, fuera de este
+repositorio): el límite NO es "SIEMPRE inclusivo" sin matices — es inclusivo
+en la unidad NATIVA del rango declarado.** Los párrafos de arriba (y la
+suite de tests que los verifica) afirman que `estaFueraDeRango` es "límite
+SIEMPRE inclusivo" — esa afirmación es un OVERCLAIM: sólo se probó (y sólo es
+literalmente cierta) para el límite alcanzado en la unidad nativa de la
+capacidad (Celsius directo, en el catálogo shippeado). Cuando el umbral llega
+en una unidad DISTINTA con conversión explícita declarada (`propagarMagnitud`,
+`valor*factor + offset`), un valor que es, físicamente, EXACTAMENTE el límite
+del sensor puede aterrizar, tras la conversión, un `epsilon` de punto
+flotante por encima o por debajo del límite exacto — y entonces
+`estaFueraDeRango` (comparación estricta `<`/`>`) lo marca como fuera de
+rango. Caso reproducido: DHT22 (rango declarado `[0,60]°C`),
+`SetComportamiento` con `umbral: { valor: 140, unidad: "fahrenheit" }` — 140°F
+es el límite superior EXACTO del sensor (140°F = 60°C), pero
+`propagarMagnitud` calcula `140 * (5/9) + (-32*5/9) = 60.00000000000001`
+(`FR/scripts/atk4_rango_umbral_caminos.mjs`, sub-caso b, salida en
+`FR/salidas/atk4.txt`), así que se emite `UMBRAL_FUERA_DE_RANGO` para un
+umbral físicamente válido y exactamente en el límite documentado. Es un falso
+WARNING, no un falso OK: `UMBRAL_FUERA_DE_RANGO` tiene
+`severidad: "warning"`, y `derivarReadiness` (`validar.ts`) sólo mira
+`severidad === "blocking"` — este falso positivo NUNCA convierte un proyecto
+válido en `listo:false`, no corrompe la IR, no bloquea el commit, no afecta
+atomicidad y es completamente reversible. Por eso se clasificó MINOR (no
+MAJOR/CRITICAL) y, por stop rule de Phase 1.2 (alcance cerrado a REA-01/02/03),
+**NO se corrige en esta fase** — queda documentado como límite conocido
+(remediación sugerida por el re-auditor, no aplicada: tolerancia epsilon o
+redondeo a la resolución declarada de la capacidad antes de comparar, cuando
+el valor proviene de una conversión). Ver `docs/programacion-intencion/DECISIONS.md`
+("Hallazgos abiertos Phase 1.2") para la clasificación completa.
 
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
