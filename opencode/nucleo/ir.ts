@@ -38,19 +38,41 @@ export interface UmbralComportamiento {
   readonly magnitud: string
 }
 
+// Phase 1.2 (hallazgo externo REA-01, CRÍTICO — re-auditoría externa,
+// PHASE_1_1_REGAUDIT_FINDINGS.md): `comparador`/`accion` son uniones LITERALES en
+// TypeScript ("sintaxis borrable" — sin protección en runtime), pero ANTES de este
+// fix el dominio real (los 4/2 valores de abajo) sólo existía como un `Set` LOCAL,
+// privado, dentro de `cargador.ts` — nada obligaba a `operaciones.ts` (Gate 5,
+// `aplicarSetComportamiento`) a usar el MISMO dominio. Resultado: una operación podía
+// aceptar y commitear un valor sintácticamente válido pero INVENTADO
+// (`comparador:"mayorQue"`), y recién `cargador.ts` lo rechazaba AL RECARGAR — un
+// documento PERSISTIBLE que no era RECARGABLE (ver
+// `docs/programacion-intencion/IR-SPEC.md`, invariante "PERSISTIBLE ⇒ RECARGABLE").
+// Estas dos constantes son la ÚNICA definición normativa de ambos dominios —
+// `cargador.ts` (Gate 2) y `operaciones.ts` (Gate 5) las IMPORTAN, ninguno de los dos
+// vuelve a declarar su propia lista. Los dos tipos de abajo (`Comparador`/`Accion`) se
+// DERIVAN de estas constantes (nunca al revés) para que agregar un valor nuevo sólo
+// tenga un lugar de edición.
+export const COMPARADORES = [">", "<", ">=", "<="] as const
+export type Comparador = (typeof COMPARADORES)[number]
+
+/** Mismo criterio que `COMPARADORES` — ver comentario de arriba. */
+export const ACCIONES = ["encender", "apagar"] as const
+export type Accion = (typeof ACCIONES)[number]
+
 export interface CuandoComportamiento {
   /** Componente.id del sensor — debe existir (verificado al cargar, R2). */
   readonly sensor: string
   /** Capacidad declarada por el catálogo del sensor (Gate 3/4 la valida). */
   readonly capacidad: string
-  readonly comparador: ">" | "<" | ">=" | "<="
+  readonly comparador: Comparador
   readonly umbral: UmbralComportamiento
 }
 
 export interface EntoncesComportamiento {
   /** Componente.id del actuador — debe existir (verificado al cargar, R2). */
   readonly actuador: string
-  readonly accion: "encender" | "apagar"
+  readonly accion: Accion
 }
 
 export interface ComportamientoRegla {

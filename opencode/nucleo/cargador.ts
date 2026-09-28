@@ -11,6 +11,7 @@
 // documento ya leído (o su string JSON) y no toca disco.
 
 import type { ComportamientoRegla, Componente, Conexion, ExtremoConexion, Proyecto } from "./ir.ts"
+import { ACCIONES, COMPARADORES } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
 import { canonicalizar, congelarProfundo } from "./canonico.ts"
 import { analizarIdsLocales, compararIdsLocales, generarIdProyectoAleatorio, validarIdsYContador, type GeneradorIdProyecto } from "./id.ts"
@@ -398,8 +399,13 @@ function validarConexion(cx: unknown): ResultadoValidacion<Conexion> {
   return { ok: true, valor: { id, desde: rDesde.valor, hasta: rHasta.valor } }
 }
 
-const COMPARADORES = new Set([">", "<", ">=", "<="])
-const ACCIONES = new Set(["encender", "apagar"])
+// Phase 1.2 (hallazgo externo REA-01, CRÍTICO): estos dos `Set` se construyen ACÁ a
+// partir del dominio NORMATIVO único (`ir.ts::COMPARADORES`/`ACCIONES`) — antes de
+// este fix eran listas LOCALES, privadas de este archivo, que `operaciones.ts` no
+// tenía forma de reusar (la causa raíz exacta de REA-01: dos definiciones del mismo
+// dominio que podían divergir en silencio). Nunca una segunda lista copiada.
+const COMPARADORES_VALIDOS = new Set<string>(COMPARADORES)
+const ACCIONES_VALIDAS = new Set<string>(ACCIONES)
 
 function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRegla> {
   if (!esObjeto(b)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", razon: "no es un objeto" } }
@@ -417,7 +423,7 @@ function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRe
     return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando", claves: clavesDesconocidasCuando } }
   }
   const { sensor, capacidad, comparador, umbral } = cuando
-  if (typeof sensor !== "string" || typeof capacidad !== "string" || typeof comparador !== "string" || !COMPARADORES.has(comparador)) {
+  if (typeof sensor !== "string" || typeof capacidad !== "string" || typeof comparador !== "string" || !COMPARADORES_VALIDOS.has(comparador)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando" } }
   }
   if (!esObjeto(umbral)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral" } }
@@ -449,7 +455,7 @@ function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRe
     return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces", claves: clavesDesconocidasEntonces } }
   }
   const { actuador, accion } = entonces
-  if (typeof actuador !== "string" || typeof accion !== "string" || !ACCIONES.has(accion)) {
+  if (typeof actuador !== "string" || typeof accion !== "string" || !ACCIONES_VALIDAS.has(accion)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces" } }
   }
   return {

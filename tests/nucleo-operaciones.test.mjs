@@ -290,6 +290,72 @@ test("setcomportamiento-reemplazo-con-id-existente-emite-motivo-informativo-COMP
   assert.notEqual(motivoReemplazo.clasificacion, "rechazo", "es informativo — nunca corta la operacion")
 })
 
+// ═══ Phase 1.2 (hallazgo externo REA-01, CRÍTICO — re-auditoría externa,
+// PHASE_1_1_REGAUDIT_FINDINGS.md) — `comparador`/`accion` son, en TypeScript,
+// uniones LITERALES (`ir.ts::Comparador`/`Accion`), pero el cast de `operaciones.ts`
+// es sólo de compilación: en runtime, un JSON crudo puede traer un string
+// SINTÁCTICAMENTE válido pero FUERA de ese dominio (`"mayorQue"`, `"prender"`). Antes
+// de este fix, NINGUNA puerta de Gate 5 lo comprobaba — la operación commiteaba
+// `ok:true`, y recién `cargador.ts` (el ÚNICO lugar que sí lo comprobaba, con su
+// propio Set local, nunca compartido con `operaciones.ts`) lo rechazaba AL RECARGAR:
+// PERSISTIBLE sin ser RECARGABLE (ver `docs/programacion-intencion/IR-SPEC.md`,
+// invariante "PERSISTIBLE ⇒ RECARGABLE"). Expresa el CONTRATO ("un valor de enum
+// inventado nunca crea estado"), nunca el mecanismo interno — nunca affirma que se
+// llama a una función particular. ═══════════════════════════════════════════════
+
+test("setcomportamiento-comparador-fuera-de-dominio-rechaza-ANTES-de-crear-estado (REA-01)", () => {
+  let p = proyectoBase()
+  p = conLed(p, "cmp-0", "GPIO23")
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  const r = ejecutarOperacion(
+    p,
+    nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: "mayorQue", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }),
+    catalogo,
+  )
+  assert.equal(r.ok, false, "un comparador inventado (sintácticamente válido, fuera de dominio) nunca commitea")
+  assert.equal(r.proyecto, p, "el proyecto devuelto es la MISMA referencia: no se creó ningún estado nuevo")
+  assert.equal(r.proyecto.comportamientos.length, 0, "ningún comportamiento se agregó")
+  const motivo = r.motivos.find((m) => m.codigo === "VALOR_ENUM_DESCONOCIDO")
+  assert.ok(motivo, `debe traer VALOR_ENUM_DESCONOCIDO: ${JSON.stringify(r.motivos)}`)
+  assert.equal(motivo.categoria, "operacion")
+  assert.equal(motivo.clasificacion, "rechazo")
+})
+
+test("setcomportamiento-accion-fuera-de-dominio-rechaza-ANTES-de-crear-estado (REA-01)", () => {
+  let p = proyectoBase()
+  p = conLed(p, "cmp-0", "GPIO23")
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  const r = ejecutarOperacion(
+    p,
+    nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "prender" } } }),
+    catalogo,
+  )
+  assert.equal(r.ok, false, "una accion inventada (sintácticamente válida, fuera de dominio) nunca commitea")
+  assert.equal(r.proyecto, p, "el proyecto devuelto es la MISMA referencia: no se creó ningún estado nuevo")
+  const motivo = r.motivos.find((m) => m.codigo === "VALOR_ENUM_DESCONOCIDO")
+  assert.ok(motivo, `debe traer VALOR_ENUM_DESCONOCIDO: ${JSON.stringify(r.motivos)}`)
+  assert.equal(motivo.categoria, "operacion")
+  assert.equal(motivo.clasificacion, "rechazo")
+})
+
+// No-regresión: TODO valor real del dominio (los 4 comparadores, las 2 acciones)
+// sigue commiteando sin rechazo — el fix de REA-01 nunca debe sobre-rechazar un
+// valor legítimo. Importa el dominio normativo directo de `ir.ts` — si algún día
+// diverge de lo que `aplicarSetComportamiento` acepta, este test lo nota solo.
+test("setcomportamiento-todo-valor-REAL-del-dominio-compartido-sigue-commiteando-sin-rechazo (REA-01, no-regresion)", async () => {
+  const { COMPARADORES, ACCIONES } = await import(join(REPO, "opencode/nucleo/ir.ts"))
+  for (const comparador of COMPARADORES) {
+    for (const accion of ACCIONES) {
+      let p = proyectoBase()
+      p = conLed(p, "cmp-0", "GPIO23")
+      p = { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+      const r = ejecutarOperacion(p, nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador, umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion } } }), catalogo)
+      assert.equal(r.ok, true, `comparador=${comparador} accion=${accion} debería commitear: ${JSON.stringify(r.motivos)}`)
+      assert.ok(!r.motivos.some((m) => m.codigo === "VALOR_ENUM_DESCONOCIDO"), `comparador=${comparador} accion=${accion} nunca debe traer VALOR_ENUM_DESCONOCIDO`)
+    }
+  }
+})
+
 // ═══ Phase 1.1 (hallazgo externo E1-03, CRÍTICO) — SetComportamiento aceptaba un
 // `umbral.valor` NaN/±Infinity con `ok:true` y lo commiteaba: ninguno de los tres es
 // representable en el documento JSON persistido (`JSON.stringify(NaN)` y

@@ -30,6 +30,7 @@
 // la decisión de E2-03 (campo extra desconocido en el sobre).
 
 import type { Componente, ComportamientoRegla, Conexion, Proyecto } from "./ir.ts"
+import { ACCIONES, COMPARADORES } from "./ir.ts"
 import type { Catalogo } from "./catalogo.ts"
 import { reemplazarSensor } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
@@ -117,6 +118,16 @@ function tieneTerminalDeclarado(catalogo: Catalogo, tipoComponente: string, term
 // `pin` con un string no vacío que no es uno de los valores reales — eso es
 // responsabilidad de la validación técnica/referencial existente, no de acá): sólo
 // la forma mínima que cada `aplicarXxx` necesita para no explotar en runtime.
+//
+// Phase 1.2 (hallazgo externo REA-01, CRÍTICO — re-auditoría externa): el párrafo de
+// arriba, para `comparador`/`accion`, describía una validación que en los hechos
+// NUNCA existía — "la validación técnica/referencial existente" jamás comprobó esos
+// dos campos, en ninguna puerta de Gate 5. `validarFormaPayload` SIGUE sin
+// comprobarlos (sigue siendo sólo de FORMA/tipo, el comentario de arriba sigue siendo
+// exacto para ella) — el chequeo real vive ahora dentro de `aplicarSetComportamiento`
+// (más abajo), contra el MISMO dominio normativo que usa el loader (`ir.ts::
+// COMPARADORES`/`ACCIONES`), con su propio código (`VALOR_ENUM_DESCONOCIDO`). Ver
+// `docs/programacion-intencion/IR-SPEC.md` §6.11 y `OPERATIONS.md` §11.
 // ════════════════════════════════════════════════════════════════════════════════════
 
 const TIPOS_OPERACION_VALIDOS: readonly TipoOperacion[] = ["SetPlaca", "AgregarComponente", "QuitarComponente", "AsignarPin", "Conectar", "Desconectar", "SetComportamiento", "CambiarComponente"]
@@ -409,6 +420,28 @@ function aplicarDesconectar(proyecto: Proyecto, payload: { conexion: string }): 
 
 function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento: Omit<ComportamientoRegla, "id"> & { id?: string } }, catalogo: Catalogo): ResultadoAplicacion {
   const { cuando, entonces } = payload.comportamiento
+  // Phase 1.2 (hallazgo externo REA-01, CRÍTICO — re-auditoría externa,
+  // PHASE_1_1_REGAUDIT_FINDINGS.md): `comparador`/`accion` son uniones LITERALES en
+  // TypeScript (`ir.ts::Comparador`/`Accion`) — pero el cast de `aplicarOperacion`
+  // (arriba) es sólo de compilación: en runtime, cualquier JSON crudo puede traer un
+  // string SINTÁCTICAMENTE válido pero FUERA de ese dominio (`"mayorQue"`,
+  // `"prender"`). Antes de este fix, ninguna puerta de Gate 5 lo comprobaba — la
+  // operación commiteaba `ok:true`, y recién `cargador.ts` (el ÚNICO lugar que sí lo
+  // comprobaba, con su propio dominio antes NO compartido) lo rechazaba AL RECARGAR:
+  // un documento PERSISTIBLE que dejaba de ser RECARGABLE (`IR-SPEC.md` §6.11) — y,
+  // peor, el compare-and-swap de `almacen.ts` (E3-07) necesita releer ese mismo
+  // documento para verificar la revisión antes de CUALQUIER commit siguiente, así que
+  // el proyecto entero quedaba inutilizable (`PERSIST_FAILED`), no sólo el
+  // comportamiento roto. Se rechaza ACÁ, ANTES de tocar el estado (mismo criterio
+  // "Camino B" que `UMBRAL_NO_FINITO` un poco más abajo), contra el MISMO dominio
+  // normativo que usa el loader (`ir.ts::COMPARADORES`/`ACCIONES` — nunca una
+  // segunda lista, esa divergencia silenciosa era la causa raíz exacta de REA-01).
+  if (!(COMPARADORES as readonly string[]).includes(cuando.comparador)) {
+    return { proyecto, motivos: [rechazo("VALOR_ENUM_DESCONOCIDO", { campo: "cuando.comparador", valorRecibido: cuando.comparador, dominioValido: COMPARADORES })] }
+  }
+  if (!(ACCIONES as readonly string[]).includes(entonces.accion)) {
+    return { proyecto, motivos: [rechazo("VALOR_ENUM_DESCONOCIDO", { campo: "entonces.accion", valorRecibido: entonces.accion, dominioValido: ACCIONES })] }
+  }
   // Phase 1.1 (hallazgo externo E1-03, CRÍTICO): un `umbral.valor` NaN/±Infinity
   // nunca es representable en el documento JSON persistido (`JSON.stringify` de
   // cualquiera de los tres da `null` — ver `canonico.ts`/`cargador.ts`), así que

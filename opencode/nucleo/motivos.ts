@@ -253,6 +253,21 @@
 //   `siguienteIdLocal + 1` — "lo mismo para el contador de ids" que para
 //   `revision`. `datos: { siguienteIdLocal, limite }`.
 
+// Phase 1.2 (hallazgo externo REA-01, CRÍTICO — re-auditoría externa,
+// PHASE_1_1_REGAUDIT_FINDINGS.md) agrega, categoria "operacion", clasificacion
+// "rechazo" siempre, emitido por `operaciones.ts` (`aplicarSetComportamiento`, ANTES
+// de tocar ningún estado):
+// - `VALOR_ENUM_DESCONOCIDO` — `cuando.comparador`/`entonces.accion` de un
+//   `SetComportamiento` es un string SINTÁCTICAMENTE válido pero FUERA del dominio
+//   normativo compartido (`ir.ts::COMPARADORES`/`ACCIONES` — los mismos dos
+//   conjuntos que `cargador.ts` exige al cargar/recargar, nunca una segunda lista).
+//   Antes de este fix, ninguna puerta de Gate 5 lo comprobaba — la operación
+//   commiteaba `ok:true` con un valor inventado (ej. `"mayorQue"`), y recién
+//   `cargador.ts` lo rechazaba AL RECARGAR con `CAMPO_REQUERIDO_FALTANTE`: un
+//   documento PERSISTIBLE que dejaba de ser RECARGABLE (ver
+//   `docs/programacion-intencion/IR-SPEC.md` §6.11, invariante "PERSISTIBLE ⇒
+//   RECARGABLE"). `datos: { campo, valorRecibido, dominioValido }`.
+
 /**
  * Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion".
  *
