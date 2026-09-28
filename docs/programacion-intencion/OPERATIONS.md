@@ -294,18 +294,25 @@ ORM con propiedades lazy). Un getter que lanza en `actor`, `payload.placa`,
 través de `aplicarOperacion` y de las 3 puertas públicas del motor — el mismo
 síntoma que E2-02, por una lectura distinta.
 
-**Fix:** la lectura de FORMA (nunca el dispatch/aplicador real, que si falla es un
-problema del núcleo, no de "entrada inválida") se envuelve en un único `try/catch`
-dentro de `aplicarOperacion`. Cualquier excepción ahí se convierte en
-`EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA` (categoría `operacion`, rechazo
-siempre — ver `motivos.ts`) — código DISTINTO de `SOBRE_OPERACION_INVALIDO`/
-`PAYLOAD_OPERACION_INVALIDO` (esos dos dicen "el valor tiene la forma incorrecta";
-éste dice "ni siquiera se pudo LEER el valor"). Por la misma razón,
-`ejecutarOperacion` (Gate 5) y `ejecutarLote` (`motor.ts`, Gate 6) leen los campos
-del sobre que ecoan en el resultado (`idOperacion`/`idTransaccion`/`baseRevision`)
-con un helper `leerSeguro` que nunca propaga: esos campos ya se validaron,
-protegidos, más arriba — leerlos de nuevo para construir el ECO del resultado no
-debe poder crashear tampoco.
+**Fix original (RX-02, superado por RX2 — ver §9.7):** la lectura de FORMA se
+envolvía en un único `try/catch` dentro de `aplicarOperacion`, convirtiendo
+cualquier excepción en `EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA`. Una segunda
+revisión adversarial (RX2-01) encontró que ese `try/catch` protegía la PRIMERA
+lectura de `operacion.payload` (dentro de la validación de forma) pero el `switch`
+de despacho, DEBAJO de ese `try/catch`, volvía a leer `operacion.payload` SIN
+proteger — un getter válido en la 1ª lectura que lanza en la 2ª atravesaba igual.
+Este código (`EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA`) ya no se emite — ver
+§9.7 para el mecanismo que lo reemplaza.
+
+### 9.1.2. Phase 1.1 (RX2) — el eco de `leerSeguro` reemplazado por la copia materializada
+
+Antes, `ejecutarOperacion` (Gate 5) y `ejecutarLote` (`motor.ts`, Gate 6) leían los
+campos del sobre que ecoan en el resultado (`idOperacion`/`idTransaccion`/
+`baseRevision`) con un helper `leerSeguro` (`try/catch` puntual) que nunca
+propagaba. Con la materialización de §9.7, esos campos se leen sobre la copia YA
+plana (§9.7) — una lectura que, por construcción, no puede lanzar — así que
+`leerSeguro` se eliminó (dos mecanismos protegiendo la misma lectura hubiera sido
+una redundancia que compite, no defensa en profundidad real).
 
 ### 9.2. Clave extra desconocida en el sobre (hallazgo E2-03, MENOR)
 
@@ -396,6 +403,36 @@ llamador reutilice deliberadamente el mismo id explícito para dos intenciones
 distintas — no corrompe la IR canónica, no rompe atomicidad ni bypassea
 `baseRevision`. Registrado como deuda diferida en `DECISIONS.md` (no se inventa un
 mecanismo de detección de "reemplazo intra-lote" sin evidencia de que haga falta).
+
+## 9.7. Phase 1.1 (RX2) — el sobre se materializa en datos planos ANTES de despachar (hallazgos externos RX2-01/RX2-02, CRÍTICOS)
+
+Una segunda revisión adversarial independiente (RX2) reabrió E2-02/RX-02 por un
+ángulo que el `try/catch` puntual de §9.1.1 no cubría: `aplicarOperacion`
+(`operaciones.ts`) leía `operacion.payload` DOS veces — la validación de forma
+(protegida) y el `switch` de despacho, más abajo (sin proteger) — un getter válido
+en la 1ª lectura que lanza en la 2ª (TOCTOU) atravesaba igual, crudo, por las 5
+puertas que despachan operaciones (`aplicarOperacion`/`ejecutarOperacion` directos,
+`motor.aplicar`/`aplicarTransaccion`/`proponer`). Relacionado (RX2-02):
+`payload.propiedades` (la bolsa abierta de `AgregarComponente`, nunca validada en
+forma — §1 de `IR-SPEC.md`) se incrustaba SIN copiar en el borrador; `congelarProfundo`
+(`canonico.ts`, usado por `motor.ts` en cada commit/dry-run) recorre `Object.values()`
+de cualquier objeto anidado, disparando el trap `get` de un Proxy que nunca antes
+había sido protegido.
+
+**Fix:** `aplicarOperacion` materializa el sobre COMPLETO (envoltorio + payload
+anidado) en datos planos, UNA sola vez, con `opencode/nucleo/datos-planos.ts`
+(`materializarDatosPlanos` — ver `IR-SPEC.md` §6.6 para el mecanismo completo),
+ANTES de `analizarSobreOperacion`/`validarFormaPayload` y del `switch` de despacho
+— los tres trabajan sobre la MISMA copia, así que no existe una "segunda lectura"
+que pueda divergir de la primera. Un rechazo se envuelve con
+`ENTRADA_NO_ES_DATO_PLANO` (categoría `operacion`) — el código
+`EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA` de §9.1.1 ya no se emite: quedó
+subsumido por un mecanismo que cierra la clase completa, no la instancia puntual
+que RX-02 había parchado. `motor.ts` (`ejecutarLote`, Gate 6) materializa ADEMÁS
+el LOTE COMPLETO de operaciones antes de leer siquiera el `baseRevision` de la
+primera (categoría `motor`) — una superficie que ni RX-01 ni RX-02 habían tocado:
+un getter en el propio `baseRevision` del sobre crasheaba ahí, antes incluso de
+llegar a `aplicarOperacion`.
 
 ## 10. Colisión de escritura entre motores que comparten almacén (hallazgo E3-07, MAJOR — resolución humana Phase 1.1, brief §21)
 

@@ -82,7 +82,7 @@
 //   `UMBRAL_NO_FINITO`.
 //
 // Phase 1.1 (hallazgo externo RX-02, CRÍTICO, revisión adversarial independiente,
-// reabre E2-02) agrega, categoria "operacion", clasificacion "rechazo" siempre:
+// reabre E2-02) agregó, categoria "operacion", clasificacion "rechazo" siempre:
 // - `EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA` — leer un campo del sobre/payload
 //   (`analizarSobreOperacion`/`validarFormaPayload`, `operaciones.ts`) lanzó una
 //   excepción en vez de devolver un valor (un getter que explota en `actor`,
@@ -91,7 +91,18 @@
 //   proceso construya). Distinto de `SOBRE_OPERACION_INVALIDO`/
 //   `PAYLOAD_OPERACION_INVALIDO` (esos dos significan "el valor tiene la forma
 //   incorrecta"; éste significa "ni siquiera se pudo LEER el valor"). `datos.error`
-//   lleva el mensaje de la excepción original, para diagnóstico.
+//   llevaba el mensaje de la excepción original, para diagnóstico.
+//
+//   Phase 1.1 (RX2, hallazgo externo RX2-01, CRÍTICO — revisión adversarial
+//   independiente #2) encontró que el `try/catch` que emitía este código protegía
+//   la PRIMERA lectura de `operacion.payload` (la validación de forma) pero no la
+//   SEGUNDA, sin proteger, del switch de despacho más abajo — un getter válido en
+//   la 1ª lectura que lanza en la 2ª (TOCTOU) lo atravesaba igual. Este código YA
+//   NO SE EMITE: `aplicarOperacion` materializa el sobre completo en datos planos
+//   (`ENTRADA_NO_ES_DATO_PLANO`, ver abajo) ANTES de esa validación, así que no
+//   existe una "segunda lectura" que necesite este código para nada. Se conserva
+//   documentado acá (histórico) para que quien busque este string en el código
+//   viejo/logs archivados encuentre el porqué y hacia dónde se movió.
 //
 
 // Phase 1.1 (hallazgo externo E3-01, CRÍTICO) agrega, categoria "motor",
@@ -135,7 +146,40 @@
 //   lanzó una excepción en vez de devolver un valor — un getter que explota en un
 //   campo, declarado o no, de un Componente/Conexion/ComportamientoRegla anidado.
 //   Nunca un `Error` crudo: se convierte acá en `ErrorEstadoInicialInvalido` con
-//   este motivo. Ver `docs/programacion-intencion/IR-SPEC.md` §6.5.
+//   este motivo. Ver `docs/programacion-intencion/IR-SPEC.md` §6.5. Phase 1.1 (RX2)
+//   dejó este código como BACKSTOP defensivo únicamente (envuelve
+//   `congelarProfundo(clonarProfundo(...))` sobre una entrada YA materializada/
+//   validada, nunca el objeto crudo del llamador) — la superficie que este código
+//   nombra en su documentación original (un getter en `proyectoInicial`) hoy la
+//   cierra `ENTRADA_NO_ES_DATO_PLANO` (abajo), antes de llegar acá.
+//
+// Phase 1.1 (RX2, hallazgo externo RX2-01/RX2-02/RX2-03, CRÍTICOS — segunda
+// revisión adversarial independiente, `RX2_REPORT.md`) agrega UN código único,
+// reusado con distinta `categoria` según quién lo emite (mismo criterio ya
+// establecido por `CLAVE_DESCONOCIDA`/`AUTOCONEXION_INVALIDA`/`UMBRAL_NO_FINITO`),
+// `severidad: "blocking"`, `clasificacion: "rechazo"` siempre:
+// - `ENTRADA_NO_ES_DATO_PLANO` — `opencode/nucleo/datos-planos.ts`
+//   (`materializarDatosPlanos`) rechazó la entrada porque no es un dato plano
+//   compatible con JSON leído de forma segura (un accessor/getter, un Proxy que
+//   miente en `ownKeys`/`getOwnPropertyDescriptor`, una clave Symbol o no
+//   enumerable, un prototipo de clase, un array con huecos, un ciclo, ...) —
+//   `datos: { ruta, razon }` describe exactamente qué falló y dónde. Cierra de
+//   CLASE, no de instancia, tres CRÍTICOS que un `try/catch` puntual (RX-02/RX-01)
+//   no alcanzaba a cerrar del todo: RX2-01 (`aplicarOperacion`/`operaciones.ts`
+//   volvía a leer `operacion.payload` sin proteger en el switch de despacho,
+//   después de haberlo leído una vez, protegido, para la validación de forma —
+//   TOCTOU), RX2-02 (`congelarProfundo`/`canonico.ts`, usado por `motor.ts` en
+//   cada commit/dry-run, se topaba con un Proxy vivo dentro de
+//   `payload.propiedades`, nunca antes protegido) y RX2-03 (`cargarProyecto()`
+//   aceptaba un documento ya-parseado sin ningún `try/catch` propio, y el doble
+//   recorrido de `pines` — validar con `Object.values`, copiar con un spread
+//   independiente — era un TOCTOU real que rompía el round-trip). Emitido con
+//   categoria `"estructural"` por `cargador.ts` (`validarFormaProyecto`, la puerta
+//   compartida por `cargarProyecto()` y `crearMotorDeProyecto({proyectoInicial})`),
+//   `"operacion"` por `operaciones.ts` (`aplicarOperacion`, el sobre completo antes
+//   del switch) y `"motor"` por `motor.ts` (`ejecutarLote`, el LOTE completo antes
+//   de leer siquiera `baseRevision`). Ver
+//   `docs/programacion-intencion/IR-SPEC.md` §6.6.
 
 // Phase 1.1 (hallazgo externo E3-08, barato) agrega, categoria "almacen",
 // clasificacion "rechazo" siempre, emitido por `almacen.ts` (`cargar()`):

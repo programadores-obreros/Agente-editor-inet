@@ -389,6 +389,116 @@ Con estos dos fixes, cualquier documento — cargado por `cargarProyecto()` o em
 directo como `proyectoInicial` — produce el MISMO `Proyecto` canónico (probado en
 `tests/nucleo-motor.test.mjs::equivalencia-cargarProyecto-vs-proyectoInicial`).
 
+### 6.6. Phase 1.1 (RX2) — frontera de datos planos
+
+Una segunda revisión adversarial independiente (RX2, `RX2_REPORT.md`) reabrió tres
+CRÍTICOS de la MISMA clase que §6.4/§6.5 ya habían tratado de cerrar — no por una
+lectura sin proteger que se les hubiera escapado, sino porque el mecanismo elegido
+(un `try/catch` puntual alrededor de UNA lectura) sólo puede probar que ESA lectura
+no crashea, nunca que no existe una SEGUNDA lectura del mismo campo en otro lugar
+del código:
+
+- **RX2-01** — `aplicarOperacion` (`operaciones.ts`) leía `operacion.payload` DOS
+  veces: una protegida (la validación de forma, dentro del `try/catch` de RX-02), y
+  otra SIN proteger (el `switch` de despacho, más abajo). Un getter válido en la 1ª
+  lectura que lanza en la 2ª (TOCTOU) atravesaba igual, crudo.
+- **RX2-02** — `payload.propiedades` (la bolsa abierta de `AgregarComponente`, §1,
+  nunca validada en forma) se incrustaba SIN copiar en el borrador. `congelarProfundo`
+  (`canonico.ts`, usado en cada commit/dry-run de `motor.ts`) recorre
+  `Object.values()` de cualquier objeto anidado — lo que SÍ dispara el trap `get` de
+  un Proxy. Una superficie que ningún fix anterior (RX-01/RX-02) había tocado.
+- **RX2-03** — `cargarProyecto(objeto)` (§6, Gate 2, acepta explícitamente un
+  documento YA parseado, no sólo un string JSON) no tenía NINGÚN `try/catch` propio
+  — a diferencia de `crearMotorDeProyecto`, que sí se había protegido en §6.5. Peor:
+  `validarComponente` validaba `pines` con `Object.values(pines).every(...)` y LUEGO
+  copiaba con un spread INDEPENDIENTE (`{...pines}`) — dos recorridos del MISMO
+  objeto, un TOCTOU real que permitía colar un valor fuera de schema (`pines.anodo:
+  42`, cuando el schema exige `string|null`) que la validación había aprobado leyendo
+  OTRO valor. Ese documento, una vez persistido y recargado, se rechazaba — el
+  round-trip que este mismo archivo (§3) exige quedaba roto.
+- **RX2-04 (NOTA)** — el rechazo fail-closed de claves desconocidas
+  (`clavesDesconocidasDe`/`Object.keys`) sólo mira claves ENUMERABLES: una clave extra
+  definida como NO enumerable ni se rechazaba ni se colaba — quedaba simplemente
+  ignorada en silencio. No explotable con JSON real (`JSON.parse` siempre produce
+  propiedades enumerables), pero un límite documentable.
+
+Ninguno de los cuatro es alcanzable por JSON real — todos requieren que el llamador
+construya el objeto a mano, in-process (brief §37: un adaptador futuro, un wrapper de
+test, un ORM con propiedades lazy). El denominador común: parchear la lectura que un
+script de ataque encontró es whack-a-mole por diseño — cierra el ataque de hoy y deja
+abierta la misma clase de grieta en el próximo lugar donde alguien agregue una lectura.
+
+**Fix, de CLASE, no de instancia:** un módulo nuevo y único,
+`opencode/nucleo/datos-planos.ts` (`materializarDatosPlanos`), que produce una copia
+PROFUNDA hecha ÚNICAMENTE de datos planos compatibles con JSON, leyendo cada
+propiedad EXACTAMENTE una vez, y NUNCA invocando un getter: se lee por DESCRIPTOR
+(`Object.getOwnPropertyDescriptor`), nunca por acceso (`v.campo`/`v[i]`) — un
+accessor (`get`/`set`) se rechaza SIN invocarlo. Efecto secundario deliberado y
+correcto: un Proxy cuyo ÚNICO trap "malicioso" es `get` (el patrón exacto de
+RX2-02/RX2-03) nunca dispara ese trap — la lectura por descriptor cae al
+comportamiento default (el descriptor REAL del target) y el dato real se acepta
+intacto. Un Proxy que miente/lanza en `ownKeys`/`getOwnPropertyDescriptor` (los
+traps que el módulo SÍ invoca) sí se rechaza, siempre con un resultado estructurado
+— el módulo entero corre dentro de un único `try/catch` y nunca lanza. Prototipo:
+sólo `Object.prototype`/`null` (objetos) o `Array.prototype` (arrays densos, sin
+huecos, sin propiedades extra fuera de índices/`length`) — cualquier otro (instancia
+de clase, `Date`, `Map`) se rechaza. Claves Symbol y propiedades NO enumerables se
+rechazan fail-closed (cierra RX2-04). Los numbers se copian TAL CUAL, incluidos
+NaN/±Infinity/-0 — la finitud la siguen decidiendo los validadores existentes
+(`UMBRAL_NO_FINITO` etc.), este módulo nunca la evalúa. `undefined` como valor de una
+propiedad de OBJETO se preserva (mismo criterio que el resto del núcleo ya usa para
+"ausente" — `JSON.stringify` ya lo omite al persistir, un comportamiento conocido);
+como ELEMENTO DE ARRAY se rechaza (`JSON.stringify` lo convertiría en `null`
+silenciosamente — un cambio de VALOR, no sólo de forma). Ciclos se rechazan; una
+referencia COMPARTIDA (no cíclica) se duplica en la copia, nunca se rechaza. Límites
+de profundidad y de tamaño total documentados en el propio módulo, para no reventar
+la pila con una entrada adversarial anidada a propósito.
+
+Un rechazo del módulo se envuelve con `motivoEntradaNoPlano(categoria, resultado)` en
+un `Motivo` con el código único y estable `ENTRADA_NO_ES_DATO_PLANO` — mismo criterio
+ya establecido en todo el núcleo (`CLAVE_DESCONOCIDA`/`AUTOCONEXION_INVALIDA`/
+`UMBRAL_NO_FINITO`): un solo código, la `categoria` la decide quién lo emite
+(`cargador.ts`: `"estructural"`; `operaciones.ts`: `"operacion"`; `motor.ts`:
+`"motor"`).
+
+**Aplicado en cada frontera pública, antes de cualquier otra lectura:**
+
+- `validarFormaProyecto` (`cargador.ts`) — usada tanto por `cargarProyecto()` (Gate
+  2) como por `crearMotorDeProyecto({ proyectoInicial })` (§6.4/§6.5) — materializa
+  su entrada como PRIMER paso. Cierra RX2-03(a) y RX2-03(b) por construcción: el
+  doble recorrido de `pines` se unificó en un único paso (`Object.entries`, valida y
+  copia junto — nunca dos fuentes de verdad sobre el mismo dato).
+- `aplicarOperacion` (`operaciones.ts`) materializa el sobre COMPLETO (envoltorio +
+  payload anidado) antes de `analizarSobreOperacion`/`validarFormaPayload` y del
+  `switch` de despacho — los tres trabajan sobre la MISMA copia, así que no existe
+  una "segunda lectura" que pueda divergir de la primera (cierra RX2-01). Cierra
+  también RX2-02: `payload.propiedades` llega a `aplicarAgregarComponente` como copia
+  plana, nunca como el objeto vivo del llamador — `congelarProfundo` ya no puede
+  toparse con un Proxy que lanza.
+- `ejecutarLote` (`motor.ts`) materializa el LOTE COMPLETO de operaciones antes de
+  leer siquiera el `baseRevision` de la primera — una superficie que ni RX-01 ni
+  RX-02 habían tocado (un getter en el propio `baseRevision` del sobre crasheaba acá,
+  antes incluso de llegar a `aplicarOperacion`).
+
+**El `try/catch` exterior de `crearMotorDeProyecto` (§6.5, RX-01 parte b) se
+eliminó.** Una mutación ronda 2 (M2, `MUTATION_RESULTS_R2.md`, hallazgo R06)
+demostró que ese catch podía enmascarar una regresión sin que ningún test lo
+notara: con un getter en un campo RAÍZ DECLARADO de `Proyecto` (`componentes`,
+`revision`, `placa`, no uno anidado/desconocido), si `validarFormaProyecto` alguna
+vez dejara de materializar, el catch exterior seguía convirtiendo la excepción en
+`ErrorEstadoInicialInvalido` IGUAL — con OTRO código
+(`EXCEPCION_INESPERADA_LEYENDO_PROYECTO_INICIAL`) — y la regresión pasaba
+inadvertida. Con la materialización como ÚNICO mecanismo (nunca dos que compitan),
+`resultadoForma.ok` sale `false` con un motivo `ENTRADA_NO_ES_DATO_PLANO`
+(`clasificacion:"rechazo"`) y el camino ya existente
+(`throw new ErrorEstadoInicialInvalido(rechazosIniciales)`) alcanza solo — sin
+necesitar el catch exterior. El `try/catch` alrededor de
+`congelarProfundo(clonarProfundo(proyectoParaConstruir))` se conserva, pero como
+BACKSTOP defensivo (ese valor ya es la copia validada/plana que
+`validarFormaProyecto` devuelve, nunca el objeto crudo del llamador — no compite con
+la materialización de arriba, protege contra un fallo inesperado del propio
+`structuredClone`, no una entrada hostil).
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:
