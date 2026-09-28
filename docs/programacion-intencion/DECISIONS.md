@@ -97,6 +97,24 @@ buffer en memoria, acotado a 50 transacciones aceptadas, nunca persistido. No ap
 a Gate 1 (placas.ts no tiene estado ni transacciones); se deja registrado acá para que
 la decisión no se pierda entre gates.
 
+**Phase 1.1 (hallazgo externo E3-06, MENOR):** el diseño original de este buffer
+(§31 de la auditoría externa) confirmó que la complejidad es mínima y justificada,
+que sólo entran transacciones ACEPTADAS (nunca dry-run/reject/fallo de persistencia,
+verificado por test), y que la API pública no depende de él hoy — pero encontró que
+`obtenerBufferUndo()` sólo clona el ARRAY contenedor (`slice()`), nunca cada entrada:
+el mismo objeto `ResultadoTransaccion` que se devuelve a quien commiteó queda
+también guardado dentro del buffer, sin copia defensiva. Un consumidor que mutara el
+resultado devuelto corrompía en el lugar la entrada histórica. Clasificado A (fix
+barato, mismo patrón ya usado para `Proyecto`): `motor.ts` ahora pasa CADA
+`ResultadoTransaccion` (los 8 posibles caminos de `ejecutarLote`, no sólo el que
+entra al buffer) por `congelarProfundo` antes de devolverlo. El buffer SIGUE
+compartiendo la misma referencia por diseño (eso es intencional, barato, y es lo que
+permite comparar `===` en los tests) — lo que cambió es que esa referencia compartida
+ya no es mutable. No se removió el buffer: Phase 1 no exige undo/redo, pero eliminarlo
+retrocedería respecto de la preparación que el brief pide para Fase 2 (§9.2), y el
+propio auditor lo calificó de diseño ya JUSTIFICADO. Test:
+`tests/nucleo-motor.test.mjs`, sección "hallazgo externo E3-06".
+
 ## `Almacen.list()` y detección de modificación externa — fuera de Fase 1
 
 **Decisión del orquestador:** ambos quedan fuera del alcance mínimo de Fase 1
@@ -131,6 +149,18 @@ Gate 5, con un fixture de 2 componentes no relacionados y assert de igualdad pro
 del componente no tocado. No se resuelve en Gate 1 (no hay operaciones todavía); se
 deja anotado para no perder la decisión.
 
+**Phase 1.1 (hallazgo externo E4-03, MENOR):** el test explícito de este invariante,
+al cerrarse Gate 5 originalmente, sólo se escribió para 2 de las 8 operaciones
+(`AsignarPin`, `CambiarComponente`) — con `===` (identidad de referencia), no sólo
+`deepEqual`, corrigiendo lo que esta entrada decía arriba ("igualdad profunda"). Las
+6 operaciones restantes (`SetPlaca`/`AgregarComponente`/`QuitarComponente`/`Conectar`/
+`Desconectar`/`SetComportamiento`) ya cumplían el contrato en el código (todas usan
+`.map`/`.filter`/spread que reusan por referencia lo no tocado), pero sin regresión
+propia — confirmado por mutación externa (`m4`: `.map((cx)=>({...cx}))` en
+`aplicarDesconectar` sobrevivía). Phase 1.1 cierra el gap de cobertura sin tocar
+código de producción: un test por operación en `tests/nucleo-operaciones.test.mjs`,
+sección "invariante-de-vista".
+
 ## Corrección: el comentario de `canonico.ts` mentía sobre el orden de array
 
 **Hallazgo (revisión externa del orquestador, Gate 2):** el comentario original de
@@ -142,6 +172,16 @@ importa de todas formas: coincide con el orden de creación porque los ids salen
 contador monotónico). Regla del repo aplicada literalmente: "un OK falso es peor que
 un error" — un comentario incorrecto sobre el propio código es la misma clase de
 falla que un test que no prueba nada.
+
+**Phase 1.1 (hallazgo externo M23, MENOR):** todos los tests que ejercitan
+`canonicalizar()` comparaban `canonicalizar(X)` contra `canonicalizar(Y)`, usando la
+MISMA función de los dos lados — un mutante que invirtiera el criterio de orden
+(ascendente → descendente) sobrevivía sin que ningún test lo notara. Se agregó
+`tests/nucleo-canonico-golden.test.mjs`: un `Proyecto` de ejemplo fijo, con su string
+canónico y su sha256 fijados como LITERAL (no generados llamando a `canonicalizar()`
+dentro del test) — oráculo de oro clásico, independiente del código bajo prueba. Sin
+cambio de código de producción: `canonicalizar()` ya cumplía el contrato de
+`IR-SPEC.md` §3 por lectura: se confirma con este test, no se corrige nada.
 
 ## Prioridad/conflicto entre reglas de comportamiento — DIFERIDA a Fase 3
 
@@ -258,6 +298,20 @@ convenía cerrar ANTES de que exista un consumidor de Fase 2.
      comparte referencia. No se sacó el seam porque un test real lo necesita
      (espiar cuántas veces se llama `clonar` para probar "baseRevision obsoleta
      corta ANTES de clonar").
+
+     **Phase 1.1 (hallazgo externo E3-02, MENOR):** el centinela de arriba era
+     PLANO (`{ __centinelaClonar: true }`) — sólo detectaba identidad de nivel
+     SUPERIOR. Un `clonar` que hace copia SUPERFICIAL (`(v) => ({...v})`) devuelve
+     una referencia NUEVA en el nivel superior y pasaba el centinela sin lanzar,
+     aunque compartiera por referencia cualquier objeto anidado (`pines`,
+     `propiedades`, etc.) con el canónico — exactamente el aislamiento que el
+     centinela existe para garantizar (evidencia/e3/scripts/e1_motor_flujo.mjs
+     TEST 3). Clasificado A (fix barato, mismo lugar): el centinela ahora es
+     anidado (`{ __centinelaClonar: true, anidado: { __centinelaClonar: true } }`)
+     y chequea DOS niveles — identidad de nivel superior (como antes) Y que el
+     objeto anidado no siga siendo la misma referencia. Test:
+     `tests/nucleo-motor.test.mjs`, "clonar inyectado que hace copia SUPERFICIAL...
+     (hallazgo externo E3-02)".
 2. **`operaciones.ts::ejecutarOperacion` tenía la MISMA clase de gap que motor.ts
    antes de su fix** (ver la entrada de arriba, "hallazgo adversarial Gate 8"):
    devolvía `ok:true` sin revisar `clasificacion:"rechazo"` en
@@ -306,3 +360,18 @@ cierra acá.
 encapsular (ej. que el motor exponga su propio `guardar`/`cargar` internamente y
 `crearAlmacen()` deje de exportarse desde el punto de entrada público) vale la pena
 contra el costo de la superficie de API nueva.
+
+## Phase 1.1 — clasificación de hallazgos no bloqueantes (T7)
+
+Cuatro hallazgos MENORES/NOTA de `PHASE_1_EXTERNAL_FINDINGS.md`, clasificados A
+(barato/bajo riesgo/contractual: se corrige acá) / B (documentado, diferido) / C
+(requiere decisión humana):
+
+| Hallazgo | Clasificación | Motivo |
+|---|---|---|
+| E3-06 | **A** | `congelarProfundo` sobre `ResultadoTransaccion` es el MISMO patrón ya usado para `Proyecto`; cero cambio de semántica aceptación/rechazo. Ver entrada "Undo-readiness (OD-21)" arriba. |
+| E3-02 | **A** | Reforzar el centinela con un objeto anidado es exactamente el fix sugerido por el propio auditor; mismo lugar, mismo patrón, cero cambio de semántica. Ver entrada "Revisión de arquitectura independiente Gate 8" arriba. |
+| E2-04 | **B/documentación** | Separar físicamente categoría-de-dato y módulo-emisor en dos taxonomías sería inventar una segunda clasificación sin consumidor real (nada en Fase 1 filtra motivos por módulo emisor). Se documenta explícitamente en `motivos.ts` (JSDoc de `CategoriaMotivo`) que son ejes independientes por diseño — sin reescribir ninguna categoría existente, sin tocar código de producción. |
+| E1-04 | **B** | `esEnteroNoNegativo` sin cota superior es una NOTA, no un defecto — el propio auditor confirma "no explotable en la práctica (requeriría ~9×10^15 commits)". Agregar un tope (aunque fuera `Number.MAX_SAFE_INTEGER`, la constante técnica más defendible) cambiaría el comportamiento de DOS puertas de entrada (`cargador.ts`: `revision`/`siguienteIdLocal`; `motor.ts`: `baseRevision`) para cerrar un riesgo que ningún documento de contrato (`IR-SPEC.md`/`OPERATIONS.md`) menciona ni acota hoy — sería inventar una regla de producto nueva (¿cuál es el tope "correcto"?) sin autoridad contractual que la pida. Se deja documentado como límite conocido, sin código nuevo; revisitar si Fase 2 introduce un escenario real donde la magnitud de `revision` importe (hoy no existe ninguno). |
+
+Ver `evidencia/T7/` (Phase 1.1) para la evidencia RED/GREEN/mutante de E3-06 y E3-02.

@@ -113,7 +113,46 @@
 //   "repara" reasignando el id en silencio. Ver
 //   `docs/programacion-intencion/OPERATIONS.md` §10.1.
 
-/** Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion". */
+/**
+ * Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion".
+ *
+ * Phase 1.1 (hallazgo externo E2-04, MAYOR, clasificación B/documentación —
+ * PHASE_1_EXTERNAL_FINDINGS.md): `categoria` clasifica el TIPO DE DATO del motivo
+ * ("¿de qué habla?" — forma, referencia, hardware/catálogo, etc.), NUNCA cuál
+ * módulo lo emitió — son DOS EJES INDEPENDIENTES a propósito, no "5 niveles = 5
+ * módulos" como una lectura apresurada del código podría sugerir:
+ * - `validar-estructural.ts` (su propio comentario dice "nivel 2 — referencial")
+ *   emite motivos con `categoria: "estructural"` (`AUTOCONEXION_INVALIDA`,
+ *   `UMBRAL_NO_FINITO`), no "referencial" — la validación ESTRUCTURAL real (forma
+ *   del documento) vive en `cargador.ts`, que corre sólo al cargar y nunca vuelve a
+ *   correr; lo que `validar-estructural.ts` reusa con esa misma `categoria` es el
+ *   MISMO invariante de forma/IR, corrido de nuevo sobre cualquier `Proyecto` sin
+ *   importar la puerta de entrada (ver `IR-SPEC.md` §6.3 para el detalle completo
+ *   de por qué esto es intencional, no un error de rotulado).
+ * - `validar-tecnico.ts` agrupa bajo `categoria: "tecnica"` tanto compatibilidad de
+ *   HARDWARE (pin/capacidad) como de CATÁLOGO/COMPONENTE — no hay una `categoria`
+ *   "componente" separada en uso real hoy (existe en el enum de abajo, para no
+ *   cerrar la puerta a Fase 2, pero Fase 1 no la emite).
+ * - `categoria: "semantica"` es un passthrough vacío por diseño en el pipeline
+ *   continuo de `validarSemantico` (Gate 4) — pero el código YA existente
+ *   `MAGNITUD_INCOMPATIBLE` (`catalogo.ts`, `propagarMagnitud`) usa esa MISMA
+ *   `categoria` activamente FUERA de ese pipeline (durante `CambiarComponente`,
+ *   `operaciones.ts`) — de nuevo, dato vs. módulo, no lo mismo.
+ * - El mismo código puede repetirse con DOS categorías distintas según quién lo
+ *   emite (`AUTOCONEXION_INVALIDA`/`CONEXION_DUPLICADA`/`UMBRAL_NO_FINITO`:
+ *   "operacion" cuando lo emite `operaciones.ts`, "estructural" cuando lo emite
+ *   `validar-estructural.ts`; `CLAVE_DESCONOCIDA`: "estructural" en `cargador.ts`,
+ *   "operacion" en `operaciones.ts`) — esto sólo tiene sentido si `categoria` no
+ *   pretende identificar el módulo.
+ *
+ * Decisión (Phase 1.1): NO se separan físicamente categoría y responsabilidad de
+ * módulo en dos tipos/campos nuevos — sería introducir una segunda taxonomía sin un
+ * consumidor real que la necesite hoy (nada en Fase 1 filtra motivos por "qué
+ * módulo los emitió", sólo por `categoria`/`clasificacion`/`severidad`, que sí son
+ * ejes con consumidores reales: `ORDEN_CATEGORIAS`, `derivarReadiness`). Se
+ * documenta acá, en el mismo lugar donde se declara el tipo, para que la próxima
+ * lectura del código no vuelva a confundir "5 categorías" con "5 módulos".
+ */
 export type CategoriaMotivo =
   | "estructural"
   | "referencial"
