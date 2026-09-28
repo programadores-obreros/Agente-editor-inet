@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tecnia Bot — vista física</title>
+<style>
+  :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
+  header h1 { font-size: 16px; margin: 0; }
+  #revision, #readiness { font-size: 13px; padding: 2px 8px; border: 1px solid currentColor; border-radius: 999px; }
+  #estado { min-height: 1.4em; margin-bottom: 12px; font-size: 13px; }
+  main { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: 2px 0; font-size: 13px; }
+  label { display: block; margin-bottom: 6px; font-size: 13px; }
+  select { font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tecnia Bot — vista física</h1>
+  <span id="revision">revisión: —</span>
+  <span id="readiness">—</span>
+</header>
+<div id="estado" role="status" aria-live="polite"></div>
+<main>
+  <section>
+    <h2>Circuito</h2>
+    <div id="circuito"></div>
+  </section>
+  <section>
+    <h2>Cables</h2>
+    <ul id="cables"></ul>
+  </section>
+  <section>
+    <h2>Controles</h2>
+    <div id="controles"></div>
+  </section>
+  <section>
+    <h2>Motivos</h2>
+    <ul id="motivos"></ul>
+  </section>
+</main>
+<script type="module" src="/assets/app.js"></script>
+</body>
+</html>
