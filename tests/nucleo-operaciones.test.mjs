@@ -256,6 +256,40 @@ test("setcomportamiento-regla-valida-commitea", () => {
   assert.equal(r.proyecto.comportamientos[0].id, "beh-0")
 })
 
+// Phase 1.1 (hallazgo externo RX-04, MENOR — revisión adversarial independiente):
+// `aplicarSetComportamiento` decide "reemplazo vs. alta nueva" mirando si
+// `payload.comportamiento.id` YA existe — pero el reemplazo (upsert) commiteaba con
+// `motivos:[]`, sin ningún rastro de que la intención ANTERIOR con ese id fue
+// descartada (brief §12: "reasons[]... también documenta decisiones deterministas
+// exitosas"). Ya existe un patrón establecido de motivo informativo de éxito para
+// una decisión determinista que SÍ cambia algo silenciosamente (`UNIDAD_CONVERTIDA`,
+// `catalogo.ts`/`reemplazarSensor`, severidad `info`, sin `clasificacion` — reusado
+// también dentro de `aplicarCambiarComponente`, Gate 5) — mismo criterio: "rama A"
+// (nada cambia) no emite motivo, pero una decisión que SÍ reemplaza algo, sí. La
+// semántica upsert de `SetComportamiento` no cambia — sigue commiteando igual,
+// `ok:true`, sólo se agrega el motivo informativo.
+test("setcomportamiento-reemplazo-con-id-existente-emite-motivo-informativo-COMPORTAMIENTO_REEMPLAZADO (hallazgo externo RX-04)", () => {
+  let p = proyectoBase()
+  p = conLed(p, "cmp-0", "GPIO23")
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  const comportamientoOriginal = { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } }
+  const rAlta = ejecutarOperacion(p, nuevaOperacion("SetComportamiento", { comportamiento: comportamientoOriginal }), catalogo)
+  assert.equal(rAlta.ok, true)
+  assert.equal(rAlta.proyecto.comportamientos.length, 1)
+  assert.ok(!rAlta.motivos.some((m) => m.codigo === "COMPORTAMIENTO_REEMPLAZADO"), "la ALTA nueva (sin id existente) nunca emite el motivo de reemplazo")
+
+  const comportamientoReemplazo = { id: "beh-0", cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: "<", umbral: { valor: 10, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "apagar" } }
+  const rReemplazo = ejecutarOperacion(rAlta.proyecto, nuevaOperacion("SetComportamiento", { comportamiento: comportamientoReemplazo }), catalogo)
+  assert.equal(rReemplazo.ok, true, "el reemplazo sigue commiteando igual — la semantica upsert no cambia")
+  assert.equal(rReemplazo.proyecto.comportamientos.length, 1, "sigue siendo un upsert: no se agrega una segunda entidad")
+  assert.equal(rReemplazo.proyecto.comportamientos[0].cuando.comparador, "<", "el contenido SI se reemplazo")
+  const motivoReemplazo = rReemplazo.motivos.find((m) => m.codigo === "COMPORTAMIENTO_REEMPLAZADO")
+  assert.ok(motivoReemplazo, `debe traer COMPORTAMIENTO_REEMPLAZADO: ${JSON.stringify(rReemplazo.motivos)}`)
+  assert.equal(motivoReemplazo.categoria, "operacion")
+  assert.equal(motivoReemplazo.severidad, "info")
+  assert.notEqual(motivoReemplazo.clasificacion, "rechazo", "es informativo — nunca corta la operacion")
+})
+
 // ═══ Phase 1.1 (hallazgo externo E1-03, CRÍTICO) — SetComportamiento aceptaba un
 // `umbral.valor` NaN/±Infinity con `ok:true` y lo commiteaba: ninguno de los tres es
 // representable en el documento JSON persistido (`JSON.stringify(NaN)` y

@@ -117,6 +117,16 @@
 //   incluida la excepción de re-guardado canónicamente idéntico y el límite conocido
 //   de detección por revisión, no por contenido).
 //
+// Phase 1.1 (RX) — hallazgo externo RX-04, MENOR (revisión adversarial
+// independiente) agrega, categoria "operacion", severidad "info" (nunca
+// `clasificacion` — es puramente informativo, nunca corta la operación), emitido
+// por `operaciones.ts` (`aplicarSetComportamiento`, rama de reemplazo):
+// - `COMPORTAMIENTO_REEMPLAZADO` — `SetComportamiento` con un `id` que YA existe
+//   reemplaza (upsert) el comportamiento anterior en vez de dar de alta uno nuevo;
+//   este motivo documenta esa decisión determinista (mismo patrón que
+//   `UNIDAD_CONVERTIDA`, `catalogo.ts`). La semántica upsert no cambia — sigue
+//   commiteando igual, `ok:true`.
+
 // Phase 1.1 (RX) — hallazgo externo RX-01, CRÍTICO (revisión adversarial
 // independiente, reabre CP-01) agrega, categoria "estructural", clasificacion
 // "rechazo" siempre, emitido por `motor.ts` (`crearMotorDeProyecto`):

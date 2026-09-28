@@ -386,4 +386,29 @@ Cuatro hallazgos MENORES/NOTA de `PHASE_1_EXTERNAL_FINDINGS.md`, clasificados A
 | E2-04 | **B/documentación** | Separar físicamente categoría-de-dato y módulo-emisor en dos taxonomías sería inventar una segunda clasificación sin consumidor real (nada en Fase 1 filtra motivos por módulo emisor). Se documenta explícitamente en `motivos.ts` (JSDoc de `CategoriaMotivo`) que son ejes independientes por diseño — sin reescribir ninguna categoría existente, sin tocar código de producción. |
 | E1-04 | **B** | `esEnteroNoNegativo` sin cota superior es una NOTA, no un defecto — el propio auditor confirma "no explotable en la práctica (requeriría ~9×10^15 commits)". Agregar un tope (aunque fuera `Number.MAX_SAFE_INTEGER`, la constante técnica más defendible) cambiaría el comportamiento de DOS puertas de entrada (`cargador.ts`: `revision`/`siguienteIdLocal`; `motor.ts`: `baseRevision`) para cerrar un riesgo que ningún documento de contrato (`IR-SPEC.md`/`OPERATIONS.md`) menciona ni acota hoy — sería inventar una regla de producto nueva (¿cuál es el tope "correcto"?) sin autoridad contractual que la pida. Se deja documentado como límite conocido, sin código nuevo; revisitar si Fase 2 introduce un escenario real donde la magnitud de `revision` importe (hoy no existe ninguno). |
 
+## Phase 1.1 (RX) — `SetComportamiento`: reemplazo intra-lote con id explícito duplicado (hallazgo externo RX-04, MENOR, residual)
+
+**Qué encontró RX:** si dos operaciones `SetComportamiento` del MISMO lote usan
+explícitamente el MISMO `id` (adivinando el valor que el contador va a asignar), la
+primera crea un comportamiento nuevo con ese id, y la segunda — viéndolo YA
+existente en el borrador intermedio dentro del mismo lote — lo trata como reemplazo
+y sobreescribe la primera intención por completo. Con el fix de este mismo hallazgo
+(`COMPORTAMIENTO_REEMPLAZADO`, `OPERATIONS.md` §9.6), la SEGUNDA operación SÍ queda
+documentada como reemplazo — pero no hay ningún rastro adicional de que la intención
+de la PRIMERA operación (dentro del MISMO lote, nunca persistida por sí sola) fue la
+descartada.
+
+**Decisión del orquestador (Phase 1.1):** DIFERIDO, no corregido acá. Detectar
+específicamente "un id que otra operación del MISMO lote acaba de crear" requeriría
+que `aplicarSetComportamiento` (Gate 5, función pura sobre una única operación) supiera
+distinguir "existía ANTES del lote" de "lo creó una operación anterior del MISMO
+lote" — información que hoy no lleva el `Proyecto`/`borrador` que recibe (ambos casos
+son indistinguibles: el id ya está en `proyecto.comportamientos`). Inventar esa
+distinción sin un caso de uso real que la necesite (el llamador tendría que estar
+adivinando ids explícitos activamente, un patrón que ninguna de las 8 operaciones
+públicas fomenta) sería una regla de producto nueva sin autoridad contractual. No
+corrompe la IR canónica, no rompe atomicidad ni bypassea `baseRevision` — es un caso
+límite de UX/auditoría, no un bypass de autoridad. Revisitar si Fase 2 introduce un
+consumidor real (agente/UI) que arme lotes con ids explícitos adivinados.
+
 Ver `evidencia/T7/` (Phase 1.1) para la evidencia RED/GREEN/mutante de E3-06 y E3-02.

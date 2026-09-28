@@ -405,7 +405,17 @@ function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento:
   const esReemplazo = idExistente !== undefined && proyecto.comportamientos.some((b) => b.id === idExistente)
   if (esReemplazo) {
     const nueva: ComportamientoRegla = { id: idExistente, cuando, entonces }
-    return { proyecto: { ...proyecto, comportamientos: proyecto.comportamientos.map((b) => (b.id === idExistente ? nueva : b)) }, motivos: [] }
+    // Phase 1.1 (hallazgo externo RX-04, MENOR): un reemplazo (upsert sobre un id YA
+    // existente) commiteaba con `motivos:[]` — ningún rastro de que la intención
+    // ANTERIOR con ese id fue descartada (brief §12: "reasons[]... también documenta
+    // decisiones deterministas exitosas"). Mismo patrón YA establecido en el núcleo
+    // para una decisión determinista que SÍ cambia algo silenciosamente
+    // (`UNIDAD_CONVERTIDA`, `catalogo.ts`/`reemplazarSensor`, severidad `info`, sin
+    // `clasificacion` — reusado también dentro de `aplicarCambiarComponente` acá
+    // mismo): "rama A" (nada cambia) no emite motivo, pero una decisión que SÍ
+    // reemplaza algo, sí. La semántica upsert NO cambia — sigue commiteando igual.
+    const motivoReemplazo: Motivo = { codigo: "COMPORTAMIENTO_REEMPLAZADO", categoria: "operacion", severidad: "info", datos: { comportamiento: idExistente } }
+    return { proyecto: { ...proyecto, comportamientos: proyecto.comportamientos.map((b) => (b.id === idExistente ? nueva : b)) }, motivos: [motivoReemplazo] }
   }
   const id = formatearIdLocal("beh", proyecto.siguienteIdLocal)
   const nueva: ComportamientoRegla = { id, cuando, entonces }

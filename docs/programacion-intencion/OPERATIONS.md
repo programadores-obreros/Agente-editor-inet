@@ -370,6 +370,33 @@ resto del contrato trata como un número real, y porque el criterio de "no hay u
 `baseRevision` real que ecoar" ya está establecido en §9.4 (lote vacío): ecoar la
 revisión canónica vigente, igual que acá.
 
+## 9.6. Phase 1.1 (RX) — `SetComportamiento` avisa cuando reemplaza (hallazgo externo RX-04, MENOR)
+
+`aplicarSetComportamiento` decide "reemplazo (upsert) vs. alta nueva" mirando si
+`payload.comportamiento.id` YA existe en `proyecto.comportamientos` en el momento en
+que esa operación corre. Antes de este fix, el reemplazo commiteaba con
+`motivos:[]` — sin ningún rastro de que la intención ANTERIOR con ese id fue
+descartada (brief §12: "reasons[]... también documenta decisiones deterministas
+exitosas"). Se agrega `COMPORTAMIENTO_REEMPLAZADO` (categoría `operacion`, severidad
+`info`, sin `clasificacion` — es puramente informativo, nunca corta la operación):
+mismo patrón YA establecido en el núcleo para una decisión determinista que SÍ
+cambia algo silenciosamente (`UNIDAD_CONVERTIDA`, `catalogo.ts`, reusado también
+dentro de `aplicarCambiarComponente`, Gate 5). La semántica upsert de
+`SetComportamiento` NO cambia: sigue commiteando igual, `ok:true`; sólo se agrega el
+motivo informativo.
+
+**Límite conocido, no resuelto acá:** si dos operaciones `SetComportamiento` del
+MISMO lote usan explícitamente el MISMO `id` (ej. adivinando el valor que el
+contador va a asignar), la primera crea un comportamiento nuevo con ese id, y la
+segunda — viéndolo YA existente en el borrador intermedio — lo trata como reemplazo
+y sobreescribe la primera intención por completo, con `COMPORTAMIENTO_REEMPLAZADO`
+en los motivos de la SEGUNDA operación pero sin ningún rastro adicional de que la
+PRIMERA intención (dentro del mismo lote) fue la que se perdió. Esto requiere que el
+llamador reutilice deliberadamente el mismo id explícito para dos intenciones
+distintas — no corrompe la IR canónica, no rompe atomicidad ni bypassea
+`baseRevision`. Registrado como deuda diferida en `DECISIONS.md` (no se inventa un
+mecanismo de detección de "reemplazo intra-lote" sin evidencia de que haga falta).
+
 ## 10. Colisión de escritura entre motores que comparten almacén (hallazgo E3-07, MAJOR — resolución humana Phase 1.1, brief §21)
 
 `baseRevision` (§9.3) sólo protege contra un lost update DENTRO de un mismo motor:
