@@ -328,3 +328,39 @@ dejar de fabricar `NaN`. `ResultadoTransaccion.baseRevision` sigue siendo `numbe
 resto del contrato trata como un número real, y porque el criterio de "no hay un
 `baseRevision` real que ecoar" ya está establecido en §9.4 (lote vacío): ecoar la
 revisión canónica vigente, igual que acá.
+
+## 10. Colisión de escritura entre motores que comparten almacén (hallazgo E3-07, MAJOR — resolución humana Phase 1.1, brief §21)
+
+`baseRevision` (§9.3) sólo protege contra un lost update DENTRO de un mismo motor:
+compara contra SU PROPIO canónico en memoria. Dos motores separados construidos sobre
+el MISMO `Almacen` y el MISMO id de proyecto (cada uno con su propio canónico en
+memoria, ninguno viendo al otro) podían commitear cada uno su propia revisión 1, y el
+segundo `guardar()` pisaba en disco al primero sin ningún diagnóstico — el
+`baseRevision` de cada motor "coincidía" perfectamente con SU PROPIO estado, porque
+nunca miraba el almacén compartido.
+
+**Fix (Gate 7, `almacen.ts::guardar()`): compare-and-swap sobre la REVISIÓN, nunca un
+lock.** El motor siempre commitea N → N+1 (`motor.ts`, `ejecutarLote`): antes de
+escribir, si YA existe un documento en disco bajo ese id, `guardar()` lo lee y exige
+que su `revision` sea EXACTAMENTE `proyecto.revision - 1` — el estado que el llamador
+cree que acaba de reemplazar. Si no coincide, rechaza con
+`CONFLICTO_REVISION_EN_ALMACEN` (categoría `almacen`, `clasificacion:"rechazo"`
+siempre) — el motor invocante lo recibe por el Path de persistence failure YA
+existente (igual que `PERSIST_FAILED`): canónico, revisión, buffer de undo y disco
+previo quedan intactos, `ResultadoTransaccion` estructurado. Excepción: un
+re-guardado CANÓNICAMENTE IDÉNTICO al que ya está en disco se permite igual (no hay
+pérdida posible — es la idempotencia de "guardar lo recién cargado sin tocar nada",
+ya cubierta antes de este hallazgo).
+
+Si el documento existente en disco es ilegible/corrupto al momento de este chequeo,
+`guardar()` falla cerrado (`PERSIST_FAILED`, nunca sobrescribe a ciegas).
+
+**Límite conocido, deliberado (no un descuido):** la detección es por REVISIÓN, no
+por contenido. Si dos documentos DISTINTOS terminaran coincidiendo en la MISMA
+revisión de forma exacta (`canonicalizar()` idéntico), esto no tiene forma de
+distinguirlos de un re-guardado idempotente — caso sin evidencia real y sin pérdida de
+datos posible (dos documentos exactamente iguales no pueden "perderse" entre sí). Este
+fix NO reabre `Almacen.list()` ni una detección GENERAL de modificación externa
+(`DECISIONS.md`, Gate 1/Gate 7): el alcance es estrictamente la colisión de escritura
+por id, sin base de datos, sin locks distribuidos, sin fusión automática de escrituras
+concurrentes, sin servidor.

@@ -93,6 +93,17 @@
 //   bug: un `??` que trataba "sin dato" como "usá la revisión de ahora"). Ver
 //   `docs/programacion-intencion/OPERATIONS.md` §9 para el detalle, incluida la
 //   decisión de E3-05 (lote vacío: no-op explícito, sin motivo, `ok:true`).
+//
+// Phase 1.1 (hallazgo externo E3-07, MAJOR — resolución humana Phase 1.1, brief §21)
+// agrega, categoria "almacen", clasificacion "rechazo" siempre, emitido por
+// `almacen.ts` (`guardar()`, ANTES de escribir):
+// - `CONFLICTO_REVISION_EN_ALMACEN` — ya existe un documento en disco bajo este id
+//   cuya `revision` NO es exactamente `proyecto.revision - 1` (el estado que el
+//   llamador cree que acaba de reemplazar) — otro motor con un punto de partida que
+//   este llamador nunca vio ya escribió acá. Compare-and-swap sobre la revisión,
+//   nunca un lock (`docs/programacion-intencion/OPERATIONS.md` §10 para el detalle,
+//   incluida la excepción de re-guardado canónicamente idéntico y el límite conocido
+//   de detección por revisión, no por contenido).
 
 /** Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion". */
 export type CategoriaMotivo =

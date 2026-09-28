@@ -111,7 +111,14 @@ test("falla-inyectada-al-escribir-preserva-archivo-previo-intacto", () => {
   const contenidoPrevio = fs._archivos.get("/proyectos/proy-1.json")
 
   fs._fallarEnProximo("escribir")
-  const p2 = { ...p1, placa: "arduino-uno" }
+  // Phase 1.1 (hallazgo externo E3-07): `guardar()` ahora exige que la revision del
+  // segundo commit sea exactamente N+1 respecto de lo que hay en disco (revision
+  // p1.revision) — p2 con la MISMA revision que p1 pero contenido distinto ahora es,
+  // correctamente, un conflicto detectado (CONFLICTO_REVISION_EN_ALMACEN) ANTES de
+  // siquiera intentar escribir, lo que nunca llegaría a ejercitar la falla inyectada
+  // que este test quiere probar. Se ajusta el fixture para representar el PRÓXIMO
+  // commit real (revision+1), sin cambiar lo que el test verifica.
+  const p2 = { ...p1, placa: "arduino-uno", revision: p1.revision + 1 }
   const r = almacen.guardar(p2)
   assert.equal(r.ok, false)
   assert.equal(r.motivo.codigo, "PERSIST_FAILED")
@@ -136,8 +143,12 @@ test("dos-temporales-en-sucesion-rapida-no-colisionan", () => {
   const rutasEscritas = []
   const fsEspiado = { ...fs, writeFileSync: (p, d) => (rutasEscritas.push(p), fs.writeFileSync(p, d)) }
   const almacen = crearAlmacen({ directorio: "/proyectos", fs: fsEspiado, catalogo })
-  almacen.guardar(proyectoDePrueba("proy-1"))
-  almacen.guardar({ ...proyectoDePrueba("proy-1"), placa: "arduino-uno" })
+  const p1 = proyectoDePrueba("proy-1")
+  almacen.guardar(p1)
+  // Phase 1.1 (hallazgo externo E3-07): segundo guardado con revision+1 (el PRÓXIMO
+  // commit real) — con la MISMA revision que p1 sería, correctamente, un conflicto
+  // detectado antes de escribir, y este test dejaría de ejercitar dos escrituras.
+  almacen.guardar({ ...p1, placa: "arduino-uno", revision: p1.revision + 1 })
   assert.equal(rutasEscritas.length, 2)
   assert.notEqual(rutasEscritas[0], rutasEscritas[1], "cada guardado usa un nombre de temporal distinto")
 })
@@ -186,6 +197,63 @@ test("idempotencia-load-save-load-no-op-byte-a-byte", () => {
   almacen.guardar(r1.proyecto)
   const contenidoTrasResave = fs._archivos.get("/proyectos/proy-1.json")
   assert.equal(contenidoTrasResave, contenidoTrasR1, "guardar lo recién cargado, sin tocar nada, es un no-op byte a byte")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E3-07 (MAJOR, evidencia/e3/scripts/e1_motor_flujo.mjs
+// TEST 4): dos motores con el MISMO almacén y MISMO id de proyecto partían de
+// revisión 0 y el segundo commit pisaba SILENCIOSAMENTE al primero en disco — sin
+// detección. `guardar()` ahora aplica un compare-and-swap sobre la REVISION (nunca un
+// lock, resolución humana Phase 1.1, sin base de datos, locks distribuidos, ni servidor): si YA
+// existe un documento en disco bajo este id, su revisión tiene que ser EXACTAMENTE
+// `proyecto.revision - 1` (el estado que este llamador cree que acaba de reemplazar).
+// Excepción: un re-guardado CANÓNICAMENTE IDÉNTICO al que ya está en disco se permite
+// igual (no hay pérdida posible) — ver "idempotencia-load-save-load", test 8 de más
+// arriba, que sigue pasando sin cambios gracias a esta excepción.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("guardar-detecta-conflicto-cuando-el-disco-ya-avanzo-mas-alla-de-lo-que-este-llamador-vio (hallazgo externo E3-07)", () => {
+  const fs = crearFsFalso()
+  const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+
+  // "motor A" guarda su primer commit (revision 0 -> 1).
+  const pA = { ...proyectoDePrueba("proy-colision"), placa: "esp32-devkit-v1", revision: 1 }
+  const rA = almacen.guardar(pA)
+  assert.equal(rA.ok, true)
+
+  // "motor B" parte del MISMO id, pero de SU PROPIA revision 0 en memoria (nunca vio
+  // el commit de A) — también intenta guardar su revision 1, con contenido DISTINTO.
+  const pB = { ...proyectoDePrueba("proy-colision"), componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} }], revision: 1 }
+  const rB = almacen.guardar(pB)
+  assert.equal(rB.ok, false, "el segundo guardado con revision en conflicto debe rechazar, no pisar en silencio")
+  assert.equal(rB.motivo.codigo, "CONFLICTO_REVISION_EN_ALMACEN")
+  assert.equal(rB.motivo.clasificacion, "rechazo")
+
+  const rCargar = almacen.cargar("proy-colision")
+  assert.equal(rCargar.ok, true)
+  assert.equal(rCargar.proyecto.placa, "esp32-devkit-v1", "el disco conserva el commit de A, intacto")
+  assert.equal(rCargar.proyecto.componentes.length, 0, "el commit de B NUNCA llego a pisar el de A")
+})
+
+test("guardar-permite-avanzar-cuando-la-revision-en-disco-coincide-con-N (flujo normal, hallazgo externo E3-07)", () => {
+  const fs = crearFsFalso()
+  const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+  const p0 = proyectoDePrueba("proy-normal")
+  assert.equal(almacen.guardar({ ...p0, revision: 1 }).ok, true, "primer guardado (sin archivo previo) siempre funciona")
+  assert.equal(almacen.guardar({ ...p0, revision: 2, placa: "esp32-devkit-v1" }).ok, true, "revision en disco (1) == N esperado (2-1=1): avanza sin conflicto")
+  assert.equal(almacen.guardar({ ...p0, revision: 3, placa: "arduino-uno" }).ok, true, "commits sucesivos siguen avanzando sin regresion")
+  const r = almacen.cargar("proy-normal")
+  assert.equal(r.proyecto.revision, 3)
+  assert.equal(r.proyecto.placa, "arduino-uno")
+})
+
+test("guardar-fail-closed-si-el-documento-existente-esta-corrupto-al-verificar-la-revision (hallazgo externo E3-07)", () => {
+  const fs = crearFsFalso({ "/proyectos/proy-corrupto.json": "{ esto no es JSON valido" })
+  const almacen = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+  const r = almacen.guardar({ ...proyectoDePrueba("proy-corrupto"), revision: 1 })
+  assert.equal(r.ok, false, "un documento existente ilegible/corrupto nunca se sobreescribe a ciegas")
+  assert.equal(r.motivo.codigo, "PERSIST_FAILED")
+  assert.equal(fs._archivos.get("/proyectos/proy-corrupto.json"), "{ esto no es JSON valido", "el archivo corrupto previo queda intacto, no se toca")
 })
 
 // ──────────────── 9. cambio de catálogo detectado al cargar: diagnóstico, no mutación ─

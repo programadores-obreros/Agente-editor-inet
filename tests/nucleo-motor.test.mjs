@@ -15,6 +15,13 @@ const { crearMotorDeProyecto } = await import(join(REPO, "opencode/nucleo/motor.
 const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
 const { clonarProfundo } = await import(join(REPO, "opencode/nucleo/canonico.ts"))
 const { construirCatalogoMinimoReal } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
+// Phase 1.1 (hallazgo externo E3-07): estos tests, a diferencia del resto del
+// archivo, necesitan el `Almacen` REAL de Gate 7 (no el falso en memoria de más
+// abajo) porque el fix de E3-07 vive DENTRO de `crearAlmacen()` — el punto es
+// justamente verificar que DOS motores reales, compartiendo la MISMA instancia de
+// almacén real (con un `fs` inyectado falso, nunca disco de verdad), detectan la
+// colisión de escritura.
+const { crearAlmacen } = await import(join(REPO, "opencode/nucleo/almacen.ts"))
 
 const catalogo = construirCatalogoMinimoReal()
 
@@ -730,4 +737,121 @@ test("proponer-con-lote-vacio-tambien-es-no-op (hallazgo externo E3-05)", () => 
   assert.equal(r.motivos.length, 0)
   assert.equal(motor.getProyecto().revision, 0)
   assert.equal(almacen.llamadasGuardar.length, 0)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo externo E3-07 (MAJOR, evidencia/e3/scripts/e1_motor_flujo.mjs
+// TEST 4, resolución humana de Phase 1.1 brief §21): dos motores con el MISMO almacén
+// y MISMO id de proyecto partían de revisión 0 cada uno (ninguno vio el commit del
+// otro) y el segundo commit pisaba SILENCIOSAMENTE al primero en disco. `guardar()`
+// (`almacen.ts`, Gate 7) ahora detecta esa colisión con un compare-and-swap sobre la
+// revisión — estos tests integran el `Almacen` REAL (no el falso en memoria de más
+// arriba) con motores REALES, porque el fix vive dentro de `crearAlmacen()`.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+function crearFsFalsoParaAlmacenReal(inicial = {}) {
+  const archivos = new Map(Object.entries(inicial))
+  return {
+    _archivos: archivos,
+    existsSync: (p) => archivos.has(p),
+    mkdirSync: () => {},
+    writeFileSync: (p, data) => archivos.set(p, data),
+    renameSync: (from, to) => {
+      const contenido = archivos.get(from)
+      archivos.delete(from)
+      archivos.set(to, contenido)
+    },
+    unlinkSync: (p) => archivos.delete(p),
+    readFileSync: (p) => {
+      if (!archivos.has(p)) {
+        const err = new Error("ENOENT")
+        err.code = "ENOENT"
+        throw err
+      }
+      return archivos.get(p)
+    },
+  }
+}
+
+test("dos-motores-mismo-almacen-real-y-mismo-id-el-segundo-commit-recibe-conflicto-en-vez-de-pisar-al-primero (hallazgo externo E3-07)", () => {
+  const fs = crearFsFalsoParaAlmacenReal()
+  const almacenReal = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+
+  const proyectoA = crearProyecto({ generadorId: () => "MISMO-ID", ahora: () => "t", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motorA = crearMotorDeProyecto({ proyectoInicial: proyectoA, catalogo, almacen: almacenReal })
+  const rA = motorA.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  assert.equal(rA.ok, true, "el primer commit de A funciona normalmente")
+  assert.equal(motorA.getProyecto().revision, 1)
+
+  // motor B parte del MISMO id, pero de SU PROPIA revision 0 en memoria — nunca vio
+  // el commit de A (mismo escenario que TEST 4 de la auditoria externa).
+  const proyectoB = crearProyecto({ generadorId: () => "MISMO-ID", ahora: () => "t2", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motorB = crearMotorDeProyecto({ proyectoInicial: proyectoB, catalogo, almacen: almacenReal })
+  const antesDeB = motorB.getProyecto()
+  const rB = motorB.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 0))
+
+  assert.equal(rB.ok, false, "el segundo commit debe rechazar — NUNCA pisar en silencio al de A")
+  assert.ok(rB.motivos.some((m) => m.codigo === "CONFLICTO_REVISION_EN_ALMACEN" && m.clasificacion === "rechazo"), `motivo esperado CONFLICTO_REVISION_EN_ALMACEN: ${JSON.stringify(rB.motivos)}`)
+  // Path de persistence failure ya existente (mismo que "orden-persistir-swap-fallo-
+  // de-guardar-preserva-estado-previo"): canonico, revision, y buffer de undo de B
+  // quedan INTACTOS — el fallo de guardar nunca llega a tocar la memoria de B.
+  assert.equal(motorB.getProyecto(), antesDeB, "el canonico de B es la MISMA referencia: nada cambio")
+  assert.equal(motorB.getProyecto().revision, 0, "la revision de B NUNCA sube")
+  assert.equal(motorB.obtenerBufferUndo().length, 0, "B nunca agrega esta transaccion rechazada al buffer de undo")
+
+  // El disco conserva el commit de A, intacto — el de B NUNCA llego a pisarlo.
+  const rCargar = almacenReal.cargar("MISMO-ID")
+  assert.equal(rCargar.ok, true)
+  assert.equal(rCargar.proyecto.placa, "esp32-devkit-v1", "disco conserva el commit de A")
+  assert.equal(rCargar.proyecto.componentes.length, 0, "el commit de B nunca se persistio")
+})
+
+test("flujo-normal-un-motor-recarga-desde-disco-y-sigue-commiteando-sin-regresion (hallazgo externo E3-07)", () => {
+  const fs = crearFsFalsoParaAlmacenReal()
+  const almacenReal = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-normal-e307", ahora: () => "t", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motor1 = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: almacenReal })
+  assert.equal(motor1.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0)).ok, true)
+  assert.equal(motor1.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 1)).ok, true)
+  assert.equal(motor1.getProyecto().revision, 2)
+
+  // Un motor NUEVO recarga el mismo proyecto desde disco (misma secuencia que un
+  // reinicio de sesion real) y sigue commiteando — no debe haber ningun conflicto
+  // fantasma: el compare-and-swap de E3-07 tiene que reconocer un flujo NORMAL.
+  const rCarga = almacenReal.cargar("proy-normal-e307")
+  assert.equal(rCarga.ok, true)
+  const motor2 = crearMotorDeProyecto({ proyectoInicial: rCarga.proyecto, catalogo, almacen: almacenReal })
+  const rSiguiente = motor2.aplicar(nuevaOperacion("AsignarPin", { componente: "cmp-0", terminal: "anodo", pin: "GPIO23" }, 2))
+  assert.equal(rSiguiente.ok, true, "recargar desde disco y seguir commiteando NO debe regresionar por el fix de E3-07")
+  assert.equal(motor2.getProyecto().revision, 3)
+})
+
+test("primer-guardado-de-un-proyecto-nuevo-funciona-con-el-almacen-real (control, hallazgo externo E3-07)", () => {
+  const fs = crearFsFalsoParaAlmacenReal()
+  const almacenReal = crearAlmacen({ directorio: "/proyectos", fs, catalogo })
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-primer-guardado-e307", ahora: () => "t", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: almacenReal })
+  const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  assert.equal(r.ok, true, "el primer guardado de un proyecto nuevo (sin archivo previo) sigue funcionando")
+})
+
+test("dry-run-nunca-toca-el-disco-ni-siquiera-para-el-chequeo-de-conflicto-de-E3-07", () => {
+  const fs = crearFsFalsoParaAlmacenReal()
+  let llamadasExists = 0
+  let llamadasWrite = 0
+  const fsEspiado = {
+    ...fs,
+    existsSync: (p) => (llamadasExists++, fs.existsSync(p)),
+    writeFileSync: (p, d) => (llamadasWrite++, fs.writeFileSync(p, d)),
+  }
+  const almacenReal = crearAlmacen({ directorio: "/proyectos", fs: fsEspiado, catalogo })
+  llamadasExists = 0 // descarta la llamada de mkdirSync-adyacente al construir el almacen, si la hubiera
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-dryrun-e307", ahora: () => "t", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: almacenReal })
+
+  const r = motor.proponer([nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0)])
+  assert.equal(r.ok, true)
+  assert.equal(llamadasWrite, 0, "un dry-run NUNCA debe escribir en disco")
+  assert.equal(llamadasExists, 0, "un dry-run NUNCA debe siquiera consultar el disco para el chequeo de conflicto de E3-07 (proponer no llega a llamar guardar())")
 })

@@ -71,8 +71,70 @@ export function crearAlmacen(deps: DependenciasAlmacen): Almacen {
 
   function guardar(proyecto: Proyecto): ResultadoGuardar {
     const destino = rutaFinal(proyecto.id)
-    const temporal = `${destino}.tmp-${process.pid}-${contadorTemp++}-${Date.now()}`
     const contenido = canonicalizar(proyecto)
+
+    // Phase 1.1 (hallazgo externo E3-07, MAJOR, evidencia/e3/scripts/
+    // e1_motor_flujo.mjs TEST 4 — resolución humana de Phase 1.1, brief §21: fix
+    // mínimo con la identidad de proyecto/revisión que YA existe, sin base de datos,
+    // sin locks distribuidos, sin fusión automática de escrituras concurrentes, sin
+    // servidor): dos motores con el MISMO almacén y MISMO id de
+    // proyecto partían de revisión 0 en memoria cada uno, y el segundo commit pisaba
+    // SILENCIOSAMENTE al primero en disco — ninguno de los dos vio al otro, porque
+    // `baseRevision` (E3-01) sólo se contrasta contra el CANÓNICO EN MEMORIA de CADA
+    // motor, nunca contra lo que hay en disco bajo ese id.
+    //
+    // Compare-and-swap sobre la REVISIÓN, nunca un lock: el motor SIEMPRE commitea
+    // N -> N+1 (`motor.ts`, `ejecutarLote`) — si YA existe un documento en disco bajo
+    // este id, su revisión tiene que ser EXACTAMENTE `proyecto.revision - 1` (el
+    // estado que ESTE llamador cree que acaba de reemplazar). Si no coincide, otro
+    // escritor con un punto de partida que este llamador nunca vio ya escribió acá
+    // — brief §33 ("no hay lost update silencioso"), extendido de "dentro de un
+    // motor" (E3-01) a "entre motores que comparten almacén y id" (E3-07).
+    //
+    // Excepción deliberada: un re-guardado CANÓNICAMENTE IDÉNTICO al que ya está en
+    // disco se permite igual — no hay pérdida posible, y es exactamente el caso que
+    // ya cubre "idempotencia-load-save-load-no-op-byte-a-byte"
+    // (`tests/nucleo-almacen.test.mjs`): cargar lo persistido y re-guardarlo sin
+    // tocar nada sigue siendo un no-op, no una "colisión".
+    //
+    // Límite conocido, documentado (no un descuido): la detección es por REVISIÓN,
+    // no por contenido — si dos documentos DISTINTOS con el mismo id coincidieran en
+    // la MISMA revisión sin ser canónicamente idénticos, esto los distingue bien
+    // (rechaza), pero si un escritor externo reescribiera el archivo con la MISMA
+    // revisión y contenido apenas distinto de forma maliciosa, esta defensa alcanza
+    // igual (revisión no coincide con la esperada O contenido no es idéntico) — el
+    // único caso que esta defensa NO cubre es una modificación externa que preserve
+    // tanto la revisión N esperada COMO el contenido exacto, lo cual no tiene sentido
+    // como "colisión" real. Ver `DECISIONS.md` (nota agregada a las dos entradas
+    // "fuera de Fase 1" — esto NO reabre `Almacen.list()` ni una detección GENERAL de
+    // modificación externa: el alcance es sólo la colisión de escritura por id).
+    if (fs.existsSync(destino)) {
+      let contenidoExistente: string
+      try {
+        contenidoExistente = fs.readFileSync(destino, "utf8")
+      } catch {
+        return { ok: false, motivo: motivoPersistFailed("no se pudo leer el documento existente para verificar la revision (fail-closed, E3-07)") }
+      }
+      const resultadoExistente = cargarProyecto(contenidoExistente)
+      if (!resultadoExistente.ok) {
+        return { ok: false, motivo: motivoPersistFailed("el documento existente no se pudo interpretar para verificar la revision (fail-closed, E3-07)") }
+      }
+      const esReguardadoIdentico = canonicalizar(resultadoExistente.proyecto) === contenido
+      if (!esReguardadoIdentico && resultadoExistente.proyecto.revision !== proyecto.revision - 1) {
+        return {
+          ok: false,
+          motivo: {
+            codigo: "CONFLICTO_REVISION_EN_ALMACEN",
+            categoria: "almacen",
+            severidad: "blocking",
+            clasificacion: "rechazo",
+            datos: { id: proyecto.id, revisionEnDisco: resultadoExistente.proyecto.revision, revisionEsperadaEnDisco: proyecto.revision - 1, revisionAGuardar: proyecto.revision },
+          },
+        }
+      }
+    }
+
+    const temporal = `${destino}.tmp-${process.pid}-${contadorTemp++}-${Date.now()}`
 
     try {
       fs.writeFileSync(temporal, contenido)

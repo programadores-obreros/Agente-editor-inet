@@ -102,6 +102,17 @@ la decisión no se pierda entre gates.
 **Decisión del orquestador:** ambos quedan fuera del alcance mínimo de Fase 1
 (`almacen.ts`, Gate 7). Documentado acá como límite conocido, no como olvido.
 
+**Phase 1.1 (hallazgo externo E3-07, MAJOR):** la colisión de ESCRITURA entre dos
+motores que comparten almacén y mismo id de proyecto ahora SÍ se detecta — resolución
+humana explícita de Phase 1.1 (brief §21, nivel de autoridad superior a esta entrada:
+"si puede resolverse con identidad explícita de proyecto/revisión ya existente: fix
+mínimo"). Esto NO reabre `Almacen.list()` ni una detección GENERAL de modificación
+externa (nada de listar/escanear el directorio, nada de observar el disco fuera de una
+escritura en curso) — el alcance es estrictamente la colisión de escritura, resuelta
+con un compare-and-swap sobre la revisión YA existente (`guardar()`, ver la entrada de
+Gate 7 más abajo para el detalle y el límite conocido que sí queda). Ver
+`docs/programacion-intencion/OPERATIONS.md` §10.
+
 ## `Connect` — invariantes estructurales cerradas
 
 **Decisión del orquestador (aplica a Gate 4/5, `validar-estructural.ts`/
@@ -160,6 +171,19 @@ confirmar si Fase 2+ corre este núcleo bajo Windows de verdad.
 **Sin locks, un solo escritor:** mismo modelo implícito que `memoria.ts` (no
 declarado como asunción explícita ahí tampoco). `Almacen.list()` y la detección de
 modificación externa quedan fuera de Fase 1 (decisión ya registrada arriba, Gate 1).
+
+**Phase 1.1: la colisión de escritura ahora se detecta por revisión** (hallazgo
+externo E3-07, MAJOR — resolución humana explícita, ver la entrada de arriba). Sigue
+"sin locks": `guardar()` no bloquea ni serializa nada, sólo COMPARA la revisión que ya
+está en disco contra la que el llamador cree reemplazar (`proyecto.revision - 1`)
+justo antes de escribir, y rechaza si no coincide (nuevo código
+`CONFLICTO_REVISION_EN_ALMACEN`, categoría `almacen`) — sin base de datos, sin locks
+distribuidos, sin fusión automática de escrituras concurrentes, sin servidor. Límite
+conocido que SÍ queda (documentado, no un descuido): la detección es por REVISIÓN, no
+por contenido — si dos documentos DISTINTOS con el mismo id coincidieran en la MISMA
+revisión de forma exacta (mismo `canonicalizar()`), no habría nada que detectar (son
+indistinguibles de un simple re-guardado idempotente, y no hay pérdida real posible en
+ese caso). Ver `almacen.ts` (`guardar()`) y `OPERATIONS.md` §10.
 
 ## Hallazgo adversarial Gate 8 (Agente X) — motor.ts no filtraba rechazo post-lote
 
