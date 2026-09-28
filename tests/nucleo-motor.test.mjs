@@ -216,6 +216,59 @@ test("buffer-undo-acotado-a-50", () => {
   assert.equal(motor.obtenerBufferUndo().length, 50)
 })
 
+// Phase 1.1 (hallazgo externo E3-06, MENOR): `bufferUndo.push(resultado)` guarda el
+// MISMO objeto `ResultadoTransaccion` que se devuelve al llamador (no una copia
+// defensiva) — `obtenerBufferUndo()` sólo hace `slice()` del array CONTENEDOR, nunca
+// clona cada entrada (evidencia/e3/scripts/e2_revision_dryrun_tx_inmut.mjs, §30). Un
+// consumidor que mute el resultado devuelto corrompe en el lugar la entrada histórica
+// del buffer, sin ningún aviso — mismo criterio de congelado que ya protege al
+// `Proyecto` canónico (`canonico.ts`, `congelarProfundo`), acá aplicado al
+// `ResultadoTransaccion`.
+
+test("ResultadoTransaccion (commit aceptado) esta profundamente congelado, y el buffer de undo es inmune a que el llamador lo mute (hallazgo externo E3-06)", () => {
+  const { motor } = crearMotorDePrueba()
+  const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  assert.equal(r.ok, true)
+  assert.ok(Object.isFrozen(r), "el ResultadoTransaccion debe estar congelado")
+  assert.ok(Object.isFrozen(r.motivos), "motivos debe estar congelado")
+  assert.ok(Object.isFrozen(r.resultadosOperaciones), "resultadosOperaciones debe estar congelado")
+
+  assert.throws(() => {
+    "use strict"
+    r.ok = false
+  }, "mutar r.ok debe lanzar TypeError en modo estricto")
+  assert.throws(() => {
+    "use strict"
+    r.motivos.push({ codigo: "FALSO" })
+  }, "empujar a r.motivos debe lanzar TypeError en modo estricto")
+
+  const entradaBuffer = motor.obtenerBufferUndo().at(-1)
+  assert.equal(entradaBuffer, r, "el buffer sigue guardando el MISMO objeto (aliasing intencional, ahora inofensivo porque esta congelado)")
+  assert.equal(entradaBuffer.ok, true, "la entrada del buffer nunca pudo corromperse, porque la mutacion de arriba nunca aplico")
+  assert.equal(entradaBuffer.motivos.length, r.motivos.length, "idem para motivos")
+})
+
+test("ResultadoTransaccion tambien esta congelado en rechazo/dry-run/fallo de persistencia (E3-06, mismo patron para todo resultado, no solo el que entra al buffer)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+
+  const rRechazo = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "placa-fantasma" }, 0))
+  assert.equal(rRechazo.ok, false)
+  assert.ok(Object.isFrozen(rRechazo), "un rechazo tambien debe devolver un ResultadoTransaccion congelado")
+
+  const rDryRun = motor.proponer([nuevaOperacion("AgregarComponente", { tipo: "led" }, 0)])
+  assert.equal(rDryRun.ok, true)
+  assert.ok(Object.isFrozen(rDryRun), "un dry-run tambien debe devolver un ResultadoTransaccion congelado")
+
+  almacen._forzarFalloProximo()
+  const rFalloPersistencia = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+  assert.equal(rFalloPersistencia.ok, false)
+  assert.ok(Object.isFrozen(rFalloPersistencia), "un fallo de persistencia tambien debe devolver un ResultadoTransaccion congelado")
+
+  const rVacio = motor.proponer([])
+  assert.equal(rVacio.ok, true)
+  assert.ok(Object.isFrozen(rVacio), "el no-op de lote vacio (E3-05) tambien debe devolver un ResultadoTransaccion congelado")
+})
+
 // ════════════════════════════════════════════════════════════════════════════════════
 // Hallazgo adversarial Gate 8 (item 4, Agente X): motor.ts sólo cortaba el lote por
 // `motivosPropios` (los que emite `aplicarOperacion` por operación) — nunca revisaba
@@ -333,6 +386,23 @@ test("clonar inyectado que devuelve la MISMA referencia (identidad) hace que el 
     () => crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso(), clonar: clonarIdentidad }),
     /ErrorClonadoInvalido|no aísla|mismo objeto/i,
     "un clonar que no aisla referencias debe rechazarse en la construcción, antes de que rompa el aislamiento borrador/canónico",
+  )
+})
+
+// Phase 1.1 (hallazgo externo E3-02, MENOR): el centinela de arriba sólo prueba
+// identidad de nivel SUPERIOR (`clonar(x) === x`) — un `clonar` que hace una copia
+// SUPERFICIAL (`(v) => ({...v})`) devuelve una referencia NUEVA en el nivel superior
+// y pasa el centinela sin lanzar, aunque comparta por referencia cualquier objeto
+// anidado (arrays/objetos dentro de `Componente.pines`, `Componente.propiedades`,
+// etc.) con el canónico — exactamente el aislamiento que este centinela existe para
+// garantizar (evidencia/e3/scripts/e1_motor_flujo.mjs TEST 3).
+test("clonar inyectado que hace copia SUPERFICIAL (nivel superior nuevo, anidado compartido) tambien hace que el motor se niegue a construirse (hallazgo externo E3-02)", () => {
+  const clonarSuperficial = (valor) => ({ ...valor })
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-clonar-superficial", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial, catalogo, almacen: crearAlmacenFalso(), clonar: clonarSuperficial }),
+    /ErrorClonadoInvalido|no aísla|anidado/i,
+    "un clonar que sólo copia el nivel superior, compartiendo objetos anidados por referencia, debe rechazarse igual que la identidad pura",
   )
 })
 

@@ -142,14 +142,20 @@ export class ErrorEstadoInicialInvalido extends Error {
 }
 
 /**
- * El `clonar` inyectado devolvió la MISMA referencia que recibió, para un valor de
- * prueba — significa que NO aísla (una función identidad, por ejemplo). Aceptarlo
- * compartiría el mismo objeto en memoria entre el borrador y el canónico, rompiendo
+ * El `clonar` inyectado devolvió la MISMA referencia que recibió (nivel superior), o
+ * una referencia NUEVA en el nivel superior que igual comparte por referencia un
+ * objeto ANIDADO — significa que NO aísla de verdad (una función identidad, o una
+ * copia SUPERFICIAL tipo `(v) => ({...v})`, Phase 1.1, hallazgo externo E3-02).
+ * Aceptarlo compartiría objetos en memoria entre el borrador y el canónico, rompiendo
  * el invariante central del motor (revisión de arquitectura Gate 8, §77).
  */
 export class ErrorClonadoInvalido extends Error {
-  constructor() {
-    super('El "clonar" inyectado no aísla referencias: clonar(x) === x para un valor de prueba. Compartiría el mismo objeto entre el borrador y el canónico.')
+  constructor(nivel: "superior" | "anidado") {
+    super(
+      nivel === "superior"
+        ? 'El "clonar" inyectado no aísla referencias: clonar(x) === x para un valor de prueba. Compartiría el mismo objeto entre el borrador y el canónico.'
+        : 'El "clonar" inyectado hace una copia SUPERFICIAL: el nivel superior es una referencia nueva, pero un objeto anidado dentro sigue siendo la MISMA referencia que en el original. Compartiría ese objeto anidado entre el borrador y el canónico.',
+    )
     this.name = "ErrorClonadoInvalido"
   }
 }
@@ -192,13 +198,21 @@ export interface MotorDeProyecto {
 export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
   const clonar = deps.clonar ?? clonarProfundo
 
-  // Centinela: `clonar` inyectado tiene que aislar de verdad. Si `clonar(x) === x`
-  // para un objeto de prueba descartable, es una función identidad (u otra que no
-  // clona) — se rechaza en la construcción, antes de que comparta referencias entre
-  // el borrador y el canónico (revisión de arquitectura Gate 8, §77).
-  const centinelaClonado = { __centinelaClonar: true }
-  if (clonar(centinelaClonado) === centinelaClonado) {
-    throw new ErrorClonadoInvalido()
+  // Centinela: `clonar` inyectado tiene que aislar de verdad, en TODOS los niveles de
+  // anidamiento — no sólo el superior. Si `clonar(x) === x` para un objeto de prueba
+  // descartable, es una función identidad (u otra que no clona); si el nivel superior
+  // sale como una referencia NUEVA pero `x.anidado` sigue siendo la MISMA referencia
+  // que en el original, es una copia SUPERFICIAL (`(v) => ({...v})`, Phase 1.1,
+  // hallazgo externo E3-02: el centinela original, plano, no detectaba este caso) —
+  // ambos se rechazan en la construcción, antes de que compartan referencias entre el
+  // borrador y el canónico (revisión de arquitectura Gate 8, §77).
+  const centinelaClonado = { __centinelaClonar: true, anidado: { __centinelaClonar: true } }
+  const centinelaClonadoResultado = clonar(centinelaClonado)
+  if (centinelaClonadoResultado === centinelaClonado) {
+    throw new ErrorClonadoInvalido("superior")
+  }
+  if (centinelaClonadoResultado.anidado === centinelaClonado.anidado) {
+    throw new ErrorClonadoInvalido("anidado")
   }
 
   // La validación REAL siempre corre — `validacionAdicionalSoloTests` (si se
@@ -299,7 +313,7 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     // dos causas distintas (E3-01 exige no confundirlas — antes, el mismo `??` las
     // trataba igual).
     if (operaciones.length === 0) {
-      return { ok: true, baseRevision: canonico.revision, revisionActual: canonico.revision, motivos: [], resultadosOperaciones: [] }
+      return congelarProfundo({ ok: true, baseRevision: canonico.revision, revisionActual: canonico.revision, motivos: [], resultadosOperaciones: [] })
     }
 
     // Phase 1.1 (hallazgo externo E3-01, CRÍTICO): la PRIMERA operación del lote
@@ -318,13 +332,13 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
       // no describe nada real. Mismo criterio que el no-op de lote vacío (E3-05,
       // arriba): se ecoa la revisión CANÓNICA vigente — el mismo valor que
       // `revisionActual` — nunca un valor inventado.
-      return { ok: false, baseRevision: canonico.revision, revisionActual: canonico.revision, motivos: [motivoBaseRevisionInvalida(baseRevisionRecibida)], resultadosOperaciones: [] }
+      return congelarProfundo({ ok: false, baseRevision: canonico.revision, revisionActual: canonico.revision, motivos: [motivoBaseRevisionInvalida(baseRevisionRecibida)], resultadosOperaciones: [] })
     }
     const baseRevision = baseRevisionRecibida
 
     // 1. baseRevision stale corta ANTES de clonar.
     if (baseRevision !== canonico.revision) {
-      return { ok: false, baseRevision, revisionActual: canonico.revision, motivos: [motivoRevisionObsoleta(baseRevision)], resultadosOperaciones: [] }
+      return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: [motivoRevisionObsoleta(baseRevision)], resultadosOperaciones: [] })
     }
 
     // 2. Clon del canónico — el borrador se muta localmente, el canónico nunca se toca.
@@ -355,7 +369,7 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
 
     // 4. Si el lote entero tiene un rechazo, se descarta completo — sin cambios parciales.
     if (rechazada) {
-      return { ok: false, baseRevision, revisionActual: canonico.revision, motivos: motivosPropios, resultadosOperaciones }
+      return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: motivosPropios, resultadosOperaciones })
     }
 
     // 5. Lote representable a nivel de operación: se valida el estado resultante UNA
@@ -369,23 +383,34 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     // — `validar-tecnico.ts` nunca usa esa clasificación), el lote se descarta IGUAL
     // que un rechazo por operación: nada se persiste, el canónico no cambia.
     if (motivosValidacion.some((m) => m.clasificacion === "rechazo")) {
-      return { ok: false, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones }
+      return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones })
     }
 
     if (!comprometer) {
       // proponer(): dry-run — se descarta el borrador, nunca se persiste, nunca sube revision.
-      return { ok: true, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones }
+      return congelarProfundo({ ok: true, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones })
     }
 
     // 6. Commit: persistir PRIMERO, recién después reemplazar la referencia canónica.
     const proyectoFinal = congelarProfundo({ ...borrador, revision: canonico.revision + 1 })
     const resultadoGuardar = deps.almacen.guardar(proyectoFinal)
     if (!resultadoGuardar.ok) {
-      return { ok: false, baseRevision, revisionActual: canonico.revision, motivos: [...motivosFinales, resultadoGuardar.motivo], resultadosOperaciones }
+      return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: [...motivosFinales, resultadoGuardar.motivo], resultadosOperaciones })
     }
 
     canonico = proyectoFinal // swap — recién acá cambia la memoria
-    const resultado: ResultadoTransaccion = { ok: true, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones }
+    // Phase 1.1 (hallazgo externo E3-06, MENOR): antes de acá `resultado` viajaba SIN
+    // congelar — el mismo objeto que se devuelve al llamador es el que queda guardado
+    // en `bufferUndo` (nunca una copia defensiva, ver `obtenerBufferUndo()` más abajo:
+    // sólo hace `slice()` del array CONTENEDOR, nunca clona cada entrada). Un
+    // consumidor descuidado que mutara el resultado devuelto (`resultado.motivos.push`,
+    // por ejemplo) corrompía en el lugar la entrada histórica del buffer, sin que nada
+    // lo detectara. `congelarProfundo` (mismo patrón ya usado para `Proyecto`, sobre un
+    // objeto que ya nadie más necesita mutar) cierra esto: es barato (un solo
+    // recorrido más, sobre un árbol que además YA está mayormente congelado, porque
+    // comparte por referencia entidades de `proyectoFinal`) y no cambia ninguna
+    // semántica de aceptación/rechazo — sólo lo hace inmutable después de construido.
+    const resultado: ResultadoTransaccion = congelarProfundo({ ok: true, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones })
     bufferUndo.push(resultado)
     if (bufferUndo.length > TOPE_BUFFER_UNDO) bufferUndo.shift()
     return resultado
