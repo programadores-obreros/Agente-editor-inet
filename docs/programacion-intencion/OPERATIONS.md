@@ -283,6 +283,30 @@ Estas dos validaciones corren para las 3 puertas públicas del motor
 por operación dentro del lote) y para quien invoque `aplicarOperacion`/
 `ejecutarOperacion` directo — un único punto de aplicación, nunca copiado.
 
+### 9.1.1. Phase 1.1 (RX) — un getter que explota durante la lectura de forma (hallazgo externo RX-02, CRÍTICO, reabre E2-02)
+
+Las dos validaciones de arriba (`analizarSobreOperacion`/`validarFormaPayload`) LEEN
+campos del sobre/payload que el LLAMADOR controla — el fix original de E2-02 sólo
+contempló "JSON crudo" (nunca produce getters), no "cualquier valor JS que un
+llamador en proceso pueda construir" (un adaptador futuro, un wrapper de test, un
+ORM con propiedades lazy). Un getter que lanza en `actor`, `payload.placa`,
+`payload.comportamiento.cuando.umbral.valor`, etc. propagaba una excepción cruda a
+través de `aplicarOperacion` y de las 3 puertas públicas del motor — el mismo
+síntoma que E2-02, por una lectura distinta.
+
+**Fix:** la lectura de FORMA (nunca el dispatch/aplicador real, que si falla es un
+problema del núcleo, no de "entrada inválida") se envuelve en un único `try/catch`
+dentro de `aplicarOperacion`. Cualquier excepción ahí se convierte en
+`EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA` (categoría `operacion`, rechazo
+siempre — ver `motivos.ts`) — código DISTINTO de `SOBRE_OPERACION_INVALIDO`/
+`PAYLOAD_OPERACION_INVALIDO` (esos dos dicen "el valor tiene la forma incorrecta";
+éste dice "ni siquiera se pudo LEER el valor"). Por la misma razón,
+`ejecutarOperacion` (Gate 5) y `ejecutarLote` (`motor.ts`, Gate 6) leen los campos
+del sobre que ecoan en el resultado (`idOperacion`/`idTransaccion`/`baseRevision`)
+con un helper `leerSeguro` que nunca propaga: esos campos ya se validaron,
+protegidos, más arriba — leerlos de nuevo para construir el ECO del resultado no
+debe poder crashear tampoco.
+
 ### 9.2. Clave extra desconocida en el sobre (hallazgo E2-03, MENOR)
 
 El sobre rechaza fail-closed una clave extra desconocida (ej. `{..., extraField:

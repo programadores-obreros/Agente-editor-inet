@@ -83,6 +83,20 @@ function esEnteroNoNegativo(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0
 }
 
+/** Phase 1.1 (hallazgo externo RX-02, CRÍTICO): lee un campo del sobre de operación
+ * para el ECO de `ResultadoOperacion` (`idOperacion`/`idTransaccion`/`baseRevision`,
+ * ya leídos una vez, protegidos, dentro de `aplicarOperacion`/`analizarSobreOperacion`
+ * — `operaciones.ts`) — si esa lectura misma lanza (un getter que explota), devuelve
+ * el `porDefecto` en vez de propagar una excepción cruda. Nunca decide validez: eso ya
+ * corrió antes, protegido. */
+function leerSeguro<T>(fn: () => T, porDefecto: T): T {
+  try {
+    return fn()
+  } catch {
+    return porDefecto
+  }
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════
 // Interfaz de almacén — implementada en Gate 7 (almacen.ts, contra disco)
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -353,9 +367,11 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
       motivosPropios.push(...motivos)
       resultadosOperaciones.push({
         ok: !motivos.some((m) => m.clasificacion === "rechazo"),
-        idOperacion: operacion.idOperacion,
-        idTransaccion: operacion.idTransaccion,
-        baseRevision: operacion.baseRevision,
+        // Phase 1.1 (hallazgo externo RX-02): sólo el ECO del sobre — la FORMA ya se
+        // validó, protegida, dentro de `aplicarOperacion` de arriba.
+        idOperacion: leerSeguro(() => operacion.idOperacion, ""),
+        idTransaccion: leerSeguro(() => operacion.idTransaccion, undefined),
+        baseRevision: leerSeguro(() => operacion.baseRevision, baseRevision),
         revisionActual: baseRevision,
         motivos,
         proyecto: siguiente,

@@ -221,11 +221,30 @@ function validarFormaPayload(tipo: TipoOperacion, payload: unknown): string | nu
 // ════════════════════════════════════════════════════════════════════════════════════
 
 export function aplicarOperacion(proyecto: Proyecto, operacion: SobreOperacion, catalogo: Catalogo): ResultadoAplicacion {
-  const motivoSobre = analizarSobreOperacion(operacion)
-  if (motivoSobre) return { proyecto, motivos: [motivoSobre] }
-
-  const tipo = operacion.tipo
-  const razonPayload = validarFormaPayload(tipo, operacion.payload)
+  // Phase 1.1 (hallazgo externo RX-02, CRÍTICO — revisión adversarial independiente,
+  // reabre E2-02): `analizarSobreOperacion`/`validarFormaPayload` LEEN campos del
+  // sobre/payload que el LLAMADOR controla (`operacion.actor`, `payload.placa`,
+  // `payload.comportamiento.cuando.umbral.valor`, etc.) — el fix de E2-02 (arriba)
+  // razonó sólo sobre "JSON crudo" (que nunca produce getters), no sobre "cualquier
+  // valor JS que un llamador en proceso pueda construir" (un adaptador futuro, un
+  // wrapper de test, un ORM con propiedades lazy). Un getter que lanza en cualquiera
+  // de esos campos propagaba una excepción cruda a través de las 3 puertas públicas
+  // del motor Y de `aplicarOperacion` directo — exactamente la clase de defecto que
+  // E2-02 ya había cerrado para otro caso. La lectura de FORMA (nunca el dispatch real
+  // de abajo, que si falla es un problema del núcleo, no de "entrada inválida") se
+  // envuelve acá, una sola vez, en un único try/catch — brief §12: "resultado
+  // estructurado también en error", nunca una excepción cruda al consumidor.
+  let motivoSobre: Motivo | null
+  let tipo: TipoOperacion
+  let razonPayload: string | null
+  try {
+    motivoSobre = analizarSobreOperacion(operacion)
+    if (motivoSobre) return { proyecto, motivos: [motivoSobre] }
+    tipo = operacion.tipo
+    razonPayload = validarFormaPayload(tipo, operacion.payload)
+  } catch (error) {
+    return { proyecto, motivos: [rechazo("EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA", { razon: "una lectura de forma del sobre/payload lanzo una excepcion en vez de devolver un valor", error: error instanceof Error ? error.message : String(error) })] }
+  }
   if (razonPayload) return { proyecto, motivos: [rechazo("PAYLOAD_OPERACION_INVALIDO", { tipo, razon: razonPayload })] }
 
   switch (tipo) {
@@ -429,16 +448,36 @@ function aplicarCambiarComponente(proyecto: Proyecto, payload: { componente: str
 // ejecutarOperacion — combina rechazo propio + validación del estado resultante
 // ════════════════════════════════════════════════════════════════════════════════════
 
+/** Phase 1.1 (hallazgo externo RX-02, CRÍTICO): lee un campo del sobre para el ECO del
+ * resultado (`idOperacion`/`idTransaccion`/`baseRevision`, ya leídos una vez, protegidos,
+ * dentro de `aplicarOperacion`/`analizarSobreOperacion`) — si esa lectura misma lanza
+ * (un getter que explota), devuelve el `porDefecto` en vez de propagar. Nunca decide
+ * validez: eso ya corrió antes, protegido. */
+function leerSeguro<T>(fn: () => T, porDefecto: T): T {
+  try {
+    return fn()
+  } catch {
+    return porDefecto
+  }
+}
+
 export function ejecutarOperacion(proyecto: Proyecto, operacion: SobreOperacion, catalogo: Catalogo): ResultadoOperacion {
   const { proyecto: proyectoAplicado, motivos: motivosPropios } = aplicarOperacion(proyecto, operacion, catalogo)
+
+  // Estos son sólo el ECO del sobre en el resultado — la FORMA ya se validó,
+  // protegida, dentro de `aplicarOperacion` de arriba. Leerlos de nuevo acá para
+  // construir el resultado nunca debe poder propagar una excepción cruda (RX-02).
+  const idOperacionEco = leerSeguro(() => operacion.idOperacion, "")
+  const idTransaccionEco = leerSeguro(() => operacion.idTransaccion, undefined)
+  const baseRevisionEco = leerSeguro(() => operacion.baseRevision, 0)
 
   if (motivosPropios.some((m) => m.clasificacion === "rechazo")) {
     return {
       ok: false,
-      idOperacion: operacion.idOperacion,
-      idTransaccion: operacion.idTransaccion,
-      baseRevision: operacion.baseRevision,
-      revisionActual: operacion.baseRevision,
+      idOperacion: idOperacionEco,
+      idTransaccion: idTransaccionEco,
+      baseRevision: baseRevisionEco,
+      revisionActual: baseRevisionEco,
       motivos: motivosPropios,
       proyecto,
     }
@@ -456,10 +495,10 @@ export function ejecutarOperacion(proyecto: Proyecto, operacion: SobreOperacion,
   if (motivosValidacion.some((m) => m.clasificacion === "rechazo")) {
     return {
       ok: false,
-      idOperacion: operacion.idOperacion,
-      idTransaccion: operacion.idTransaccion,
-      baseRevision: operacion.baseRevision,
-      revisionActual: operacion.baseRevision,
+      idOperacion: idOperacionEco,
+      idTransaccion: idTransaccionEco,
+      baseRevision: baseRevisionEco,
+      revisionActual: baseRevisionEco,
       motivos: [...motivosPropios, ...motivosValidacion],
       proyecto,
     }
@@ -467,10 +506,10 @@ export function ejecutarOperacion(proyecto: Proyecto, operacion: SobreOperacion,
 
   return {
     ok: true,
-    idOperacion: operacion.idOperacion,
-    idTransaccion: operacion.idTransaccion,
-    baseRevision: operacion.baseRevision,
-    revisionActual: operacion.baseRevision,
+    idOperacion: idOperacionEco,
+    idTransaccion: idTransaccionEco,
+    baseRevision: baseRevisionEco,
+    revisionActual: baseRevisionEco,
     motivos: [...motivosPropios, ...motivosValidacion],
     proyecto: proyectoAplicado,
   }

@@ -681,6 +681,111 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan una excepcion cru
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (hallazgo externo RX-02, CRÍTICO — reabre E2-02): la MISMA función que
+// cierra E2-02 (`analizarSobreOperacion`/`validarFormaPayload`, `operaciones.ts`) lanza
+// una excepcion cruda cuando cualquier campo que lee es un getter que explota — algo
+// que ningún JSON real produce, pero que un llamador en proceso sí puede construir
+// (brief §37: "cualquier futura UI son clientes/adaptadores del Project Engine").
+// Reproducido a través de las 3 puertas públicas del motor (T9/scripts/
+// 03_e2_getter_via_motor.mjs de la revisión adversarial RX): `motor.aplicar` (SetPlaca,
+// getter en `payload.placa`), `motor.aplicarTransaccion` (lote de 2, la SEGUNDA
+// operación con el getter), `motor.proponer` (dry-run, mismo getter), SetComportamiento
+// con getter en `umbral.valor` (más anidado), y un getter en el propio `actor` del
+// sobre.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-explota del sobre/payload (hallazgo externo RX-02, reabre E2-02)", () => {
+  function payloadConGetterQueExplota(campo, mensaje) {
+    const payload = {}
+    Object.defineProperty(payload, campo, {
+      enumerable: true,
+      get() {
+        throw new Error(mensaje)
+      },
+    })
+    return payload
+  }
+
+  // Caso 1: motor.aplicar con getter en payload.placa.
+  {
+    const { motor, almacen } = crearMotorDePrueba()
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicar({ idOperacion: "op1", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: payloadConGetterQueExplota("placa", "getter boom en placa") })
+    }, "motor.aplicar NUNCA debe propagar el getter (caso 1)")
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+    assert.equal(almacen.llamadasGuardar.length, 0, "el intento con getter nunca persiste")
+  }
+
+  // Caso 2: motor.aplicarTransaccion — lote de 2, la SEGUNDA operacion trae el getter.
+  {
+    const { motor, almacen } = crearMotorDePrueba()
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicarTransaccion([
+        { idOperacion: "op1", actor: "agente", baseRevision: 0, tipo: "AgregarComponente", payload: { tipo: "led" } },
+        { idOperacion: "op2", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: payloadConGetterQueExplota("placa", "getter boom en placa") },
+      ])
+    }, "motor.aplicarTransaccion NUNCA debe propagar el getter (caso 2)")
+    assert.equal(r.ok, false, "el lote entero rechaza — el getter en la operacion 2 no deja pasar la 1")
+    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+    assert.equal(almacen.llamadasGuardar.length, 0, "ningun lote con un getter que explota persiste")
+  }
+
+  // Caso 3: motor.proponer (dry-run) con el mismo getter.
+  {
+    const { motor } = crearMotorDePrueba()
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.proponer([{ idOperacion: "op1", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: payloadConGetterQueExplota("placa", "getter boom en placa") }])
+    }, "motor.proponer NUNCA debe propagar el getter (caso 3)")
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+  }
+
+  // Caso 4: SetComportamiento con getter en un campo MAS anidado (umbral.valor).
+  {
+    const { motor } = crearMotorDePrueba()
+    motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, 0))
+    motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "dht22" }, 1))
+    motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 2))
+    const umbral = { unidad: "celsius", magnitud: "temperatura" }
+    Object.defineProperty(umbral, "valor", {
+      enumerable: true,
+      get() {
+        throw new Error("getter boom en umbral.valor")
+      },
+    })
+    const comportamiento = { cuando: { sensor: "cmp-0", capacidad: "temperatura", comparador: ">", umbral }, entonces: { actuador: "cmp-1", accion: "encender" } }
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicar(nuevaOperacion("SetComportamiento", { comportamiento }, 3))
+    }, "motor.aplicar NUNCA debe propagar el getter anidado (caso 4)")
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+  }
+
+  // Caso 5: getter en el propio `actor` del sobre.
+  {
+    const { motor } = crearMotorDePrueba()
+    const operacion = { idOperacion: "op1", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }
+    Object.defineProperty(operacion, "actor", {
+      enumerable: true,
+      get() {
+        throw new Error("getter boom en actor")
+      },
+    })
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicar(operacion)
+    }, "motor.aplicar NUNCA debe propagar el getter del sobre (caso 5)")
+    assert.equal(r.ok, false)
+    assert.equal(r.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA")
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // Phase 1.1 — hallazgo externo E3-01 (CRÍTICO, PHASE_1_EXTERNAL_FINDINGS.md):
 // `motor.ts` — `operaciones[0]?.baseRevision ?? canonico.revision` trataba
 // `baseRevision:null`/campo ausente/de OTRO TIPO en la PRIMERA operación de un lote NO

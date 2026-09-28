@@ -656,6 +656,92 @@ test("el sobre de operacion rechaza una clave extra desconocida con CLAVE_DESCON
   assert.deepEqual(r.motivos[0].datos.claves, ["extraField"])
 })
 
+// Phase 1.1 (hallazgo externo RX-02, CRÍTICO — reabre E2-02): `analizarSobreOperacion`/
+// `validarFormaPayload` LEEN campos del sobre/payload (`operacion.actor`,
+// `payload.placa`, `payload.comportamiento.cuando.umbral.valor`, etc.) sin ningún
+// `try/catch` — un getter que lanza en cualquiera de esos campos (algo que ningún JSON
+// real puede producir, pero que un llamador en proceso — un futuro adaptador, un
+// wrapper de test, un ORM con propiedades lazy — sí puede construir) propagaba una
+// excepción cruda a través de `aplicarOperacion` en vez del `Motivo` estructurado que
+// el propio fix de E2-02 prometía. Los 5 casos de acá son los que reprodujo RX
+// (T9/scripts/03_e2_getter_via_motor.mjs): getter en el SOBRE (`actor`), en el
+// PAYLOAD de primer nivel (`placa`), y en un campo MÁS anidado del payload
+// (`comportamiento.cuando.umbral.valor`) — más dos casos adicionales para cubrir
+// `idOperacion` (sobre) y un extremo de `Conectar` (payload anidado en otra operación).
+test("aplicarOperacion/ejecutarOperacion NUNCA propagan un getter-que-explota del sobre/payload — siempre un Motivo estructurado (hallazgo externo RX-02, reabre E2-02)", () => {
+  const p = proyectoBase()
+
+  function conGetterQueExplota(objetoBase, campo, mensaje) {
+    const objeto = { ...objetoBase }
+    delete objeto[campo]
+    Object.defineProperty(objeto, campo, {
+      enumerable: true,
+      get() {
+        throw new Error(mensaje)
+      },
+    })
+    return objeto
+  }
+
+  const casos = [
+    {
+      nombre: "getter en operacion.actor (sobre)",
+      operacion: conGetterQueExplota({ idOperacion: "op-rx02-1", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }, "actor", "getter boom en actor"),
+    },
+    {
+      nombre: "getter en operacion.idOperacion (sobre)",
+      operacion: conGetterQueExplota({ idOperacion: "op-rx02-2", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }, "idOperacion", "getter boom en idOperacion"),
+    },
+    {
+      nombre: "getter en payload.placa (SetPlaca)",
+      operacion: { idOperacion: "op-rx02-3", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: conGetterQueExplota({}, "placa", "getter boom en placa") },
+    },
+    {
+      nombre: "getter en payload.comportamiento.cuando.umbral.valor (SetComportamiento, anidado)",
+      operacion: {
+        idOperacion: "op-rx02-4",
+        actor: "agente",
+        baseRevision: 0,
+        tipo: "SetComportamiento",
+        payload: {
+          comportamiento: {
+            cuando: { sensor: "cmp-0", capacidad: "temperatura", comparador: ">", umbral: conGetterQueExplota({ unidad: "celsius", magnitud: "temperatura" }, "valor", "getter boom en umbral.valor") },
+            entonces: { actuador: "cmp-1", accion: "encender" },
+          },
+        },
+      },
+    },
+    {
+      nombre: "getter en payload.desde (Conectar, extremo completo)",
+      operacion: {
+        idOperacion: "op-rx02-5",
+        actor: "agente",
+        baseRevision: 0,
+        tipo: "Conectar",
+        payload: conGetterQueExplota({ hasta: { componente: "cmp-1", terminal: "a" } }, "desde", "getter boom en desde"),
+      },
+    },
+  ]
+
+  for (const { nombre, operacion } of casos) {
+    let directo
+    assert.doesNotThrow(() => {
+      directo = aplicarOperacion(p, operacion, catalogo)
+    }, `aplicarOperacion NUNCA debe propagar el getter — caso "${nombre}"`)
+    assert.equal(directo.proyecto, p, `caso "${nombre}": el proyecto devuelto debe ser la MISMA referencia`)
+    assert.equal(directo.motivos.length, 1, `caso "${nombre}": debe traer exactamente un motivo`)
+    assert.equal(directo.motivos[0].clasificacion, "rechazo", `caso "${nombre}": debe ser clasificacion rechazo`)
+    assert.equal(directo.motivos[0].codigo, "EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA", `caso "${nombre}": codigo esperado EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA, recibido ${directo.motivos[0].codigo}`)
+
+    let viaEjecutar
+    assert.doesNotThrow(() => {
+      viaEjecutar = ejecutarOperacion(p, operacion, catalogo)
+    }, `ejecutarOperacion NUNCA debe propagar el getter — caso "${nombre}"`)
+    assert.equal(viaEjecutar.ok, false, `caso "${nombre}": ejecutarOperacion debe rechazar`)
+    assert.equal(viaEjecutar.proyecto, p, `caso "${nombre}": el proyecto devuelto por ejecutarOperacion debe ser la MISMA referencia`)
+  }
+})
+
 // No-regresión: un string VACÍO DENTRO de `payload` (no en el sobre) nunca es "forma
 // inválida" — sigue siendo el mismo REFERENCIA_INEXISTENTE de siempre (mismo criterio
 // que ya fija tests/nucleo-adversarial.test.mjs contra el motor real, acá fijado

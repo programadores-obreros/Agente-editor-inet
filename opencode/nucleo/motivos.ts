@@ -81,6 +81,18 @@
 //   categorías según quién lo emite, mismo criterio que `AUTOCONEXION_INVALIDA`/
 //   `UMBRAL_NO_FINITO`.
 //
+// Phase 1.1 (hallazgo externo RX-02, CRÍTICO, revisión adversarial independiente,
+// reabre E2-02) agrega, categoria "operacion", clasificacion "rechazo" siempre:
+// - `EXCEPCION_INESPERADA_EN_VALIDACION_DE_FORMA` — leer un campo del sobre/payload
+//   (`analizarSobreOperacion`/`validarFormaPayload`, `operaciones.ts`) lanzó una
+//   excepción en vez de devolver un valor (un getter que explota en `actor`,
+//   `payload.placa`, `payload.comportamiento.cuando.umbral.valor`, etc. — nunca
+//   producible por JSON real, pero sí por cualquier valor JS que un llamador en
+//   proceso construya). Distinto de `SOBRE_OPERACION_INVALIDO`/
+//   `PAYLOAD_OPERACION_INVALIDO` (esos dos significan "el valor tiene la forma
+//   incorrecta"; éste significa "ni siquiera se pudo LEER el valor"). `datos.error`
+//   lleva el mensaje de la excepción original, para diagnóstico.
+//
 
 // Phase 1.1 (hallazgo externo E3-01, CRÍTICO) agrega, categoria "motor",
 // clasificacion "rechazo" siempre, emitido por `motor.ts` (`ejecutarLote`, ANTES de
