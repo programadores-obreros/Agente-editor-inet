@@ -1,11 +1,184 @@
 # Phase 2 — Slice 1: protocolo (detalle)
 
 Complemento de `PHASE_2_SLICE_1_DESIGN.md` (§2.4 lo referencia para el protocolo
-HTTP/SSE; este documento agrega, por ahora, sólo la parte de la vista física — §2.6 del
-diseño — y el plan de pintado, tal como los dejó el writer de
-`opencode/vista-fisica/**`). El protocolo HTTP (`GET /api/proyecto`,
-`POST /api/operaciones`, `GET /api/eventos`) NO se documenta acá todavía: lo agrega el
-writer del servidor.
+HTTP/SSE; §2.6 para la vista física). Dos partes: la vista física (`vista` dentro del
+`Snapshot`, el plan de pintado — la dejó el writer de `opencode/vista-fisica/**`) y,
+ahora, el protocolo HTTP+SSE en sí (`opencode/servidor/servidor-proyecto.ts`, writer
+W3, tarea 2/3).
+
+## Servidor HTTP+SSE — `opencode/servidor/servidor-proyecto.ts`
+
+`iniciarServidor({ servicio, host?, puerto? }) => Promise<{ url, puerto, cerrar()
+}>`. `servicio` viene YA construido por `opencode/servidor/servicio-con-vista.ts`
+(`obtenerServicioDeProyectoConVista`, el único call site de producción autorizado a
+`obtenerServicioDeProyecto` — ver más abajo, "Único punto de producción..."): el
+servidor nunca decide de dónde sale el servicio, sólo lo sirve. `host` default
+`"127.0.0.1"`, `puerto` default `0` (efímero — el SO elige uno libre, sin colisión
+entre dos instancias corriendo a la vez). `node:http` puro, sin dependencias nuevas —
+funciona igual en Node (tests) y en Bun (proceso real de OpenCode). Precedente probado
+en este mismo repo: `opencode/skills/archify/bin/preview.mjs`.
+
+### Rutas
+
+| Método | Ruta | Qué hace |
+| --- | --- | --- |
+| GET/HEAD | `/` | Sirve `opencode/vista-fisica/web/index.html` |
+| GET/HEAD | `/assets/<nombre>` | Sirve un asset de la lista blanca (ver abajo), o 404 |
+| GET/HEAD | `/api/proyecto` | Devuelve el `Snapshot` autoritativo, JSON completo |
+| POST | `/api/operaciones` | Aplica un `SobreOperacion` (ver abajo) |
+| GET | `/api/eventos` | SSE — evento `revision` en cada commit real |
+| cualquiera | cualquier otra ruta | 404 |
+| método no soportado en una ruta conocida | — | 405, con `Allow` |
+
+### Lista blanca de `/assets/<nombre>`
+
+Fija, calculada una sola vez al arrancar (`Map<nombre, Buffer>`, los archivos se leen
+UNA vez a memoria):
+
+| `nombre` | Archivo real |
+| --- | --- |
+| `wokwi-bundle.js` | `opencode/tecniabot-web/wokwi-bundle.js` (el mismo bundle de `circuito.ts`) |
+| `componentes-extra.js` | `opencode/tecniabot-web/componentes-extra.js` — en la lista blanca, servible, pero `index.html` de este slice NO lo carga (ESP32+LED no necesita ninguna pieza custom) |
+| `app.js` | `opencode/vista-fisica/web/app.js` |
+| `pintar.js` | `opencode/vista-fisica/web/pintar.js` |
+| `plan-de-pintado.js` | `opencode/vista-fisica/web/plan-de-pintado.js` |
+
+**Path traversal cerrado por construcción, no por sanitización**: `nombre` (el texto
+crudo después de `/assets/`) NUNCA se usa para construir una ruta de archivo — es
+sólo la clave de un `Map` ya fijo. Un `nombre` como `"../../package.json"` no matchea
+ninguna clave del mapa → 404, sin que el valor del atacante toque el filesystem en
+ningún momento (`tests/phase2-transporte-http.test.mjs`, "GET
+/assets/../../package.json"). Además, `new URL(req.url, ...)` ya normaliza los
+segmentos `..` en la práctica (Node/WHATWG), así que ese ejemplo ni siquiera llega a
+matchear `/assets/` — pero la lista blanca es la defensa real, no esa normalización
+incidental.
+
+### `GET /api/proyecto`
+
+200, body = el `Snapshot` completo tal cual `servicio.snapshot()`
+(`opencode/nucleo/composicion-raiz.ts::Snapshot`) — incluida la clave `vista`, porque
+`servicio` siempre sale de `servicio-con-vista.ts`. Nunca envuelto en otro objeto (a
+diferencia del bosquejo preliminar de ARCH-B, que proponía `{proyecto, revision}`: ese
+bosquejo es anterior a que `composicion-raiz.ts`/W1 fijaran la forma final de
+`Snapshot`; este documento sigue la forma real y congelada, no el bosquejo).
+
+### `POST /api/operaciones`
+
+**Request**: body = un `SobreOperacion` de Phase 1 (`opencode/nucleo/operaciones.ts`),
+sin envoltorio nuevo — `{idOperacion, idTransaccion?, actor, baseRevision, tipo,
+payload}`. Límite: **256 KiB** (un sobre real es un objeto chico; el límite es
+generoso pero acota memoria — un cuerpo más grande da 400 antes de intentar
+`JSON.parse`, sin acumular sin límite).
+
+**`actor` — decisión registrada**: el servidor **FUERZA** `actor: "navegador"`
+siempre, pisando lo que mande el cliente (si el body es un objeto plano) — no sólo lo
+valida y rechaza si viene distinto. Este endpoint es EXCLUSIVAMENTE el canal del
+navegador (la tool de OpenCode, W4, es un actor `"agente"` y usa el servicio en
+proceso, nunca este POST); `actor` es metadata descriptiva que
+`operaciones.ts::analizarSobreOperacion` sólo valida contra dos valores posibles, sin
+cambiar ninguna regla de negocio según cuál sea — confiar en que el navegador siempre
+lo mande bien sería un requisito extra sin beneficio real (un bug de `app.js`, o un
+POST armado a mano en DevTools, provocaría un 400/rechazo por un campo que el
+servidor YA sabe cuál tiene que ser, dado que llegó por ESTE endpoint). Si el body no
+es un objeto plano (array, string, número, `null`), no hay nada que forzar — se deja
+pasar tal cual y el motor lo rechaza con `SOBRE_OPERACION_INVALIDO`, estructurado.
+
+**Response**: 200 (si el body era JSON válido, sin importar si el Engine aceptó o
+rechazó la operación) con:
+```json
+{ "resultado": { /* ResultadoTransaccion tal cual devuelve motor.ts */ }, "snapshot": { /* Snapshot tal cual GET /api/proyecto */ } }
+```
+`resultado.ok:false` con un motivo en `resultado.motivos[]` (ej.
+`BASE_REVISION_DESACTUALIZADA`, `datos:{baseRevision,revisionActual}`) es un
+RECHAZO DE DOMINIO, no un error de transporte — el Engine PROCESÓ la operación
+(la evaluó y la rechazó), que es distinto de "la request en sí es inválida". `snapshot`
+en la respuesta es SIEMPRE el estado autoritativo actual (post-commit si se aceptó;
+sin cambios si se rechazó) — el cliente nunca necesita adivinar ni hacer un GET
+aparte para saber qué pasó.
+
+**Códigos de TRANSPORTE (nunca de dominio)**:
+
+| Código | Cuándo |
+| --- | --- |
+| 400 | JSON inválido, o cuerpo mayor a 256 KiB |
+| 403 | Header `Host` no matchea `127.0.0.1:<puerto>` ni `localhost:<puerto>` |
+| 404 | Ruta desconocida (incluida cualquier `/assets/<nombre>` fuera de la lista blanca) |
+| 405 | Método no soportado en esa ruta (con header `Allow`) |
+
+### `GET /api/eventos` (SSE)
+
+200, `Content-Type: text/event-stream`, un preámbulo `retry: 1000` (no es un evento:
+sin `data:`, un cliente que parsee bloques SSE no debe contarlo como notificación).
+Por cada commit real (`servicio.suscribir`, dispara sólo cuando `ok:true` Y la
+revisión efectivamente cambió — nunca en un rechazo ni en un lote vacío), el servidor
+escribe:
+```
+event: revision
+data: {"revision": 8}
+
+```
+Un rechazo (`BASE_REVISION_DESACTUALIZADA` o cualquier otro) **nunca** produce un
+evento — probado en `tests/phase2-transporte-http.test.mjs` por diferencia: un
+rechazo intercalado entre dos operaciones aceptadas no debe insertar un evento
+espurio antes del segundo evento real (sin `sleep`: el test espera el próximo evento
+por promesa, nunca por timeout). Al cerrarse la conexión (`req` `close`), el servidor
+desuscribe del servicio — nunca deja un listener fantasma.
+
+### Seguridad
+
+- Bind exclusivo a `127.0.0.1` (nunca `0.0.0.0`), puerto efímero por defecto.
+- Header `Host` validado contra `127.0.0.1:<puerto>` **o** `localhost:<puerto>`
+  exacto — 403 si no matchea (anti DNS-rebinding, mismo mecanismo que
+  `preview.mjs`).
+- Sin CORS: todo sale del mismo origen (página, assets, API, SSE) — no hay
+  cabecera `Access-Control-Allow-Origin` en ninguna respuesta.
+- CSP restrictiva en TODAS las respuestas: `default-src 'none'; script-src 'self';
+  style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri
+  'none'; form-action 'none'`. Nunca `unsafe-eval`; `app.js`/`pintar.js`/
+  `plan-de-pintado.js` son ES modules externos (`<script type="module" src=...>`),
+  nunca inline.
+- Otras cabeceras en todas las respuestas: `Cache-Control: no-store`,
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy:
+  no-referrer`, `Cross-Origin-Resource-Policy: same-origin`.
+
+### Comportamiento ante fallas
+
+- **Cierre del servidor** (`cerrar()`): termina TODAS las conexiones SSE abiertas
+  (`res.end()` + desuscripción de `servicio.suscribir`) y fuerza el cierre de
+  conexiones keep-alive ociosas (`server.closeIdleConnections?.()`, mismo mecanismo
+  que `preview.mjs` — si no, `server.close()` puede quedar esperando para siempre a
+  que un cliente cierre su lado primero) antes de resolver.
+- **Conflicto stale**: el navegador recibe `BASE_REVISION_DESACTUALIZADA` en
+  `resultado.motivos`, con el `snapshot` (ya autoritativo, sin cambios) en la misma
+  respuesta; `app.js` igual hace un refetch explícito de `/api/proyecto` (documentado
+  en el diseño como la conducta esperada, aunque el `snapshot` de la respuesta ya sea
+  autoritativo — no hay condición de carrera posible entre el rechazo y esa lectura,
+  porque el servidor es de un solo hilo y no hay ningún `await` entre `aplicar()` y
+  `snapshot()` dentro del handler).
+- **Rechazo de dominio (Path B)**: la vista se queda en el `snapshot` que ya trae la
+  respuesta (sin cambios) — nunca aplica el cambio pedido de forma optimista.
+- **Aceptado con estado blocking representable (Path A)**: `resultado.ok:true`, el
+  `snapshot.vista.motivos` (y por lo tanto el panel de motivos que pinta `app.js`) ya
+  refleja el motivo — no hace falta ningún caso especial en el cliente.
+- **SSE cortado**: `EventSource` reconecta solo (protocolo nativo); mientras está
+  desconectado, la vista simplemente no recibe push nuevo, pero sigue mostrando el
+  último snapshot válido.
+- **Reinicio del servidor**: el puerto efímero cambia — una pestaña vieja apuntando
+  al puerto muerto necesita reabrirse (mismo comportamiento aceptado que hoy con
+  `file://`, informe ARCH-B).
+
+### Único punto de producción con vista — `opencode/servidor/servicio-con-vista.ts`
+
+`obtenerServicioDeProyectoConVista(opciones)` es el ÚNICO módulo de producción
+autorizado a llamar `obtenerServicioDeProyecto` (`composicion-raiz.ts`) — siempre con
+`calcularVista: vistaDeProyectoConCatalogoReal` inyectado, para que el snapshot traiga
+`vista` desde la PRIMERA construcción del singleton por (directorio, idProyecto), sin
+importar si quien llega primero es el servidor HTTP o (después) la tool de OpenCode
+(W4). Guardia estructural nueva, mismo mecanismo fs+regex que
+`scripts/guardia-composicion-raiz.mjs`: `scripts/guardia-servicio-con-vista.mjs` +
+`tests/phase2-servicio-con-vista.test.mjs` — ningún archivo de producción fuera de
+este módulo (y de `composicion-raiz.ts`, que lo define) referencia
+`obtenerServicioDeProyecto` directo.
 
 ## Vista física — `vista` dentro del `Snapshot`
 
@@ -140,3 +313,31 @@ deliberadamente "tonto": aplica estas instrucciones tal cual, sin ninguna decisi
 propia. `plan-de-pintado.js` nunca referencia una URL externa en ninguna instrucción
 (`tests/phase2-vista-fisica.test.mjs` lo verifica con un escaneo de texto) — offline
 por diseño (§2.9 del diseño congelado).
+
+## `pintar.js` — aplica el plan al DOM, "tonto"
+
+`pintar(doc, instrucciones, manejadores?) => {circuito, cables, controles, motivos}`
+(cuatro raíces NUEVAS por llamada — nunca reusa/muta un DOM anterior). Recibe `doc`
+como parámetro (nunca el global `document`), así que es testeable con un "document"
+mínimo fabricado a mano (`tests/phase2-pintar.test.mjs`) — sólo usa
+`createElement`/`setAttribute`/`appendChild`, más `addEventListener` en el `<select>`
+del selector de GPIO (detrás de un chequeo de tipo, para no romper con un fake que no
+lo implemente). `manejadores.onCambioGpio({componenteId, terminalId, valor})` es la
+única integración con el llamador — `valor` es `null` cuando el usuario elige "sin
+asignar" (AsignarPin con `pin:null` es una forma válida,
+`nucleo/operaciones.ts::validarFormaPayload`).
+
+## `app.js` — único módulo que habla con el transporte
+
+`fetch('/api/proyecto')` al cargar y repinta; `new EventSource('/api/eventos')`, y en
+cada evento `revision` vuelve a pedir el snapshot y repinta (nunca aplica el
+`{revision}` del evento de forma optimista). El selector de GPIO arma un
+`AsignarPin` con `baseRevision` del ÚLTIMO snapshot autoritativo (`ultimoSnapshot.
+revision`, nunca un contador local) y hace `POST /api/operaciones`; con la respuesta
+repinta SIEMPRE desde `cuerpo.snapshot` (nunca desde el estado que el `<select>`
+mostraba antes del POST). Si el motivo es `BASE_REVISION_DESACTUALIZADA`, muestra "otro
+cambio llegó primero" y hace un refetch explícito; con cualquier otro rechazo (Path
+B), muestra el código del motivo y se queda en el snapshot que ya trajo la respuesta;
+con un `ok:true` sobre un estado blocking representable (Path A), el motivo ya
+aparece en el panel de motivos vía el propio plan de pintado — no hay caso especial.
+Los mensajes salen literal de `motivo.codigo` — nunca una causa inventada.
