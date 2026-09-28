@@ -753,3 +753,90 @@ reabre un tema ya cerrado por la re-auditoría de Phase 1.1/1.2 sin evidencia
 nueva — cada clasificación (severidad, bloquea/no bloquea) es la que ya fijó
 la fuente externa (`reaudit/CONSOLIDACION.md`, autoridad de la re-auditoría),
 nunca una reinterpretación de este writer.
+
+## Phase 2 Slice 1 — E3-04b: CERRADO por raíz de composición única
+
+**Decisión:** E3-04b (`Almacen` como puerto interno, no una segunda vía de
+escritura — entrada "Almacen es un puerto interno del composition root" más
+arriba, y REA-N5) queda **CERRADO** en Phase 2 Slice 1 por
+`opencode/nucleo/composicion-raiz.ts` — la raíz de composición única del
+Project Engine (ver `docs/programacion-intencion/PHASE_2_SLICE_1_DESIGN.md`
+§2.1/§2.2 y el informe ARCH-A, "composition root, in-process, singleton por
+proyecto").
+
+**Mecanismo (sin DI, sin proxies, sin frameworks de inyección — mismo
+criterio que Phase 1.1 ya había fijado, entrada arriba "nunca encapsularlo
+con un subsistema nuevo: proxy, permisos, wrapper"):**
+
+1. `composicion-raiz.ts` es el ÚNICO módulo de producción, además de
+   `nucleo/almacen.ts` mismo, autorizado a importar `crearAlmacen`. Construye
+   el `Almacen` internamente y NUNCA lo devuelve — expone
+   `obtenerServicioDeProyecto({ directorio, idProyecto, crearSiNoExiste?,
+   calcularVista? })`, una factory idempotente (singleton por
+   `(directorio, idProyecto)` en un `Map` de módulo — memoización simple,
+   mismo patrón que el precedente ya real `opencode/tool/platformio.ts:20`,
+   `pioPathCache`) que devuelve un `ServicioDeProyecto` angosto:
+   `snapshot()`, `aplicar()`/`aplicarTransaccion()`/`proponer()` (delegan
+   íntegro en `MotorDeProyecto`, la única autoridad de mutación),
+   `suscribir()` (cambios de revisión) y `cerrar()`. NUNCA `guardar`/
+   `cargar`/`existe` ni una referencia al `Almacen` o al motor crudo.
+2. El catálogo es el REAL de producción
+   (`adaptadores/hash-catalogo.node.ts::construirCatalogoMinimoReal()`),
+   calculado una única vez por proceso — la raíz no agrega reglas de
+   dominio propias, todo pasa por el motor.
+3. Un único `MotorDeProyecto` vivo por proyecto en el proceso (singleton por
+   `(directorio, idProyecto)`) cierra REA-N5 (bloqueo documentado arriba,
+   "bloquea si Phase 2 usa múltiples motores sobre el mismo proyecto") sin
+   relajar el CAS de `almacen.ts` (E3-07): el CAS sigue siendo la defensa de
+   último recurso, nunca el diseño deseado — con la raíz única, nunca hay dos
+   motores compitiendo por el mismo `Almacen` en un mismo proceso.
+
+**Tests guardia (`tests/phase2-composicion-raiz.test.mjs`):**
+
+- (a) la superficie exportada del MÓDULO es exactamente
+  `["obtenerServicioDeProyecto"]` (los `export interface`/`export type` se
+  borran en runtime — límite honesto documentado en el propio test: un
+  re-export de SOLO TIPO no es detectable así, pero tampoco es una vía de
+  escritura ejecutable).
+- (b) el SERVICIO devuelto por cada llamada no expone `guardar`/`cargar`/
+  `existe`/`almacen`/`Almacen`/`crearAlmacen`/el motor crudo — recorriendo
+  claves propias Y de todo el prototipo.
+- (c) guardia estructural en JS puro (`scripts/guardia-composicion-raiz.mjs`,
+  mismo estilo que `scripts/seguridad-proyectos.mjs`: `fs` + regex, sin
+  `rg`/`grep` como dependencia externa): escanea `opencode/**/*.{ts,js,mjs}` y
+  `scripts/**` (excluyendo `node_modules`, `tests/**` y el propio guardia) y
+  falla si algún archivo, fuera de `nucleo/almacen.ts` y
+  `nucleo/composicion-raiz.ts`, importa `almacen.ts` o referencia
+  `crearAlmacen`. HOY pasa vacío (nadie más lo hace); un test dedicado prueba
+  que el guardia SÍ puede fallar, con un archivo trampa descartable en un
+  directorio temporal (nunca contra el repo real).
+- (d) singleton: dos llamadas con el mismo `(directorio, idProyecto)`
+  devuelven el MISMO servicio (misma referencia); ids distintos dan servicios
+  distintos; una operación aplicada por un handle es visible por el otro con
+  la misma revisión (comparten el mismo motor en memoria).
+
+**Verificación de mutación (evidencia, no parte de la suite permanente):**
+un mutante que agrega `almacen` al objeto que `construirServicio` devuelve
+(exponiendo el `Almacen` desde el SERVICIO, no desde el módulo — una clase de
+bug que el guardia (a) no vería) mata el guardia (b): `Object.getOwnPropertyNames`
+del servicio mutante incluye `"almacen"`, y la aserción de superficie exacta
+falla. Confirma que el guardia (b) no es un test vacío.
+
+**Resto del slice (snapshot, motor/GPIO, conflicto stale, Path A/Path B,
+reload, invariante visual) probado en `tests/phase2-snapshot.test.mjs`,
+`tests/phase2-motor-gpio.test.mjs`, `tests/phase2-conflicto.test.mjs`,
+`tests/phase2-paths.test.mjs`, `tests/phase2-reload.test.mjs` — todos sobre
+un `Almacen` REAL (`os.tmpdir()`), nunca un almacén falso, mismo criterio que
+`tests/nucleo-persistible-recargable.test.mjs`/`nucleo-demo-contractual.test.mjs`.
+Los 983 tests de Phase 1 (`tests/nucleo-*.test.mjs`) NO se tocaron y siguen
+en verde; `tests/nucleo-adversarial.test.mjs` ("29b. grep: node:fs/node:crypto
+SOLO en almacen.ts y adaptadores/hash-catalogo.node.ts") obligó a que
+`composicion-raiz.ts` NUNCA importe `node:path` (ni ningún otro `node:`*):
+la normalización de `directorio` para la clave del singleton es un recorte de
+string simple (`normalizarDirectorio`), sin resolver contra `process.cwd()`.
+
+El campo `vista` del snapshot (diseño §2.6, modelo de vista física) TODAVÍA NO
+EXISTE — la raíz deja un hook interno opcional (`calcularVista`, en las
+opciones de `obtenerServicioDeProyecto`, nunca una clave nueva del módulo) sin
+inventar su forma: si nadie lo inyecta, `snapshot()` simplemente omite la
+clave. Lo agrega el writer siguiente (servidor HTTP + vista física).
