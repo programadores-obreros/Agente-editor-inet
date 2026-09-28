@@ -470,9 +470,28 @@ function esObjeto(v: unknown): v is Record<string, unknown> {
  * verbatim en `motor.ts` (`baseRevision`) y acá (`revision`/`siguienteIdLocal`). No
  * divergía (mismo comportamiento en ambos, incluida la aceptación de `-0`), pero
  * dos copias de la MISMA regla es una violación de DRY que arriesga que una futura
- * edición cambie una y no la otra. `motor.ts` la importa de acá. */
+ * edición cambie una y no la otra. `motor.ts` la importa de acá.
+ *
+ * Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO — cuarta revisión adversarial
+ * independiente, RX4_REPORT.md; RECLASIFICA E1-04, ver DECISIONS.md): antes de
+ * este fix, `Number.isInteger(v)` no tenía cota superior — `Number.isInteger(1e21)`
+ * es `true` en JS (representación IEEE-754 sin parte fraccionaria a esa magnitud),
+ * así que un documento con `"revision": 1e21` pasaba sin diagnóstico. El
+ * invariante que esta función existe para sostener es que `revision`/
+ * `siguienteIdLocal`/`baseRevision` son enteros cuyo INCREMENTO (`+1`, `motor.ts`/
+ * `operaciones.ts`) tiene que seguir siendo exacto — ese invariante deriva
+ * directamente la cota: `Number.isSafeInteger` (`Math.abs(v) <=
+ * Number.MAX_SAFE_INTEGER`, además de `Number.isInteger`), nunca una regla de
+ * producto arbitraria. Más allá de `Number.MAX_SAFE_INTEGER`, `v + 1 === v`
+ * (colapso de precisión IEEE-754): con `revision` congelada en un valor aparente
+ * para siempre, el compare-and-swap optimista (`baseRevision !== canonico.
+ * revision`, E3-01/E3-07, brief §33) queda neutralizado en silencio — el mismo
+ * `baseRevision` "viejo" sigue pareciendo al día indefinidamente. Ver
+ * `motor.ts::ejecutarLote` (guarda adicional: el COMMIT se niega a producir un
+ * incremento que ya no sea exacto, incluso si `revision` entró siendo un entero
+ * seguro) y `operaciones.ts` (guarda equivalente para `siguienteIdLocal`). */
 export function esEnteroNoNegativo(v: unknown): v is number {
-  return typeof v === "number" && Number.isInteger(v) && v >= 0
+  return typeof v === "number" && Number.isSafeInteger(v) && v >= 0
 }
 
 function rechazo(codigo: string, datos?: Record<string, unknown>): { readonly ok: false; readonly motivos: readonly Motivo[] } {

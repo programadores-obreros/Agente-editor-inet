@@ -462,6 +462,22 @@ intactos. Ver `IR-SPEC.md` §6.8 para el detalle completo, incluida la
 corrección paralela en `ejecutarOperacion` (el ECO del sobre no lee un campo de
 un valor que podría no ser un objeto).
 
+## 9.9. Phase 1.1 (RX4) — `revision`/`baseRevision`/`siguienteIdLocal` acotados a `Number.isSafeInteger` (hallazgo externo RX4-02, CRÍTICO, RECLASIFICA E1-04)
+
+`esEnteroNoNegativo` (§9.3, reusada por `baseRevision` acá y por `revision`/
+`siguienteIdLocal` en `cargador.ts`) no tenía cota superior — un `baseRevision`
+o una `revision` de `1e21` pasaban sin diagnóstico, y más allá de
+`Number.MAX_SAFE_INTEGER` el incremento (`+1`) deja de ser exacto
+(`revision + 1 === revision`), neutralizando en silencio el compare-and-swap
+optimista de §9.3/E3-01 que este mismo documento describe. **Fix:**
+`esEnteroNoNegativo` usa `Number.isSafeInteger` — un `baseRevision` de `1e21`
+rechaza con `BASE_REVISION_INVALIDA` (mismo código de §9.3, ahora con una cota
+más estricta), igual que cualquier otro entero fuera de rango. Además, el
+commit se niega a producir un incremento que ya no sea exacto
+(`REVISION_EXCEDE_ENTERO_SEGURO`) y la generación de id local se niega
+igual (`CONTADOR_ID_EXCEDE_ENTERO_SEGURO`) — ver `IR-SPEC.md` §6.9 para el
+detalle completo, incluida la reclasificación de E1-04 (`DECISIONS.md`).
+
 ## 10. Colisión de escritura entre motores que comparten almacén (hallazgo E3-07, MAJOR — resolución humana Phase 1.1, brief §21)
 
 `baseRevision` (§9.3) sólo protege contra un lost update DENTRO de un mismo motor:

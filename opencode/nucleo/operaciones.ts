@@ -81,6 +81,22 @@ function rechazo(codigo: string, datos?: Record<string, unknown>, entidad?: Moti
   return { codigo, categoria: "operacion", severidad: "blocking", clasificacion: "rechazo", entidad, datos }
 }
 
+/** Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO — cuarta revisión adversarial
+ * independiente): `siguienteIdLocal` entra siempre como un entero SEGURO
+ * (`esEnteroNoNegativo`, `cargador.ts`, ahora acotada con `Number.isSafeInteger`) —
+ * el ÚNICO valor donde generar el PRÓXIMO id local (`+1`, los 3 aplicadores que lo
+ * usan) dejaría de ser exacto es `siguienteIdLocal === Number.MAX_SAFE_INTEGER`.
+ * "Lo mismo para el contador de ids" que el commit de revisión en `motor.ts`:
+ * nunca un incremento silenciosamente inexacto — se rechaza ANTES de generar el id
+ * o mutar el proyecto. */
+function contadorExcedeEnteroSeguro(siguienteIdLocal: number): boolean {
+  return !Number.isSafeInteger(siguienteIdLocal + 1)
+}
+
+function motivoContadorExcedeEnteroSeguro(siguienteIdLocal: number): Motivo {
+  return rechazo("CONTADOR_ID_EXCEDE_ENTERO_SEGURO", { siguienteIdLocal, limite: Number.MAX_SAFE_INTEGER })
+}
+
 function terminalesNoRielFijo(catalogo: Catalogo, tipo: string): readonly string[] {
   const comp = catalogo.obtenerComponente(tipo)
   if (!comp) return []
@@ -297,6 +313,9 @@ function aplicarAgregarComponente(proyecto: Proyecto, payload: { tipo: string; p
   if (!catalogo.obtenerComponente(payload.tipo)) {
     return { proyecto, motivos: [rechazo("TIPO_CATALOGO_DESCONOCIDO", { tipo: payload.tipo })] }
   }
+  if (contadorExcedeEnteroSeguro(proyecto.siguienteIdLocal)) {
+    return { proyecto, motivos: [motivoContadorExcedeEnteroSeguro(proyecto.siguienteIdLocal)] }
+  }
   const id = formatearIdLocal("cmp", proyecto.siguienteIdLocal)
   const pines: Record<string, string | null> = {}
   for (const terminalId of terminalesNoRielFijo(catalogo, payload.tipo)) pines[terminalId] = null
@@ -366,6 +385,9 @@ function aplicarConectar(proyecto: Proyecto, payload: { desde: { componente: str
   if (proyecto.conexiones.some((cx) => mismaConexion(cx, payload))) {
     return { proyecto, motivos: [rechazo("CONEXION_DUPLICADA", { desde: payload.desde, hasta: payload.hasta })] }
   }
+  if (contadorExcedeEnteroSeguro(proyecto.siguienteIdLocal)) {
+    return { proyecto, motivos: [motivoContadorExcedeEnteroSeguro(proyecto.siguienteIdLocal)] }
+  }
   const id = formatearIdLocal("conn", proyecto.siguienteIdLocal)
   const nueva: Conexion = { id, desde: payload.desde, hasta: payload.hasta }
   return {
@@ -424,6 +446,9 @@ function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento:
     // reemplaza algo, sí. La semántica upsert NO cambia — sigue commiteando igual.
     const motivoReemplazo: Motivo = { codigo: "COMPORTAMIENTO_REEMPLAZADO", categoria: "operacion", severidad: "info", datos: { comportamiento: idExistente } }
     return { proyecto: { ...proyecto, comportamientos: proyecto.comportamientos.map((b) => (b.id === idExistente ? nueva : b)) }, motivos: [motivoReemplazo] }
+  }
+  if (contadorExcedeEnteroSeguro(proyecto.siguienteIdLocal)) {
+    return { proyecto, motivos: [motivoContadorExcedeEnteroSeguro(proyecto.siguienteIdLocal)] }
   }
   const id = formatearIdLocal("beh", proyecto.siguienteIdLocal)
   const nueva: ComportamientoRegla = { id, cuando, entonces }

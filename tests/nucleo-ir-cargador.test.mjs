@@ -827,3 +827,54 @@ test("crearProyecto: estado inicial correcto", () => {
   assert.equal(p.schemaVersion, SCHEMA_VERSION_SOPORTADA)
   assert.equal(p.metadata.creadoEn, "2026-01-01T00:00:00.000Z")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO — cuarta revisión adversarial
+// independiente, RX4_REPORT.md; RECLASIFICA E1-04, ver DECISIONS.md): `esEnteroNoNegativo`
+// aceptaba enteros SIN cota superior (`Number.isInteger(1e21) === true`). Con
+// `revision: 1e21`, el documento cargaba sin diagnóstico — y `1e21 + 1 === 1e21`
+// (colapso de precisión IEEE-754 más allá de `Number.MAX_SAFE_INTEGER`), así que el
+// próximo commit congelaba la revisión para siempre, neutralizando en silencio el
+// compare-and-swap optimista (E3-01/E3-07, brief §33). El invariante ("el INCREMENTO
+// de revision tiene que ser exacto") deriva la cota: `Number.isSafeInteger`, no una
+// regla de producto arbitraria. Ver `nucleo-motor.test.mjs` para el comportamiento en
+// el COMMIT (revision congelada en MAX_SAFE_INTEGER-1 -> MAX_SAFE_INTEGER, y el
+// siguiente commit se rechaza sin cambiar nada).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("revision mas alla de Number.MAX_SAFE_INTEGER rechaza al cargar (hallazgo externo RX4-02)", () => {
+  const casos = [
+    { nombre: "1e21", valor: 1e21 },
+    { nombre: "2**53 (justo arriba de MAX_SAFE_INTEGER)", valor: 2 ** 53 },
+    { nombre: "MAX_SAFE_INTEGER + 1", valor: Number.MAX_SAFE_INTEGER + 1 },
+  ]
+  for (const { nombre, valor } of casos) {
+    const doc = { ...documentoValido(), revision: valor }
+    const r = cargarProyecto(doc)
+    assert.equal(r.ok, false, `revision=${nombre}: debe rechazar`)
+    assert.equal(r.motivos[0].codigo, "CAMPO_REQUERIDO_FALTANTE", `revision=${nombre}: mismo codigo que cualquier otro valor de forma invalida para 'revision'`)
+    assert.deepEqual(r.motivos[0].datos, { campo: "revision" }, `revision=${nombre}`)
+  }
+})
+
+test("revision === Number.MAX_SAFE_INTEGER - 1 carga sin problema (limite exacto, no regresion RX4-02)", () => {
+  const doc = { ...documentoValido(), revision: Number.MAX_SAFE_INTEGER - 1 }
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.revision, Number.MAX_SAFE_INTEGER - 1)
+})
+
+test("revision === Number.MAX_SAFE_INTEGER carga sin problema (limite exacto, no regresion RX4-02)", () => {
+  const doc = { ...documentoValido(), revision: Number.MAX_SAFE_INTEGER }
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.revision, Number.MAX_SAFE_INTEGER)
+})
+
+test("siguienteIdLocal mas alla de Number.MAX_SAFE_INTEGER rechaza al cargar (hallazgo externo RX4-02, misma cota)", () => {
+  const doc = { ...documentoValido(), siguienteIdLocal: 1e21 }
+  const r = cargarProyecto(doc)
+  assert.equal(r.ok, false)
+  assert.equal(r.motivos[0].codigo, "CAMPO_REQUERIDO_FALTANTE")
+  assert.deepEqual(r.motivos[0].datos, { campo: "siguienteIdLocal" })
+})

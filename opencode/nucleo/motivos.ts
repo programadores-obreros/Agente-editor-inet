@@ -229,6 +229,29 @@
 // En ambos casos, el rechazo es del LOTE ENTERO — `resultadosOperaciones: []`,
 // canónico/revisión/disco/buffer de undo intactos, igual que `BASE_REVISION_INVALIDA`
 // (E3-01, arriba).
+//
+// Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO — cuarta revisión adversarial
+// independiente, `RX4_REPORT.md`; RECLASIFICA E1-04, ver `DECISIONS.md`):
+// `esEnteroNoNegativo` (`cargador.ts`, reusada por `revision`/`siguienteIdLocal`/
+// `baseRevision`) pasó a usar `Number.isSafeInteger` en vez de `Number.isInteger`
+// — un `baseRevision`/`revision` de `1e21` ahora rechaza con `BASE_REVISION_INVALIDA`
+// (E3-01, arriba, sin código nuevo) o con `CAMPO_REQUERIDO_FALTANTE` (`cargador.ts`,
+// mismo código que cualquier otro valor de forma inválida). Dos códigos NUEVOS,
+// porque acotar el DATO DE ENTRADA no alcanza: el límite es válido a la entrada,
+// pero incrementarlo (`+1`) puede dejar de ser exacto:
+// - `REVISION_EXCEDE_ENTERO_SEGURO` — categoria "motor", `severidad: "blocking"`,
+//   `clasificacion: "rechazo"` siempre, emitido por `motor.ts` (`ejecutarLote`, en
+//   el commit): `canonico.revision + 1` ya no sería un entero seguro (el único
+//   caso posible es `canonico.revision === Number.MAX_SAFE_INTEGER`, porque
+//   `esEnteroNoNegativo` ya garantiza que `revision` nunca lo EXCEDE al entrar).
+//   Rechazo ANTES de tocar disco o memoria — nunca un commit con un incremento
+//   inexacto. `datos: { revisionActual, limite }`.
+// - `CONTADOR_ID_EXCEDE_ENTERO_SEGURO` — categoria "operacion", `severidad:
+//   "blocking"`, `clasificacion: "rechazo"` siempre, emitido por `operaciones.ts`
+//   (`aplicarAgregarComponente`/`aplicarConectar`/`aplicarSetComportamiento`, alta
+//   nueva): misma guarda que `REVISION_EXCEDE_ENTERO_SEGURO`, pero para
+//   `siguienteIdLocal + 1` — "lo mismo para el contador de ids" que para
+//   `revision`. `datos: { siguienteIdLocal, limite }`.
 
 /**
  * Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion".

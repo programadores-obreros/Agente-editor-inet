@@ -1753,3 +1753,118 @@ test("elemento null en el lote rechaza con SOBRE_OPERACION_INVALIDO, categoria m
   assert.equal(r.motivos[0].categoria, "motor", "mismo codigo que operaciones.ts, distinta categoria — mismo criterio que ENTRADA_NO_ES_DATO_PLANO/BASE_REVISION_INVALIDA")
   assert.equal(r.motivos[0].datos.indice, 1, "el indice del elemento invalido dentro del lote")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO — cuarta revisión adversarial
+// independiente, RX4_REPORT.md; RECLASIFICA E1-04, ver DECISIONS.md): más allá de
+// `Number.MAX_SAFE_INTEGER`, `revision + 1 === revision` (colapso IEEE-754) — el
+// motor se NIEGA a producir un commit cuyo incremento de revisión no sea exacto,
+// nunca "silenciosamente se congela". `baseRevision` (que reusa la MISMA
+// `esEnteroNoNegativo`, ahora acotada) también queda cubierto: un `baseRevision`
+// más allá de `MAX_SAFE_INTEGER` rechaza con `BASE_REVISION_INVALIDA`, igual que
+// cualquier otro entero fuera de rango (E3-01).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+function crearMotorConRevisionInicial(revisionInicial) {
+  const documento = {
+    id: "proy-rx4-02",
+    schemaVersion: "1.0.0",
+    catalogoVersion: catalogo.version,
+    catalogoHash: catalogo.hash,
+    revision: revisionInicial,
+    siguienteIdLocal: 0,
+    placa: null,
+    componentes: [],
+    conexiones: [],
+    comportamientos: [],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }
+  const almacen = crearAlmacenFalso()
+  const motor = crearMotorDeProyecto({ proyectoInicial: documento, catalogo, almacen })
+  return { motor, almacen }
+}
+
+test("baseRevision === 1e21 en una operacion rechaza con BASE_REVISION_INVALIDA — nunca 'ok:true' silencioso (hallazgo externo RX4-02)", () => {
+  const { motor, almacen } = crearMotorDePrueba()
+  const r = motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 1e21))
+  assert.equal(r.ok, false, "un baseRevision de 1e21 (fuera de Number.isSafeInteger) tiene que rechazar, NUNCA aceptar en silencio")
+  assert.equal(r.motivos[0].codigo, "BASE_REVISION_INVALIDA")
+  assert.equal(almacen.llamadasGuardar.length, 0, "nunca llamo a guardar")
+})
+
+// El reproductor original de RX4-02 ("cargarProyecto(doc con revision:1e21) -> ok:true,
+// luego DOS commits con el mismo baseRevision:1e21, los DOS ok:true") ya deja de
+// reproducir en la PRIMERA puerta: ningun documento con revision:1e21 vuelve a
+// producir un `Proyecto` cargado ni un motor operable — `esEnteroNoNegativo`
+// (reusada acá vía `validarFormaProyecto`) lo rechaza ANTES de que exista ningun
+// canonico con esa revision para commitear encima.
+test("un proyectoInicial con revision:1e21 NUNCA construye un motor operable — el reproductor de 'dos commits con la misma baseRevision, ambos ok' deja de reproducir (hallazgo externo RX4-02)", () => {
+  const documento = {
+    id: "proy-rx4-02-repro",
+    schemaVersion: "1.0.0",
+    catalogoVersion: catalogo.version,
+    catalogoHash: catalogo.hash,
+    revision: 1e21,
+    siguienteIdLocal: 0,
+    placa: null,
+    componentes: [],
+    conexiones: [],
+    comportamientos: [],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }
+  assert.equal(cargarProyecto(structuredClone(documento)).ok, false, "control: cargarProyecto tambien rechaza el mismo documento — misma regla, misma puerta compartida")
+  assert.throws(
+    () => crearMotorDeProyecto({ proyectoInicial: documento, catalogo, almacen: crearAlmacenFalso() }),
+    (err) => {
+      assert.ok(err instanceof Error && err.name === "ErrorEstadoInicialInvalido", `debe lanzar ErrorEstadoInicialInvalido: ${err}`)
+      assert.ok(
+        err.motivos?.some((m) => m.codigo === "CAMPO_REQUERIDO_FALTANTE" && m.clasificacion === "rechazo"),
+        `el error debe traer el motivo de forma invalida para 'revision': ${JSON.stringify(err.motivos)}`,
+      )
+      return true
+    },
+    "un proyectoInicial con revision:1e21 NUNCA debe construir un motor operable",
+  )
+})
+
+test("revision === Number.MAX_SAFE_INTEGER - 1 commitea exacto a Number.MAX_SAFE_INTEGER (limite, no regresion RX4-02)", () => {
+  const { motor, almacen } = crearMotorConRevisionInicial(Number.MAX_SAFE_INTEGER - 1)
+  const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, Number.MAX_SAFE_INTEGER - 1))
+  assert.equal(r.ok, true, "el incremento hasta MAX_SAFE_INTEGER es exacto — tiene que commitear igual que antes del fix")
+  assert.equal(motor.getProyecto().revision, Number.MAX_SAFE_INTEGER)
+  assert.equal(almacen.llamadasGuardar.length, 1)
+})
+
+test("en revision === Number.MAX_SAFE_INTEGER el siguiente commit rechaza SIN cambiar nada — nunca un incremento inexacto (hallazgo externo RX4-02)", () => {
+  const { motor, almacen } = crearMotorConRevisionInicial(Number.MAX_SAFE_INTEGER)
+  const revisionAntes = motor.getProyecto().revision
+  assert.equal(revisionAntes, Number.MAX_SAFE_INTEGER)
+  const r = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, Number.MAX_SAFE_INTEGER))
+  assert.equal(r.ok, false, "el motor se niega a producir revision+1 cuando ya no seria exacto")
+  assert.equal(motor.getProyecto().revision, revisionAntes, "el canonico NO cambio")
+  assert.equal(motor.getProyecto().placa, null, "la placa NUNCA se seteo")
+  assert.equal(almacen.llamadasGuardar.length, 0, "nunca llamo a guardar — nunca un incremento inexacto persistido")
+  assert.equal(motor.obtenerBufferUndo().length, 0)
+})
+
+test("el contador de ids (siguienteIdLocal) tambien se niega a producir un incremento inexacto — AgregarComponente rechaza en vez de generar un id con precision perdida (hallazgo externo RX4-02, 'lo mismo para el contador de ids')", () => {
+  const documento = {
+    id: "proy-rx4-02-contador",
+    schemaVersion: "1.0.0",
+    catalogoVersion: catalogo.version,
+    catalogoHash: catalogo.hash,
+    revision: 0,
+    siguienteIdLocal: Number.MAX_SAFE_INTEGER,
+    placa: null,
+    componentes: [],
+    conexiones: [],
+    comportamientos: [],
+    metadata: { creadoEn: "2026-01-01T00:00:00.000Z" },
+  }
+  const almacen = crearAlmacenFalso()
+  const motor = crearMotorDeProyecto({ proyectoInicial: documento, catalogo, almacen })
+  const r = motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "led" }, 0))
+  assert.equal(r.ok, false, "siguienteIdLocal+1 ya no seria exacto — el motor rechaza en vez de generar un id con precision perdida")
+  assert.equal(motor.getProyecto().componentes.length, 0, "ningun componente se agrego")
+  assert.equal(almacen.llamadasGuardar.length, 0)
+})

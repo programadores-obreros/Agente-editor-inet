@@ -434,6 +434,23 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     return { codigo: "SOBRE_OPERACION_INVALIDO", categoria: "motor", severidad: "blocking", clasificacion: "rechazo", datos: { indice, razon: "el sobre de operacion no es un objeto" } }
   }
 
+  /** Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO): el commit se niega a
+   * producir `canonico.revision + 1` cuando ese incremento ya no seria un entero
+   * seguro (`Number.isSafeInteger`) — el único valor donde esto puede pasar es
+   * `canonico.revision === Number.MAX_SAFE_INTEGER`, porque `esEnteroNoNegativo`
+   * ya garantiza que `revision` nunca EXCEDE ese límite al entrar. Nunca un
+   * incremento silenciosamente inexacto (RX4-02: `revision + 1 === revision` más
+   * allá de esa magnitud, neutralizando el compare-and-swap optimista). */
+  function motivoRevisionExcedeEnteroSeguro(): Motivo {
+    return {
+      codigo: "REVISION_EXCEDE_ENTERO_SEGURO",
+      categoria: "motor",
+      severidad: "blocking",
+      clasificacion: "rechazo",
+      datos: { revisionActual: canonico.revision, limite: Number.MAX_SAFE_INTEGER },
+    }
+  }
+
   function ejecutarLote(operacionesCrudas: readonly SobreOperacion[], comprometer: boolean): ResultadoTransaccion {
     // Phase 1.1 (RX2, hallazgo externo RX2-01, CRÍTICO — revisión adversarial
     // independiente #2): materializa el LOTE COMPLETO en datos planos, UNA sola
@@ -602,6 +619,23 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     if (!comprometer) {
       // proponer(): dry-run — se descarta el borrador, nunca se persiste, nunca sube revision.
       return congelarProfundo({ ok: true, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones })
+    }
+
+    // Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO — cuarta revisión adversarial
+    // independiente): `canonico.revision` es SIEMPRE un entero SEGURO acá
+    // (`esEnteroNoNegativo`, ahora acotada con `Number.isSafeInteger`, se aplica en
+    // toda puerta de entrada de `revision` — `cargador.ts`/la construcción de este
+    // mismo motor) — el ÚNICO valor en el que `canonico.revision + 1` podría dejar
+    // de ser exacto es exactamente `Number.MAX_SAFE_INTEGER` (arriba de eso, la
+    // carga ya rechazó). El motor se NIEGA a producir un commit cuyo incremento de
+    // revisión no sea exacto — nunca "silenciosamente se congela" (eso era
+    // RX4-02: a partir de `Number.MAX_SAFE_INTEGER`, `revision + 1 === revision`
+    // por colapso de precisión IEEE-754, y el compare-and-swap optimista de
+    // `baseRevision` quedaba neutralizado para siempre en ese documento, brief
+    // §33). Rechazo estructurado, ANTES de tocar disco o memoria — el lote se
+    // descarta completo, igual que cualquier otro rechazo de esta función.
+    if (!Number.isSafeInteger(canonico.revision + 1)) {
+      return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: [...motivosFinales, motivoRevisionExcedeEnteroSeguro()], resultadosOperaciones })
     }
 
     // 6. Commit: persistir PRIMERO, recién después reemplazar la referencia canónica.

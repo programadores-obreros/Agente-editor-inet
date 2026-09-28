@@ -634,6 +634,53 @@ materializado es, de hecho, un objeto plano — con un sobre `null`, el eco usa
 los mismos valores por defecto que cuando la materialización falla del todo
 (nunca lee `.idOperacion` de un valor que podría no ser un objeto).
 
+### 6.9. Phase 1.1 (RX4) — cota superior de `esEnteroNoNegativo`: `Number.isSafeInteger` (RECLASIFICA E1-04)
+
+Hallazgo externo RX4-02, CRÍTICO — cuarta revisión adversarial independiente,
+`RX4_REPORT.md`. `esEnteroNoNegativo` (`cargador.ts`, §2/reusada por `motor.ts`
+para `baseRevision`) validaba `typeof v === "number" && Number.isInteger(v) &&
+v >= 0` — sin cota superior. `Number.isInteger(1e21)` es `true` en JS
+(representación IEEE-754 sin parte fraccionaria a esa magnitud), así que un
+documento con `"revision": 1e21` (JSON válido, ni siquiera requiere notación
+exponencial) pasaba `validarFormaProyecto` sin diagnóstico. Más allá de
+`Number.MAX_SAFE_INTEGER` (`2^53-1`), la aritmética de punto flotante colapsa:
+`1e21 + 1 === 1e21`. El commit (`motor.ts::ejecutarLote`) calcula `canonico.
+revision + 1` — con la revisión congelada en el mismo valor aparente para
+siempre, y `baseRevision !== canonico.revision` siendo la ÚNICA defensa contra
+escritura concurrente/perdida (E3-01 en memoria, E3-07 contra disco, brief
+§33), cualquier commit posterior con el mismo `baseRevision` "viejo" sigue
+pareciendo al día indefinidamente — el compare-and-swap optimista queda
+neutralizado en silencio, sin ningún motivo/diagnóstico. Alcanzable con un
+único documento manipulado/importado, sin necesitar ningún estado intermedio
+ni ~9×10^15 commits reales — la premisa de T7/E1-04 ("no explotable en la
+práctica") era incorrecta (ver `DECISIONS.md`, entrada E1-04 reclasificada).
+
+**Fix (deriva la cota del invariante ya existente, no inventa una regla de
+producto):** el INCREMENTO de `revision`/`siguienteIdLocal` tiene que seguir
+siendo exacto — eso deriva directamente `Number.isSafeInteger` como cota,
+aplicada en la ÚNICA definición de `esEnteroNoNegativo` (así cubre
+`revision`, `siguienteIdLocal` y `baseRevision` de una sola vez, RX-06). Dos
+guardas adicionales, porque acotar el DATO DE ENTRADA no alcanza por sí solo
+(el límite `revision === Number.MAX_SAFE_INTEGER` es válido a la entrada, pero
+`+ 1` ya no lo es):
+
+- `motor.ts::ejecutarLote`, en el commit: si `canonico.revision + 1 >
+  Number.MAX_SAFE_INTEGER` (equivalente a `!Number.isSafeInteger(canonico.
+  revision + 1)`), rechaza con `REVISION_EXCEDE_ENTERO_SEGURO` (categoría
+  `motor`) ANTES de tocar disco o memoria — nunca un commit con un incremento
+  inexacto.
+- `operaciones.ts` (`aplicarAgregarComponente`/`aplicarConectar`/
+  `aplicarSetComportamiento`, alta nueva): misma guarda para
+  `siguienteIdLocal + 1`, `CONTADOR_ID_EXCEDE_ENTERO_SEGURO` (categoría
+  `operacion`) — "lo mismo para el contador de ids" que para `revision`.
+
+Con ambos fixes, el reproductor original de RX4-02 ("cargar un documento con
+`revision:1e21`, luego dos commits con el mismo `baseRevision`, ambos
+`ok:true`") deja de reproducir en la PRIMERA puerta: ningún documento con
+`revision` fuera de rango vuelve a producir un `Proyecto` cargado ni un motor
+operable — no existe ningún canónico con esa revisión sobre el cual commitear
+encima.
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:
