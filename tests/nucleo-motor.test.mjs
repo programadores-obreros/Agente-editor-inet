@@ -1669,6 +1669,108 @@ test("defensa-en-profundidad-post-lote: contador de ids inconsistente en el comm
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.2 (hallazgo externo REA-01, CRÍTICO — re-auditoría externa,
+// PHASE_1_1_REGAUDIT_FINDINGS.md): barrera PERSISTIBLE ⇒ RECARGABLE.
+//
+// Las 8 operaciones públicas, con el fix de REA-01 en `aplicarSetComportamiento`
+// (VALOR_ENUM_DESCONOCIDO), NUNCA producen hoy un borrador estructuralmente
+// irrecargable — así que esta barrera (igual que `validarIdsYContador` post-lote,
+// RX-03, arriba) no es alcanzable vía la API pública. Se ejercita con la MISMA
+// técnica que el test de arriba: un `clonar` inyectado que, al clonar el CANÓNICO ya
+// sano, simula que un aplicador futuro (Fase 2+) corrompió un `comparador` DESPUÉS de
+// que la operación de origen ya lo validó — exactamente el escenario que la barrera
+// existe para cerrar en profundidad, nunca alcanzable con las operaciones de Fase 1.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("barrera-PERSISTIBLE-RECARGABLE: un borrador con comparador fuera de dominio (inyectado vía 'clonar', nunca vía las 8 operaciones públicas) rechaza en el COMMIT con ESTADO_NO_RECARGABLE (REA-01)", () => {
+  // `clonar` inyectado: clona de verdad (aísla referencias, pasa el centinela de
+  // construcción) pero, para un valor con forma de `Proyecto` que YA trae al menos un
+  // comportamiento, corrompe el `comparador` del PRIMERO a un valor fuera de dominio
+  // — simula que algo (un aplicador futuro, una migración) rompió el invariante
+  // DESPUÉS de que la operación de origen ya lo había validado. El gatillo es de UN
+  // SOLO USO (`corromperProximoClon`, activado a mano desde el test): así se puede
+  // demostrar, con el MISMO motor, que después del rechazo el PRÓXIMO commit sano
+  // (uno que el gatillo ya no corrompe) sigue funcionando.
+  let corromperProximoClon = false
+  const clonarQueCorrompeComparador = (valor) => {
+    const clon = clonarProfundo(valor)
+    if (corromperProximoClon && clon !== null && typeof clon === "object" && Array.isArray(clon.comportamientos) && clon.comportamientos.length > 0) {
+      corromperProximoClon = false
+      const [primero, ...resto] = clon.comportamientos
+      return { ...clon, comportamientos: [{ ...primero, cuando: { ...primero.cuando, comparador: "mayorQue" } }, ...resto] }
+    }
+    return clon
+  }
+
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-rea01-barrera", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const almacen = crearAlmacenFalso()
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen, clonar: clonarQueCorrompeComparador })
+
+  // Primer commit: agrega el LED (cmp-0) + el sensor (cmp-1) + un comportamiento con
+  // comparador REAL (">") — el `clonar` roto no dispara acá porque el CANÓNICO de
+  // partida todavía no tiene ningún comportamiento (comportamientos.length === 0).
+  const r0 = motor.aplicarTransaccion([nuevaOperacion("AgregarComponente", { tipo: "led" }, 0), nuevaOperacion("AgregarComponente", { tipo: "dht22" }, 0)])
+  assert.equal(r0.ok, true, "alta de los dos componentes sigue sana")
+  const rBeh = motor.aplicar(nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }, motor.getProyecto().revision))
+  assert.equal(rBeh.ok, true, "el comportamiento con comparador REAL commitea sano")
+  const canonicoSano = motor.getProyecto()
+  assert.equal(canonicoSano.comportamientos[0].cuando.comparador, ">")
+  assert.equal(almacen.llamadasGuardar.length, 2, "dos commits sanos persistidos hasta acá")
+
+  // Segundo commit: una operación que NO toca comportamientos (SetPlaca) — pero el
+  // `clonar` inyectado, al clonar el canónico (que YA tiene beh-0 con comparador
+  // ">"), corrompe ese comparador a "mayorQue" en el BORRADOR. Nada en el pipeline de
+  // la operación SetPlaca lo toca ni lo repara — sólo la barrera de forma lo agarra.
+  corromperProximoClon = true
+  const r2 = motor.aplicar(nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, motor.getProyecto().revision))
+  assert.equal(r2.ok, false, "el borrador estructuralmente irrecargable rechaza en el commit, ANTES de persistir")
+  const motivoBarrera = r2.motivos.find((m) => m.codigo === "ESTADO_NO_RECARGABLE")
+  assert.ok(motivoBarrera, `debe traer ESTADO_NO_RECARGABLE: ${JSON.stringify(r2.motivos)}`)
+  assert.equal(motivoBarrera.categoria, "motor")
+  assert.equal(motivoBarrera.clasificacion, "rechazo")
+
+  // Canónico, revisión, disco y buffer de undo quedan INTACTOS — igual que cualquier
+  // otro rechazo de `ejecutarLote`.
+  assert.equal(motor.getProyecto(), canonicoSano, "el canónico es la MISMA referencia: no cambió")
+  assert.equal(motor.getProyecto().placa, null, "la placa NUNCA se asignó")
+  assert.equal(almacen.llamadasGuardar.length, 2, "el commit rechazado NUNCA llegó a persistir")
+  assert.equal(motor.obtenerBufferUndo().length, 2, "el buffer de undo no crece con un rechazo")
+
+  // El PRÓXIMO commit válido (uno que la barrera no corrompe, porque el canónico
+  // vuelve a estar sano en memoria) sigue funcionando — el proyecto no queda
+  // inutilizable por el rechazo.
+  const r3 = motor.aplicar(nuevaOperacion("AgregarComponente", { tipo: "resistencia" }, motor.getProyecto().revision))
+  assert.equal(r3.ok, true, "el motor sigue operativo después del rechazo de la barrera")
+})
+
+test("barrera-PERSISTIBLE-RECARGABLE: proponer() (dry-run) rechaza IGUAL que aplicar() ante el MISMO borrador irrecargable (REA-01, decisión sobre el dry-run)", () => {
+  const clonarQueCorrompeComparador = (valor) => {
+    const clon = clonarProfundo(valor)
+    if (clon !== null && typeof clon === "object" && Array.isArray(clon.comportamientos) && clon.comportamientos.length > 0) {
+      const [primero, ...resto] = clon.comportamientos
+      return { ...clon, comportamientos: [{ ...primero, cuando: { ...primero.cuando, comparador: "mayorQue" } }, ...resto] }
+    }
+    return clon
+  }
+
+  const proyectoInicial = crearProyecto({ generadorId: () => "proy-rea01-barrera-dryrun", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const almacen = crearAlmacenFalso()
+  const motor = crearMotorDeProyecto({ proyectoInicial, catalogo, almacen, clonar: clonarQueCorrompeComparador })
+
+  motor.aplicarTransaccion([nuevaOperacion("AgregarComponente", { tipo: "led" }, 0), nuevaOperacion("AgregarComponente", { tipo: "dht22" }, 0)])
+  motor.aplicar(nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }, motor.getProyecto().revision))
+  const canonicoSano = motor.getProyecto()
+
+  // `proponer()` es dry-run puro: NUNCA debería "aprobar" un lote que `aplicar()` con
+  // el MISMO lote rechazaría — mismo pipeline (`ejecutarLote`), misma barrera, ANTES
+  // de la bifurcación dry-run/commit.
+  const rPropuesta = motor.proponer([nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }, motor.getProyecto().revision)])
+  assert.equal(rPropuesta.ok, false, "proponer() nunca aprueba un lote que aplicar() rechazaría por la misma barrera")
+  assert.ok(rPropuesta.motivos.some((m) => m.codigo === "ESTADO_NO_RECARGABLE"))
+  assert.equal(motor.getProyecto(), canonicoSano, "un dry-run nunca muta el canónico, rechazado o no")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // Gap de la campaña de mutación T8 (mutantes M10-adaptado/M11-adaptado, sobrevivientes):
 // desactivar la defensa TEMPRANA de `aplicarConectar` (self-loop/duplicado, dentro de
 // la operación misma) no lo detectaba ningún test existente cuando esa operación es la

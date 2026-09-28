@@ -526,3 +526,67 @@ el resto de Gate 7 (nunca reparar en silencio, nunca devolver un documento con u
 identidad que no es la pedida). Distinto en alcance de E3-07 (que protege la
 ESCRITURA): esto es una verificación de integridad sobre la LECTURA, del mismo
 almacén, independiente de si hay o no otro escritor concurrente.
+
+## 11. Phase 1.2 — invariante PERSISTIBLE ⇒ RECARGABLE (hallazgo externo REA-01, CRÍTICO)
+
+§9.1 de arriba dice, para la forma del payload, que un valor de enum
+"sintácticamente válido pero inventado" (`comparador`/`accion`/`pin` con un
+string no vacío que no es un valor real) "sigue siendo responsabilidad de la
+validación referencial/técnica existente, no de acá" (es decir, no de
+`validarFormaPayload`). La re-auditoría externa (`PHASE_1_1_REGAUDIT_FINDINGS.md`,
+REA-01, CRÍTICO) encontró que, para `comparador`/`accion` específicamente,
+**esa validación referencial/técnica nunca existió** — `aplicarSetComportamiento`
+(Gate 5) commiteaba `ok:true` con un `comparador`/`accion` inventado, y recién
+`cargador.ts` (Gate 2, el único lugar que sí comprobaba ese dominio, con su
+propio `Set` LOCAL, nunca compartido) lo rechazaba al RECARGAR. Un documento
+PERSISTIBLE que dejaba de ser RECARGABLE — y, porque el compare-and-swap de
+§10 (E3-07) necesita releer el documento existente para verificar la revisión
+antes de escribir, TODO commit siguiente (sin relación con el comportamiento
+roto) fallaba con `PERSIST_FAILED`: el proyecto entero quedaba inutilizable.
+
+**El contrato de §9.1 sigue siendo válido para el resto de los casos que
+menciona** (`pin` inventado sigue siendo `PIN_INEXISTENTE_EN_PLACA`,
+representable, diagnosticado por `aplicarAsignarPin` — nunca por
+`validarFormaPayload`) — Phase 1.2 sólo cierra el gap real que la
+re-auditoría demostró para `comparador`/`accion`.
+
+**Invariante nombrado:** todo `Proyecto` que una operación acepta persistir
+tiene que pertenecer al MISMO dominio ESTRUCTURAL que el loader acepta al
+recargarlo — **PERSISTIBLE ⇒ RECARGABLE** (ver `IR-SPEC.md` §6.11 para el
+detalle completo). Nunca responde readiness, nunca convierte un motivo
+representable en rechazo, nunca exige completitud — es puramente estructural,
+al mismo nivel que `validarFormaProyecto` (forma, dominio de enums cerrados,
+referencias sin colgar).
+
+**Fix, en dos capas:**
+
+1. **`SetComportamiento` rechaza el valor fuera de dominio, ANTES de crear
+   estado** (`aplicarSetComportamiento`, `operaciones.ts`): `comparador`/
+   `accion` se comprueban contra el dominio NORMATIVO único
+   (`ir.ts::COMPARADORES`/`ACCIONES` — la MISMA constante que ahora importa
+   `cargador.ts`, en vez de su `Set` local anterior) — un valor fuera de ese
+   dominio rechaza con `VALOR_ENUM_DESCONOCIDO` (categoría `operacion`,
+   `clasificacion:"rechazo"` siempre), mismo criterio "Camino B" que
+   `UMBRAL_NO_FINITO` (§ E1-03).
+2. **Barrera PERSISTIBLE ⇒ RECARGABLE en el commit** (`ejecutarLote`,
+   `motor.ts`, punto 5c del pipeline — ANTES de la bifurcación dry-run/commit
+   descrita al principio de este documento): reutiliza `validarFormaProyecto`
+   DIRECTO sobre el `borrador`, en memoria, sin I/O — defensa en PROFUNDIDAD,
+   nunca alcanzable hoy vía las 8 operaciones públicas (la capa 1 ya cierra
+   el único gap real), mismo criterio que `validarIdsYContador` post-lote
+   (§ RX-03) o la defensa post-lote de `REFERENCIA_INEXISTENTE`/
+   `AUTOCONEXION_INVALIDA` (§ E2-01). Rechaza con `ESTADO_NO_RECARGABLE`
+   (categoría `motor`, `clasificacion:"rechazo"` siempre; `datos.motivosLoader`
+   conserva el/los motivos originales de `validarFormaProyecto`). **Decisión
+   sobre el dry-run:** `motor.proponer()` corre esta MISMA barrera, en el
+   MISMO punto de `ejecutarLote` — nunca "aprueba" (dry-run `ok:true`) un
+   lote que `motor.aplicar()`/`aplicarTransaccion()` con el mismo lote
+   rechazaría; los dos caminos comparten un único veredicto, nunca dos
+   validaciones que puedan divergir.
+
+Como cualquier otro rechazo de `ejecutarLote`: canónico, revisión, disco y
+buffer de undo quedan intactos — el proyecto sigue operativo para el próximo
+commit válido. Path A (`PIN_OCUPADO` → commit + blocking + persistido + not-ready
++ editable) y los proyectos incompletos (sin placa, con un `pin` en `null`)
+siguen siendo persistibles sin cambios: ninguna de las dos capas de este fix
+mira readiness ni completitud, sólo forma estructural cerrada de enum.

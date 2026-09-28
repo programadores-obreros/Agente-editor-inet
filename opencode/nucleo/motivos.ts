@@ -267,6 +267,25 @@
 //   documento PERSISTIBLE que dejaba de ser RECARGABLE (ver
 //   `docs/programacion-intencion/IR-SPEC.md` §6.11, invariante "PERSISTIBLE ⇒
 //   RECARGABLE"). `datos: { campo, valorRecibido, dominioValido }`.
+//
+// Phase 1.2 (mismo hallazgo REA-01) agrega, categoria "motor", clasificacion
+// "rechazo" siempre, emitido por `motor.ts` (`ejecutarLote`, ANTES de la
+// bifurcación dry-run/commit, punto 5c del pipeline):
+// - `ESTADO_NO_RECARGABLE` — el `borrador` que ya pasó la validación de la operación
+//   Y `validarProyecto`/`validarIdsYContador` TODAVÍA viola un invariante de FORMA
+//   que sólo el loader (`validarFormaProyecto`, Gate 2) conoce — la BARRERA general
+//   del invariante "PERSISTIBLE ⇒ RECARGABLE": `motor.proponer()` (dry-run) y
+//   `motor.aplicar()`/`aplicarTransaccion()` (commit) corren la MISMA barrera, en el
+//   MISMO punto del pipeline, así que nunca pueden divergir en el veredicto. Con las
+//   8 operaciones públicas actuales, este código NUNCA es alcanzable hoy (REA-01 ya
+//   se cierra antes, en la operación misma, con `VALOR_ENUM_DESCONOCIDO` arriba) —
+//   es defensa en PROFUNDIDAD, mismo criterio que `validarIdsYContador` post-lote
+//   (RX-03) o `REFERENCIA_INEXISTENTE`/`AUTOCONEXION_INVALIDA` post-lote (E2-01):
+//   un aplicador futuro (Fase 2+) que dejara pasar un borrador estructuralmente
+//   irrecargable se detiene ACÁ, no sólo en la operación de origen. `datos: {
+//   motivosLoader }` lleva el/los `Motivo[]` que `validarFormaProyecto` produjo, para
+//   diagnóstico — nunca se pierde el detalle original. Ver `IR-SPEC.md` §6.11 y
+//   `OPERATIONS.md` §11.
 
 /**
  * Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion".

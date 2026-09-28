@@ -434,6 +434,16 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     return { codigo: "SOBRE_OPERACION_INVALIDO", categoria: "motor", severidad: "blocking", clasificacion: "rechazo", datos: { indice, razon: "el sobre de operacion no es un objeto" } }
   }
 
+  /** Phase 1.2 (hallazgo externo REA-01, CRÍTICO): la barrera PERSISTIBLE ⇒
+   * RECARGABLE (ver comentario extenso en el punto 5c de `ejecutarLote`, más abajo).
+   * `motivosLoader` conserva el/los `Motivo[]` originales que `validarFormaProyecto`
+   * produjo — nunca se pierde el detalle, sólo se envuelve bajo un código único de
+   * motor para que el llamador tenga un solo lugar donde mirar "¿esto es
+   * irrecargable?". */
+  function motivoEstadoNoRecargable(motivosLoader: readonly Motivo[]): Motivo {
+    return { codigo: "ESTADO_NO_RECARGABLE", categoria: "motor", severidad: "blocking", clasificacion: "rechazo", datos: { motivosLoader } }
+  }
+
   /** Phase 1.1 (RX4, hallazgo externo RX4-02, CRÍTICO): el commit se niega a
    * producir `canonico.revision + 1` cuando ese incremento ya no seria un entero
    * seguro (`Number.isSafeInteger`) — el único valor donde esto puede pasar es
@@ -614,6 +624,41 @@ export function crearMotorDeProyecto(deps: DependenciasMotor): MotorDeProyecto {
     // persiste, el canónico no cambia.
     if (motivosValidacion.some((m) => m.clasificacion === "rechazo") || motivosIdsPostLote.some((m) => m.clasificacion === "rechazo")) {
       return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: motivosFinales, resultadosOperaciones })
+    }
+
+    // 5c. Phase 1.2 (barrera PERSISTIBLE ⇒ RECARGABLE, hallazgo externo REA-01,
+    // CRÍTICO — re-auditoría externa, PHASE_1_1_REGAUDIT_FINDINGS.md): el `borrador`
+    // que aprobó TODO lo de arriba (operación + `validarProyecto` +
+    // `validarIdsYContador`) todavía puede violar un invariante de FORMA que sólo el
+    // loader (`validarFormaProyecto`, Gate 2) conoce — el caso exacto de REA-01 es
+    // `comparador`/`accion` fuera de su dominio normativo, ya cerrado en la
+    // OPERACIÓN misma (`VALOR_ENUM_DESCONOCIDO`, `aplicarSetComportamiento`,
+    // `operaciones.ts`) — pero esta barrera es la defensa GENERAL, en profundidad:
+    // cualquier aplicador futuro (Fase 2+) que dejara pasar un borrador
+    // estructuralmente irrecargable se detiene ACÁ, ANTES de la bifurcación
+    // dry-run/commit, para que `proponer()` y `aplicar()`/`aplicarTransaccion()` se
+    // comporten IGUAL — `motor.proponer()` nunca "aprueba" un lote que
+    // `motor.aplicar()` con el MISMO lote rechazaría (decisión Phase 1.2 sobre el
+    // dry-run: ambos corren la MISMA barrera, en el MISMO punto del pipeline, así
+    // que nunca pueden divergir).
+    //
+    // Reutiliza `validarFormaProyecto` (`cargador.ts`) DIRECTO sobre el `borrador` en
+    // memoria — nunca un mecanismo de "guardar y volver a cargar" como chequeo
+    // normal (eso sería I/O innecesario y sólo simularía este mismo chequeo puro, que
+    // ya es sin I/O). Esta barrera NUNCA responde readiness (`derivarReadiness` sigue
+    // siendo el único dueño de esa pregunta, `validar.ts`), NUNCA convierte un
+    // warning o un `blocking` REPRESENTABLE en rechazo (`validarFormaProyecto` sólo
+    // mira FORMA — claves, tipos, enums cerrados, referencias sin colgar — nunca
+    // hardware/catálogo/completitud), y NUNCA exige completitud: un proyecto
+    // incompleto (sin placa, con un `pin` en `null`) es estructuralmente
+    // REPRESENTABLE de sobra, así que `validarFormaProyecto` lo acepta igual — la
+    // completitud es un predicado DISTINTO (`derivarReadiness`), nunca parte de esta
+    // forma. Si falla: rechazo estructurado — canónico, revisión, disco y buffer de
+    // undo quedan intactos, igual que cualquier otro rechazo de esta función; el
+    // proyecto sigue operativo para el PRÓXIMO commit válido.
+    const resultadoRecargable = validarFormaProyecto(borrador)
+    if (!resultadoRecargable.ok) {
+      return congelarProfundo({ ok: false, baseRevision, revisionActual: canonico.revision, motivos: [...motivosFinales, motivoEstadoNoRecargable(resultadoRecargable.motivos)], resultadosOperaciones })
     }
 
     if (!comprometer) {

@@ -709,6 +709,80 @@ idéntico en toda comparación aritmética del núcleo, antes y después de este
 fix — lo único que cambia es la REPRESENTACIÓN en memoria, nunca una
 decisión).
 
+### 6.11. Phase 1.2 — invariante PERSISTIBLE ⇒ RECARGABLE (hallazgo externo REA-01, CRÍTICO)
+
+La re-auditoría externa (`PHASE_1_1_REGAUDIT_FINDINGS.md`) encontró que
+`comparador` (`">" | "<" | ">=" | "<="`) y `accion` (`"encender" | "apagar"`)
+son uniones LITERALES en TypeScript, pero el cast que `operaciones.ts` usa
+para despachar el payload de `SetComportamiento` es sólo de compilación
+("sintaxis borrable"): en runtime, un valor SINTÁCTICAMENTE válido (un
+string no vacío) pero FUERA de ese dominio — `"mayorQue"`, `"prender"` —
+atravesaba la operación sin ningún chequeo. Antes de Phase 1.2, el ÚNICO
+lugar que conocía el dominio REAL de esos dos campos era `cargador.ts`
+(Gate 2), con dos `Set` LOCALES y privados. `operaciones.ts` (Gate 5) nunca
+los comprobaba — el comentario que lo justificaba (§9.1 de `OPERATIONS.md`,
+antes de este fix) asumía, sin verificarlo, que "la validación
+referencial/técnica existente" cubría ese caso; esa validación nunca existió
+para `comparador`/`accion`.
+
+Consecuencia observada: `SetComportamiento` con `comparador:"mayorQue"`
+commiteaba `ok:true` y se persistía en disco — un documento PERSISTIBLE. Al
+recargar ese MISMO documento, `cargador.ts` lo rechazaba con
+`CAMPO_REQUERIDO_FALTANTE` — dejaba de ser RECARGABLE. Peor: el
+compare-and-swap de `almacen.ts::guardar()` (E3-07, §10 de `OPERATIONS.md`)
+necesita LEER el documento existente en disco para verificar la revisión
+antes de escribir CUALQUIER commit siguiente bajo ese mismo id — si no puede
+interpretarlo, todo commit posterior (aunque sea una operación normal, sin
+relación con el comportamiento roto) falla con `PERSIST_FAILED`: el proyecto
+entero queda inutilizable, no sólo el comportamiento inválido.
+
+**El invariante que faltaba, nombrado explícitamente:** todo `Proyecto` que
+una puerta pública del núcleo acepta persistir (`ok:true` en un commit) tiene
+que pertenecer al MISMO dominio estructural que el loader acepta al
+recargarlo — **PERSISTIBLE ⇒ RECARGABLE**. Es un invariante puramente
+ESTRUCTURAL (forma, dominio de enums cerrados, referencias sin colgar — el
+mismo nivel que `validarFormaProyecto`, Gate 2): **nunca** responde la
+pregunta de readiness (`derivarReadiness`, `validar.ts`, sigue siendo el
+único dueño de esa pregunta), **nunca** convierte un motivo
+`clasificacion:"representable"` (warning o `blocking` representable, ej.
+`PIN_OCUPADO`) en rechazo, y **nunca** exige completitud — un proyecto
+incompleto (sin placa, con un `pin` en `null`) es estructuralmente
+REPRESENTABLE de sobra, y sigue siendo persistible como siempre.
+
+**Fix, en dos capas independientes (ninguna reemplaza a la otra):**
+
+1. **Dominio normativo único** (`ir.ts::COMPARADORES`/`ACCIONES`, con los
+   tipos `Comparador`/`Accion` derivados de esas constantes) — `cargador.ts`
+   y `operaciones.ts` lo IMPORTAN, ninguno de los dos vuelve a declarar su
+   propia lista. `aplicarSetComportamiento` (`operaciones.ts`, Gate 5)
+   rechaza con `VALOR_ENUM_DESCONOCIDO` (categoría `operacion`, rechazo) ANTES
+   de tocar ningún estado si `comparador`/`accion` caen fuera de ese dominio
+   — mismo criterio "Camino B" que ya usa `UMBRAL_NO_FINITO` (E1-03) para
+   `umbral.valor` no finito.
+2. **Barrera general, en profundidad** (`motor.ts::ejecutarLote`, punto 5c
+   del pipeline, ANTES de la bifurcación dry-run/commit): reutiliza
+   `validarFormaProyecto` (`cargador.ts`) DIRECTO sobre el `borrador` en
+   memoria — nunca un mecanismo de "guardar y volver a cargar" como chequeo
+   normal. Con las 8 operaciones públicas de Fase 1, esta barrera NUNCA es
+   alcanzable hoy (la capa 1 ya cierra el único gap real, ver la auditoría
+   "loader-only" de Phase 1.2) — es defensa PROSPECTIVA, mismo criterio que
+   `validarIdsYContador` post-lote (RX-03, §6.1) o
+   `REFERENCIA_INEXISTENTE`/`AUTOCONEXION_INVALIDA` post-lote (E2-01, §6.3):
+   un aplicador futuro (Fase 2+) que rompiera la disciplina de la capa 1 se
+   detiene ACÁ. Rechaza con `ESTADO_NO_RECARGABLE` (categoría `motor`,
+   rechazo; `datos.motivosLoader` conserva el detalle original que
+   `validarFormaProyecto` produjo). `motor.proponer()` (dry-run) y
+   `motor.aplicar()`/`aplicarTransaccion()` (commit) corren la MISMA barrera,
+   en el MISMO punto del pipeline — **decisión Phase 1.2 sobre el dry-run:**
+   un `proponer()` nunca "aprueba" un lote que `aplicar()` con el mismo lote
+   rechazaría; ambos caminos de `ejecutarLote` comparten un único veredicto.
+
+Ver `docs/programacion-intencion/OPERATIONS.md` §11 para el contrato de
+Gate 5/Gate 6 completo, y la auditoría "loader-only" de Phase 1.2 (evidencia
+del ciclo, fuera de este repositorio) para el recorrido completo de todo
+invariante estructural del loader contra las 8 operaciones públicas —
+confirmó que `comparador`/`accion` era el ÚNICO gap real de esta clase.
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:
