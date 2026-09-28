@@ -414,7 +414,12 @@ function esObjeto(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v)
 }
 
-function esEnteroNoNegativo(v: unknown): v is number {
+/** Phase 1.1 (hallazgo externo RX-06, NOTA): única definición — antes duplicada
+ * verbatim en `motor.ts` (`baseRevision`) y acá (`revision`/`siguienteIdLocal`). No
+ * divergía (mismo comportamiento en ambos, incluida la aceptación de `-0`), pero
+ * dos copias de la MISMA regla es una violación de DRY que arriesga que una futura
+ * edición cambie una y no la otra. `motor.ts` la importa de acá. */
+export function esEnteroNoNegativo(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0
 }
 

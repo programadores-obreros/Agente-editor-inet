@@ -73,15 +73,8 @@ import type { Motivo } from "./motivos.ts"
 import { clonarProfundo, congelarProfundo } from "./canonico.ts"
 import { validarProyecto as validarProyectoReal } from "./validar.ts"
 import { validarIdsYContador } from "./id.ts"
-import { validarFormaProyecto } from "./cargador.ts"
+import { validarFormaProyecto, esEnteroNoNegativo } from "./cargador.ts"
 import { aplicarOperacion, type ResultadoOperacion, type SobreOperacion } from "./operaciones.ts"
-
-/** Mismo criterio que `cargador.ts` (Gate 2) para `revision`/`siguienteIdLocal`:
- * `0` es un entero no negativo perfectamente válido — nunca "falsy"/"ausente". Phase
- * 1.1, hallazgo externo E3-01. */
-function esEnteroNoNegativo(v: unknown): v is number {
-  return typeof v === "number" && Number.isInteger(v) && v >= 0
-}
 
 /** Phase 1.1 (hallazgo externo RX-02, CRÍTICO): lee un campo del sobre de operación
  * para el ECO de `ResultadoOperacion` (`idOperacion`/`idTransaccion`/`baseRevision`,
