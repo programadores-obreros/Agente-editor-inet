@@ -852,3 +852,154 @@ test("un string vacio DENTRO de payload no es forma invalida — sigue siendo RE
   const r = aplicarOperacion(p, nuevaOperacion("QuitarComponente", { componente: "" }), catalogo)
   assert.equal(r.motivos[0].codigo, "REFERENCIA_INEXISTENTE")
 })
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo M3 (campaña de mutación final, MUTATION_RESULTS_FINAL.md),
+// sobrevivientes W9-M2a: el switch de despacho de `aplicarOperacion` (case por
+// `tipo`) usa `operacion.payload` (la copia YA materializada por
+// `materializarDatosPlanos`, ver cabecera de `datos-planos.ts` — "no puede existir
+// una 'segunda lectura' que diverja de la primera") — el mutante W9-M2a
+// (`M3/diffs/W9-M2a.diff`) reemplaza esa lectura por `operacionCruda.payload` (el
+// sobre CRUDO, tal cual llegó, ANTES de materializar) en UN solo `case`
+// (`SetPlaca`, elegido por el informe como muestra representativa mínima) — ningún
+// test existente detectaba esa regresión (pass=952 fail=2, idéntico al baseline).
+//
+// Este test expresa el INVARIANTE observable (IR-SPEC.md §6.6/§6.7,
+// INVARIANTES-ENTRYPOINTS.md fila 15: "una sola materialización; nunca una
+// relectura cruda posterior"), no el mecanismo interno — nunca llama a
+// `materializarDatosPlanos` ni inspecciona el switch: construye, para cada uno de
+// los 8 `case` del dispatch (`TipoOperacion`), un `payload` que es un Proxy sobre
+// un objeto plano configurable cuyo trap `getOwnPropertyDescriptor` (lo que la
+// materialización usa) reporta el valor A (el que SÍ pasa la materialización y
+// `validarFormaPayload`), pero cuyo trap `get` (una relectura cruda posterior —
+// SOLO alcanzable si el switch de despacho vuelve a leer el sobre crudo) devuelve,
+// para las claves elegidas, un valor B DISTINTO y también representable — válido
+// ECMAScript, sin violar ningún invariante de Proxy, porque el target es siempre un
+// objeto plano configurable (mismo criterio que `M3/m/probe-w9-m2a.mjs`). El
+// resultado observable (placa/tipo/componente/pin/conexión/comportamiento
+// aplicado, o el código de rechazo) tiene que corresponder SIEMPRE al valor A
+// materializado — nunca al valor B, sólo visible vía el trap `get` vivo — tanto por
+// `aplicarOperacion` como por `ejecutarOperacion` (RX2-01: `ejecutarOperacion`
+// delega en `aplicarOperacion` para el resultado de aplicación, y materializa su
+// PROPIA copia sólo para el eco del sobre).
+test("aplicarOperacion/ejecutarOperacion usan SIEMPRE el payload MATERIALIZADO en los 8 tipos de operacion, nunca vuelven a leer el payload crudo (Proxy con getOwnPropertyDescriptor/get inconsistentes, hallazgo M3 W9-M2a)", () => {
+  // Envuelve `target` (el valor MATERIALIZADO, A) en un Proxy cuyo
+  // `getOwnPropertyDescriptor` reporta fielmente los descriptores de `target`
+  // (pasa la materialización sin problema, produce exactamente A), pero cuyo `get`
+  // devuelve, para cada clave presente en `divergentes`, el valor B — una
+  // relectura cruda que SÓLO se observaría si algo, en vez de usar la copia ya
+  // materializada, volviera a leer este objeto directamente.
+  function payloadConRelecturaCrudaDivergente(target, divergentes) {
+    return new Proxy(target, {
+      getOwnPropertyDescriptor: (t, p) => Reflect.getOwnPropertyDescriptor(t, p),
+      get: (t, p, r) => (Object.prototype.hasOwnProperty.call(divergentes, p) ? divergentes[p] : Reflect.get(t, p, r)),
+      ownKeys: (t) => Reflect.ownKeys(t),
+    })
+  }
+
+  function proyectoConDosComponentes() {
+    let p = proyectoBase()
+    p = {
+      ...p,
+      placa: "esp32-devkit-v1",
+      componentes: [
+        { id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} },
+        { id: "cmp-1", tipo: "dht22", pines: { senal: null }, propiedades: {} },
+      ],
+    }
+    return p
+  }
+
+  const casos = [
+    {
+      nombre: "SetPlaca",
+      proyecto: () => proyectoBase(),
+      target: { placa: "esp32-devkit-v1" },
+      divergentes: { placa: "placa-fantasma" }, // crudo: PLACA_DESCONOCIDA si se relee
+      verificarAceptado: (r) => assert.equal(r.proyecto.placa, "esp32-devkit-v1", "debe usar la placa MATERIALIZADA, nunca la del trap get"),
+    },
+    {
+      nombre: "AgregarComponente",
+      proyecto: () => proyectoBase(),
+      target: { tipo: "led" },
+      divergentes: { tipo: "tipo-que-no-existe" }, // crudo: TIPO_CATALOGO_DESCONOCIDO si se relee
+      verificarAceptado: (r) => assert.equal(r.proyecto.componentes[0]?.tipo, "led", "debe usar el tipo MATERIALIZADO, nunca el del trap get"),
+    },
+    {
+      nombre: "QuitarComponente",
+      proyecto: () => proyectoConDosComponentes(),
+      target: { componente: "cmp-0" },
+      divergentes: { componente: "cmp-inexistente" }, // crudo: REFERENCIA_INEXISTENTE si se relee
+      verificarAceptado: (r) => assert.ok(!r.proyecto.componentes.some((c) => c.id === "cmp-0"), "debe quitar cmp-0 (el MATERIALIZADO), nunca fallar por 'cmp-inexistente' (el del trap get)"),
+    },
+    {
+      nombre: "AsignarPin",
+      proyecto: () => proyectoConDosComponentes(),
+      target: { componente: "cmp-0", terminal: "anodo", pin: "GPIO23" },
+      divergentes: { pin: "GPIO999" }, // crudo: PIN_INEXISTENTE_EN_PLACA si se relee
+      verificarAceptado: (r) => assert.equal(r.proyecto.componentes.find((c) => c.id === "cmp-0")?.pines.anodo, "GPIO23", "debe asignar el pin MATERIALIZADO, nunca el del trap get"),
+    },
+    {
+      nombre: "Conectar",
+      proyecto: () => proyectoConDosComponentes(),
+      target: { desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "senal" } },
+      divergentes: { hasta: { componente: "cmp-inexistente", terminal: "x" } }, // crudo: REFERENCIA_INEXISTENTE si se relee
+      verificarAceptado: (r) => assert.ok(r.proyecto.conexiones.some((cx) => cx.desde.componente === "cmp-0" && cx.hasta.componente === "cmp-1"), "debe conectar hacia cmp-1 (el MATERIALIZADO), nunca fallar por 'cmp-inexistente' (el del trap get)"),
+    },
+    {
+      nombre: "Desconectar",
+      proyecto: () => ({ ...proyectoConDosComponentes(), conexiones: [{ id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "senal" } }] }),
+      target: { conexion: "conn-0" },
+      divergentes: { conexion: "conn-inexistente" }, // crudo: REFERENCIA_INEXISTENTE si se relee
+      verificarAceptado: (r) => assert.ok(!r.proyecto.conexiones.some((cx) => cx.id === "conn-0"), "debe desconectar conn-0 (el MATERIALIZADO), nunca fallar por 'conn-inexistente' (el del trap get)"),
+    },
+    {
+      nombre: "SetComportamiento",
+      proyecto: () => proyectoConDosComponentes(),
+      target: {
+        comportamiento: {
+          cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 25, unidad: "celsius", magnitud: "temperatura" } },
+          entonces: { actuador: "cmp-0", accion: "encender" },
+        },
+      },
+      divergentes: {
+        // crudo: REFERENCIA_INEXISTENTE (actuador inexistente) si se relee
+        comportamiento: {
+          cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 25, unidad: "celsius", magnitud: "temperatura" } },
+          entonces: { actuador: "cmp-inexistente", accion: "encender" },
+        },
+      },
+      verificarAceptado: (r) => assert.equal(r.proyecto.comportamientos[0]?.entonces.actuador, "cmp-0", "debe usar el comportamiento MATERIALIZADO (actuador cmp-0), nunca el del trap get"),
+    },
+    {
+      nombre: "CambiarComponente",
+      proyecto: () => proyectoConDosComponentes(),
+      target: { componente: "cmp-0", tipoNuevo: "dht22" },
+      divergentes: { tipoNuevo: "tipo-que-no-existe" }, // crudo: TIPO_CATALOGO_DESCONOCIDO si se relee
+      verificarAceptado: (r) => assert.equal(r.proyecto.componentes.find((c) => c.id === "cmp-0")?.tipo, "dht22", "debe cambiar al tipo MATERIALIZADO, nunca al del trap get"),
+    },
+  ]
+
+  assert.equal(casos.length, 8, "control: los 8 tipos de TipoOperacion, uno por cada case del switch de despacho")
+
+  for (const { nombre, proyecto, target, divergentes, verificarAceptado } of casos) {
+    const payloadDivergente = payloadConRelecturaCrudaDivergente(target, divergentes)
+    const operacion = nuevaOperacion(nombre, payloadDivergente)
+
+    const p = proyecto()
+    let directo
+    assert.doesNotThrow(() => {
+      directo = aplicarOperacion(p, operacion, catalogo)
+    }, `aplicarOperacion NUNCA debe lanzar — caso "${nombre}"`)
+    assert.equal(directo.motivos.filter((m) => m.clasificacion === "rechazo").length, 0, `caso "${nombre}": aplicarOperacion no debe rechazar usando el valor MATERIALIZADO — motivos: ${JSON.stringify(directo.motivos)}`)
+    verificarAceptado(directo)
+
+    const p2 = proyecto()
+    let viaEjecutar
+    assert.doesNotThrow(() => {
+      viaEjecutar = ejecutarOperacion(p2, operacion, catalogo)
+    }, `ejecutarOperacion NUNCA debe lanzar — caso "${nombre}"`)
+    assert.equal(viaEjecutar.ok, true, `caso "${nombre}": ejecutarOperacion debe aceptar usando el valor MATERIALIZADO — motivos: ${JSON.stringify(viaEjecutar.motivos)}`)
+    verificarAceptado(viaEjecutar)
+  }
+})

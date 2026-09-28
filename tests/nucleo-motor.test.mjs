@@ -837,6 +837,107 @@ test("motor.aplicar/aplicarTransaccion/proponer NUNCA propagan un getter-que-exp
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// Phase 1.1 — hallazgo M3 (campaña de mutación final, MUTATION_RESULTS_FINAL.md),
+// sobreviviente W9-M2b: `ejecutarLote` (motor.ts) lee `baseRevisionRecibida` de
+// `operaciones[0]!.baseRevision` — la copia YA materializada por
+// `materializarDatosPlanos` (comentario de `ejecutarLote`: "Lectura ya segura, dato
+// plano materializado arriba"; cabecera de `datos-planos.ts`: "no puede existir una
+// 'segunda lectura' que diverja de la primera") — el mutante W9-M2b
+// (`M3/diffs/W9-M2b.diff`) la reemplaza por `operacionesCrudas[0]!.baseRevision` (el
+// LOTE CRUDO, tal cual llegó, ANTES de materializar). Ningún test existente lo
+// detectaba (pass=952 fail=2, idéntico al baseline): el gate de `baseRevision` —
+// diseñado para cortar el lote ANTES de tocar cualquier operación (E3-01) — queda
+// neutralizado por la relectura cruda.
+//
+// Este test expresa el INVARIANTE observable (IR-SPEC.md §6.6/§6.7,
+// INVARIANTES-ENTRYPOINTS.md fila 15), no el mecanismo interno — nunca inspecciona
+// `ejecutarLote`: construye un `SobreOperacion` completo como Proxy sobre un objeto
+// plano configurable cuyo trap `getOwnPropertyDescriptor` (lo que la materialización
+// usa) reporta `baseRevision: -1` (dato plano, PASA la materialización; INVÁLIDO
+// como regla de negocio — `esEnteroNoNegativo` lo rechaza), pero cuyo trap `get`
+// (una relectura cruda posterior) devuelve, para `baseRevision`, `0` — un valor
+// DISTINTO, "válido" en el sentido de que coincide con la revisión canónica vigente
+// del motor recién construido — válido ECMAScript, sin violar ningún invariante de
+// Proxy porque el target es un objeto plano configurable (mismo criterio que
+// `M3/m/probe-w9-m2b.mjs`). El veredicto observable (rechazo/no-rechazo, el código
+// de motivo, y si el canónico/almacén se tocan) tiene que corresponder SIEMPRE al
+// valor MATERIALIZADO (-1, rechazo `BASE_REVISION_INVALIDA`, ANTES de tocar
+// cualquier operación) — nunca al valor sólo visible vía el trap `get` vivo (0, que
+// dejaría procesar la operación y fallar más tarde, si acaso, por una razón
+// distinta) — a través de las 3 puertas públicas que llegan a `ejecutarLote`:
+// `motor.aplicar`, `motor.aplicarTransaccion`, `motor.proponer`.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("motor.aplicar/aplicarTransaccion/proponer usan SIEMPRE el baseRevision MATERIALIZADO de la primera operacion, nunca vuelven a leer el lote crudo (Proxy con getOwnPropertyDescriptor/get inconsistentes, hallazgo M3 W9-M2b)", () => {
+  // Envuelve el SOBRE completo (`target`, el valor MATERIALIZADO, A) en un Proxy
+  // cuyo `getOwnPropertyDescriptor` reporta fielmente los descriptores de `target`
+  // (pasa la materialización del LOTE sin problema, produce exactamente A), pero
+  // cuyo `get` devuelve, para las claves presentes en `divergentes`, el valor B —
+  // una relectura cruda que SÓLO se observaría si `ejecutarLote` volviera a leer
+  // este objeto directamente en vez de usar la copia ya materializada.
+  function sobreConRelecturaCrudaDivergente(target, divergentes) {
+    return new Proxy(target, {
+      getOwnPropertyDescriptor: (t, p) => Reflect.getOwnPropertyDescriptor(t, p),
+      get: (t, p, r) => (Object.prototype.hasOwnProperty.call(divergentes, p) ? divergentes[p] : Reflect.get(t, p, r)),
+      ownKeys: (t) => Reflect.ownKeys(t),
+    })
+  }
+
+  function nuevoSobreDivergente() {
+    // baseRevision MATERIALIZADO (A) = -1: dato plano válido para la
+    // materialización, pero INVÁLIDO segun `esEnteroNoNegativo` — debe rechazar
+    // ANTES de tocar la operación. Si algo relee crudo, ve 0 (B) — coincide con
+    // `canonico.revision` de un motor recién construido, dejaría pasar el gate. El
+    // `tipo`/`payload` (`Desconectar` sobre una conexión inexistente) es deliberado:
+    // si el gate se salta de largo, la operación SÍ se procesa y falla con un
+    // código DISTINTO (`REFERENCIA_INEXISTENTE`), lo que hace la divergencia
+    // observable sin ambigüedad.
+    return sobreConRelecturaCrudaDivergente({ idOperacion: "op-w9-m2b", actor: "agente", baseRevision: -1, tipo: "Desconectar", payload: { conexion: "no-existe" } }, { baseRevision: 0 })
+  }
+
+  function verificarRechazoPorBaseRevisionInvalida(r, almacen, motor, revisionAntes, nombrePuerta) {
+    assert.equal(r.ok, false, `${nombrePuerta}: debe rechazar (baseRevision MATERIALIZADO -1 es invalido)`)
+    assert.equal(r.motivos[0]?.codigo, "BASE_REVISION_INVALIDA", `${nombrePuerta}: debe rechazar con BASE_REVISION_INVALIDA usando el valor MATERIALIZADO (-1) — nunca REFERENCIA_INEXISTENTE (lo que pasaria si se relee el crudo, 0, y la operacion llega a procesarse). motivos: ${JSON.stringify(r.motivos)}`)
+    assert.equal(r.resultadosOperaciones.length, 0, `${nombrePuerta}: el gate de baseRevision corta ANTES de procesar ninguna operacion — resultadosOperaciones debe quedar vacio`)
+    assert.equal(motor.getProyecto().revision, revisionAntes, `${nombrePuerta}: el canonico no debe cambiar`)
+    assert.equal(almacen.llamadasGuardar.length, 0, `${nombrePuerta}: nunca debe llamarse a almacen.guardar`)
+  }
+
+  // Puerta 1: motor.aplicar (ejecutarLote([operacion], true)).
+  {
+    const { motor, almacen } = crearMotorDePrueba()
+    const revisionAntes = motor.getProyecto().revision
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicar(nuevoSobreDivergente())
+    }, "motor.aplicar NUNCA debe lanzar")
+    verificarRechazoPorBaseRevisionInvalida(r, almacen, motor, revisionAntes, "motor.aplicar")
+  }
+
+  // Puerta 2: motor.aplicarTransaccion (ejecutarLote(operaciones, true)).
+  {
+    const { motor, almacen } = crearMotorDePrueba()
+    const revisionAntes = motor.getProyecto().revision
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.aplicarTransaccion([nuevoSobreDivergente()])
+    }, "motor.aplicarTransaccion NUNCA debe lanzar")
+    verificarRechazoPorBaseRevisionInvalida(r, almacen, motor, revisionAntes, "motor.aplicarTransaccion")
+  }
+
+  // Puerta 3: motor.proponer (ejecutarLote(operaciones, false) — dry-run).
+  {
+    const { motor, almacen } = crearMotorDePrueba()
+    const revisionAntes = motor.getProyecto().revision
+    let r
+    assert.doesNotThrow(() => {
+      r = motor.proponer([nuevoSobreDivergente()])
+    }, "motor.proponer NUNCA debe lanzar")
+    verificarRechazoPorBaseRevisionInvalida(r, almacen, motor, revisionAntes, "motor.proponer")
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // Phase 1.1 — hallazgo externo E3-01 (CRÍTICO, PHASE_1_EXTERNAL_FINDINGS.md):
 // `motor.ts` — `operaciones[0]?.baseRevision ?? canonico.revision` trataba
 // `baseRevision:null`/campo ausente/de OTRO TIPO en la PRIMERA operación de un lote NO
