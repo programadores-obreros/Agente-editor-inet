@@ -136,6 +136,23 @@ es `===` (misma referencia, no sólo `deepEqual`) entre el proyecto antes y desp
 CUALQUIER otro componente/conexión/comportamiento no relacionado sigue siendo la
 MISMA referencia.
 
+### 5.1. Ampliación Phase 1.1 (hallazgo externo E4-03)
+
+Antes de Phase 1.1 este invariante sólo tenía test explícito para `AsignarPin` y
+`CambiarComponente` — las otras 6 operaciones (`SetPlaca`/`AgregarComponente`/
+`QuitarComponente`/`Conectar`/`Desconectar`/`SetComportamiento`) comparten el MISMO
+contrato (todas están escritas con `.map`/`.filter`/spread que reusan por referencia
+lo no tocado, nunca `structuredClone` de todo el árbol) pero no tenían regresión
+propia por operación. `tests/nucleo-operaciones.test.mjs` agrega un test por
+operación (mismo patrón: fixture con una entidad no relacionada, `===` entre
+antes/después) — sin cambiar código de producción, porque las 8 ya cumplían el
+invariante; esto es cobertura, no un fix. Confirmado con mutante ad-hoc sobre copia
+temporal: `aplicarDesconectar` clonando cada conexión sobreviviente
+(`.filter(...).map((cx)=>({...cx}))`) mata el test de `Desconectar` (el `m4` de la
+auditoría externa); un segundo mutante sobre `aplicarSetComportamiento` (rama de alta
+nueva, clonando cada comportamiento previo) mata el test de `SetComportamiento` —
+evidencia en `evidencia/T7/E4-03_mutante_*.txt` de Phase 1.1.
+
 ## 6. Resultados representables NO se rechazan a nivel de operación
 
 Un motivo `clasificacion: "representable"` NUNCA corta la operación — el ejemplo

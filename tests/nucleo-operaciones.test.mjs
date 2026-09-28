@@ -440,6 +440,112 @@ test("invariante-de-vista: CambiarComponente solo reescribe los comportamientos 
   assert.equal(r.proyecto.componentes.find((c) => c.id === "cmp-0"), cmpLedAntes, "cmp-0 (el actuador, no el sensor cambiado) tampoco se toca")
 })
 
+// Phase 1.1 (hallazgo externo E4-03): antes de acá el invariante de vista (OPERATIONS.md
+// §5) sólo se ejercitaba con test explícito para AsignarPin y CambiarComponente — las
+// otras 6 operaciones mutantes (SetPlaca/AgregarComponente/QuitarComponente/Conectar/
+// Desconectar/SetComportamiento) no tenían regresión propia, aunque el contrato ("una
+// operación cambia SÓLO su entidad destino y los efectos derivados que las reglas
+// exigen") es el MISMO para las 8. Se agrega un test por operación, siguiendo el mismo
+// patrón de los 2 tests de arriba: fixture con una entidad NO relacionada, `===` (no
+// `deepEqual`) entre el proyecto antes y después.
+
+test("invariante-de-vista: SetPlaca no toca ninguna entidad — todo el arbol de componentes/conexiones/comportamientos queda === ", () => {
+  let p = proyectoBase()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} }, { id: "cmp-1", tipo: "resistencia", pines: {}, propiedades: {} }] }
+  p = { ...p, conexiones: [...p.conexiones, { id: "conn-0", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "a" } }] }
+  const componentesAntes = p.componentes
+  const conexionesAntes = p.conexiones
+  const comportamientosAntes = p.comportamientos
+  const r = ejecutarOperacion(p, nuevaOperacion("SetPlaca", { placa: "esp32-devkit-v1" }), catalogo)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.placa, "esp32-devkit-v1")
+  assert.equal(r.proyecto.componentes, componentesAntes, "SetPlaca sólo toca el campo placa: el array de componentes entero debe seguir siendo la MISMA referencia")
+  assert.equal(r.proyecto.conexiones, conexionesAntes, "idem para conexiones")
+  assert.equal(r.proyecto.comportamientos, comportamientosAntes, "idem para comportamientos")
+})
+
+test("invariante-de-vista: AgregarComponente solo agrega, el componente existente no relacionado queda === ", () => {
+  let p = proyectoBase()
+  p = conLed(p, "cmp-0", "GPIO23")
+  const cmp0Antes = p.componentes.find((c) => c.id === "cmp-0")
+  const conexionesAntes = p.conexiones
+  const comportamientosAntes = p.comportamientos
+  const r = ejecutarOperacion(p, nuevaOperacion("AgregarComponente", { tipo: "resistencia" }), catalogo)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.componentes.find((c) => c.id === "cmp-0"), cmp0Antes, "el componente ya existente, no relacionado con el alta, debe ser la MISMA referencia")
+  assert.equal(r.proyecto.conexiones, conexionesAntes, "AgregarComponente no toca conexiones: misma referencia de array")
+  assert.equal(r.proyecto.comportamientos, comportamientosAntes, "AgregarComponente no toca comportamientos: misma referencia de array")
+})
+
+test("invariante-de-vista: QuitarComponente solo remueve el suyo, el componente no relacionado queda === ", () => {
+  let p = proyectoBase()
+  p = conLed(p, "cmp-0", "GPIO23")
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "resistencia", pines: {}, propiedades: {} }] }
+  const cmp1Antes = p.componentes.find((c) => c.id === "cmp-1")
+  const conexionesAntes = p.conexiones
+  const comportamientosAntes = p.comportamientos
+  const r = ejecutarOperacion(p, nuevaOperacion("QuitarComponente", { componente: "cmp-0" }), catalogo)
+  assert.equal(r.ok, true)
+  assert.ok(!r.proyecto.componentes.some((c) => c.id === "cmp-0"), "cmp-0 debe haber sido removido")
+  assert.equal(r.proyecto.componentes.find((c) => c.id === "cmp-1"), cmp1Antes, "cmp-1, no relacionado con la baja, debe ser la MISMA referencia")
+  assert.equal(r.proyecto.conexiones, conexionesAntes, "QuitarComponente sin dependientes no toca conexiones: misma referencia de array")
+  assert.equal(r.proyecto.comportamientos, comportamientosAntes, "idem para comportamientos")
+})
+
+test("invariante-de-vista: Conectar solo agrega una conexion, la existente no relacionada y los componentes quedan === ", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1", componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} }, { id: "cmp-1", tipo: "resistencia", pines: {}, propiedades: {} }, { id: "cmp-2", tipo: "pulsador", pines: { senal: null }, propiedades: {} }] }
+  p = { ...p, conexiones: [{ id: "conn-0", desde: { componente: "cmp-1", terminal: "a" }, hasta: { componente: "cmp-2", terminal: "senal" } }], siguienteIdLocal: 3 }
+  const conn0Antes = p.conexiones.find((cx) => cx.id === "conn-0")
+  const componentesAntes = p.componentes
+  const comportamientosAntes = p.comportamientos
+  const r = ejecutarOperacion(p, nuevaOperacion("Conectar", { desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "b" } }), catalogo)
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.conexiones.find((cx) => cx.id === "conn-0"), conn0Antes, "conn-0, no relacionada con la conexion nueva, debe ser la MISMA referencia")
+  assert.equal(r.proyecto.componentes, componentesAntes, "Conectar no toca componentes: misma referencia de array")
+  assert.equal(r.proyecto.comportamientos, comportamientosAntes, "idem para comportamientos")
+})
+
+test("invariante-de-vista: Desconectar solo remueve la suya, la conexion no relacionada queda === (hallazgo E4-03, mutante m4)", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1", componentes: [{ id: "cmp-0", tipo: "led", pines: { anodo: null }, propiedades: {} }, { id: "cmp-1", tipo: "resistencia", pines: {}, propiedades: {} }, { id: "cmp-2", tipo: "pulsador", pines: { senal: null }, propiedades: {} }] }
+  p = {
+    ...p,
+    conexiones: [
+      { id: "conn-0", desde: { componente: "cmp-1", terminal: "a" }, hasta: { componente: "cmp-2", terminal: "senal" } },
+      { id: "conn-1", desde: { componente: "cmp-0", terminal: "anodo" }, hasta: { componente: "cmp-1", terminal: "b" } },
+    ],
+    siguienteIdLocal: 3,
+  }
+  const conn0Antes = p.conexiones.find((cx) => cx.id === "conn-0")
+  const componentesAntes = p.componentes
+  const comportamientosAntes = p.comportamientos
+  const r = ejecutarOperacion(p, nuevaOperacion("Desconectar", { conexion: "conn-1" }), catalogo)
+  assert.equal(r.ok, true)
+  assert.ok(!r.proyecto.conexiones.some((cx) => cx.id === "conn-1"), "conn-1 debe haber sido removida")
+  assert.equal(r.proyecto.conexiones.find((cx) => cx.id === "conn-0"), conn0Antes, "conn-0, no relacionada con la baja, debe ser la MISMA referencia — no una copia deepEqual")
+  assert.equal(r.proyecto.componentes, componentesAntes, "Desconectar no toca componentes: misma referencia de array")
+  assert.equal(r.proyecto.comportamientos, comportamientosAntes, "idem para comportamientos")
+})
+
+test("invariante-de-vista: SetComportamiento (alta nueva) no toca el comportamiento existente no relacionado, que queda === ", () => {
+  let p = proyectoConSensorYComportamiento("dht22") // ya trae beh-0: sensor cmp-1, actuador cmp-0
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "pulsador", pines: { senal: "GPIO4" }, propiedades: {} }] }
+  const beh0Antes = p.comportamientos.find((b) => b.id === "beh-0")
+  const componentesAntes = p.componentes
+  const conexionesAntes = p.conexiones
+  const r = ejecutarOperacion(
+    p,
+    nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 50, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-2", accion: "encender" } } }),
+    catalogo,
+  )
+  assert.equal(r.ok, true)
+  assert.equal(r.proyecto.comportamientos.length, 2, "debe haber agregado un beh-1 nuevo, sin tocar beh-0")
+  assert.equal(r.proyecto.comportamientos.find((b) => b.id === "beh-0"), beh0Antes, "beh-0, no relacionado con el alta nueva, debe ser la MISMA referencia")
+  assert.equal(r.proyecto.componentes, componentesAntes, "SetComportamiento no toca componentes: misma referencia de array")
+  assert.equal(r.proyecto.conexiones, conexionesAntes, "idem para conexiones")
+})
+
 // ──────────────────── extra: aplicarOperacion es pura (misma entrada, mismo resultado)
 
 test("aplicarOperacion es pura: misma entrada da el mismo resultado dos veces", () => {
