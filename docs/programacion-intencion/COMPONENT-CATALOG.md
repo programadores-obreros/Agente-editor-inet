@@ -72,9 +72,11 @@ un catálogo que cambió sin que alguien haya bumpeado la versión a mano.
 ## 5. Reglas genéricas del core — SIEMPRE despachan por tipo/rol/clase, nunca por id
 
 `evaluarRequisito`, `asignarPin`, `propagarMagnitud`, `validarConexion`,
-`reemplazarSensor`. El test `catalogo-sin-cambio-de-core-al-agregar-componente` prueba
-esto literalmente: un componente 100% inventado en el propio test, nunca importado de
-`catalogo-datos.ts`, se procesa sin tocar ningún `.ts` del core.
+`reemplazarSensor`, `estaFueraDeRango` (Phase 1.2, REA-02 — extraída de la closure
+local que `reemplazarSensor` usaba, ahora compartida también por
+`validar-tecnico.ts`). El test `catalogo-sin-cambio-de-core-al-agregar-componente`
+prueba esto literalmente: un componente 100% inventado en el propio test, nunca
+importado de `catalogo-datos.ts`, se procesa sin tocar ningún `.ts` del core.
 
 `reemplazarSensor` implementa las 4 ramas de §8.1, con una corrección sobre la
 redacción original del diseño: el chequeo de "misma unidad → conservar sin más" debe
@@ -109,6 +111,7 @@ se implemente Gate 5):
 | `CONEXION_DUPLICADA` (Phase 1.1, E2-01) | blocking | estructural / operacion | **RECHAZO** | `validar-estructural.ts` (Gate 4) / `operaciones.ts` (Gate 5, categoría `operacion`) |
 | `AUTOCONEXION_INVALIDA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
 | `CONEXION_DUPLICADA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
+| `UMBRAL_FUERA_DE_RANGO` (Phase 1.2, REA-02) | **warning** | tecnica | **REPRESENTABLE** | `validar-tecnico.ts` (Gate 4, continuo, reusa `estaFueraDeRango` de `catalogo.ts`) |
 
 **Regla general que Gate 4 tiene que respetar:** todo lo que este documento clasifica
 `REPRESENTABLE` significa que la operación que lo provoca **COMMITEA** — el motivo

@@ -18,13 +18,26 @@
 // como el ORÁCULO de compatibilidad magnitud/unidad — la misma regla que
 // `reemplazarSensor`/`CambiarComponente` ya asumían que corría acá (`catalogo.ts`,
 // comentario de `reemplazarSensor` sobre el cast de `cuando.umbral`, ahora
-// finalmente cierto). El `valor` convertido que `propagarMagnitud` devolvería NUNCA
-// se usa acá: esta validación sólo diagnostica, no muta ni reemplaza el umbral del
-// comportamiento del estudiante.
+// finalmente cierto). El `valor` convertido que `propagarMagnitud` devolvería nunca
+// REEMPLAZA el umbral del comportamiento del estudiante — esta validación sólo
+// diagnostica, nunca muta ni reescribe nada en la IR (Phase 1.2 SÍ lo LEE, ver abajo,
+// exclusivamente para comparar contra el rango — nunca para persistirlo).
+//
+// Phase 1.2 (hallazgo externo REA-02, MAYOR — re-auditoría externa AUD-C-02): un
+// umbral con magnitud/unidad COMPATIBLE puede seguir siendo físicamente imposible
+// para el sensor vigente (DHT22, rango [0,60]°C, umbral de 200°C) — antes de este
+// fix, sólo `reemplazarSensor` (`catalogo.ts`, rama C, corrida ÚNICAMENTE durante
+// `CambiarComponente`) lo diagnosticaba; el MISMO estado llegado por cualquier otra
+// puerta (`SetComportamiento` directo, `proyectoInicial`, recarga) no tenía ningún
+// aviso. Se cierra acá, en el mismo bucle continuo, reusando `estaFueraDeRango`
+// (`catalogo.ts`) — el mismo chequeo que `reemplazarSensor` ya usaba, nunca una
+// segunda regla divergente. WARNING (nunca `blocking`): Brief §8.1 ("se conserva el
+// umbral/intención y se advierte") + §12.1 (`warning` no impide `ready`) — no afecta
+// `derivarReadiness`. Ver `docs/programacion-intencion/IR-SPEC.md` §6.12.
 
 import type { Proyecto, Componente } from "./ir.ts"
 import type { Catalogo, ComponenteCatalogo, Cantidad, Magnitud, Unidad } from "./catalogo.ts"
-import { asignarPin, evaluarRequisito, propagarMagnitud } from "./catalogo.ts"
+import { asignarPin, evaluarRequisito, propagarMagnitud, estaFueraDeRango } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
 
 export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly Motivo[] {
@@ -126,6 +139,42 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
     // (nada se está convirtiendo de verdad, sólo diagnosticando) y se descarta.
     if (!propagacion.ok) {
       motivos.push({ ...propagacion.motivo, entidad: { tipo: "comportamiento", id: comportamiento.id } })
+      continue
+    }
+
+    // Phase 1.2 (hallazgo externo REA-02, MAYOR — re-auditoría externa AUD-C-02,
+    // `PHASE_1_1_EXTERNAL_FINDINGS.md`): un `umbral` con la MISMA magnitud física y
+    // una unidad compatible (`propagacion.ok`, arriba) puede seguir siendo
+    // FÍSICAMENTE imposible para el sensor vigente — ej. un DHT22 (rango [0,60]°C)
+    // con un umbral de 200°C. Antes de este fix, `reemplazarSensor` (`catalogo.ts`)
+    // era el ÚNICO lugar que chequeaba esto (rama C, §8.1 del brief), y sólo en el
+    // instante de la operación `CambiarComponente` — el mismo estado (mismo sensor,
+    // mismo umbral, mismo rango) llegado por CUALQUIER OTRA puerta (`SetComportamiento`
+    // directo, `proyectoInicial`, recarga desde disco) validaba SIN ningún aviso,
+    // hasta `listo:true` (evidencia:
+    // `reaudit/AUD-C/scripts/10_rango_sensor_deuda2.mjs`). Brief §8.1 ("rango
+    // incompatible: se conserva el umbral/intención y se advierte, según el contrato
+    // de validación aplicable, §12.1") y §12.1 (`warning` = "proyecto utilizable pero
+    // requiere atención"; sólo `blocking` impide `ready`) — decisión del orquestador,
+    // `DECISIONS.md`: esto es un WARNING DERIVADO DEL ESTADO, no del camino, y NUNCA
+    // afecta `derivarReadiness` (que sólo mira `severidad === "blocking"`,
+    // `validar.ts`). Reusa `estaFueraDeRango` (`catalogo.ts`) — el MISMO chequeo que
+    // `reemplazarSensor` ya usaba, nunca una segunda regla — contra el `valor` YA
+    // propagado a la unidad de la capacidad (`propagacion.valor`, la conversión
+    // EXPLÍCITA que ya corrió arriba): si la unidad difiere, se compara DESPUÉS de
+    // convertir, nunca comparando unidades distintas directo. El umbral del
+    // comportamiento del estudiante NUNCA se toca (ni se clampa, ni se reinterpreta):
+    // sólo se diagnostica, mismo criterio que `PIN_OCUPADO`/`MAGNITUD_INCOMPATIBLE`
+    // de este mismo archivo.
+    if (estaFueraDeRango(propagacion.valor.valor, capacidadReal.rango)) {
+      motivos.push({
+        codigo: "UMBRAL_FUERA_DE_RANGO",
+        categoria: "tecnica",
+        severidad: "warning",
+        clasificacion: "representable",
+        entidad: { tipo: "comportamiento", id: comportamiento.id },
+        datos: { umbral: comportamiento.cuando.umbral.valor, unidad: comportamiento.cuando.umbral.unidad, rango: capacidadReal.rango },
+      })
     }
   }
 

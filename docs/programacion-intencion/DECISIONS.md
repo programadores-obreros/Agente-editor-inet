@@ -520,3 +520,78 @@ costo de CPU evitable. Se documenta y se ACEPTA sin refactor (ver `IR-SPEC.md`
 Ver `evidencia/RX3fix/` (Phase 1.1) para la evidencia RED/GREEN/mutante completa de
 RX3-01/RX3-02, incluida la conversión a test de regresión del repro original de la
 auditoría externa (`phase1_auditoria_externa/evidencia/e1/exp_proto_pollution.mjs`).
+
+## Phase 1.2 — "umbral fuera de rango" es WARNING derivado del ESTADO, no del camino (hallazgo externo REA-02, MAYOR)
+
+**Qué encontró la re-auditoría externa (AUD-C-02):** `reemplazarSensor`
+(`catalogo.ts`, rama C de §8.1 del brief) era el ÚNICO lugar del núcleo que
+comparaba un umbral contra `Capacidad.rango`, y sólo corría durante la
+operación `CambiarComponente`. El MISMO estado (mismo sensor, mismo umbral,
+mismo rango) llegado por cualquier otra puerta — `SetComportamiento` directo,
+`proyectoInicial`, una recarga desde disco — validaba SIN ningún aviso, hasta
+`listo:true`: un DHT22 (rango declarado `[0,60]°C`) con un umbral de `200°C`
+quedaba marcado como proyecto completo y listo, sin ningún diagnóstico
+(`reaudit/AUD-C/scripts/10_rango_sensor_deuda2.mjs`). Esto ya estaba
+documentado como deuda conocida en `PHASE_1_1_REMEDIATION_REPORT.md` §8
+("Umbral fuera del rango declarado del sensor en `SetComportamiento` directo:
+no se valida" / "`RANGO_INCOMPATIBLE_AL_REEMPLAZAR` sólo cubierto en la rama
+`CambiarComponente`") — la re-auditoría la confirmó con evidencia
+reproducible y la elevó a hallazgo MAYOR.
+
+**Decisión del orquestador, con fuente (Phase 1.2, registrada en
+`odd/tasks/programacion-intencion-fase1-2.md`, "Decisiones del orquestador"):**
+el umbral fuera de rango es un **WARNING DERIVADO DEL ESTADO** — nunca del
+camino por el que ese estado se alcanzó — y **NO afecta la readiness**, con
+esta fuente contractual:
+
+- Brief §8.1, rama C de "al cambiar un sensor por otro": "misma cantidad
+  física pero rango incompatible: se conserva el umbral/intención y se
+  advierte, según el contrato de validación aplicable (§12.1)".
+- Brief §12.1: `warning` = "proyecto utilizable pero requiere atención";
+  sólo `blocking` "impide marcarlo `ready` o ejecutar la operación
+  afectada... el Project Engine puede haberla aceptado y persistido con el
+  proyecto marcado inválido para ejecutar".
+- Brief l.1856: "No convertir todos los warnings en bloqueos. Un proyecto
+  incompleto es un estado normal de aprendizaje" — mismo espíritu aplicado
+  acá.
+- Prompt humano de la tarea (§15/§18): "según contrato vigente... not-ready
+  cuando corresponda" + "no cambiar este contrato durante 1.2" — se leyó el
+  Brief/IR-SPEC/OPERATIONS antes de implementar, sin encontrar ninguna
+  contradicción real con esta lectura (si hubiera aparecido una, el writer
+  tenía instrucción de parar y devolver `HUMAN_DECISION_REQUIRED`, evidencia
+  que nunca hizo falta usar).
+
+**Por qué NO se decidió `blocking`:** convertir esto en `blocking` habría
+significado que un estudiante con un umbral fuera de rango (una elección
+pedagógicamente válida de explorar, corregible después) no podría marcar su
+proyecto como `ready` — exactamente el "convertir warnings en bloqueos" que
+el Brief prohíbe explícitamente. `blocking` queda reservado para lo que ya
+lo usa en este mismo archivo de reglas (`PIN_OCUPADO`,
+`CAPACIDAD_PIN_INCOMPATIBLE`, `CAPACIDAD_INEXISTENTE_EN_CATALOGO`,
+`MAGNITUD_INCOMPATIBLE`) — todos casos donde el circuito, TAL COMO está
+descrito, no puede funcionar en absoluto; un umbral fuera de rango sigue
+siendo un circuito perfectamente funcional, sólo con una condición que
+nunca (o siempre) se cumple en la práctica real del sensor.
+
+**Fix, mismo criterio de clase que E1-03/REA-01 (nunca parche puntual):**
+`estaFueraDeRango` se extrajo de la closure local de `reemplazarSensor`
+(`catalogo.ts`) a una función compartida, y `validar-tecnico.ts` la reusa en
+el mismo bucle continuo que ya diagnostica `CAPACIDAD_INEXISTENTE_EN_CATALOGO`/
+`MAGNITUD_INCOMPATIBLE` sobre `proyecto.comportamientos` — la remediación
+mínima exacta que sugería la ficha del hallazgo
+(`PHASE_1_1_EXTERNAL_FINDINGS.md`, REA-02). Nuevo reason code
+`UMBRAL_FUERA_DE_RANGO` (categoría `tecnica`, `severidad: "warning"`,
+`clasificacion: "representable"`) — nunca hardcodea ids de componente, nunca
+clampa ni reinterpreta el umbral, nunca toca `SetComportamiento` en sí. El
+motivo transitorio `RANGO_INCOMPATIBLE_AL_REEMPLAZAR` que `reemplazarSensor`
+ya emitía durante `CambiarComponente` se conserva sin cambios — es
+informativo del EVENTO puntual de esa operación, nunca se fusiona con el
+diagnóstico continuo. Ver `IR-SPEC.md` §6.12 para el detalle técnico
+completo.
+
+**Equivalencia por caminos, probada explícitamente (`tests/nucleo-rango-umbral-caminos.test.mjs`):**
+el mismo estado final alcanzado por operación directa, `proyectoInicial`,
+save→load con el Almacén real, y reemplazo de sensor (`CambiarComponente`,
+rama C) da la MISMA clasificación de rango y la MISMA readiness en los 4
+casos — cierra exactamente la dependencia-del-camino que motivó el
+hallazgo MAYOR.

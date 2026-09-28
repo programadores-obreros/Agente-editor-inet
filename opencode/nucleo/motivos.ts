@@ -287,6 +287,37 @@
 //   diagnóstico — nunca se pierde el detalle original. Ver `IR-SPEC.md` §6.11 y
 //   `OPERATIONS.md` §11.
 
+// Phase 1.2 (hallazgo externo REA-02, MAYOR — re-auditoría externa AUD-C-02,
+// `PHASE_1_1_EXTERNAL_FINDINGS.md`) agrega, categoria "tecnica", `severidad:
+// "warning"`, `clasificacion: "representable"` siempre, emitido por
+// `validar-tecnico.ts` (Gate 4, validación CONTINUA de `proyecto.comportamientos`,
+// el mismo bucle que ya emite `CAPACIDAD_INEXISTENTE_EN_CATALOGO`/
+// `MAGNITUD_INCOMPATIBLE`):
+// - `UMBRAL_FUERA_DE_RANGO` — el `umbral` de un `ComportamientoRegla` tiene magnitud/
+//   unidad COMPATIBLE con la capacidad real del sensor vigente (si no lo fuera, ya se
+//   reportó arriba con `MAGNITUD_INCOMPATIBLE` — nunca se duplica), pero el valor
+//   (ya convertido a la unidad de la capacidad, si hiciera falta conversión) cae
+//   FUERA de `Capacidad.rango` — ej. un DHT22 (rango `[0,60]°C`) con un umbral de
+//   `200°C`, físicamente imposible para el sensor real. Antes de este fix, el ÚNICO
+//   lugar que diagnosticaba esto era `reemplazarSensor` (`catalogo.ts`, rama C de
+//   §8.1 del brief), y sólo en el instante de la operación `CambiarComponente` — el
+//   MISMO estado (mismo sensor, mismo umbral, mismo rango) llegado por
+//   `SetComportamiento` directo, `proyectoInicial` o una recarga desde disco validaba
+//   SIN ningún aviso, hasta `listo:true` (evidencia:
+//   `reaudit/AUD-C/scripts/10_rango_sensor_deuda2.mjs`). Reusa `estaFueraDeRango`
+//   (`catalogo.ts`) — extraída de la closure local que `reemplazarSensor` ya usaba,
+//   nunca una segunda regla divergente. WARNING, nunca `blocking` — decisión del
+//   orquestador con fuente (`DECISIONS.md`): Brief §8.1 rama C ("se conserva el
+//   umbral/intención y se advierte") + §12.1 (`warning` = "proyecto utilizable pero
+//   requiere atención"; sólo `blocking` impide `ready`) + Brief l.1856 ("no convertir
+//   todos los warnings en bloqueos") — nunca afecta `derivarReadiness`, nunca clampa
+//   ni reinterpreta el umbral del estudiante. El motivo TRANSITORIO que
+//   `reemplazarSensor` ya emitía (`RANGO_INCOMPATIBLE_AL_REEMPLAZAR`, sólo dentro del
+//   eco de la operación `CambiarComponente`) se conserva SIN cambios — es informativo
+//   del EVENTO puntual de reemplazo, nunca parte de la validación continua; los dos
+//   códigos pueden coexistir para la MISMA operación, nunca se fusionan. `datos: {
+//   umbral, unidad, rango }`. Ver `docs/programacion-intencion/IR-SPEC.md` §6.12.
+
 /**
  * Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion".
  *

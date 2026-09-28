@@ -799,6 +799,100 @@ del ciclo, fuera de este repositorio) para el recorrido completo de todo
 invariante estructural del loader contra las 8 operaciones públicas —
 confirmó que `comparador`/`accion` era el ÚNICO gap real de esta clase.
 
+### 6.12. Phase 1.2 — "umbral fuera de rango" es un WARNING derivado del ESTADO, no del camino (hallazgo externo REA-02, MAYOR)
+
+La re-auditoría externa (`PHASE_1_1_EXTERNAL_FINDINGS.md`, REA-02, origen
+AUD-C-02) encontró que un `ComportamientoRegla` con la magnitud/unidad
+CORRECTA para la capacidad de su sensor, pero un `umbral.valor` físicamente
+imposible para ese sensor (ej. un DHT22, rango declarado `[0,60]°C`, con un
+umbral de `200°C`), no tenía NINGÚN diagnóstico — `validarProyecto()` no
+devolvía ningún motivo de rango y `derivarReadiness()` daba `listo:true`. El
+único lugar del núcleo que sabía comparar un valor contra `Capacidad.rango`
+era `reemplazarSensor` (`catalogo.ts`, rama C de §8.1 del brief), y sólo
+corría en el instante de la operación `CambiarComponente` — el MISMO estado
+llegado por cualquier otra puerta (`SetComportamiento` directo,
+`proyectoInicial`, una recarga desde disco) no pasaba nunca por esa función,
+así que el aviso dependía del CAMINO por el que el estado se alcanzó, no del
+estado en sí. Evidencia:
+`reaudit/AUD-C/scripts/10_rango_sensor_deuda2.mjs` (script original de
+AUD-C).
+
+**Decisión de severidad, con fuente (decisión del orquestador,
+`DECISIONS.md`):** Brief §8.1, rama C de "al cambiar un sensor por otro":
+"misma cantidad física pero rango incompatible: se conserva el
+umbral/intención y se advierte, según el contrato de validación aplicable
+(§12.1)". Brief §12.1 define `warning` como "proyecto utilizable pero
+requiere atención" y fija que sólo `blocking` "impide marcarlo `ready` o
+ejecutar la operación afectada". Brief l.1856: "No convertir todos los
+warnings en bloqueos. Un proyecto incompleto es un estado normal de
+aprendizaje" (mismo espíritu aplicado acá: un umbral fuera de rango es una
+elección del estudiante que se puede seguir editando, no un error que deba
+bloquear el proyecto). En consecuencia: el umbral fuera de rango es un
+**WARNING DERIVADO DEL ESTADO** — no del camino — que **nunca** afecta
+`derivarReadiness` (que sólo mira `severidad === "blocking"`, `validar.ts`),
+**nunca** clampa el valor y **nunca** reinterpreta la intención del
+estudiante.
+
+**Fix — de CLASE, no de instancia (mismo criterio que E1-03/§6.2 arriba):**
+
+1. **Regla compartida** (`catalogo.ts::estaFueraDeRango`) — antes de este
+   fix, la comparación `valor < rango.min.valor || valor > rango.max.valor`
+   vivía DUPLICADA como una closure local (`fueraDeRango`) únicamente dentro
+   de `reemplazarSensor`. Se extrajo a una función exportada, con la MISMA
+   semántica exacta (límites INCLUSIVOS: `valor === rango.min.valor` o
+   `valor === rango.max.valor` nunca es "fuera de rango"; `rango === undefined`
+   — capacidad sin rango declarado, ej. una capacidad booleana pura — nunca es
+   "fuera de rango" por ausencia de dato). `reemplazarSensor` ahora LLAMA a
+   esta función en vez de declarar su propia closure — ningún cambio de
+   comportamiento, sólo se elimina la duplicación (ver
+   `tests/nucleo-catalogo.test.mjs`, las 4 ramas de `reemplazarSensor` siguen
+   pasando sin cambios).
+2. **Validación continua** (`validar-tecnico.ts`, Gate 4, el MISMO bucle que
+   ya recorre `proyecto.comportamientos` para `CAPACIDAD_INEXISTENTE_EN_CATALOGO`/
+   `MAGNITUD_INCOMPATIBLE`, §6.2 arriba) — cuando `propagarMagnitud` confirma
+   que magnitud/unidad son compatibles (`propagacion.ok`), se llama a
+   `estaFueraDeRango(propagacion.valor.valor, capacidadReal.rango)`. El
+   `valor` que se compara es el YA PROPAGADO a la unidad de la capacidad — si
+   el umbral llegó en una unidad distinta con conversión EXPLÍCITA declarada
+   (§8.1, "conversiones entre unidades compatibles"), se compara DESPUÉS de
+   convertir, nunca comparando unidades distintas directo; si no hay
+   conversión declarada, el caso ya cerró antes como `MAGNITUD_INCOMPATIBLE`
+   y el chequeo de rango nunca se duplica (`continue` antes de llegar acá).
+   Si está fuera de rango, se agrega `UMBRAL_FUERA_DE_RANGO` (categoría
+   `tecnica`, `severidad: "warning"`, `clasificacion: "representable"`) —
+   nunca se toca `comportamiento.cuando.umbral`: sólo se diagnostica, mismo
+   criterio que `PIN_OCUPADO`/`MAGNITUD_INCOMPATIBLE` de este mismo archivo.
+   Como corre dentro de `validarTecnico`/`validarProyecto`, se ejercita
+   IGUAL sin importar la puerta de entrada (operación, `proyectoInicial`,
+   recarga, revalidación con otro catálogo) — exactamente lo que cierra la
+   dependencia del camino que la re-auditoría encontró.
+
+`aplicarSetComportamiento` (`operaciones.ts`, Gate 5) NO agrega ningún
+rechazo ni chequeo nuevo por rango: es representable por contrato (arriba),
+así que se deja pasar y `validarTecnico` lo diagnostica después de
+commitear — mismo criterio que ya usa el resto de Gate 4 para
+`PIN_OCUPADO`/`MAGNITUD_INCOMPATIBLE`/`CAPACIDAD_INEXISTENTE_EN_CATALOGO`.
+`reemplazarSensor` (`catalogo.ts`) tampoco cambia de comportamiento: su
+motivo `RANGO_INCOMPATIBLE_AL_REEMPLAZAR` sigue siendo emitido igual, como
+motivo TRANSITORIO del evento puntual de la operación `CambiarComponente`
+(informativo, categoría `semantica`) — coexiste con `UMBRAL_FUERA_DE_RANGO`
+sin fusionarse: el primero explica "qué pasó en ESTA operación", el segundo
+es el diagnóstico CONTINUO del estado resultante, el mismo que corre
+siempre, sea cual sea la puerta.
+
+**Equivalencia por caminos, probada explícitamente:** el mismo estado final
+(mismo sensor, mismo umbral, mismo rango) alcanzado por 4 puertas distintas
+— A) `SetComportamiento` directo, B) `proyectoInicial`
+(`crearMotorDeProyecto`), C) guardar y recargar con el Almacén real, D)
+`CambiarComponente` hacia un sensor cuyo rango deja el umbral afuera (rama
+C) — da la MISMA clasificación (`UMBRAL_FUERA_DE_RANGO`, `warning`,
+`representable`) y la MISMA `derivarReadiness()` en los 4 casos
+(`tests/nucleo-rango-umbral-caminos.test.mjs`). Regresión de las 4 ramas de
+§8.1 (misma magnitud/rango compatible, unidad distinta con conversión
+dentro de rango, rango incompatible, capability incompatible) y de los
+casos borde (límite inclusivo en `min`/`max`, rango ausente, valores
+negativos) en `tests/nucleo-validacion.test.mjs`.
+
 ## 7. Referencia colgada vs. tipo de catálogo desconocido (R2) — dos problemas distintos
 
 No son el mismo tipo de problema y por eso tienen código y momento distintos:

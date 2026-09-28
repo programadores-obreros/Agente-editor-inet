@@ -235,6 +235,30 @@ export function asignarPin(terminal: Terminal, pin: RegistroPin): Motivo | null 
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// estaFueraDeRango — límite compartido de `Capacidad.rango`, SIEMPRE inclusivo
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Phase 1.2 (hallazgo externo REA-02, MAYOR — re-auditoría externa AUD-C-02):
+ * antes de este fix, esta comparación vivía DUPLICADA (como closure local `fueraDeRango`)
+ * únicamente dentro de `reemplazarSensor`, más abajo — la remediación mínima sugerida
+ * por el hallazgo (`PHASE_1_1_EXTERNAL_FINDINGS.md`, REA-02) es exactamente extraerla acá
+ * para que `validar-tecnico.ts` (Gate 4, validación CONTINUA de
+ * `proyecto.comportamientos`, ver `IR-SPEC.md` §6.2) la reuse también — mismo criterio
+ * que ya usa `propagarMagnitud` como oráculo COMPARTIDO de compatibilidad
+ * magnitud/unidad, nunca una segunda regla divergente.
+ *
+ * `rango === undefined` (capacidad sin rango declarado en el catálogo, ej. una
+ * capacidad booleana pura) nunca es "fuera de rango" por ausencia de dato — no hay
+ * nada contra qué comparar. Límite SIEMPRE inclusivo: `valor === rango.min.valor` o
+ * `valor === rango.max.valor` NO es fuera de rango, sólo estrictamente afuera lo es
+ * (semántica ya fijada por el `reemplazarSensor` original, nunca redefinida acá).
+ */
+export function estaFueraDeRango(valor: number, rango: Rango | undefined): boolean {
+  return rango !== undefined && (valor < rango.min.valor || valor > rango.max.valor)
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // propagarMagnitud — conversión de unidad EXPLÍCITA, nunca silenciosa (§8.1)
 // ════════════════════════════════════════════════════════════════════════════════════
 
@@ -335,8 +359,9 @@ export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNu
   }
 
   const unidadNueva = capacidadNueva.unidad ?? comportamiento.cuando.umbral.unidad
-  const fueraDeRango = (valor: number): boolean =>
-    capacidadNueva.rango !== undefined && (valor < capacidadNueva.rango.min.valor || valor > capacidadNueva.rango.max.valor)
+  // Phase 1.2 (REA-02): reusa `estaFueraDeRango` (arriba) — ya NO una closure local
+  // duplicada acá. Mismo comportamiento exacto, ninguna regla nueva.
+  const fueraDeRango = (valor: number): boolean => estaFueraDeRango(valor, capacidadNueva.rango)
 
   // Rama A/C comparten unidad — la diferencia es si el umbral cae dentro del rango
   // del sensor nuevo. Ojo con el orden: chequear el rango ANTES de "misma unidad

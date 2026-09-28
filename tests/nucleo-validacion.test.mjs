@@ -23,7 +23,7 @@ const { validarTecnico } = await import(join(REPO, "opencode/nucleo/validar-tecn
 const { validarProyecto, derivarReadiness } = await import(join(REPO, "opencode/nucleo/validar.ts"))
 const { lintPedagogico } = await import(join(REPO, "opencode/nucleo/lint-pedagogico.ts"))
 const { construirCatalogoMinimoReal, sha256Hex } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
-const { construirCatalogo } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
+const { construirCatalogo, estaFueraDeRango } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
 const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, LED, RESISTENCIA, PULSADOR, DHT22, NTC } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
 
 const catalogo = construirCatalogoMinimoReal()
@@ -402,4 +402,162 @@ test("orden-de-motivos-determinista", () => {
   const idxTecnica = motivos1.findIndex((m) => m.categoria === "tecnica")
   assert.ok(idxReferencial !== -1 && idxTecnica !== -1, "el fixture debe producir ambas categorías")
   assert.ok(idxReferencial < idxTecnica, "referencial va antes que tecnica (ORDEN_CATEGORIAS)")
+})
+
+// ═══ Phase 1.2 (hallazgo externo REA-02, MAYOR — re-auditoría externa AUD-C-02,
+// `PHASE_1_1_EXTERNAL_FINDINGS.md`): "umbral fuera del rango declarado del sensor",
+// continuo, derivado del ESTADO — `validarTecnico` reusa `estaFueraDeRango`
+// (`catalogo.ts`, el MISMO chequeo que `reemplazarSensor` ya usaba). Contrato: WARNING
+// (Brief §8.1 rama C + §12.1), REPRESENTABLE, nunca afecta readiness (§12.1: sólo
+// `blocking` impide `ready`), nunca clampa/reinterpreta el umbral. Las 4 ramas A-D de
+// §8.1 se regresionan acá contra `validarTecnico` directo (unidad de Gate 4); el test
+// de EQUIVALENCIA POR CAMINOS (operación/proyectoInicial/save→load/reemplazo) vive en
+// `tests/nucleo-rango-umbral-caminos.test.mjs`, con el Almacén real. ═══════════════════
+
+/** Fixture sintético de test (no-producto, mismo patrón que
+ * `tests/nucleo-catalogo.test.mjs::SENSOR_TEMP_CORTO`): rango angosto declarado en el
+ * catálogo, para poder construir un umbral compatible en magnitud/unidad pero
+ * físicamente fuera de rango, sin tocar ningún componente shippeado. */
+const SENSOR_RANGO_CORTO_FIXTURE_VALIDACION = {
+  id: "sensor-rango-corto-fixture-validacion",
+  nombreVisible: "Sensor de prueba de rango corto (no-producto, validar-tecnico)",
+  clase: "sensor",
+  terminales: [{ id: "senal", rol: "senal", electrica: "digital", direccion: "entrada" }],
+  capacidades: [
+    {
+      id: "temperatura",
+      magnitud: "temperatura",
+      unidad: "celsius",
+      rango: { min: { valor: 0, unidad: "celsius", magnitud: "temperatura" }, max: { valor: 25, unidad: "celsius", magnitud: "temperatura" } },
+    },
+  ],
+  requisitos: [],
+}
+
+const catalogoConRangoCorto = construirCatalogo(
+  {
+    version: "rango-corto-test",
+    componentes: [...COMPONENTES_CATALOGO_MINIMO, SENSOR_RANGO_CORTO_FIXTURE_VALIDACION],
+    placas: PLACAS_CATALOGO_MINIMO,
+    unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS },
+  },
+  sha256Hex,
+)
+
+function conSensorDeRangoCorto(p, { id = "cmp-2" } = {}) {
+  return { ...p, componentes: [...p.componentes, { id, tipo: "sensor-rango-corto-fixture-validacion", pines: { senal: "GPIO16" }, propiedades: {} }] }
+}
+
+test("REA-02, rama A (§8.1): misma magnitud fisica y rango COMPATIBLE preserva la condicion sin warning de rango", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 30, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  assert.ok(!motivos.some((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO"), `30C esta dentro de [0,60]C del dht22: no debe haber warning de rango: ${JSON.stringify(motivos)}`)
+  assert.equal(p.comportamientos[0].cuando.umbral.valor, 30)
+})
+
+test("REA-02, rama B (§8.1): unidad distinta con conversion EXPLICITA deja el valor convertido dentro de rango, sin warning", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  // 98.6F = 37C -- dentro de [0,60]C del dht22. Usa el catalogo REAL (con la
+  // conversion celsius<->fahrenheit ya declarada, catalogo-datos.ts).
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 98.6, unidad: "fahrenheit", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  assert.ok(!motivos.some((m) => m.codigo === "MAGNITUD_INCOMPATIBLE"), `la conversion esta declarada: no debe rechazar por magnitud: ${JSON.stringify(motivos)}`)
+  assert.ok(!motivos.some((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO"), `98.6F=37C esta dentro de [0,60]C: el valor CONVERTIDO no debe dar warning de rango: ${JSON.stringify(motivos)}`)
+  assert.equal(p.comportamientos[0].cuando.umbral.valor, 98.6, "el umbral persiste en su unidad ORIGINAL (fahrenheit): esta validacion nunca reescribe la IR")
+})
+
+test("REA-02, rama C (§8.1): rango INCOMPATIBLE -- el umbral se preserva sin clamp, con warning de rango DERIVADO DEL ESTADO", () => {
+  let p = proyectoCompletoYValido()
+  p = conSensorDeRangoCorto(p)
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 30, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogoConRangoCorto)
+  const motivo = motivos.find((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO")
+  assert.ok(motivo, `30C esta FUERA de [0,25]C del sensor de rango corto: debe aparecer UMBRAL_FUERA_DE_RANGO: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.categoria, "tecnica")
+  assert.equal(motivo.severidad, "warning", "WARNING, nunca blocking -- Brief §12.1")
+  assert.equal(motivo.clasificacion, "representable")
+  assert.equal(motivo.entidad.tipo, "comportamiento")
+  assert.equal(motivo.entidad.id, "beh-0")
+  assert.equal(p.comportamientos[0].cuando.umbral.valor, 30, "el umbral NUNCA se recorta ni se reinterpreta -- se preserva tal cual")
+
+  // Readiness: el warning NUNCA bloquea (Brief §12.1) -- sigue siendo representable,
+  // nunca invalida el proyecto por si solo.
+  const motivosCompletos = validarProyecto(p, catalogoConRangoCorto)
+  const readiness = derivarReadiness(p, motivosCompletos)
+  assert.equal(readiness.invalido, false, "un warning de rango NUNCA marca el proyecto invalido")
+
+  // Revalidar es idempotente -- "visible tambien despues de recargar" (el round-trip
+  // completo con Almacen real vive en nucleo-rango-umbral-caminos.test.mjs, Camino C):
+  // acá se prueba la propiedad mas basica que ese round-trip presupone -- revalidar el
+  // MISMO Proyecto da EXACTAMENTE el mismo motivo, nunca desaparece por si solo.
+  const motivosRevalidados = validarTecnico(p, catalogoConRangoCorto)
+  assert.deepEqual(motivosRevalidados, motivos, "revalidar es idempotente: el warning de rango no depende de un estado oculto entre corridas")
+})
+
+test("REA-02, rama D (§8.1): capability INCOMPATIBLE -- incompatibilidad explicita, nunca se reinterpreta, y el rango no se duplica", () => {
+  let p = proyectoCompletoYValido()
+  // El pulsador SOLO declara "estadoBooleano" -- pedirle "temperatura" nunca resuelve
+  // una capacidad real, asi que el chequeo de rango (que necesita `capacidadReal`)
+  // jamas corre para este caso -- no hay forma de que se duplique con
+  // CAPACIDAD_INEXISTENTE_EN_CATALOGO.
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "pulsador", pines: { senal: "GPIO4" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 200, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  const motivo = motivos.find((m) => m.codigo === "CAPACIDAD_INEXISTENTE_EN_CATALOGO")
+  assert.ok(motivo, `debe aparecer CAPACIDAD_INEXISTENTE_EN_CATALOGO: ${JSON.stringify(motivos)}`)
+  assert.ok(!motivos.some((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO"), `sin capacidad real resuelta, el chequeo de rango NUNCA debe correr (no duplicado): ${JSON.stringify(motivos)}`)
+  assert.equal(p.comportamientos[0].cuando.capacidad, "temperatura", "el comportamiento no se borra ni se reinterpreta")
+})
+
+// ─────────────────────── Casos borde de estaFueraDeRango/UMBRAL_FUERA_DE_RANGO ───────
+
+test("REA-02, caso borde: umbral EXACTAMENTE en el limite INFERIOR del rango (0C) es INCLUSIVO -- sin warning", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 0, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  assert.ok(!motivos.some((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO"), `0C es el limite INFERIOR de [0,60]C, inclusivo: sin warning: ${JSON.stringify(motivos)}`)
+})
+
+test("REA-02, caso borde: umbral EXACTAMENTE en el limite SUPERIOR del rango (60C) es INCLUSIVO -- sin warning", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: 60, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  assert.ok(!motivos.some((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO"), `60C es el limite SUPERIOR de [0,60]C, inclusivo: sin warning: ${JSON.stringify(motivos)}`)
+})
+
+test("REA-02, caso borde: umbral de -40C, por debajo del minimo declarado (0C), SI es fuera de rango", () => {
+  let p = proyectoCompletoYValido()
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "temperatura", valor: -40, unidad: "celsius", magnitud: "temperatura", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  const motivo = motivos.find((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO")
+  assert.ok(motivo, `-40C esta por debajo de 0C (el minimo de [0,60]C): debe aparecer UMBRAL_FUERA_DE_RANGO: ${JSON.stringify(motivos)}`)
+  assert.equal(motivo.severidad, "warning")
+  assert.equal(p.comportamientos[0].cuando.umbral.valor, -40, "el umbral NEGATIVO se preserva tal cual, nunca se recorta a 0")
+})
+
+test("REA-02, caso borde: capacidad SIN rango declarado en el catalogo -- nunca fuera de rango, cualquiera sea el valor", () => {
+  let p = proyectoCompletoYValido()
+  // El pulsador declara "estadoBooleano" SIN `rango` (catalogo-datos.ts): nada contra
+  // que comparar -- `estaFueraDeRango` trata la ausencia de rango como "sin limite".
+  p = { ...p, componentes: [...p.componentes, { id: "cmp-2", tipo: "pulsador", pines: { senal: "GPIO4" }, propiedades: {} }] }
+  p = conComportamiento(p, { sensor: "cmp-2", capacidad: "estadoBooleano", valor: 999999, unidad: "ninguna", magnitud: "estadoBooleano", actuador: "cmp-0" })
+  const motivos = validarTecnico(p, catalogo)
+  assert.ok(!motivos.some((m) => m.codigo === "UMBRAL_FUERA_DE_RANGO"), `sin rango declarado no hay limite que violar: ${JSON.stringify(motivos)}`)
+})
+
+// ─────────────────────── estaFueraDeRango (catalogo.ts) -- unidad compartida ─────────
+
+test("REA-02: estaFueraDeRango es la MISMA regla que reemplazarSensor (catalogo.ts) ya usaba -- limites inclusivos, sin rango = nunca fuera", () => {
+  const rango = { min: { valor: 0, unidad: "celsius", magnitud: "temperatura" }, max: { valor: 60, unidad: "celsius", magnitud: "temperatura" } }
+  assert.equal(estaFueraDeRango(0, rango), false, "limite inferior inclusivo")
+  assert.equal(estaFueraDeRango(60, rango), false, "limite superior inclusivo")
+  assert.equal(estaFueraDeRango(-0.0001, rango), true, "estrictamente por debajo del minimo")
+  assert.equal(estaFueraDeRango(60.0001, rango), true, "estrictamente por encima del maximo")
+  assert.equal(estaFueraDeRango(200, undefined), false, "sin rango declarado: nunca fuera de rango")
 })
