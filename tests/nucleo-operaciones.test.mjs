@@ -356,6 +356,46 @@ test("setcomportamiento-todo-valor-REAL-del-dominio-compartido-sigue-commiteando
   }
 })
 
+// Phase 1.2 (T3, dominio compartido) — mitad complementaria del test de arriba,
+// llamando a `ejecutarOperacion` DIRECTO (Gate 5, SIN motor — nunca pasa por la
+// barrera de `ejecutarLote`, `motor.ts`). Si `operaciones.ts` alguna vez usara un
+// dominio LOCAL distinto del de `ir.ts` (una lista copiada en vez de importada —
+// la clase exacta de mutante "loader y operación usan listas distintas"), este test
+// lo detecta ACÁ, a nivel de Gate 5, sin depender de que la barrera de Gate 6
+// "tape" la divergencia por defensa en profundidad: itera sobre la constante
+// COMPARTIDA (siempre debe commitear) y sobre valores de AFUERA del dominio
+// (siempre debe rechazar con VALOR_ENUM_DESCONOCIDO), y verifica que `ejecutarOperacion`
+// acepta EXACTAMENTE el mismo conjunto que `ir.ts::COMPARADORES`/`ACCIONES` describe
+// — ni más (una lista local con un valor de más) ni menos (una lista local con un
+// valor de menos).
+test("setcomportamiento-dominio-EXACTO-en-Gate-5-directo (sin motor, sin barrera): constante compartida commitea, valores de afuera rechazan (REA-01/T3, deteccion de listas divergentes)", async () => {
+  const { COMPARADORES, ACCIONES } = await import(join(REPO, "opencode/nucleo/ir.ts"))
+  const VALORES_COMPARADOR_DE_AFUERA = ["mayorQue", "menorQue", "igual", "==", "", ">>", "gt"]
+  const VALORES_ACCION_DE_AFUERA = ["prender", "apagarr", "on", "off", "", "ENCENDER"]
+
+  function proyectoConSensorYActuador() {
+    let p = proyectoBase()
+    p = conLed(p, "cmp-0", "GPIO23")
+    return { ...p, componentes: [...p.componentes, { id: "cmp-1", tipo: "dht22", pines: { senal: "GPIO16" }, propiedades: {} }] }
+  }
+
+  for (const comparador of [...COMPARADORES, ...VALORES_COMPARADOR_DE_AFUERA]) {
+    const p = proyectoConSensorYActuador()
+    const r = ejecutarOperacion(p, nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador, umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion: "encender" } } }), catalogo)
+    const enDominio = COMPARADORES.includes(comparador)
+    assert.equal(r.ok, enDominio, `comparador=${JSON.stringify(comparador)}: ejecutarOperacion.ok debe ser EXACTAMENTE ${enDominio} (${JSON.stringify(r.motivos)})`)
+    if (!enDominio) assert.ok(r.motivos.some((m) => m.codigo === "VALOR_ENUM_DESCONOCIDO"))
+  }
+
+  for (const accion of [...ACCIONES, ...VALORES_ACCION_DE_AFUERA]) {
+    const p = proyectoConSensorYActuador()
+    const r = ejecutarOperacion(p, nuevaOperacion("SetComportamiento", { comportamiento: { cuando: { sensor: "cmp-1", capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: "cmp-0", accion } } }), catalogo)
+    const enDominio = ACCIONES.includes(accion)
+    assert.equal(r.ok, enDominio, `accion=${JSON.stringify(accion)}: ejecutarOperacion.ok debe ser EXACTAMENTE ${enDominio} (${JSON.stringify(r.motivos)})`)
+    if (!enDominio) assert.ok(r.motivos.some((m) => m.codigo === "VALOR_ENUM_DESCONOCIDO"))
+  }
+})
+
 // ═══ Phase 1.1 (hallazgo externo E1-03, CRÍTICO) — SetComportamiento aceptaba un
 // `umbral.valor` NaN/±Infinity con `ok:true` y lo commiteaba: ninguno de los tres es
 // representable en el documento JSON persistido (`JSON.stringify(NaN)` y
