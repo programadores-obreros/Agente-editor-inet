@@ -37,7 +37,9 @@ import { readdirSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
-const [, modo, configDir, ...resto] = process.argv
+// process.argv = [node, ESTE_ARCHIVO, modo, configDir, ...resto] — se saltean los
+// DOS primeros (el ejecutable de node y la ruta de este script), no uno solo.
+const [, , modo, configDir, ...resto] = process.argv
 
 function urlDe(rutaAbsoluta) {
   return pathToFileURL(rutaAbsoluta).href
