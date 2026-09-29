@@ -1152,3 +1152,43 @@ FIX): servidor viejo muerto → `#conexion` pasa a "desconectado: la vista
 puede no estar actualizada. Si el servidor se reinició en otro puerto, volvé
 a abrir la vista física desde Tecnia Bot." y el `<select>` queda
 `disabled:true` — evidencia en `.../evidencia/W5/B2/despues-cdp.txt`.
+
+### H4 (MAJOR según el auditor; decisión del orquestador: limitación documentada, NO arreglada con más regex)
+
+**Hallazgo**: `scripts/guardia-composicion-raiz.mjs` y
+`scripts/guardia-servicio-con-vista.mjs` son heurísticas LÉXICAS sobre texto
+(`\bcrearAlmacen\b`, `\bobtenerServicioDeProyecto\b`, un patrón
+`from|require\(` para el import). Un `import()` DINÁMICO (nunca matchea
+`from`/`require(`) combinado con acceso a la propiedad por CONCATENACIÓN DE
+STRINGS (`modulo["crear" + "Almacen"]`, nunca aparece la palabra completa
+contigua) evade AMBOS patrones — verificado por el red team EJECUTABLEMENTE:
+el bypass obtiene `crearAlmacen`/`obtenerServicioDeProyecto` como funciones
+invocables, sin que ninguna guardia lo detecte (exit 0, "OK"), mientras que
+el MISMO patrón escrito de forma naive (`import {crearAlmacen} from
+"...")`) SÍ es detectado (exit 1) — control positivo que prueba que el
+bypass no es un simple "la guardia está rota", sino un hueco puntual de
+cualquier regex sobre texto plano (ataque 5, P2-RED-A).
+
+**Decisión del orquestador**: NO se "arregla" agregando más regex (un patrón
+más específico sólo movería el punto exacto de evasión, nunca lo cerraría
+de verdad — el problema es de CLASE, no de un patrón puntual faltante).
+Se documenta la limitación explícitamente, en el propio encabezado de cada
+guardia (`scripts/guardia-composicion-raiz.mjs`,
+`scripts/guardia-servicio-con-vista.mjs`) y acá: **estas guardias protegen
+contra ACCIDENTES (la forma natural de escribir un import), no contra
+ofuscación DELIBERADA de alguien que ya sepa que existen y quiera evadirlas
+a propósito**. La severidad del auditor (MAJOR) queda registrada tal cual,
+sin relajarla ni disputarla — el orquestador elige NO cerrarla en esta
+ronda porque cerrarla de verdad requeriría un parser real (AST, la propia
+API de TypeScript/`tsgo`) para detectar `import()` dinámico + acceso
+computado, un cambio de mecanismo mayor que excede el alcance de "ronda
+única de fixes puntuales" y que este proyecto había decidido explícitamente
+NO sumar (`DECISIONS.md`, Phase 1.1: "sin DI, sin proxies, sin frameworks",
+mismo criterio de mínima infraestructura nueva).
+
+**Verificado sin cambios tras el resto de los fixes de esta ronda** (H1/H2/H5
+tocaron `composicion-raiz.ts`/`servicio-con-vista.ts`): las dos guardias
+siguen dando exit 0 ("OK") contra el mismo repo trampa del red team
+(`RED-A/ataques/fake-repo/`), y exit 1 contra el control naive — evidencia
+en `.../evidencia/W5/H4/`. No hay test nuevo (una limitación documentada, no
+un contrato que deba probarse en verde).

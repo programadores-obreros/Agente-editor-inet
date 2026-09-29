@@ -18,6 +18,25 @@
 // El segundo modo es lo que usan los tests (tests/phase2-composicion-raiz.test.mjs)
 // para probar, con un archivo trampa descartable dentro de un directorio temporal,
 // que este guardia SÍ puede fallar — nunca apuntando al repo real.
+//
+// LIMITACIÓN CONOCIDA, documentada, NO cerrada (Hallazgo H4, MAJOR según el auditor,
+// P2-RED-A/INFORME.md, ataque 5 — decisión del orquestador: se documenta la
+// limitación, no se "arregla" con más regex): esta guardia es una heurística LÉXICA
+// sobre texto, no un parser real de JS/TS. `import()` DINÁMICO (nunca matchea
+// `from`/`require(`) combinado con acceso a la propiedad por CONCATENACIÓN DE
+// STRINGS (`modulo["crear" + "Almacen"]`, que nunca hace aparecer la palabra
+// `crearAlmacen` contigua en el texto) evade AMBOS patrones sin que el bypass deje
+// de funcionar en runtime — verificado ejecutablemente por el red team (obtiene
+// `crearAlmacen` como función invocable, sin que esta guardia lo detecte). Esta
+// guardia protege contra ACCIDENTES (un import directo, la forma natural de
+// escribir el código), NO contra ofuscación DELIBERADA de alguien que ya sepa que
+// existe y quiera evadirla a propósito — ese es un problema de otra clase (análisis
+// estático real, AST, o confianza en el proceso de revisión humano), fuera del
+// alcance de "fs + regex en JS puro" que este script elige a propósito (ver arriba,
+// "sin agregar un linter de boundaries ni ESLint nuevo"). Cerrar esto de verdad
+// requeriría un parser real (ej. la propia API de TypeScript/`tsgo`) para detectar
+// `import()` dinámico + acceso computado — evaluado y diferido, no resuelto en esta
+// ronda de fixes (`docs/programacion-intencion/DECISIONS.md`).
 
 import { readdirSync, readFileSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"

@@ -17,6 +17,15 @@
 // Uso:
 //   node scripts/guardia-servicio-con-vista.mjs                # escanea el repo real
 //   node scripts/guardia-servicio-con-vista.mjs --raiz <dir>   # escanea OTRA raíz
+//
+// LIMITACIÓN CONOCIDA, documentada, NO cerrada (Hallazgo H4, MAJOR según el auditor,
+// P2-RED-A/INFORME.md, ataque 5 — decisión del orquestador: se documenta la
+// limitación, no se "arregla" con más regex; mismo límite que
+// `scripts/guardia-composicion-raiz.mjs`, ver ahí el detalle completo): esta guardia
+// es una heurística LÉXICA sobre texto, no un parser real. `import()` DINÁMICO +
+// acceso a la propiedad por concatenación de strings evade el patrón sin que el
+// bypass deje de funcionar en runtime — verificado ejecutablemente por el red team.
+// Protege contra ACCIDENTES, no contra ofuscación DELIBERADA.
 
 import { readdirSync, readFileSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
