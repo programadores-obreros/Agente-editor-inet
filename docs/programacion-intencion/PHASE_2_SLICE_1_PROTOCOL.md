@@ -180,6 +180,21 @@ importar si quien llega primero es el servidor HTTP o (después) la tool de Open
 este módulo (y de `composicion-raiz.ts`, que lo define) referencia
 `obtenerServicioDeProyecto` directo.
 
+**Revisión post red-team (H1/H5, `DECISIONS.md` para el detalle completo)**: este
+módulo, además, ahora:
+- **Canonicaliza** `directorio` (`fs.mkdirSync` + `fs.realpathSync`) ANTES de llamar
+  a la raíz — "dir", "dir//", una ruta relativa y un symlink al mismo directorio real
+  dan el MISMO servicio. `composicion-raiz.ts` complementa esto rechazando
+  cualquier `directorio` que no sea ya una ruta absoluta.
+- **Toma un candado de propiedad por proyecto, a nivel proceso**
+  (`<directorio>/<idProyecto>.lock`, `fs.openSync(..., "wx")`, atómico a nivel de
+  sistema operativo) — si otro proceso de sistema operativo ya tiene ese
+  directorio+idProyecto abierto, la llamada FALLA con un error claro
+  (`"...ya está abierto en otro proceso (pid N)..."`) en vez de construir un
+  segundo motor que compita en el CAS de disco de `almacen.ts`. Se libera en
+  `cerrar()` y al salir del proceso. La tool y el launcher de demo atrapan este
+  error y devuelven/imprimen un mensaje claro, sin colgarse.
+
 ## Vista física — `vista` dentro del `Snapshot`
 
 `opencode/nucleo/composicion-raiz.ts::Snapshot` puede incluir una clave `vista`, con la

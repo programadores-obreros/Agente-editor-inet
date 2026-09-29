@@ -155,7 +155,18 @@ Usala cuando el alumno/docente quiera VER y tocar el circuito en el navegador, n
   },
   async execute(args, ctx) {
     const idProyecto = args.idProyecto?.trim() || ID_PROYECTO_DEFAULT
-    const { servidor } = await obtenerServidorVistaFisica(ctx.directory, idProyecto)
+    // Fix H5 (red-team Phase 2 Slice 1): si otro proceso (otra sesión de OpenCode)
+    // ya tiene este proyecto abierto, obtenerServidorVistaFisica (vía
+    // obtenerServicioDeProyectoConVista, candado de propiedad por proceso) lanza —
+    // se devuelve un mensaje claro a la conversación en vez de dejar que la tool
+    // termine en una excepción cruda.
+    let servidor
+    try {
+      ;({ servidor } = await obtenerServidorVistaFisica(ctx.directory, idProyecto))
+    } catch (error) {
+      const mensaje = error instanceof Error ? error.message : String(error)
+      return `No pude abrir la vista física: ${mensaje}`
+    }
     const abierto = abrirEnNavegador(servidor.url)
     return abierto
       ? `Vista física abierta en el navegador: ${servidor.url}`

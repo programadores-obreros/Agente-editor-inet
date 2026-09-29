@@ -928,3 +928,72 @@ diseño — esa raíz sigue siendo permisiva) y ahora lanza un error explícito 
 el caso B (antes fallaba silenciosamente distinto); adaptado al camino de
 producción real (`servicio-con-vista.ts`), los tres casos dan
 `mismo objeto JS? true` — evidencia en `.../evidencia/W5/H1/`.
+
+### H5 (CRITICAL) — carrera del CAS de disco entre DOS PROCESOS de sistema operativo
+
+**Hallazgo**: el CAS de `Almacen.guardar()` (E3-07, `almacen.ts`) es un patrón
+leer-decidir-escribir SIN lock de archivo (limitación ya documentada
+explícitamente en Phase 1: "Sin locks/mutex", modelo single-writer). Entre
+DOS PROCESOS de sistema operativo reales (dos sesiones de OpenCode sobre la
+misma carpeta), el singleton de `composicion-raiz.ts` no puede coordinar
+nada (vive sólo en memoria de un proceso) — esa era la ÚNICA defensa. En 3 de
+4 corridas del red team (y 3 de 3 en la reproducción de este writer contra
+`composicion-raiz.ts` directo), AMBOS procesos recibían
+`ResultadoTransaccion.ok:true`, con pérdida SILENCIOSA de uno de los dos
+commits — el proceso "perdedor" nunca se enteraba (ataque 6, P2-RED-A).
+
+**Fix** (`opencode/servidor/servicio-con-vista.ts` — NUNCA `almacen.ts` ni
+`composicion-raiz.ts`: los tests de Phase 1 fabrican varios `Almacen` sobre
+el mismo directorio a propósito, y el test `dos-motores-mismo-almacen-real`
+de E3-07 no se puede romper): un candado de propiedad por proyecto, A NIVEL
+PROCESO. Archivo `<directorio>/<idProyecto>.lock`, creado con
+`fs.openSync(ruta, "wx")` — `O_CREAT | O_EXCL`, atómico a nivel de sistema
+operativo (a diferencia del CAS de `almacen.ts`, acá no hay ventana
+leer-luego-escribir). Contenido `{pid, hostname, creado}`.
+- Si el candado ya existe y el dueño sigue vivo (mismo hostname,
+  `process.kill(pid, 0)` no lanza o lanza `EPERM`): la obtención del
+  servicio FALLA con un error claro (`"...ya está abierto en otro proceso
+  (pid N)..."`).
+- Si el dueño está muerto (`ESRCH`, o el candado es ilegible/corrupto): se
+  recupera — se toma de nuevo, y el reemplazo queda registrado en el propio
+  archivo (nuevo pid/hostname/creado).
+- Se libera en `cerrar()` (verificando que el contenido siga siendo el
+  propio ANTES de borrar — nunca pisa el candado de otro dueño que ya lo
+  haya recuperado) y también al salir del proceso (`process.on("exit")`).
+- Dentro del MISMO proceso, una llamada repetida para la misma clave reusa
+  el wrapper ya construido — nunca vuelve a disputar el candado consigo
+  mismo.
+- La tool (`opencode/tool/vista-fisica.ts`) y el launcher de demo
+  (`scripts/vista-fisica-demo.mjs`) atrapan el error y devuelven/imprimen un
+  mensaje claro con código de salida de error — nunca un stack trace crudo
+  ni un proceso colgado.
+
+**Límites documentados, NO cerrados en esta ronda**: reuso de PID (ventana
+angosta: el sistema operativo tendría que reasignar el mismo PID a otro
+proceso completamente distinto entre la muerte del dueño original y el
+chequeo de este código) y filesystems de red (`O_EXCL` es atómico
+garantizado en filesystems locales; NFS viejo históricamente no lo
+garantizaba entre hosts distintos).
+
+**Alcance deliberado**: igual que H1, el candado protege el CAMINO DE
+PRODUCCIÓN (`servicio-con-vista.ts`) — llamar `composicion-raiz.ts` directo
+(como hacen los tests de Phase 1 y los tests de Phase 2 que fabrican varios
+motores a propósito) sigue sin candado, así que el CAS de disco sigue siendo
+la única defensa ahí (documentado como límite conocido, no cerrado).
+
+**Tests** (`tests/phase2-candado-proceso.test.mjs` + su hijo real,
+`tests/phase2-candado-proceso-hijo.mjs`): dos procesos de SO reales sobre el
+mismo directorio+idProyecto (protocolo determinista LISTO/ABRIR/CERRAR por
+stdin/stdout — nunca `sleep`: la carrera real se dispara recién cuando AMBOS
+terminaron de importar el módulo y avisan estar listos) — el SEGUNDO tiene
+que fallar al abrir, nunca hay dos `abrio:true`; candado con pid muerto se
+recupera; `cerrar()` libera y otro proceso puede abrir después; dentro del
+mismo proceso no hay autobloqueo; el launcher de demo y la tool, con otro
+proceso dueño, fallan con un mensaje claro y no cuelgan. Mutante (saltear el
+chequeo de "está vivo") mata 4 de los 6 tests — evidencia en
+`.../evidencia/W5/H5/mutante-resultado.txt`. Reproducción del ataque 6
+original: contra `composicion-raiz.ts` DIRECTO sigue mostrando la carrera (3
+de 3 corridas, por diseño — esa raíz sigue siendo permisiva); adaptado al
+camino de producción real (`servicio-con-vista.ts`, mismo protocolo
+LISTO/ABRIR/CERRAR), 3 de 3 corridas dan EXACTAMENTE un `abrio:true` —
+evidencia en `.../evidencia/W5/H5/`.

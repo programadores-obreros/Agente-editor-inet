@@ -92,7 +92,19 @@ async function main() {
   }
   const directorio = resolve(directorioPedido)
 
-  const servicio = obtenerServicioDeProyectoConVista({ directorio, idProyecto: args.idProyecto })
+  // Fix H5 (red-team Phase 2 Slice 1): si OTRO proceso ya tiene este
+  // directorio+idProyecto abierto (candado de propiedad, servicio-con-vista.ts),
+  // obtenerServicioDeProyectoConVista lanza — se atrapa acá para un mensaje CLARO
+  // en stderr y un exit code de error, en vez de un stack trace crudo o (peor) un
+  // proceso que se cuelga esperando algo que nunca va a pasar.
+  let servicio
+  try {
+    servicio = obtenerServicioDeProyectoConVista({ directorio, idProyecto: args.idProyecto })
+  } catch (error) {
+    console.error(`vista-fisica-demo: no se pudo abrir el proyecto — ${error.message}`)
+    process.exitCode = 1
+    return
+  }
   sembrarSiHaceFalta(servicio)
 
   const servidor = await iniciarServidor({ servicio })
