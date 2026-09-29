@@ -30,6 +30,8 @@
 // (los tests, que fabrican fixtures aislados a propósito, quedan exceptuados, mismo
 // criterio que scripts/guardia-composicion-raiz.mjs para `crearAlmacen`).
 
+import { mkdirSync, realpathSync } from "node:fs"
+import { resolve } from "node:path"
 import type { OpcionesServicioDeProyecto, ServicioDeProyecto } from "../nucleo/composicion-raiz.ts"
 import { obtenerServicioDeProyecto } from "../nucleo/composicion-raiz.ts"
 import { vistaDeProyectoConCatalogoReal } from "../vista-fisica/vista-real.ts"
@@ -43,6 +45,37 @@ import { vistaDeProyectoConCatalogoReal } from "../vista-fisica/vista-real.ts"
 export type OpcionesServicioConVista = Omit<OpcionesServicioDeProyecto, "calcularVista">
 
 /**
+ * Fix de ronda única red-team, Hallazgo H1 (CRITICAL, P2-RED-A/INFORME.md, ataque
+ * 1), mitad (a) — la raíz de composición (`composicion-raiz.ts`, núcleo, sin
+ * `node:`) RECHAZA rutas no absolutas (mitad (b) del mismo fix) pero no puede
+ * resolver equivalencias de ruta por su cuenta. Este módulo SÍ puede: vive fuera de
+ * `opencode/nucleo/**`, así que `node:fs`/`node:path` están permitidos acá (la
+ * guardia 29b de `tests/nucleo-adversarial.test.mjs` sólo escanea el núcleo).
+ *
+ * `fs.mkdirSync(dir, {recursive:true})` asegura que el directorio exista ANTES de
+ * `fs.realpathSync` (que lanza `ENOENT` sobre un directorio inexistente) — mismo
+ * efecto que ya hacía `crearAlmacen` internamente, sólo que acá hace falta ANTES,
+ * para poder canonicalizar. `fs.realpathSync(path.resolve(dir))` resuelve relativo
+ * contra `process.cwd()` EN EL MOMENTO DE ESTA LLAMADA (nunca más tarde — cierra
+ * también el problema que ataque 1/caso B señaló: una ruta relativa que se
+ * resolvía contra el `process.cwd()` de CADA operación de disco, no contra el del
+ * momento de construcción) y resuelve symlinks — así "dir", "dir//", una ruta
+ * relativa a la misma carpeta real, y un symlink a esa carpeta, dan la MISMA
+ * cadena canónica y por lo tanto la MISMA clave en el singleton de
+ * `composicion-raiz.ts` (`tests/phase2-directorio-canonico.test.mjs`).
+ *
+ * Límite documentado, no cerrado en esta ronda: en un filesystem
+ * case-insensitive (Windows/macOS default), dos rutas que sólo difieren en
+ * mayúsculas/minúsculas siguen dando dos cadenas canónicas DISTINTAS acá (ninguna
+ * de las dos funciones normaliza case) aunque el FS real las resuelva al mismo
+ * archivo — mismo estado `WINDOWS_UNVERIFIED` que el resto del slice.
+ */
+function directorioCanonico(directorio: string): string {
+  mkdirSync(directorio, { recursive: true })
+  return realpathSync(resolve(directorio))
+}
+
+/**
  * Equivalente a `obtenerServicioDeProyecto(opciones)`, pero SIEMPRE con
  * `calcularVista: vistaDeProyectoConCatalogoReal` — el snapshot que devuelve
  * `.snapshot()` trae la clave `vista` desde la primera construcción del singleton
@@ -50,5 +83,6 @@ export type OpcionesServicioConVista = Omit<OpcionesServicioDeProyecto, "calcula
  * HTTP, tool de OpenCode, o un test de integración).
  */
 export function obtenerServicioDeProyectoConVista(opciones: OpcionesServicioConVista): ServicioDeProyecto {
-  return obtenerServicioDeProyecto({ ...opciones, calcularVista: vistaDeProyectoConCatalogoReal })
+  const directorio = directorioCanonico(opciones.directorio)
+  return obtenerServicioDeProyecto({ ...opciones, directorio, calcularVista: vistaDeProyectoConCatalogoReal })
 }

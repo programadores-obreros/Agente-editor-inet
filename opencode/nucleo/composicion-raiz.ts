@@ -118,14 +118,59 @@ const CATALOGO_REAL: Catalogo = construirCatalogoMinimoReal()
 const registro = new Map<string, ServicioDeProyecto>()
 
 /**
- * Normaliza SIN `node:path` — el núcleo (`opencode/nucleo/**`) sólo permite
- * `node:`* en `almacen.ts`/`adaptadores/hash-catalogo.node.ts`
- * (`tests/nucleo-adversarial.test.mjs`, "29b. grep: node:fs/node:crypto SOLO en
- * almacen.ts y adaptadores/hash-catalogo.node.ts" — invariante de Phase 1, no se
- * toca). Recorta sólo una barra final, para que "dir" y "dir/" no colisionen por
- * accidente — nunca resuelve contra `process.cwd()` ni normaliza `.`/`..`: el
- * llamador (la tool de OpenCode, el servidor HTTP, los tests) siempre pasa la MISMA
- * representación de un directorio dado.
+ * Fix de ronda única red-team, Hallazgo H1 (CRITICAL, P2-RED-A/INFORME.md, ataque
+ * 1): `normalizarDirectorio()` sólo recortaba UNA barra final — no resolvía
+ * relativo/absoluto, symlinks ni mayúsculas/minúsculas, así que "dir"/"dir//", una
+ * ruta relativa a la misma carpeta real, o un symlink al mismo directorio, daban
+ * CUATRO servicios/motores DISTINTOS sobre el mismo `<id>.json`.
+ *
+ * Esta raíz (núcleo, SIN `node:` por la guardia 29b de
+ * `tests/nucleo-adversarial.test.mjs` — no puede usar `path.resolve`/
+ * `fs.realpathSync`) no intenta arreglar la equivalencia de rutas por su cuenta:
+ * en cambio, RECHAZA con un error explícito cualquier `directorio` que no sea ya
+ * una ruta absoluta. La canonicalización real (`fs.mkdirSync` + `fs.realpathSync`)
+ * la hace el ÚNICO call site de producción autorizado a llamar acá
+ * (`opencode/servidor/servicio-con-vista.ts`, que SÍ puede usar `node:fs`/
+ * `node:path` porque vive fuera de `opencode/nucleo/**`) ANTES de invocar
+ * `obtenerServicioDeProyecto` — así "dir", "dir//", una ruta relativa y un symlink al
+ * mismo directorio real resuelven a la MISMA clave (`tests/phase2-directorio-canonico.test.mjs`).
+ *
+ * **Contrato para cualquier llamador de esta raíz** (documentado, no sólo aplicado):
+ * `directorio` tiene que ser una ruta absoluta y canónica — nunca una relativa, y
+ * nunca dos representaciones distintas del mismo directorio real (barra final,
+ * symlink) si se espera compartir el mismo motor. Los tests de Phase 2 que llaman
+ * `obtenerServicioDeProyecto` directo (`phase2-helpers.mjs::nuevoDir`) ya pasan rutas
+ * absolutas reales (`os.tmpdir()` + `join`) — este rechazo no les afecta.
+ *
+ * Detección de "es absoluta", deliberadamente simple (sin resolver contra
+ * `process.cwd()`, sin normalizar `.`/`..`): POSIX empieza con `/`; Windows con una
+ * letra de unidad (`X:\` o `X:/`) o UNC (`\\`). La política de mayúsculas/minúsculas
+ * para filesystems case-insensitive (Windows/macOS) queda **documentada, no
+ * cerrada**: esta raíz compara la clave como STRING exacto — dos rutas que sólo
+ * difieren en mayúsculas seguirían dando servicios distintos aunque el FS real las
+ * resuelva al mismo archivo. Estado igual que el resto del slice: `WINDOWS_UNVERIFIED`
+ * (`PHASE_2_SLICE_1_DESIGN.md` §2.9) — no se cierra en esta ronda de fixes.
+ */
+const PATRON_RUTA_ABSOLUTA_WINDOWS = /^(?:[A-Za-z]:[\\/]|\\\\)/
+
+function esRutaAbsoluta(directorio: string): boolean {
+  if (directorio.startsWith("/")) return true // POSIX
+  return PATRON_RUTA_ABSOLUTA_WINDOWS.test(directorio) // Windows: "X:\", "X:/", "\\\\" (UNC)
+}
+
+function asegurarRutaAbsoluta(directorio: string): void {
+  if (!esRutaAbsoluta(directorio)) {
+    throw new Error(
+      `composicion-raiz: "directorio" tiene que ser una ruta absoluta canónica (recibido: ${JSON.stringify(directorio)}) — el llamador (servicio-con-vista.ts, o cualquier otro call site) tiene que resolverla y canonicalizarla ANTES de llamar acá; esta raíz nunca resuelve contra process.cwd().`,
+    )
+  }
+}
+
+/**
+ * Recorta sólo una barra final, para que "dir" y "dir/" no colisionen por
+ * accidente DESPUÉS de que el llamador ya garantizó que `directorio` es una ruta
+ * absoluta — sigue sin resolver symlinks ni `.`/`..`: eso es responsabilidad del
+ * llamador (ver arriba).
  */
 function normalizarDirectorio(directorio: string): string {
   return directorio.endsWith("/") ? directorio.slice(0, -1) : directorio
@@ -263,6 +308,7 @@ function construirServicio(clave: string, directorio: string, idProyecto: string
  * función) para que "dir" y "dir/" resuelvan a la misma entrada.
  */
 export function obtenerServicioDeProyecto(opciones: OpcionesServicioDeProyecto): ServicioDeProyecto {
+  asegurarRutaAbsoluta(opciones.directorio) // H1(b) — ver asegurarRutaAbsoluta arriba
   const clave = claveDelServicio(opciones.directorio, opciones.idProyecto)
   const existente = registro.get(clave)
   if (existente) return existente

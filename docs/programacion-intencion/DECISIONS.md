@@ -874,3 +874,57 @@ sigue siendo idempotente; tras `cerrar()`, un servicio nuevo para la misma
 clave es el ÚNICO que sigue mutando. Mutante (quitar `cerrado = true` de
 `cerrar()`) mata 3 de los 5 tests — confirmado, evidencia en
 `.../evidencia/W5/H2/mutante-resultado.txt`.
+
+### H1 (CRITICAL) — clave del singleton frágil (dir//, relativa, symlink → motores distintos)
+
+**Hallazgo**: `normalizarDirectorio()` sólo recortaba UNA barra final — no
+resolvía relativo/absoluto, symlinks ni mayúsculas/minúsculas. `"dir"` vs
+`"dir//"`, una ruta relativa vs absoluta a la MISMA carpeta real, y un
+symlink vs su destino real, daban CUATRO servicios/motores DISTINTOS sobre el
+mismo `<id>.json` — el módulo cuya única razón de ser es garantizar un motor
+por proyecto no lo garantizaba frente a variaciones triviales (ataque 1,
+P2-RED-A). El caso de ruta relativa era además más grave: se resolvía contra
+`process.cwd()` en el MOMENTO de cada operación de disco, no en el momento de
+construcción — un cambio de cwd entre medio podía apuntar el handle a un
+directorio distinto.
+
+**Fix, en dos mitades** (decisión registrada: la mitad (a) vive en el
+SERVIDOR, no en el núcleo, porque la guardia 29b de
+`tests/nucleo-adversarial.test.mjs` prohíbe `node:fs`/`node:path` fuera de
+`almacen.ts`/`hash-catalogo.node.ts` dentro de `opencode/nucleo/**`):
+- (a) `opencode/servidor/servicio-con-vista.ts::directorioCanonico` —
+  `fs.mkdirSync(dir, {recursive:true})` + `fs.realpathSync(path.resolve(dir))`
+  ANTES de llamar a la raíz. Único call site de producción, así que la tool
+  de OpenCode, el servidor HTTP y el launcher de demo quedan cubiertos por
+  construcción.
+- (b) `opencode/nucleo/composicion-raiz.ts::asegurarRutaAbsoluta` — la raíz
+  RECHAZA con un error explícito (`"tiene que ser una ruta absoluta
+  canónica"`) cualquier `directorio` que no empiece con `/` (POSIX) o
+  `X:\`/`X:/`/`\\` (Windows) — documentado como contrato para CUALQUIER
+  llamador, no sólo (a). La raíz sigue sin resolver symlinks/`.`/`..` por su
+  cuenta (eso es responsabilidad del llamador) y sigue sin normalizar
+  mayúsculas/minúsculas (`WINDOWS_UNVERIFIED`, igual que el resto del slice).
+
+**Alcance deliberado**: los tests de Phase 1 y los tests de Phase 2 que
+llaman `obtenerServicioDeProyecto` DIRECTO (`phase2-helpers.mjs`,
+`tests/nucleo-*.test.mjs`) siguen sin canonicalizar — pasan rutas absolutas
+reales (`os.tmpdir()`) y no se ven afectados por (a); el test
+`dos-motores-mismo-almacen-real` (E3-07, Phase 1) sigue intocado. El fix
+protege el CAMINO DE PRODUCCIÓN (servicio-con-vista.ts), no cierra la
+permisividad de la raíz cruda — eso es a propósito, no un descuido: la raíz
+cruda sigue siendo la herramienta correcta para un test que necesita
+fabricar dos motores en aislamiento.
+
+**Tests**: `tests/phase2-directorio-absoluto.test.mjs` (mitad b: ruta
+relativa/vacía → error explícito, sin tocar el filesystem; ruta absoluta
+real pasa la guardia de forma) y `tests/phase2-directorio-canonico.test.mjs`
+(mitad a, vía `servicio-con-vista.ts`: las cuatro variantes dan el MISMO
+servicio, comparten motor en memoria, y el directorio se crea solo si hace
+falta). Mutante (saltear `directorioCanonico()`) mata 3 de los 5 tests de
+equivalencia — evidencia en `.../evidencia/W5/H1/mutante-resultado.txt`.
+Reproducción del ataque 1 original: contra `composicion-raiz.ts` DIRECTO
+(como lo escribió el red team) sigue mostrando la colisión en el caso A (por
+diseño — esa raíz sigue siendo permisiva) y ahora lanza un error explícito en
+el caso B (antes fallaba silenciosamente distinto); adaptado al camino de
+producción real (`servicio-con-vista.ts`), los tres casos dan
+`mismo objeto JS? true` — evidencia en `.../evidencia/W5/H1/`.
