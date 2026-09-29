@@ -56,6 +56,13 @@ https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.69
 
 Bajar el `.exe` de ahí e instalarlo encima. No hace falta desinstalar nada.
 
+**Nota (Phase 2, packaging, D14/INST-1=D):** para volver a una versión
+anterior, desinstalá primero. Un `.exe` viejo no sabe limpiar las piezas que
+sumó una versión más nueva (`opencode/nucleo`, `opencode/servidor`,
+`opencode/vista-fisica`), así que instalarlo encima puede dejar mezcladas
+piezas de las dos versiones. Desde el menú inicio: `Desinstalar Tecnia Bot`,
+y recién ahí instalar el `.exe` de la versión vieja.
+
 ### 2. Sacar la versión rota de "Latest" (2 minutos)
 
 Así el que entra a la página de releases no se lleva la mala (`vX.Y.Z` es la

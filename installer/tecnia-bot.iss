@@ -112,6 +112,31 @@ Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"
 
+[InstallDelete]
+; D14 (INST-1=D, PHASE_2_SLICE_1_HARDENING_DESIGN.md §1/§6.3): borra
+; {app}\opencode ENTERO antes de recopiarlo desde [Files], en cada instalación
+; (nueva o encima de una existente).
+;
+; POR QUÉ. {app}\opencode es sólo la copia MAESTRA del fuente (de la que
+; install\install.ps1 publica la capa educativa a la config real de OpenCode,
+; %USERPROFILE%\.config\opencode) — nunca donde vive el trabajo del docente:
+; el perfil, la memoria del aula, la key de Google y (desde Phase 2)
+; nucleo/servidor/vista-fisica quedan en esa OTRA carpeta, fuera de {app} por
+; completo (verificado leyendo este .iss e install\bootstrap.ps1: nada de eso
+; se escribe bajo {app}\opencode). Sin este borrado, un .exe VIEJO instalado
+; encima de uno nuevo deja ahí un tool\vista-fisica.ts desactualizado junto a
+; un nucleo/servidor/vista-fisica más viejo todavía (o, antes de Phase 2,
+; ausentes) — el mismo escenario de rollback por overlay que reprodujo
+; ARCH_INSTALL_REPORT.md §4 ("R"): la instalación resultante se rompe con
+; exactamente el defecto que D12/D13 cierran. Con este borrado, cada
+; instalación deja {app}\opencode como una foto exacta del .exe que se corrió
+; — nunca una mezcla de versiones.
+;
+; Límite conocido y documentado (no cerrado acá, ver docs\rollback.md): esto
+; sólo protege instalaciones hechas CON un .exe que ya trae esta línea. Un
+; downgrade a un .exe VIEJO corre las secciones de ESE .exe, que no la tiene.
+Type: filesandordirs; Name: "{app}\opencode"
+
 [Files]
 ; La capa educativa (agentes, skills, herramientas, web): el corazón del bot.
 ;
