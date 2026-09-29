@@ -997,3 +997,54 @@ de 3 corridas, por diseño — esa raíz sigue siendo permisiva); adaptado al
 camino de producción real (`servicio-con-vista.ts`, mismo protocolo
 LISTO/ABRIR/CERRAR), 3 de 3 corridas dan EXACTAMENTE un `abrio:true` —
 evidencia en `.../evidencia/W5/H5/`.
+
+### H3 (MAJOR) — sin validación de Origin ni Content-Type, CSRF local
+
+**Hallazgo**: el chequeo de `Host` (`manejarRequest`) sólo protege contra
+DNS-rebinding — nunca contra una request cross-origin DIRECTA hacia
+`127.0.0.1:<puerto>`, porque el navegador manda el `Host` real del destino
+sin importar el origen de la página que dispara el `fetch`. Sin validar
+`Content-Type`, cualquier pestaña de OTRO origen podía mandar un POST
+"simple" (`Content-Type: text/plain`, sin preflight) hacia
+`/api/operaciones` y ejecutar CUALQUIERA de las operaciones del motor — no
+sólo `AsignarPin` — si conocía/adivinaba el puerto efímero (ataque 3, casos
+3.9/3.10/3.11/3.12, P2-RED-A).
+
+**Fix** (`opencode/servidor/servidor-proyecto.ts::validarOrigenYContentType`,
+llamado al INICIO de `manejarOperaciones`, antes de leer el cuerpo): exige,
+en orden, (1) `Content-Type: application/json` (con o sin `;charset=...`
+detrás) — si no, **415**; (2) header `Origin` presente e IGUAL al origen
+propio (`http://127.0.0.1:<puerto>` o `http://localhost:<puerto>`, misma
+lógica que `hostsPermitidos`) — si no, **403**. `app.js` ya mandaba
+`Content-Type: application/json` de entrada; `Origin` lo agrega el
+NAVEGADOR solo en cualquier POST same-origin (header que JS no puede omitir
+ni falsificar) — la demo real no necesitó ningún cambio.
+
+**Los tests existentes que hacían POST sin esos headers se actualizaron**
+(`tests/phase2-transporte-http.test.mjs`, `tests/phase2-e2e.test.mjs`) —
+agregar un `Origin`/`Content-Type` VÁLIDO a un cliente que ya se comportaba
+bien no es debilitar ningún invariante: es lo que el cliente real (`app.js`,
+o el navegador por su cuenta) ya hacía. `tests/phase2-e2e.test.mjs` usa
+`fetch()` de Node (sin contexto de página, nunca agrega `Origin` solo) —
+ahí se pasa explícito.
+
+**Tests** (`tests/phase2-transporte-http.test.mjs`, sección H3): Origin de
+otro sitio → 403 (reproduce 3.12); sin Origin → 403; Origin de otro PUERTO en
+`127.0.0.1` → 403; `Content-Type: text/plain` → 415 (reproduce 3.9);
+`application/json;charset=utf-8` (parámetros detrás) sí se acepta; el POST
+válido de la página real sigue funcionando exactamente igual. Mutante
+(saltear `validarOrigenYContentType`) mata 4 de los 26 tests del archivo.
+Reproducción del ataque 3 original (que nunca mandaba estos headers en
+NINGÚN caso): todos sus POST caen ahora en 403/415 — confirmado además
+contra el demo launcher REAL por `curl` (favicon 204, sin Origin → 403,
+Origin cross-site + text/plain → 415, POST válido con headers correctos →
+200 `ok:true`) — evidencia en `.../evidencia/W5/H3/`.
+
+### Favicon
+
+`GET /favicon.ico` → **204 sin cuerpo** (reusa `responderBuffer` con
+`soloCabeceras:true`) — sin esto, el navegador lo pedía solo y cada carga de
+la página dejaba un 404 de ruido en la consola (observado por el
+orquestador en la demo real, P2-T12). Test:
+`tests/phase2-transporte-http.test.mjs`, "GET /favicon.ico da 204 sin
+cuerpo".

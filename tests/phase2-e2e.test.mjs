@@ -126,7 +126,11 @@ test("flujo end-to-end: servidor real, SSE, POST aceptado, reload (cerrar + raiz
     const n = snapshot1.revision
     const rPost = await fetch(new URL("/api/operaciones", servidor1.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // Origin: fix H3 (red-team) — un navegador real lo manda solo en cualquier
+      // POST same-origin (header que JS no puede omitir/falsificar); `fetch()` de
+      // Node, al no tener contexto de página, no lo agrega solo — se pasa
+      // explicito acá con el mismo origen que `servidor1.url`.
+      headers: { "Content-Type": "application/json", Origin: new URL(servidor1.url).origin },
       body: JSON.stringify({ idOperacion: "e2e-post-1", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }),
     })
     assert.equal(rPost.status, 200)
@@ -169,7 +173,7 @@ test("flujo end-to-end: servidor real, SSE, POST aceptado, reload (cerrar + raiz
       // --- un stale con base N (la vieja, ya superada) sobre el servidor NUEVO da BASE_REVISION_DESACTUALIZADA, sin cambios ---
       const rStale = await fetch(new URL("/api/operaciones", servidor2.url), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Origin: new URL(servidor2.url).origin },
         body: JSON.stringify({ idOperacion: "e2e-post-stale", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO18" } }),
       })
       assert.equal(rStale.status, 200) // rechazo de DOMINIO, no de transporte

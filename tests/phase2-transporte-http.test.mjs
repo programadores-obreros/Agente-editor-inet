@@ -13,6 +13,19 @@
 //   - Host inválido: 403;
 //   - /assets/../../package.json y rutas fuera de la lista blanca: 404;
 //   - cerrar() libera el puerto.
+//
+// Revisión post red-team (Hallazgo H3, MAJOR, P2-RED-A/INFORME.md, ataque 3, casos
+// 3.9/3.12): `POST /api/operaciones` ahora EXIGE `Content-Type: application/json`
+// (si no, 415) y un header `Origin` presente e igual al origen propio (si no, 403) —
+// ver `validarOrigenYContentType` en `servidor-proyecto.ts`. Por eso TODOS los POST
+// de esta suite que antes no mandaban esos headers ahora los agregan explícitamente
+// (`origenPropio(servidor)` + `Content-Type` que `solicitud()` ya pone por defecto en
+// cualquier POST con `cuerpo`) — agregar headers VÁLIDOS a un cliente que ya se
+// comportaba bien no es debilitar ningún invariante, es lo que `app.js` real ya
+// hacía de entrada (fetch con `Content-Type: application/json`, y el navegador
+// siempre manda `Origin` en un POST same-origin, sin que la página tenga que hacer
+// nada especial). Los casos NUEVOS (Origin ajeno/ausente, Content-Type no-JSON) están
+// en su propia sección más abajo.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -74,6 +87,12 @@ function solicitud(urlBase, ruta, opciones = {}) {
 
 function json(respuesta) {
   return JSON.parse(respuesta.cuerpo)
+}
+
+/** El `Origin` que un navegador real manda en un POST same-origin contra este
+ * servidor — fix H3, ver la nota de cabecera del archivo. */
+function origenPropio(servidor) {
+  return `http://127.0.0.1:${servidor.puerto}`
 }
 
 /** Cliente SSE mínimo: parsea bloques `event:`/`data:` separados por línea en blanco
@@ -171,7 +190,7 @@ test("POST /api/operaciones con base N: ok, revision N+1, y el GET posterior mue
   try {
     const n = servicio.snapshot().revision
     const sobre = { idOperacion: "browser-op-1", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor) } })
     assert.equal(r.estado, 200)
     const cuerpo = json(r)
     assert.equal(cuerpo.resultado.ok, true)
@@ -196,7 +215,7 @@ test("POST /api/operaciones fuerza actor:'navegador' — un actor:'agente' manda
   try {
     const n = servicio.snapshot().revision
     const sobre = { idOperacion: "browser-op-actor", actor: "agente", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor) } })
     const cuerpo = json(r)
     // Si el servidor hubiera respetado actor:"agente" tal cual, esto seguiría siendo
     // válido igual (es uno de los dos valores aceptados) — la prueba real de que se
@@ -223,7 +242,7 @@ test("POST /api/operaciones con base vieja da BASE_REVISION_DESACTUALIZADA, sin 
     assert.equal(revisionReal, n + 1)
 
     const sobreStale = { idOperacion: "browser-op-stale", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO18" } }
-    const rHttp = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobreStale })
+    const rHttp = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobreStale, cabeceras: { Origin: origenPropio(servidor) } })
     assert.equal(rHttp.estado, 200) // rechazo de DOMINIO, no de transporte
     const cuerpo = json(rHttp)
     assert.equal(cuerpo.resultado.ok, false)
@@ -242,7 +261,7 @@ test("POST /api/operaciones con JSON invalido da 400, sin cambios en disco", asy
   const servidor = await iniciarServidor({ servicio })
   try {
     const revisionAntes = servicio.snapshot().revision
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: "{ esto no es json ][", cabeceras: { "Content-Type": "application/json" } })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: "{ esto no es json ][", cabeceras: { "Content-Type": "application/json", Origin: origenPropio(servidor) } })
     assert.equal(r.estado, 400)
     assert.equal(servicio.snapshot().revision, revisionAntes)
   } finally {
@@ -259,7 +278,7 @@ test("POST /api/operaciones con forma invalida (JSON valido, sobre incorrecto) d
     const revisionAntes = servicio.snapshot().revision
     // Un array en la raíz: `esObjetoPlano` lo rechaza (nunca "el sobre es un objeto
     // plano" para un array) — motor.ts, SOBRE_OPERACION_INVALIDO.
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: [1, 2, 3] })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: [1, 2, 3], cabeceras: { Origin: origenPropio(servidor) } })
     assert.equal(r.estado, 200)
     const cuerpo = json(r)
     assert.equal(cuerpo.resultado.ok, false)
@@ -278,7 +297,7 @@ test("POST /api/operaciones con cuerpo mas grande que el limite da 400, sin camb
   try {
     const revisionAntes = servicio.snapshot().revision
     const relleno = "x".repeat(300 * 1024) // > 256 KiB, el limite documentado
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: JSON.stringify({ relleno }) })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: JSON.stringify({ relleno }), cabeceras: { Origin: origenPropio(servidor) } })
     assert.equal(r.estado, 400)
     assert.equal(servicio.snapshot().revision, revisionAntes)
   } finally {
@@ -303,6 +322,7 @@ test("SSE: un POST aceptado produce EXACTAMENTE un evento revision N+1; un recha
     const r1 = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: { idOperacion: "sse-1", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } },
+      cabeceras: { Origin: origenPropio(servidor) },
     })
     assert.equal(json(r1).resultado.ok, true)
     const evento1 = await coleccion.siguienteEvento()
@@ -314,6 +334,7 @@ test("SSE: un POST aceptado produce EXACTAMENTE un evento revision N+1; un recha
     const rStale = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: { idOperacion: "sse-stale", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO18" } },
+      cabeceras: { Origin: origenPropio(servidor) },
     })
     assert.equal(json(rStale).resultado.ok, false)
 
@@ -323,6 +344,7 @@ test("SSE: un POST aceptado produce EXACTAMENTE un evento revision N+1; un recha
     const r2 = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: { idOperacion: "sse-2", actor: "navegador", baseRevision: n + 1, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO18" } },
+      cabeceras: { Origin: origenPropio(servidor) },
     })
     assert.equal(json(r2).resultado.ok, true)
     const evento2 = await coleccion.siguienteEvento()
@@ -515,4 +537,138 @@ test("cerrar() cierra las conexiones SSE abiertas (el stream termina de verdad, 
   // terminado esa respuesta de verdad, esta promesa nunca resolvería (el test
   // colgaría en vez de dar un falso verde). Nada de `setTimeout`/sleep.
   await coleccion.cerrado
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Fix de ronda única red-team, Hallazgo H3 (MAJOR, P2-RED-A/INFORME.md, ataque 3,
+// casos 3.9/3.12): POST /api/operaciones exige Content-Type: application/json (415
+// si no) y un Origin igual al propio (403 si no/ajeno) — ver
+// validarOrigenYContentType en servidor-proyecto.ts.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("H3: POST /api/operaciones con Origin de OTRO sitio da 403, sin cambios (reproduce ataque 3, caso 3.12)", async () => {
+  const dir = nuevoDir("h3-origin-ajeno")
+  const { servicio, idComponente } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const revisionAntes = servicio.snapshot().revision
+    const sobre = { idOperacion: "csrf-1", actor: "navegador", baseRevision: revisionAntes, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: "http://evil.example.com" } })
+    assert.equal(r.estado, 403)
+    assert.equal(servicio.snapshot().revision, revisionAntes, "el intento cross-origin NUNCA debe llegar al motor")
+    assert.equal(servicio.snapshot().proyecto.placa, "esp32-devkit-v1", "la placa NO cambio a arduino-uno")
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+test("H3: POST /api/operaciones SIN header Origin da 403, sin cambios", async () => {
+  const dir = nuevoDir("h3-origin-ausente")
+  const { servicio, idComponente } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const revisionAntes = servicio.snapshot().revision
+    const sobre = { idOperacion: "csrf-2", actor: "navegador", baseRevision: revisionAntes, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }
+    // `solicitud()` no manda Origin salvo que se pida explicito — este caso lo deja afuera a proposito.
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre })
+    assert.equal(r.estado, 403)
+    assert.equal(servicio.snapshot().revision, revisionAntes)
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+test("H3: POST /api/operaciones con Content-Type: text/plain da 415, sin cambios (reproduce ataque 3, caso 3.9)", async () => {
+  const dir = nuevoDir("h3-content-type-no-json")
+  const { servicio, idComponente } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const revisionAntes = servicio.snapshot().revision
+    const sobre = JSON.stringify({ idOperacion: "csrf-3", actor: "navegador", baseRevision: revisionAntes, tipo: "SetPlaca", payload: { placa: "arduino-uno" } })
+    const r = await solicitud(servidor.url, "/api/operaciones", {
+      metodo: "POST",
+      cuerpo: sobre,
+      cabeceras: { "Content-Type": "text/plain", Origin: origenPropio(servidor) },
+    })
+    assert.equal(r.estado, 415)
+    assert.equal(servicio.snapshot().revision, revisionAntes, "un Content-Type simple (sin preflight) no puede ejecutar la operacion")
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+test("H3: POST /api/operaciones con Content-Type application/json;charset=utf-8 (parametros detras) SI se acepta", async () => {
+  const dir = nuevoDir("h3-content-type-con-charset")
+  const { servicio, idComponente } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const n = servicio.snapshot().revision
+    const sobre = { idOperacion: "ct-charset", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }
+    const r = await solicitud(servidor.url, "/api/operaciones", {
+      metodo: "POST",
+      cuerpo: sobre,
+      cabeceras: { "Content-Type": "application/json;charset=utf-8", Origin: origenPropio(servidor) },
+    })
+    assert.equal(r.estado, 200)
+    assert.equal(json(r).resultado.ok, true)
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+test("H3: el POST valido de la pagina real (Content-Type application/json + Origin propio) sigue funcionando exactamente igual", async () => {
+  const dir = nuevoDir("h3-post-valido-sigue-funcionando")
+  const { servicio, idComponente } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const n = servicio.snapshot().revision
+    const sobre = { idOperacion: "browser-op-valido", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor) } })
+    assert.equal(r.estado, 200)
+    const cuerpo = json(r)
+    assert.equal(cuerpo.resultado.ok, true)
+    assert.equal(cuerpo.resultado.revisionActual, n + 1)
+    assert.equal(cuerpo.snapshot.proyecto.componentes[0].pines.anodo, GPIO_Y)
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+test("H3: Origin de OTRO puerto en 127.0.0.1 (mismo host, puerto distinto) tambien da 403", async () => {
+  const dir = nuevoDir("h3-origin-otro-puerto")
+  const { servicio } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const revisionAntes = servicio.snapshot().revision
+    const sobre = { idOperacion: "csrf-4", actor: "navegador", baseRevision: revisionAntes, tipo: "SetPlaca", payload: { placa: "arduino-uno" } }
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: `http://127.0.0.1:${servidor.puerto + 1}` } })
+    assert.equal(r.estado, 403)
+    assert.equal(servicio.snapshot().revision, revisionAntes)
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Favicon: 204 sin cuerpo, para que la consola del navegador quede sin errores
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("GET /favicon.ico da 204 sin cuerpo", async () => {
+  const dir = nuevoDir("http-favicon")
+  const { servicio } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const r = await solicitud(servidor.url, "/favicon.ico")
+    assert.equal(r.estado, 204)
+    assert.equal(r.cuerpo.length, 0, "204 nunca lleva cuerpo")
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
 })

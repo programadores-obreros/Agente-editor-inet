@@ -23,6 +23,7 @@ en este mismo repo: `opencode/skills/archify/bin/preview.mjs`.
 | Método | Ruta | Qué hace |
 | --- | --- | --- |
 | GET/HEAD | `/` | Sirve `opencode/vista-fisica/web/index.html` |
+| GET/HEAD | `/favicon.ico` | 204 sin cuerpo (revisión post red-team — sin esto, ruido de 404 en la consola del navegador) |
 | GET/HEAD | `/assets/<nombre>` | Sirve un asset de la lista blanca (ver abajo), o 404 |
 | GET/HEAD | `/api/proyecto` | Devuelve el `Snapshot` autoritativo, JSON completo |
 | POST | `/api/operaciones` | Aplica un `SobreOperacion` (ver abajo) |
@@ -101,9 +102,22 @@ aparte para saber qué pasó.
 | Código | Cuándo |
 | --- | --- |
 | 400 | JSON inválido, o cuerpo mayor a 256 KiB |
-| 403 | Header `Host` no matchea `127.0.0.1:<puerto>` ni `localhost:<puerto>` |
+| 403 | Header `Host` no matchea `127.0.0.1:<puerto>` ni `localhost:<puerto>`; o (sólo en `POST /api/operaciones`) `Origin` ausente o distinto del origen propio |
 | 404 | Ruta desconocida (incluida cualquier `/assets/<nombre>` fuera de la lista blanca) |
 | 405 | Método no soportado en esa ruta (con header `Allow`) |
+| 415 | (sólo en `POST /api/operaciones`) `Content-Type` distinto de `application/json` (con o sin `;charset=...` detrás) |
+
+**Revisión post red-team (Hallazgo H3, MAJOR — `DECISIONS.md` para el detalle
+completo)**: el chequeo de `Host` de arriba sólo protege contra
+DNS-rebinding, nunca contra un POST cross-origin directo (el navegador manda
+el `Host` real del destino sin importar qué página disparó el `fetch`). Por
+eso `POST /api/operaciones` exige, ADEMÁS, en este orden: (1) `Content-Type:
+application/json` (415 si no) y (2) un header `Origin` presente e IGUAL al
+origen propio, `http://127.0.0.1:<puerto>` o `http://localhost:<puerto>`
+(403 si no) — antes de leer el cuerpo. `app.js` ya mandaba el primero; el
+segundo lo manda el navegador solo en cualquier POST same-origin (no es un
+header que una página pueda omitir o falsificar), así que la demo real no
+necesitó ningún cambio.
 
 ### `GET /api/eventos` (SSE)
 

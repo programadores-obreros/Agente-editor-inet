@@ -166,7 +166,45 @@ function leerCuerpo(req: http.IncomingMessage, limiteBytes: number): Promise<{ o
   })
 }
 
-async function manejarOperaciones(req: http.IncomingMessage, res: http.ServerResponse, servicio: ServicioDeProyecto): Promise<void> {
+/**
+ * Fix de ronda única red-team, Hallazgo H3 (MAJOR, P2-RED-A/INFORME.md, ataque 3,
+ * casos 3.9/3.12): el chequeo de `Host` (`manejarRequest`, más abajo) sólo protege
+ * contra DNS-rebinding — NUNCA contra una request cross-origin DIRECTA hacia
+ * `127.0.0.1:<puerto>`, porque el navegador manda el `Host` real del destino sin
+ * importar el origen de la página que dispara el `fetch`. Combinado con que este
+ * endpoint no validaba `Content-Type`, cualquier pestaña de OTRO origen podía, si
+ * conocía/adivinaba el puerto efímero, mandar un POST "simple" (`Content-Type:
+ * text/plain`, sin preflight) y ejecutar CUALQUIER operación — no sólo `AsignarPin`
+ * (CSRF clásico de servidor local).
+ *
+ * Fix: exigir y validar DOS headers, en este orden:
+ * 1. `Content-Type: application/json` (con o sin `;charset=...` detrás) — si no,
+ *    415. `app.js` ya lo manda así (`fetch(..., {headers:{"Content-Type":
+ *    "application/json"}}`); esto NO debilita ningún invariante existente, sólo
+ *    exige un header que el cliente legítimo ya mandaba.
+ * 2. `Origin` presente e IGUAL al origen propio (`http://127.0.0.1:<puerto>` o
+ *    `http://localhost:<puerto>`, coherente con las dos formas de `Host` que ya
+ *    acepta este servidor) — si no, 403. Un POST same-origin disparado por
+ *    `fetch`/`<form>` desde un navegador real SIEMPRE manda `Origin` (no es un
+ *    header que JS pueda omitir o falsificar): la página de este servidor lo manda
+ *    sola, sin que `app.js` tenga que hacer nada especial.
+ */
+function validarOrigenYContentType(req: http.IncomingMessage, res: http.ServerResponse, origenesPermitidos: ReadonlySet<string>): boolean {
+  const contentType = req.headers["content-type"]
+  if (!contentType || !/^application\/json\b/i.test(contentType)) {
+    responderTexto(res, 415, "Content-Type no soportado: se requiere application/json")
+    return false
+  }
+  const origen = req.headers.origin
+  if (!origen || !origenesPermitidos.has(origen)) {
+    responderTexto(res, 403, "Origin no permitido")
+    return false
+  }
+  return true
+}
+
+async function manejarOperaciones(req: http.IncomingMessage, res: http.ServerResponse, servicio: ServicioDeProyecto, origenesPermitidos: ReadonlySet<string>): Promise<void> {
+  if (!validarOrigenYContentType(req, res, origenesPermitidos)) return
   const cuerpo = await leerCuerpo(req, LIMITE_BYTES_OPERACION)
   if (!cuerpo.ok) {
     // Error de TRANSPORTE (nunca de dominio) — mismo criterio que JSON inválido: 400,
@@ -289,6 +327,16 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
       return responderBuffer(res, 200, "text/html; charset=utf-8", indiceHtml, req.method === "HEAD")
     }
 
+    // Favicon (MINOR anotado por el orquestador en P2-T12): sin este handler, el
+    // navegador pide `/favicon.ico` sola (nunca la manda `index.html`) y cae en el
+    // 404 genérico — ruido en la consola sin ningún valor. 204 sin cuerpo es la
+    // respuesta estándar para "no hay favicon, y está bien así" (RFC 7231 — un 204
+    // nunca lleva body; distinto de 404, que un navegador sí loguea como error).
+    if (ruta === "/favicon.ico") {
+      if (req.method !== "GET" && req.method !== "HEAD") return responderMetodoNoPermitido(res, ["GET", "HEAD"])
+      return responderBuffer(res, 204, "text/plain; charset=utf-8", Buffer.alloc(0), true) // soloCabeceras=true -> nunca escribe cuerpo, coherente con 204
+    }
+
     if (ruta.startsWith("/assets/")) {
       if (req.method !== "GET" && req.method !== "HEAD") return responderMetodoNoPermitido(res, ["GET", "HEAD"])
       const nombre = ruta.slice("/assets/".length)
@@ -305,7 +353,10 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
 
     if (ruta === "/api/operaciones") {
       if (req.method !== "POST") return responderMetodoNoPermitido(res, ["POST"])
-      return manejarOperaciones(req, res, servicio)
+      // Mismo criterio que `hostsPermitidos` arriba: las dos formas de loopback que
+      // un navegador puede mandar como Origin de una página same-origin.
+      const origenesPermitidos = new Set([`http://127.0.0.1:${puerto}`, `http://localhost:${puerto}`])
+      return manejarOperaciones(req, res, servicio, origenesPermitidos)
     }
 
     if (ruta === "/api/eventos") {
