@@ -149,6 +149,22 @@ function construirProyectoInicial(almacen: ReturnType<typeof crearAlmacen>, idPr
   return crearProyecto({ generadorId: () => idProyecto, catalogoVersion: CATALOGO_REAL.version, catalogoHash: CATALOGO_REAL.hash })
 }
 
+/**
+ * Fix de ronda única red-team, Hallazgo H2 (CRITICAL, P2-RED-A/INFORME.md, ataque
+ * 2): un `Error` con `.code === "SERVICIO_CERRADO"` — nunca una clase exportada del
+ * módulo (rompería el guardia (a), "la superficie exportada es EXACTAMENTE
+ * obtenerServicioDeProyecto", tests/phase2-composicion-raiz.test.mjs). `.code` es lo
+ * que un llamador real chequea con seguridad (`error.code === "SERVICIO_CERRADO"`),
+ * nunca un parseo frágil de `error.message`.
+ */
+function crearErrorServicioCerrado(directorio: string, idProyecto: string): Error {
+  const error = new Error(
+    `composicion-raiz: el servicio de "${idProyecto}" en "${directorio}" ya fue cerrado (cerrar() ya se llamó) — pedí uno nuevo con obtenerServicioDeProyecto, nunca sigas usando este handle.`,
+  )
+  ;(error as Error & { code?: string }).code = "SERVICIO_CERRADO"
+  return error
+}
+
 function construirServicio(clave: string, directorio: string, idProyecto: string, crearSiNoExiste: boolean, calcularVista: OpcionesServicioDeProyecto["calcularVista"]): ServicioDeProyecto {
   // El Almacen se construye ACÁ, una única vez, y se inyecta al motor — nunca se
   // retiene por fuera para llamar guardar()/cargar() directo (mismo contrato que
@@ -158,6 +174,17 @@ function construirServicio(clave: string, directorio: string, idProyecto: string
   const motor = crearMotorDeProyecto({ proyectoInicial, catalogo: CATALOGO_REAL, almacen })
 
   const listeners = new Set<(evento: { readonly revision: number }) => void>()
+
+  // Fix H2 (ver arriba): tras `cerrar()`, este flag hace que TODA operación del
+  // servicio (`snapshot`/`aplicar`/`aplicarTransaccion`/`proponer`/`suscribir`) lance
+  // ANTES de tocar el motor/disco/listeners — nunca delega en el motor "por las
+  // dudas". `cerrar()` en sí mismo sigue siendo idempotente (no lanza si ya estaba
+  // cerrado): lo único que cambia es que el handle deja de ser una autoridad de
+  // mutación utilizable, no que `cerrar()` se vuelva más estricto consigo mismo.
+  let cerrado = false
+  function asegurarAbierto(): void {
+    if (cerrado) throw crearErrorServicioCerrado(directorio, idProyecto)
+  }
 
   function notificarSiCorresponde(resultado: ResultadoTransaccion, revisionAntes: number): ResultadoTransaccion {
     if (resultado.ok && motor.getProyecto().revision !== revisionAntes) {
@@ -193,24 +220,34 @@ function construirServicio(clave: string, directorio: string, idProyecto: string
   }
 
   const servicio: ServicioDeProyecto = {
-    snapshot,
+    snapshot() {
+      asegurarAbierto()
+      return snapshot()
+    },
     aplicar(sobre) {
+      asegurarAbierto()
       const revisionAntes = motor.getProyecto().revision
       return notificarSiCorresponde(motor.aplicar(sobre), revisionAntes)
     },
     aplicarTransaccion(sobres) {
+      asegurarAbierto()
       const revisionAntes = motor.getProyecto().revision
       return notificarSiCorresponde(motor.aplicarTransaccion(sobres), revisionAntes)
     },
     proponer(sobres) {
+      asegurarAbierto()
       // Dry-run: el motor nunca persiste ni sube revisión acá — nada que notificar.
       return motor.proponer(sobres)
     },
     suscribir(listener) {
+      asegurarAbierto()
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
     cerrar() {
+      // Idempotente: cerrar un servicio ya cerrado no lanza — sólo asegurarAbierto()
+      // (las operaciones de ESCRITURA/LECTURA) chequea el flag.
+      cerrado = true
       registro.delete(clave)
       listeners.clear()
     },

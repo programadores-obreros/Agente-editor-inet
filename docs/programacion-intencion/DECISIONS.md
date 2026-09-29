@@ -840,3 +840,37 @@ EXISTE — la raíz deja un hook interno opcional (`calcularVista`, en las
 opciones de `obtenerServicioDeProyecto`, nunca una clave nueva del módulo) sin
 inventar su forma: si nadie lo inyecta, `snapshot()` simplemente omite la
 clave. Lo agrega el writer siguiente (servidor HTTP + vista física).
+
+## Revisión post red-team (P2-RED-A/P2-RED-B, ronda única de fixes, W5)
+
+Los informes completos, con sus ataques y salidas, quedan fuera del repo en
+`.../scratchpad/phase2/RED-A/INFORME.md` y `.../RED-B/INFORME.md` (evidencia
+de W5 en `.../scratchpad/phase2/evidencia/W5/`). Acá sólo el resumen de cada
+decisión y su fix.
+
+### H2 (CRITICAL) — `cerrar()` no invalidaba el handle (motor zombi)
+
+**Hallazgo**: `cerrar()` sólo hacía `registro.delete(clave)` + `listeners.clear()` —
+nunca invalidaba los closures del `ServicioDeProyecto` ya entregado. Un handle
+"cerrado" seguía `aplicar()`/`suscribir()` con éxito (escribía en disco y
+notificaba), y un `obtenerServicioDeProyecto()` posterior para la MISMA clave
+construía una raíz nueva: dos motores vivos simultáneos sobre el mismo
+proyecto, en el mismo proceso — segunda autoridad de mutación real, sin
+ningún truco de claves (ataque 2, P2-RED-A).
+
+**Fix** (`opencode/nucleo/composicion-raiz.ts`): un flag `cerrado` por
+servicio (closure, nunca expuesto). `cerrar()` lo pone en `true` ADEMÁS de
+sacar la entrada del registro — sigue siendo idempotente (llamarlo dos veces
+no lanza). `snapshot`/`aplicar`/`aplicarTransaccion`/`proponer`/`suscribir`
+chequean el flag ANTES de tocar el motor/disco/listeners y lanzan un `Error`
+con `.code === "SERVICIO_CERRADO"` si ya está cerrado — nunca una clase nueva
+exportada del módulo (rompería el guardia (a) de superficie exacta,
+`tests/phase2-composicion-raiz.test.mjs`).
+
+**Tests** (`tests/phase2-cerrar-invalida.test.mjs`): handle cerrado no
+escribe en disco (bytes idénticos antes/después del intento) ni notifica; las
+cinco operaciones de la superficie lanzan `SERVICIO_CERRADO`; `cerrar()`
+sigue siendo idempotente; tras `cerrar()`, un servicio nuevo para la misma
+clave es el ÚNICO que sigue mutando. Mutante (quitar `cerrado = true` de
+`cerrar()`) mata 3 de los 5 tests — confirmado, evidencia en
+`.../evidencia/W5/H2/mutante-resultado.txt`.
