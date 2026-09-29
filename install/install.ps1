@@ -20,7 +20,7 @@ $Src = Join-Path $RepoDir "opencode"
 
 Write-Host "==> Instalando Tecnia Bot en: $ConfigDir"
 
-foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes")) {
+foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "nucleo", "servidor", "vista-fisica")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir $sub) | Out-Null
 }
 
@@ -30,6 +30,20 @@ Copy-Item (Join-Path $Src "agent\*")   (Join-Path $ConfigDir "agent\")   -Recurs
 Copy-Item (Join-Path $Src "tool\*")    (Join-Path $ConfigDir "tool\")    -Recurse -Force
 Copy-Item (Join-Path $Src "skills\*")  (Join-Path $ConfigDir "skills\")  -Recurse -Force
 Copy-Item (Join-Path $Src "command\*") (Join-Path $ConfigDir "command\") -Recurse -Force
+
+# Piezas de Phase 2 (vista fisica): nucleo/servidor/vista-fisica, SIEMPRE
+# hermanas de tool\ -- nunca adentro -- porque el registry de tools de OpenCode
+# levanta CUALQUIER .ts que encuentre bajo tool\ como si fuera una tool propia
+# (D12, PHASE_2_SLICE_1_HARDENING_DESIGN.md, tabla de decisiones). tool\vista-
+# fisica.ts importa estos tres directorios con rutas relativas (..\servidor\...,
+# ..\nucleo\...) resueltas contra su propia ubicacion, asi que tienen que
+# quedar en el mismo nivel que tool\ dentro de $ConfigDir -- ver
+# ARCH_INSTALL_REPORT.md, seccion 1. Mismo patron -Recurse -Force que ya usa
+# tecniabot-web\* mas abajo: subcarpetas como nucleo\adaptadores\ o
+# vista-fisica\web\ se copian solas.
+Copy-Item (Join-Path $Src "nucleo\*")       (Join-Path $ConfigDir "nucleo\")       -Recurse -Force
+Copy-Item (Join-Path $Src "servidor\*")     (Join-Path $ConfigDir "servidor\")     -Recurse -Force
+Copy-Item (Join-Path $Src "vista-fisica\*") (Join-Path $ConfigDir "vista-fisica\") -Recurse -Force
 
 # Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
 Copy-Item (Join-Path $Src "plugins\*") (Join-Path $ConfigDir "plugins\") -Recurse -Force
@@ -49,7 +63,7 @@ $Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else {
 
 # Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
 # coincidan con las que escribe el instalador de Linux).
-$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes")) {
+$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "nucleo", "servidor", "vista-fisica")) {
     Get-ChildItem -Path (Join-Path $Src $sub) -Recurse -File | ForEach-Object {
         $rel = $_.FullName.Substring($Src.Length + 1) -replace '\\', '/'
         $rel

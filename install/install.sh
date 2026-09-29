@@ -14,7 +14,7 @@ SRC="$REPO_DIR/opencode"
 
 echo "==> Instalando Tecnia Bot en: $CONFIG_DIR"
 
-mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes}
+mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,nucleo,servidor,vista-fisica}
 
 # Copiamos todo el contenido de cada carpeta (asi los archivos nuevos
 # se instalan solos, sin tener que actualizar este script cada vez).
@@ -22,6 +22,17 @@ cp -r "$SRC/agent/."   "$CONFIG_DIR/agent/"
 cp -r "$SRC/tool/."    "$CONFIG_DIR/tool/"
 cp -r "$SRC/skills/."  "$CONFIG_DIR/skills/"
 cp -r "$SRC/command/." "$CONFIG_DIR/command/"
+
+# Piezas de Phase 2 (vista física): nucleo/servidor/vista-fisica, SIEMPRE
+# hermanas de tool/ -- nunca adentro -- porque el registry de tools de OpenCode
+# levanta CUALQUIER .ts que encuentre bajo tool/ como si fuera una tool propia
+# (D12, PHASE_2_SLICE_1_HARDENING_DESIGN.md §1). `tool/vista-fisica.ts` importa
+# estos tres directorios con rutas relativas (`../servidor/...`, `../nucleo/...`)
+# resueltas contra su propia ubicacion, asi que tienen que quedar en el mismo
+# nivel que `tool/` dentro de $CONFIG_DIR -- ver ARCH_INSTALL_REPORT.md §1.
+cp -r "$SRC/nucleo/."       "$CONFIG_DIR/nucleo/"
+cp -r "$SRC/servidor/."     "$CONFIG_DIR/servidor/"
+cp -r "$SRC/vista-fisica/." "$CONFIG_DIR/vista-fisica/"
 
 # Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
 cp -r "$SRC/plugins/." "$CONFIG_DIR/plugins/"
@@ -35,7 +46,7 @@ cp -r "$SRC/tecniabot-web/." "$CONFIG_DIR/tecniabot-web/"
 # Habilita actualizar limpio (borra huérfanos) y desinstalar sin tocar lo del usuario.
 MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
 VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || echo "0.0.0")"
-NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes -type f | LC_ALL=C sort)"
+NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes nucleo servidor vista-fisica -type f | LC_ALL=C sort)"
 
 # Borrar huérfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
 if [ -f "$MANIFEST" ]; then
