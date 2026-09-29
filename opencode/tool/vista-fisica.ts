@@ -117,7 +117,7 @@ async function cargarServidor(): Promise<{
     const detalle = error instanceof Error ? error.message : String(error)
     throw new Error(
       `Falta la carpeta "servidor" de Tecnia Bot (no se pudo cargar ../servidor/ junto a esta tool: ${detalle}). ` +
-        `Esto pasa con una instalación incompleta o interrumpida a mitad de una actualización. Volvé a instalar ` +
+        `Esto pasa con una instalación incompleta o interrumpida a mitad de una actualización. Reinstalá ` +
         `Tecnia Bot (o corré "Reparar Tecnia Bot" desde el menú inicio en Windows) para arreglarlo.`,
     )
   }
