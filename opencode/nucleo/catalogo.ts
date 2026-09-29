@@ -13,7 +13,7 @@
 // agregado sólo como DATO en `catalogo-datos.ts` (o un fixture de test), se procesa
 // sin tocar ningún `.ts` de este módulo.
 
-import type { Placa, RegistroPin } from "./placas.ts"
+import type { Placa, RegistroPin, Restriccion } from "./placas.ts"
 import type { ComportamientoRegla } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
 import { canonicalizar, clonarProfundo, congelarProfundo } from "./canonico.ts"
@@ -44,6 +44,17 @@ export interface Terminal {
   readonly electrica: "digital" | "analogica" | "riel-fijo"
   readonly requierePwm?: boolean
   readonly destinoFijo?: DestinoFijo
+  /**
+   * Dato declarativo del catálogo (D5/H-4, `PHASE_2_SLICE_1_HARDENING_DESIGN.md` §1-2):
+   * este terminal necesita un pull-up (o pull-down) INTERNO del pin para leer bien —
+   * hoy sólo `pulsador.senal` lo declara (`catalogo-datos.ts`, INPUT_PULLUP,
+   * `circuito.ts:1104`). Lo consume `evaluarRestriccionesPin` (más abajo): combinado
+   * con `RegistroPin.restricciones.includes("soloEntrada")` (esos pines NO tienen
+   * pull-up/pull-down real, `circuito.ts:339-343`) emite `PIN_SIN_PULLUP_INTERNO`.
+   * `undefined`/`false` es "no lo necesita" (default) — nunca se infiere del `rol` ni
+   * del nombre del componente, sólo del dato explícito del catálogo.
+   */
+  readonly requierePullUpInterno?: boolean
   /**
    * Sentido eléctrico real del terminal — NO se infiere del `rol` (un rol es un
    * nombre de dominio, no una propiedad eléctrica): un ánodo de LED necesariamente
@@ -232,6 +243,113 @@ export function asignarPin(terminal: Terminal, pin: RegistroPin): Motivo | null 
     }
   }
   return null
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// evaluarRestriccionesPin — D1/D2/D3/D5/D7 (PHASE_2_SLICE_1_HARDENING_DESIGN.md §1-2)
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Severidad por CLASE de `RegistroPin.restricciones` (`placas.ts`) — tabla
+ * declarativa del NÚCLEO, separada de `Restriccion` (que sigue siendo sólo la clase
+ * técnica, enum cerrado, sin agregados). Decisiones del HUMAN PRODUCT OWNER del gate
+ * final de hardening, normativas (`PHASE_2_SLICE_1_HARDENING_DESIGN.md` D1/D2/D7):
+ * - `flashReservado` → `blocking` (D1, H-1=B): GPIO6-11 van a la flash SPI, usarlos
+ *   "cuelga/rompe la placa" (`circuito.ts:335`) — compromete hardware real.
+ * - `strapping` → `info` por DEFAULT (D2/D3, H-2=B/H-2b=A); GPIO12 es la ÚNICA
+ *   excepción por pin (`severidadStrapping`, abajo).
+ * - `uartUsb` → `warning` (D7, H-6=B): interfiere con la carga del programa y el
+ *   Monitor Serie (`circuito.ts:348-351`), nunca impide seguir editando.
+ *
+ * `soloEntrada` NO tiene entrada acá: a diferencia de las otras tres, nunca dispara
+ * un motivo por sí sola (un pin solo-entrada es perfecto para una analógica, ej. el
+ * `ntc`) — sólo en combinación con `Terminal.requierePullUpInterno`, más abajo.
+ */
+const SEVERIDAD_POR_RESTRICCION: Readonly<Record<"flashReservado" | "strapping" | "uartUsb", "info" | "warning" | "blocking">> = {
+  flashReservado: "blocking",
+  strapping: "info",
+  uartUsb: "warning",
+}
+
+/**
+ * Excepción por pin de D2 (H-2=B): dentro de la clase `strapping`, GPIO12 (MTDI) es
+ * el único que en HIGH al encender fija la flash a 1,8V y "la placa no bootea, sin
+ * aviso" (`skills/checklist-seguridad/SKILL.md:58`) — el resto de la clase (GPIO0,
+ * GPIO2, GPIO15) se queda en la severidad `info` de la tabla de arriba (D3, H-2b=A:
+ * GPIO2 sigue en el pool automático y se sigue ofreciendo).
+ */
+function severidadStrapping(pin: RegistroPin): "info" | "warning" {
+  return pin.numero === 12 ? "warning" : "info"
+}
+
+/**
+ * Motivos de restricción de UN pin, para UN terminal — se llama desde el mismo bucle
+ * que hoy llama `asignarPin` (`validar-tecnico.ts`), NUNCA reemplaza esa función: la
+ * operación sigue sin rechazarse por restricciones (D1/D11 — `clasificacion:
+ * "representable"` siempre, nunca `"rechazo"`; `motor.ts:358-360` rechazaría el
+ * ESTADO INICIAL completo si esto fuera `"rechazo"`, rompiendo PERSISTIBLE ⇒
+ * RECARGABLE para los proyectos que ya existen con estos pines).
+ *
+ * Terminal-aware por construcción, nunca por `if GPIO<n>`:
+ * - `flashReservado`/`strapping`/`uartUsb` sólo miran `pin.restricciones` — aplican
+ *   igual a cualquier terminal (LED, pulsador), porque `RegistroPin.capacidades`
+ *   (`entradaDigital`) ya es `true` en esos pines (`placas.ts::crearPinEsp32`): el
+ *   riesgo es del PIN, no del sentido del terminal.
+ * - `PIN_SIN_PULLUP_INTERNO` (D5, H-4=A) SÍ depende del terminal: sólo dispara si
+ *   `terminal.requierePullUpInterno` es `true` (hoy, únicamamente `pulsador.senal`)
+ *   Y el pin tiene `soloEntrada`. Una terminal `analogica` (el `ntc`) nunca declara
+ *   ese dato, así que GPIO34 sigue sin motivo para un sensor analógico — mismo
+ *   fixture de Phase 1 (`nucleo-ir-cargador.test.mjs:706`).
+ * - Nunca duplica `CAPACIDAD_PIN_INCOMPATIBLE`: un LED (salida) en GPIO34 ya lo
+ *   recibe de `asignarPin`, y como su terminal no declara `requierePullUpInterno`,
+ *   esta función no agrega nada más para ese caso.
+ */
+export function evaluarRestriccionesPin(terminal: Terminal, pin: RegistroPin): readonly Motivo[] {
+  const motivos: Motivo[] = []
+
+  if (pin.restricciones.includes("flashReservado")) {
+    motivos.push({
+      codigo: "PIN_FLASH_RESERVADO",
+      categoria: "tecnica",
+      severidad: SEVERIDAD_POR_RESTRICCION.flashReservado,
+      clasificacion: "representable",
+      datos: { pin: pin.id, terminal: terminal.id, restriccion: "flashReservado" satisfies Restriccion },
+    })
+  }
+
+  if (pin.restricciones.includes("strapping")) {
+    motivos.push({
+      codigo: "PIN_STRAPPING",
+      categoria: "tecnica",
+      severidad: severidadStrapping(pin),
+      clasificacion: "representable",
+      datos: { pin: pin.id, terminal: terminal.id, restriccion: "strapping" satisfies Restriccion },
+    })
+  }
+
+  if (pin.restricciones.includes("uartUsb")) {
+    motivos.push({
+      codigo: "PIN_UART_USB",
+      categoria: "tecnica",
+      severidad: SEVERIDAD_POR_RESTRICCION.uartUsb,
+      clasificacion: "representable",
+      // `datos` se limita a la evidencia de `circuito.ts:348-351`: la carga del
+      // programa y el Monitor Serie, nunca más de lo que el repo respalda.
+      datos: { pin: pin.id, terminal: terminal.id, restriccion: "uartUsb" satisfies Restriccion, impacto: "carga del programa y Monitor Serie" },
+    })
+  }
+
+  if (terminal.requierePullUpInterno && pin.restricciones.includes("soloEntrada")) {
+    motivos.push({
+      codigo: "PIN_SIN_PULLUP_INTERNO",
+      categoria: "tecnica",
+      severidad: "blocking",
+      clasificacion: "representable",
+      datos: { pin: pin.id, terminal: terminal.id, restriccion: "soloEntrada" satisfies Restriccion },
+    })
+  }
+
+  return motivos
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════

@@ -109,8 +109,22 @@ const ESP32_POOL_DIGITAL: readonly number[] = [4, 5, 18, 19, 23, 25, 26, 27, 33,
 // circuito.ts:330 — pool analógico automático.
 const ESP32_POOL_ANALOGICO: readonly number[] = [34, 35, 36, 39, 32, 33]
 // circuito.ts:334 — GPIOs que existen físicamente y NO son flash (unión con el set de abajo).
+//
+// D9 (PHASE_2_SLICE_1_HARDENING_DESIGN.md §1, gate final de hardening, 2026-09-29):
+// SIN 37 y 38 — DIVERGE a propósito de `circuito.ts:334`, que sí los incluye en su
+// `GPIO_VALIDOS` (ese archivo NO se toca, prohibido en Fase 1/2). A nivel chip existen
+// como `SENSOR_CAPP`/`SENSOR_CAPN` (solo-entrada), pero NO salen a ningún pin del
+// módulo WROOM que traen las escuelas — "un matiz honesto sobre 'son cuatro'"
+// (`opencode/skills/esp32/SKILL.md:82-85`) y confirmado contra el bundle Wokwi real
+// (`tests/circuito.test.mjs:2524-2527`: "GPIO37 y GPIO38 son SENSOR_CAPP/SENSOR_CAPN
+// y el módulo WROOM no los expone... no se pueden 'mapear': no están"). Declararlos
+// VALIDOS acá era mentirle al registro: esta placa (`esp32-devkit-v1`, no el chip
+// desnudo) no los tiene. Asignarlos por operación da el mismo rechazo que cualquier
+// otro pin inexistente (`PIN_INEXISTENTE_EN_PLACA`); un estado histórico con GPIO37/38
+// se diagnostica con `PIN_INEXISTENTE_EN_DOCUMENTO` (D10, `validar-tecnico.ts`).
+// Ningún test `tests/nucleo-*` (Phase 1, intocable) referencia 37/38 — verificado.
 const ESP32_GPIO_VALIDOS: readonly number[] = [
-  0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 37, 38, 39,
+  0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39,
 ]
 // circuito.ts:336 — flash SPI: existen físicamente, `motivoRechazo` los frena ANTES que
 // el chequeo de "no existe" (por eso van acá, no en GPIO_VALIDOS: circuito.ts los trata

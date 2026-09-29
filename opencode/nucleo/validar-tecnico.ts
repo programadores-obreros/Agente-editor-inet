@@ -37,7 +37,7 @@
 
 import type { Proyecto, Componente } from "./ir.ts"
 import type { Catalogo, ComponenteCatalogo, Cantidad, Magnitud, Unidad } from "./catalogo.ts"
-import { asignarPin, evaluarRequisito, propagarMagnitud, estaFueraDeRango } from "./catalogo.ts"
+import { asignarPin, evaluarRequisito, evaluarRestriccionesPin, propagarMagnitud, estaFueraDeRango } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
 
 export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly Motivo[] {
@@ -94,6 +94,30 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
       if (pinReal) {
         const incompatible = asignarPin(terminal, pinReal)
         if (incompatible) motivos.push({ ...incompatible, entidad: { tipo: "componente", id: componente.id } })
+        // D1/D2/D3/D5/D7 (PHASE_2_SLICE_1_HARDENING_DESIGN.md §1-2): restricciones de
+        // GPIO del pin ASIGNADO — mismo llamador que `asignarPin`, nunca la reemplaza
+        // (la operación sigue sin rechazarse por esto, D11). `evaluarRestriccionesPin`
+        // es terminal-aware por dato (`requierePullUpInterno`), nunca por `if GPIO<n>`.
+        for (const restriccion of evaluarRestriccionesPin(terminal, pinReal)) {
+          motivos.push({ ...restriccion, entidad: { tipo: "componente", id: componente.id } })
+        }
+      } else if (pinesDePlaca !== undefined) {
+        // D10 (PIN_INEXISTENTE_EN_DOCUMENTO): la placa SÍ se reconoce (si no fuera
+        // así, ya se reportó `PLACA_DESCONOCIDA_EN_DOCUMENTO` arriba y `pinesDePlaca`
+        // sería `undefined`), pero este pin no existe en SU registro — por cualquier
+        // camino (`SetPlaca` a otra placa con el pin ya asignado, o un documento
+        // editado a mano en disco con un GPIO fuera del registro). Antes de este fix
+        // este caso se salteaba en silencio (`if (pinReal)`, sin más) — mismo patrón
+        // que `PLACA_DESCONOCIDA_EN_DOCUMENTO`: blocking, representable, el
+        // componente NUNCA se borra, el proyecto carga, queda not-ready y editable.
+        motivos.push({
+          codigo: "PIN_INEXISTENTE_EN_DOCUMENTO",
+          categoria: "tecnica",
+          severidad: "blocking",
+          clasificacion: "representable",
+          entidad: { tipo: "componente", id: componente.id },
+          datos: { pin: pinId, terminal: terminal.id, placa: proyecto.placa },
+        })
       }
     }
 

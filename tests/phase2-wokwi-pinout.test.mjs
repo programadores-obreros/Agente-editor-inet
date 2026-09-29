@@ -81,9 +81,14 @@ test("B1: nombreWokwiDePin devuelve null (nunca un D<n> inventado) para un GPIO 
   assert.ok(gpio6, "fixture: GPIO6 existe en el catalogo (flash, gap heredado)")
   assert.equal(nombreWokwiDePin(gpio6), null, "sin pin fisico real -> null, nunca 'D6'")
 
+  // D9 (PHASE_2_SLICE_1_HARDENING_DESIGN.md, gate final de hardening): GPIO37 ya NO
+  // está en el registro (`nucleo/placas.ts::ESP32_GPIO_VALIDOS`) — no salen a ningún
+  // pin del módulo WROOM que traen las escuelas (SKILL.md:82-85,
+  // circuito.test.mjs:2524-2527), a diferencia de `circuito.ts`, que sí lo declara
+  // válido y no se toca. El caso "sin pin físico real" queda cubierto por GPIO6 (flash,
+  // arriba): esto ahora prueba que GPIO37 directamente no existe en el catálogo.
   const gpio37 = catalogo.pinesDePlaca("esp32-devkit-v1").find((p) => p.id === "GPIO37")
-  assert.ok(gpio37)
-  assert.equal(nombreWokwiDePin(gpio37), null, "sin pin fisico real -> null, nunca 'D37'")
+  assert.equal(gpio37, undefined, "GPIO37 ya no existe en el registro (D9) -- no sale a ningun pin del modulo WROOM en el DevKit v1")
 
   const gpio1 = catalogo.pinesDePlaca("esp32-devkit-v1").find((p) => p.id === "GPIO1")
   assert.ok(gpio1)

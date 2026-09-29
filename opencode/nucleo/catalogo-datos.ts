@@ -57,7 +57,13 @@ export const PULSADOR: ComponenteCatalogo = {
   nombreVisible: "Pulsador",
   clase: "entrada",
   terminales: [
-    { id: "senal", rol: "senal", electrica: "digital", direccion: "entrada" },
+    // requierePullUpInterno (D5/H-4=A, PHASE_2_SLICE_1_HARDENING_DESIGN.md §1-2):
+    // el pulsador se cablea SIN resistencia externa porque usa el pull-up interno
+    // del pin (INPUT_PULLUP, circuito.ts:1104) — un pin `soloEntrada` (GPIO34/35/
+    // 36/39) NO tiene pull-up/pull-down real (circuito.ts:339-343), así que ahí el
+    // pulsador nunca va a leer bien. `evaluarRestriccionesPin` (catalogo.ts) combina
+    // este dato con `RegistroPin.restricciones` para emitir `PIN_SIN_PULLUP_INTERNO`.
+    { id: "senal", rol: "senal", electrica: "digital", direccion: "entrada", requierePullUpInterno: true },
     { id: "gnd", rol: "tierra", electrica: "riel-fijo", destinoFijo: "GND" },
   ],
   capacidades: [{ id: "estadoBooleano", magnitud: "estadoBooleano", unidad: "ninguna" }],
