@@ -1048,3 +1048,60 @@ la página dejaba un 404 de ruido en la consola (observado por el
 orquestador en la demo real, P2-T12). Test:
 `tests/phase2-transporte-http.test.mjs`, "GET /favicon.ico da 204 sin
 cuerpo".
+
+### B1 (MAJOR) — nombre de pin Wokwi inventado/erróneo para GPIO reservados/inexistentes
+
+**Hallazgo**: `nombreWokwiDePin()` tenía un fallback `` `D${numero}` `` para
+cualquier GPIO fuera de la tabla `ESP32_WOKWI_PIN` — un nombre NUNCA
+verificado contra el bundle Wokwi real. Contra el `<wokwi-esp32-devkit-v1>`
+REAL (Chromium headless instanciando el bundle real del repo, `el.pinInfo`),
+la pieza tiene EXACTAMENTE 30 pines. Comparado contra lo que el selector
+ofrecía: 9 GPIO (0, 6-11, 37, 38) NO EXISTEN como pin físico en absoluto —
+se mostraban como `D0`/`D6`.../`D37`/`D38`, nombres inventados sin ningún
+cable real detrás. Y 2 GPIO (1, 3) SÍ existen físicamente pero con OTRO
+nombre — `TX0`/`RX0`, no `D1`/`D3` — un dato incorrecto, no sólo un hueco
+(ataque A1, P2-RED-B).
+
+**Fix**:
+- `opencode/vista-fisica/wokwi-render-datos.ts::ESP32_WOKWI_PIN` — se agregan
+  `1→"TX0"` y `3→"RX0"`, confirmados contra el dump real (NUNCA una copia de
+  `circuito.ts`, que no los tenía — la fuente acá es el bundle real,
+  documentado explícitamente en el archivo).
+- `nombreWokwiDePin()` — el fallback `` `D${numero}` `` se ELIMINA. Un GPIO
+  fuera de la tabla ahora devuelve `null` ("sin pin físico en esta placa"),
+  nunca un nombre inventado.
+- `snapshot-a-vista.ts::gpiosCandidatosPara()` — los GPIO OFRECIDOS en el
+  selector son ahora la INTERSECCIÓN de "el Engine/catálogo los acepta"
+  (`asignarPin()`, sin cambios) Y "el renderer tiene un pin físico real para
+  ellos" (`nombreWokwiDePin() !== null`). Es una restricción de
+  PRESENTACIÓN (no se puede dibujar un cable a un pin que no existe en la
+  pieza), NUNCA una regla eléctrica nueva — el gap de `asignarPin()` no
+  filtrando `RegistroPin.restricciones` sigue siendo el mismo, sin cerrar.
+- Si el Engine YA tiene un pin asignado sin representación física (un actor
+  "agente" lo asignó directo, sin pasar por el selector — sigue siendo
+  posible, ese gap es de Fase 1 y no se cierra acá): la vista lo muestra
+  HONESTAMENTE. `TerminalVista.asignado.nombreWokwiPlaca` y
+  `ExtremoCableVista.pinPlaca.nombreWokwi` pasan a ser `string | null` — el
+  `pinSemantico` real NUNCA se oculta, y `plan-de-pintado.js::etiquetaDeExtremo`
+  convierte el `null` en un texto honesto (`"GPIO6 (sin pin físico en esta
+  placa)"`), nunca la palabra literal `"null"` ni un nombre inventado.
+
+**Backlog explícito, NO tocado en esta ronda** (`nucleo/placas.ts`): GPIO37/38
+están en `ESP32_GPIO_VALIDOS` sin ninguna restricción asociada (ni
+`ESP32_GPIO_SOLO_ENTRADA`/`STRAPPING`/`FLASH`/`UART_USB`), y `asignarPin()`
+nunca mira `RegistroPin.restricciones` — ambos son gaps de DATOS Y REGLAS de
+Fase 1, no de este adaptador de vista. Esta ronda sólo cierra que la VISTA no
+invente ni oculte nada; no valida eléctricamente nada nuevo.
+
+**Tests** (`tests/phase2-wokwi-pinout.test.mjs`, contra una lista fija de los
+30 nombres reales citada del dump): todos los GPIO ofrecidos existen en el
+pinout real; GPIO1/GPIO3 se muestran como TX0/RX0; una asignación a un GPIO
+sin pin físico se proyecta honestamente (pin semántico visible,
+`nombreWokwi: null`, texto pintado sin la palabra "null" ni un nombre
+inventado). Se actualizó `tests/phase2-vista-fisica.test.mjs` (el assert que
+documentaba "GPIO6 SE OFRECE, gap heredado" pasa a "GPIO6 YA NO SE OFRECE" —
+GPIO2 sigue ofrecido, porque SÍ tiene pin físico real, así que el gap de
+`asignarPin()` para strapping sigue siendo visible ahí). Mutante (volver al
+fallback `D${numero}`) mata 3 de los 4 tests nuevos. Verificado además contra
+el demo launcher REAL (antes: 30 GPIO ofrecidos con 9 inventados; después: 21
+GPIO, todos reales) — evidencia en `.../evidencia/W5/B1/`.

@@ -44,6 +44,14 @@ import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, Extremo
  * técnico), exactamente el mismo criterio que usa `validarTecnico()` para diagnosticar
  * `CAPACIDAD_PIN_INCOMPATIBLE` post-commit.
  *
+ * Revisión post red-team (Hallazgo B1, MAJOR, P2-RED-B/INFORME.md): ADEMÁS, un pin
+ * sólo se ofrece si `nombreWokwiDePin()` le da un nombre REAL (no `null`) — la
+ * intersección entre "el Engine/catálogo lo acepta" y "el renderer lo puede
+ * dibujar". Es una restricción de PRESENTACIÓN (no se puede dibujar un cable a un
+ * pin que no existe en la pieza Wokwi), nunca una regla eléctrica nueva: el gap de
+ * `asignarPin()` no filtrando `RegistroPin.restricciones` sigue siendo el mismo,
+ * documentado y NO cerrado acá (`DECISIONS.md`, backlog de Fase 1).
+ *
  * `placaId === null` (proyecto sin placa elegida) da SIEMPRE `[]` — no hay pines que
  * ofrecer todavía (mismo criterio que `detectarIncompleto`, `nucleo/validar.ts`).
  */
@@ -51,7 +59,14 @@ export function gpiosCandidatosPara(catalogo: Catalogo, placaId: string | null, 
   if (placaId === null) return []
   const pines = catalogo.pinesDePlaca(placaId)
   if (!pines) return []
-  return pines.filter((pin) => asignarPin(terminal, pin) === null).map((pin) => ({ pinSemantico: pin.id, nombreWokwi: nombreWokwiDePin(pin) }))
+  const candidatos: OpcionGpioVista[] = []
+  for (const pin of pines) {
+    if (asignarPin(terminal, pin) !== null) continue // rechazo técnico del catálogo
+    const nombreWokwi = nombreWokwiDePin(pin)
+    if (nombreWokwi === null) continue // sin pin fisico real en el renderer — no se puede ofrecer
+    candidatos.push({ pinSemantico: pin.id, nombreWokwi })
+  }
+  return candidatos
 }
 
 function resolverDestinoFijo(terminal: Terminal): string | undefined {

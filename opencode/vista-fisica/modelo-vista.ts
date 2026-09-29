@@ -29,7 +29,13 @@ export interface PlacaVista {
  * nunca inventado. Las cuatro variantes existen porque el catálogo real (Fase 1) las
  * distingue de verdad:
  * - `asignado`: terminal `electrica: "digital"|"analogica"` CON un pin de placa
- *   asignado (`Componente.pines[terminal.id]`, `nucleo/ir.ts`).
+ *   asignado (`Componente.pines[terminal.id]`, `nucleo/ir.ts`). `nombreWokwiPlaca`
+ *   es `null` (revisión post red-team, B1) cuando el pin asignado NO tiene
+ *   representación física en el custom element Wokwi de la placa (ej. un GPIO de
+ *   flash/reservado que un actor "agente" asignó directo, sin pasar por el
+ *   selector) — la vista lo muestra HONESTAMENTE (el `pinSemantico` real sigue
+ *   presente, nunca se oculta la asignación), nunca inventa un nombre de pin que
+ *   no existe (`wokwi-render-datos.ts::nombreWokwiDePin`).
  * - `sinAsignar`: mismo tipo de terminal, sin pin todavía (`null` en la IR).
  * - `rielFijo`: terminal `electrica: "riel-fijo"` CON `Terminal.destinoFijo`
  *   declarado (ej. el cátodo del LED, GND — `catalogo-datos.ts:23`).
@@ -39,7 +45,7 @@ export interface PlacaVista {
  *   destino fijo que no existe.
  */
 export type TerminalVista =
-  | { readonly estado: "asignado"; readonly pinSemantico: string; readonly nombreWokwiPlaca: string; readonly nombreWokwiPieza: string | null }
+  | { readonly estado: "asignado"; readonly pinSemantico: string; readonly nombreWokwiPlaca: string | null; readonly nombreWokwiPieza: string | null }
   | { readonly estado: "sinAsignar"; readonly nombreWokwiPieza: string | null }
   | { readonly estado: "rielFijo"; readonly destino: string; readonly nombreWokwiPieza: string | null }
   | { readonly estado: "puente"; readonly nombreWokwiPieza: string | null }
@@ -64,9 +70,11 @@ export interface ComponenteVista {
 }
 
 /** Un extremo de un cable esquemático — nunca un punto geométrico (eso queda fuera
- * del slice, PHASE_2_SLICE_1_DESIGN.md §2.6/§3.4 de ARCH-C). */
+ * del slice, PHASE_2_SLICE_1_DESIGN.md §2.6/§3.4 de ARCH-C). `nombreWokwi` de
+ * `pinPlaca` es `string | null` (revisión post red-team, B1) por el mismo motivo que
+ * `TerminalVista.asignado.nombreWokwiPlaca` — ver esa nota. */
 export type ExtremoCableVista =
-  | { readonly tipo: "pinPlaca"; readonly pinSemantico: string; readonly nombreWokwi: string }
+  | { readonly tipo: "pinPlaca"; readonly pinSemantico: string; readonly nombreWokwi: string | null }
   | { readonly tipo: "terminal"; readonly componente: string; readonly terminal: string; readonly nombreWokwi: string | null }
   | { readonly tipo: "rielFijo"; readonly destino: string }
 
@@ -79,7 +87,12 @@ export interface CableVista {
 export interface OpcionGpioVista {
   /** `RegistroPin.id` ("GPIO5") — lo que entiende el motor/la IR. */
   readonly pinSemantico: string
-  /** Nombre real del pin en el custom element Wokwi de la PLACA ("D5"). */
+  /** Nombre real del pin en el custom element Wokwi de la PLACA ("D5") — SIEMPRE un
+   * pin que existe de verdad en el renderer (revisión post red-team, B1:
+   * `snapshot-a-vista.ts::gpiosCandidatosPara` sólo ofrece un GPIO si, ADEMÁS de
+   * pasar `asignarPin()`, `wokwi-render-datos.ts::nombreWokwiDePin` le da un nombre
+   * real, no `null`) — nunca `string | null` acá: un candidato SIN representación
+   * física simplemente no aparece en esta lista. */
   readonly nombreWokwi: string
 }
 
@@ -99,7 +112,11 @@ export interface ModeloDeVista {
   /** `componente.id` → `terminal.id` → candidatos, sólo para terminales que NO son
    * riel-fijo. Cada candidato ya pasó `asignarPin()` (`nucleo/catalogo.ts`) — la
    * vista consulta esa única regla, nunca la reimplementa (ver el límite conocido en
-   * `wokwi-render-datos.ts`/`snapshot-a-vista.ts` sobre `RegistroPin.restricciones`). */
+   * `wokwi-render-datos.ts`/`snapshot-a-vista.ts` sobre `RegistroPin.restricciones`).
+   * Revisión post red-team (B1): además, sólo quedan los candidatos con un nombre
+   * Wokwi REAL confirmado — la intersección Engine∩pin-físico-del-renderer, nunca
+   * una regla eléctrica nueva (es que NO SE PUEDE DIBUJAR un cable a un pin que no
+   * existe en la pieza, una restricción de presentación). */
   readonly gpiosDisponibles: Readonly<Record<string, Readonly<Record<string, readonly OpcionGpioVista[]>>>>
   /** Tal cual `validarProyecto()` los produjo (mismo orden estable,
    * `nucleo/motivos.ts::compararMotivos`) — la vista NUNCA inventa una causa nueva ni

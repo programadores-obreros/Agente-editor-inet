@@ -13,6 +13,21 @@
 // - Arduino UNO nombra sus digitales con el número PELADO (`"2"`, no `D2`) y sus
 //   analógicos `A<n>` — dump:60/53-58. Fuera del fixture de este slice (ESP32+LED),
 //   pero la tabla lo cubre para no dejar una trampa de "funciona sólo para ESP32".
+//
+// Revisión post red-team (Hallazgo B1, MAJOR, P2-RED-B/INFORME.md, ataque A1): el
+// `<wokwi-esp32-devkit-v1>` REAL (instanciado con Chromium headless contra el bundle
+// real del repo, `el.pinInfo`) tiene EXACTAMENTE 30 pines — `3V3, D12, D13, D14, D15,
+// D18, D19, D2, D21, D22, D23, D25, D26, D27, D32, D33, D34, D35, D4, D5, EN, GND.1,
+// GND.2, RX0, RX2, TX0, TX2, VIN, VN, VP`. Contra ESA lista real (no la documentación
+// parcial de `docs/wokwi-pinout-dump.md`, truncada con "…"): GPIO1 es `TX0` (no
+// `D1`) y GPIO3 es `RX0` (no `D3`) — el fallback `` `D${numero}` `` que este archivo
+// tenía antes los mostraba MAL, no sólo con un hueco. Y GPIO0/6/7/8/9/10/11/37/38 NO
+// EXISTEN como pin físico en absoluto en ese custom element — el fallback los
+// inventaba como `D0`/`D6`.../`D37`/`D38`, nombres que un estudiante podía intentar
+// cablear y que no corresponden a NADA dibujado. Ver
+// `.../scratchpad/phase2/RED-B/pinout-check/` y
+// `.../scratchpad/phase2/evidencia/W5/B1/` para el dump completo (Chromium real
+// contra el bundle real del repo, no una suposición).
 
 import type { RegistroPin } from "../nucleo/placas.ts"
 
@@ -20,8 +35,12 @@ import type { RegistroPin } from "../nucleo/placas.ts"
 // GPIO (placa) → nombre real del pin en el custom element Wokwi
 // ════════════════════════════════════════════════════════════════════════════════════
 
-// circuito.ts:624-631 (`ESP32_WOKWI_PIN`) — copiado LITERAL, con su propia cita de
-// origen para los 4 casos especiales conservada tal cual el archivo original.
+// circuito.ts:624-631 (`ESP32_WOKWI_PIN`) — los 23 primeros son copia LITERAL, con su
+// propia cita de origen para los 4 casos especiales conservada tal cual el archivo
+// original. `1`/`3` son NUEVOS (revisión post red-team, B1): `circuito.ts` NUNCA
+// tuvo entrada para ellos (su `motivoRechazo` los frenaba antes de necesitar
+// dibujarlos), así que la fuente acá es el dump REAL del bundle, no una copia de
+// `circuito.ts` — ver la nota de cabecera del archivo, ataque A1 de P2-RED-B.
 const ESP32_WOKWI_PIN: ReadonlyMap<number, string> = new Map<number, string>([
   ...([2, 4, 5, 12, 13, 14, 15, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35] as const).map((n): [number, string] => [n, `D${n}`]),
   // Los cuatro que la placa NO rotula "GPIO". Cada uno con su fuente (circuito.ts:626-630):
@@ -29,35 +48,39 @@ const ESP32_WOKWI_PIN: ReadonlyMap<number, string> = new Map<number, string>([
   [17, "TX2"], // idem
   [36, "VP"], // SENSOR_VP — ESP32 Series Datasheet, Pin Definitions, pin físico 5
   [39, "VN"], // SENSOR_VN — idem, pin físico 8
+  // NUEVOS (B1): confirmados contra `el.pinInfo` real del bundle, nunca contra
+  // circuito.ts (que no los tenía) — ver la nota de cabecera del archivo.
+  [1, "TX0"],
+  [3, "RX0"],
 ])
 
 /**
  * Nombre del pin de la PLACA, en el vocabulario del custom element Wokwi (`pinInfo`/
- * atributo), a partir de un `RegistroPin` (`nucleo/placas.ts`).
+ * atributo), a partir de un `RegistroPin` (`nucleo/placas.ts`) — o `null` si ese
+ * número de GPIO NO TIENE representación física en el custom element real (revisión
+ * post red-team, B1: antes acá se inventaba `` `D${numero}` ``, un nombre nunca
+ * verificado contra el bundle, para cualquier GPIO fuera de la tabla).
  *
- * Regla de resolución (PURA, sin I/O, sin regla eléctrica nueva — sólo PRESENTACIÓN):
+ * Regla de resolución (PURA, sin I/O, sin regla eléctrica nueva — sólo PRESENTACIÓN;
+ * "no ofrecer/dibujar un pin sin representación física" es una restricción de
+ * PRESENTACIÓN — no se puede dibujar un cable a un pin que no existe en la pieza —
+ * nunca una regla eléctrica nueva sobre qué GPIO son válidos: esa sigue siendo,
+ * únicamente, `asignarPin()`, `nucleo/catalogo.ts`):
  * 1. ESP32 (`pin.banco === "GPIO"`): tabla `ESP32_WOKWI_PIN` si el número está ahí.
- * 2. Si no está en la tabla (gap real: `ESP32_GPIO_VALIDOS`/`ESP32_GPIO_FLASH` de
- *    `nucleo/placas.ts` listan MÁS números que los 23 que `circuito.ts` portaba —
- *    ej. GPIO0/1/3/6-11/37/38 nunca tuvieron entrada en `ESP32_WOKWI_PIN` porque
- *    `circuito.ts.motivoRechazo` los frenaba ANTES de necesitar dibujarlos):
- *    fallback derivable de la MISMA convención que el resto de la placa usa
- *    (`docs/wokwi-pinout-dump.md`: "Los GPIO se llaman D<n>") — `RegistroPin.etiquetas`
- *    primero (por si el catálogo declaró un alias no-"GPIO" que la tabla todavía no
- *    cubre), si no `` `D${numero}` ``. Nunca una regla eléctrica nueva: sólo el mismo
- *    patrón de nombre que ya certifica el volcado real.
+ * 2. Si no está en la tabla: `null` — sin fallback inventado. `ESP32_GPIO_VALIDOS`/
+ *    `ESP32_GPIO_FLASH` de `nucleo/placas.ts` listan GPIO (0, 6-11, 37, 38) que el
+ *    catálogo de Fase 1 acepta pero que la pieza Wokwi real NO representa —
+ *    confirmado contra `el.pinInfo` (ver nota de cabecera). Ese es un gap de
+ *    datos/reglas de Fase 1 (`asignarPin()` no filtra por `RegistroPin.restricciones`,
+ *    y `ESP32_GPIO_VALIDOS` incluye 37/38 sin ninguna restricción asociada) — NO se
+ *    cierra acá (`DECISIONS.md`, backlog); esta función sólo se niega a INVENTAR un
+ *    nombre para lo que no existe.
  * 3. Arduino UNO digital (`banco === "D"`): Wokwi usa el número PELADO (dump:60).
  * 4. Arduino UNO analógico (`banco === "A"`): Wokwi usa `A<n>` (dump:53-58) — mismo
  *    `id` que ya usa `RegistroPin.id` en `nucleo/placas.ts`, sin traducción.
  */
-export function nombreWokwiDePin(pin: RegistroPin): string {
-  if (pin.banco === "GPIO") {
-    const directo = ESP32_WOKWI_PIN.get(pin.numero)
-    if (directo) return directo
-    const alternativa = pin.etiquetas.find((e) => !e.startsWith("GPIO"))
-    if (alternativa) return alternativa
-    return `D${pin.numero}`
-  }
+export function nombreWokwiDePin(pin: RegistroPin): string | null {
+  if (pin.banco === "GPIO") return ESP32_WOKWI_PIN.get(pin.numero) ?? null
   if (pin.banco === "D") return String(pin.numero)
   return `A${pin.numero}` // banco === "A"
 }

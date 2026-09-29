@@ -302,17 +302,29 @@ Wokwi de la PLACA), `terminal` (componente + terminal + nombre Wokwi de la PIEZA
 
 ### Límite conocido, heredado — no lo cierra este módulo
 
-`gpiosDisponibles` sale ÚNICAMENTE de `asignarPin()` (`nucleo/catalogo.ts`), pin por
-pin. Esa función filtra por `RegistroPin.capacidades` (salidaDigital/entradaDigital/
-pwm/adc) — eso SÍ excluye los pines `soloEntrada` del ESP32 (GPIO34/35/36/39). Pero
+`gpiosDisponibles` sale de `asignarPin()` (`nucleo/catalogo.ts`), pin por pin. Esa
+función filtra por `RegistroPin.capacidades` (salidaDigital/entradaDigital/pwm/adc)
+— eso SÍ excluye los pines `soloEntrada` del ESP32 (GPIO34/35/36/39). Pero
 `asignarPin()` NUNCA mira `RegistroPin.restricciones` (`flashReservado`/`strapping`/
 `uartUsb`): ningún validador de Fase 1 consume ese campo hoy (verificado: `rg
 restriccion -i` sobre `validar-tecnico.ts`/`catalogo.ts` da cero resultados). La vista
-NO cierra ese gap por su cuenta — mostrará como "disponible" un GPIO reservado a flash
-(6-11) o de arranque (strapping: 0/2/12/15) si el catálogo lo acepta hoy. Cerrarlo es
-una decisión de producto sobre `nucleo/catalogo.ts`, documentada pero no resuelta acá
-(ver `tests/phase2-vista-fisica.test.mjs`, sección 2, para la evidencia ejecutable de
-qué SÍ filtra y qué no).
+NO cierra ese gap por su cuenta — GPIO2 (strapping), por ejemplo, sigue "disponible"
+si el catálogo lo acepta hoy. Cerrarlo es una decisión de producto sobre
+`nucleo/catalogo.ts`, documentada pero no resuelta acá (ver
+`tests/phase2-vista-fisica.test.mjs`, sección 2, para la evidencia ejecutable de qué
+SÍ filtra y qué no).
+
+**Revisión post red-team (Hallazgo B1, MAJOR — `DECISIONS.md` para el detalle
+completo)**: ADEMÁS del filtro de `asignarPin()` de arriba, `gpiosDisponibles` ahora
+exige que el GPIO tenga un nombre Wokwi REAL confirmado contra el bundle
+(`wokwi-render-datos.ts::nombreWokwiDePin`, nunca un `` `D${numero}` `` inventado) —
+una restricción de PRESENTACIÓN (no se puede dibujar un cable a un pin que no existe
+en la pieza), nunca una regla eléctrica nueva. Por eso GPIO0/6-11/37/38 (9 números
+que el catálogo acepta pero que el `<wokwi-esp32-devkit-v1>` real no representa) ya
+NO aparecen ofrecidos, mientras que GPIO2 (strapping, el ejemplo del gap de arriba)
+SÍ sigue ofrecido, porque tiene pin físico real (`D2`) — los dos gaps son
+independientes: uno es del catálogo (Fase 1, backlog), el otro era de la tabla de
+render (B1, cerrado en esta ronda).
 
 ## Plan de pintado — `opencode/vista-fisica/web/plan-de-pintado.js`
 

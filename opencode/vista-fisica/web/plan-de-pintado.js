@@ -95,8 +95,15 @@ export function planDePintado(modeloDeVista) {
   return instrucciones
 }
 
+// Revisión post red-team (Hallazgo B1, MAJOR, P2-RED-B/INFORME.md): `nombreWokwi`
+// de un extremo `pinPlaca` puede ser `null` (el pin está asignado en la IR, pero el
+// renderer no tiene una pieza física para él — ej. un GPIO de flash asignado por un
+// actor "agente", nunca ofrecido por el selector). Mostrar la palabra "null" o
+// inventar un nombre serían las dos formas de romper el mismo contrato ("nunca
+// oculta, nunca inventa") — el texto muestra el pin SEMÁNTICO real (lo que el
+// Engine sabe) más una nota honesta de que no hay dónde dibujarlo.
 function etiquetaDeExtremo(extremo) {
-  if (extremo.tipo === "pinPlaca") return extremo.nombreWokwi
+  if (extremo.tipo === "pinPlaca") return extremo.nombreWokwi ?? `${extremo.pinSemantico} (sin pin físico en esta placa)`
   if (extremo.tipo === "rielFijo") return extremo.destino
   return extremo.nombreWokwi ?? `${extremo.componente}.${extremo.terminal}`
 }

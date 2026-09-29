@@ -114,12 +114,21 @@ test("gpiosDisponibles incluye GPIO16/GPIO18 (validos, verificados en phase2-hel
   // Límite conocido, heredado y documentado (esta vista NO lo cierra):
   // `asignarPin()` nunca mira `RegistroPin.restricciones` (flashReservado/strapping/
   // uartUsb) — ningún validador de Fase 1 lo consume hoy (`rg restriccion -i` sobre
-  // validar-tecnico.ts/catalogo.ts da cero resultados, informe ARCH-C §7.1). GPIO6
-  // (flash) y GPIO2 (strapping) SÍ pasan asignarPin() hoy. Si un cambio futuro en
-  // `nucleo/catalogo.ts` cerrara este gap, este assert se pondría en rojo — señal de
-  // que hay que revisar esta nota, no de que el módulo de vista se rompió.
-  assert.ok(semanticos.includes("GPIO6"), "gap heredado: flashReservado no está filtrado por asignarPin() hoy")
-  assert.ok(semanticos.includes("GPIO2"), "gap heredado: strapping no está filtrado por asignarPin() hoy")
+  // validar-tecnico.ts/catalogo.ts da cero resultados, informe ARCH-C §7.1). GPIO2
+  // (strapping) SÍ pasa asignarPin() hoy Y tiene pin físico real en el renderer
+  // ("D2") — sigue OFRECIDO: el gap de asignarPin() es del catálogo (Fase 1), no de
+  // la vista, y esta prueba lo mantiene visible a propósito.
+  assert.ok(semanticos.includes("GPIO2"), "gap heredado: strapping no está filtrado por asignarPin() hoy — y GPIO2 SI tiene pin fisico real (D2), asi que se ofrece igual")
+
+  // Revisión post red-team (Hallazgo B1, MAJOR, P2-RED-B/INFORME.md): GPIO6 (flash)
+  // SIGUE pasando `asignarPin()` (mismo gap heredado de arriba — no se tocó
+  // `nucleo/catalogo.ts`), pero YA NO aparece ofrecido: `gpiosCandidatosPara()`
+  // ahora también exige que `wokwi-render-datos.ts::nombreWokwiDePin` le dé un
+  // nombre REAL, y GPIO6 no tiene pin físico en el `<wokwi-esp32-devkit-v1>` real
+  // (confirmado contra el bundle real, `tests/phase2-wokwi-pinout.test.mjs`) — antes
+  // de este fix, se ofrecía con el nombre INVENTADO "D6". Este assert cambió de
+  // "se ofrece" a "NO se ofrece" como parte del fix de B1, no por una regresión.
+  assert.ok(!semanticos.includes("GPIO6"), "B1: GPIO6 no tiene pin fisico real en el renderer -- ya no se ofrece, aunque asignarPin() lo siga aceptando (gap heredado, backlog)")
 
   servicio.cerrar()
 })
