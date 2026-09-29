@@ -1192,3 +1192,12 @@ siguen dando exit 0 ("OK") contra el mismo repo trampa del red team
 (`RED-A/ataques/fake-repo/`), y exit 1 contra el control naive — evidencia
 en `.../evidencia/W5/H4/`. No hay test nuevo (una limitación documentada, no
 un contrato que deba probarse en verde).
+
+**Aclaración de autoría de la decisión (P2-T13)**: quien decidió NO cerrar H4
+con más regex fue el **ORQUESTADOR** de la sesión de Phase 2 Slice 1, no un
+humano — esta decisión queda **pendiente de confirmación del usuario
+humano**. El informe de regresión (`REG/INFORME.md`, veredicto final) la
+atribuyó por error a "decisión humana explícita"; esa atribución es
+incorrecta y se corrige acá y en `PHASE_2_SLICE_1_REPORT.md` §D.6/§E. La
+severidad MAJOR del auditor no cambia por esta aclaración: sigue registrada
+tal cual, sin relajarla.

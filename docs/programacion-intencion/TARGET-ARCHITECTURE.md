@@ -114,3 +114,45 @@ Este documento no declara Fase 1 "terminada" — eso lo dice el freeze de Fase 1
 pregunta "¿el target del brief está bien entendido y mapeado contra lo que existe
 hoy en `nucleo/`?" — sí, con la tabla de arriba como evidencia trazable gate por
 gate, archivo por archivo.
+
+## 6. Phase 2 Slice 1 — decisiones concretas
+
+Slice 1 ("quiero ver el LED") deja de decisiones tomadas, con código real como
+evidencia (detalle completo en `PHASE_2_SLICE_1_DESIGN.md`,
+`PHASE_2_SLICE_1_PROTOCOL.md` y `PHASE_2_SLICE_1_REPORT.md`):
+
+- **El composition root es in-process**: una única raíz, `opencode/nucleo/composicion-raiz.ts`,
+  con `servicio-con-vista.ts` (`opencode/servidor/servicio-con-vista.ts`) como el
+  ÚNICO punto de producción que la invoca con la vista física inyectada. Ningún otro
+  archivo de producción construye un `Almacen` ni llama a
+  `obtenerServicioDeProyecto` directo — cerrado por un único call site más un
+  candado de propiedad por proceso (`<directorio>/<idProyecto>.lock`,
+  `fs.openSync(..., "wx")`) que convierte el TOCTOU del CAS de disco entre dos
+  procesos de sistema operativo en un fallo determinístico y explícito, sin relajar
+  el CAS de `almacen.ts` (E3-07).
+- **El transporte es HTTP + SSE, same-origin, sobre loopback con puerto efímero**:
+  `opencode/servidor/servidor-proyecto.ts` (`node:http`, `127.0.0.1:0`) sirve la
+  página, los assets (lista blanca), el snapshot y las operaciones desde el MISMO
+  origen — nunca `file://` para la vista interactiva.
+- **El snapshot y las operaciones siguen el protocolo documentado en
+  `PHASE_2_SLICE_1_PROTOCOL.md`**: `GET /api/proyecto` (snapshot autoritativo),
+  `POST /api/operaciones` (`SobreOperacion` de Phase 1 tal cual, actor forzado a
+  `"navegador"`, 200 aun con rechazo de dominio, 4xx sólo por errores de
+  transporte).
+- **La notificación es un SSE `revision`**: `GET /api/eventos` emite
+  `event: revision` con `{revision}` en cada commit real (de cualquier cliente); el
+  navegador vuelve a pedir el snapshot al recibirlo — nunca aplica un cambio
+  optimista antes de la confirmación del Engine.
+- **La vista física es un adaptador puro**: `opencode/vista-fisica/snapshot-a-vista.ts`
+  proyecta `(Proyecto, Catalogo)` a un `ModeloDeVista` serializable, sin DOM ni
+  `node:`, reusando `asignarPin()` del catálogo de Phase 1 para los GPIO
+  ofrecidos (nunca reimplementa la regla eléctrica). `circuito.ts` no se modifica ni
+  se importa; sólo se citan tablas de datos presentacionales
+  (`wokwi-render-datos.ts`).
+- **E3-04b quedó CERRADO** en este slice — `Almacen` deja de ser un puerto interno
+  documentado sólo por JSDoc y pasa a estar encapsulado por la raíz de composición
+  única más un guardia estructural verificable (`DECISIONS.md`, "Phase 2 Slice 1 —
+  E3-04b: CERRADO por raíz de composición única"). Límite conocido y documentado:
+  el guardia estructural es léxico, no un parser AST — evadible de forma
+  demostrable con `import()` dinámico + acceso computado (hallazgo H4, MAJOR,
+  abierto por decisión del orquestador, pendiente de confirmación humana).
