@@ -306,6 +306,11 @@ documento. Cerrarla de verdad requeriría un parser real (AST, la API de TypeScr
 `tsgo`) para detectar `import()` dinámico + acceso computado, un cambio de mecanismo
 mayor que excede el alcance de "ronda única de fixes puntuales" de P2-T13.
 
+**Resolución posterior (2026-09-29):** el HUMAN PRODUCT OWNER confirmó H4 como
+`ACCEPTED_KNOWN_LIMITATION` (MAJOR original, no bloquea el slice). Registro y
+condiciones de reapertura en `DECISIONS.md` (sección H4) y
+`PHASE_2_SLICE_1_HARDENING_DESIGN.md` D15.
+
 ### D.7 Observaciones pendientes
 
 - **Backlog heredado de Phase 1**: `asignarPin()` (`nucleo/catalogo.ts`) nunca

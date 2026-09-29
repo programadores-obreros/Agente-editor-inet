@@ -1201,3 +1201,19 @@ atribuyó por error a "decisión humana explícita"; esa atribución es
 incorrecta y se corrige acá y en `PHASE_2_SLICE_1_REPORT.md` §D.6/§E. La
 severidad MAJOR del auditor no cambia por esta aclaración: sigue registrada
 tal cual, sin relajarla.
+
+**Resolución humana posterior (gate final de hardening, 2026-09-29)**: el HUMAN
+PRODUCT OWNER confirmó formalmente la decisión. Registro normativo:
+`original_severity = MAJOR`, `state = ACCEPTED_KNOWN_LIMITATION`,
+`accepted_by = HUMAN_PRODUCT_OWNER`, `blocks_phase2_slice1 = NO`. Las guardias
+léxicas E3-04b son controles contra bypass arquitectónico ACCIDENTAL. NO son una
+frontera de seguridad frente a código deliberadamente ofuscado escrito por alguien
+con acceso al repo. Se conservan los tests que prueban que el bypass accidental se
+detecta y la evidencia (W5/H4) de que el bypass ofuscado evade la guardia. No se
+agregan AST, regex nuevas, sandbox ni loader. **Reabrir H4 si**: corre en el proceso
+código, plugin o extensión no confiable; cambia el modelo de confianza; el almacén
+pasa a formar parte de una API pública o extensible; aparece un bypass accidental
+no detectado; o hay evidencia de que el bypass puede originarse desde input externo.
+El texto anterior (autoría del orquestador, "pendiente de confirmación") se deja
+tal cual como historia; esta resolución lo completa, no lo reemplaza. Ver
+`PHASE_2_SLICE_1_HARDENING_DESIGN.md` D15.

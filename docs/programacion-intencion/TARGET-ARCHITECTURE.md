@@ -155,4 +155,6 @@ evidencia (detalle completo en `PHASE_2_SLICE_1_DESIGN.md`,
   E3-04b: CERRADO por raíz de composición única"). Límite conocido y documentado:
   el guardia estructural es léxico, no un parser AST — evadible de forma
   demostrable con `import()` dinámico + acceso computado (hallazgo H4, MAJOR,
-  abierto por decisión del orquestador, pendiente de confirmación humana).
+  abierto por decisión del orquestador, pendiente de confirmación humana;
+  confirmado después por el HUMAN PRODUCT OWNER como `ACCEPTED_KNOWN_LIMITATION`,
+  ver `DECISIONS.md` H4).
