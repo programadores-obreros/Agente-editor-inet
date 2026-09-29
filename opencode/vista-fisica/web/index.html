@@ -27,7 +27,10 @@
   body { margin: 0; padding: 16px; }
   header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
   header h1 { font-size: 16px; margin: 0; }
-  #revision, #readiness { font-size: 13px; padding: 2px 8px; border: 1px solid currentColor; border-radius: 999px; }
+  #revision, #readiness, #conexion { font-size: 13px; padding: 2px 8px; border: 1px solid currentColor; border-radius: 999px; }
+  /* Revisión post red-team (B2): el indicador de conexión SIEMPRE está presente en
+     el DOM (no aparece/desaparece) — sólo cambia de color/texto vía data-estado-conexion. */
+  #conexion[data-estado-conexion="desconectado"] { border-color: #b91c1c; color: #b91c1c; }
   #estado { min-height: 1.4em; margin-bottom: 12px; font-size: 13px; }
   main { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
@@ -42,6 +45,7 @@
   <h1>Tecnia Bot — vista física</h1>
   <span id="revision">revisión: —</span>
   <span id="readiness">—</span>
+  <span id="conexion" data-estado-conexion="conectado">conectado</span>
 </header>
 <div id="estado" role="status" aria-live="polite"></div>
 <main>

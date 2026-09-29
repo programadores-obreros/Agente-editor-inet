@@ -11,6 +11,7 @@
 
 import { planDePintado } from "./plan-de-pintado.js"
 import { pintar } from "./pintar.js"
+import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 
 const contenedores = {
   circuito: document.getElementById("circuito"),
@@ -21,11 +22,51 @@ const contenedores = {
 const elementoRevision = document.getElementById("revision")
 const elementoReadiness = document.getElementById("readiness")
 const elementoEstado = document.getElementById("estado")
+const elementoConexion = document.getElementById("conexion")
 
 /** Último snapshot AUTORITATIVO recibido (GET /api/proyecto, POST /api/operaciones,
  * o un refetch tras el evento SSE `revision`) — nunca un estado optimista. */
 let ultimoSnapshot = null
 let contadorOperacion = 0
+
+/** Revisión post red-team (Hallazgo B2, MAJOR, P2-RED-B/INFORME.md, ataque A6): si
+ * el servidor se reinicia (puerto efímero nuevo, el caso normal con `listen(0)`)
+ * mientras la página sigue abierta, el `EventSource` reintenta CONTRA EL PUERTO
+ * MUERTO para siempre — nunca puede reconectar, porque el servidor nuevo es un
+ * origin distinto. Antes, la página quedaba exactamente igual, sin ningún indicio.
+ * `estadoConexion` (reductor PURO, `estado-conexion.js`) más este indicador visible
+ * cierran eso: nunca inventan datos de proyecto, sólo comunican la pérdida de
+ * conexión de TRANSPORTE. */
+let estadoConexion = ESTADO_INICIAL
+
+const MENSAJE_DESCONECTADO = "desconectado: la vista puede no estar actualizada. Si el servidor se reinició en otro puerto, volvé a abrir la vista física desde Tecnia Bot."
+
+function actualizarIndicadorConexion() {
+  if (!elementoConexion) return
+  elementoConexion.textContent = estadoConexion === "conectado" ? "conectado" : MENSAJE_DESCONECTADO
+  elementoConexion.setAttribute("data-estado-conexion", estadoConexion)
+}
+
+/** Procesa un evento NATIVO del `EventSource` (`"error"`/`"open"`) a través del
+ * reductor puro, y sólo si el estado CAMBIÓ actualiza el indicador y (en una
+ * reconexión real) vuelve a pedir el snapshot — nunca en la apertura inicial
+ * (`estadoConexion` ya arrancó en `"conectado"`, no hay transición que atender ahí). */
+function manejarEventoConexion(evento) {
+  const anterior = estadoConexion
+  estadoConexion = reducirEstadoConexion(estadoConexion, evento)
+  if (anterior === estadoConexion) return
+  actualizarIndicadorConexion()
+  if (estadoConexion === "conectado") {
+    // Reconexión real (mismo puerto): SIEMPRE se repinta desde un snapshot
+    // autoritativo fresco, nunca desde lo que la pestaña ya tenía dibujado.
+    cargarSnapshot()
+  } else {
+    // Desconectado: el selector se deshabilita en el PRÓXIMO repintado — repintar
+    // acá mismo (sin esperar un nuevo snapshot) para que se refleje ya mismo, sin
+    // inventar ningún dato nuevo de proyecto.
+    repintar()
+  }
+}
 
 function siguienteIdOperacion() {
   contadorOperacion += 1
@@ -47,7 +88,7 @@ function repintar() {
   elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
 
   if (!ultimoSnapshot.vista) return
-  const instrucciones = planDePintado(ultimoSnapshot.vista)
+  const instrucciones = planDePintado(ultimoSnapshot.vista, { conexionActiva: estadoConexion === "conectado" })
   const secciones = pintar(document, instrucciones, { onCambioGpio: manejarCambioGpio })
   for (const clave of Object.keys(contenedores)) {
     contenedores[clave].replaceChildren(secciones[clave])
@@ -122,5 +163,10 @@ const eventos = new EventSource("/api/eventos")
 eventos.addEventListener("revision", () => {
   cargarSnapshot()
 })
+// Revisión post red-team (B2): `error`/`open` son eventos NATIVOS del propio
+// `EventSource` (no algo que este módulo invente) — se procesan por el reductor
+// puro de `estado-conexion.js`, nunca acá mismo con lógica ad-hoc.
+eventos.addEventListener("error", () => manejarEventoConexion({ tipo: "error" }))
+eventos.addEventListener("open", () => manejarEventoConexion({ tipo: "open" }))
 
 cargarSnapshot()

@@ -43,6 +43,7 @@ UNA vez a memoria):
 | `app.js` | `opencode/vista-fisica/web/app.js` |
 | `pintar.js` | `opencode/vista-fisica/web/pintar.js` |
 | `plan-de-pintado.js` | `opencode/vista-fisica/web/plan-de-pintado.js` |
+| `estado-conexion.js` | `opencode/vista-fisica/web/estado-conexion.js` (revisión post red-team, Hallazgo B2) |
 
 **Path traversal cerrado por construcción, no por sanitización**: `nombre` (el texto
 crudo después de `/assets/`) NUNCA se usa para construir una ruta de archivo — es
@@ -179,7 +180,16 @@ desuscribe del servicio — nunca deja un listener fantasma.
   último snapshot válido.
 - **Reinicio del servidor**: el puerto efímero cambia — una pestaña vieja apuntando
   al puerto muerto necesita reabrirse (mismo comportamiento aceptado que hoy con
-  `file://`, informe ARCH-B).
+  `file://`, informe ARCH-B). **Revisión post red-team (Hallazgo B2, MAJOR —
+  `DECISIONS.md` para el detalle completo)**: antes esto era invisible (la pestaña
+  vieja quedaba exactamente igual, sin ningún indicio). Ahora `app.js` escucha
+  `error`/`open` del `EventSource` (vía el reductor puro
+  `estado-conexion.js::reducirEstadoConexion`) y pinta un indicador SIEMPRE
+  presente (`#conexion`) que pasa a "desconectado: la vista puede no estar
+  actualizada..." con una sugerencia de reabrir desde Tecnia Bot, y deshabilita el
+  selector de GPIO (`planDePintado(vista, {conexionActiva:false})`) mientras dura.
+  Una reconexión real al MISMO puerto (`open` tras un `error` previo) repinta desde
+  un snapshot fresco y rehabilita — nunca inventa datos de proyecto.
 
 ### Único punto de producción con vista — `opencode/servidor/servicio-con-vista.ts`
 
@@ -382,3 +392,14 @@ B), muestra el código del motivo y se queda en el snapshot que ya trajo la resp
 con un `ok:true` sobre un estado blocking representable (Path A), el motivo ya
 aparece en el panel de motivos vía el propio plan de pintado — no hay caso especial.
 Los mensajes salen literal de `motivo.codigo` — nunca una causa inventada.
+
+**Revisión post red-team (Hallazgo B2, `DECISIONS.md` para el detalle completo)**:
+además, `app.js` escucha `eventos.addEventListener("error"/"open", ...)` sobre el
+mismo `EventSource`, pasa cada evento nativo por el reductor puro
+`estado-conexion.js::reducirEstadoConexion`, y sólo en una transición real (1)
+actualiza el indicador `#conexion` (siempre presente en `index.html`, nunca
+aparece/desaparece) y (2) si volvió a `"conectado"`, pide el snapshot de nuevo. Cada
+`repintar()` pasa `conexionActiva: estadoConexion === "conectado"` a
+`planDePintado`, que deshabilita el selector de GPIO mientras no hay conexión viva —
+nunca se inventa un dato de proyecto, sólo se comunica la pérdida de conexión de
+transporte.

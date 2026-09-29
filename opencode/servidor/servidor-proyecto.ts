@@ -48,8 +48,9 @@ const LIMITE_BYTES_OPERACION = 256 * 1024
  * construcción cualquier path traversal, no por sanitización de la entrada.
  *
  * `wokwi-bundle.js`/`componentes-extra.js` (opencode/tecniabot-web/, el mismo bundle
- * que ya usa `circuito.ts` para el HTML estático) + los tres JS planos de la vista
- * física (opencode/vista-fisica/web/, PHASE_2_SLICE_1_DESIGN.md §2.6). Slice 1
+ * que ya usa `circuito.ts` para el HTML estático) + los JS planos de la vista
+ * física (opencode/vista-fisica/web/, PHASE_2_SLICE_1_DESIGN.md §2.6 —
+ * `estado-conexion.js` se sumó en la revisión post red-team, Hallazgo B2). Slice 1
  * (ESP32+LED) no necesita `componentes-extra.js` en `index.html` (el LED sale del
  * bundle Wokwi central) — igual queda en la lista blanca, servible bajo demanda, sin
  * forzar a index.html a cargarlo si no hace falta (documentado en
@@ -62,6 +63,11 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
     ["app.js", join(DIR_VISTA_FISICA_WEB, "app.js")],
     ["pintar.js", join(DIR_VISTA_FISICA_WEB, "pintar.js")],
     ["plan-de-pintado.js", join(DIR_VISTA_FISICA_WEB, "plan-de-pintado.js")],
+    // Revisión post red-team (Hallazgo B2): `app.js` importa este módulo
+    // (`import ... from "./estado-conexion.js"`) — sin agregarlo acá, el navegador
+    // pediría `/assets/estado-conexion.js` y caería en el 404 genérico, rompiendo el
+    // ES module de `app.js` entero (import no resuelto).
+    ["estado-conexion.js", join(DIR_VISTA_FISICA_WEB, "estado-conexion.js")],
   ])
 }
 

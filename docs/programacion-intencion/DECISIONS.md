@@ -1105,3 +1105,50 @@ GPIO2 sigue ofrecido, porque SÍ tiene pin físico real, así que el gap de
 fallback `D${numero}`) mata 3 de los 4 tests nuevos. Verificado además contra
 el demo launcher REAL (antes: 30 GPIO ofrecidos con 9 inventados; después: 21
 GPIO, todos reales) — evidencia en `.../evidencia/W5/B1/`.
+
+### B2 (MAJOR) — la vista queda muda si el servidor se reinicia/cambia de puerto
+
+**Hallazgo**: el servidor usa `listen(0)` (puerto efímero) — reiniciar el
+proceso (crash, actualización, el propio agente relanzándolo) da CASI SEGURO
+un puerto NUEVO. `app.js` sólo escuchaba el evento `"revision"` del
+`EventSource` — sin ningún listener `"error"`, sin ningún indicador de
+conexión en `index.html`. Contra un servidor viejo muerto, el `EventSource`
+reintenta EN SILENCIO para siempre (consola vacía, sin excepción visible) y
+la pestaña vieja queda EXACTAMENTE IGUAL — revisión, readiness y selector
+sin ningún cambio, como si la conexión siguiera vigente. Contradice
+literalmente `PHASE_2_SLICE_1_DESIGN.md:87` ("vuelve a pedir el snapshot al
+reconectar" — falso acá: nunca puede reconectar, es un origin distinto)
+(ataque A6, P2-RED-B).
+
+**Fix**:
+- `opencode/vista-fisica/web/estado-conexion.js` (NUEVO, PURO, testeable sin
+  navegador): `reducirEstadoConexion(estado, evento)` — `{tipo:"error"}` →
+  `"desconectado"`, `{tipo:"open"}` → `"conectado"`, cualquier otro evento
+  deja el estado sin cambios. `ESTADO_INICIAL = "conectado"` (optimista: la
+  primera carga ya usa `fetch()`, no SSE).
+- `app.js` — agrega `eventos.addEventListener("error"/"open", ...)`, pasa
+  cada evento nativo por el reductor, y SÓLO en una transición real
+  actualiza el indicador (`#conexion`, siempre presente en el DOM, nunca
+  aparece/desaparece — sólo cambia `data-estado-conexion`/texto) y, si
+  volvió a `"conectado"`, pide el snapshot de nuevo (reconexión al MISMO
+  puerto) — nunca inventa datos de proyecto, sólo comunica la pérdida de
+  conexión de TRANSPORTE. El mensaje de desconectado sugiere explícitamente
+  "volvé a abrir la vista física desde Tecnia Bot" (para el caso de puerto
+  nuevo, donde nunca va a reconectar sola).
+- `plan-de-pintado.js`/`pintar.js` — `planDePintado(modeloDeVista,
+  {conexionActiva})` (default `true`, compatibilidad hacia atrás) agrega
+  `deshabilitado` a la instrucción `selectorGpio`; `pintar()` lo aplica como
+  `selector.disabled` real — el selector de GPIO queda inutilizable mientras
+  no hay conexión viva.
+- `servidor-proyecto.ts` — `estado-conexion.js` se suma a la lista blanca de
+  `/assets/` (lo importa `app.js`).
+
+**Tests** (`tests/phase2-conexion-estado.test.mjs`): el reductor puro cubre
+las tres transiciones (sin DOM); `planDePintado` con/sin `conexionActiva`
+produce/no produce `deshabilitado`; `pintar()` aplica `.disabled` real sobre
+un `<select>` fake. Verificado ADEMÁS en un navegador REAL (Chromium
+headless vía CDP, reproduciendo el ataque A6 contra el código YA CON EL
+FIX): servidor viejo muerto → `#conexion` pasa a "desconectado: la vista
+puede no estar actualizada. Si el servidor se reinició en otro puerto, volvé
+a abrir la vista física desde Tecnia Bot." y el `<select>` queda
+`disabled:true` — evidencia en `.../evidencia/W5/B2/despues-cdp.txt`.

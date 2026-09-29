@@ -109,6 +109,10 @@ function pintarSelectorGpio(doc, contenedor, instruccion, manejadores) {
   }
 
   selector.value = instruccion.valorActual ?? ""
+  // Revisión post red-team (Hallazgo B2, MAJOR): sin conexión SSE viva, el selector
+  // sale deshabilitado — nunca se decide acá POR QUÉ (eso es de `app.js`/
+  // `plan-de-pintado.js`), sólo se aplica el dato de la instrucción.
+  selector.disabled = Boolean(instruccion.deshabilitado)
 
   if (typeof selector.addEventListener === "function" && typeof manejadores.onCambioGpio === "function") {
     selector.addEventListener("change", () => {

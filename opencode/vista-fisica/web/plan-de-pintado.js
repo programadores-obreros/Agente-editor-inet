@@ -18,10 +18,18 @@
 /**
  * @param {import("../modelo-vista.ts").ModeloDeVista} modeloDeVista - el campo
  *   `vista` del snapshot, tal cual llega serializado por HTTP/SSE.
+ * @param {{ conexionActiva?: boolean }} [opciones] - `conexionActiva` (default
+ *   `true`, revisión post red-team, Hallazgo B2): si es `false`, cada instrucción
+ *   `selectorGpio` sale con `deshabilitado: true` — nunca se decide acá SI mostrar
+ *   un indicador de conexión (eso es de `app.js`), sólo si el selector puede
+ *   tocarse. Sigue siendo PURO: `conexionActiva` es un dato de entrada más, nunca
+ *   `app.js` toca el DOM del selector directo.
  * @returns {readonly object[]} instrucciones, en orden determinista y estable — el
- *   mismo `modeloDeVista` produce SIEMPRE la misma lista, en el mismo orden.
+ *   mismo `modeloDeVista`+`opciones` produce SIEMPRE la misma lista, en el mismo
+ *   orden.
  */
-export function planDePintado(modeloDeVista) {
+export function planDePintado(modeloDeVista, opciones = {}) {
+  const conexionActiva = opciones.conexionActiva ?? true
   const instrucciones = []
 
   if (modeloDeVista.placa) {
@@ -75,6 +83,7 @@ export function planDePintado(modeloDeVista) {
         terminalId,
         opciones: porTerminal[terminalId].map((opcion) => ({ valor: opcion.pinSemantico, etiqueta: opcion.nombreWokwi })),
         valorActual,
+        deshabilitado: !conexionActiva, // B2 — sin conexion viva, el selector no se puede tocar
       })
     }
   }
