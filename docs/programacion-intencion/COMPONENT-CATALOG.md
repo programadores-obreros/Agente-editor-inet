@@ -32,7 +32,7 @@ pide todavía (mismo criterio YAGNI que ya aplicó `placas.ts` en Gate 1 para
 ## 2. Tipos (traducidos de D §1, sin cambios de fondo)
 
 `Magnitud`, `Unidad`, `Cantidad{valor,unidad,magnitud}`, `Rango{min,max}`,
-`Terminal{id,rol,electrica,requierePwm?,destinoFijo?,direccion?}`,
+`Terminal{id,rol,electrica,requierePwm?,destinoFijo?,direccion?,requierePullUpInterno?}`,
 `Capacidad{id,magnitud?,unidad?,rango?,resolucion?}`,
 `Requisito{tipo,enTerminal?,spec}`, `ComponenteCatalogo{id,nombreVisible,clase,
 terminales,capacidades,requisitos,compatibilidades?,pedagogico?}`.
@@ -44,6 +44,17 @@ de "GPIO34 sirve para prender un LED" sin saber el sentido eléctrico del termin
 ánodo de LED siempre empuja corriente; GPIO34 del ESP32 es solo-entrada, Gate 1). Sin
 este campo, `asignar-pin-capacidad-incompatible` no podía escribirse correctamente.
 Documentado acá porque es una desviación real (aunque menor) del diseño consolidado.
+
+`Terminal.requierePullUpInterno` (booleano, opcional) es un dato nuevo del gate final
+de hardening (D5/H-4=A, `PHASE_2_SLICE_1_HARDENING_DESIGN.md` §1-2): declara que ese
+terminal necesita el pull-up (o pull-down) INTERNO del pin para leer bien. Hoy sólo lo
+declara `pulsador.senal` (`catalogo-datos.ts`, INPUT_PULLUP sin resistencia externa,
+`circuito.ts:1104`). Lo consume `evaluarRestriccionesPin` (`catalogo.ts`, §6 más
+abajo): combinado con `RegistroPin.restricciones.includes("soloEntrada")`
+(`placas.ts` — esos pines no tienen pull-up/pull-down real, `circuito.ts:339-343`)
+emite `PIN_SIN_PULLUP_INTERNO`. Es terminal-aware por DATO, nunca por `if GPIO<n>`: un
+`ntc` (terminal analógica) no declara este campo, así que un pin solo-entrada sigue
+siendo su mejor uso, sin motivo.
 
 ## 3. Contenido mínimo shippeado
 
@@ -112,6 +123,21 @@ se implemente Gate 5):
 | `AUTOCONEXION_INVALIDA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
 | `CONEXION_DUPLICADA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
 | `UMBRAL_FUERA_DE_RANGO` (Phase 1.2, REA-02) | **warning** | tecnica | **REPRESENTABLE** | `validar-tecnico.ts` (Gate 4, continuo, reusa `estaFueraDeRango` de `catalogo.ts`) |
+| `PIN_FLASH_RESERVADO` (gate final de hardening, D1) | **blocking** | tecnica | **REPRESENTABLE** | `catalogo.ts` (`evaluarRestriccionesPin`) |
+| `PIN_STRAPPING` (gate final de hardening, D2/D3) | **warning** (sólo GPIO12) / **info** (GPIO0, GPIO2, GPIO15) | tecnica | **REPRESENTABLE** | `catalogo.ts` (`evaluarRestriccionesPin`) |
+| `PIN_UART_USB` (gate final de hardening, D7) | **warning** | tecnica | **REPRESENTABLE** | `catalogo.ts` (`evaluarRestriccionesPin`) |
+| `PIN_SIN_PULLUP_INTERNO` (gate final de hardening, D5/H-4=A) | **blocking** | tecnica | **REPRESENTABLE** | `catalogo.ts` (`evaluarRestriccionesPin`) |
+| `PIN_INEXISTENTE_EN_DOCUMENTO` (gate final de hardening, D10) | **blocking** | tecnica | **REPRESENTABLE** | `validar-tecnico.ts` (Gate 4, mismo patrón que `PLACA_DESCONOCIDA_EN_DOCUMENTO`) |
+
+Las cinco filas de arriba son la resolución del gap que este mismo documento (§1) ya
+señalaba: `RegistroPin.restricciones` existía desde Gate 1 (`placas.ts`) pero ningún
+validador lo leía. Todas `clasificacion: "representable"` SIEMPRE, nunca `"rechazo"`
+(`PHASE_2_SLICE_1_HARDENING_DESIGN.md` D11, `motor.ts:358-360`): un proyecto
+persistido con GPIO6/GPIO1/GPIO12 sigue abriendo — PERSISTIBLE ⇒ RECARGABLE. La
+operación `AsignarPin` en sí NUNCA se rechaza por una restricción de pin (`asignarPin`
+no se toca); sólo `PIN_INEXISTENTE_EN_PLACA` (ya existente, §OPERATIONS.md) sigue
+rechazando la operación cuando el pin directamente no está en el registro de la
+placa.
 
 **Regla general que Gate 4 tiene que respetar:** todo lo que este documento clasifica
 `REPRESENTABLE` significa que la operación que lo provoca **COMMITEA** — el motivo

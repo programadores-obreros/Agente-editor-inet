@@ -944,6 +944,19 @@ No son el mismo tipo de problema y por eso tienen código y momento distintos:
 | Clasificación | RECHAZO (nunca hay `Proyecto` parcial) | REPRESENTABLE (el componente/placa SIGUE en el proyecto, nunca se borra) |
 | Escenario típico | Un documento corrupto o escrito a mano mal | *Version skew*: el catálogo cambió (se sacó un componente, ej.) después de guardar el proyecto |
 
+**`PIN_INEXISTENTE_EN_DOCUMENTO` (gate final de hardening, D10,
+`PHASE_2_SLICE_1_HARDENING_DESIGN.md` §1-2) extiende el mismo patrón de la columna
+derecha a los PINES**: una asignación (`Componente.pines[terminal]`) que ya no existe
+en el registro de la placa VIGENTE — por `SetPlaca` a otra placa con el pin ya
+asignado, o por un documento editado a mano en disco con un GPIO fuera del registro
+(ej. `GPIO37`, fuera de `ESP32_GPIO_VALIDOS` desde D9). Mismo momento de detección
+(`validar-tecnico.ts`, Gate 4, CON catálogo), misma clasificación REPRESENTABLE (el
+pin semántico SIGUE en el componente, nunca se borra), mismo escenario típico
+(*version skew*, ahora sobre `pinesDePlaca` en vez de `tipo`/`placa`). Antes de este
+fix, `validar-tecnico.ts` saltaba este caso EN SILENCIO (`if (pinReal)`, sin rama
+`else`) — el estado quedaba `listo:true` con un pin que ya no existía en ningún
+registro.
+
 ## 8. `catalogoHash` — algoritmo (R4, implementado en Gate 3)
 
 `sha256(canonicalizar(catalogoSinCampoHash))`. `canonicalizar()` es la MISMA función

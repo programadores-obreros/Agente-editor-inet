@@ -1217,3 +1217,47 @@ no detectado; o hay evidencia de que el bypass puede originarse desde input exte
 El texto anterior (autoría del orquestador, "pendiente de confirmación") se deja
 tal cual como historia; esta resolución lo completa, no lo reemplaza. Ver
 `PHASE_2_SLICE_1_HARDENING_DESIGN.md` D15.
+
+**Gate de pines del hardening final (W-PINS, D1-D11, `PHASE_2_SLICE_1_HARDENING_DESIGN.md`
+§1-3, resolución humana del gate final de hardening, 2026-09-29)**: el HUMAN PRODUCT
+OWNER resolvió el gap que `COMPONENT-CATALOG.md` §1 ya señalaba (`RegistroPin.
+restricciones` existía desde Gate 1 pero ningún validador lo leía, ARCH-PINS §1) con
+una función pura nueva, `evaluarRestriccionesPin` (`catalogo.ts`), llamada desde el
+mismo bucle de `validar-tecnico.ts` que ya llama `asignarPin` — sin tocar `asignarPin`:
+la operación `AsignarPin` sigue sin rechazarse por una restricción de pin (D1/D11).
+Decisiones normativas:
+- D1 (H-1=B): `PIN_FLASH_RESERVADO` (GPIO6-11) — blocking, representable.
+- D2 (H-2=B): `PIN_STRAPPING` con severidad POR PIN — GPIO12 `warning` (excepción),
+  el resto de la clase `info`.
+- D3 (H-2b=A): GPIO2 se queda en `info`, sigue en el pool automático y ofrecido.
+- D4 (H-3=A): GPIO5 sin restricción nueva — el repo no tiene fuente interna que lo
+  clasifique como strapping; no se inventa el dato.
+- D5 (H-4=A): dato declarativo `requierePullUpInterno: true` en `pulsador.senal`
+  (`catalogo-datos.ts`) + `PIN_SIN_PULLUP_INTERNO` (blocking, representable) cuando el
+  terminal lo requiere Y el pin tiene `soloEntrada` — nunca `if GPIO<n>`. El `ntc`
+  (analógica) no declara el dato, así que GPIO34 sigue sin motivo para él (fixture de
+  Phase 1, `nucleo-ir-cargador.test.mjs:706`); el DHT22 queda en BACKLOG.
+- D6 (H-5=A): GPIO0 y la flash se quedan en el registro, sin una restricción
+  `sinPinFisico` nueva (no se reabre el enum cerrado, `DECISIONS.md` OD-01) y sin
+  tocar Phase 1 (`nucleo-placas.test.mjs`, intocable).
+- D7 (H-6=B): `PIN_UART_USB` (GPIO1/3) — warning, representable, `datos` limitado a
+  la evidencia de `circuito.ts:348-351` (carga del programa + Monitor Serie).
+- D8 (H-7=A): se mantiene el filtro de capacidad de `gpiosCandidatosPara` — el
+  browser JS sigue sin ninguna tabla eléctrica, los candidatos salen SOLO del núcleo,
+  y GPIO2/12/15/1/3 se siguen ofreciendo.
+- D9: se quitan GPIO37/38 de `ESP32_GPIO_VALIDOS` (`placas.ts`) — no salen a ningún
+  pin del módulo WROOM (`SKILL.md:82-85`, `circuito.test.mjs:2524-2527`). `circuito.ts`
+  NO se toca: la divergencia queda documentada en el propio comentario de `placas.ts`.
+- D10: `PIN_INEXISTENTE_EN_DOCUMENTO` (blocking, representable) — mismo patrón que
+  `PLACA_DESCONOCIDA_EN_DOCUMENTO` — para una asignación que ya no existe en el
+  registro de la placa vigente, por cualquier camino.
+- D11: ninguna regla nueva del validador emite `rechazo` — todas `representable`
+  (`motor.ts:358-360`), así que los proyectos persistidos con GPIO6/1/12/37 siguen
+  abriendo (PERSISTIBLE ⇒ RECARGABLE).
+
+Verificado por `tests/phase2-hardening-pines.test.mjs` (matriz de severidad, D5
+terminal-aware, D9/D10, reasignar limpia el motivo, D11, y la convergencia de
+diagnóstico entre Engine directo, POST `/api/operaciones`, el snapshot con vista y la
+recarga desde disco para el mismo estado) + `tests/phase2-wokwi-pinout.test.mjs:84-86`
+actualizado (D9). `git diff 8b43c59 -- 'tests/nucleo-*'` queda vacío: ningún test de
+Phase 1 se tocó.
