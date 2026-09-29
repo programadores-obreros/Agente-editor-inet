@@ -14,8 +14,6 @@
 // Engine, sin importar quién lo pida primero.
 import { tool } from "@opencode-ai/plugin"
 import { join } from "node:path"
-import { obtenerServicioDeProyectoConVista } from "../servidor/servicio-con-vista.ts"
-import { iniciarServidor } from "../servidor/servidor-proyecto.ts"
 import type { ServicioDeProyecto } from "../nucleo/composicion-raiz.ts"
 import type { ServidorProyecto } from "../servidor/servidor-proyecto.ts"
 
@@ -80,6 +78,52 @@ function claveDeServidor(directorioDatos: string, idProyecto: string): string {
   return `${directorioDatos}::${idProyecto}`
 }
 
+type ModuloServicioConVista = typeof import("../servidor/servicio-con-vista.ts")
+type ModuloServidorProyecto = typeof import("../servidor/servidor-proyecto.ts")
+
+/**
+ * Carga PEREZOSA de `../servidor/*` (D13, PHASE_2_SLICE_1_HARDENING_DESIGN.md,
+ * decisión INST-2=A) — `await import()` acá adentro, y NUNCA como import de
+ * valor en el top-level del archivo (los `import type` de arriba sí se quedan:
+ * son sintaxis borrable, no generan ningún `import()` en runtime).
+ *
+ * Por qué: el registry de tools de OpenCode importa cada tool de `tool/` en un
+ * loop SIN catch por archivo (`packages/opencode/src/tool/registry.ts:199-212`,
+ * `for (match of matches) { const mod = yield* Effect.promise(() =>
+ * import(...)) }`). Si este módulo importara `../servidor/*` como valor en el
+ * top-level y esa carpeta faltara (instalación a medio copiar, actualización
+ * interrumpida, o el rollback por overlay documentado en
+ * ARCH_INSTALL_REPORT.md §4, escenario R), el `import()` de ESTA tool
+ * rechazaría durante la carga del REGISTRO ENTERO — tirando abajo, con ella,
+ * las otras nueve tools y los built-ins (reproducido: ARCH_INSTALL_REPORT.md
+ * §0.2, "con el install de hoy, NINGUNA tool carga"). Con la carga acá adentro,
+ * el import ESTÁTICO de `tool/vista-fisica.ts` no toca el disco de
+ * `../servidor/` en absoluto — sólo lo hace la PRIMERA vez que alguien pide
+ * abrir la vista física, y sólo ESTA tool se ve afectada si falta.
+ *
+ * El error, si falta la carpeta: NUNCA un catch vacío, NUNCA un fallback
+ * simulado ni un "listo" que no se comprobó — se nombra la pieza que falta
+ * (`servidor/`) y se sugiere reinstalar, determinista y comprensible.
+ */
+async function cargarServidor(): Promise<{
+  obtenerServicioDeProyectoConVista: ModuloServicioConVista["obtenerServicioDeProyectoConVista"]
+  iniciarServidor: ModuloServidorProyecto["iniciarServidor"]
+}> {
+  let modServicio: ModuloServicioConVista
+  let modServidor: ModuloServidorProyecto
+  try {
+    ;[modServicio, modServidor] = await Promise.all([import("../servidor/servicio-con-vista.ts"), import("../servidor/servidor-proyecto.ts")])
+  } catch (error) {
+    const detalle = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Falta la carpeta "servidor" de Tecnia Bot (no se pudo cargar ../servidor/ junto a esta tool: ${detalle}). ` +
+        `Esto pasa con una instalación incompleta o interrumpida a mitad de una actualización. Volvé a instalar ` +
+        `Tecnia Bot (o corré "Reparar Tecnia Bot" desde el menú inicio en Windows) para arreglarlo.`,
+    )
+  }
+  return { obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista, iniciarServidor: modServidor.iniciarServidor }
+}
+
 /**
  * Obtiene (o levanta, la primera vez en este proceso) el servidor de la vista
  * física para una carpeta de trabajo activa — función interna EXPORTADA para
@@ -97,6 +141,7 @@ export async function obtenerServidorVistaFisica(directorioActivo: string, idPro
   if (existente) return existente
 
   const promesa = (async (): Promise<ServidorYServicioVistaFisica> => {
+    const { obtenerServicioDeProyectoConVista, iniciarServidor } = await cargarServidor()
     const servicio = obtenerServicioDeProyectoConVista({ directorio: directorioDatos, idProyecto })
     const servidor = await iniciarServidor({ servicio })
     return { servidor, servicio }
