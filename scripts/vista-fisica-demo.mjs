@@ -40,6 +40,11 @@ const { iniciarServidor } = await import(join(REPO, "opencode/servidor/servidor-
 
 const ID_PROYECTO_POR_DEFECTO = "demo"
 const GPIO_DEMO = "GPIO4" // mismo pin que ya usan los fixtures de Phase 2 (phase2-helpers.mjs, GPIO_X) — sin restricciones en el ESP32.
+// Fase 2, Slice 2 (§3.6, HD-S2-1b): GPIO18 para el pulsador — un pin normal, fuera
+// de las cuatro listas de restricción del ESP32 (flashReservado 6-11, strapping
+// 0/2/12/15, soloEntrada 34/35/36/39, uartUsb 1/3 — nucleo/placas.ts), y distinto de
+// GPIO_DEMO para no chocar con el LED (PIN_OCUPADO).
+const GPIO_DEMO_PULSADOR = "GPIO18"
 
 function leerArgs(argv) {
   const args = { dir: undefined, idProyecto: ID_PROYECTO_POR_DEFECTO, unaVez: false }
@@ -78,6 +83,15 @@ function sembrarSiHaceFalta(servicio) {
 
   r = servicio.aplicar({ idOperacion: siguienteId(), actor: "agente", baseRevision: servicio.snapshot().revision, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_DEMO } })
   if (!r.ok) throw new Error(`vista-fisica-demo: AsignarPin rechazado: ${JSON.stringify(r.motivos)}`)
+
+  // Fase 2, Slice 2 (§3.6, HD-S2-1b): pulsador, con el mismo criterio de operaciones
+  // reales, actor "agente" — nunca escribiendo el JSON a mano.
+  r = servicio.aplicar({ idOperacion: siguienteId(), actor: "agente", baseRevision: servicio.snapshot().revision, tipo: "AgregarComponente", payload: { tipo: "pulsador" } })
+  if (!r.ok) throw new Error(`vista-fisica-demo: AgregarComponente(pulsador) rechazado: ${JSON.stringify(r.motivos)}`)
+  const idPulsador = servicio.snapshot().proyecto.componentes[1].id
+
+  r = servicio.aplicar({ idOperacion: siguienteId(), actor: "agente", baseRevision: servicio.snapshot().revision, tipo: "AsignarPin", payload: { componente: idPulsador, terminal: "senal", pin: GPIO_DEMO_PULSADOR } })
+  if (!r.ok) throw new Error(`vista-fisica-demo: AsignarPin(pulsador) rechazado: ${JSON.stringify(r.motivos)}`)
 }
 
 async function main() {
