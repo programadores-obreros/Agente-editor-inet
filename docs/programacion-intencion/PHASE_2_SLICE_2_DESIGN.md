@@ -1,6 +1,6 @@
 # Phase 2 Slice 2: diseño (ESP32 + LED + pulsador)
 
-**Estado: PROPUESTO. Pendiente de revisión del HUMAN PRODUCT OWNER. NO autoriza writers.**
+**Estado: APROBADO por el HUMAN PRODUCT OWNER (2026-09-30), con las decisiones R-1..R-6 de §10 resueltas. Writers autorizados en la rama `feature/programacion-intencion-phase2-slice2`.**
 
 Base: `main` local `d8212fb` (Slice 1 cerrado; producto auditado `06233e3`).
 
@@ -241,7 +241,16 @@ Un writer por vez, sin Agent/fork, test-first, commits chicos, en una rama `feat
 3. **W-S2-DOCS:** actualizar COMPONENT-CATALOG/OPERATIONS/DECISIONS sólo en lo que cambia (la tool de transporte del agente, `rol`, explicaciones), REPORT y TEST_PLAN.
 4. Gate §7 → red team → como máximo una ronda de fixes → freeze → STOP.
 
-## 10. Puntos de revisión abiertos para el humano (no bloquean el diseño; se confirman al aprobarlo)
+## 10. Decisiones de revisión (RESUELTAS por el humano)
+
+- **R-1 = TOOL SEPARADA**: `vista-fisica` presenta/abre; `proyecto-fisico` emite operaciones existentes hacia el Engine. No se mezclan.
+- **R-2 = ALLOW**: sin confirmación `ask`. No reduce ninguna protección: baseRevision obligatorio, whitelist, Engine como autoridad única, validación, transacción atómica, reasons estructurados, stale, candado/singleton y persistencia autoritativa.
+- **R-3 = GREEN**: es proyección visual, no semántica.
+- **R-4 = textos de §3.4 APROBADOS**: con voseo, deterministas y derivados sólo del reason estructurado. Un reason desconocido muestra el código original. La entidad se resalta cuando la referencia alcanza.
+- **R-5 = WINDOWS SHORT RUN** al final del slice: el instalado abre, ESP32+LED+pulsador y Entrada/Salida visibles, una edición real del GPIO del pulsador por el Engine, revisión +1, persistencia, recarga y consola limpia. Si hay que actualizar, sólo con el procedimiento no destructivo ya validado. Sin snapshot restore, clean install, uninstall ni matriz completa.
+- **R-6 = WHITELIST exacta**: SetPlaca, AgregarComponente, QuitarComponente, AsignarPin, Conectar, Desconectar. Máximo 20 operaciones por llamada, en UNA transacción atómica. Con más de 20 se RECHAZA explícitamente con resultado estructurado: nunca se trunca, se aplica parcial ni se divide.
+
+### Propuesta original (histórica)
 
 - **R-1:** la tool como archivo separado `proyecto-fisico` (recomendado: permiso propio y superficie auditable) o como acciones extra dentro de `vista-fisica`.
 - **R-2:** permiso `allow` (fluido para el agente) o `ask` (el docente confirma cada mutación).
