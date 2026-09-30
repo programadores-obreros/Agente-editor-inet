@@ -1261,3 +1261,93 @@ diagnóstico entre Engine directo, POST `/api/operaciones`, el snapshot con vist
 recarga desde disco para el mismo estado) + `tests/phase2-wokwi-pinout.test.mjs:84-86`
 actualizado (D9). `git diff 8b43c59 -- 'tests/nucleo-*'` queda vacío: ningún test de
 Phase 1 se tocó.
+
+## Phase 2 Slice 2 — ESP32 + LED + pulsador, tool de transporte del agente (2026-09-30)
+
+Diseño normativo: `PHASE_2_SLICE_2_DESIGN.md` (aprobado por el HUMAN PRODUCT OWNER,
+2026-09-30, base `main` local `74e0674`). Discovery: `PHASE_2_SLICE_2_DISCOVERY.md`
+(HD-S2-0..10). El HUMAN PRODUCT OWNER resolvió las diez decisiones de discovery más
+las seis de revisión del diseño (§10):
+
+- **HD-S2-0 = A**: scope ESP32 + LED + pulsador (contraste entrada/salida mínimo).
+- **HD-S2-1 = a+b**: una tool controlada emite operaciones EXISTENTES para el
+  agente (whitelist), más el sembrado determinista de la demo — el Project Engine
+  sigue siendo la única autoridad, el agente nunca escribe la IR.
+- **HD-S2-2 = dibujar** el pulsador con Wokwi Elements (no una fila de texto).
+- **HD-S2-3**: `1.l` = señal, `2.l` = GND, sólo en la proyección física — sin
+  verdad eléctrica paralela (los cuatro terminales del `wokwi-pushbutton` real
+  están puenteados de a pares, la elección es cosmética).
+- **HD-S2-4**: `wokwi-pushbutton` estándar (no la variante `-6mm`).
+- **HD-S2-5 = B**: CSS mínimo (`flex-wrap`/`gap`), sin motor de layout.
+- **HD-S2-6**: se descarta el cable geométrico.
+- **HD-S2-7 = A**: Entrada/Salida derivadas de la autoridad catalogal
+  (`ComponenteCatalogo.clase`) — el browser no mantiene tablas propias.
+- **HD-S2-8 = A+C acotado**: texto determinista para los reason codes del
+  recorrido, más resaltar la entidad afectada. Sin LLM; un código desconocido se
+  muestra tal cual.
+- **HD-S2-9 = A**: se mantiene `INPUT_PULLUP` interno (no se agrega
+  `pulsador-pulldown`: scope creep para este slice).
+- **HD-S2-10 = NO**: ninguna `ComportamientoRegla` pulsador → LED, ni siquiera
+  representable sin ejecutar — territorio de Phase 3.
+- **R-1 = TOOL SEPARADA**: `vista-fisica` (existente) presenta/abre; la tool nueva
+  `proyecto-fisico` (`opencode/tool/proyecto-fisico.ts`) emite operaciones — no se
+  mezclan en un mismo archivo.
+- **R-2 = ALLOW**: sin confirmación `ask` para la tool nueva (`opencode/agent/
+  tecnia-bot.md:25`); no reduce ninguna protección semántica (baseRevision
+  obligatorio, whitelist, Engine como autoridad única, transacción atómica,
+  candado/singleton, persistencia autoritativa siguen todas intactas).
+- **R-3 = GREEN**: color del pulsador, presentación pura para distinguirlo del LED
+  rojo (`wokwi-render-datos.ts:144-147`), nunca un dato semántico.
+- **R-4**: los ocho textos de `explicaciones-motivos.ts` quedan APROBADOS tal
+  cual, sin parafrasear.
+- **R-5 = WINDOWS SHORT RUN**: al final del slice, sin repetir la matriz completa
+  (proporcionalidad — el slice no toca el candado, el servidor ni los
+  instaladores).
+- **R-6 = WHITELIST exacta + límite 20**: ver el detalle completo (con los seis
+  códigos de rechazo de transporte) en `OPERATIONS.md` §12.
+
+**Decisiones de implementación** (no elevadas al humano — dentro del margen que el
+diseño delega en el writer):
+
+- **Rol Entrada/Salida derivado de `clase`, del lado del SERVIDOR**
+  (`rolDeClase`, `opencode/vista-fisica/snapshot-a-vista.ts:86-90`): función pura
+  que despacha ÚNICAMENTE por `ComponenteCatalogo.clase` (nunca por `tipo`/id de
+  componente) — `"entrada"`/`"sensor"` → `"entrada"`, `"actuador"` → `"salida"`,
+  cualquier otra clase (incluida una futura que el mapeo no conozca) → `null`. El
+  browser (`plan-de-pintado.js`/`pintar.js`) sólo capitaliza el texto YA resuelto;
+  nunca repite este despacho ni mantiene su propia tabla de clases/tipos
+  (verificado por escaneo estático en `phase2-s2-rol.test.mjs`, mismo criterio que
+  D8 del gate de pines).
+- **Explicaciones de motivos deterministas, del lado del SERVIDOR**
+  (`opencode/vista-fisica/explicaciones-motivos.ts`): tabla pura `código →
+  (datos, nombres) → string`, sin LLM y sin inferir causas — sólo interpola
+  `motivo.datos` y el `nombreVisible` de catálogo. `snapshot-a-vista.ts` agrega
+  `explicacion: string | null` a cada motivo de la vista; un código que la tabla
+  no conoce da `null` y el browser muestra el código crudo (fail-closed, mismo
+  criterio que el resto del adaptador).
+- **`figure`/`figcaption` por pieza — fix del gate visual** (commit `0267797`,
+  `opencode/vista-fisica/web/pintar.js:100-116`): el gate con Chromium real
+  (`.../s2impl/gate-vista/v2-gpio34-blocking.png`) mostró el rótulo "Entrada" del
+  pulsador separado de su pieza — como hermano suelto de `#circuito` en
+  `flex-wrap`, podía terminar en otra línea del wrap. Fix: cada pieza CON rol se
+  envuelve en un `<figure data-entidad-tipo/id/data-pieza-de>` propio, junto con
+  su `<figcaption data-rol-de-componente>`, DEBAJO de la pieza — `flex-wrap` opera
+  sobre el contenedor entero, nunca separa la pieza de su texto. Una pieza sin rol
+  (la placa, un componente sin rol pedagógico) sigue siendo hija directa de
+  `#circuito`, sin envoltorio innecesario. Test-first: `phase2-s2-rol.test.mjs`
+  reproduce el escenario exacto del gate (RED confirmado contra el código
+  anterior, GREEN después del fix).
+- **Ajuste aditivo de `tests/phase2-hardening-pines.test.mjs`** (mismo commit que
+  agrega `explicacion`, `feat(vista-fisica): explicación de motivos en texto
+  llano + resaltado`): el helper `sinExplicacion`
+  (`tests/phase2-hardening-pines.test.mjs:36-44`) le quita el campo `explicacion`
+  (aditivo, `MotivoVista`) a los motivos de la vista ANTES de comparar contra
+  `validacion.motivos`/el snapshot HTTP (`tests/phase2-hardening-pines.test.mjs:
+  377,398`) — sin este ajuste, la comparación literal (`assert.deepEqual`) rompía
+  porque un lado del `deepEqual` tiene `explicacion` y el otro no, aunque el
+  motivo estructurado en sí (código/severidad/clasificación/entidad/datos) sea
+  idéntico. Es el único ajuste retroactivo que el diseño (§5) autorizaba, y era
+  el previsto: el análisis previo del diseño decía que los `deepEqual` comparan
+  proyecciones de vista entre sí (donde `explicacion` está en ambos lados, no
+  rompe nada) — este caso puntual compara vista contra `validacion.motivos`/HTTP
+  crudo, donde sí hacía falta el ajuste.

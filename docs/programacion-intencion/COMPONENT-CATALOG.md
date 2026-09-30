@@ -146,6 +146,18 @@ operación completa por esto. Sólo lo que la tabla de arriba marca `RECHAZO` (y
 filas de `operaciones.ts`/`cargador.ts` de `DECISIONS.md`) corta la operación antes de
 tocar el borrador.
 
+## 6.1. Phase 2 Slice 2 — la vista física proyecta `clase` → rol pedagógico (sin cambios acá)
+
+El catálogo NO cambia por Slice 2: `pulsador` (clase `"entrada"`) ya existía desde
+el gate final de hardening (§0 más arriba), y `ComponenteCatalogo.clase` (`"sensor"
+| "actuador" | "pasivo" | "entrada"`) ya existía desde Gate 3. Lo nuevo es un
+consumidor: `opencode/vista-fisica/snapshot-a-vista.ts::rolDeClase` proyecta esa
+`clase`, del lado del servidor, a un rótulo pedagógico Entrada/Salida
+(`"entrada"`/`"sensor"` → `"entrada"`; `"actuador"` → `"salida"`; `"pasivo"` o
+cualquier clase futura sin mapeo → `null`). Es lectura pura de un campo ya
+existente, nunca una clasificación nueva del catálogo — ver `OPERATIONS.md` §12 y
+`DECISIONS.md` ("Phase 2 Slice 2") para el detalle completo.
+
 ## 7. Límites conocidos de Gate 3 (documentados, no bugs)
 
 - `validarConexion` queda deliberadamente mínima (siempre `null` hoy): sin evidencia

@@ -590,3 +590,86 @@ commit válido. Path A (`PIN_OCUPADO` → commit + blocking + persistido + not-r
 + editable) y los proyectos incompletos (sin placa, con un `pin` en `null`)
 siguen siendo persistibles sin cambios: ninguna de las dos capas de este fix
 mira readiness ni completitud, sólo forma estructural cerrada de enum.
+
+## 12. Phase 2 Slice 2 — tool de transporte del agente `proyecto-fisico`
+
+`opencode/tool/proyecto-fisico.ts` (§3.1 de `PHASE_2_SLICE_2_DESIGN.md`, HD-S2-1a,
+R-1/R-2/R-6 de §10, HUMAN PRODUCT OWNER) es **transporte, no autoridad**: cumple
+exactamente la misma función que `POST /api/operaciones`
+(`opencode/servidor/servidor-proyecto.ts:116-135`), pero para el actor `"agente"` en
+vez del actor `"navegador"` — las dos vías arman un `SobreOperacion` con el actor
+FORZADO (nunca el que mande el cliente) y lo pasan al MISMO Project Engine, por
+`obtenerServicioDeProyectoConVista` (`opencode/servidor/servicio-con-vista.ts`); la
+tool nunca escribe la IR, nunca construye un `Almacen`, nunca valida hardware por su
+cuenta (`proyecto-fisico.ts:1-26`, T-AG-01).
+
+**Tres `accion`** (`proyecto-fisico.ts:193-222`):
+- `leer`: `servicio.snapshot()` resumido — revisión, componentes (id/tipo/rol/pines)
+  y los motivos vigentes con su explicación en texto llano (`resumenDeLectura`,
+  `proyecto-fisico.ts:171-182`).
+- `simular`: `servicio.proponer(sobres)` — dry-run, nunca persiste ni sube la
+  revisión ni notifica por SSE (T-AG-08).
+- `aplicar`: `servicio.aplicarTransaccion(sobres)` — atómico, todo o nada: un lote
+  con una sola operación inválida no aplica ninguna, ni siquiera las anteriores del
+  mismo lote (T-AG-02/T-AG-04).
+
+**Whitelist exacta e inmutable** (R-6, `OPERACIONES_PERMITIDAS`,
+`proyecto-fisico.ts:42`): `SetPlaca`, `AgregarComponente`, `QuitarComponente`,
+`AsignarPin`, `Conectar`, `Desconectar`. Quedan afuera a propósito
+`SetComportamiento` (HD-S2-10: ninguna lógica pulsador→LED) y `CambiarComponente`
+(fuera del recorrido de este slice); cualquier otro `tipo` (desconocido, mal
+escrito o `CrearProyecto`) se rechaza EN LA TOOL, sin invocar el Engine.
+**Límite de 20 operaciones por llamada** (`MAXIMO_OPERACIONES`,
+`proyecto-fisico.ts:46`), en una única transacción atómica: con más de 20 se
+RECHAZA explícito — nunca se trunca, aplica parcial ni se divide en varias
+transacciones (T-AG-11).
+
+**`baseRevision` obligatorio para `simular`/`aplicar`, nunca autocompletado**
+(`proyecto-fisico.ts:249-258`, T-AG-03): sin él, la tool rechaza con
+`BASE_REVISION_FALTANTE` antes de tocar el Engine. La tool JAMÁS lo completa con
+`servicio.snapshot().revision` — hacerlo anularía la protección contra stale que
+`baseRevision` obligatorio existe para dar; un `baseRevision` con forma válida pero
+desactualizado (o no entero/negativo) SÍ llega al Engine, que lo rechaza con sus
+propios motivos de dominio (`BASE_REVISION_DESACTUALIZADA`/`BASE_REVISION_INVALIDA`
+— no son códigos de transporte).
+
+**Actor forzado, sobre armado por la tool** (`construirSobres`,
+`proyecto-fisico.ts:150-162`): cada `SobreOperacion` se arma SÓLO con `tipo`+
+`payload` del arg — `actor: "agente"` siempre (sin importar qué venga en el arg,
+T-AG-06), `idOperacion` generado, un `idTransaccion` COMPARTIDO por todo el lote y
+`baseRevision` = el del arg en la primera operación (leído por `motor.ts:538-548`,
+igual que hace el navegador). Un elemento de `operaciones` con cualquier clave
+extra (`actor`, `idOperacion`, `idTransaccion`, `baseRevision`) se rechaza entero,
+EN LA TOOL — nunca se descartan sólo las claves de más (T-AG-06).
+
+**Códigos de rechazo de transporte** (`validarLoteParaTransporte`,
+`proyecto-fisico.ts:124-144`, y los dos chequeos previos de
+`execute`, `proyecto-fisico.ts:250-267`) — todos con `rechazadoPor:"tool"`:
+
+| Código | Cuándo |
+|---|---|
+| `OPERACION_FUERA_DE_WHITELIST` | `tipo` no está en la whitelist exacta de R-6 |
+| `DEMASIADAS_OPERACIONES` | más de 20 operaciones en el lote |
+| `OPERACION_CON_FORMA_INVALIDA` | un elemento del lote no es un objeto plano |
+| `OPERACION_CON_CLAVES_INVALIDAS` | un elemento no tiene EXACTAMENTE `tipo`+`payload` |
+| `BASE_REVISION_FALTANTE` | falta `baseRevision` para `simular`/`aplicar` |
+| `OPERACIONES_FALTANTES` | falta o viene vacía la lista `operaciones` |
+
+Estos seis códigos **NO son motivos del Engine y no se persisten**: son un rechazo
+de transporte, resuelto antes de invocar `servicio.aplicarTransaccion`/`proponer`
+(el Engine ni se entera), y nunca viajan por `nucleo/motivos.ts` ni por el
+`vista.motivos` de un snapshot — se diferencian en runtime de un rechazo de
+dominio porque sólo estos últimos traen `motivos[]` del Engine (ver T-AG-03: un
+`baseRevision` con forma válida pero desactualizado da
+`BASE_REVISION_DESACTUALIZADA`, un motivo de dominio, sin `rechazadoPor:"tool"`).
+
+**Paralelo con el navegador:** la tool y `servidor-proyecto.ts` resuelven al MISMO
+directorio de datos (`opencode/vista-fisica/ubicacion-proyecto.ts::directorioDeDatos`)
+para la misma carpeta de trabajo, así que terminan en el MISMO singleton/candado de
+`servicio-con-vista.ts` — una operación aplicada por la tool dispara el mismo SSE
+`revision` que ve un navegador ya abierto (T-AG-07), y una asignación de pin
+inválida (ej. GPIO34) da el mismo `PIN_SIN_PULLUP_INTERNO`, con la misma
+explicación determinista, por los dos caminos (T-AG-05, convergencia de caminos).
+La diferencia es únicamente el actor forzado (`"agente"` vs. `"navegador"`) y el
+transporte (tool de OpenCode vs. `POST /api/operaciones`) — la autoridad semántica
+es una sola, en los dos casos.

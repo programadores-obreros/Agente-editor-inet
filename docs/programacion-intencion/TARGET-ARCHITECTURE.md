@@ -158,3 +158,9 @@ evidencia (detalle completo en `PHASE_2_SLICE_1_DESIGN.md`,
   abierto por decisión del orquestador, pendiente de confirmación humana;
   confirmado después por el HUMAN PRODUCT OWNER como `ACCEPTED_KNOWN_LIMITATION`,
   ver `DECISIONS.md` H4).
+- **Phase 2 Slice 2** agrega el pulsador (entrada) a la vista física, con rol
+  Entrada/Salida derivado del catálogo, y una SEGUNDA tool de transporte para el
+  agente, `opencode/tool/proyecto-fisico.ts` — mismo Project Engine, mismo actor
+  forzado que el navegador (sólo que `"agente"`), whitelist de operaciones
+  existentes (detalle en `PHASE_2_SLICE_2_DESIGN.md`, `OPERATIONS.md` §12 y
+  `DECISIONS.md`).
