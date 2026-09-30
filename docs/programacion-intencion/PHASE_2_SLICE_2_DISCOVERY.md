@@ -164,3 +164,29 @@ Ninguna decisión exige reabrir D1–D17, E3-04b ni H4. No hay condición de STO
 5. Gate: el test de aceptación H, navegador real, packaging instalado, red team focal (con foco en la superficie de HD-S2-1), freeze.
 
 Las estimaciones y el orden fino se fijan en el DESIGN, no acá.
+
+---
+
+## Decisiones humanas tomadas (2026-09-30)
+
+El HUMAN PRODUCT OWNER resolvió las HD-S2 (son normativas para el DESIGN):
+
+| ID | Decisión |
+|---|---|
+| HD-S2-0 | A: ESP32 + LED + pulsador |
+| HD-S2-1 | a + b: tool controlada con whitelist explícita de operaciones EXISTENTES para el agente, más el sembrado determinista de la demo. No es una nueva autoridad: el Project Engine sigue siendo la única, y el agente nunca escribe la IR |
+| HD-S2-2 | Dibujar el pulsador con Wokwi Elements |
+| HD-S2-3 | `1.l` = señal, `2.l` = GND, sólo en la proyección física; sin verdad eléctrica paralela |
+| HD-S2-4 | `wokwi-pushbutton` estándar |
+| HD-S2-5 | B: CSS mínimo; sin motor de layout |
+| HD-S2-6 | Descartar el cable geométrico |
+| HD-S2-7 | A: Entrada/Salida derivadas de la autoridad catalogal; el browser no mantiene tablas propias |
+| HD-S2-8 | A + C acotado: texto determinista para los reason codes del recorrido, más resaltar la entidad afectada. Sin LLM. Un código desconocido se muestra tal cual |
+| HD-S2-9 | A: INPUT_PULLUP interno |
+| HD-S2-10 | NO: ninguna regla pulsador → LED |
+
+**Contrato de scope:** el slice demuestra "coexistencia física y semántica de una entrada y una salida dentro del mismo proyecto, editables, persistentes y validadas por el mismo Project Engine". NO demuestra "cuando aprieto el botón, prender el LED".
+
+**Capas protegidas:** `nucleo/**`, `servidor/**`, `circuito.ts`, `tests/nucleo-*`, los instaladores y `package.json`. Cualquier necesidad de tocarlas es HUMAN_DECISION_REQUIRED. También lo es cualquier cambio de schema, semántica nueva del Engine, cambio en la validación central, operación nueva, segunda autoridad de componentes/pines o comportamiento pulsador → LED.
+
+Diseño: `PHASE_2_SLICE_2_DESIGN.md`.
