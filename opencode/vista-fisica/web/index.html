@@ -38,6 +38,26 @@
   li { padding: 2px 0; font-size: 13px; }
   label { display: block; margin-bottom: 6px; font-size: 13px; }
   select { font-size: 13px; }
+
+  /* Fase 2, Slice 2 (§3.5, HD-S2-5): sólo CSS, sin motor de layout ni tabla de
+     tamaños. `#circuito` acomoda placa+componentes con "aire" entre ellos en vez de
+     quedar pegados como texto en línea (ARCH-S2-PHYSICAL/INFORME.md §6, opción B). */
+  #circuito { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+  /* `transform:scale()` es puramente cosmético (wokwi-render-datos.ts::ESCALA_WOKWI_POR_PLACA,
+     circuito.ts:93-99 citado ahí) — el elemento escalado NO reserva más espacio de
+     layout que su tamaño sin escalar, así que la pieza vecina puede quedar pisada.
+     Este margen fijo en la placa (única con escala != 1 hoy, ESP32 a 1.25) compensa
+     el desborde real medido en Chromium (ARCH-S2-PHYSICAL/INFORME.md §6: ~106.6px de
+     ancho reservado vs. ~133px visual, ~204px de alto reservado vs. ~255px visual) —
+     un valor fijo, cosmético, nunca una tabla de tamaños por placa. */
+  #circuito [data-entidad-tipo="placa"] { margin-right: 32px; margin-bottom: 56px; }
+
+  /* Fase 2, Slice 2 (§3.4, resaltado C): el elemento del componente afectado por un
+     motivo se remarca según la severidad — presentación pura, derivada del atributo
+     `data-afectado` que `pintar.js` ya calculó (nunca una decisión nueva acá). */
+  [data-afectado="blocking"] { outline: 3px solid #b91c1c; }
+  [data-afectado="warning"] { outline: 3px dashed #b45309; }
+  [data-afectado="info"] { outline: 2px dotted #1d4ed8; }
 </style>
 </head>
 <body>
