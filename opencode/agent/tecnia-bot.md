@@ -22,6 +22,7 @@ permission:
   actualizar: "allow"
   clave: "allow"
   vista-fisica: "allow"
+  proyecto-fisico: "allow"
   edit:
     "*.html": "deny"
     "*.svg": "deny"
