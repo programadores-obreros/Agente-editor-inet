@@ -31,7 +31,7 @@ import type { SobreOperacion, TipoOperacion } from "../nucleo/operaciones.ts"
 import type { ResultadoTransaccion } from "../nucleo/motor.ts"
 import type { Proyecto } from "../nucleo/ir.ts"
 import type { ModeloDeVista, MotivoVista } from "../vista-fisica/modelo-vista.ts"
-import { directorioDeDatos, ID_PROYECTO_DEFAULT } from "../vista-fisica/ubicacion-proyecto.ts"
+import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // R-6: whitelist EXACTA e inmutable — SetComportamiento (HD-S2-10: nada de
@@ -122,10 +122,26 @@ interface RechazoDeLaTool {
  * no": un solo elemento fuera de forma/whitelist rechaza el lote COMPLETO.
  */
 function validarLoteParaTransporte(operacionesCrudas: readonly unknown[]): RechazoDeLaTool | null {
+  // Fix M-01 (MINOR, red team Phase 2 Slice 2, RED-S2-TOOL/INFORME.md): un `operaciones`
+  // con el prototipo alterado (`Object.setPrototypeOf(arr, {length:999})`) sigue siendo
+  // un Array de verdad para `Array.isArray` (el internal slot de array no cambia con el
+  // prototipo) — pero pierde CUALQUIER método heredado de `Array.prototype`
+  // (`.entries()`, `.map()`, `Symbol.iterator`), así que iterarlo con esos métodos
+  // rompía con un `TypeError` crudo, sin capturar. `Array.isArray` primero rechaza
+  // cualquier cosa que NO sea un array de verdad (un objeto array-like disfrazado, p.
+  // ej. `{0:..., length:1}`, nunca se trata como lote). Después, el recorrido es por
+  // ÍNDICE, con acceso `[]` PLANO (siempre propio del array, nunca heredado del
+  // prototipo) sobre un largo YA ACOTADO a `MAXIMO_OPERACIONES` — nunca confía en
+  // `.entries()`/`.map()`/`for...of`/`Symbol.iterator` del objeto de entrada.
+  if (!Array.isArray(operacionesCrudas)) {
+    return { codigo: "OPERACION_CON_FORMA_INVALIDA", motivo: "operaciones tiene que ser un array" }
+  }
   if (operacionesCrudas.length > MAXIMO_OPERACIONES) {
     return { codigo: "DEMASIADAS_OPERACIONES", limite: MAXIMO_OPERACIONES, recibidas: operacionesCrudas.length }
   }
-  for (const [indice, cruda] of operacionesCrudas.entries()) {
+  const largoAcotado = Math.min(operacionesCrudas.length, MAXIMO_OPERACIONES)
+  for (let indice = 0; indice < largoAcotado; indice++) {
+    const cruda = operacionesCrudas[indice]
     if (!esObjetoPlanoSimple(cruda)) {
       return { codigo: "OPERACION_CON_FORMA_INVALIDA", indice, motivo: "cada elemento tiene que ser un objeto con exactamente `tipo` y `payload`" }
     }
@@ -221,74 +237,108 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       .describe(`Id del proyecto físico. Por defecto "${ID_PROYECTO_DEFAULT}" — el mismo proyecto que abre \`vista-fisica\` en esta carpeta de trabajo.`),
   },
   async execute(args, ctx) {
-    const idProyecto = args.idProyecto?.trim() || ID_PROYECTO_DEFAULT
-    const directorioDatos = directorioDeDatos(ctx.directory)
-
-    let deps: DependenciasProyectoFisico
+    // Fix M-01 (MINOR, red team Phase 2 Slice 2, RED-S2-TOOL/INFORME.md): ningún error
+    // inesperado puede escapar de `execute()` como excepción cruda — nunca un catch
+    // vacío, nunca un "éxito" simulado: se devuelve un rechazo ESTRUCTURADO con el
+    // mensaje real, mismo invariante que ya sostiene el resto del núcleo ("nunca una
+    // excepción cruda, siempre un rechazo estructurado"). Los try/catch puntuales de
+    // más abajo (carga de dependencias, candado) ya devuelven ANTES de llegar acá; este
+    // catch envolvente es la red de seguridad para cualquier otra cosa inesperada.
     try {
-      deps = await cargarDependencias()
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error)
-    }
+      // Fix N-01 (NOTE, defensa en profundidad, mismo informe): el schema zod del
+      // harness YA restringe `accion` a `leer`/`simular`/`aplicar` — este chequeo es
+      // para quien invoque `execute()` directo (bypaseando zod, mismo criterio que
+      // motiva la whitelist de `tipo`/R-6 más abajo): un valor desconocido se rechaza
+      // EXPLÍCITO, nunca cae en el dry-run por el default implícito del ternario de
+      // más abajo (`args.accion === "aplicar" ? ... : ...`).
+      if (args.accion !== "leer" && args.accion !== "simular" && args.accion !== "aplicar") {
+        return JSON.stringify({ accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ACCION_DESCONOCIDA" }, null, 2)
+      }
 
-    let servicio: ServicioDeProyecto
-    try {
-      servicio = deps.obtenerServicioDeProyectoConVista({ directorio: directorioDatos, idProyecto })
+      const idProyecto = args.idProyecto?.trim() || ID_PROYECTO_DEFAULT
+
+      // Fix C-01 (CRITICAL, mismo informe): `idProyecto` viajaba SIN VALIDAR hasta
+      // `nucleo/almacen.ts`/`servidor/servicio-con-vista.ts` (capas PROTEGIDAS, §6), que
+      // arman la ruta final con `join(directorio, \`${id}.json\`)` sin chequear
+      // separadores de ruta ni "..". Un id como "../../../fuga" escribe fuera de
+      // `.tecnia-vista-fisica` y hasta fuera de `ctx.directory` (reproducido,
+      // confirmado). Se rechaza ACÁ, en el borde, ANTES de `directorioDeDatos`/
+      // `obtenerServicioDeProyectoConVista`: nunca toca disco, nunca toma el candado.
+      if (!validarIdProyecto(idProyecto)) {
+        return JSON.stringify({ accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "ID_PROYECTO_INVALIDO" }, null, 2)
+      }
+
+      const directorioDatos = directorioDeDatos(ctx.directory)
+
+      let deps: DependenciasProyectoFisico
+      try {
+        deps = await cargarDependencias()
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error)
+      }
+
+      let servicio: ServicioDeProyecto
+      try {
+        servicio = deps.obtenerServicioDeProyectoConVista({ directorio: directorioDatos, idProyecto })
+      } catch (error) {
+        // Candado (H5, mismo criterio que vista-fisica.ts): otro proceso ya tiene este
+        // proyecto abierto — mensaje claro, nunca una excepción cruda ni una escritura.
+        const mensaje = error instanceof Error ? error.message : String(error)
+        return `No pude acceder al proyecto físico: ${mensaje}`
+      }
+
+      if (args.accion === "leer") {
+        const snapshot = servicio.snapshot() as SnapshotConVista
+        return JSON.stringify(resumenDeLectura(idProyecto, snapshot), null, 2)
+      }
+
+      // ── 'simular' / 'aplicar': baseRevision y operaciones son obligatorios. ────────
+      if (args.baseRevision === undefined) {
+        const snapshotActual = servicio.snapshot() as SnapshotConVista
+        return JSON.stringify(
+          { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "BASE_REVISION_FALTANTE", baseRevision: null, revisionActual: snapshotActual.revision },
+          null,
+          2,
+        )
+      }
+      const baseRevision = args.baseRevision
+      const operacionesCrudas = args.operaciones
+      if (!operacionesCrudas || operacionesCrudas.length === 0) {
+        const snapshotActual = servicio.snapshot() as SnapshotConVista
+        return JSON.stringify(
+          { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "OPERACIONES_FALTANTES", baseRevision, revisionActual: snapshotActual.revision },
+          null,
+          2,
+        )
+      }
+
+      // ── Whitelist, forma exacta y tamaño — TODO en la tool, ANTES del Engine
+      // (§3.1/§4: "sin invocar el Engine" para un lote rechazado en transporte). ─────
+      const rechazoDeTransporte = validarLoteParaTransporte(operacionesCrudas)
+      if (rechazoDeTransporte) {
+        const snapshotActual = servicio.snapshot() as SnapshotConVista
+        return JSON.stringify(
+          { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", ...rechazoDeTransporte, baseRevision, revisionActual: snapshotActual.revision },
+          null,
+          2,
+        )
+      }
+
+      const sobres = construirSobres(operacionesCrudas as readonly OperacionCruda[], baseRevision)
+      const resultado: ResultadoTransaccion = args.accion === "aplicar" ? servicio.aplicarTransaccion(sobres) : servicio.proponer(sobres)
+
+      const snapshotVigente = servicio.snapshot() as SnapshotConVista
+      const proyectoParaNombres = proyectoParaExplicar(resultado, snapshotVigente)
+      const motivos = deps.explicarMotivosConCatalogoReal(resultado.motivos, proyectoParaNombres).map(proyectarMotivoParaAgente)
+
+      return JSON.stringify(
+        { accion: args.accion, idProyecto, ok: resultado.ok, baseRevision: resultado.baseRevision, revisionActual: resultado.revisionActual, motivos },
+        null,
+        2,
+      )
     } catch (error) {
-      // Candado (H5, mismo criterio que vista-fisica.ts): otro proceso ya tiene este
-      // proyecto abierto — mensaje claro, nunca una excepción cruda ni una escritura.
       const mensaje = error instanceof Error ? error.message : String(error)
-      return `No pude acceder al proyecto físico: ${mensaje}`
+      return JSON.stringify({ accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ERROR_INESPERADO", mensaje }, null, 2)
     }
-
-    if (args.accion === "leer") {
-      const snapshot = servicio.snapshot() as SnapshotConVista
-      return JSON.stringify(resumenDeLectura(idProyecto, snapshot), null, 2)
-    }
-
-    // ── 'simular' / 'aplicar': baseRevision y operaciones son obligatorios. ────────
-    if (args.baseRevision === undefined) {
-      const snapshotActual = servicio.snapshot() as SnapshotConVista
-      return JSON.stringify(
-        { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "BASE_REVISION_FALTANTE", baseRevision: null, revisionActual: snapshotActual.revision },
-        null,
-        2,
-      )
-    }
-    const baseRevision = args.baseRevision
-    const operacionesCrudas = args.operaciones
-    if (!operacionesCrudas || operacionesCrudas.length === 0) {
-      const snapshotActual = servicio.snapshot() as SnapshotConVista
-      return JSON.stringify(
-        { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "OPERACIONES_FALTANTES", baseRevision, revisionActual: snapshotActual.revision },
-        null,
-        2,
-      )
-    }
-
-    // ── Whitelist, forma exacta y tamaño — TODO en la tool, ANTES del Engine
-    // (§3.1/§4: "sin invocar el Engine" para un lote rechazado en transporte). ─────
-    const rechazoDeTransporte = validarLoteParaTransporte(operacionesCrudas)
-    if (rechazoDeTransporte) {
-      const snapshotActual = servicio.snapshot() as SnapshotConVista
-      return JSON.stringify(
-        { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", ...rechazoDeTransporte, baseRevision, revisionActual: snapshotActual.revision },
-        null,
-        2,
-      )
-    }
-
-    const sobres = construirSobres(operacionesCrudas as readonly OperacionCruda[], baseRevision)
-    const resultado: ResultadoTransaccion = args.accion === "aplicar" ? servicio.aplicarTransaccion(sobres) : servicio.proponer(sobres)
-
-    const snapshotVigente = servicio.snapshot() as SnapshotConVista
-    const proyectoParaNombres = proyectoParaExplicar(resultado, snapshotVigente)
-    const motivos = deps.explicarMotivosConCatalogoReal(resultado.motivos, proyectoParaNombres).map(proyectarMotivoParaAgente)
-
-    return JSON.stringify(
-      { accion: args.accion, idProyecto, ok: resultado.ok, baseRevision: resultado.baseRevision, revisionActual: resultado.revisionActual, motivos },
-      null,
-      2,
-    )
   },
 })

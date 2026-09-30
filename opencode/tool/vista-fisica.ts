@@ -24,7 +24,7 @@ import type { ServidorProyecto } from "../servidor/servidor-proyecto.ts"
 // esta tool sigue siendo el único dueño histórico de la doc larga, que ahora vive en
 // el módulo compartido.
 export { directorioDeDatos, ID_PROYECTO_DEFAULT } from "../vista-fisica/ubicacion-proyecto.ts"
-import { directorioDeDatos, ID_PROYECTO_DEFAULT } from "../vista-fisica/ubicacion-proyecto.ts"
+import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
 
 export interface ServidorYServicioVistaFisica {
   readonly servidor: ServidorProyecto
@@ -177,6 +177,17 @@ Usala cuando el alumno/docente quiera VER y tocar el circuito en el navegador, n
   },
   async execute(args, ctx) {
     const idProyecto = args.idProyecto?.trim() || ID_PROYECTO_DEFAULT
+
+    // Fix C-01 (CRITICAL, red team Phase 2 Slice 2, RED-S2-TOOL/INFORME.md — "mismo bug
+    // preexistente de Slice 1"): `idProyecto` viajaba SIN VALIDAR hasta
+    // `obtenerServicioDeProyectoConVista` (servidor/servicio-con-vista.ts, capa
+    // PROTEGIDA), que arma la ruta final (y la del candado) sin chequear separadores de
+    // ruta ni "..". Se rechaza ACÁ, ANTES de `obtenerServidorVistaFisica`: nunca abre un
+    // servidor, nunca toca disco, nunca toma el candado con un id inválido.
+    if (!validarIdProyecto(idProyecto)) {
+      return `No pude abrir la vista física: idProyecto inválido (${JSON.stringify(idProyecto)}). Tiene que ser alfanumérico (con "-"/"_" opcionales, sin espacios ni "/", "\\" o ".."), de 1 a 64 caracteres.`
+    }
+
     // Fix H5 (red-team Phase 2 Slice 1): si otro proceso (otra sesión de OpenCode)
     // ya tiene este proyecto abierto, obtenerServidorVistaFisica (vía
     // obtenerServicioDeProyectoConVista, candado de propiedad por proceso) lanza —

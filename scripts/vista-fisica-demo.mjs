@@ -37,6 +37,11 @@ const REPO = join(AQUI, "..")
 
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { iniciarServidor } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
+// Fix C-01 (CRITICAL, red team Phase 2 Slice 2, RED-S2-TOOL/INFORME.md): este launcher
+// pasaba `args.idProyecto` SIN VALIDAR directo a `obtenerServicioDeProyectoConVista`,
+// mismo agujero que las dos tools de OpenCode — un `--id-proyecto` con path traversal
+// escribe fuera de `--dir`. Se valida en `main()`, ANTES de pedir el servicio.
+const { validarIdProyecto } = await import(join(REPO, "opencode/vista-fisica/ubicacion-proyecto.ts"))
 
 const ID_PROYECTO_POR_DEFECTO = "demo"
 const GPIO_DEMO = "GPIO4" // mismo pin que ya usan los fixtures de Phase 2 (phase2-helpers.mjs, GPIO_X) — sin restricciones en el ESP32.
@@ -105,6 +110,13 @@ async function main() {
     return
   }
   const directorio = resolve(directorioPedido)
+
+  if (!validarIdProyecto(args.idProyecto)) {
+    console.error(`vista-fisica-demo: --id-proyecto inválido (${JSON.stringify(args.idProyecto)}).`)
+    console.error(`Tiene que ser alfanumérico (con "-"/"_" opcionales, sin espacios ni "/", "\\" o ".."), de 1 a 64 caracteres.`)
+    process.exitCode = 1
+    return
+  }
 
   // Fix H5 (red-team Phase 2 Slice 1): si OTRO proceso ya tiene este
   // directorio+idProyecto abierto (candado de propiedad, servicio-con-vista.ts),

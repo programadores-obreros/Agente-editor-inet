@@ -51,3 +51,38 @@ export function directorioDeDatos(directorioActivo: string): string {
  * multi-proyecto por carpeta; `idProyecto` queda como argumento opcional para no
  * cerrar esa puerta más adelante. Reusado tal cual por `proyecto-fisico` (Slice 2). */
 export const ID_PROYECTO_DEFAULT = "activo"
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Fix C-01 (CRITICAL, red team Phase 2 Slice 2, RED-S2-TOOL/INFORME.md): `idProyecto`
+// viajaba SIN VALIDAR desde las dos tools (`proyecto-fisico.ts`, `vista-fisica.ts`) y
+// desde `scripts/vista-fisica-demo.mjs` hasta `nucleo/almacen.ts::rutaFinal` (`join(deps
+// .directorio, \`${id}.json\`)`) y `servidor/servicio-con-vista.ts::tomarCandado`
+// (`join(directorio, \`${idProyecto}.lock\`)`) — ninguno de los dos chequea que `id` no
+// traiga separadores de ruta ni `..`. Con `idProyecto:"../../../fuga"`, la escritura
+// aterriza fuera de `.tecnia-vista-fisica` y hasta fuera de `ctx.directory` por completo
+// (reproducido: `.../s2impl/repro-c01/repro2.mjs`, escritura real confirmada).
+//
+// `nucleo/almacen.ts` y `servidor/servicio-con-vista.ts` son capas PROTEGIDAS (§6 del
+// diseño) — el arreglo va ACÁ, en el borde: una función pura que las tres superficies
+// (`proyecto-fisico.ts`, `vista-fisica.ts`, `vista-fisica-demo.mjs`) llaman ANTES de
+// resolver `directorioDeDatos`/pedir el servicio, para no tocar disco ni tomar el
+// candado con un id inválido.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** Patrón EXACTO de un `idProyecto` válido: alfanumérico ASCII, con `-`/`_`
+ * opcionales, de 1 a 64 caracteres, primer carácter siempre alfanumérico. Cierra, por
+ * construcción (ninguno de estos caracteres matchea `[A-Za-z0-9_-]`): `..`, `/`, `\`,
+ * rutas absolutas, secuencias percent-encoded (`%2e%2e`) y cualquier variante unicode
+ * (homoglyphs, "two dot leader", etc.) — nunca hace falta una lista de exclusión, sólo
+ * una whitelist estricta de caracteres. `ID_PROYECTO_DEFAULT` ("activo") siempre pasa. */
+export const PATRON_ID_PROYECTO = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+
+/** Función PURA: `true` si `idProyecto` es seguro para usar tal cual como nombre de
+ * archivo dentro del directorio de datos (nunca lo sanitiza ni lo transforma — sólo
+ * dice si hace falta rechazarlo). Vacío o sólo espacios NO se decide acá: eso sigue
+ * resolviéndose ANTES, con el mismo `args.idProyecto?.trim() || ID_PROYECTO_DEFAULT`
+ * de siempre — para cuando esta función se llama, `idProyecto` ya es el valor final
+ * (el default incluido). */
+export function validarIdProyecto(idProyecto: string): boolean {
+  return PATRON_ID_PROYECTO.test(idProyecto)
+}
