@@ -83,6 +83,30 @@ function documentoFake() {
   return { createElement: (tag) => elementoFake(tag) }
 }
 
+/** Busca, recursivamente, un descendiente por `tagName` — necesario desde el fix
+ * post-gate (v2-gpio34-blocking.png, `phase2-s2-rol.test.mjs`): una pieza CON rol ya
+ * no es hija directa de `raiz.circuito`, está envuelta en su propio contenedor
+ * (`<figure>`) junto con su rótulo. */
+function buscarPieza(nodo, tag) {
+  for (const hijo of nodo.hijos ?? []) {
+    if (hijo.tagName === tag) return hijo
+    const enHijo = buscarPieza(hijo, tag)
+    if (enHijo) return enHijo
+  }
+  return undefined
+}
+
+/** Todos los descendientes, en cualquier profundidad (incluye los contenedores
+ * `<figure>` del fix de rol Y las piezas/rótulos adentro) — para verificar que
+ * NINGUNO, a ninguna profundidad, tiene un listener. */
+function todosLosNodos(nodo, acc = []) {
+  for (const hijo of nodo.hijos ?? []) {
+    acc.push(hijo)
+    todosLosNodos(hijo, acc)
+  }
+  return acc
+}
+
 test("pintar(): la pieza wokwi-pushbutton creada NUNCA recibe ningún addEventListener; sólo el <select> del GPIO lo recibe", () => {
   const doc = documentoFake()
   const instrucciones = [
@@ -92,7 +116,7 @@ test("pintar(): la pieza wokwi-pushbutton creada NUNCA recibe ningún addEventLi
   const eventos = []
   const raiz = pintar(doc, instrucciones, { onCambioGpio: (e) => eventos.push(e) })
 
-  const pulsador = raiz.circuito.hijos.find((h) => h.tagName === "wokwi-pushbutton")
+  const pulsador = buscarPieza(raiz.circuito, "wokwi-pushbutton")
   assert.deepEqual(pulsador._listeners, {}, "la pieza Wokwi no tiene NINGÚN listener propio")
 
   const selector = raiz.controles.hijos[0].hijos[0]
@@ -104,7 +128,7 @@ test("pintar(): la pieza wokwi-pushbutton creada NUNCA recibe ningún addEventLi
   assert.equal(Object.keys(pulsador._listeners).length, 0)
 })
 
-test("pintar(): con dos wokwi-pushbutton + un LED, ninguno de los tres recibe listeners", () => {
+test("pintar(): con dos wokwi-pushbutton + un LED (cada uno con su rótulo de rol), ninguno de los descendientes de #circuito recibe listeners", () => {
   const doc = documentoFake()
   const instrucciones = [
     { tipo: "crearElemento", entidad: { tipo: "placa", id: "placa-0" }, tag: "wokwi-esp32-devkit-v1", atributos: {}, etiquetaRol: null },
@@ -112,7 +136,12 @@ test("pintar(): con dos wokwi-pushbutton + un LED, ninguno de los tres recibe li
     { tipo: "crearElemento", entidad: { tipo: "componente", id: "cmp-2" }, tag: "wokwi-pushbutton", atributos: { color: "green" }, etiquetaRol: "Entrada" },
   ]
   const raiz = pintar(doc, instrucciones)
-  for (const pieza of raiz.circuito.hijos) {
+  const piezas = todosLosNodos(raiz.circuito)
+  assert.ok(
+    piezas.some((p) => p.tagName === "wokwi-pushbutton") && piezas.some((p) => p.tagName === "wokwi-led"),
+    "fixture: el recorrido recursivo tiene que encontrar las piezas envueltas en sus contenedores",
+  )
+  for (const pieza of piezas) {
     assert.deepEqual(pieza._listeners ?? {}, {}, `${pieza.tagName} no puede tener ningún listener`)
   }
 })

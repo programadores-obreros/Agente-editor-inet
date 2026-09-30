@@ -56,6 +56,19 @@ function documentoFake() {
   return { createElement: (tag) => elementoFake(tag) }
 }
 
+/** Busca, recursivamente, un descendiente por `tagName` — necesario desde el fix
+ * post-gate (v2-gpio34-blocking.png, `phase2-s2-rol.test.mjs`): una pieza CON rol ya
+ * no es hija directa de `raiz.circuito`, está envuelta en su propio contenedor
+ * (`<figure>`) junto con su rótulo. */
+function buscarPieza(nodo, tag) {
+  for (const hijo of nodo.hijos ?? []) {
+    if (hijo.tagName === tag) return hijo
+    const enHijo = buscarPieza(hijo, tag)
+    if (enHijo) return enHijo
+  }
+  return undefined
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════
 // Fixtures — un proyecto real por código, por operaciones REALES del Engine.
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -281,9 +294,9 @@ test("pintar: el elemento del componente afectado recibe data-afectado=<severida
     { tipo: "panelMotivo", codigo: "PIN_SIN_PULLUP_INTERNO", severidad: "blocking", clasificacion: "representable", entidad: { tipo: "componente", id: "cmp-1" }, explicacion: "texto" },
   ]
   const raiz = pintar(doc, instrucciones)
-  const pulsador = raiz.circuito.hijos.find((h) => h.tagName === "wokwi-pushbutton")
+  const pulsador = buscarPieza(raiz.circuito, "wokwi-pushbutton")
   assert.equal(pulsador.atributos["data-afectado"], "blocking")
-  const placaElemento = raiz.circuito.hijos.find((h) => h.tagName === "wokwi-esp32-devkit-v1")
+  const placaElemento = buscarPieza(raiz.circuito, "wokwi-esp32-devkit-v1")
   assert.equal(placaElemento.atributos["data-afectado"], undefined, "la placa no tiene ningun motivo, no se marca")
 })
 
@@ -294,7 +307,7 @@ test("pintar: un motivo sin entidad no marca ningun elemento (nunca inventa una 
     { tipo: "panelMotivo", codigo: "X", severidad: "info", clasificacion: null, entidad: null, explicacion: null },
   ]
   const raiz = pintar(doc, instrucciones)
-  const led = raiz.circuito.hijos.find((h) => h.tagName === "wokwi-led")
+  const led = buscarPieza(raiz.circuito, "wokwi-led")
   assert.equal(led.atributos["data-afectado"], undefined)
 })
 

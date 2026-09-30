@@ -83,18 +83,36 @@ function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad) {
   for (const [clave, valor] of Object.entries(instruccion.atributos)) {
     elemento.setAttribute(clave, valor)
   }
-  contenedor.appendChild(elemento)
   if (elementosPorEntidad) elementosPorEntidad.set(`${instruccion.entidad.tipo}:${instruccion.entidad.id}`, elemento)
 
-  // Fase 2, Slice 2 (§3.3): rótulo Entrada/Salida, junto al componente — un
-  // elemento propio (nunca un atributo invisible), con el texto YA capitalizado por
-  // `plan-de-pintado.js::etiquetaDeRol`. `null` (placa, componente sin rol) no
-  // agrega nada.
+  // Fix post-gate (Chromium real, .../s2impl/gate-vista/v2-gpio34-blocking.png): con
+  // `#circuito` en `flex-wrap` (§3.5), un rótulo de rol pintado como hermano SUELTO
+  // de la pieza podía terminar en OTRA línea del wrap, lejos de su componente ("El
+  // rótulo 'Entrada' del pulsador se veía debajo del ESP32"). Fix: la pieza CON rol
+  // va envuelta en un contenedor propio (`<figure>`, DOM/CSS mínimo, sin motor de
+  // layout) que agrupa la pieza + su rótulo — flex-wrap sólo puede envolver ese
+  // contenedor ENTERO, nunca separar la pieza de su texto. El contenedor repite
+  // `data-entidad-tipo`/`data-entidad-id` (mismos valores que la pieza) para que
+  // "mismo contenedor, misma entidad" sea trivial de verificar desde afuera.
+  //
+  // Sin rol (placa, componente sin rol pedagógico): la pieza sigue siendo hija
+  // DIRECTA de `contenedor`, exactamente como antes de este fix — nunca se envuelve
+  // sin necesidad.
   if (instruccion.etiquetaRol) {
-    const rotulo = doc.createElement("span")
+    const contenedorPieza = doc.createElement("figure")
+    contenedorPieza.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
+    contenedorPieza.setAttribute("data-entidad-id", instruccion.entidad.id)
+    contenedorPieza.setAttribute("data-pieza-de", instruccion.entidad.id)
+    contenedorPieza.appendChild(elemento)
+
+    const rotulo = doc.createElement("figcaption")
     rotulo.setAttribute("data-rol-de-componente", instruccion.entidad.id)
     rotulo.textContent = instruccion.etiquetaRol
-    contenedor.appendChild(rotulo)
+    contenedorPieza.appendChild(rotulo)
+
+    contenedor.appendChild(contenedorPieza)
+  } else {
+    contenedor.appendChild(elemento)
   }
 
   return elemento

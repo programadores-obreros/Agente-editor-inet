@@ -129,23 +129,90 @@ test("planDePintado: crearElemento del pulsador trae etiquetaRol:'Entrada'; el L
   assert.equal(crearPulsador.etiquetaRol, "Entrada")
 })
 
-test("pintar: el rótulo de rol se pinta como un elemento propio, con el texto capitalizado, dentro de raiz.circuito", () => {
+test("pintar: el rótulo de rol se pinta DENTRO del MISMO contenedor que su pieza, con el texto capitalizado — nunca hermano suelto de #circuito", () => {
   const instrucciones = [
     { tipo: "crearElemento", entidad: { tipo: "componente", id: "cmp-0" }, tag: "wokwi-pushbutton", atributos: { color: "green" }, etiquetaRol: "Entrada" },
   ]
   const doc = documentoFake()
   const raiz = pintar(doc, instrucciones)
-  assert.equal(raiz.circuito.hijos.length, 2, "el elemento wokwi + su rótulo de rol")
-  const [pieza, rotulo] = raiz.circuito.hijos
+  // Fix post-gate (v2-gpio34-blocking.png): la pieza CON rol va envuelta en un
+  // único contenedor -- nunca un hermano suelto que flex-wrap pueda separar a otra
+  // línea.
+  assert.equal(raiz.circuito.hijos.length, 1, "un ÚNICO contenedor por pieza-con-rol, nunca dos hermanos sueltos")
+  const contenedor = raiz.circuito.hijos[0]
+  assert.notEqual(contenedor.tagName, "wokwi-pushbutton", "la pieza no es hija directa de #circuito: está envuelta")
+  assert.equal(contenedor.hijos.length, 2, "el contenedor tiene adentro la pieza + su rótulo")
+  const [pieza, rotulo] = contenedor.hijos
   assert.equal(pieza.tagName, "wokwi-pushbutton")
   assert.equal(rotulo.textContent, "Entrada")
+  assert.equal(contenedor.atributos["data-entidad-id"], "cmp-0", "el contenedor repite el mismo data-entidad-id que la pieza")
+  assert.equal(pieza.atributos["data-entidad-id"], contenedor.atributos["data-entidad-id"], "mismo data-entidad-id entre pieza y contenedor")
 })
 
-test("pintar: sin etiquetaRol (null), no se agrega ningún elemento de rol", () => {
+test("pintar: sin etiquetaRol (null), no se agrega ningún elemento de rol ni ningún contenedor extra", () => {
   const instrucciones = [{ tipo: "crearElemento", entidad: { tipo: "placa", id: "placa-0" }, tag: "wokwi-esp32-devkit-v1", atributos: {}, etiquetaRol: null }]
   const doc = documentoFake()
   const raiz = pintar(doc, instrucciones)
   assert.equal(raiz.circuito.hijos.length, 1)
+  assert.equal(raiz.circuito.hijos[0].tagName, "wokwi-esp32-devkit-v1", "sin rol, la placa sigue siendo hija DIRECTA de #circuito (sin envoltorio innecesario)")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 3b. Fix post-gate (Chromium real, .../s2impl/gate-vista/v2-gpio34-blocking.png):
+// "Entrada" del pulsador se veía debajo del ESP32 (otra línea del flex-wrap), lejos
+// de su pieza -- porque el rótulo era un HERMANO SUELTO de #circuito, y flex-wrap
+// podía separarlo de su elemento Wokwi. Reproduce el escenario completo
+// (placa+LED+pulsador, por operaciones REALES del Engine) y demuestra que ya no pasa.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("fix v2-gpio34-blocking.png: ningún rótulo de rol es hijo DIRECTO de #circuito; cada rótulo vive en el MISMO contenedor que su pieza (mismo data-entidad-id)", () => {
+  const dir = nuevoDir("s2-rol-fix-contenedor")
+  const idProyecto = nuevoIdProyecto()
+  const servicio = obtenerServicioDeProyecto({ directorio: dir, idProyecto })
+  let r = servicio.aplicar(op("SetPlaca", { placa: "esp32-devkit-v1" }, servicio.snapshot().revision))
+  assert.equal(r.ok, true)
+  r = servicio.aplicar(op("AgregarComponente", { tipo: "led" }, servicio.snapshot().revision))
+  assert.equal(r.ok, true)
+  const idLed = servicio.snapshot().proyecto.componentes[0].id
+  r = servicio.aplicar(op("AgregarComponente", { tipo: "pulsador" }, servicio.snapshot().revision))
+  assert.equal(r.ok, true)
+  const idPulsador = servicio.snapshot().proyecto.componentes[1].id
+  r = servicio.aplicar(op("AsignarPin", { componente: idPulsador, terminal: "senal", pin: "GPIO34" }, servicio.snapshot().revision))
+  assert.equal(r.ok, true, "mismo Path A que disparó el defecto en el gate (GPIO34, PIN_SIN_PULLUP_INTERNO, blocking)")
+
+  const vista = proyectarVista(servicio.snapshot().proyecto, catalogo)
+  const instrucciones = planDePintado(vista)
+  const doc = documentoFake()
+  const raiz = pintar(doc, instrucciones)
+
+  // Ningún rótulo de rol ("Entrada"/"Salida") es hijo DIRECTO de #circuito.
+  for (const hijo of raiz.circuito.hijos) {
+    assert.equal(hijo.atributos["data-rol-de-componente"], undefined, "un rótulo de rol nunca puede ser hijo directo de #circuito (defecto original)")
+  }
+
+  // El contenedor del pulsador tiene, adentro, la pieza Y su rótulo, con el MISMO
+  // data-entidad-id — nunca en otra línea del flex-wrap.
+  const contenedorPulsador = raiz.circuito.hijos.find((c) => (c.hijos ?? []).some((h) => h.tagName === "wokwi-pushbutton"))
+  assert.ok(contenedorPulsador, "hay un contenedor con la pieza del pulsador adentro")
+  const piezaPulsador = contenedorPulsador.hijos.find((h) => h.tagName === "wokwi-pushbutton")
+  const rotuloPulsador = contenedorPulsador.hijos.find((h) => h.atributos["data-rol-de-componente"] === idPulsador)
+  assert.ok(rotuloPulsador, "el rótulo del pulsador está en el MISMO contenedor que su pieza")
+  assert.equal(rotuloPulsador.textContent, "Entrada")
+  assert.equal(piezaPulsador.atributos["data-entidad-id"], idPulsador)
+  assert.equal(contenedorPulsador.atributos["data-entidad-id"], idPulsador, "el contenedor repite el mismo data-entidad-id que la pieza")
+
+  // Ídem para el LED ("Salida") -- no queda "suelto entre el LED y el pulsador".
+  const contenedorLed = raiz.circuito.hijos.find((c) => (c.hijos ?? []).some((h) => h.tagName === "wokwi-led"))
+  assert.ok(contenedorLed)
+  const rotuloLed = contenedorLed.hijos.find((h) => h.atributos["data-rol-de-componente"] === idLed)
+  assert.ok(rotuloLed, "el rótulo del LED está en el MISMO contenedor que su pieza")
+  assert.equal(rotuloLed.textContent, "Salida")
+  assert.equal(contenedorLed.atributos["data-entidad-id"], idLed)
+
+  // data-afectado/el mapa en memoria NO se rompen: el motivo blocking del pulsador
+  // (GPIO34) sigue marcando la PIEZA (nunca el contenedor ni ningún otro elemento).
+  assert.equal(piezaPulsador.atributos["data-afectado"], "blocking")
+  assert.equal(contenedorPulsador.atributos["data-afectado"], undefined, "data-afectado sigue en la pieza, no en el contenedor")
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════

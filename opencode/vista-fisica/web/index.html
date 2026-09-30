@@ -52,6 +52,15 @@
      un valor fijo, cosmético, nunca una tabla de tamaños por placa. */
   #circuito [data-entidad-tipo="placa"] { margin-right: 32px; margin-bottom: 56px; }
 
+  /* Fix post-gate (Chromium real, .../s2impl/gate-vista/v2-gpio34-blocking.png):
+     una pieza CON rol va envuelta en su propio contenedor (`<figure>`,
+     `pintar.js::pintarElemento`) junto con su rótulo — flex-wrap opera sobre ese
+     contenedor ENTERO, nunca separa la pieza de su texto. Sólo CSS/DOM mínimo, sin
+     motor de layout: se le quita el margen por defecto del navegador y se apila la
+     pieza + el rótulo en columna, con el rótulo DEBAJO. */
+  #circuito figure[data-pieza-de] { margin: 0; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  #circuito figure[data-pieza-de] figcaption { font-size: 12px; }
+
   /* Fase 2, Slice 2 (§3.4, resaltado C): el elemento del componente afectado por un
      motivo se remarca según la severidad — presentación pura, derivada del atributo
      `data-afectado` que `pintar.js` ya calculó (nunca una decisión nueva acá). */
