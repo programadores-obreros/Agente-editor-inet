@@ -21,9 +21,10 @@
 // `obtenerServicioDeProyecto(...)`.
 
 import type { Proyecto } from "../nucleo/ir.ts"
-import type { ModeloDeVista } from "./modelo-vista.ts"
+import type { Motivo } from "../nucleo/motivos.ts"
+import type { ModeloDeVista, MotivoVista } from "./modelo-vista.ts"
 import { construirCatalogoMinimoReal } from "../nucleo/adaptadores/hash-catalogo.node.ts"
-import { proyectarVista } from "./snapshot-a-vista.ts"
+import { proyectarVista, explicarMotivos } from "./snapshot-a-vista.ts"
 
 // Igual que `composicion-raiz.ts::CATALOGO_REAL`: puro y determinista, se calcula una
 // única vez por proceso — todos los llamados a `vistaDeProyectoConCatalogoReal`
@@ -32,4 +33,16 @@ const CATALOGO_REAL = construirCatalogoMinimoReal()
 
 export function vistaDeProyectoConCatalogoReal(proyecto: Proyecto): ModeloDeVista {
   return proyectarVista(proyecto, CATALOGO_REAL)
+}
+
+/**
+ * Fase 2, Slice 2 (W-S2-TOOL): conveniencia equivalente a
+ * `vistaDeProyectoConCatalogoReal`, pero para `explicarMotivos` — la tool
+ * `proyecto-fisico` la usa para explicar los `Motivo[]` que devuelve
+ * `servicio.aplicarTransaccion`/`servicio.proponer` (un resultado de transacción, no
+ * un snapshot completo) con el MISMO catálogo real que usa el resto de la vista
+ * física, sin construir un catálogo propio (evita una segunda autoridad).
+ */
+export function explicarMotivosConCatalogoReal(motivos: readonly Motivo[], proyecto: Proyecto): readonly MotivoVista[] {
+  return explicarMotivos(motivos, proyecto, CATALOGO_REAL)
 }

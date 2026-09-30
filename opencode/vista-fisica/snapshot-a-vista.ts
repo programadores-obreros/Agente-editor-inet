@@ -230,14 +230,35 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   const readiness = derivarReadiness(proyecto, motivosBase)
 
   // Fase 2, Slice 2 (§3.4): cada motivo se proyecta TAL CUAL (mismo criterio de
-  // siempre) MÁS una `explicacion` en texto llano — calculada acá, del lado del
-  // SERVIDOR, nunca en el browser. `nombres` resuelve `{componente}`/`{ocupadoPor}`
-  // contra el MISMO proyecto+catálogo de esta llamada.
-  const nombres = resolverNombreDeComponente(proyecto, catalogo)
-  const motivos: MotivoVista[] = motivosBase.map((motivo) => ({
-    ...motivo,
-    explicacion: explicacionDeMotivo(motivo.codigo, datosParaExplicacion(motivo), nombres),
-  }))
+  // siempre) MÁS una `explicacion` en texto llano — ver `explicarMotivos` más abajo.
+  const motivos: readonly MotivoVista[] = explicarMotivos(motivosBase, proyecto, catalogo)
 
   return { placa, componentes, cables, gpiosDisponibles, motivos, readiness }
+}
+
+/**
+ * Fase 2, Slice 2 (W-S2-TOOL, §3.1 del diseño): la tool `proyecto-fisico`
+ * (`opencode/tool/proyecto-fisico.ts`) necesita explicar los `Motivo[]` que devuelve
+ * el motor DIRECTO (`servicio.aplicarTransaccion`/`servicio.proponer`) — un resultado
+ * de transacción, no un `Snapshot` completo — sin pagar el costo de recalcular
+ * cables/gpiosDisponibles/rol de `proyectarVista` (innecesario para ese caso de uso) y
+ * SIN reimplementar el criterio de nombres/explicación en un segundo lugar.
+ *
+ * Reusa EXACTAMENTE los mismos dos helpers privados de este módulo
+ * (`resolverNombreDeComponente`/`datosParaExplicacion`) que ya usa `proyectarVista` de
+ * arriba — de hecho, `proyectarVista` llama a ESTA función para su propio campo
+ * `motivos` (un solo lugar, nunca dos copias del mismo criterio).
+ *
+ * `proyecto` es el que da contexto para resolver `{componente}`/`{ocupadoPor}` —
+ * para un lote recién aplicado/propuesto, el llamador pasa el `Proyecto` resultante
+ * de la ÚLTIMA operación evaluada (incluye componentes creados EN el mismo lote); para
+ * un rechazo de transporte (antes de tocar el motor), el llamador pasa el `Proyecto`
+ * canónico vigente (`servicio.snapshot().proyecto`) — cualquiera de los dos alcanza
+ * porque los códigos de rechazo de transporte/motor (`BASE_REVISION_INVALIDA`,
+ * `BASE_REVISION_DESACTUALIZADA`, `ENTRADA_NO_ES_DATO_PLANO`, ...) no están en la
+ * tabla de `explicaciones-motivos.ts` — dan `explicacion: null` sin mirar `nombres`.
+ */
+export function explicarMotivos(motivos: readonly Motivo[], proyecto: Proyecto, catalogo: Catalogo): readonly MotivoVista[] {
+  const nombres = resolverNombreDeComponente(proyecto, catalogo)
+  return motivos.map((motivo) => ({ ...motivo, explicacion: explicacionDeMotivo(motivo.codigo, datosParaExplicacion(motivo), nombres) }))
 }
