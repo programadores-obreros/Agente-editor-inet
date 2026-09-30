@@ -45,19 +45,28 @@ export function planDePintado(modeloDeVista, opciones = {}) {
       // más chica que la escala pensada para el catálogo
       // (`wokwi-render-datos.ts::ESCALA_WOKWI_POR_PLACA`, citando circuito.ts:641).
       atributos: { style: `transform:scale(${modeloDeVista.placa.escala});transform-origin:top left` },
+      // La placa nunca tiene rol pedagógico Entrada/Salida (§3.3) — `null` explícito,
+      // mismo campo que los componentes, para que `pintar.js` no necesite distinguir.
+      etiquetaRol: null,
     })
   }
 
   for (const componente of modeloDeVista.componentes) {
     // Sin dato Wokwi para este tipo (gap documentado en `wokwi-render-datos.ts`: hoy
-    // sólo "led" tiene tabla de render) — no se inventa un tag: se omite la
-    // instrucción de creación para ese componente, nunca se dibuja con un tag falso.
+    // sólo "led"/"pulsador" tienen tabla de render) — no se inventa un tag: se omite
+    // la instrucción de creación para ese componente, nunca se dibuja con un tag falso.
     if (!componente.elementoWokwi) continue
     instrucciones.push({
       tipo: "crearElemento",
       entidad: { tipo: "componente", id: componente.id },
       tag: componente.elementoWokwi,
       atributos: { ...componente.atributos },
+      // Fase 2, Slice 2 (§3.3): `componente.rol` YA viene resuelto del servidor
+      // (`snapshot-a-vista.ts::rolDeClase`, "entrada"|"salida"|null) — acá sólo se
+      // capitaliza para mostrar ("entrada" -> "Entrada"), una transformación de
+      // texto GENÉRICA, nunca una tabla de clases/tipos ni un despacho por
+      // `componente.tipo`.
+      etiquetaRol: etiquetaDeRol(componente.rol),
     })
   }
 
@@ -102,6 +111,15 @@ export function planDePintado(modeloDeVista, opciones = {}) {
   }
 
   return instrucciones
+}
+
+// Fase 2, Slice 2 (§3.3): capitaliza el rol YA resuelto por el servidor
+// (`snapshot-a-vista.ts::rolDeClase`) para mostrarlo ("entrada" -> "Entrada") — una
+// transformación de texto GENÉRICA (nunca mira `componente.tipo` ni ninguna clase de
+// catálogo): el browser no tiene ninguna tabla de clases/tipos.
+function etiquetaDeRol(rol) {
+  if (!rol) return null
+  return rol.charAt(0).toUpperCase() + rol.slice(1)
 }
 
 // Revisión post red-team (Hallazgo B1, MAJOR, P2-RED-B/INFORME.md): `nombreWokwi`

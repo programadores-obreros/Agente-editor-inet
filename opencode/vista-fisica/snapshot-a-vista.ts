@@ -69,6 +69,24 @@ export function gpiosCandidatosPara(catalogo: Catalogo, placaId: string | null, 
   return candidatos
 }
 
+/**
+ * Rol pedagógico Entrada/Salida — Fase 2, Slice 2 (§3.3, HD-S2-7). Función PURA,
+ * despacha ÚNICAMENTE por `ComponenteCatalogo.clase` (`nucleo/catalogo.ts:88`:
+ * `"sensor" | "actuador" | "pasivo" | "entrada"`), nunca por `tipo`/id de
+ * componente. `"entrada"`/`"sensor"` → `"entrada"` (el pulsador es `clase:
+ * "entrada"`, un sensor como el DHT22 es `clase: "sensor"` — ambos son entradas
+ * pedagógicas); `"actuador"` → `"salida"` (el LED); `"pasivo"` → `null` (la
+ * resistencia, sin rótulo). Una `clase` que este mapeo no reconoce todavía (Fase 2+)
+ * también da `null` — NUNCA se inventa un rol para una clase desconocida. El browser
+ * (`plan-de-pintado.js`/`pintar.js`) sólo recibe el resultado ya resuelto acá; nunca
+ * repite este despacho ni ninguna tabla de clases/tipos por su cuenta.
+ */
+export function rolDeClase(clase: string): "entrada" | "salida" | null {
+  if (clase === "entrada" || clase === "sensor") return "entrada"
+  if (clase === "actuador") return "salida"
+  return null
+}
+
 function resolverDestinoFijo(terminal: Terminal): string | undefined {
   if (terminal.destinoFijo === undefined) return undefined
   return typeof terminal.destinoFijo === "string" ? terminal.destinoFijo : terminal.destinoFijo.externo
@@ -112,6 +130,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     const compCatalogo = catalogo.obtenerComponente(componente.tipo)
     const elementoWokwi = ELEMENTO_WOKWI_POR_TIPO[componente.tipo] ?? null
     const atributos = ATRIBUTOS_POR_TIPO[componente.tipo] ?? {}
+    const rol = compCatalogo ? rolDeClase(compCatalogo.clase) : null
     const terminales: Record<string, TerminalVista> = {}
     if (compCatalogo) {
       const tablaPieza = TERMINAL_WOKWI_POR_TIPO[componente.tipo]
@@ -120,7 +139,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
         terminales[terminal.id] = resolverTerminal(componente, terminal, pinesDePlaca, nombreWokwiPieza)
       }
     }
-    return { id: componente.id, tipo: componente.tipo, elementoWokwi, atributos, terminales }
+    return { id: componente.id, tipo: componente.tipo, elementoWokwi, atributos, rol, terminales }
   })
 
   function terminalesDe(componenteId: string): Readonly<Record<string, TerminalVista>> {

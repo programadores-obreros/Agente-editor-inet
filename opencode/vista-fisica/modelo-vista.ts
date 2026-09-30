@@ -62,6 +62,14 @@ export interface ComponenteVista {
   /** Presentación pura (ej. `{color:"red"}`) — Fase 1 no modela color como dato
    * semántico; ver `wokwi-render-datos.ts`. */
   readonly atributos: Readonly<Record<string, string>>
+  /** Fase 2, Slice 2 (§3.3, HD-S2-7): "entrada" | "salida" | `null`, derivado de
+   * `ComponenteCatalogo.clase` (`nucleo/catalogo.ts:88`) por una función PURA del
+   * lado del servidor (`snapshot-a-vista.ts::rolDeClase`) — aditivo, nunca afecta
+   * ninguna regla eléctrica ni de validación. `null` para `clase: "pasivo"` (la
+   * resistencia) y para cualquier `clase` que la función no reconozca todavía: el
+   * browser (`plan-de-pintado.js`/`pintar.js`) sólo capitaliza este texto YA
+   * resuelto, nunca mira `tipo` ni ninguna clase de catálogo por su cuenta. */
+  readonly rol: "entrada" | "salida" | null
   /** `terminal.id` (catálogo) → su estado proyectado. Incluye SIEMPRE los terminales
    * riel-fijo del catálogo (el cátodo del LED nunca falta acá, aunque
    * `Componente.pines` ni siquiera tenga esa clave — `operaciones.ts`,

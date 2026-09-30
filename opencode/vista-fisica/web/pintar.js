@@ -77,6 +77,19 @@ function pintarElemento(doc, contenedor, instruccion) {
     elemento.setAttribute(clave, valor)
   }
   contenedor.appendChild(elemento)
+
+  // Fase 2, Slice 2 (§3.3): rótulo Entrada/Salida, junto al componente — un
+  // elemento propio (nunca un atributo invisible), con el texto YA capitalizado por
+  // `plan-de-pintado.js::etiquetaDeRol`. `null` (placa, componente sin rol) no
+  // agrega nada.
+  if (instruccion.etiquetaRol) {
+    const rotulo = doc.createElement("span")
+    rotulo.setAttribute("data-rol-de-componente", instruccion.entidad.id)
+    rotulo.textContent = instruccion.etiquetaRol
+    contenedor.appendChild(rotulo)
+  }
+
+  return elemento
 }
 
 function pintarCable(doc, contenedor, instruccion) {
