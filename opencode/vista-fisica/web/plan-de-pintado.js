@@ -107,6 +107,11 @@ export function planDePintado(modeloDeVista, opciones = {}) {
       severidad: motivo.severidad,
       clasificacion: motivo.clasificacion ?? null,
       entidad: motivo.entidad ?? null,
+      // Fase 2, Slice 2 (§3.4): texto llano YA resuelto del lado del servidor
+      // (`snapshot-a-vista.ts`, vía `explicaciones-motivos.ts`) — `null` si el
+      // código no está en esa tabla; `pintar.js` muestra la fila cruda en ese caso.
+      // Este módulo NUNCA calcula la explicación, sólo la pasa.
+      explicacion: motivo.explicacion ?? null,
     })
   }
 

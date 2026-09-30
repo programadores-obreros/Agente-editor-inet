@@ -32,6 +32,18 @@ function motivosDe(snapshot, idComponente) {
   return snapshot.validacion.motivos.filter((m) => m.entidad?.id === idComponente)
 }
 
+/** Ajuste ADITIVO (Phase 2, Slice 2, §3.4/§5 del diseño): `snapshot.vista.motivos`
+ * ahora trae, ADEMÁS, `explicacion` (`MotivoVista`, `modelo-vista.ts`) — un campo que
+ * `snapshot.validacion.motivos` (nucleo puro, `motivosDe` arriba) nunca tuvo ni va a
+ * tener. Esta suite compara EXACTAMENTE esos dos orígenes para demostrar que la
+ * vista no reinterpreta el diagnóstico — se le quita `explicacion` antes de comparar
+ * para seguir demostrando EXACTAMENTE eso (codigo/categoria/severidad/clasificacion/
+ * entidad/datos idénticos), sin que el campo aditivo nuevo rompa la igualdad literal
+ * por una razón que no tiene nada que ver con lo que este test verifica. */
+function sinExplicacion(motivos) {
+  return motivos.map(({ explicacion, ...resto }) => resto)
+}
+
 function rutaDocumento(dir, idProyecto) {
   return join(dir, `${idProyecto}.json`)
 }
@@ -362,7 +374,7 @@ test("Engine directo, POST /api/operaciones (servidor real en 127.0.0.1:0), snap
   // `proyectarVista` -> su PROPIA llamada a `validarProyecto` (snapshot-a-vista.ts),
   // un call site independiente de `validacion.motivos` (composicion-raiz.ts). ---
   const motivosVista = snapDirecto.vista.motivos.filter((m) => m.entidad?.id === idComponente)
-  assert.deepEqual(motivosVista, motivosDirecto, "el snapshot que usa la tool (vista) tiene que dar EXACTAMENTE el mismo motivo que validacion.motivos")
+  assert.deepEqual(sinExplicacion(motivosVista), motivosDirecto, "el snapshot que usa la tool (vista) tiene que dar EXACTAMENTE el mismo motivo que validacion.motivos (aparte de `explicacion`, aditivo — ver sinExplicacion)")
 
   // --- Camino 3: POST /api/operaciones del servidor real en 127.0.0.1:0 -- misma
   // operacion (no-op semantico: reasigna al pin donde ya esta) para leer el
@@ -383,7 +395,7 @@ test("Engine directo, POST /api/operaciones (servidor real en 127.0.0.1:0), snap
     const motivosPost = cuerpo.snapshot.validacion.motivos.filter((m) => m.entidad?.id === idComponente)
     assert.deepEqual(motivosPost, motivosDirecto, "el POST del servidor real tiene que dar EXACTAMENTE el mismo diagnostico")
     const motivosPostVista = cuerpo.snapshot.vista.motivos.filter((m) => m.entidad?.id === idComponente)
-    assert.deepEqual(motivosPostVista, motivosDirecto, "la vista servida por HTTP tambien coincide")
+    assert.deepEqual(sinExplicacion(motivosPostVista), motivosDirecto, "la vista servida por HTTP tambien coincide (aparte de `explicacion`, aditivo)")
   } finally {
     await servidor.cerrar()
   }

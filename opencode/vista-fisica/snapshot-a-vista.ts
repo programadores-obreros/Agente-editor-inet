@@ -32,10 +32,12 @@
 import type { Proyecto, Componente } from "../nucleo/ir.ts"
 import type { Catalogo, Terminal } from "../nucleo/catalogo.ts"
 import type { RegistroPin, Placa } from "../nucleo/placas.ts"
+import type { Motivo } from "../nucleo/motivos.ts"
 import { asignarPin } from "../nucleo/catalogo.ts"
 import { validarProyecto, derivarReadiness } from "../nucleo/validar.ts"
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA } from "./wokwi-render-datos.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista } from "./modelo-vista.ts"
+import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal — consulta `asignarPin()` (`nucleo/catalogo.ts`)
@@ -85,6 +87,46 @@ export function rolDeClase(clase: string): "entrada" | "salida" | null {
   if (clase === "entrada" || clase === "sensor") return "entrada"
   if (clase === "actuador") return "salida"
   return null
+}
+
+/**
+ * Fase 2, Slice 2 (§3.4, HD-S2-8): resuelve un `nombreVisible` a partir de CUALQUIERA
+ * de las dos formas que los `datos`/`entidad` de un `Motivo` usan (verificado contra
+ * `nucleo/catalogo.ts`/`validar-tecnico.ts`, ver ARCH-S2-VALIDATION/INFORME.md):
+ * - un `Componente.id` de INSTANCIA ("cmp-0" — ej. `PIN_OCUPADO.datos.ocupadoPor`,
+ *   `Motivo.entidad.id`);
+ * - un `ComponenteCatalogo.id` de TIPO ("led" — ej.
+ *   `REQUISITO_INSATISFECHO.datos.componente`, que es `catalogoComponente.id`, no una
+ *   instancia).
+ *
+ * Intenta primero como instancia (busca en `proyecto.componentes`); si no encuentra
+ * ninguna, trata el valor DIRECTAMENTE como tipo de catálogo. Si tampoco hay
+ * `ComponenteCatalogo` para ese tipo, devuelve el propio `idOTipo` sin cambios —
+ * nunca inventa un nombre (briefing: "usá el valor crudo disponible o el id").
+ */
+function resolverNombreDeComponente(proyecto: Proyecto, catalogo: Catalogo): ResolverNombreDeComponente {
+  return (idOTipo) => {
+    const instancia = proyecto.componentes.find((c) => c.id === idOTipo)
+    const tipo = instancia ? instancia.tipo : idOTipo
+    return catalogo.obtenerComponente(tipo)?.nombreVisible ?? idOTipo
+  }
+}
+
+/**
+ * `datos` que le llegan a `explicacionDeMotivo` — `motivo.datos` TAL CUAL, salvo que
+ * agrega `componente` = `motivo.entidad.id` cuando el motivo NO trae ya un campo
+ * `componente` propio (ej. `CAPACIDAD_PIN_INCOMPATIBLE`/`PIN_SIN_PULLUP_INTERNO`: su
+ * `datos` no tiene `componente`, sólo `entidad`) — nunca sobrescribe un
+ * `datos.componente` que ya exista (ej. `REQUISITO_INSATISFECHO`, donde `componente`
+ * es el TIPO de catálogo, no la instancia de `entidad`). Nunca inventa un campo que
+ * ni `datos` ni `entidad` traen.
+ */
+function datosParaExplicacion(motivo: Motivo): Readonly<Record<string, unknown>> {
+  const base = motivo.datos ?? {}
+  if (motivo.entidad?.tipo === "componente" && base.componente === undefined) {
+    return { ...base, componente: motivo.entidad.id }
+  }
+  return base
 }
 
 function resolverDestinoFijo(terminal: Terminal): string | undefined {
@@ -184,8 +226,18 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     gpiosDisponibles[componente.id] = porTerminal
   }
 
-  const motivos = validarProyecto(proyecto, catalogo)
-  const readiness = derivarReadiness(proyecto, motivos)
+  const motivosBase = validarProyecto(proyecto, catalogo)
+  const readiness = derivarReadiness(proyecto, motivosBase)
+
+  // Fase 2, Slice 2 (§3.4): cada motivo se proyecta TAL CUAL (mismo criterio de
+  // siempre) MÁS una `explicacion` en texto llano — calculada acá, del lado del
+  // SERVIDOR, nunca en el browser. `nombres` resuelve `{componente}`/`{ocupadoPor}`
+  // contra el MISMO proyecto+catálogo de esta llamada.
+  const nombres = resolverNombreDeComponente(proyecto, catalogo)
+  const motivos: MotivoVista[] = motivosBase.map((motivo) => ({
+    ...motivo,
+    explicacion: explicacionDeMotivo(motivo.codigo, datosParaExplicacion(motivo), nombres),
+  }))
 
   return { placa, componentes, cables, gpiosDisponibles, motivos, readiness }
 }

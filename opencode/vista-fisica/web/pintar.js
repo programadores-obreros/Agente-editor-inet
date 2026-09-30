@@ -43,9 +43,16 @@ export function pintar(doc, instrucciones, manejadores = {}) {
     motivos: doc.createElement("ul"),
   }
 
+  // Fase 2, Slice 2 (§3.4, resaltado C): `"tipo:id"` -> el elemento del circuito que
+  // `pintarElemento` creó para esa entidad — SÓLO en memoria de esta llamada, nunca
+  // toca el DOM para leerlo de vuelta (serían 4 operaciones más allá de las 3
+  // documentadas arriba). Permite que `pintarMotivo`, más abajo en el MISMO plan,
+  // marque `data-afectado` sobre el elemento ya creado sin ningún `getAttribute`.
+  const elementosPorEntidad = new Map()
+
   for (const instruccion of instrucciones) {
     if (instruccion.tipo === "crearElemento") {
-      pintarElemento(doc, raiz.circuito, instruccion)
+      pintarElemento(doc, raiz.circuito, instruccion, elementosPorEntidad)
       continue
     }
     if (instruccion.tipo === "filaCable") {
@@ -57,7 +64,7 @@ export function pintar(doc, instrucciones, manejadores = {}) {
       continue
     }
     if (instruccion.tipo === "panelMotivo") {
-      pintarMotivo(doc, raiz.motivos, instruccion)
+      pintarMotivo(doc, raiz.motivos, instruccion, elementosPorEntidad)
       continue
     }
     // Instrucción de un tipo que este pintor no conoce todavía — se ignora, nunca se
@@ -69,7 +76,7 @@ export function pintar(doc, instrucciones, manejadores = {}) {
   return raiz
 }
 
-function pintarElemento(doc, contenedor, instruccion) {
+function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad) {
   const elemento = doc.createElement(instruccion.tag)
   elemento.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
   elemento.setAttribute("data-entidad-id", instruccion.entidad.id)
@@ -77,6 +84,7 @@ function pintarElemento(doc, contenedor, instruccion) {
     elemento.setAttribute(clave, valor)
   }
   contenedor.appendChild(elemento)
+  if (elementosPorEntidad) elementosPorEntidad.set(`${instruccion.entidad.tipo}:${instruccion.entidad.id}`, elemento)
 
   // Fase 2, Slice 2 (§3.3): rótulo Entrada/Salida, junto al componente — un
   // elemento propio (nunca un atributo invisible), con el texto YA capitalizado por
@@ -141,11 +149,42 @@ function pintarSelectorGpio(doc, contenedor, instruccion, manejadores) {
   contenedor.appendChild(etiqueta)
 }
 
-function pintarMotivo(doc, contenedor, instruccion) {
+function pintarMotivo(doc, contenedor, instruccion, elementosPorEntidad) {
   const fila = doc.createElement("li")
   fila.setAttribute("data-motivo-codigo", instruccion.codigo)
   fila.setAttribute("data-motivo-severidad", instruccion.severidad)
   const clasificacion = instruccion.clasificacion ? ` (${instruccion.clasificacion})` : ""
   fila.textContent = `[${instruccion.severidad}] ${instruccion.codigo}${clasificacion}`
+
+  // Fase 2, Slice 2 (§3.4, resaltado C): `data-entidad-*` en la fila — presentación
+  // pura, derivada de `motivo.entidad` (que `plan-de-pintado.js` ya calculaba desde
+  // Slice 1 y este pintor descartaba). Nunca inventa una entidad: sin `entidad`, no
+  // se agrega ningún atributo.
+  if (instruccion.entidad) {
+    fila.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
+    fila.setAttribute("data-entidad-id", instruccion.entidad.id)
+  }
+
+  // Texto llano, YA resuelto del lado del servidor (`explicaciones-motivos.ts`) —
+  // este módulo no calcula nada, sólo lo agrega como un hijo más si vino. `null`
+  // (código desconocido para esa tabla) deja la fila cruda tal cual, sin agregar
+  // ningún hijo.
+  if (instruccion.explicacion) {
+    const textoLlano = doc.createElement("p")
+    textoLlano.setAttribute("data-motivo-explicacion", instruccion.codigo)
+    textoLlano.textContent = instruccion.explicacion
+    fila.appendChild(textoLlano)
+  }
+
   contenedor.appendChild(fila)
+
+  // Resaltado: el ELEMENTO del componente afectado (ya creado por `pintarElemento`,
+  // antes en el mismo plan — `panelMotivo` siempre viene después de `crearElemento`
+  // en `plan-de-pintado.js`) recibe `data-afectado="<severidad>"`. Un motivo sin
+  // `entidad`, o cuya entidad no tiene un elemento creado (ej. una placa
+  // desconocida, nunca dibujada), no marca nada — nunca se inventa un elemento.
+  if (instruccion.entidad && elementosPorEntidad) {
+    const afectado = elementosPorEntidad.get(`${instruccion.entidad.tipo}:${instruccion.entidad.id}`)
+    if (afectado) afectado.setAttribute("data-afectado", instruccion.severidad)
+  }
 }

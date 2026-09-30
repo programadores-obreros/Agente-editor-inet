@@ -77,6 +77,18 @@ export interface ComponenteVista {
   readonly terminales: Readonly<Record<string, TerminalVista>>
 }
 
+/**
+ * Fase 2, Slice 2 (§3.4, HD-S2-8): un `Motivo` del núcleo, MÁS una explicación en
+ * texto llano — aditivo, calculado SÓLO del lado del servidor
+ * (`explicaciones-motivos.ts`, vía `snapshot-a-vista.ts`). La vista NUNCA reinventa
+ * `codigo`/`categoria`/`severidad`/`clasificacion`/`entidad`/`datos`: los reusa TAL
+ * CUAL de `nucleo/motivos.ts::Motivo`, exactamente como ya hacía antes de este
+ * campo. `explicacion: null` cuando el código no está en la tabla de
+ * `explicaciones-motivos.ts` — el browser muestra la fila cruda tal cual (mismo
+ * criterio fail-closed que el resto del adaptador).
+ */
+export type MotivoVista = Motivo & { readonly explicacion: string | null }
+
 /** Un extremo de un cable esquemático — nunca un punto geométrico (eso queda fuera
  * del slice, PHASE_2_SLICE_1_DESIGN.md §2.6/§3.4 de ARCH-C). `nombreWokwi` de
  * `pinPlaca` es `string | null` (revisión post red-team, B1) por el mismo motivo que
@@ -128,8 +140,9 @@ export interface ModeloDeVista {
   readonly gpiosDisponibles: Readonly<Record<string, Readonly<Record<string, readonly OpcionGpioVista[]>>>>
   /** Tal cual `validarProyecto()` los produjo (mismo orden estable,
    * `nucleo/motivos.ts::compararMotivos`) — la vista NUNCA inventa una causa nueva ni
-   * reclasifica severidad/clasificación. */
-  readonly motivos: readonly Motivo[]
+   * reclasifica severidad/clasificación. Fase 2, Slice 2: cada motivo lleva además
+   * `explicacion` (`MotivoVista`, aditivo) — ver ese tipo. */
+  readonly motivos: readonly MotivoVista[]
   /** Tal cual `derivarReadiness()` — la vista nunca decide por su cuenta si el
    * proyecto está "listo". */
   readonly readiness: Readiness
