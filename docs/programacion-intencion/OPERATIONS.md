@@ -643,25 +643,76 @@ extra (`actor`, `idOperacion`, `idTransaccion`, `baseRevision`) se rechaza enter
 EN LA TOOL — nunca se descartan sólo las claves de más (T-AG-06).
 
 **Códigos de rechazo de transporte** (`validarLoteParaTransporte`,
-`proyecto-fisico.ts:124-144`, y los dos chequeos previos de
-`execute`, `proyecto-fisico.ts:250-267`) — todos con `rechazadoPor:"tool"`:
+`proyecto-fisico.ts:124-144`, y los chequeos previos de
+`execute`) — todos con `rechazadoPor:"tool"`:
 
 | Código | Cuándo |
 |---|---|
+| `ACCION_DESCONOCIDA` | `accion` no es `leer`/`simular`/`aplicar` (fix N-01, defensa en profundidad — ver más abajo) |
+| `ID_PROYECTO_INVALIDO` | `idProyecto` no matchea `PATRON_ID_PROYECTO` (fix C-01 — ver más abajo) |
 | `OPERACION_FUERA_DE_WHITELIST` | `tipo` no está en la whitelist exacta de R-6 |
 | `DEMASIADAS_OPERACIONES` | más de 20 operaciones en el lote |
-| `OPERACION_CON_FORMA_INVALIDA` | un elemento del lote no es un objeto plano |
+| `OPERACION_CON_FORMA_INVALIDA` | `operaciones` no es un `Array` de verdad, o un elemento del lote no es un objeto plano |
 | `OPERACION_CON_CLAVES_INVALIDAS` | un elemento no tiene EXACTAMENTE `tipo`+`payload` |
 | `BASE_REVISION_FALTANTE` | falta `baseRevision` para `simular`/`aplicar` |
 | `OPERACIONES_FALTANTES` | falta o viene vacía la lista `operaciones` |
+| `ERROR_INESPERADO` | cualquier otra excepción no anticipada, atrapada por el catch envolvente de `execute()` (fix M-01 — ver más abajo) |
 
-Estos seis códigos **NO son motivos del Engine y no se persisten**: son un rechazo
+Estos códigos **NO son motivos del Engine y no se persisten**: son un rechazo
 de transporte, resuelto antes de invocar `servicio.aplicarTransaccion`/`proponer`
 (el Engine ni se entera), y nunca viajan por `nucleo/motivos.ts` ni por el
 `vista.motivos` de un snapshot — se diferencian en runtime de un rechazo de
 dominio porque sólo estos últimos traen `motivos[]` del Engine (ver T-AG-03: un
 `baseRevision` con forma válida pero desactualizado da
 `BASE_REVISION_DESACTUALIZADA`, un motivo de dominio, sin `rechazadoPor:"tool"`).
+
+### 12.1. Fix C-01 (CRITICAL, ronda W-S2-FIX, red team RED-S2-TOOL/INFORME.md) — `idProyecto` sin validar
+
+`idProyecto` viajaba SIN VALIDAR desde las dos tools (`proyecto-fisico.ts`,
+`vista-fisica.ts`) y desde `scripts/vista-fisica-demo.mjs` hasta
+`nucleo/almacen.ts::rutaFinal` (`join(deps.directorio, \`${id}.json\`)`) y
+`servidor/servicio-con-vista.ts::tomarCandado` (`join(directorio,
+\`${idProyecto}.lock\`)`) — capas PROTEGIDAS (§6) que arman la ruta final sin
+chequear separadores de ruta ni `..`. Con `idProyecto:"../../../fuga"` la
+escritura aterrizaba fuera de `.tecnia-vista-fisica` y hasta fuera de
+`ctx.directory` por completo (reproducido con una escritura real confirmada).
+
+El fix agrega una función pura, `validarIdProyecto`
+(`opencode/vista-fisica/ubicacion-proyecto.ts`, patrón `PATRON_ID_PROYECTO =
+/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/`, alfanumérico ASCII con `-`/`_`
+opcionales, 1 a 64 caracteres), y la aplica ANTES de resolver
+`directorioDeDatos`/pedir el servicio en las tres superficies (las dos tools y
+el launcher de demo) — nunca toca disco ni toma el candado con un id inválido.
+`idProyecto` vacío o sólo espacios sigue cayendo en `ID_PROYECTO_DEFAULT`
+("activo") exactamente como antes del fix — la validación corre sobre el valor
+YA resuelto (default incluido), nunca antes.
+
+### 12.2. Fix M-01 (MINOR, misma ronda) — `operaciones` con el prototipo alterado
+
+Un `operaciones` con `Object.setPrototypeOf(arr, {length:999})` sigue siendo un
+`Array` de verdad para `Array.isArray` (el internal slot no cambia con el
+prototipo), pero pierde cualquier método heredado de `Array.prototype`
+(`.entries()`, `Symbol.iterator`) — `validarLoteParaTransporte` iteraba con
+`for...of operacionesCrudas.entries()`, que rompía con un `TypeError` crudo,
+sin capturar, fuera de `execute()`. El fix: `Array.isArray` primero (rechaza
+cualquier objeto array-like que no sea un array real, `OPERACION_CON_FORMA_INVALIDA`),
+y después un recorrido por ÍNDICE con acceso `[]` plano (siempre propio del
+array, nunca heredado del prototipo) sobre un largo ya acotado a
+`MAXIMO_OPERACIONES` — nunca `.entries()`/`.map()`/`for...of` sobre el objeto
+de entrada. Además, todo el cuerpo de `execute()` quedó envuelto en un
+`try/catch` externo (`codigo:"ERROR_INESPERADO"`, arriba) como red de
+seguridad: ningún error inesperado puede escapar como excepción cruda.
+
+### 12.3. Fix N-01 (NOTE, defensa en profundidad, misma ronda) — `accion` desconocida
+
+El schema zod del harness ya restringe `accion` a `leer`/`simular`/`aplicar`,
+pero quien invoque `execute()` directo (bypaseando zod) encontraba que
+`args.accion === "aplicar" ? aplicarTransaccion(...) : proponer(...)` trataba
+cualquier otro valor como dry-run implícito — mismo criterio que ya motiva la
+whitelist explícita de `tipo`/R-6 ("no confíes sólo en el schema"), que acá no
+se aplicaba a `accion`. El fix agrega un chequeo explícito al principio de
+`execute()`: una `accion` fuera de las tres conocidas se rechaza con
+`ACCION_DESCONOCIDA`, sin invocar el Engine.
 
 **Paralelo con el navegador:** la tool y `servidor-proyecto.ts` resuelven al MISMO
 directorio de datos (`opencode/vista-fisica/ubicacion-proyecto.ts::directorioDeDatos`)
