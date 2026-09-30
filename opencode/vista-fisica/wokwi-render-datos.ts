@@ -98,16 +98,36 @@ export function nombreWokwiDePin(pin: RegistroPin): string | null {
 // circuito.ts:949 (`COMPONENTES.led.tag`). Único tipo con evidencia real hoy — el
 // fixture de este slice es ESP32+LED; agregar otro componente con render es sumar
 // una entrada acá, nunca tocar `snapshot-a-vista.ts`.
+//
+// Fase 2, Slice 2 (§3.2, HD-S2-2/3/4): agrega `pulsador` → `wokwi-pushbutton`, el
+// custom element ESTÁNDAR (no la variante `-6mm`, sin evidencia de que el catálogo/
+// pedagogía la pida — ARCH-S2-PHYSICAL/INFORME.md §8, "scope creep" final). Ya
+// definido en `opencode/tecniabot-web/wokwi-bundle.js` (mismo bundle que ya sirve
+// `wokwi-led`/`wokwi-esp32-devkit-v1`, licencia MIT ya presente en el repo, sin
+// asset nuevo) — confirmado con `shadowRoot` real en Chromium headless
+// (ARCH-S2-PHYSICAL/INFORME.md §1).
 export const ELEMENTO_WOKWI_POR_TIPO: Readonly<Record<string, string>> = {
   led: "wokwi-led",
+  pulsador: "wokwi-pushbutton",
 }
 
 // docs/wokwi-pinout-dump.md:79 (`wokwi-led | A C`, confirmado contra el bundle real)
 // + la convención estándar ánodo=+/cátodo=- que ya usa `catalogo-datos.ts:22-23`
 // (`rol: "anodo"`/`"catodo"`). Presentación pura: no es una regla eléctrica, es el
 // nombre del PIN dentro del custom element de la PIEZA.
+//
+// Fase 2, Slice 2 (§3.2, HD-S2-2/3/4): `pulsador.senal → "1.l"`, `pulsador.gnd →
+// "2.l"`. `el.pinInfo` REAL de `wokwi-pushbutton` (Chromium headless, ARCH-S2-
+// PHYSICAL/INFORME.md §2): `[{"name":"1.l"},{"name":"2.l"},{"name":"1.r"},
+// {"name":"2.r"}]` — 4 terminales, un par izquierdo (`1.l`/`2.l`) puenteado
+// internamente y un par derecho (`1.r`/`2.r`) puenteado internamente; el pulsador
+// conecta ambos pares SÓLO al presionar (topología real de un tactile switch de 4
+// patas). Como `1.l≡2.l` (mismo nodo interno), la elección de CUÁL pin de cada lado
+// dibujar para `senal`/`gnd` es puramente cosmética (informe §2, "cualquiera de las
+// 4 combinaciones es correcta") — nunca una decisión eléctrica nueva.
 export const TERMINAL_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   led: { anodo: "A", catodo: "C" },
+  pulsador: { senal: "1.l", gnd: "2.l" },
 }
 
 // circuito.ts:949-975 (`COMPONENTES.led`, color por índice `[red,yellow,green][i%3]`
@@ -116,8 +136,14 @@ export const TERMINAL_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<st
 // decoración pura, nunca proyección de IR. Si en el futuro se agrega
 // `componente.propiedades.color`, el adaptador (`snapshot-a-vista.ts`) lo proyecta
 // 1:1 y ESTE default deja de aplicarse para ese componente.
+//
+// Fase 2, Slice 2 (§3.2, R-3=GREEN): `pulsador.color = "green"`, sólo para
+// distinguirlo visualmente del LED rojo — cosmético, revisable, nunca semántico
+// (informe ARCH-S2-PHYSICAL confirma que `color` es un atributo puramente visual del
+// custom element, sin efecto eléctrico).
 export const ATRIBUTOS_POR_TIPO: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   led: { color: "red" },
+  pulsador: { color: "green" },
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
