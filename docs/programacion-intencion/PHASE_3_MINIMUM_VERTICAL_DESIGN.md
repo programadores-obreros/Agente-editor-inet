@@ -319,9 +319,9 @@ No se mide "le gustó".
 ## 17. Test de aceptación (E2E futuro)
 
 1. Proyecto ESP32 + LED + pulsador.
-2. "Agregar regla" → regla vacía → `COMPORTAMIENTO_INCOMPLETO`, `listo:false`.
+2. "Agregar regla" + elegir sólo **[Pulsador]** → la regla nace con un slot → `COMPORTAMIENTO_INCOMPLETO` (faltan estado, actuador y salida), `listo:false`.
 3. Persiste.
-4. Recarga → la misma regla vacía.
+4. Recarga → la misma regla incompleta (sólo el sensor).
 5. Completar slot por slot (4 `SetComportamiento`, revisión +1 cada uno) → la frase completa se muestra, sin códigos.
 6. La frase dice "Mientras el Pulsador esté presionado, el LED está encendido.", sin "si no".
 7. Documento o POST con el pulsador como actuador (no llega desde los selectores) → `ACTUADOR_INVALIDO` visible y resaltado al recargar; desde la UI, vaciar un slot → `COMPORTAMIENTO_INCOMPLETO`.
