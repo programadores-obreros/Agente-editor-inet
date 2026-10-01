@@ -62,3 +62,22 @@ Esto NO es implementación de Phase 3: no cambia la semántica de comportamiento
 
 ## 6. Orden
 W-PHT-ENGINE (HD-W0-A) → verificación independiente → W-PHT-VIEW (HD-W0-B) → verificación + navegador → gate integrado → Windows → smoke → R1–R4 → red team ×3 → como máximo 1 ronda de fixes → freeze pre-humano → protocolo de prueba humana → **STOP**.
+
+## 7. Resultado, límites y riesgos conocidos (al cierre de la implementación)
+- **HD-W0-A** implementada en `c9fb79c` (`TERMINAL_NO_ASIGNABLE`). Verificada en Windows sobre el producto instalado: rechazo, revision e IR sin cambios.
+  - **Límite documentado (RED-PHT-INVARIANTS H1, preexistente):** si el catálogo vigente NO reconoce el tipo de un componente, `aplicarAsignarPin` no valida sus terminales (`operaciones.ts:109`: "catálogo desconocido: eso lo valida validar-tecnico.ts"). Un tipo desconocido no se puede agregar (`TIPO_CATALOGO_DESCONOCIDO`); sólo llega por un documento histórico o externo. La invariancia aplica a los terminales que el catálogo **declara**.
+- **HD-W0-B** implementada en `188fc2a` → `fb047ae` → `a569f36`:
+  - la cadena de cables es contigua y en orden físico;
+  - la resistencia y el componente al que sirve van en el mismo grupo visual, con la resistencia primero y el rótulo del rol del componente;
+  - sin fallback de tipo (fail-closed).
+  - Verificada en Chromium a 800, 1280 y 1920 px y en Windows real.
+  - La primera versión FALLÓ el criterio pedagógico en la verificación del orquestador, y la segunda en el red team (PT-F1). Las dos se corrigieron con TEST-FIRST.
+- **HD-W0-C:** ACCEPTED_MINOR_BACKLOG. Id interno estable verificado (`cmp-1` se conserva al borrar `cmp-0`; la vista pasa de "LED 2" a "LED").
+- **Riesgos conocidos al entrar a la prueba humana** (no se ocultan; se observan):
+  - **F-13:** pedir "abrime la vista de nuevo" abre una pestaña DUPLICADA (`reabrir:true`); un proceso nuevo también abre una pestaña nueva.
+  - **Fuga de razonamiento:** no determinista (modelo). En la Wave 0 apareció como texto visible; en esta etapa no se reprodujo.
+  - **Desplegable nativo:** con input sintético por CDP, cerrar el desplegable confirma el valor resaltado, con o sin repintado. NO reproducido como defecto del producto.
+  - **Type-ahead "D19"** perdido (las opciones empiezan con "GPIO").
+  - **Respuestas truncadas del modelo** ("Ah") observadas dos veces.
+  - Etiqueta "Salida" del grupo con una tipografía más grande que "Entrada" (MINOR cosmético).
+- **F-02:** la prueba humana usa un entorno aislado (`C:\tb-human`, `XDG_CONFIG_HOME`) con las plantillas del instalador; la configuración del usuario queda intacta.
