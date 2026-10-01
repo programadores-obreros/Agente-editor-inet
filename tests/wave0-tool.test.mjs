@@ -396,5 +396,8 @@ test("debeAbrirNuevaPestana (función pura, F-05 continuación): nunca reabre sa
 
 test("F-07 (estático): la descripción de 'proyecto-fisico' le dice al agente que 'leer' trae el vocabulario válido", () => {
   const crudo = readFileSync(join(REPO, "opencode/tool/proyecto-fisico.ts"), "utf8")
-  assert.match(crudo, /llamá `leer` primero: trae el vocabulario válido \(placas, componentes, terminales, ejemplos\)/)
+  // El `\`` está escapado en el código fuente porque vive DENTRO del template literal de
+  // `description` (que usa backticks como delimitador) — el archivo en disco contiene
+  // literalmente `\`leer\`` (barra invertida + backtick), no un backtick pelado.
+  assert.match(crudo, /llamá \\`leer\\` primero: trae el vocabulario válido \(placas, componentes, terminales, ejemplos\)/)
 })

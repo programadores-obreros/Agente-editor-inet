@@ -22,6 +22,7 @@
 
 import type { Proyecto } from "../nucleo/ir.ts"
 import type { Motivo } from "../nucleo/motivos.ts"
+import type { Catalogo } from "../nucleo/catalogo.ts"
 import type { ModeloDeVista, MotivoVista } from "./modelo-vista.ts"
 import { construirCatalogoMinimoReal } from "../nucleo/adaptadores/hash-catalogo.node.ts"
 import { proyectarVista, explicarMotivos } from "./snapshot-a-vista.ts"
@@ -45,4 +46,16 @@ export function vistaDeProyectoConCatalogoReal(proyecto: Proyecto): ModeloDeVist
  */
 export function explicarMotivosConCatalogoReal(motivos: readonly Motivo[], proyecto: Proyecto): readonly MotivoVista[] {
   return explicarMotivos(motivos, proyecto, CATALOGO_REAL)
+}
+
+/**
+ * Phase 3, Wave 0 (W-W0-TOOL, F-05/F-07/F-13, PHASE_3_WAVE_0_DESIGN.md): acceso directo
+ * al MISMO catálogo real que ya usa el resto de este módulo (`CATALOGO_REAL`, arriba) —
+ * para que `tool/proyecto-fisico.ts` (vocabulario + valoresValidos + descripcionPines) y
+ * `tool/vista-fisica.ts` (resumen del snapshot) puedan nombrar placas/componentes/
+ * terminales con el MISMO catálogo, sin construir una segunda instancia ni importar
+ * `hash-catalogo.node.ts` por su cuenta.
+ */
+export function catalogoReal(): Catalogo {
+  return CATALOGO_REAL
 }

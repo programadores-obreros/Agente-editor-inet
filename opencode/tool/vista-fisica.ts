@@ -59,6 +59,7 @@ function claveDeServidor(directorioDatos: string, idProyecto: string): string {
 
 type ModuloServicioConVista = typeof import("../servidor/servicio-con-vista.ts")
 type ModuloServidorProyecto = typeof import("../servidor/servidor-proyecto.ts")
+type ModuloVistaReal = typeof import("../vista-fisica/vista-real.ts")
 
 /**
  * Carga PEREZOSA de `../servidor/*` (D13, PHASE_2_SLICE_1_HARDENING_DESIGN.md,
@@ -87,11 +88,20 @@ type ModuloServidorProyecto = typeof import("../servidor/servidor-proyecto.ts")
 async function cargarServidor(): Promise<{
   obtenerServicioDeProyectoConVista: ModuloServicioConVista["obtenerServicioDeProyectoConVista"]
   iniciarServidor: ModuloServidorProyecto["iniciarServidor"]
+  /** Phase 3, Wave 0 (W-W0-TOOL, F-05): el MISMO catálogo real que ya usa
+   * `tool/proyecto-fisico.ts` — para nombrar placa/componentes en el resumen del
+   * snapshot (`resumenDelProyecto`, más abajo), sin construir una segunda instancia. */
+  catalogoReal: ModuloVistaReal["catalogoReal"]
 }> {
   let modServicio: ModuloServicioConVista
   let modServidor: ModuloServidorProyecto
+  let modVistaReal: ModuloVistaReal
   try {
-    ;[modServicio, modServidor] = await Promise.all([import("../servidor/servicio-con-vista.ts"), import("../servidor/servidor-proyecto.ts")])
+    ;[modServicio, modServidor, modVistaReal] = await Promise.all([
+      import("../servidor/servicio-con-vista.ts"),
+      import("../servidor/servidor-proyecto.ts"),
+      import("../vista-fisica/vista-real.ts"),
+    ])
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
     throw new Error(
@@ -100,7 +110,7 @@ async function cargarServidor(): Promise<{
         `Tecnia Bot (o corré "Reparar Tecnia Bot" desde el menú inicio en Windows) para arreglarlo.`,
     )
   }
-  return { obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista, iniciarServidor: modServidor.iniciarServidor }
+  return { obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista, iniciarServidor: modServidor.iniciarServidor, catalogoReal: modVistaReal.catalogoReal }
 }
 
 /**
@@ -172,35 +182,72 @@ function abrirEnNavegador(url: string): boolean {
 type SnapshotConVista = Snapshot & { readonly vista?: ModeloDeVista }
 
 // ════════════════════════════════════════════════════════════════════════════════════
-// Phase 3, Wave 0 (W-W0-TOOL, F-05/pestañas, PHASE_3_WAVE_0_DESIGN.md) — STUBS
-// deliberados (RED genuino, TEST-FIRST obligatorio del briefing de la Wave 0):
-// `debeAbrirNuevaPestana`/`resumenDelProyecto` todavía NO implementan la regla real —
-// sólo tienen la forma mínima para que `tests/wave0-tool.test.mjs` importe y FALLE por
-// una aserción semántica. La implementación real llega en el commit GREEN inmediato
-// siguiente al commit `test(...): RED ...`.
+// Phase 3, Wave 0 (W-W0-TOOL, F-05 + "varias pestañas", PHASE_3_WAVE_0_DESIGN.md)
 // ════════════════════════════════════════════════════════════════════════════════════
 
-/** Pura, sin Bun/navegador real — exportada para testear la decisión de "pestañas"
- * (F-05 continuación) sin depender de `Bun.spawn` (`abrirEnNavegador`, más abajo). */
-export function debeAbrirNuevaPestana(_yaAbiertoEnEsteProceso: boolean, _reabrir: boolean | undefined): boolean {
-  return true
+/**
+ * "Varias pestañas" (fila final del mapa de hallazgos): si el servidor de este
+ * (directorio, idProyecto) YA estaba levantado EN ESTE PROCESO (`registroServidores`,
+ * arriba — `execute()` consulta `registroServidores.has(clave)` ANTES de llamar
+ * `obtenerServidorVistaFisica`, que lo crea si hace falta), no corresponde abrir una
+ * pestaña nueva — el alumno ya la tiene abierta y un GET/SSE la mantiene viva. Pura,
+ * sin Bun/navegador real: exportada para testear la decisión sin depender de
+ * `Bun.spawn` (`abrirEnNavegador`, más abajo).
+ */
+export function debeAbrirNuevaPestana(yaAbiertoEnEsteProceso: boolean, reabrir: boolean | undefined): boolean {
+  return !yaAbiertoEnEsteProceso || reabrir === true
 }
 
-/** Resumen en texto llano del snapshot vigente (F-05) — pura, derivada del `Proyecto`
- * (IR) y del catálogo, nunca de una tabla hardcodeada. */
-export function resumenDelProyecto(_snapshot: SnapshotConVista, _catalogo: Catalogo): string {
-  return ""
+/** Texto para cuando `debeAbrirNuevaPestana` da `false` — nombra la URL ya abierta y
+ * cómo forzar otra pestaña igual. */
+export function mensajeYaAbierta(url: string): string {
+  return `La vista física ya estaba abierta en esta sesión: ${url}. No abrí otra pestaña (pasá reabrir:true si igual querés abrir una nueva).`
+}
+
+/**
+ * F-05 (PHASE_2_SIMULATED_ROLE_TRIAL.md: "vista-fisica abrió un proyecto vacío y el
+ * bot afirmó que había piezas — la tool no le informa al agente que está vacío"):
+ * resumen en texto llano del snapshot vigente, derivado del `Proyecto` (IR) y del
+ * catálogo — nunca de una tabla hardcodeada ni de lo que el agente "cree" que armó.
+ * `ModeloDeVista.placa`/`.componentes` (modelo-vista.ts) no traen `nombreVisible`
+ * (sólo ids/datos de render Wokwi) — por eso hace falta el `Catalogo` acá, el MISMO
+ * que ya usa el resto de `vista-fisica/` (`vista-real.ts::catalogoReal`).
+ */
+export function resumenDelProyecto(snapshot: SnapshotConVista, catalogo: Catalogo): string {
+  const proyecto = snapshot.proyecto
+  if (!proyecto.placa && proyecto.componentes.length === 0) {
+    return "Abrí la vista, pero el proyecto está VACÍO: todavía no tiene placa ni componentes."
+  }
+
+  const nombrePlaca = proyecto.placa ? (catalogo.placas.find((placa) => placa.id === proyecto.placa)?.nombreVisible ?? proyecto.placa) : "sin placa"
+  const piezas = proyecto.componentes.map((componente) => {
+    const catalogoComponente = catalogo.obtenerComponente(componente.tipo)
+    const nombre = catalogoComponente?.nombreVisible ?? componente.tipo
+    const asignados = Object.entries(componente.pines)
+      .filter((entrada): entrada is [string, string] => entrada[1] !== null)
+      .map(([terminal, pin]) => `${terminal} en ${pin}`)
+    return asignados.length > 0 ? `${nombre} — ${asignados.join(", ")}` : nombre
+  })
+  const motivosBloqueantes = (snapshot.vista?.motivos ?? []).filter((motivo) => motivo.severidad === "blocking").length
+  const partes = [nombrePlaca, ...piezas, `${motivosBloqueantes} motivo${motivosBloqueantes === 1 ? "" : "s"} bloqueante${motivosBloqueantes === 1 ? "" : "s"}`]
+  return `Muestra: ${partes.join("; ")}.`
 }
 
 export default tool({
   description: `Abre en el navegador la vista física del circuito (ESP32 + LED, este slice) del proyecto activo: piezas Wokwi reales, con selectores de GPIO editables desde la propia página. A diferencia de \`circuito\` (que genera un HTML estático de una sola vez), esta vista queda VIVA — cualquier cambio que hagas sobre el proyecto (con otras tools, o el que haga el alumno desde el navegador) usa el MISMO motor, así que un GET/refresh posterior ya lo refleja.
 
-Usala cuando el alumno/docente quiera VER y tocar el circuito en el navegador, no un archivo para imprimir o pegar en otro lado.`,
+Usala cuando el alumno/docente quiera VER y tocar el circuito en el navegador, no un archivo para imprimir o pegar en otro lado.
+
+La respuesta siempre incluye un resumen del proyecto (vacío, o placa/piezas/pines/motivos bloqueantes) — no asumas que está armado sólo porque la tool abrió. Si el servidor de este proyecto ya estaba abierto en esta sesión, no abre una pestaña nueva salvo que pidas \`reabrir: true\`.`,
   args: {
     idProyecto: tool.schema
       .string()
       .optional()
       .describe(`Id del proyecto de vista física a abrir. Por defecto "${ID_PROYECTO_DEFAULT}" — un único proyecto activo por carpeta de trabajo; no hace falta pasarlo salvo que quieras separar varios proyectos en la misma carpeta.`),
+    reabrir: tool.schema
+      .boolean()
+      .optional()
+      .describe("Por defecto, si el servidor de este (directorio, idProyecto) ya estaba levantado en esta sesión, NO se abre otra pestaña. Pasá true para forzar abrir una igual."),
   },
   async execute(args, ctx) {
     const idProyecto = args.idProyecto?.trim() || ID_PROYECTO_DEFAULT
@@ -215,21 +262,44 @@ Usala cuando el alumno/docente quiera VER y tocar el circuito en el navegador, n
       return `No pude abrir la vista física: idProyecto inválido (${JSON.stringify(idProyecto)}). Tiene que ser alfanumérico (con "-"/"_" opcionales, sin espacios ni "/", "\\" o ".."), de 1 a 64 caracteres.`
     }
 
+    // "Varias pestañas" (PHASE_3_WAVE_0_DESIGN.md): hay que saber si ESTE proceso ya
+    // tenía el servidor levantado ANTES de pedirlo (`obtenerServidorVistaFisica` lo crea
+    // si hace falta) — por eso la consulta al Map va PRIMERO.
+    const directorioDatos = directorioDeDatos(ctx.directory)
+    const claveServidor = claveDeServidor(directorioDatos, idProyecto)
+    const yaAbiertoEnEsteProceso = registroServidores.has(claveServidor)
+
     // Fix H5 (red-team Phase 2 Slice 1): si otro proceso (otra sesión de OpenCode)
     // ya tiene este proyecto abierto, obtenerServidorVistaFisica (vía
     // obtenerServicioDeProyectoConVista, candado de propiedad por proceso) lanza —
     // se devuelve un mensaje claro a la conversación en vez de dejar que la tool
     // termine en una excepción cruda.
-    let servidor
+    let servidor: ServidorProyecto
+    let servicio: ServicioDeProyecto
     try {
-      ;({ servidor } = await obtenerServidorVistaFisica(ctx.directory, idProyecto))
+      ;({ servidor, servicio } = await obtenerServidorVistaFisica(ctx.directory, idProyecto))
     } catch (error) {
       const mensaje = error instanceof Error ? error.message : String(error)
       return `No pude abrir la vista física: ${mensaje}`
     }
+
+    // F-05: el resumen es aditivo y nunca bloquea la apertura — si por lo que sea no se
+    // puede calcular (instalación con vista-fisica/vista-real.ts dañado), la tool sigue
+    // abriendo la vista igual, nunca rompe el flujo principal por un resumen no crítico.
+    let resumen: string
+    try {
+      const { catalogoReal } = await cargarServidor()
+      resumen = resumenDelProyecto(servicio.snapshot() as SnapshotConVista, catalogoReal())
+    } catch {
+      resumen = "(no pude armar un resumen del proyecto)"
+    }
+
+    if (!debeAbrirNuevaPestana(yaAbiertoEnEsteProceso, args.reabrir)) {
+      return `${mensajeYaAbierta(servidor.url)} ${resumen}`
+    }
+
     const abierto = abrirEnNavegador(servidor.url)
-    return abierto
-      ? `Vista física abierta en el navegador: ${servidor.url}`
-      : `No pude abrir el navegador solo. Abrí esta URL a mano: ${servidor.url}`
+    const mensajeApertura = abierto ? `Vista física abierta en el navegador: ${servidor.url}` : `No pude abrir el navegador solo. Abrí esta URL a mano: ${servidor.url}`
+    return `${mensajeApertura} ${resumen}`
   },
 })

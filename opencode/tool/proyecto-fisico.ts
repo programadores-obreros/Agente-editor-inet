@@ -29,9 +29,16 @@ import { randomUUID } from "node:crypto"
 import type { ServicioDeProyecto, Snapshot } from "../nucleo/composicion-raiz.ts"
 import type { SobreOperacion, TipoOperacion } from "../nucleo/operaciones.ts"
 import type { ResultadoTransaccion } from "../nucleo/motor.ts"
-import type { Proyecto } from "../nucleo/ir.ts"
+import type { Componente, Proyecto } from "../nucleo/ir.ts"
+import type { Catalogo } from "../nucleo/catalogo.ts"
 import type { ModeloDeVista, MotivoVista } from "../vista-fisica/modelo-vista.ts"
 import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
+// Phase 3, Wave 0 (W-W0-TOOL, F-07/F-13, PHASE_3_WAVE_0_DESIGN.md): `vocabulario.ts` es
+// PURO — sólo `import type` hacia `nucleo/*` (se borran en runtime), CERO imports de
+// valor. Por eso se importa ESTÁTICO acá (a diferencia de `../servidor/*` y
+// `../vista-fisica/vista-real.ts`, más abajo): no puede romper el loop de carga del
+// registry de tools si `servidor/` faltara, porque no toca ese árbol en absoluto.
+import { descripcionPinesDeComponente, valoresValidosParaMotivos, vocabularioDesdeCatalogo } from "../vista-fisica/vocabulario.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // R-6: whitelist EXACTA e inmutable — SetComportamiento (HD-S2-10: nada de
@@ -66,6 +73,10 @@ type ModuloVistaReal = typeof import("../vista-fisica/vista-real.ts")
 interface DependenciasProyectoFisico {
   readonly obtenerServicioDeProyectoConVista: ModuloServicioConVista["obtenerServicioDeProyectoConVista"]
   readonly explicarMotivosConCatalogoReal: ModuloVistaReal["explicarMotivosConCatalogoReal"]
+  /** Phase 3, Wave 0 (F-07/F-13): el MISMO catálogo real que ya usa
+   * `explicarMotivosConCatalogoReal` — para derivar `vocabulario`, `valoresValidos` y
+   * `descripcionPines`, sin construir una segunda instancia. */
+  readonly catalogoReal: ModuloVistaReal["catalogoReal"]
 }
 
 async function cargarDependencias(): Promise<DependenciasProyectoFisico> {
@@ -81,7 +92,11 @@ async function cargarDependencias(): Promise<DependenciasProyectoFisico> {
         `Tecnia Bot (o corré "Reparar Tecnia Bot" desde el menú inicio en Windows) para arreglarlo.`,
     )
   }
-  return { obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista, explicarMotivosConCatalogoReal: modVistaReal.explicarMotivosConCatalogoReal }
+  return {
+    obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista,
+    explicarMotivosConCatalogoReal: modVistaReal.explicarMotivosConCatalogoReal,
+    catalogoReal: modVistaReal.catalogoReal,
+  }
 }
 
 /** `Snapshot` (composicion-raiz.ts) NUNCA declara `vista` en su tipo — la clave la
@@ -184,17 +199,53 @@ function proyectarMotivoParaAgente(motivo: MotivoVista) {
   return { codigo: motivo.codigo, severidad: motivo.severidad, clasificacion: motivo.clasificacion ?? null, entidad: motivo.entidad ?? null, explicacion: motivo.explicacion }
 }
 
-function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista) {
+/**
+ * F-13 (PHASE_3_WAVE_0_DESIGN.md): `nombre` (nombreVisible del catálogo) y
+ * `descripcionPines` (texto llano, `vocabulario.ts::descripcionPinesDeComponente`) por
+ * componente — derivados del IR + el catálogo REAL, nunca de una tabla hardcodeada.
+ * `catalogo.obtenerComponente(componente.tipo)` puede dar `undefined` si el catálogo
+ * cambió desde que se creó el componente (gap heredado, documentado): el fallback usa
+ * el `tipo` crudo como nombre, nunca explota.
+ */
+function resumenDeComponente(componente: Componente, catalogo: Catalogo) {
+  const catalogoComponente = catalogo.obtenerComponente(componente.tipo)
+  return {
+    id: componente.id,
+    tipo: componente.tipo,
+    nombre: catalogoComponente?.nombreVisible ?? componente.tipo,
+    pines: componente.pines,
+    descripcionPines: descripcionPinesDeComponente(componente, catalogo),
+  }
+}
+
+function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, catalogo: Catalogo) {
   const vista = snapshot.vista
   const rolPorId = new Map((vista?.componentes ?? []).map((c) => [c.id, c.rol] as const))
   const componentes = snapshot.proyecto.componentes.map((componente) => ({
-    id: componente.id,
-    tipo: componente.tipo,
+    ...resumenDeComponente(componente, catalogo),
     rol: rolPorId.get(componente.id) ?? null,
-    pines: componente.pines,
   }))
   const motivos = (vista?.motivos ?? []).map(proyectarMotivoParaAgente)
   return { accion: "leer" as const, idProyecto, revision: snapshot.revision, componentes, motivos }
+}
+
+/**
+ * F-06 (PHASE_3_WAVE_0_DESIGN.md): línea `resultado` inequívoca, SIEMPRE al frente de
+ * la salida de `simular`/`aplicar` (ya resuelto el lote contra el Engine) — distingue,
+ * sin ambigüedad, qué pasó de verdad: un dry-run nunca afirma haber cambiado algo, un
+ * commit real SIEMPRE nombra la revisión antes→después, y un rechazo nunca se confunde
+ * con un éxito. `stale` (BASE_REVISION_DESACTUALIZADA) tiene su propio texto fijo,
+ * citado literal por el diseño ("el proyecto cambió; volvé a leer") — el resto de los
+ * rechazos del Engine usan el motivo principal (ya traducido a texto llano por
+ * `explicarMotivosConCatalogoReal`, o el código crudo si no hay explicación tabulada).
+ */
+function lineaDeResultado(accion: "simular" | "aplicar", ok: boolean, opts: { readonly baseRevision: number; readonly revisionActual: number; readonly stale: boolean; readonly motivoPrincipal?: string | null }): string {
+  if (accion === "simular") {
+    return ok ? "SIMULACIÓN — no se aplicó nada (resultado hipotético: ok)" : "SIMULACIÓN — no se aplicó nada (resultado hipotético: rechazo)"
+  }
+  if (ok) return `APLICADO — revisión ${opts.baseRevision}→${opts.revisionActual}`
+  if (opts.stale) return "NO SE APLICÓ NADA — el proyecto cambió; volvé a leer"
+  return `NO SE APLICÓ NADA — ${opts.motivoPrincipal ?? "rechazado por el Project Engine"}`
 }
 
 /** El `Proyecto` contra el que se resuelven `{componente}`/`{ocupadoPor}` en las
@@ -209,10 +260,14 @@ function proyectoParaExplicar(resultado: ResultadoTransaccion, snapshotVigente: 
 export default tool({
   description: `Emite operaciones EXISTENTES del Project Engine sobre el proyecto físico activo (el mismo proyecto que \`vista-fisica\` abre en el navegador), actuando como el actor "agente". Es TRANSPORTE, no autoridad: nunca valida hardware por su cuenta ni inventa un motivo — todo pasa por el MISMO Project Engine que usa el navegador, así que una operación tuya se ve en vivo si el alumno ya tiene la vista abierta.
 
+Para no adivinar ids: llamá \`leer\` primero: trae el vocabulario válido (placas, componentes, terminales, ejemplos).
+
 Tres \`accion\`:
-- \`leer\`: snapshot resumido — revisión, componentes (id/tipo/rol/pines) y los motivos vigentes con su explicación en texto llano.
+- \`leer\`: snapshot resumido — revisión, componentes (id/tipo/nombre/rol/pines/descripcionPines) y los motivos vigentes con su explicación en texto llano, MÁS \`vocabulario\` (placas/componentes/terminales/operaciones de ejemplo, derivados del catálogo real).
 - \`simular\`: dry-run — nunca persiste, nunca sube la revisión, sólo anticipa qué pasaría.
 - \`aplicar\`: commitea de verdad, todo o nada (una transacción atómica: o entran TODAS las operaciones del lote, o ninguna).
+
+Toda salida empieza con un campo \`resultado\` (texto llano inequívoco): "SÓLO LECTURA" para \`leer\`, "SIMULACIÓN" para un \`simular\` resuelto, "APLICADO — revisión X→Y" para un \`aplicar\` que entró, o "NO SE APLICÓ NADA — <motivo>" para cualquier rechazo (de transporte, del Engine, o stale). Nunca afirmes una acción que no veas confirmada en esa línea.
 
 \`simular\`/\`aplicar\` necesitan:
 - \`baseRevision\`: la revisión que leíste con \`leer\` justo antes — si alguien más (el alumno desde el navegador, u otra llamada tuya) ya cambió el proyecto, la operación se rechaza con un motivo claro en vez de pisar ese cambio. Nunca inventes este número ni lo copies de una llamada vieja: si no lo tenés a mano, llamá \`leer\` primero.
@@ -252,7 +307,11 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       // EXPLÍCITO, nunca cae en el dry-run por el default implícito del ternario de
       // más abajo (`args.accion === "aplicar" ? ... : ...`).
       if (args.accion !== "leer" && args.accion !== "simular" && args.accion !== "aplicar") {
-        return JSON.stringify({ accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ACCION_DESCONOCIDA" }, null, 2)
+        return JSON.stringify(
+          { resultado: "NO SE APLICÓ NADA — acción desconocida (usá 'leer', 'simular' o 'aplicar')", accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ACCION_DESCONOCIDA" },
+          null,
+          2,
+        )
       }
 
       const idProyecto = args.idProyecto?.trim() || ID_PROYECTO_DEFAULT
@@ -265,7 +324,7 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       // confirmado). Se rechaza ACÁ, en el borde, ANTES de `directorioDeDatos`/
       // `obtenerServicioDeProyectoConVista`: nunca toca disco, nunca toma el candado.
       if (!validarIdProyecto(idProyecto)) {
-        return JSON.stringify({ accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "ID_PROYECTO_INVALIDO" }, null, 2)
+        return JSON.stringify({ resultado: "NO SE APLICÓ NADA — idProyecto inválido", accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "ID_PROYECTO_INVALIDO" }, null, 2)
       }
 
       const directorioDatos = directorioDeDatos(ctx.directory)
@@ -287,16 +346,28 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
         return `No pude acceder al proyecto físico: ${mensaje}`
       }
 
+      const catalogo = deps.catalogoReal()
+
       if (args.accion === "leer") {
         const snapshot = servicio.snapshot() as SnapshotConVista
-        return JSON.stringify(resumenDeLectura(idProyecto, snapshot), null, 2)
+        const vocabulario = vocabularioDesdeCatalogo(catalogo, OPERACIONES_PERMITIDAS)
+        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, catalogo), vocabulario }, null, 2)
       }
 
       // ── 'simular' / 'aplicar': baseRevision y operaciones son obligatorios. ────────
       if (args.baseRevision === undefined) {
         const snapshotActual = servicio.snapshot() as SnapshotConVista
         return JSON.stringify(
-          { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "BASE_REVISION_FALTANTE", baseRevision: null, revisionActual: snapshotActual.revision },
+          {
+            resultado: "NO SE APLICÓ NADA — falta baseRevision (llamá 'leer' primero)",
+            accion: args.accion,
+            idProyecto,
+            ok: false,
+            rechazadoPor: "tool",
+            codigo: "BASE_REVISION_FALTANTE",
+            baseRevision: null,
+            revisionActual: snapshotActual.revision,
+          },
           null,
           2,
         )
@@ -306,7 +377,7 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       if (!operacionesCrudas || operacionesCrudas.length === 0) {
         const snapshotActual = servicio.snapshot() as SnapshotConVista
         return JSON.stringify(
-          { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "OPERACIONES_FALTANTES", baseRevision, revisionActual: snapshotActual.revision },
+          { resultado: "NO SE APLICÓ NADA — faltan operaciones", accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "OPERACIONES_FALTANTES", baseRevision, revisionActual: snapshotActual.revision },
           null,
           2,
         )
@@ -318,7 +389,16 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       if (rechazoDeTransporte) {
         const snapshotActual = servicio.snapshot() as SnapshotConVista
         return JSON.stringify(
-          { accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", ...rechazoDeTransporte, baseRevision, revisionActual: snapshotActual.revision },
+          {
+            resultado: `NO SE APLICÓ NADA — rechazado en transporte (${rechazoDeTransporte.codigo})`,
+            accion: args.accion,
+            idProyecto,
+            ok: false,
+            rechazadoPor: "tool",
+            ...rechazoDeTransporte,
+            baseRevision,
+            revisionActual: snapshotActual.revision,
+          },
           null,
           2,
         )
@@ -330,15 +410,42 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       const snapshotVigente = servicio.snapshot() as SnapshotConVista
       const proyectoParaNombres = proyectoParaExplicar(resultado, snapshotVigente)
       const motivos = deps.explicarMotivosConCatalogoReal(resultado.motivos, proyectoParaNombres).map(proyectarMotivoParaAgente)
+      // F-07 (continuación): ante PLACA_DESCONOCIDA/TIPO_CATALOGO_DESCONOCIDO/
+      // TERMINAL_NO_DECLARADO, `valoresValidos` derivado del catálogo (y, para
+      // TERMINAL_NO_DECLARADO, del `Proyecto` vigente) — sobre los motivos CRUDOS del
+      // Engine (`resultado.motivos`, con `datos`), nunca sobre `motivos` ya proyectados
+      // para el agente (esos pierden `datos` a propósito, ver `proyectarMotivoParaAgente`).
+      const valoresValidos = valoresValidosParaMotivos(resultado.motivos, catalogo, proyectoParaNombres)
+
+      const esStale = resultado.motivos.some((m) => m.codigo === "BASE_REVISION_DESACTUALIZADA")
+      const resultadoTexto = lineaDeResultado(args.accion, resultado.ok, {
+        baseRevision: resultado.baseRevision,
+        revisionActual: resultado.revisionActual,
+        stale: esStale,
+        motivoPrincipal: motivos[0]?.explicacion ?? motivos[0]?.codigo,
+      })
 
       return JSON.stringify(
-        { accion: args.accion, idProyecto, ok: resultado.ok, baseRevision: resultado.baseRevision, revisionActual: resultado.revisionActual, motivos },
+        {
+          resultado: resultadoTexto,
+          accion: args.accion,
+          idProyecto,
+          ok: resultado.ok,
+          baseRevision: resultado.baseRevision,
+          revisionActual: resultado.revisionActual,
+          motivos,
+          ...(valoresValidos ? { valoresValidos } : {}),
+        },
         null,
         2,
       )
     } catch (error) {
       const mensaje = error instanceof Error ? error.message : String(error)
-      return JSON.stringify({ accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ERROR_INESPERADO", mensaje }, null, 2)
+      return JSON.stringify(
+        { resultado: `NO SE APLICÓ NADA — error inesperado (${mensaje})`, accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ERROR_INESPERADO", mensaje },
+        null,
+        2,
+      )
     }
   },
 })
