@@ -111,7 +111,12 @@ export function planDePintado(modeloDeVista, opciones = {}) {
         componenteId: componente.id,
         terminalId,
         etiqueta: `${componente.nombre} — ${etiquetaTerminal}:`,
-        opciones: porTerminal[terminalId].map((opcion) => ({ valor: opcion.pinSemantico, etiqueta: opcion.nombreWokwi })),
+        // FX-4 (RED-W0-UX (c), ronda de fixes): nombre SEMÁNTICO primero ("GPIO18",
+        // lo que dice el bot/la tool `proyecto-fisico`), rótulo de la placa entre
+        // paréntesis ("D18", lo que el alumno ve dibujado) — antes mostraba SÓLO el
+        // rótulo de la placa, que nunca coincidía con lo que el bot decía, rompiendo
+        // la sensación de "estamos mirando lo mismo" (ONE PHYSICAL TRUTH).
+        opciones: porTerminal[terminalId].map((opcion) => ({ valor: opcion.pinSemantico, etiqueta: `${opcion.pinSemantico} (${opcion.nombreWokwi})` })),
         valorActual,
         deshabilitado: !conexionActiva, // B2 — sin conexion viva, el selector no se puede tocar
       })
@@ -169,7 +174,13 @@ function etiquetaDeRol(rol) {
 // metadata secundaria para quien los necesite (`cable.id`, `data-*`), nunca en el
 // texto primario.
 function etiquetaDeExtremo(extremo, componentesPorId) {
-  if (extremo.tipo === "pinPlaca") return extremo.nombreWokwi ?? `${extremo.pinSemantico} (sin pin físico en esta placa)`
+  if (extremo.tipo === "pinPlaca") {
+    if (extremo.nombreWokwi === null) return `${extremo.pinSemantico} (sin pin físico en esta placa)`
+    // FX-4 (RED-W0-UX (c)): nombre SEMÁNTICO primero ("GPIO18", lo que dice el bot),
+    // rótulo de la placa entre paréntesis ("D18", lo que el alumno ve dibujado en el
+    // cable) — mismo criterio que la opción del selector, más arriba.
+    return `${extremo.pinSemantico} (${extremo.nombreWokwi})`
+  }
   if (extremo.tipo === "rielFijo") return extremo.destino
   const componente = componentesPorId.get(extremo.componente)
   const nombreComponente = componente ? componente.nombre : extremo.componente
