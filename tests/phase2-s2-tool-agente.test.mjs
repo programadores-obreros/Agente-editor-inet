@@ -559,8 +559,17 @@ test("T-AG-09: con OTRO proceso dueño del proyecto, la tool devuelve un mensaje
 
   const discoAntes = leerDiscoCrudo(dirDatos, idProyecto)
   const respuesta = await llamarTool({ accion: "leer", idProyecto }, dirActivo)
+  // Cambia por contrato (FX-5, ronda de fixes, F-TRUTH-3): ANTES esta ruta devolvía
+  // un string plano ("es un mensaje de texto de la tool, no un JSON de resultado del
+  // Engine") — contradecía F-06 ("proyecto-fisico SIEMPRE arranca su respuesta con
+  // una línea resultado"), y un agente que intentara parsear la respuesta como JSON
+  // fallaba. Ahora es el MISMO sobre JSON que cualquier otro rechazo de la tool.
   assert.match(respuesta, /otro proceso/i, "el mensaje tiene que ser claro sobre por qué falló")
-  assert.doesNotMatch(respuesta.trim(), /^\{/, "es un mensaje de texto de la tool, no un JSON de resultado del Engine")
+  const parsed = JSON.parse(respuesta)
+  assert.equal(parsed.ok, false)
+  assert.equal(parsed.rechazadoPor, "tool")
+  assert.equal(parsed.codigo, "PROYECTO_BLOQUEADO")
+  assert.match(parsed.resultado, /^NO SE APLIC/, "sigue trayendo la línea 'resultado' inequívoca (F-06)")
   assert.equal(leerDiscoCrudo(dirDatos, idProyecto), discoAntes, "la tool no escribió nada")
 
   hijo.proc.stdin.write("CERRAR\n")
