@@ -215,13 +215,15 @@ function destinoLegible(destinoFijo: string | { readonly externo: string }): str
 function descripcionDeUnTerminal(idTerminal: string, catalogoComponente: ComponenteCatalogo | undefined, pinAsignado: string | null): string {
   const terminal = catalogoComponente?.terminales.find((t) => t.id === idTerminal)
   if (terminal?.electrica === "riel-fijo") {
-    // FX-6(b) (F-TRUTH-1, ronda de fixes): el Engine (protegido, `nucleo/
-    // operaciones.ts::aplicarAsignarPin`) no rechaza hoy un `AsignarPin` sobre un
-    // terminal riel-fijo (ej. la pata de la Resistencia) — si el IR YA trae un pin
-    // real para este terminal, decirlo explícito es más importante que el destino
-    // fijo "de catálogo": nunca se oculta un dato que el IR sí tiene (mismo
-    // fail-closed de siempre). Sin esto, esta función describía "puente (sin
-    // destino fijo)" para un terminal que en los hechos SÍ tenía un GPIO asignado.
+    // FX-6(b) (F-TRUTH-1, ronda de fixes). PFX-3 (RED-PHT-INVARIANTS H2): desde
+    // HD-W0-A (`c9fb79c`, `nucleo/operaciones.ts::aplicarAsignarPin`,
+    // `TERMINAL_NO_ASIGNABLE`) el Engine SÍ rechaza hoy un `AsignarPin` NUEVO sobre
+    // un terminal riel-fijo (ej. la pata de la Resistencia) — esta rama ya no cubre
+    // una operación válida de hoy. Sigue siendo necesaria para un documento
+    // HISTÓRICO, de ANTES de HD-W0-A, que ya tenga ese pin persistido: el loader no
+    // migra ni limpia ese dato (PERSISTIBLE ⇒ RECARGABLE, `pht-engine.test.mjs` A9),
+    // así que `descripcionPines` tiene que seguir diciendo la verdad sobre lo que el
+    // IR YA tiene, nunca ocultarlo detrás de "puente (sin destino fijo)".
     if (pinAsignado !== null) return `${idTerminal} → ${pinAsignado} (asignado directo — fuera del patrón esperado para este terminal)`
     return terminal.destinoFijo !== undefined ? `${idTerminal} → ${destinoLegible(terminal.destinoFijo)} (fijo)` : `${idTerminal} → puente (sin destino fijo)`
   }
