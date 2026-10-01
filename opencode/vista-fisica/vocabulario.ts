@@ -49,6 +49,15 @@ export interface ComponenteVocabulario {
   readonly nombre: string
   readonly clase: ComponenteCatalogo["clase"]
   readonly terminales: readonly TerminalVocabulario[]
+  /** FX-6(a) (F-TRUTH-1, ronda de fixes): sólo para un componente "puente" (TODOS
+   * sus terminales son `riel-fijo` SIN `destinoFijo` — ej. la Resistencia,
+   * `catalogo-datos.ts:40-43`, "es un puente, no tiene polaridad"): cómo conectarlo
+   * de verdad, ya que ninguno de sus terminales acepta `AsignarPin`. Derivado 100%
+   * del catálogo real (nunca un nombre hardcodeado) — ver `notaDeConexionRequerida`,
+   * abajo. `undefined` para cualquier otro componente, o si el catálogo todavía no
+   * declara ningún requisito que lo necesite (nunca se inventa una nota sin una
+   * fuente real). */
+  readonly nota?: string
 }
 
 export interface VocabularioProyectoFisico {
@@ -71,6 +80,29 @@ function primerTerminalAsignable(componente: ComponenteCatalogo): string | undef
   return componente.terminales.find((terminal) => terminal.electrica !== "riel-fijo")?.id
 }
 
+/**
+ * FX-6(a) (F-TRUTH-1, ronda de fixes): un componente "puente" (TODOS sus
+ * terminales `riel-fijo` SIN `destinoFijo`) no se asigna a un pin: se agrega al
+ * proyecto y se `Conectar`-a al terminal que lo REQUIERE como `requisito` (ej. el
+ * ánodo del LED, `catalogo-datos.ts:24`, "resistencia-serie"). Derivado 100% del
+ * catálogo real: busca, entre TODOS los componentes del catálogo, el primero cuyo
+ * `requisitos` pida ESTE tipo de componente (`Requisito.spec.tipoComponente`,
+ * mismo campo que ya lee `nucleo/catalogo.ts::evaluarRequisito`), y arma la nota
+ * con su `nombreVisible` + el terminal exacto que el requisito declara
+ * (`Requisito.enTerminal`) — nunca un nombre hardcodeado en paralelo.
+ * `undefined` si el componente no es un puente, o si ningún otro componente del
+ * catálogo todavía lo requiere (nunca se inventa una nota sin una fuente real).
+ */
+function notaDeConexionRequerida(componente: ComponenteCatalogo, catalogo: Catalogo): string | undefined {
+  const esPuente = componente.terminales.length > 0 && componente.terminales.every((terminal) => terminal.electrica === "riel-fijo" && terminal.destinoFijo === undefined)
+  if (!esPuente) return undefined
+  for (const otro of catalogo.componentes) {
+    const requisito = otro.requisitos.find((r) => typeof r.spec.tipoComponente === "string" && r.spec.tipoComponente === componente.id)
+    if (requisito?.enTerminal) return `no se asigna a pines; se agrega y se conecta al ${requisito.enTerminal} del ${otro.nombreVisible} (puente en el cable)`
+  }
+  return undefined
+}
+
 const PLACEHOLDER_COMPONENTE = "<id de un componente ya agregado — lo devuelve 'leer'>"
 const PLACEHOLDER_TERMINAL = "<id de terminal — ver componentes[].terminales>"
 const PLACEHOLDER_PIN = "<id de pin de la placa, p. ej. GPIO4>"
@@ -83,12 +115,10 @@ const PLACEHOLDER_CONEXION = "<id de conexión — lo devuelve 'leer'>"
  */
 export function vocabularioDesdeCatalogo(catalogo: Catalogo, tiposPermitidos: readonly TipoOperacion[]): VocabularioProyectoFisico {
   const placas: readonly PlacaVocabulario[] = catalogo.placas.map((placa) => ({ id: placa.id, nombre: placa.nombreVisible, alias: placa.alias }))
-  const componentes: readonly ComponenteVocabulario[] = catalogo.componentes.map((componente) => ({
-    tipo: componente.id,
-    nombre: componente.nombreVisible,
-    clase: componente.clase,
-    terminales: terminalesVocabulario(componente),
-  }))
+  const componentes: readonly ComponenteVocabulario[] = catalogo.componentes.map((componente) => {
+    const nota = notaDeConexionRequerida(componente, catalogo)
+    return { tipo: componente.id, nombre: componente.nombreVisible, clase: componente.clase, terminales: terminalesVocabulario(componente), ...(nota !== undefined ? { nota } : {}) }
+  })
 
   const primeraPlaca = catalogo.placas[0]
   const primerComponente = catalogo.componentes[0]
@@ -185,6 +215,14 @@ function destinoLegible(destinoFijo: string | { readonly externo: string }): str
 function descripcionDeUnTerminal(idTerminal: string, catalogoComponente: ComponenteCatalogo | undefined, pinAsignado: string | null): string {
   const terminal = catalogoComponente?.terminales.find((t) => t.id === idTerminal)
   if (terminal?.electrica === "riel-fijo") {
+    // FX-6(b) (F-TRUTH-1, ronda de fixes): el Engine (protegido, `nucleo/
+    // operaciones.ts::aplicarAsignarPin`) no rechaza hoy un `AsignarPin` sobre un
+    // terminal riel-fijo (ej. la pata de la Resistencia) — si el IR YA trae un pin
+    // real para este terminal, decirlo explícito es más importante que el destino
+    // fijo "de catálogo": nunca se oculta un dato que el IR sí tiene (mismo
+    // fail-closed de siempre). Sin esto, esta función describía "puente (sin
+    // destino fijo)" para un terminal que en los hechos SÍ tenía un GPIO asignado.
+    if (pinAsignado !== null) return `${idTerminal} → ${pinAsignado} (asignado directo — fuera del patrón esperado para este terminal)`
     return terminal.destinoFijo !== undefined ? `${idTerminal} → ${destinoLegible(terminal.destinoFijo)} (fijo)` : `${idTerminal} → puente (sin destino fijo)`
   }
   return `${idTerminal} → ${pinAsignado ?? "sin asignar"}`
