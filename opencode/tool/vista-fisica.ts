@@ -13,8 +13,10 @@
 // (singleton por (directorio, idProyecto) de `composicion-raiz.ts`) — un solo
 // Engine, sin importar quién lo pida primero.
 import { tool } from "@opencode-ai/plugin"
-import type { ServicioDeProyecto } from "../nucleo/composicion-raiz.ts"
+import type { ServicioDeProyecto, Snapshot } from "../nucleo/composicion-raiz.ts"
 import type { ServidorProyecto } from "../servidor/servidor-proyecto.ts"
+import type { Catalogo } from "../nucleo/catalogo.ts"
+import type { ModeloDeVista } from "../vista-fisica/modelo-vista.ts"
 
 // Fase 2, Slice 2 (§3.1 del diseño, PHASE_2_SLICE_2_DESIGN.md, "Módulo compartido"):
 // `directorioDeDatos`/`ID_PROYECTO_DEFAULT` vivían ACÁ (Slice 1, W4) — se mudaron a
@@ -163,6 +165,31 @@ function abrirEnNavegador(url: string): boolean {
   } catch {
     return false
   }
+}
+
+/** `Snapshot` (composicion-raiz.ts) nunca declara `vista` en su tipo estático — ver la
+ * misma nota en `tool/proyecto-fisico.ts::SnapshotConVista`. Mismo criterio acá. */
+type SnapshotConVista = Snapshot & { readonly vista?: ModeloDeVista }
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 3, Wave 0 (W-W0-TOOL, F-05/pestañas, PHASE_3_WAVE_0_DESIGN.md) — STUBS
+// deliberados (RED genuino, TEST-FIRST obligatorio del briefing de la Wave 0):
+// `debeAbrirNuevaPestana`/`resumenDelProyecto` todavía NO implementan la regla real —
+// sólo tienen la forma mínima para que `tests/wave0-tool.test.mjs` importe y FALLE por
+// una aserción semántica. La implementación real llega en el commit GREEN inmediato
+// siguiente al commit `test(...): RED ...`.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** Pura, sin Bun/navegador real — exportada para testear la decisión de "pestañas"
+ * (F-05 continuación) sin depender de `Bun.spawn` (`abrirEnNavegador`, más abajo). */
+export function debeAbrirNuevaPestana(_yaAbiertoEnEsteProceso: boolean, _reabrir: boolean | undefined): boolean {
+  return true
+}
+
+/** Resumen en texto llano del snapshot vigente (F-05) — pura, derivada del `Proyecto`
+ * (IR) y del catálogo, nunca de una tabla hardcodeada. */
+export function resumenDelProyecto(_snapshot: SnapshotConVista, _catalogo: Catalogo): string {
+  return ""
 }
 
 export default tool({
