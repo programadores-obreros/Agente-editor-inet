@@ -273,6 +273,44 @@ function resolverFusionesSerie(proyecto: Proyecto, catalogo: Catalogo, terminale
   return porAncla
 }
 
+/**
+ * Corrección pedagógica del orquestador sobre la primera entrega de HD-W0-B (diseño
+ * §2: "si visualmente sigue pareciendo colgante → FAIL, aunque los tests estén en
+ * verde") — ADYACENCIA: en el orden en que `plan-de-pintado.js` dibuja las piezas
+ * (`ModeloDeVista.componentes`, el array completo, nunca uno nuevo), la instancia
+ * fusionada se reubica INMEDIATAMENTE ANTES del componente al que sirve — nunca
+ * después, nunca en su posición natural si esa posición la deja lejos (verificado
+ * real en Chromium: antes de esto, un Pulsador en el medio de `Proyecto.componentes`
+ * la dejaba pegada a OTRA pieza).
+ *
+ * Nunca toca el NOMBRE ("LED"/"LED 2"): ese ordinal sigue derivándose del orden
+ * ORIGINAL de `Proyecto.componentes` (comentario de más arriba, F-09) — esta función
+ * sólo reordena el ARRAY de salida, un paso puramente de PRESENTACIÓN, después de
+ * que los nombres ya están resueltos. Sin fusiones, devuelve `componentes` tal cual
+ * (misma referencia, cero trabajo de más).
+ */
+function reordenarParaAdyacencia(componentes: readonly ComponenteVista[], fusionesSerie: ReadonlyMap<string, FusionSerie>): readonly ComponenteVista[] {
+  if (fusionesSerie.size === 0) return componentes
+  const anclaPorResistencia = new Map<string, string>() // resistenciaId -> componenteId que la requiere
+  for (const fusion of fusionesSerie.values()) anclaPorResistencia.set(fusion.resistenciaId, fusion.componenteId)
+
+  const porId = new Map(componentes.map((c) => [c.id, c] as const))
+  const resultado: ComponenteVista[] = []
+  for (const componente of componentes) {
+    // Una pieza fusionada NUNCA se dibuja en su posición natural — sólo se agrega
+    // una vez, justo antes de su ancla (más abajo), sin importar si en la IR
+    // aparecía antes, después o lejos de ella.
+    if (anclaPorResistencia.has(componente.id)) continue
+    for (const [resistenciaId, anclaId] of anclaPorResistencia) {
+      if (anclaId !== componente.id) continue
+      const pieza = porId.get(resistenciaId)
+      if (pieza) resultado.push(pieza)
+    }
+    resultado.push(componente)
+  }
+  return resultado
+}
+
 export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDeVista {
   const placaId = proyecto.placa
   const placaCatalogo: Placa | undefined = placaId !== null ? catalogo.placas.find((p) => p.id === placaId) : undefined
@@ -319,15 +357,22 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   }
 
   // HD-W0-B: qué parejas (terminal-con-pin, instancia-puente) fusionan en una cadena
-  // de 3 nodos — ver `resolverFusionesSerie`. `fusionPorConexion` es el mismo mapa
-  // indexado por `Conexion.id`, para el segundo bucle de abajo.
+  // de 3 nodos — ver `resolverFusionesSerie`.
   const fusionesSerie = resolverFusionesSerie(proyecto, catalogo, terminalesDe)
-  const fusionPorConexion = new Map<string, FusionSerie>()
-  for (const fusion of fusionesSerie.values()) fusionPorConexion.set(fusion.conexionId, fusion)
 
-  // Cables: de asignaciones (pin↔terminal, incluido el riel fijo del catálogo) +
-  // conexiones de la IR (terminal↔terminal) — nunca de un pin/riel hardcodeado.
+  // Corrección pedagógica del orquestador (diseño §2, "si visualmente sigue
+  // pareciendo colgante → FAIL, aunque los tests estén en verde", verificado real en
+  // Chromium): topológicamente correcta no alcanza — la cadena fusionada tiene que
+  // leerse JUNTA. Cables: de asignaciones (pin↔terminal, incluido el riel fijo del
+  // catálogo) + conexiones de la IR (terminal↔terminal) — nunca de un pin/riel
+  // hardcodeado. CONTIGÜIDAD: cuando (componente,terminal) fusiona, la arista de la
+  // `Conexion` real se emite ACÁ MISMO, inmediatamente después de la del pin —
+  // mismo `cable-conexion-<id>` de siempre (nunca uno nuevo, la cantidad de aristas
+  // no cambia), nunca al final del todo donde los cables de OTRO componente puedan
+  // intercalarse en el medio. `conexionesFusionadasEmitidas` evita que el bucle de
+  // abajo la vuelva a agregar.
   const cables: CableVista[] = []
+  const conexionesFusionadasEmitidas = new Set<string>()
   for (const componente of proyecto.componentes) {
     for (const [terminalId, terminalVista] of Object.entries(terminalesDe(componente.id))) {
       const extremoTerminal = extremoDeTerminal(componente.id, terminalId, terminalVista)
@@ -340,6 +385,12 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
         const fusion = fusionesSerie.get(claveAncla(componente.id, terminalId))
         const hastaPin = fusion ? extremoDeTerminal(fusion.resistenciaId, fusion.terminalLibre, terminalVistaDe(fusion.resistenciaId, fusion.terminalLibre)) : extremoTerminal
         cables.push({ id: `cable-pin-${componente.id}-${terminalId}`, desde: extremoPin, hasta: hastaPin })
+        if (fusion) {
+          const desde = extremoDeTerminal(fusion.resistenciaId, fusion.terminalConectado, terminalVistaDe(fusion.resistenciaId, fusion.terminalConectado))
+          const hasta = extremoDeTerminal(fusion.componenteId, fusion.terminalId, terminalVistaDe(fusion.componenteId, fusion.terminalId))
+          cables.push({ id: `cable-conexion-${fusion.conexionId}`, desde, hasta })
+          conexionesFusionadasEmitidas.add(fusion.conexionId)
+        }
       } else if (terminalVista.estado === "rielFijo") {
         cables.push({ id: `cable-riel-${componente.id}-${terminalId}`, desde: extremoTerminal, hasta: { tipo: "rielFijo", destino: terminalVista.destino } })
       }
@@ -349,17 +400,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     }
   }
   for (const conexion of proyecto.conexiones) {
-    // HD-W0-B: la `Conexion` real que la fusión usa como "serie" se reorienta —
-    // pata CONECTADA de la instancia puente → terminal del componente ancla (el
-    // mismo `cable-conexion-<id>`, nunca uno nuevo: la cantidad de aristas no
-    // cambia, sólo sus extremos).
-    const fusion = fusionPorConexion.get(conexion.id)
-    if (fusion) {
-      const desde = extremoDeTerminal(fusion.resistenciaId, fusion.terminalConectado, terminalVistaDe(fusion.resistenciaId, fusion.terminalConectado))
-      const hasta = extremoDeTerminal(fusion.componenteId, fusion.terminalId, terminalVistaDe(fusion.componenteId, fusion.terminalId))
-      cables.push({ id: `cable-conexion-${conexion.id}`, desde, hasta })
-      continue
-    }
+    if (conexionesFusionadasEmitidas.has(conexion.id)) continue // ya se emitió arriba, contigua a su pin
     const desde = extremoDeTerminal(conexion.desde.componente, conexion.desde.terminal, terminalVistaDe(conexion.desde.componente, conexion.desde.terminal))
     const hasta = extremoDeTerminal(conexion.hasta.componente, conexion.hasta.terminal, terminalVistaDe(conexion.hasta.componente, conexion.hasta.terminal))
     cables.push({ id: `cable-conexion-${conexion.id}`, desde, hasta })
@@ -406,7 +447,11 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
           return valor === undefined ? c : { ...c, atributos: { ...c.atributos, value: valor } }
         })
 
-  return { placa, componentes: componentesConValor, cables, gpiosDisponibles, motivos, readiness }
+  // HD-W0-B (adyacencia): ver `reordenarParaAdyacencia` — sólo mueve piezas
+  // fusionadas, justo antes de su ancla; el resto conserva su orden de siempre.
+  const componentesOrdenados = reordenarParaAdyacencia(componentesConValor, fusionesSerie)
+
+  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness }
 }
 
 /**
