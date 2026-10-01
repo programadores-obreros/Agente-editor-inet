@@ -333,7 +333,17 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       try {
         deps = await cargarDependencias()
       } catch (error) {
-        return error instanceof Error ? error.message : String(error)
+        // FX-5 (F-TRUTH-3, MAJOR, ronda de fixes): el diseño y el prompt afirman que
+        // "proyecto-fisico SIEMPRE arranca su respuesta con una línea resultado" —
+        // esta ruta devolvía un string PLANO (el mensaje de error tal cual), sin
+        // `resultado` ni JSON, rompiendo esa promesa (`JSON.parse` del agente
+        // fallaba). Mismo sobre que cualquier otro rechazo de la tool.
+        const mensaje = error instanceof Error ? error.message : String(error)
+        return JSON.stringify(
+          { resultado: `NO SE APLICÓ NADA — ${mensaje}`, accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "DEPENDENCIAS_NO_DISPONIBLES", mensaje },
+          null,
+          2,
+        )
       }
 
       let servicio: ServicioDeProyecto
@@ -341,9 +351,15 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
         servicio = deps.obtenerServicioDeProyectoConVista({ directorio: directorioDatos, idProyecto })
       } catch (error) {
         // Candado (H5, mismo criterio que vista-fisica.ts): otro proceso ya tiene este
-        // proyecto abierto — mensaje claro, nunca una excepción cruda ni una escritura.
+        // proyecto abierto — mensaje claro, nunca una excepción cruda ni una
+        // escritura. FX-5 (F-TRUTH-3): mismo sobre JSON con `resultado` que cualquier
+        // otro rechazo — antes esta ruta devolvía un string plano.
         const mensaje = error instanceof Error ? error.message : String(error)
-        return `No pude acceder al proyecto físico: ${mensaje}`
+        return JSON.stringify(
+          { resultado: `NO SE APLICÓ NADA — no pude acceder al proyecto físico: ${mensaje}`, accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "PROYECTO_BLOQUEADO", mensaje },
+          null,
+          2,
+        )
       }
 
       const catalogo = deps.catalogoReal()
