@@ -106,9 +106,18 @@ export function nombreWokwiDePin(pin: RegistroPin): string | null {
 // `wokwi-led`/`wokwi-esp32-devkit-v1`, licencia MIT ya presente en el repo, sin
 // asset nuevo) — confirmado con `shadowRoot` real en Chromium headless
 // (ARCH-S2-PHYSICAL/INFORME.md §1).
+//
+// Fase 3, Wave 0 (HD-W0-B, PHASE_3_PRE_HUMAN_TEST_DESIGN.md §2): agrega
+// `resistencia` → `wokwi-resistor` — el custom element YA está en el mismo bundle,
+// sin asset nuevo (EXP-B, confirmado en Chromium headless real contra el bundle del
+// repo: `tagRegistrado:true`, `shadowRoot` con contenido, `pinInfo` con los pines
+// `"1"`/`"2"` reales — ver `TERMINAL_WOKWI_POR_TIPO` más abajo). Antes de esto la
+// pieza existía en el bundle pero nunca se registraba acá, así que no se dibujaba
+// (causa confirmada de HD-W0-B).
 export const ELEMENTO_WOKWI_POR_TIPO: Readonly<Record<string, string>> = {
   led: "wokwi-led",
   pulsador: "wokwi-pushbutton",
+  resistencia: "wokwi-resistor",
 }
 
 // docs/wokwi-pinout-dump.md:79 (`wokwi-led | A C`, confirmado contra el bundle real)
@@ -125,9 +134,16 @@ export const ELEMENTO_WOKWI_POR_TIPO: Readonly<Record<string, string>> = {
 // patas). Como `1.l≡2.l` (mismo nodo interno), la elección de CUÁL pin de cada lado
 // dibujar para `senal`/`gnd` es puramente cosmética (informe §2, "cualquiera de las
 // 4 combinaciones es correcta") — nunca una decisión eléctrica nueva.
+// Fase 3, Wave 0 (HD-W0-B): `resistencia.a/b -> "1"/"2"` — `el.pinInfo` REAL de
+// `wokwi-resistor` (Chromium headless, EXP-B): `[{"name":"1"},{"name":"2"}]`, sin
+// polaridad (coincide con `catalogo-datos.ts:40-43`, "es un puente, no tiene
+// polaridad" — CUALQUIER pata puede mapear a CUALQUIERA de los dos pines, una
+// elección cosmética, nunca eléctrica, mismo criterio que ya documenta el pulsador
+// acá arriba).
 export const TERMINAL_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   led: { anodo: "A", catodo: "C" },
   pulsador: { senal: "1.l", gnd: "2.l" },
+  resistencia: { a: "1", b: "2" },
 }
 
 // circuito.ts:949-975 (`COMPONENTES.led`, color por índice `[red,yellow,green][i%3]`

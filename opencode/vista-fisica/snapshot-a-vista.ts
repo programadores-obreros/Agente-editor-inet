@@ -30,7 +30,7 @@
 // producto sobre `nucleo/catalogo.ts`, no de este adaptador.
 
 import type { Proyecto, Componente } from "../nucleo/ir.ts"
-import type { Catalogo, Terminal } from "../nucleo/catalogo.ts"
+import type { Catalogo, Terminal, Requisito } from "../nucleo/catalogo.ts"
 import type { RegistroPin, Placa } from "../nucleo/placas.ts"
 import type { Motivo } from "../nucleo/motivos.ts"
 import { asignarPin } from "../nucleo/catalogo.ts"
@@ -167,6 +167,112 @@ function extremoDeTerminal(componenteId: string, terminalId: string, terminalVis
   return { tipo: "terminal", componente: componenteId, terminal: terminalId, nombreWokwi: terminalVista.nombreWokwiPieza }
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// HD-W0-B (PHASE_3_PRE_HUMAN_TEST_DESIGN.md §2, "la resistencia se ve en serie")
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Una pareja (terminal CON pin asignado, instancia que satisface su
+ * `resistencia-serie`) que el contrato visual del diseño permite fusionar en una
+ * cadena de 3 nodos. `ancla` = el terminal del componente que DECLARA el requisito
+ * (`componenteId`/`terminalId`); `resistenciaId`/`terminalConectado`/`terminalLibre`
+ * = la instancia que lo satisface, su pata unida por la `Conexion` real y su ÚNICA
+ * otra pata. `ohmios` viaja TAL CUAL de `Requisito.spec.ohmios` — `unknown`, nunca
+ * asumido numérico acá (eso lo decide quien lo consume, más abajo).
+ */
+interface FusionSerie {
+  readonly componenteId: string
+  readonly terminalId: string
+  readonly resistenciaId: string
+  readonly terminalConectado: string
+  readonly terminalLibre: string
+  readonly conexionId: string
+  readonly ohmios: unknown
+}
+
+/** Mismo fallback que `evaluarRequisito` (`nucleo/catalogo.ts:189`) — una sola
+ * derivación del "tipo esperado" de un requisito `resistencia-serie`, reusada acá
+ * para no abrir una segunda lectura de `spec.tipoComponente`. */
+function tipoEsperadoDeRequisito(req: Requisito): string {
+  return typeof req.spec.tipoComponente === "string" ? req.spec.tipoComponente : "resistencia"
+}
+
+function claveAncla(componenteId: string, terminalId: string): string {
+  return `${componenteId}\u0000${terminalId}`
+}
+
+/**
+ * Deriva, para TODO el proyecto, qué parejas (terminal-con-pin, instancia-puente)
+ * cumplen el contrato visual del diseño §2 — puro despacho por
+ * `Requisito.tipo`/`enTerminal`/`spec.tipoComponente`, NUNCA por id/tipo de
+ * componente literal ("led"/"resistencia"/"anodo" no aparecen acá abajo): cualquier
+ * componente futuro que declare `resistencia-serie` sobre cualquier terminal entra
+ * por el mismo camino.
+ *
+ * Fail-closed (briefing: "ante cualquier ambigüedad") — NINGUNA fusión si:
+ * - el terminal que declara el requisito no tiene pin asignado todavía;
+ * - hay CERO o MÁS DE UNA `Conexion` real entre ese terminal y una instancia del
+ *   `spec.tipoComponente` esperado (ambiguo: ¿cuál es "la" serie?);
+ * - la instancia candidata no tiene, en su catálogo, EXACTAMENTE un terminal además
+ *   del conectado (una forma de "puente" de más de 2 patas no tiene una "libre"
+ *   obvia — nunca se adivina cuál);
+ * - esa instancia participa en alguna OTRA `Conexion` de CUALQUIER componente (una
+ *   resistencia compartida por dos LEDs no es una serie clara para ninguno de los
+ *   dos — diseño §2, "R no tiene otras conexiones").
+ *
+ * `terminalesDe` es el MISMO resolver que ya usa el resto de `proyectarVista` (abajo)
+ * — nunca una segunda lectura de `Componente.pines`.
+ */
+function resolverFusionesSerie(proyecto: Proyecto, catalogo: Catalogo, terminalesDe: (componenteId: string) => Readonly<Record<string, TerminalVista>>): ReadonlyMap<string, FusionSerie> {
+  const porAncla = new Map<string, FusionSerie>()
+  for (const componente of proyecto.componentes) {
+    const compCatalogo = catalogo.obtenerComponente(componente.tipo)
+    if (!compCatalogo) continue
+    for (const req of compCatalogo.requisitos) {
+      if (req.tipo !== "resistencia-serie" || req.enTerminal === undefined) continue
+      const terminalId = req.enTerminal
+      const terminalVista = terminalesDe(componente.id)[terminalId]
+      if (!terminalVista || terminalVista.estado !== "asignado") continue // sin pin, nada que fusionar
+
+      const tipoEsperado = tipoEsperadoDeRequisito(req)
+      const candidatas = proyecto.conexiones.filter((cx) => {
+        const propio = cx.desde.componente === componente.id && cx.desde.terminal === terminalId ? cx.desde : cx.hasta.componente === componente.id && cx.hasta.terminal === terminalId ? cx.hasta : null
+        if (!propio) return false
+        const otro = propio === cx.desde ? cx.hasta : cx.desde
+        const instanciaOtro = proyecto.componentes.find((c) => c.id === otro.componente)
+        return instanciaOtro?.tipo === tipoEsperado
+      })
+      if (candidatas.length !== 1) continue // cero o ambiguo: fail-closed
+
+      const conexion = candidatas[0]
+      if (!conexion) continue // defensa en profundidad (candidatas.length === 1 ya lo garantiza)
+      const extremoR = conexion.desde.componente === componente.id && conexion.desde.terminal === terminalId ? conexion.hasta : conexion.desde
+      const instanciaR = proyecto.componentes.find((c) => c.id === extremoR.componente)
+      if (!instanciaR) continue
+      const catalogoR = catalogo.obtenerComponente(instanciaR.tipo)
+      if (!catalogoR) continue
+
+      const terminalesLibres = catalogoR.terminales.filter((t) => t.id !== extremoR.terminal)
+      const terminalLibre = terminalesLibres.length === 1 ? terminalesLibres[0] : undefined
+      if (!terminalLibre) continue // cero o más de una pata libre: forma de puente ambigua, fail-closed
+
+      const otrasConexionesDeR = proyecto.conexiones.filter((cx) => cx.desde.componente === instanciaR.id || cx.hasta.componente === instanciaR.id)
+      if (otrasConexionesDeR.length !== 1) continue // R comprometido con otra cosa: fail-closed
+
+      porAncla.set(claveAncla(componente.id, terminalId), {
+        componenteId: componente.id,
+        terminalId,
+        resistenciaId: instanciaR.id,
+        terminalConectado: extremoR.terminal,
+        terminalLibre: terminalLibre.id,
+        conexionId: conexion.id,
+        ohmios: req.spec.ohmios,
+      })
+    }
+  }
+  return porAncla
+}
+
 export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDeVista {
   const placaId = proyecto.placa
   const placaCatalogo: Placa | undefined = placaId !== null ? catalogo.placas.find((p) => p.id === placaId) : undefined
@@ -204,6 +310,21 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     return componentes.find((c) => c.id === componenteId)?.terminales ?? {}
   }
 
+  // Mismo fallback que ya usaba el bucle de `Conexion` de abajo para un terminal que
+  // el modelo no resolvió (no debería pasar en producción: todo cable sale de un
+  // componente del MISMO modelo) — ahora compartido también por la fusión HD-W0-B,
+  // nunca una segunda copia del objeto `"puente"` por defecto.
+  function terminalVistaDe(componenteId: string, terminalId: string): TerminalVista {
+    return terminalesDe(componenteId)[terminalId] ?? { estado: "puente", nombreWokwiPieza: null, etiqueta: etiquetaDeTerminal(terminalId) }
+  }
+
+  // HD-W0-B: qué parejas (terminal-con-pin, instancia-puente) fusionan en una cadena
+  // de 3 nodos — ver `resolverFusionesSerie`. `fusionPorConexion` es el mismo mapa
+  // indexado por `Conexion.id`, para el segundo bucle de abajo.
+  const fusionesSerie = resolverFusionesSerie(proyecto, catalogo, terminalesDe)
+  const fusionPorConexion = new Map<string, FusionSerie>()
+  for (const fusion of fusionesSerie.values()) fusionPorConexion.set(fusion.conexionId, fusion)
+
   // Cables: de asignaciones (pin↔terminal, incluido el riel fijo del catálogo) +
   // conexiones de la IR (terminal↔terminal) — nunca de un pin/riel hardcodeado.
   const cables: CableVista[] = []
@@ -212,7 +333,13 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
       const extremoTerminal = extremoDeTerminal(componente.id, terminalId, terminalVista)
       if (terminalVista.estado === "asignado") {
         const extremoPin: ExtremoCableVista = { tipo: "pinPlaca", pinSemantico: terminalVista.pinSemantico, nombreWokwi: terminalVista.nombreWokwiPlaca }
-        cables.push({ id: `cable-pin-${componente.id}-${terminalId}`, desde: extremoPin, hasta: extremoTerminal })
+        // HD-W0-B: si este (componente,terminal) fusiona, el extremo del lado del
+        // pin deja de ser el propio terminal y pasa a ser la pata LIBRE de la
+        // instancia puente — corrección del orquestador sobre EXP-B: nunca la pata
+        // conectada otra vez, siempre la que la IR deja sin usar.
+        const fusion = fusionesSerie.get(claveAncla(componente.id, terminalId))
+        const hastaPin = fusion ? extremoDeTerminal(fusion.resistenciaId, fusion.terminalLibre, terminalVistaDe(fusion.resistenciaId, fusion.terminalLibre)) : extremoTerminal
+        cables.push({ id: `cable-pin-${componente.id}-${terminalId}`, desde: extremoPin, hasta: hastaPin })
       } else if (terminalVista.estado === "rielFijo") {
         cables.push({ id: `cable-riel-${componente.id}-${terminalId}`, desde: extremoTerminal, hasta: { tipo: "rielFijo", destino: terminalVista.destino } })
       }
@@ -222,16 +349,19 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     }
   }
   for (const conexion of proyecto.conexiones) {
-    const desde = extremoDeTerminal(
-      conexion.desde.componente,
-      conexion.desde.terminal,
-      terminalesDe(conexion.desde.componente)[conexion.desde.terminal] ?? { estado: "puente", nombreWokwiPieza: null, etiqueta: etiquetaDeTerminal(conexion.desde.terminal) },
-    )
-    const hasta = extremoDeTerminal(
-      conexion.hasta.componente,
-      conexion.hasta.terminal,
-      terminalesDe(conexion.hasta.componente)[conexion.hasta.terminal] ?? { estado: "puente", nombreWokwiPieza: null, etiqueta: etiquetaDeTerminal(conexion.hasta.terminal) },
-    )
+    // HD-W0-B: la `Conexion` real que la fusión usa como "serie" se reorienta —
+    // pata CONECTADA de la instancia puente → terminal del componente ancla (el
+    // mismo `cable-conexion-<id>`, nunca uno nuevo: la cantidad de aristas no
+    // cambia, sólo sus extremos).
+    const fusion = fusionPorConexion.get(conexion.id)
+    if (fusion) {
+      const desde = extremoDeTerminal(fusion.resistenciaId, fusion.terminalConectado, terminalVistaDe(fusion.resistenciaId, fusion.terminalConectado))
+      const hasta = extremoDeTerminal(fusion.componenteId, fusion.terminalId, terminalVistaDe(fusion.componenteId, fusion.terminalId))
+      cables.push({ id: `cable-conexion-${conexion.id}`, desde, hasta })
+      continue
+    }
+    const desde = extremoDeTerminal(conexion.desde.componente, conexion.desde.terminal, terminalVistaDe(conexion.desde.componente, conexion.desde.terminal))
+    const hasta = extremoDeTerminal(conexion.hasta.componente, conexion.hasta.terminal, terminalVistaDe(conexion.hasta.componente, conexion.hasta.terminal))
     cables.push({ id: `cable-conexion-${conexion.id}`, desde, hasta })
   }
 
@@ -257,7 +387,26 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   // siempre) MÁS una `explicacion` en texto llano — ver `explicarMotivos` más abajo.
   const motivos: readonly MotivoVista[] = explicarMotivos(motivosBase, proyecto, catalogo)
 
-  return { placa, componentes, cables, gpiosDisponibles, motivos, readiness }
+  // HD-W0-B (diseño §2, fila "Pieza"): el `value` (ohmios) de una instancia
+  // FUSIONADA sale de `Requisito.spec.ohmios` — nunca un número fijo en
+  // `ATRIBUTOS_POR_TIPO` (eso sería el mismo valor para CUALQUIER instancia del
+  // tipo, aunque el catálogo declarara otro ohmiaje en otro requisito). Una
+  // instancia que no fusiona con nada (huérfana o ambigua, fail-closed de arriba) no
+  // tiene un ohmiaje conocido todavía — se deja SIN `value`: la pieza se dibuja
+  // igual (gap cerrado), pero nunca se inventa el número.
+  const ohmiosPorResistencia = new Map<string, string>()
+  for (const fusion of fusionesSerie.values()) {
+    if (typeof fusion.ohmios === "number" && Number.isFinite(fusion.ohmios)) ohmiosPorResistencia.set(fusion.resistenciaId, String(fusion.ohmios))
+  }
+  const componentesConValor: readonly ComponenteVista[] =
+    ohmiosPorResistencia.size === 0
+      ? componentes
+      : componentes.map((c) => {
+          const valor = ohmiosPorResistencia.get(c.id)
+          return valor === undefined ? c : { ...c, atributos: { ...c.atributos, value: valor } }
+        })
+
+  return { placa, componentes: componentesConValor, cables, gpiosDisponibles, motivos, readiness }
 }
 
 /**
