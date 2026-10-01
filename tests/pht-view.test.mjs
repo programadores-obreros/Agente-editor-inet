@@ -502,7 +502,7 @@ test("PFX-1 (pintar), integración real: un Pulsador SIN fusión nunca cae dentr
   const plan = planDePintado(vista)
   const raiz = pintar(documentoFake(), plan)
 
-  assert.equal(raiz.circuito.hijos.length, 2, "un contenedor para el grupo fusionado, otro para el pulsador — nunca tres sueltos")
+  assert.equal(raiz.circuito.hijos.length, 3, "la placa + un contenedor para el grupo fusionado + otro para el pulsador — nunca más piezas sueltas")
   const grupo = raiz.circuito.hijos.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-led"))
   const contenedorPulsador = raiz.circuito.hijos.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-pushbutton"))
   assert.ok(grupo && contenedorPulsador)
@@ -524,8 +524,10 @@ test("PFX-1 (pintar), integración real: 2 LEDs + 2 Resistencias — dos grupos 
   const plan = planDePintado(vista)
   const raiz = pintar(documentoFake(), plan)
 
-  assert.equal(raiz.circuito.hijos.length, 2, "dos grupos, uno por cada par LED+Resistencia")
-  for (const grupo of raiz.circuito.hijos) {
+  assert.equal(raiz.circuito.hijos.length, 3, "la placa + dos grupos, uno por cada par LED+Resistencia")
+  const grupos = raiz.circuito.hijos.filter((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-led"))
+  assert.equal(grupos.length, 2)
+  for (const grupo of grupos) {
     const piezas = piezasDentroDe(grupo)
     assert.equal(piezas.length, 2, `cada grupo tiene exactamente 2 piezas: ${JSON.stringify(piezas.map((p) => p.tagName))}`)
     assert.equal(piezas[0].tagName, "wokwi-resistor")

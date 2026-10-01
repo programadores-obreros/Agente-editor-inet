@@ -50,9 +50,17 @@ export function pintar(doc, instrucciones, manejadores = {}) {
   // marque `data-afectado` sobre el elemento ya creado sin ningún `getAttribute`.
   const elementosPorEntidad = new Map()
 
+  // PFX-1 (RED-PHT-PHYSICAL-TRUTH F1): `componenteId` del ancla (`agrupadoCon`) ->
+  // el grupo `<figure>`/fila ya creados para ESA fusión, mientras se espera la
+  // instrucción del ancla misma — SÓLO en memoria de esta llamada (mismo patrón que
+  // `elementosPorEntidad`, nunca se relee del DOM). El orden del plan YA garantiza
+  // que la pieza fusionada llega ANTES que su ancla (servidor,
+  // `snapshot-a-vista.ts::reordenarParaAdyacencia`): acá sólo se obedece ese orden.
+  const gruposPendientes = new Map()
+
   for (const instruccion of instrucciones) {
     if (instruccion.tipo === "crearElemento") {
-      pintarElemento(doc, raiz.circuito, instruccion, elementosPorEntidad)
+      pintarElemento(doc, raiz.circuito, instruccion, elementosPorEntidad, gruposPendientes)
       continue
     }
     if (instruccion.tipo === "filaCable") {
@@ -91,7 +99,7 @@ function pintarEstadoVacio(doc, contenedor, instruccion) {
   contenedor.appendChild(parrafo)
 }
 
-function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad) {
+function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad, gruposPendientes) {
   const elemento = doc.createElement(instruccion.tag)
   elemento.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
   elemento.setAttribute("data-entidad-id", instruccion.entidad.id)
@@ -99,6 +107,43 @@ function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad) {
     elemento.setAttribute(clave, valor)
   }
   if (elementosPorEntidad) elementosPorEntidad.set(`${instruccion.entidad.tipo}:${instruccion.entidad.id}`, elemento)
+
+  // PFX-1 (RED-PHT-PHYSICAL-TRUTH F1, criterio pedagógico del diseño §2): esta pieza
+  // es la RESISTENCIA de una fusión (`instruccion.agrupadoCon`, resuelto por el
+  // servidor) — se dibuja en una fila DENTRO de un grupo propio, primero (a la
+  // izquierda); el ancla llega después en el plan y se agrega a esta MISMA fila (ver
+  // más abajo). El grupo no tiene rótulo todavía: lo pone el ancla, con SU rol.
+  if (instruccion.agrupadoCon) {
+    const grupo = doc.createElement("figure")
+    grupo.setAttribute("data-entidad-tipo", "componente")
+    grupo.setAttribute("data-entidad-id", instruccion.agrupadoCon)
+    grupo.setAttribute("data-grupo-fusion", "true")
+    grupo.setAttribute("style", "display:flex;flex-direction:column;align-items:flex-start;gap:4px")
+    const fila = doc.createElement("span")
+    fila.setAttribute("data-fila-fusion", "true")
+    fila.setAttribute("style", "display:flex;flex-direction:row;align-items:center;gap:4px")
+    fila.appendChild(elemento)
+    grupo.appendChild(fila)
+    contenedor.appendChild(grupo)
+    gruposPendientes.set(instruccion.agrupadoCon, { grupo, fila })
+    return elemento
+  }
+
+  // Esta pieza es el ANCLA de un grupo ya abierto por SU resistencia (arriba) — se
+  // agrega a la MISMA fila (después, a la derecha) y el grupo recién ahora recibe su
+  // ÚNICO rótulo: el rol del ancla (nunca el de la resistencia, que es `null`).
+  const grupoPendiente = gruposPendientes?.get(instruccion.entidad.id)
+  if (grupoPendiente) {
+    grupoPendiente.fila.appendChild(elemento)
+    if (instruccion.etiquetaRol) {
+      const rotulo = doc.createElement("figcaption")
+      rotulo.setAttribute("data-rol-de-componente", instruccion.entidad.id)
+      rotulo.textContent = instruccion.etiquetaRol
+      grupoPendiente.grupo.appendChild(rotulo)
+    }
+    gruposPendientes.delete(instruccion.entidad.id)
+    return elemento
+  }
 
   // Fix post-gate (Chromium real, .../s2impl/gate-vista/v2-gpio34-blocking.png): con
   // `#circuito` en `flex-wrap` (§3.5), un rótulo de rol pintado como hermano SUELTO
@@ -112,7 +157,8 @@ function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad) {
   //
   // Sin rol (placa, componente sin rol pedagógico): la pieza sigue siendo hija
   // DIRECTA de `contenedor`, exactamente como antes de este fix — nunca se envuelve
-  // sin necesidad.
+  // sin necesidad. Un componente SIN fusión (ni `agrupadoCon` ni un grupo pendiente
+  // esperándolo) cae acá EXACTAMENTE como antes de PFX-1.
   if (instruccion.etiquetaRol) {
     const contenedorPieza = doc.createElement("figure")
     contenedorPieza.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)

@@ -190,11 +190,18 @@ interface FusionSerie {
   readonly ohmios: unknown
 }
 
-/** Mismo fallback que `evaluarRequisito` (`nucleo/catalogo.ts:189`) — una sola
- * derivación del "tipo esperado" de un requisito `resistencia-serie`, reusada acá
- * para no abrir una segunda lectura de `spec.tipoComponente`. */
-function tipoEsperadoDeRequisito(req: Requisito): string {
-  return typeof req.spec.tipoComponente === "string" ? req.spec.tipoComponente : "resistencia"
+/**
+ * PFX-2 (RED-PHT-AUDITABILITY F2): `evaluarRequisito` (`nucleo/catalogo.ts:189`)
+ * tiene su PROPIO fallback a `"resistencia"` cuando `spec.tipoComponente` no es un
+ * string — una decisión del NÚCLEO, fuera de este alcance (no se toca `nucleo/`).
+ * Esta función NO lo copia: antes lo hacía (duplicando la misma decisión en dos
+ * lugares, el riesgo real que F2 señaló — un cambio futuro al fallback del núcleo
+ * podía divergir en silencio del de la vista). Acá, sin ese dato explícito, no hay
+ * tipo que buscar — `null` fail-closed, nunca una fusión "porque total casi siempre
+ * es una resistencia": `resolverFusionesSerie` nunca fusiona ante `null`.
+ */
+function tipoEsperadoDeRequisito(req: Requisito): string | null {
+  return typeof req.spec.tipoComponente === "string" ? req.spec.tipoComponente : null
 }
 
 function claveAncla(componenteId: string, terminalId: string): string {
@@ -235,6 +242,7 @@ function resolverFusionesSerie(proyecto: Proyecto, catalogo: Catalogo, terminale
       if (!terminalVista || terminalVista.estado !== "asignado") continue // sin pin, nada que fusionar
 
       const tipoEsperado = tipoEsperadoDeRequisito(req)
+      if (tipoEsperado === null) continue // PFX-2: sin spec.tipoComponente declarado como string, fail-closed — nunca se asume "resistencia"
       const candidatas = proyecto.conexiones.filter((cx) => {
         const propio = cx.desde.componente === componente.id && cx.desde.terminal === terminalId ? cx.desde : cx.hasta.componente === componente.id && cx.hasta.terminal === terminalId ? cx.hasta : null
         if (!propio) return false
@@ -288,6 +296,12 @@ function resolverFusionesSerie(proyecto: Proyecto, catalogo: Catalogo, terminale
  * sólo reordena el ARRAY de salida, un paso puramente de PRESENTACIÓN, después de
  * que los nombres ya están resueltos. Sin fusiones, devuelve `componentes` tal cual
  * (misma referencia, cero trabajo de más).
+ *
+ * PFX-1 (RED-PHT-PHYSICAL-TRUTH F1): de paso, estampa `ComponenteVista.agrupadoCon`
+ * en la pieza fusionada — el mismo dato que ya decide este reordenamiento (el id del
+ * ancla), nunca un segundo cálculo. `plan-de-pintado.js`/`pintar.js` sólo lo leen
+ * para agrupar visualmente (mismo contenedor, un único rótulo de rol — el del
+ * ancla); esta función no sabe nada de DOM ni de `<figure>`.
  */
 function reordenarParaAdyacencia(componentes: readonly ComponenteVista[], fusionesSerie: ReadonlyMap<string, FusionSerie>): readonly ComponenteVista[] {
   if (fusionesSerie.size === 0) return componentes
@@ -304,7 +318,7 @@ function reordenarParaAdyacencia(componentes: readonly ComponenteVista[], fusion
     for (const [resistenciaId, anclaId] of anclaPorResistencia) {
       if (anclaId !== componente.id) continue
       const pieza = porId.get(resistenciaId)
-      if (pieza) resultado.push(pieza)
+      if (pieza) resultado.push({ ...pieza, agrupadoCon: anclaId })
     }
     resultado.push(componente)
   }
@@ -341,7 +355,10 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     const ocurrencia = (ocurrenciasPorTipo.get(componente.tipo) ?? 0) + 1
     ocurrenciasPorTipo.set(componente.tipo, ocurrencia)
     const nombre = ocurrencia === 1 ? nombreBase : `${nombreBase} ${ocurrencia}`
-    return { id: componente.id, tipo: componente.tipo, nombre, elementoWokwi, atributos, rol, terminales }
+    // PFX-1: `agrupadoCon` se resuelve recién en `reordenarParaAdyacencia` (abajo,
+    // necesita la fusión ya calculada) — acá siempre `null`, nunca una segunda
+    // decisión de agrupamiento.
+    return { id: componente.id, tipo: componente.tipo, nombre, elementoWokwi, atributos, rol, terminales, agrupadoCon: null }
   })
 
   function terminalesDe(componenteId: string): Readonly<Record<string, TerminalVista>> {
