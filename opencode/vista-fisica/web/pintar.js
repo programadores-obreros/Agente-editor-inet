@@ -67,6 +67,10 @@ export function pintar(doc, instrucciones, manejadores = {}) {
       pintarMotivo(doc, raiz.motivos, instruccion, elementosPorEntidad)
       continue
     }
+    if (instruccion.tipo === "estadoVacio") {
+      pintarEstadoVacio(doc, raiz.circuito, instruccion)
+      continue
+    }
     // Instrucción de un tipo que este pintor no conoce todavía — se ignora, nunca se
     // inventa un render: el mismo criterio fail-closed que `plan-de-pintado.js` ya
     // aplica para un componente sin tabla de render (se omite, no se dibuja con un
@@ -74,6 +78,17 @@ export function pintar(doc, instrucciones, manejadores = {}) {
   }
 
   return raiz
+}
+
+// W0-8 (PHASE_3_WAVE_0_DESIGN.md): "Este proyecto todavía no tiene componentes..." —
+// VISIBLE en `raiz.circuito` (no una superficie vacía). `instruccion.texto` ya viene
+// resuelto por `plan-de-pintado.js`; este módulo sólo decide CÓMO construir el nodo
+// (mismo criterio "tonto" del resto del archivo).
+function pintarEstadoVacio(doc, contenedor, instruccion) {
+  const parrafo = doc.createElement("p")
+  parrafo.setAttribute("data-estado-vacio", "true")
+  parrafo.textContent = instruccion.texto
+  contenedor.appendChild(parrafo)
 }
 
 function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad) {
@@ -126,10 +141,14 @@ function pintarCable(doc, contenedor, instruccion) {
 }
 
 function pintarSelectorGpio(doc, contenedor, instruccion, manejadores) {
+  // F-09 (PHASE_3_WAVE_0_DESIGN.md): el texto primario es `instruccion.etiqueta`
+  // ("Pulsador — señal:"), YA resuelto por `plan-de-pintado.js` — este módulo nunca
+  // arma el texto a partir de los ids crudos. `componenteId`/`terminalId` siguen acá
+  // como `data-*`, metadata secundaria para quien los necesite (nunca texto primario).
   const etiqueta = doc.createElement("label")
   etiqueta.setAttribute("data-componente-id", instruccion.componenteId)
   etiqueta.setAttribute("data-terminal-id", instruccion.terminalId)
-  etiqueta.textContent = `${instruccion.componenteId} / ${instruccion.terminalId}: `
+  etiqueta.textContent = instruccion.etiqueta ?? ""
 
   const selector = doc.createElement("select")
   selector.setAttribute("data-componente-id", instruccion.componenteId)

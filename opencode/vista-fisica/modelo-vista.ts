@@ -43,18 +43,33 @@ export interface PlacaVista {
  *   terminales de la resistencia, `catalogo-datos.ts:40-43`: "es un puente, no tiene
  *   polaridad") — su cableado sale ÚNICAMENTE de `Proyecto.conexiones`, nunca de un
  *   destino fijo que no existe.
+ *
+ * `etiqueta` (Fase 3, Wave 0, F-09, PHASE_3_WAVE_0_DESIGN.md): texto de PRESENTACIÓN
+ * para un humano ("ánodo (+)", "señal", "GND", "pata A"...), de la tabla de
+ * `etiquetas-terminales.ts` — compartido por las CUATRO variantes (igual que
+ * `nombreWokwiPieza`) porque es presentación pura, no depende de si el terminal tiene
+ * pin asignado. El id crudo del terminal (`senal`, `1.l` de Wokwi, etc.) queda fuera
+ * del texto primario que ve el estudiante: eso es justamente lo que F-09 cierra.
  */
 export type TerminalVista =
-  | { readonly estado: "asignado"; readonly pinSemantico: string; readonly nombreWokwiPlaca: string | null; readonly nombreWokwiPieza: string | null }
-  | { readonly estado: "sinAsignar"; readonly nombreWokwiPieza: string | null }
-  | { readonly estado: "rielFijo"; readonly destino: string; readonly nombreWokwiPieza: string | null }
-  | { readonly estado: "puente"; readonly nombreWokwiPieza: string | null }
+  | { readonly estado: "asignado"; readonly pinSemantico: string; readonly nombreWokwiPlaca: string | null; readonly nombreWokwiPieza: string | null; readonly etiqueta: string }
+  | { readonly estado: "sinAsignar"; readonly nombreWokwiPieza: string | null; readonly etiqueta: string }
+  | { readonly estado: "rielFijo"; readonly destino: string; readonly nombreWokwiPieza: string | null; readonly etiqueta: string }
+  | { readonly estado: "puente"; readonly nombreWokwiPieza: string | null; readonly etiqueta: string }
 
 export interface ComponenteVista {
   /** `Componente.id` ("cmp-0", nucleo/ir.ts). */
   readonly id: string
   /** `Componente.tipo` — id de catálogo ("led"), un dato, nunca una rama de TS acá. */
   readonly tipo: string
+  /** Fase 3, Wave 0 (F-09): `ComponenteCatalogo.nombreVisible` ("LED", "Pulsador") más
+   * un ordinal ESTABLE si hay más de una instancia del MISMO tipo en el proyecto
+   * ("LED", "LED 2", "LED 3"...), calculado del lado del servidor
+   * (`snapshot-a-vista.ts`, en el orden de `Proyecto.componentes` — nunca
+   * recalculado ni reordenado en el browser). `componente.tipo` crudo como
+   * fallback si el catálogo no tiene ese tipo (mismo criterio fail-closed que el
+   * resto del adaptador: nunca inventa un nombre). */
+  readonly nombre: string
   /** `wokwi-render-datos.ts` — `null` si el tipo no tiene tabla de render todavía
    * (gap documentado: hoy sólo "led" la tiene; agregar un componente nuevo con
    * render es sumar una entrada a esa tabla, nunca tocar este módulo). */

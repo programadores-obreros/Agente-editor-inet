@@ -382,7 +382,17 @@ test("F-11 coalescing: una rafaga D, D1, D19 en el MISMO selector dentro del deb
   assert.deepEqual(llamadas[0], { componenteId: "cmp-0", terminalId: "anodo", valor: "D19" })
 })
 
-test("F-11 coalescing: selectores DISTINTOS tienen debounce independiente (uno no cancela el timer del otro)", () => {
+test("F-11 coalescing: selectores DISTINTOS tienen debounce INDEPENDIENTE (uno no cancela el timer del otro) — pero el envio sigue siendo 'a lo sumo UN POST en vuelo', GLOBAL", () => {
+  // CORRECCIÓN post-RED (ver el commit GREEN): la primera versión de este test
+  // esperaba `llamadas.length === 2` tras `avanzar()`, asumiendo que dos selectores
+  // distintos podían tener dos POST EN VUELO al mismo tiempo. Eso contradice la
+  // propia regla de F-11 que este archivo ya documenta más abajo ("a lo sumo UN POST
+  // en vuelo", GLOBAL — el servidor tiene una sola `baseRevision` por proyecto, dos
+  // POST simultáneos se pisarían la revisión entre sí). Lo que SÍ es independiente
+  // por selector es el DEBOUNCE (ningún timer cancela al del otro) — eso es lo que
+  // este test verifica ahora: ambos timers siguen vivos hasta que cada uno vence, pero
+  // sólo el PRIMERO en vencer despacha un POST; el segundo se ENCOLA (mismo camino que
+  // "a lo sumo un POST en vuelo" ya prueba con un solo selector, acá con dos).
   const reloj = crearRelojFalso()
   const { enviar, llamadas } = crearEnviarControlable()
   const coalescer = crearCoalescerCambiosGpio({ programar: reloj.programar, cancelarProgramado: reloj.cancelar, enviar, obtenerValorServidor: () => null })
@@ -390,9 +400,9 @@ test("F-11 coalescing: selectores DISTINTOS tienen debounce independiente (uno n
   coalescer.registrarCambio("cmp-0", "anodo", "GPIO4")
   coalescer.registrarCambio("cmp-1", "senal", "GPIO18")
 
-  assert.equal(reloj.pendientesVivos(), 2, "dos selectores distintos: dos timers vivos")
+  assert.equal(reloj.pendientesVivos(), 2, "dos selectores distintos: DOS timers de debounce vivos, ninguno cancela al otro")
   reloj.avanzar()
-  assert.equal(llamadas.length, 2)
+  assert.equal(llamadas.length, 1, "el PRIMERO en vencer despacha; el segundo se encola (a lo sumo un POST en vuelo, GLOBAL — nunca dos en paralelo)")
 })
 
 test("F-11 coalescing: a lo sumo UN POST en vuelo — un cambio que llega mientras hay uno en curso se encola y se envia SOLO al volver, con el valor de servidor ya actualizado", async () => {

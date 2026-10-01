@@ -13,15 +13,116 @@ import { planDePintado } from "./plan-de-pintado.js"
 import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 
-// STUB temporal (RED, Wave 0 F-11, PHASE_3_WAVE_0_DESIGN.md): este archivo no tenía
-// ningún export puro todavía — `tests/wave0-view.test.mjs` necesita importar
-// `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` sin ejecutar el bootstrap real
-// (que toca `document`/`EventSource`/`fetch`, inexistentes bajo `node --test`). Por
-// eso TODO lo que toca el DOM de verdad al cargar el módulo queda detrás de este
-// chequeo de feature-detection — en el navegador real `document` SIEMPRE existe, así
-// que el comportamiento ahí no cambia un bit; en Node (los tests), el módulo carga
-// sin tocar nada, y sólo las funciones puras exportadas son invocables.
+// Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
+// importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
+// SIN ejecutar el bootstrap real de este módulo (`document`/`EventSource`/`fetch`,
+// inexistentes bajo `node --test`) — por eso todo lo que toca el DOM de verdad al
+// cargar el módulo queda detrás de este chequeo de feature-detection. En el navegador
+// real `document` SIEMPRE existe, así que el comportamiento ahí no cambia un bit; en
+// Node (los tests), el módulo carga sin tocar nada, y sólo las funciones puras
+// exportadas son invocables.
 const enNavegador = typeof document !== "undefined"
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// F-11 (PHASE_3_WAVE_0_DESIGN.md) — coalescing PURO de cambios de GPIO.
+//
+// Causa raíz (F-11, PHASE_2_SIMULATED_ROLE_TRIAL.md): antes, CADA evento `change` del
+// `<select>` disparaba un POST propio, con `baseRevision` del snapshot vigente EN ESE
+// INSTANTE. Tipear "D19" carácter por carácter mandaba un POST por "D", otro por "D1"
+// y otro por "D19" — y como cada POST corre contra el servidor real, el segundo podía
+// volver DESPUÉS que el tercero, pisando el valor final con uno viejo, o el servidor
+// rechazaba el segundo como `BASE_REVISION_DESACTUALIZADA` ("otro cambio llegó
+// primero") cuando en realidad el "otro cambio" era EL MISMO USUARIO, todavía
+// escribiendo. `repintar()` además hacía `replaceChildren` de TODO el DOM en cada
+// vuelta, así que el `<select>` perdía el foco a mitad de tecleo.
+//
+// Esta función es PURA salvo por lo que el llamador INYECTA (`programar`/
+// `cancelarProgramado` — equivalentes de `setTimeout`/`clearTimeout`, para poder
+// testear con un reloj FALSO, nunca un timer real; `enviar` — el POST real, inyectado
+// por este mismo archivo más abajo; `obtenerValorServidor` — lee `ultimoSnapshot`, SIN
+// que este módulo tenga que conocerlo). El browser SIGUE sin ser autoridad: lo único
+// que esta función decide es CUÁNDO mandar un pedido, nunca si se aplica — eso lo
+// sigue decidiendo el Engine, como siempre.
+//
+// Reglas (F-11, una x selector, identificado por `componenteId`+`terminalId`):
+//  - debounce de `debounceMs` (300 por defecto): cada cambio nuevo en el MISMO
+//    selector cancela el timer anterior y programa uno nuevo — sólo el ÚLTIMO valor
+//    elegido llega a decidirse.
+//  - a lo sumo UN POST en vuelo, GLOBAL (no por selector: el servidor tiene una sola
+//    `baseRevision` para el proyecto entero, dos POST simultáneos siempre van a pisar
+//    la revisión del otro). Si el debounce de CUALQUIER selector termina mientras ya
+//    hay un POST en curso, el pedido se ENCOLA — reemplazando cualquier pedido que ya
+//    estuviera encolado: "sólo el ÚLTIMO valor elegido" vale también acá.
+//  - al volver el POST en vuelo, si hay un pedido encolado, se re-evalúa CONTRA EL
+//    VALOR DE SERVIDOR YA ACTUALIZADO (nunca el de antes del POST): si ya coincide, no
+//    se manda nada; si no, se manda con la `baseRevision` fresca (que lee `enviar` de
+//    `ultimoSnapshot` en el momento en que de verdad se invoca, nunca antes).
+//  - si el valor final (al vencer el debounce, o al desencolar) ya coincide con el
+//    valor vigente del servidor, no se manda NADA.
+export function crearCoalescerCambiosGpio({ debounceMs = 300, programar = (fn, ms) => setTimeout(fn, ms), cancelarProgramado = (id) => clearTimeout(id), enviar, obtenerValorServidor } = {}) {
+  const timerPorSelector = new Map() // "componenteId\u0000terminalId" -> id de timer vivo
+  let enVuelo = false
+  let pedidoEncolado = null // el UNICO pedido en espera mientras hay un POST en vuelo
+
+  function clave(componenteId, terminalId) {
+    return `${componenteId}\u0000${terminalId}`
+  }
+
+  function registrarCambio(componenteId, terminalId, valor) {
+    const k = clave(componenteId, terminalId)
+    const timerPrevio = timerPorSelector.get(k)
+    if (timerPrevio !== undefined) cancelarProgramado(timerPrevio)
+    const id = programar(() => {
+      timerPorSelector.delete(k)
+      decidirEnvio(componenteId, terminalId, valor)
+    }, debounceMs)
+    timerPorSelector.set(k, id)
+  }
+
+  function decidirEnvio(componenteId, terminalId, valor) {
+    if (valor === obtenerValorServidor(componenteId, terminalId)) return // ya coincide: nada que mandar
+    const pedido = { componenteId, terminalId, valor }
+    if (enVuelo) {
+      pedidoEncolado = pedido // pisa cualquier pedido encolado anterior: sólo el ÚLTIMO importa
+      return
+    }
+    despachar(pedido)
+  }
+
+  function despachar(pedido) {
+    enVuelo = true
+    Promise.resolve(enviar(pedido)).then(alVolverElPost, alVolverElPost)
+  }
+
+  function alVolverElPost() {
+    enVuelo = false
+    if (!pedidoEncolado) return
+    const proximo = pedidoEncolado
+    pedidoEncolado = null
+    // Re-chequea contra el valor de servidor YA actualizado por el POST que acaba de
+    // volver — si mientras tanto ya quedó igual, el pedido encolado no aporta nada.
+    decidirEnvio(proximo.componenteId, proximo.terminalId, proximo.valor)
+  }
+
+  return { registrarCambio }
+}
+
+/**
+ * F-11 — foco: función PURA que elige, de la lista de selectores que el repintado
+ * ACABA de crear, el que es "el mismo" que tenía el foco antes de repintar (mismo
+ * componente/terminal). Nunca toca el DOM ella misma — quien la llama (`restaurarFoco`,
+ * más abajo) es quien de verdad hace `.focus()` sobre el elemento real.
+ *
+ * `disponibles`: `{componenteId, terminalId}[]` — los selectores que existen DESPUÉS
+ * del repintado. `focoAnterior`: `{componenteId, terminalId} | null` — lo que tenía el
+ * foco ANTES (o `null` si nada lo tenía, o si lo que tenía el foco no era un selector
+ * de GPIO). Si no hay match (ej. el terminal dejó de tener selector), `null` — nunca
+ * elige "cualquier cosa": fail-closed, mismo criterio que el resto de `vista-fisica/`.
+ */
+export function elegirSelectorParaFoco(disponibles, focoAnterior) {
+  if (!focoAnterior) return null
+  return disponibles.find((s) => s.componenteId === focoAnterior.componenteId && s.terminalId === focoAnterior.terminalId) ?? null
+}
 
 let contenedores = null
 let elementoRevision = null
@@ -95,10 +196,48 @@ function mostrarEstado(texto) {
   elementoEstado.textContent = texto ?? ""
 }
 
+/** F-11: lo que tenía el foco ANTES de repintar, si era un selector de GPIO (tiene
+ * `data-componente-id`/`data-terminal-id`) — `null` en cualquier otro caso (nada
+ * enfocado, o enfocado algo que no es un selector nuestro). Lee el DOM real
+ * (`document.activeElement`); la DECISIÓN de qué hacer con esto es de
+ * `elegirSelectorParaFoco` (pura, arriba). */
+function capturarFocoActual() {
+  const activo = document.activeElement
+  if (!activo || typeof activo.getAttribute !== "function") return null
+  const componenteId = activo.getAttribute("data-componente-id")
+  const terminalId = activo.getAttribute("data-terminal-id")
+  if (!componenteId || !terminalId) return null
+  return { componenteId, terminalId }
+}
+
+/** F-11: tras montar la sección de controles recién pintada, re-enfoca el selector
+ * EQUIVALENTE (mismo componente/terminal) al que tenía el foco antes de repintar, si
+ * sigue existiendo — nunca enfoca "cualquier cosa" (ver `elegirSelectorParaFoco`). */
+function restaurarFoco(raizControles, focoAnterior) {
+  if (!focoAnterior || typeof raizControles.querySelectorAll !== "function") return
+  const disponibles = [...raizControles.querySelectorAll("select[data-componente-id][data-terminal-id]")].map((elemento) => ({
+    componenteId: elemento.getAttribute("data-componente-id"),
+    terminalId: elemento.getAttribute("data-terminal-id"),
+    elemento,
+  }))
+  const elegido = elegirSelectorParaFoco(
+    disponibles.map(({ componenteId, terminalId }) => ({ componenteId, terminalId })),
+    focoAnterior,
+  )
+  if (!elegido) return
+  const match = disponibles.find((s) => s.componenteId === elegido.componenteId && s.terminalId === elegido.terminalId)
+  if (match && typeof match.elemento.focus === "function") match.elemento.focus()
+}
+
 /** Repinta ÍNTEGRO desde `ultimoSnapshot` — nunca actualiza el DOM anterior a
  * pedazos. Si el snapshot no trae `vista` (no debería pasar en producción, donde
  * `servicio-con-vista.ts` siempre inyecta `calcularVista`), no rompe: sólo no dibuja
- * el circuito, deja el resto de la cabecera (revisión/readiness) al día. */
+ * el circuito, deja el resto de la cabecera (revisión/readiness) al día.
+ *
+ * F-11: captura el foco ANTES de reemplazar el DOM y lo restaura DESPUÉS, sobre el
+ * selector equivalente — el `replaceChildren` sigue siendo "repintar TODO" (ninguna
+ * actualización parcial, mismo invariante de siempre), sólo que ahora no se pierde el
+ * foco en el camino. */
 function repintar() {
   if (!ultimoSnapshot) return
   elementoRevision.textContent = `revisión: ${ultimoSnapshot.revision}`
@@ -106,11 +245,13 @@ function repintar() {
   elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
 
   if (!ultimoSnapshot.vista) return
+  const focoAnterior = capturarFocoActual()
   const instrucciones = planDePintado(ultimoSnapshot.vista, { conexionActiva: estadoConexion === "conectado" })
   const secciones = pintar(document, instrucciones, { onCambioGpio: manejarCambioGpio })
   for (const clave of Object.keys(contenedores)) {
     contenedores[clave].replaceChildren(secciones[clave])
   }
+  restaurarFoco(secciones.controles, focoAnterior)
 }
 
 async function cargarSnapshot() {
@@ -126,11 +267,25 @@ function descripcionDeMotivos(motivos) {
   return motivos.map((m) => m.codigo).join(", ")
 }
 
-async function manejarCambioGpio({ componenteId, terminalId, valor }) {
+/** F-11: el valor que el servidor tiene HOY para (componenteId, terminalId), leído de
+ * `ultimoSnapshot` — `null` si el terminal no está asignado (o no existe). Es lo que
+ * `crearCoalescerCambiosGpio` usa para decidir "si el valor final coincide con el del
+ * servidor, no se manda nada": siempre lee el snapshot MÁS RECIENTE en el momento en
+ * que de verdad se evalúa (nunca uno capturado de antes). */
+function valorServidorDe(componenteId, terminalId) {
+  const componente = ultimoSnapshot?.vista?.componentes.find((c) => c.id === componenteId)
+  const terminal = componente?.terminales?.[terminalId]
+  return terminal && terminal.estado === "asignado" ? terminal.pinSemantico : null
+}
+
+/** El POST real — misma forma/invariantes que antes de F-11 (sobre firmado con
+ * `baseRevision` del ÚLTIMO snapshot autoritativo, nunca optimista; "otro cambio
+ * llegó primero" sigue siendo honesto para un conflicto REAL con otro actor — F-11
+ * sólo cierra los conflictos FALSOS que generaba un POST por tecla). La diferencia:
+ * ahora quien decide CUÁNDO llamar a esta función es `coalescerGpio`, nunca
+ * directamente el `change` del `<select>`. */
+async function enviarCambioGpio({ componenteId, terminalId, valor }) {
   if (!ultimoSnapshot) return
-  // `baseRevision` sale del ÚLTIMO snapshot AUTORITATIVO — nunca de un contador local
-  // ni de lo que el usuario cree que está viendo (PHASE_2_SLICE_1_PROTOCOL.md,
-  // briefing tarea 3).
   const sobre = {
     idOperacion: siguienteIdOperacion(),
     actor: "navegador", // el servidor lo fuerza de todos modos (servidor-proyecto.ts)
@@ -175,11 +330,25 @@ async function manejarCambioGpio({ componenteId, terminalId, valor }) {
   repintar()
 }
 
+/** F-11: el coalescer real de esta página — `enviar`/`obtenerValorServidor` leen
+ * `ultimoSnapshot` siempre FRESCO en el momento en que de verdad se invocan (nunca
+ * algo capturado al momento del `change`). `programar`/`cancelarProgramado` quedan en
+ * sus valores por defecto (`setTimeout`/`clearTimeout` reales) — sólo los tests
+ * (`tests/wave0-view.test.mjs`) los reemplazan por un reloj falso. */
+const coalescerGpio = crearCoalescerCambiosGpio({ enviar: enviarCambioGpio, obtenerValorServidor: valorServidorDe })
+
+/** El único manejador de `change` que `pintar.js` conoce — F-11: en vez de mandar un
+ * POST directo, registra el cambio en el coalescer (debounce + "a lo sumo un POST en
+ * vuelo" + "sólo el último valor"). */
+function manejarCambioGpio({ componenteId, terminalId, valor }) {
+  coalescerGpio.registrarCambio(componenteId, terminalId, valor)
+}
+
 // SSE: cualquier commit (de este navegador o de otro actor, ej. la tool) dispara un
 // refetch íntegro — nunca se aplica el `{revision}` del evento de forma optimista.
 //
-// STUB temporal (RED): este bootstrap sólo corre en el navegador real (ver
-// `enNavegador` arriba) — nunca bajo `node --test`.
+// Este bootstrap sólo corre en el navegador real (ver `enNavegador` arriba) — nunca
+// bajo `node --test`.
 if (enNavegador) {
   const eventos = new EventSource("/api/eventos")
   eventos.addEventListener("revision", () => {
@@ -192,28 +361,4 @@ if (enNavegador) {
   eventos.addEventListener("open", () => manejarEventoConexion({ tipo: "open" }))
 
   cargarSnapshot()
-}
-
-// ════════════════════════════════════════════════════════════════════════════════════
-// F-11 (PHASE_3_WAVE_0_DESIGN.md) — STUBs temporales (RED), reemplazados en el commit
-// GREEN. Existen para que este módulo sea importable desde `tests/wave0-view.test.mjs`
-// sin un link error, y para que esos tests fallen por ASERCIÓN semántica (no por un
-// export inexistente): el coalescing real (debounce de 300ms por selector, a lo sumo
-// un POST en vuelo, el ÚLTIMO valor elegido) y la elección del selector a re-enfocar
-// todavía NO están implementados acá abajo.
-// ════════════════════════════════════════════════════════════════════════════════════
-
-/** STUB (RED): manda cada cambio YA MISMO, ignorando `programar`/`cancelarProgramado`/
- * `obtenerValorServidor` — ningún debounce, ninguna cola. */
-export function crearCoalescerCambiosGpio({ enviar } = {}) {
-  return {
-    registrarCambio(componenteId, terminalId, valor) {
-      if (typeof enviar === "function") enviar({ componenteId, terminalId, valor })
-    },
-  }
-}
-
-/** STUB (RED): nunca elige ningún selector para recuperar el foco. */
-export function elegirSelectorParaFoco() {
-  return null
 }

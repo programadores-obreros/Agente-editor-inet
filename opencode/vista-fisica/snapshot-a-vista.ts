@@ -36,6 +36,7 @@ import type { Motivo } from "../nucleo/motivos.ts"
 import { asignarPin } from "../nucleo/catalogo.ts"
 import { validarProyecto, derivarReadiness } from "../nucleo/validar.ts"
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA } from "./wokwi-render-datos.ts"
+import { etiquetaDeTerminal } from "./etiquetas-terminales.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
 import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista } from "./modelo-vista.ts"
 
@@ -137,21 +138,27 @@ function resolverDestinoFijo(terminal: Terminal): string | undefined {
 /** Estado de UN terminal, proyectado desde la IR (`componente.pines`) + el catálogo
  * (`terminal.electrica`/`terminal.destinoFijo`) + la placa vigente (para resolver el
  * nombre Wokwi del pin asignado). Nunca inventa un pin/destino: si la IR no tiene el
- * dato, el estado es `sinAsignar`/`puente`. */
+ * dato, el estado es `sinAsignar`/`puente`.
+ *
+ * Fase 3, Wave 0 (F-09): `etiqueta` sale de `etiquetas-terminales.ts` (tabla de
+ * PRESENTACIÓN), compartida por las cuatro variantes — nunca del nombre Wokwi
+ * (`nombreWokwiPieza`, que para el pulsador es literalmente `"1.l"`/`"2.l"`, el pin
+ * INTERNO del custom element, no un texto para un estudiante). */
 function resolverTerminal(componente: Componente, terminal: Terminal, pinesDePlaca: readonly RegistroPin[], nombreWokwiPieza: string | null): TerminalVista {
+  const etiqueta = etiquetaDeTerminal(terminal.id)
   if (terminal.electrica === "riel-fijo") {
     const destino = resolverDestinoFijo(terminal)
-    if (destino === undefined) return { estado: "puente", nombreWokwiPieza }
-    return { estado: "rielFijo", destino, nombreWokwiPieza }
+    if (destino === undefined) return { estado: "puente", nombreWokwiPieza, etiqueta }
+    return { estado: "rielFijo", destino, nombreWokwiPieza, etiqueta }
   }
   const pinAsignado = componente.pines[terminal.id] ?? null
-  if (pinAsignado === null) return { estado: "sinAsignar", nombreWokwiPieza }
+  if (pinAsignado === null) return { estado: "sinAsignar", nombreWokwiPieza, etiqueta }
   const pinReal = pinesDePlaca.find((p) => p.id === pinAsignado)
   // Si el pin asignado no está en la placa vigente (documento viejo tras un cambio de
   // placa, por ejemplo) no hay `RegistroPin` real que traducir — se muestra el propio
   // id semántico como último recurso, nunca se inventa un nombre Wokwi de la nada.
   const nombreWokwiPlaca = pinReal ? nombreWokwiDePin(pinReal) : pinAsignado
-  return { estado: "asignado", pinSemantico: pinAsignado, nombreWokwiPlaca, nombreWokwiPieza }
+  return { estado: "asignado", pinSemantico: pinAsignado, nombreWokwiPlaca, nombreWokwiPieza, etiqueta }
 }
 
 // Las CUATRO variantes de `TerminalVista` (`modelo-vista.ts`) comparten el campo
@@ -168,6 +175,11 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     : null
   const pinesDePlaca: readonly RegistroPin[] = (placaId !== null ? catalogo.pinesDePlaca(placaId) : undefined) ?? []
 
+  // Fase 3, Wave 0 (F-09): ordinal ESTABLE por tipo — el PRIMER componente de un tipo
+  // dado nunca lleva sufijo ("LED"), el segundo del MISMO tipo sí ("LED 2"), etc. En
+  // el orden de `Proyecto.componentes` (nunca reordenado): el mismo criterio
+  // determinista que ya usa el resto del adaptador.
+  const ocurrenciasPorTipo = new Map<string, number>()
   const componentes: ComponenteVista[] = proyecto.componentes.map((componente) => {
     const compCatalogo = catalogo.obtenerComponente(componente.tipo)
     const elementoWokwi = ELEMENTO_WOKWI_POR_TIPO[componente.tipo] ?? null
@@ -181,7 +193,11 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
         terminales[terminal.id] = resolverTerminal(componente, terminal, pinesDePlaca, nombreWokwiPieza)
       }
     }
-    return { id: componente.id, tipo: componente.tipo, elementoWokwi, atributos, rol, terminales }
+    const nombreBase = compCatalogo ? compCatalogo.nombreVisible : componente.tipo // fail-closed: nunca inventa un nombre
+    const ocurrencia = (ocurrenciasPorTipo.get(componente.tipo) ?? 0) + 1
+    ocurrenciasPorTipo.set(componente.tipo, ocurrencia)
+    const nombre = ocurrencia === 1 ? nombreBase : `${nombreBase} ${ocurrencia}`
+    return { id: componente.id, tipo: componente.tipo, nombre, elementoWokwi, atributos, rol, terminales }
   })
 
   function terminalesDe(componenteId: string): Readonly<Record<string, TerminalVista>> {
@@ -206,8 +222,16 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     }
   }
   for (const conexion of proyecto.conexiones) {
-    const desde = extremoDeTerminal(conexion.desde.componente, conexion.desde.terminal, terminalesDe(conexion.desde.componente)[conexion.desde.terminal] ?? { estado: "puente", nombreWokwiPieza: null })
-    const hasta = extremoDeTerminal(conexion.hasta.componente, conexion.hasta.terminal, terminalesDe(conexion.hasta.componente)[conexion.hasta.terminal] ?? { estado: "puente", nombreWokwiPieza: null })
+    const desde = extremoDeTerminal(
+      conexion.desde.componente,
+      conexion.desde.terminal,
+      terminalesDe(conexion.desde.componente)[conexion.desde.terminal] ?? { estado: "puente", nombreWokwiPieza: null, etiqueta: etiquetaDeTerminal(conexion.desde.terminal) },
+    )
+    const hasta = extremoDeTerminal(
+      conexion.hasta.componente,
+      conexion.hasta.terminal,
+      terminalesDe(conexion.hasta.componente)[conexion.hasta.terminal] ?? { estado: "puente", nombreWokwiPieza: null, etiqueta: etiquetaDeTerminal(conexion.hasta.terminal) },
+    )
     cables.push({ id: `cable-conexion-${conexion.id}`, desde, hasta })
   }
 

@@ -32,6 +32,14 @@ export function planDePintado(modeloDeVista, opciones = {}) {
   const conexionActiva = opciones.conexionActiva ?? true
   const instrucciones = []
 
+  // W0-8 (PHASE_3_WAVE_0_DESIGN.md): "si el proyecto no tiene placa NI componentes" —
+  // ambas condiciones, nunca una superficie vacía sin ningún indicio. Va PRIMERO en
+  // el plan (antes que cualquier otra cosa, aunque en este caso no haya nada más que
+  // agregar) para que `pintar.js` siempre tenga una instrucción que mostrar.
+  if (!modeloDeVista.placa && modeloDeVista.componentes.length === 0) {
+    instrucciones.push({ tipo: "estadoVacio", texto: "Este proyecto todavía no tiene componentes. Pedile a Tecnia Bot que lo arme." })
+  }
+
   if (modeloDeVista.placa) {
     instrucciones.push({
       tipo: "crearElemento",
@@ -70,12 +78,18 @@ export function planDePintado(modeloDeVista, opciones = {}) {
     })
   }
 
+  // F-09 (PHASE_3_WAVE_0_DESIGN.md): `componentesPorId` deja que `etiquetaDeExtremo`
+  // resuelva el nombre humano de un extremo "terminal" (`ComponenteVista.nombre` +
+  // `TerminalVista.etiqueta`) sin reimplementar ninguna tabla acá — los dos campos ya
+  // vienen resueltos del lado del servidor (`snapshot-a-vista.ts`).
+  const componentesPorId = new Map(modeloDeVista.componentes.map((componente) => [componente.id, componente]))
+
   for (const cable of modeloDeVista.cables) {
     instrucciones.push({
       tipo: "filaCable",
       id: cable.id,
-      desde: etiquetaDeExtremo(cable.desde),
-      hasta: etiquetaDeExtremo(cable.hasta),
+      desde: etiquetaDeExtremo(cable.desde, componentesPorId),
+      hasta: etiquetaDeExtremo(cable.hasta, componentesPorId),
     })
   }
 
@@ -86,10 +100,17 @@ export function planDePintado(modeloDeVista, opciones = {}) {
     for (const terminalId of Object.keys(porTerminal)) {
       const terminalVista = componente.terminales[terminalId]
       const valorActual = terminalVista && terminalVista.estado === "asignado" ? terminalVista.pinSemantico : null
+      // F-09: "Pulsador — señal:" — nombre humano del componente + etiqueta de
+      // presentación del terminal, YA resueltos del lado del servidor. El id crudo
+      // (`componente.id`/`terminalId`) sigue viajando en la instrucción para que
+      // `pintar.js` lo use como `data-*` (metadata secundaria), nunca como texto
+      // primario.
+      const etiquetaTerminal = terminalVista ? terminalVista.etiqueta : terminalId
       instrucciones.push({
         tipo: "selectorGpio",
         componenteId: componente.id,
         terminalId,
+        etiqueta: `${componente.nombre} — ${etiquetaTerminal}:`,
         opciones: porTerminal[terminalId].map((opcion) => ({ valor: opcion.pinSemantico, etiqueta: opcion.nombreWokwi })),
         valorActual,
         deshabilitado: !conexionActiva, // B2 — sin conexion viva, el selector no se puede tocar
@@ -134,8 +155,24 @@ function etiquetaDeRol(rol) {
 // inventar un nombre serían las dos formas de romper el mismo contrato ("nunca
 // oculta, nunca inventa") — el texto muestra el pin SEMÁNTICO real (lo que el
 // Engine sabe) más una nota honesta de que no hay dónde dibujarlo.
-function etiquetaDeExtremo(extremo) {
+//
+// F-09 (PHASE_3_WAVE_0_DESIGN.md): un extremo "terminal" NUNCA usa `nombreWokwi`
+// como texto primario — para el pulsador eso era literalmente `"1.l"`/`"2.l"` (el pin
+// INTERNO del custom element Wokwi, `TERMINAL_WOKWI_POR_TIPO.pulsador`,
+// `wokwi-render-datos.ts`), no un texto para un estudiante. En cambio usa
+// `ComponenteVista.nombre` + `TerminalVista.etiqueta` (YA resueltos del lado del
+// servidor, `snapshot-a-vista.ts`) — "Pulsador (señal)", "LED (ánodo (+))". Si el
+// componente no aparece en `componentesPorId` (no debería pasar en producción: todo
+// cable sale de un componente del MISMO modelo), el id crudo queda como último
+// recurso, nunca se rompe el pintado — mismo criterio fail-closed del resto del
+// adaptador. `nombreWokwi`/el id crudo del terminal siguen disponibles como
+// metadata secundaria para quien los necesite (`cable.id`, `data-*`), nunca en el
+// texto primario.
+function etiquetaDeExtremo(extremo, componentesPorId) {
   if (extremo.tipo === "pinPlaca") return extremo.nombreWokwi ?? `${extremo.pinSemantico} (sin pin físico en esta placa)`
   if (extremo.tipo === "rielFijo") return extremo.destino
-  return extremo.nombreWokwi ?? `${extremo.componente}.${extremo.terminal}`
+  const componente = componentesPorId.get(extremo.componente)
+  const nombreComponente = componente ? componente.nombre : extremo.componente
+  const etiquetaTerminal = componente?.terminales?.[extremo.terminal]?.etiqueta ?? extremo.terminal
+  return `${nombreComponente} (${etiquetaTerminal})`
 }
