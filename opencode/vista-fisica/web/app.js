@@ -51,18 +51,33 @@ const enNavegador = typeof document !== "undefined"
 //  - a lo sumo UN POST en vuelo, GLOBAL (no por selector: el servidor tiene una sola
 //    `baseRevision` para el proyecto entero, dos POST simultáneos siempre van a pisar
 //    la revisión del otro). Si el debounce de CUALQUIER selector termina mientras ya
-//    hay un POST en curso, el pedido se ENCOLA — reemplazando cualquier pedido que ya
-//    estuviera encolado: "sólo el ÚLTIMO valor elegido" vale también acá.
-//  - al volver el POST en vuelo, si hay un pedido encolado, se re-evalúa CONTRA EL
-//    VALOR DE SERVIDOR YA ACTUALIZADO (nunca el de antes del POST): si ya coincide, no
-//    se manda nada; si no, se manda con la `baseRevision` fresca (que lee `enviar` de
-//    `ultimoSnapshot` en el momento en que de verdad se invoca, nunca antes).
+//    hay un POST en curso, el pedido se ENCOLA — pero la cola es un Map POR SELECTOR
+//    (FX-1, ronda de fixes, RED-AUTH-01: antes era UNA sola variable global, y un
+//    TERCER selector que terminaba su debounce pisaba, sin aviso, lo que un SEGUNDO
+//    selector ya había encolado — el pedido de ese segundo selector se perdía para
+//    siempre). Un pedido nuevo del MISMO selector sigue reemplazando al anterior
+//    ("sólo el ÚLTIMO valor elegido" vale, por selector), pero nunca pisa el de OTRO
+//    selector que también esté esperando su turno.
+//  - al volver el POST en vuelo, se despacha el PRÓXIMO selector de la cola (uno por
+//    vez — nunca dos POST en paralelo, sigue valiendo "a lo sumo UN POST en vuelo,
+//    GLOBAL"): se re-evalúa CONTRA EL VALOR DE SERVIDOR YA ACTUALIZADO (nunca el de
+//    antes del POST) — salvo que sea el MISMO selector cuyo propio POST acaba de
+//    volver (FX-1, RED-AUTH-02: un "arrepentimiento" mientras el POST de ESE selector
+//    sigue en vuelo comparaba contra el snapshot VIEJO, pre-POST, y se perdía — ver
+//    `decidirEnvio`, más abajo).
 //  - si el valor final (al vencer el debounce, o al desencolar) ya coincide con el
-//    valor vigente del servidor, no se manda NADA.
+//    valor vigente del servidor, no se manda NADA — salvo el caso de arriba (mismo
+//    selector en vuelo), donde el snapshot "vigente" todavía no refleja ESE POST.
 export function crearCoalescerCambiosGpio({ debounceMs = 300, programar = (fn, ms) => setTimeout(fn, ms), cancelarProgramado = (id) => clearTimeout(id), enviar, obtenerValorServidor } = {}) {
   const timerPorSelector = new Map() // "componenteId\u0000terminalId" -> id de timer vivo
   let enVuelo = false
-  let pedidoEncolado = null // el UNICO pedido en espera mientras hay un POST en vuelo
+  // FX-1 (RED-AUTH-01): Map POR CLAVE (mismo patrón que `timerPorSelector`) — cada
+  // selector tiene su propio lugar en la cola, nunca pisa el de otro.
+  const pedidosEncolados = new Map() // clave -> el pedido en espera de ESE selector
+  // FX-1 (RED-AUTH-02): la clave del selector cuyo POST está en vuelo AHORA MISMO (o
+  // `null`) — necesaria para decidir si "ya coincide con el servidor" es un chequeo
+  // válido (ver `decidirEnvio`).
+  let claveEnVuelo = null
 
   function clave(componenteId, terminalId) {
     return `${componenteId}\u0000${terminalId}`
@@ -80,28 +95,47 @@ export function crearCoalescerCambiosGpio({ debounceMs = 300, programar = (fn, m
   }
 
   function decidirEnvio(componenteId, terminalId, valor) {
-    if (valor === obtenerValorServidor(componenteId, terminalId)) return // ya coincide: nada que mandar
+    const k = clave(componenteId, terminalId)
+    // FX-1 (RED-AUTH-02): si el POST en vuelo AHORA MISMO es el de ESTE MISMO
+    // selector, `obtenerValorServidor()` todavía lee el snapshot ANTERIOR a ese POST
+    // (stale para este selector en particular) — compararlo contra un
+    // "arrepentimiento" (volver al valor viejo) lo confundiría con un no-op y lo
+    // perdería para siempre. En ese caso especial, SIEMPRE se encola, nunca se
+    // compara contra el snapshot viejo.
+    const esElMismoSelectorEnVuelo = enVuelo && claveEnVuelo === k
+    if (!esElMismoSelectorEnVuelo && valor === obtenerValorServidor(componenteId, terminalId)) return // ya coincide: nada que mandar
     const pedido = { componenteId, terminalId, valor }
     if (enVuelo) {
-      pedidoEncolado = pedido // pisa cualquier pedido encolado anterior: sólo el ÚLTIMO importa
+      pedidosEncolados.set(k, pedido) // reemplaza el pedido ANTERIOR del MISMO selector, nunca el de otro
       return
     }
-    despachar(pedido)
+    despachar(k, pedido)
   }
 
-  function despachar(pedido) {
+  function despachar(k, pedido) {
     enVuelo = true
+    claveEnVuelo = k
     Promise.resolve(enviar(pedido)).then(alVolverElPost, alVolverElPost)
   }
 
   function alVolverElPost() {
     enVuelo = false
-    if (!pedidoEncolado) return
-    const proximo = pedidoEncolado
-    pedidoEncolado = null
-    // Re-chequea contra el valor de servidor YA actualizado por el POST que acaba de
-    // volver — si mientras tanto ya quedó igual, el pedido encolado no aporta nada.
-    decidirEnvio(proximo.componenteId, proximo.terminalId, proximo.valor)
+    claveEnVuelo = null
+    despacharSiguienteDeLaCola()
+  }
+
+  // FX-1: procesa la cola selector por selector — re-evalúa cada uno contra el valor
+  // de servidor YA actualizado por el POST que acaba de volver (nunca el de antes).
+  // Si `decidirEnvio` despacha un POST real, el `while` corta solo (a lo sumo UN POST
+  // en vuelo, GLOBAL: el resto de la cola espera a que ÉSE vuelva). Si fue un no-op
+  // (ya coincidía), sigue con el PRÓXIMO selector encolado en la MISMA vuelta —
+  // ningún selector encolado se pierde por quedar "detrás" de un no-op.
+  function despacharSiguienteDeLaCola() {
+    while (!enVuelo && pedidosEncolados.size > 0) {
+      const [k, pedido] = pedidosEncolados.entries().next().value
+      pedidosEncolados.delete(k)
+      decidirEnvio(pedido.componenteId, pedido.terminalId, pedido.valor)
+    }
   }
 
   return { registrarCambio }
