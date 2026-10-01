@@ -30,8 +30,10 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
+import { readFileSync, mkdirSync, writeFileSync, realpathSync } from "node:fs"
+import { join, resolve } from "node:path"
+import { hostname } from "node:os"
+import { pathToFileURL } from "node:url"
 import { REPO, nuevoDir, nuevoIdProyecto } from "./phase2-helpers.mjs"
 
 const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.ts"))).default
@@ -400,4 +402,121 @@ test("F-07 (estático): la descripción de 'proyecto-fisico' le dice al agente q
   // `description` (que usa backticks como delimitador) — el archivo en disco contiene
   // literalmente `\`leer\`` (barra invertida + backtick), no un backtick pelado.
   assert.match(crudo, /llamá \\`leer\\` primero: trae el vocabulario válido \(placas, componentes, terminales, ejemplos\)/)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 7. FX-5 (F-TRUTH-3 MAJOR, triage de la ronda de fixes) — TODA salida de
+// 'proyecto-fisico', incluidos el candado tomado y el fallo de dependencias, en el
+// MISMO sobre JSON con 'resultado' (F-06) -- nunca un string plano.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("FX-5: 'leer' con el candado tomado por otro proceso devuelve el MISMO sobre JSON con 'resultado' (nunca un string plano)", async () => {
+  const dirActivo = nuevoDir("wave0-fx5-candado")
+  const idProyecto = nuevoIdProyecto()
+  const dirDatos = directorioDeDatos(dirActivo)
+  mkdirSync(dirDatos, { recursive: true })
+  const dirCanon = realpathSync(resolve(dirDatos))
+  // Candado "vivo": mismo pid/hostname que ESTE proceso de test (estaVivo(pid) da
+  // true siempre para el propio proceso) -- simula un proceso real sin tener que
+  // lanzar uno de verdad, mismo criterio que `servicio-con-vista.ts::tomarCandado`
+  // espera encontrar en el archivo `<idProyecto>.lock`.
+  writeFileSync(join(dirCanon, `${idProyecto}.lock`), JSON.stringify({ pid: process.pid, hostname: hostname(), creado: new Date().toISOString() }))
+
+  const respuesta = await llamarProyectoFisico({ accion: "leer", idProyecto }, dirActivo)
+  let parsed
+  assert.doesNotThrow(() => {
+    parsed = JSON.parse(respuesta)
+  }, `con el candado tomado, la respuesta tiene que seguir siendo el MISMO sobre JSON con 'resultado' (F-06), nunca un string plano: ${respuesta}`)
+  assert.equal(parsed.ok, false)
+  assert.equal(parsed.rechazadoPor, "tool")
+  assert.match(parsed.resultado, /^NO SE APLIC/, `falta la línea 'resultado' inequívoca (F-06): ${respuesta}`)
+})
+
+test("FX-5: 'leer' cuando fallan las dependencias (instalación incompleta) devuelve el MISMO sobre JSON con 'resultado' (nunca un string plano)", async () => {
+  const dirSalida = nuevoDir("wave0-fx5-deps-rotas-src")
+  writeFileSync(
+    join(dirSalida, "mock-plugin.ts"),
+    "const chain=new Proxy(function(){return chain},{get:()=>chain,apply:()=>chain});export const tool=(c)=>c;tool.schema=chain;",
+  )
+
+  const abs = (relFromOpencode) => pathToFileURL(join(REPO, "opencode", relFromOpencode)).href
+  const crudo = readFileSync(join(REPO, "opencode/tool/proyecto-fisico.ts"), "utf8")
+  // Copia modificada de la tool, en OTRO directorio: redirige sus imports de VALOR
+  // (relativos a su ubicación original) a rutas absolutas del repo real, salvo el de
+  // "../servidor/servicio-con-vista.ts", que se apunta a un archivo que NO EXISTE --
+  // simula exactamente lo que `cargarDependencias()` documenta como causa real
+  // ("instalación incompleta o interrumpida a mitad de una actualización"), sin tocar
+  // la carpeta `servidor/` (protegida) del repo real.
+  const modificado = crudo
+    .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
+    .replace('"../vista-fisica/ubicacion-proyecto.ts"', JSON.stringify(abs("vista-fisica/ubicacion-proyecto.ts")))
+    .replace('"../vista-fisica/vocabulario.ts"', JSON.stringify(abs("vista-fisica/vocabulario.ts")))
+    .replace('import("../servidor/servicio-con-vista.ts")', 'import("file:///ruta/que-no-existe/servicio-con-vista.ts")')
+    .replace('import("../vista-fisica/vista-real.ts")', `import(${JSON.stringify(abs("vista-fisica/vista-real.ts"))})`)
+  assert.notEqual(modificado, crudo, "fixture: las 5 sustituciones tienen que haber pegado sobre el texto real")
+  writeFileSync(join(dirSalida, "proyecto-fisico.ts"), modificado)
+
+  const herramientaRota = (await import(join(dirSalida, "proyecto-fisico.ts"))).default
+  const dirActivo = nuevoDir("wave0-fx5-deps-rotas-ctx")
+  const respuesta = await herramientaRota.execute({ accion: "leer" }, { directory: dirActivo })
+
+  let parsed
+  assert.doesNotThrow(() => {
+    parsed = JSON.parse(respuesta)
+  }, `con las dependencias rotas, la respuesta tiene que seguir siendo el MISMO sobre JSON con 'resultado' (F-06), nunca un string plano: ${respuesta}`)
+  assert.equal(parsed.ok, false)
+  assert.equal(parsed.rechazadoPor, "tool")
+  assert.match(parsed.resultado, /^NO SE APLIC/, `falta la línea 'resultado' inequívoca (F-06): ${respuesta}`)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 8. FX-6 (F-TRUTH-1 MAJOR dentro del alcance, triage) — (a) el vocabulario avisa que
+// un componente "puente" (la Resistencia) no se asigna a pines; (b) 'descripcionPines'
+// nunca oculta un pin que el IR YA tiene, aunque el terminal sea riel-fijo.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("FX-6(a): el vocabulario de la Resistencia trae una 'nota': no se asigna a pines, se conecta al anodo del LED (derivado del requisito REAL del catálogo)", async () => {
+  const catalogo = construirCatalogoMinimoReal()
+  const { vocabularioDesdeCatalogo } = await import(join(REPO, "opencode/vista-fisica/vocabulario.ts"))
+  const vocab = vocabularioDesdeCatalogo(catalogo, ["AgregarComponente", "Conectar"])
+  const resistencia = vocab.componentes.find((c) => c.tipo === "resistencia")
+  assert.ok(resistencia, "fixture: tiene que existir 'resistencia' en el catálogo")
+  assert.match(resistencia.nota ?? "", /no se asigna a pines/i, `falta la nota en 'resistencia': ${JSON.stringify(resistencia)}`)
+  assert.match(resistencia.nota ?? "", /anodo/i, `la nota tiene que nombrar el terminal real del requisito: ${JSON.stringify(resistencia)}`)
+  assert.match(resistencia.nota ?? "", /LED/i, `la nota tiene que nombrar el componente real que la requiere: ${JSON.stringify(resistencia)}`)
+})
+
+test("FX-6(a): un componente que NO es un 'puente' (el LED) no trae 'nota' (nunca se inventa una donde no corresponde)", async () => {
+  const catalogo = construirCatalogoMinimoReal()
+  const { vocabularioDesdeCatalogo } = await import(join(REPO, "opencode/vista-fisica/vocabulario.ts"))
+  const vocab = vocabularioDesdeCatalogo(catalogo, ["AgregarComponente"])
+  const led = vocab.componentes.find((c) => c.tipo === "led")
+  assert.ok(led)
+  assert.equal(led.nota, undefined)
+})
+
+test("FX-6(b): descripcionPines, si un terminal riel-fijo YA tiene un pin real en el IR (F-TRUTH-1: el Engine hoy no rechaza AsignarPin ahí), lo dice explícito -- nunca lo oculta detrás de 'puente'", async () => {
+  const dirActivo = nuevoDir("wave0-fx6-descripcion-riel-fijo")
+  const idProyecto = nuevoIdProyecto()
+
+  let r = parsearJson(
+    await llamarProyectoFisico(
+      { accion: "aplicar", idProyecto, baseRevision: 0, operaciones: [{ tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }, { tipo: "AgregarComponente", payload: { tipo: "resistencia" } }] },
+      dirActivo,
+    ),
+  )
+  assert.equal(r.ok, true)
+  let lectura = parsearJson(await llamarProyectoFisico({ accion: "leer", idProyecto }, dirActivo))
+  const idResistencia = lectura.componentes.find((c) => c.tipo === "resistencia").id
+
+  // Fixture del defecto real (F-TRUTH-1): el Engine (protegido) hoy ACEPTA un
+  // AsignarPin sobre "a" (riel-fijo, sin destinoFijo) -- no se cierra ese gap acá.
+  r = parsearJson(
+    await llamarProyectoFisico({ accion: "aplicar", idProyecto, baseRevision: lectura.revision, operaciones: [{ tipo: "AsignarPin", payload: { componente: idResistencia, terminal: "a", pin: "GPIO18" } }] }, dirActivo),
+  )
+  assert.equal(r.ok, true, `fixture: el Engine tiene que aceptar esto hoy (gap heredado, F-TRUTH-1): ${JSON.stringify(r.motivos)}`)
+
+  lectura = parsearJson(await llamarProyectoFisico({ accion: "leer", idProyecto }, dirActivo))
+  const resistencia = lectura.componentes.find((c) => c.id === idResistencia)
+  assert.match(resistencia.descripcionPines, /a → GPIO18/, `la descripción tiene que mostrar el pin REAL que el IR ya tiene, nunca 'puente (sin destino fijo)' cuando hay un valor: ${resistencia.descripcionPines}`)
 })

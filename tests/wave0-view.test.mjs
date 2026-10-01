@@ -467,6 +467,78 @@ test("F-11 coalescing: el pedido ENCOLADO tambien se descarta si, al volver, ya 
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// 6b. FX-1 (RED-AUTH-01/02, triage de la ronda de fixes) — el "pedido encolado" es un
+// Map POR SELECTOR, nunca una variable global, y el arrepentimiento del PROPIO
+// selector en vuelo nunca se pierde.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("FX-1 (RED-AUTH-01): TRES selectores distintos durante un POST en vuelo -- NINGUNO se pierde (cola por selector, nunca un pedido global)", async () => {
+  const reloj = crearRelojFalso()
+  const { enviar, llamadas, resolverUltimoEnvio } = crearEnviarControlable()
+  const coalescer = crearCoalescerCambiosGpio({ programar: reloj.programar, cancelarProgramado: reloj.cancelar, enviar, obtenerValorServidor: () => null })
+
+  // A despacha de una (nada en vuelo todavia).
+  coalescer.registrarCambio("cmp-A", "x", "GPIO4")
+  reloj.avanzar()
+  assert.equal(llamadas.length, 1, "A sale de una")
+
+  // Mientras A sigue en vuelo, B Y C (dos selectores MAS, distintos entre si) terminan
+  // su debounce -- los DOS tienen que quedar encolados, ninguno pisa al otro (la
+  // version con un solo "pedidoEncolado" global hacia que C pisara a B acá mismo).
+  coalescer.registrarCambio("cmp-B", "y", "GPIO16")
+  coalescer.registrarCambio("cmp-C", "z", "GPIO18")
+  reloj.avanzar()
+  assert.equal(llamadas.length, 1, "con A en vuelo, B y C se ENCOLAN -- todavia ningun POST nuevo")
+
+  // Vuelve A: se despacha el PRIMERO de la cola (B) -- C sigue esperando, pero nunca
+  // se perdio.
+  resolverUltimoEnvio()
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(llamadas.length, 2, "al volver A, se despacha B")
+  assert.deepEqual(llamadas[1], { componenteId: "cmp-B", terminalId: "y", valor: "GPIO16" })
+
+  // Vuelve B: se despacha C -- exactamente el que la variable global perdia.
+  resolverUltimoEnvio()
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(llamadas.length, 3, "al volver B, se despacha C -- los TRES valores finales llegaron, de a uno")
+  assert.deepEqual(llamadas[2], { componenteId: "cmp-C", terminalId: "z", valor: "GPIO18" })
+})
+
+test("FX-1 (RED-AUTH-02): arrepentimiento -- el alumno vuelve al valor ANTERIOR mientras su PROPIO POST sigue en vuelo, y el valor final queda en el servidor", async () => {
+  const reloj = crearRelojFalso()
+  const { enviar, llamadas, resolverUltimoEnvio } = crearEnviarControlable()
+  let valorServidor = "GPIO4" // valor YA aplicado antes de este escenario
+  const coalescer = crearCoalescerCambiosGpio({ programar: reloj.programar, cancelarProgramado: reloj.cancelar, enviar, obtenerValorServidor: () => valorServidor })
+
+  // El alumno cambia GPIO4 -> GPIO16: despacha YA (nada en vuelo todavia).
+  coalescer.registrarCambio("cmp-0", "anodo", "GPIO16")
+  reloj.avanzar()
+  assert.equal(llamadas.length, 1)
+
+  // Mientras ESE POST sigue sin resolver, el alumno se ARREPIENTE y vuelve a GPIO4 --
+  // el MISMO valor que el servidor todavia tiene en su snapshot (stale, pre-POST). La
+  // version con el bug comparaba contra ESE snapshot viejo, veia "ya coincide" y no
+  // encolaba nada: el arrepentimiento se perdia para siempre.
+  coalescer.registrarCambio("cmp-0", "anodo", "GPIO4")
+  reloj.avanzar()
+  assert.equal(llamadas.length, 1, "todavia no se manda nada nuevo -- pero TIENE que quedar encolado, aunque 'parezca' coincidir con el snapshot viejo")
+
+  // El POST en vuelo resuelve: el servidor queda en GPIO16 (lo que se mando).
+  valorServidor = "GPIO16"
+  resolverUltimoEnvio()
+  await Promise.resolve()
+  await Promise.resolve()
+
+  // El pedido encolado (GPIO4, el arrepentimiento) se re-evalua contra el servidor YA
+  // actualizado (GPIO16) -- difieren, asi que se manda: el valor final en el servidor
+  // tiene que ser el que el alumno de verdad queria.
+  assert.equal(llamadas.length, 2, "el arrepentimiento SI se manda -- nunca se pierde por comparar contra el snapshot pre-POST")
+  assert.deepEqual(llamadas[1], { componenteId: "cmp-0", terminalId: "anodo", valor: "GPIO4" })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // 7. F-11 — foco: elegirSelectorParaFoco (funcion PURA)
 // ════════════════════════════════════════════════════════════════════════════════════
 
@@ -488,4 +560,67 @@ test("F-11 foco: si el selector que tenia el foco ya no existe tras el repintado
   const disponibles = [{ componenteId: "cmp-0", terminalId: "catodo" }]
   const elegido = elegirSelectorParaFoco(disponibles, { componenteId: "cmp-0", terminalId: "anodo" })
   assert.equal(elegido, null)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 8. FX-3 (RED-W0-UX (a), triage de la ronda de fixes) — panel de MOTIVOS: con
+// explicación en texto llano, se ve SÓLO esa explicación -- nunca "[blocking]"/el
+// código crudo/"(representable)" como texto primario (quedan en data-*).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("FX-3: panelMotivo CON explicación muestra SÓLO el texto llano -- nunca '[severidad] codigo (clasificacion)' crudo", () => {
+  const doc = documentoFake()
+  const instrucciones = [
+    {
+      tipo: "panelMotivo",
+      codigo: "REQUISITO_INSATISFECHO",
+      severidad: "blocking",
+      clasificacion: "representable",
+      entidad: { tipo: "componente", id: "cmp-0" },
+      explicacion: "Al LED le falta algo que necesita para funcionar sin riesgo (resistencia-serie en anodo).",
+    },
+  ]
+  const raiz = pintar(doc, instrucciones)
+  const fila = raiz.motivos.hijos[0]
+  assert.equal(fila.textContent, "Al LED le falta algo que necesita para funcionar sin riesgo (resistencia-serie en anodo).")
+  assert.doesNotMatch(fila.textContent, /\[blocking\]/, "no puede quedar el corchete de severidad crudo en el texto primario")
+  assert.doesNotMatch(fila.textContent, /REQUISITO_INSATISFECHO/, "el codigo crudo no puede ser texto PRIMARIO -- sigue disponible en data-motivo-codigo")
+  assert.doesNotMatch(fila.textContent, /\(representable\)/, "la clasificacion cruda no puede ser texto PRIMARIO -- sigue disponible en data-*")
+  // El código/severidad/clasificación SIGUEN disponibles como data-*, para quien los necesite.
+  assert.equal(fila.atributos["data-motivo-codigo"], "REQUISITO_INSATISFECHO")
+  assert.equal(fila.atributos["data-motivo-severidad"], "blocking")
+  assert.equal(fila.atributos["data-motivo-clasificacion"], "representable")
+})
+
+test("FX-3: panelMotivo SIN explicación (null) mantiene el fallback crudo de siempre (contrato Slice 2: nunca se oculta un código sin traducir)", () => {
+  const doc = documentoFake()
+  const instrucciones = [{ tipo: "panelMotivo", codigo: "CODIGO_SIN_TRADUCIR", severidad: "warning", clasificacion: null, entidad: null, explicacion: null }]
+  const raiz = pintar(doc, instrucciones)
+  const fila = raiz.motivos.hijos[0]
+  assert.equal(fila.textContent, "[warning] CODIGO_SIN_TRADUCIR")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 9. FX-4 (RED-W0-UX (c), triage) — la vista nombra el pin con su nombre SEMÁNTICO
+// (lo que dice el bot, "GPIO18") más el rótulo de la placa entre paréntesis (lo que el
+// alumno ve dibujado, "D18") -- en las opciones del selector y en los cables.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("FX-4: el selector de GPIO y el cable muestran 'GPIO18 (D18)' (nombre semántico primero, rótulo de la placa entre paréntesis) -- nunca sólo 'D18'", () => {
+  const dir = nuevoDir("wave0-fx4-nombre-semantico")
+  const { servicio, idPulsador } = prepararProyectoConPulsador(dir, nuevoIdProyecto())
+  const vista = proyectarVista(servicio.snapshot().proyecto, catalogo)
+
+  const { plan } = pintarCompleto(vista)
+  const selector = plan.find((i) => i.tipo === "selectorGpio" && i.componenteId === idPulsador && i.terminalId === "senal")
+  assert.ok(selector)
+  const opcionGpio18 = selector.opciones.find((o) => o.valor === "GPIO18")
+  assert.ok(opcionGpio18, `tiene que ofrecer GPIO18: ${JSON.stringify(selector.opciones)}`)
+  assert.equal(opcionGpio18.etiqueta, "GPIO18 (D18)", "nombre SEMÁNTICO (lo que dice el bot) primero, rótulo de la placa (lo que el alumno ve dibujado) entre paréntesis")
+
+  const filasCable = plan.filter((i) => i.tipo === "filaCable")
+  const cableSenal = filasCable.find((f) => f.desde === "GPIO18 (D18)" || f.hasta === "GPIO18 (D18)")
+  assert.ok(cableSenal, `el cable del pin tiene que mostrar 'GPIO18 (D18)': ${JSON.stringify(filasCable)}`)
+
+  servicio.cerrar()
 })

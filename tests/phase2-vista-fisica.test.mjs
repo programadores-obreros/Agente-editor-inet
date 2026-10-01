@@ -264,7 +264,13 @@ test("planDePintado: crea la placa y el LED, filas de cable con sus etiquetas, s
 
   const filasCable = plan.filter((i) => i.tipo === "filaCable")
   assert.equal(filasCable.length, 2, "cable del anodo + cable del catodo")
-  assert.ok(filasCable.some((f) => f.desde === "D4" || f.hasta === "D4"), "la fila del anodo muestra el nombre Wokwi del pin (D4)")
+  // Cambia por contrato (FX-4, ronda de fixes Wave 0, RED-W0-UX (c)): el texto del
+  // cable ahora nombra el pin con su nombre SEMÁNTICO ("GPIO4", lo que dice el bot)
+  // más el rótulo de la placa entre paréntesis ("D4", lo que el alumno ve dibujado)
+  // -- antes mostraba SÓLO "D4", que nunca coincidía con lo que el bot decía
+  // ("GPIO4"), rompiendo la sensación de "estamos mirando lo mismo" (ONE PHYSICAL
+  // TRUTH). `GPIO_X` es "GPIO4" (`phase2-helpers.mjs`).
+  assert.ok(filasCable.some((f) => f.desde === `${GPIO_X} (D4)` || f.hasta === `${GPIO_X} (D4)`), `la fila del anodo muestra el nombre semántico + el rótulo de la placa ('${GPIO_X} (D4)')`)
   assert.ok(filasCable.some((f) => f.desde === "GND" || f.hasta === "GND"), "la fila del catodo muestra GND")
 
   const selector = plan.find((i) => i.tipo === "selectorGpio" && i.componenteId === idComponente && i.terminalId === "anodo")

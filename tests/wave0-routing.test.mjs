@@ -168,6 +168,58 @@ test("F-15: el código/platformio.ini/compilar quedan acotados a un pedido EXPL�
     "no dice que esa relación todavía no se puede construir en el proyecto físico de esta versión")
 })
 
+// ════════════════════════════════════════════════════════════════════════════
+// FX-2 (RED-AUTH-04 MAJOR, RED-W0-UX W0-T5-2 MAJOR, triage de la ronda de fixes) —
+// el cierre de "comportamiento sin pedido de código" nunca ofrece código como
+// alternativa, y aclara que la pregunta de cierre general (L80-119, cuyos propios
+// ejemplos modelan ofrecer código) NO aplica en este caso puntual.
+// ════════════════════════════════════════════════════════════════════════════
+
+function bloqueComportamientoSinCodigo() {
+  const i = prompt.indexOf("Pedido de COMPORTAMIENTO sin pedido de código")
+  assert.ok(i >= 0, "no encontré la sección 'Pedido de COMPORTAMIENTO sin pedido de código'")
+  const iSiguiente = prompt.indexOf("NUNCA PEGUES EL CÓDIGO POR DEFECTO")
+  assert.ok(iSiguiente > i, "no pude acotar el final de la sección (¿se renombró el siguiente título?)")
+  return prompt.slice(i, iSiguiente)
+}
+
+test("FX-2: la sección de comportamiento sin código aclara que el cierre general (que ofrece código) NO aplica acá", () => {
+  const bloque = bloqueComportamientoSinCodigo()
+  assert.match(bloque, /no apl(ica|ique)/i, "no aclara que la pregunta de cierre general (L80-119) no aplica en este caso puntual")
+})
+
+test("FX-2: esa sección trae un cierre concreto (una pregunta) que NO ofrece código/C++/platformio como alternativa", () => {
+  const bloque = bloqueComportamientoSinCodigo()
+  const preguntas = bloque.match(/¿[^?]+\?/g) ?? []
+  assert.ok(preguntas.length > 0, `tiene que haber un cierre concreto (una pregunta de ejemplo) en esta sección: ${bloque}`)
+  for (const pregunta of preguntas) {
+    assert.doesNotMatch(pregunta, /c[oó]digo|c\+\+|platformio/i, `un cierre de ejemplo de esta sección ofrece código como alternativa: "${pregunta}"`)
+  }
+})
+
+test("FX-2: no se borró la regla de codegen ante un pedido EXPLÍCITO de código (sigue corriendo el procedimiento de siempre)", () => {
+  const bloque = bloqueComportamientoSinCodigo()
+  assert.match(bloque, /pide.{0,20}c[oó]digo.{0,80}EXPL[ÍI]CITAMENTE|EXPL[ÍI]CITAMENTE.{0,80}c[oó]digo/is,
+    "la sección tiene que seguir diciendo que, ante un pedido EXPLÍCITO de código, corre el procedimiento de siempre")
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// FX-6(c) (F-TRUTH-1 MAJOR dentro del alcance, triage) — AsignarPin SÓLO en
+// terminales que el vocabulario marca asignable; un "puente" (la resistencia) se
+// conecta con Conectar, nunca con AsignarPin. El prompt NO puede prometer que la
+// tool rechaza lo que el Engine (protegido) hoy acepta.
+// ════════════════════════════════════════════════════════════════════════════
+
+test("FX-6(c): la regla de proyecto físico dice que AsignarPin es sólo para terminales asignables, y que un puente se conecta con Conectar", () => {
+  const iRegla = prompt.indexOf("Para no adivinar nada, llamá `proyecto-fisico` con `leer`")
+  assert.ok(iRegla >= 0, "no encontré el párrafo de 'leer ANTES de decidir'")
+  const bloque = prompt.slice(iRegla, iRegla + 1200)
+  assert.match(bloque, /asignable/i, "no menciona que AsignarPin depende de 'asignable' del vocabulario")
+  assert.match(bloque, /`Conectar`/, "no dice que un puente se conecta con Conectar")
+  assert.doesNotMatch(bloque, /la tool (lo )?rechaza|el motor (lo )?rechaza|el engine (lo )?rechaza|se rechaza/i,
+    "el prompt no puede prometer un rechazo que el Engine (protegido) todavía acepta hoy (F-TRUTH-1, HD-W0-A pendiente)")
+})
+
 test("F-15: la excepción de 'un solo paso' (L65-71) sigue intacta y queda acotada a pedido explícito", () => {
   // Pinneado también por tests/tecnia-bot-prompt.test.mjs ("las reglas nuevas no
   // se contradicen entre sí"): la excepción tiene que seguir legible en los
