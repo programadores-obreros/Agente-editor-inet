@@ -13,16 +13,34 @@ import { planDePintado } from "./plan-de-pintado.js"
 import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 
-const contenedores = {
-  circuito: document.getElementById("circuito"),
-  cables: document.getElementById("cables"),
-  controles: document.getElementById("controles"),
-  motivos: document.getElementById("motivos"),
+// STUB temporal (RED, Wave 0 F-11, PHASE_3_WAVE_0_DESIGN.md): este archivo no tenía
+// ningún export puro todavía — `tests/wave0-view.test.mjs` necesita importar
+// `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` sin ejecutar el bootstrap real
+// (que toca `document`/`EventSource`/`fetch`, inexistentes bajo `node --test`). Por
+// eso TODO lo que toca el DOM de verdad al cargar el módulo queda detrás de este
+// chequeo de feature-detection — en el navegador real `document` SIEMPRE existe, así
+// que el comportamiento ahí no cambia un bit; en Node (los tests), el módulo carga
+// sin tocar nada, y sólo las funciones puras exportadas son invocables.
+const enNavegador = typeof document !== "undefined"
+
+let contenedores = null
+let elementoRevision = null
+let elementoReadiness = null
+let elementoEstado = null
+let elementoConexion = null
+
+if (enNavegador) {
+  contenedores = {
+    circuito: document.getElementById("circuito"),
+    cables: document.getElementById("cables"),
+    controles: document.getElementById("controles"),
+    motivos: document.getElementById("motivos"),
+  }
+  elementoRevision = document.getElementById("revision")
+  elementoReadiness = document.getElementById("readiness")
+  elementoEstado = document.getElementById("estado")
+  elementoConexion = document.getElementById("conexion")
 }
-const elementoRevision = document.getElementById("revision")
-const elementoReadiness = document.getElementById("readiness")
-const elementoEstado = document.getElementById("estado")
-const elementoConexion = document.getElementById("conexion")
 
 /** Último snapshot AUTORITATIVO recibido (GET /api/proyecto, POST /api/operaciones,
  * o un refetch tras el evento SSE `revision`) — nunca un estado optimista. */
@@ -159,14 +177,43 @@ async function manejarCambioGpio({ componenteId, terminalId, valor }) {
 
 // SSE: cualquier commit (de este navegador o de otro actor, ej. la tool) dispara un
 // refetch íntegro — nunca se aplica el `{revision}` del evento de forma optimista.
-const eventos = new EventSource("/api/eventos")
-eventos.addEventListener("revision", () => {
-  cargarSnapshot()
-})
-// Revisión post red-team (B2): `error`/`open` son eventos NATIVOS del propio
-// `EventSource` (no algo que este módulo invente) — se procesan por el reductor
-// puro de `estado-conexion.js`, nunca acá mismo con lógica ad-hoc.
-eventos.addEventListener("error", () => manejarEventoConexion({ tipo: "error" }))
-eventos.addEventListener("open", () => manejarEventoConexion({ tipo: "open" }))
+//
+// STUB temporal (RED): este bootstrap sólo corre en el navegador real (ver
+// `enNavegador` arriba) — nunca bajo `node --test`.
+if (enNavegador) {
+  const eventos = new EventSource("/api/eventos")
+  eventos.addEventListener("revision", () => {
+    cargarSnapshot()
+  })
+  // Revisión post red-team (B2): `error`/`open` son eventos NATIVOS del propio
+  // `EventSource` (no algo que este módulo invente) — se procesan por el reductor
+  // puro de `estado-conexion.js`, nunca acá mismo con lógica ad-hoc.
+  eventos.addEventListener("error", () => manejarEventoConexion({ tipo: "error" }))
+  eventos.addEventListener("open", () => manejarEventoConexion({ tipo: "open" }))
 
-cargarSnapshot()
+  cargarSnapshot()
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// F-11 (PHASE_3_WAVE_0_DESIGN.md) — STUBs temporales (RED), reemplazados en el commit
+// GREEN. Existen para que este módulo sea importable desde `tests/wave0-view.test.mjs`
+// sin un link error, y para que esos tests fallen por ASERCIÓN semántica (no por un
+// export inexistente): el coalescing real (debounce de 300ms por selector, a lo sumo
+// un POST en vuelo, el ÚLTIMO valor elegido) y la elección del selector a re-enfocar
+// todavía NO están implementados acá abajo.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** STUB (RED): manda cada cambio YA MISMO, ignorando `programar`/`cancelarProgramado`/
+ * `obtenerValorServidor` — ningún debounce, ninguna cola. */
+export function crearCoalescerCambiosGpio({ enviar } = {}) {
+  return {
+    registrarCambio(componenteId, terminalId, valor) {
+      if (typeof enviar === "function") enviar({ componenteId, terminalId, valor })
+    },
+  }
+}
+
+/** STUB (RED): nunca elige ningún selector para recuperar el foco. */
+export function elegirSelectorParaFoco() {
+  return null
+}
