@@ -80,6 +80,15 @@ function proyectoCanonico() {
   return agregarLedConResistencia(p, "GPIO18")
 }
 
+/** Agrega un Pulsador con su pin ya asignado — para los casos de contigüidad que
+ * necesitan OTRO componente en el medio del proyecto, sin requisito propio. */
+function agregarPulsadorAsignado(p, pinSenal) {
+  const idPulsador = `cmp-${p.siguienteIdLocal}`
+  p = aplicar(p, "AgregarComponente", { tipo: "pulsador" })
+  p = aplicar(p, "AsignarPin", { componente: idPulsador, terminal: "senal", pin: pinSenal })
+  return { proyecto: p, idPulsador }
+}
+
 // ════════════════════════════════════════════════════════════════════════════════════
 // B1 — la pieza resistencia existe en la vista
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -258,4 +267,104 @@ test("B8: proyectarVista es determinista (misma entrada -> misma vista) y nunca 
 test("wokwi-render-datos: la resistencia está registrada con sus pines REALES (1/2, nunca inventados — EXP-B, Chromium headless)", () => {
   assert.equal(ELEMENTO_WOKWI_POR_TIPO.resistencia, "wokwi-resistor")
   assert.deepEqual(TERMINAL_WOKWI_POR_TIPO.resistencia, { a: "1", b: "2" })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Criterio pedagógico (diseño §2, "si visualmente sigue pareciendo colgante → FAIL,
+// aunque los tests estén en verde") — corrección del orquestador sobre la primera
+// entrega de HD-W0-B: los tests B1-B8 de arriba eran topológicos (qué cable va a qué
+// terminal) pero NO exigían que la cadena se vea JUNTA. Verificado real en Chromium
+// (despues-circuito.png, primera entrega): la Resistencia se dibujaba lejos del LED
+// (pegada al Pulsador) y su fila de cable quedaba separada en la lista por las filas
+// del Pulsador en el medio — cierto en los datos, pero ilegible para un estudiante.
+//
+// (a) CONTIGÜIDAD: cuando hay fusión, las DOS aristas de la cadena (pin→libre,
+//     conectada→terminal) van consecutivas, y el resto de los cables del MISMO
+//     componente las sigue ANTES de pasar a otro componente.
+// (b) ADYACENCIA: en `vista.componentes` (el orden en que se dibujan las piezas), la
+//     resistencia fusionada va INMEDIATAMENTE ANTES del componente al que sirve.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("HD-W0-B contigüidad: la cadena fusionada va consecutiva y en orden físico — pin, conexión, y recién después el resto del MISMO componente", () => {
+  const { proyecto, idLed } = proyectoCanonico()
+  const vista = proyectarVista(proyecto, catalogo)
+  const ids = vista.cables.map((c) => c.id)
+  const iPin = ids.indexOf(`cable-pin-${idLed}-anodo`)
+  const iRiel = ids.indexOf(`cable-riel-${idLed}-catodo`)
+  assert.notEqual(iPin, -1, `falta el cable del pin: ${JSON.stringify(ids)}`)
+  assert.notEqual(iRiel, -1, `falta el cable del riel: ${JSON.stringify(ids)}`)
+  const siguienteAlPin = vista.cables[iPin + 1]
+  assert.ok(siguienteAlPin?.id.startsWith("cable-conexion-"), `la arista de la Conexion fusionada tiene que ir INMEDIATAMENTE después de la del pin: ${JSON.stringify(ids)}`)
+  assert.equal(iRiel, iPin + 2, `el resto de los cables del MISMO componente (cátodo→GND) tiene que seguir a la cadena, antes de cualquier otro componente: ${JSON.stringify(ids)}`)
+})
+
+test("HD-W0-B contigüidad: los cables de OTRO componente (Pulsador) nunca se intercalan en medio de la cadena fusionada del LED", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  const par = agregarLedConResistencia(p, "GPIO18")
+  const { proyecto, idPulsador } = agregarPulsadorAsignado(par.proyecto, "GPIO19")
+
+  const vista = proyectarVista(proyecto, catalogo)
+  const ids = vista.cables.map((c) => c.id)
+  const iPin = ids.indexOf(`cable-pin-${par.idLed}-anodo`)
+  const iRiel = ids.indexOf(`cable-riel-${par.idLed}-catodo`)
+  const iPinPulsador = ids.indexOf(`cable-pin-${idPulsador}-senal`)
+  assert.ok(vista.cables[iPin + 1]?.id.startsWith("cable-conexion-"), `cadena partida: ${JSON.stringify(ids)}`)
+  assert.equal(iRiel, iPin + 2, `cadena partida: ${JSON.stringify(ids)}`)
+  assert.ok(iPinPulsador > iRiel, `los cables del Pulsador tienen que venir DESPUÉS de completar la cadena del LED, nunca intercalados en el medio: ${JSON.stringify(ids)}`)
+})
+
+test("HD-W0-B adyacencia: la Resistencia fusionada se dibuja INMEDIATAMENTE ANTES de su LED (entre la placa y el LED), nunca después ni lejos", () => {
+  const { proyecto, idLed, idResistencia } = proyectoCanonico()
+  const vista = proyectarVista(proyecto, catalogo)
+  const ids = vista.componentes.map((c) => c.id)
+  const iRes = ids.indexOf(idResistencia)
+  const iLed = ids.indexOf(idLed)
+  assert.notEqual(iRes, -1)
+  assert.equal(iLed, iRes + 1, `la Resistencia fusionada tiene que ir justo antes de SU LED: ${JSON.stringify(ids)}`)
+})
+
+test("HD-W0-B adyacencia: con un Pulsador en el medio del proyecto, la Resistencia sigue INMEDIATAMENTE antes de SU LED (nunca pegada a otro componente)", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  const par = agregarLedConResistencia(p, "GPIO18")
+  const { proyecto, idPulsador } = agregarPulsadorAsignado(par.proyecto, "GPIO19")
+
+  const vista = proyectarVista(proyecto, catalogo)
+  const ids = vista.componentes.map((c) => c.id)
+  const iRes = ids.indexOf(par.idResistencia)
+  const iLed = ids.indexOf(par.idLed)
+  assert.equal(iLed, iRes + 1, `adyacencia rota: ${JSON.stringify(ids)}`)
+  assert.notEqual(ids.indexOf(idPulsador), iRes + 1, "el Pulsador nunca puede quedar pegado entre la Resistencia y SU LED")
+})
+
+test("HD-W0-B contigüidad + adyacencia, 2 LEDs con 2 Resistencias: cada cadena es contigua y cada Resistencia queda junto a SU LED, nunca cruzadas", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  const par1 = agregarLedConResistencia(p, "GPIO18")
+  const par2 = agregarLedConResistencia(par1.proyecto, "GPIO19")
+  const vista = proyectarVista(par2.proyecto, catalogo)
+
+  const idsComp = vista.componentes.map((c) => c.id)
+  const idsCables = vista.cables.map((c) => c.id)
+  for (const { idLed, idResistencia } of [par1, par2]) {
+    const iRes = idsComp.indexOf(idResistencia)
+    const iLed = idsComp.indexOf(idLed)
+    assert.equal(iLed, iRes + 1, `adyacencia rota para ${idLed}: ${JSON.stringify(idsComp)}`)
+
+    const iPin = idsCables.indexOf(`cable-pin-${idLed}-anodo`)
+    const siguiente = vista.cables[iPin + 1]
+    assert.ok(siguiente?.id.startsWith("cable-conexion-"), `cadena de ${idLed} no contigua: ${JSON.stringify(idsCables)}`)
+    assert.equal(siguiente.hasta.componente, idLed, `la conexión contigua tiene que volver a SU led, nunca al otro: ${JSON.stringify(siguiente)}`)
+    assert.equal(siguiente.hasta.terminal, "anodo")
+  }
+})
+
+test("una Resistencia huérfana (sin fusión) conserva su orden de SIEMPRE en vista.componentes — la adyacencia sólo mueve piezas fusionadas", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  p = aplicar(p, "AgregarComponente", { tipo: "pulsador" }) // cmp-0
+  p = aplicar(p, "AgregarComponente", { tipo: "resistencia" }) // cmp-1, huérfana
+  const vista = proyectarVista(p, catalogo)
+  assert.deepEqual(vista.componentes.map((c) => c.id), ["cmp-0", "cmp-1"], "sin fusión, el orden es el de siempre (Proyecto.componentes, nunca reordenado)")
 })
