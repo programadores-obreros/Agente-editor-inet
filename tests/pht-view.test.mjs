@@ -32,12 +32,59 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 const { ejecutarOperacion } = await import(join(REPO, "opencode/nucleo/operaciones.ts"))
 const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
-const { construirCatalogoMinimoReal } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
+const { construirCatalogo } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
+const { construirCatalogoMinimoReal, sha256Hex } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
+const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, VERSION_CATALOGO_MINIMO } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
 const { proyectarVista } = await import(join(REPO, "opencode/vista-fisica/snapshot-a-vista.ts"))
 const { planDePintado } = await import(join(REPO, "opencode/vista-fisica/web/plan-de-pintado.js"))
+const { pintar } = await import(join(REPO, "opencode/vista-fisica/web/pintar.js"))
 const { ELEMENTO_WOKWI_POR_TIPO, TERMINAL_WOKWI_POR_TIPO } = await import(join(REPO, "opencode/vista-fisica/wokwi-render-datos.ts"))
 
 const catalogo = construirCatalogoMinimoReal()
+
+// Mismo fake de documento que `tests/phase2-s2-rol.test.mjs` — sólo las 3 operaciones
+// de DOM que `pintar.js` usa de verdad (createElement/setAttribute/appendChild),
+// nunca un DOM real (jsdom/happy-dom no son dependencias de este repo).
+function elementoFake(tag) {
+  return {
+    tagName: tag,
+    atributos: {},
+    hijos: [],
+    _textContent: "",
+    setAttribute(nombre, valor) {
+      this.atributos[nombre] = String(valor)
+    },
+    appendChild(hijo) {
+      this.hijos.push(hijo)
+      return hijo
+    },
+    get textContent() {
+      return this._textContent
+    },
+    set textContent(valor) {
+      this._textContent = valor
+    },
+  }
+}
+function documentoFake() {
+  return { createElement: (tag) => elementoFake(tag) }
+}
+/** Busca, recursivamente, todos los elementos cuyo `tagName` empieza con "wokwi-"
+ * (piezas reales, nunca <figure>/<span>/<figcaption> de agrupamiento). */
+function piezasDentroDe(elemento) {
+  const propias = (elemento.tagName ?? "").startsWith("wokwi-") ? [elemento] : []
+  const anidadas = (elemento.hijos ?? []).flatMap(piezasDentroDe)
+  return [...propias, ...anidadas]
+}
+/** Busca, recursivamente, el primer `<figcaption>`. */
+function figcaptionDentroDe(elemento) {
+  if (elemento.tagName === "figcaption") return elemento
+  for (const hijo of elemento.hijos ?? []) {
+    const encontrado = figcaptionDentroDe(hijo)
+    if (encontrado) return encontrado
+  }
+  return null
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Fixtures compartidas
@@ -367,4 +414,171 @@ test("una Resistencia huérfana (sin fusión) conserva su orden de SIEMPRE en vi
   p = aplicar(p, "AgregarComponente", { tipo: "resistencia" }) // cmp-1, huérfana
   const vista = proyectarVista(p, catalogo)
   assert.deepEqual(vista.componentes.map((c) => c.id), ["cmp-0", "cmp-1"], "sin fusión, el orden es el de siempre (Proyecto.componentes, nunca reordenado)")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// W-PHT-FIX — ronda de red team pre-humano
+// ════════════════════════════════════════════════════════════════════════════════════
+//
+// PFX-1 (MAJOR, RED-PHT-PHYSICAL-TRUTH F1, verificado real en Chromium por el
+// orquestador): la Resistencia fusionada se dibujaba lejos de su LED (sin rol, nunca
+// envuelta en `<figure>`, `pintar.js:107-124`) — a veces pegada al Pulsador. Contrato:
+// la pieza fusionada y su ancla comparten el MISMO contenedor, la fusionada PRIMERO
+// (a la izquierda), con el rol del ANCLA como única leyenda del grupo. La agrupación
+// la decide el SERVIDOR (`ComponenteVista.agrupadoCon`, derivado de la fusión que ya
+// se calcula) — `plan-de-pintado.js`/`pintar.js` sólo la obedecen, cero lógica física
+// nueva en JS. Un componente SIN fusión queda exactamente como hoy.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("PFX-1 (modelo): la Resistencia fusionada trae agrupadoCon = id de SU LED; el resto trae agrupadoCon:null", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  const par = agregarLedConResistencia(p, "GPIO18")
+  const { proyecto, idPulsador } = agregarPulsadorAsignado(par.proyecto, "GPIO19")
+  const vista = proyectarVista(proyecto, catalogo)
+
+  const resistencia = vista.componentes.find((c) => c.id === par.idResistencia)
+  const led = vista.componentes.find((c) => c.id === par.idLed)
+  const pulsador = vista.componentes.find((c) => c.id === idPulsador)
+  assert.equal(resistencia.agrupadoCon, par.idLed, "la resistencia fusionada apunta a SU LED")
+  assert.equal(led.agrupadoCon, null, "un ancla nunca se agrupa con nada, se la agrupan A ella")
+  assert.equal(pulsador.agrupadoCon, null, "sin fusión propia, nunca se agrupa")
+})
+
+test("PFX-1 (modelo): una Resistencia huérfana (sin fusión) trae agrupadoCon:null — la pieza se dibuja sola, como siempre", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  p = aplicar(p, "AgregarComponente", { tipo: "resistencia" })
+  const vista = proyectarVista(p, catalogo)
+  assert.equal(vista.componentes[0].agrupadoCon, null)
+})
+
+test("PFX-1 (plan): planDePintado forwardea agrupadoCon tal cual en la instrucción crearElemento; la placa nunca se agrupa", () => {
+  const { proyecto, idLed, idResistencia } = proyectoCanonico()
+  const vista = proyectarVista(proyecto, catalogo)
+  const plan = planDePintado(vista)
+  const crearRes = plan.find((i) => i.tipo === "crearElemento" && i.entidad.id === idResistencia)
+  const crearLed = plan.find((i) => i.tipo === "crearElemento" && i.entidad.id === idLed)
+  const crearPlaca = plan.find((i) => i.tipo === "crearElemento" && i.entidad.tipo === "placa")
+  assert.equal(crearRes.agrupadoCon, idLed)
+  assert.equal(crearLed.agrupadoCon, null)
+  assert.equal(crearPlaca.agrupadoCon, null)
+})
+
+test("PFX-1 (pintar): la Resistencia fusionada y su LED comparten el MISMO contenedor, la Resistencia PRIMERO, con el rol del LED como leyenda del grupo", () => {
+  const instrucciones = [
+    { tipo: "crearElemento", entidad: { tipo: "componente", id: "cmp-res" }, tag: "wokwi-resistor", atributos: { value: "220" }, etiquetaRol: null, agrupadoCon: "cmp-led" },
+    { tipo: "crearElemento", entidad: { tipo: "componente", id: "cmp-led" }, tag: "wokwi-led", atributos: { color: "red" }, etiquetaRol: "Salida", agrupadoCon: null },
+  ]
+  const raiz = pintar(documentoFake(), instrucciones)
+  assert.equal(raiz.circuito.hijos.length, 1, "un ÚNICO contenedor para el grupo fusionado — nunca dos piezas sueltas")
+  const grupo = raiz.circuito.hijos[0]
+  const piezas = piezasDentroDe(grupo)
+  assert.deepEqual(piezas.map((p) => p.tagName), ["wokwi-resistor", "wokwi-led"], "la resistencia va PRIMERO (a la izquierda) de su LED")
+  const rotulo = figcaptionDentroDe(grupo)
+  assert.ok(rotulo, "el grupo tiene UNA leyenda")
+  assert.equal(rotulo.textContent, "Salida", "la leyenda del grupo es el ROL DEL ANCLA (LED), nunca el de la resistencia (null)")
+})
+
+test("PFX-1 (pintar): sin agrupadoCon ni match, un componente queda EXACTAMENTE como hoy (su propio <figure> si tiene rol, hijo directo si no)", () => {
+  const instrucciones = [
+    { tipo: "crearElemento", entidad: { tipo: "placa", id: "placa-0" }, tag: "wokwi-esp32-devkit-v1", atributos: {}, etiquetaRol: null, agrupadoCon: null },
+    { tipo: "crearElemento", entidad: { tipo: "componente", id: "cmp-pul" }, tag: "wokwi-pushbutton", atributos: {}, etiquetaRol: "Entrada", agrupadoCon: null },
+  ]
+  const raiz = pintar(documentoFake(), instrucciones)
+  assert.equal(raiz.circuito.hijos.length, 2)
+  assert.equal(raiz.circuito.hijos[0].tagName, "wokwi-esp32-devkit-v1", "sin rol, la placa sigue siendo hija DIRECTA, sin envoltorio")
+  const contenedorPulsador = raiz.circuito.hijos[1]
+  assert.equal(piezasDentroDe(contenedorPulsador).length, 1, "el pulsador sigue solo en su propio contenedor")
+  assert.equal(figcaptionDentroDe(contenedorPulsador).textContent, "Entrada")
+})
+
+test("PFX-1 (pintar), integración real: un Pulsador SIN fusión nunca cae dentro del grupo Resistencia+LED — sigue en su PROPIO contenedor, nunca pegado", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  const par = agregarLedConResistencia(p, "GPIO18")
+  const { proyecto, idPulsador } = agregarPulsadorAsignado(par.proyecto, "GPIO19")
+  const vista = proyectarVista(proyecto, catalogo)
+  const plan = planDePintado(vista)
+  const raiz = pintar(documentoFake(), plan)
+
+  assert.equal(raiz.circuito.hijos.length, 2, "un contenedor para el grupo fusionado, otro para el pulsador — nunca tres sueltos")
+  const grupo = raiz.circuito.hijos.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-led"))
+  const contenedorPulsador = raiz.circuito.hijos.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-pushbutton"))
+  assert.ok(grupo && contenedorPulsador)
+  assert.notEqual(grupo, contenedorPulsador, "el pulsador NUNCA comparte contenedor con el grupo Resistencia+LED")
+  assert.deepEqual(
+    piezasDentroDe(grupo).map((p) => p.tagName),
+    ["wokwi-resistor", "wokwi-led"],
+    "el grupo trae SÓLO la resistencia y su LED, la resistencia primero",
+  )
+  assert.equal(piezasDentroDe(contenedorPulsador).length, 1, "el pulsador sigue solo")
+})
+
+test("PFX-1 (pintar), integración real: 2 LEDs + 2 Resistencias — dos grupos separados, nunca cruzados", () => {
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  const par1 = agregarLedConResistencia(p, "GPIO18")
+  const par2 = agregarLedConResistencia(par1.proyecto, "GPIO19")
+  const vista = proyectarVista(par2.proyecto, catalogo)
+  const plan = planDePintado(vista)
+  const raiz = pintar(documentoFake(), plan)
+
+  assert.equal(raiz.circuito.hijos.length, 2, "dos grupos, uno por cada par LED+Resistencia")
+  for (const grupo of raiz.circuito.hijos) {
+    const piezas = piezasDentroDe(grupo)
+    assert.equal(piezas.length, 2, `cada grupo tiene exactamente 2 piezas: ${JSON.stringify(piezas.map((p) => p.tagName))}`)
+    assert.equal(piezas[0].tagName, "wokwi-resistor")
+    assert.equal(piezas[1].tagName, "wokwi-led")
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// PFX-2 (MAJOR, RED-PHT-AUDITABILITY F2): `snapshot-a-vista.ts` duplicaba el fallback
+// "resistencia" de `nucleo/catalogo.ts:189` (`evaluarRequisito`). Contrato: SIN tocar
+// `nucleo/`, la vista deja de asumir "resistencia" — si `spec.tipoComponente` no es un
+// string, NO fusiona (fail-closed), aunque haya una instancia "resistencia" real
+// conectada que coincidiría por pura casualidad con el fallback viejo.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const REQUISITO_SIN_TIPO_DECLARADO = {
+  id: "zumbador-sin-tipo-fixture",
+  nombreVisible: "Zumbador sin tipo declarado (fixture, no-producto)",
+  clase: "actuador",
+  terminales: [
+    { id: "senal", rol: "senal", electrica: "digital", direccion: "salida" },
+    { id: "gnd", rol: "tierra", electrica: "riel-fijo", destinoFijo: "GND" },
+  ],
+  capacidades: [],
+  // A propósito: "resistencia-serie" SIN `spec.tipoComponente` — el caso que
+  // `nucleo/catalogo.ts:189` (`evaluarRequisito`) sigue resolviendo con su PROPIO
+  // fallback a "resistencia" (archivo fuera de alcance, no se toca); la vista no
+  // puede duplicar esa misma decisión en un segundo lugar.
+  requisitos: [{ tipo: "resistencia-serie", enTerminal: "senal", spec: {} }],
+}
+
+test("PFX-2: un requisito resistencia-serie SIN spec.tipoComponente (string) NUNCA fusiona en la vista — fail-closed, sin fallback duplicado a 'resistencia'", () => {
+  const catalogoFixture = construirCatalogo(
+    { version: VERSION_CATALOGO_MINIMO, componentes: [...COMPONENTES_CATALOGO_MINIMO, REQUISITO_SIN_TIPO_DECLARADO], placas: PLACAS_CATALOGO_MINIMO, unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS } },
+    sha256Hex,
+  )
+  let p = proyectoBase()
+  p = { ...p, placa: "esp32-devkit-v1" }
+  const aplicarFixture = (proyecto, tipo, payload) => {
+    const r = ejecutarOperacion(proyecto, op(tipo, payload, proyecto.revision), catalogoFixture)
+    assert.equal(r.ok, true, `fixture: ${tipo}(${JSON.stringify(payload)}) rechazado: ${JSON.stringify(r.motivos)}`)
+    return r.proyecto
+  }
+  p = aplicarFixture(p, "AgregarComponente", { tipo: "zumbador-sin-tipo-fixture" }) // cmp-0
+  p = aplicarFixture(p, "AgregarComponente", { tipo: "resistencia" }) // cmp-1 — una instancia REAL del tipo que el fallback viejo asumía
+  p = aplicarFixture(p, "Conectar", { desde: { componente: "cmp-0", terminal: "senal" }, hasta: { componente: "cmp-1", terminal: "a" } })
+  p = aplicarFixture(p, "AsignarPin", { componente: "cmp-0", terminal: "senal", pin: "GPIO18" })
+
+  const vista = proyectarVista(p, catalogoFixture)
+  const cablePin = vista.cables.find((c) => c.id === "cable-pin-cmp-0-senal")
+  assert.ok(cablePin, `falta el cable del pin: ${JSON.stringify(vista.cables)}`)
+  assert.equal(cablePin.hasta.tipo, "terminal")
+  assert.equal(cablePin.hasta.componente, "cmp-0", "sin spec.tipoComponente declarado, el cable del pin sigue yendo DIRECTO al propio terminal — nunca fusiona por asumir 'resistencia'")
+  assert.equal(cablePin.hasta.terminal, "senal")
+  assert.equal(vista.componentes.find((c) => c.id === "cmp-1").agrupadoCon, null, "la resistencia real conectada tampoco queda marcada como agrupada — no hubo fusión")
 })
