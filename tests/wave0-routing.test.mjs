@@ -249,8 +249,16 @@ test("FX-2b: el cierre general (L80-119) NO se borra (la tabla sigue intacta) pe
 // ════════════════════════════════════════════════════════════════════════════
 // FX-6(c) (F-TRUTH-1 MAJOR dentro del alcance, triage) — AsignarPin SÓLO en
 // terminales que el vocabulario marca asignable; un "puente" (la resistencia) se
-// conecta con Conectar, nunca con AsignarPin. El prompt NO puede prometer que la
-// tool rechaza lo que el Engine (protegido) hoy acepta.
+// conecta con Conectar, nunca con AsignarPin.
+//
+// HD-W0-A (docs/programacion-intencion/PHASE_3_PRE_HUMAN_TEST_DESIGN.md §1, §5)
+// cierra el gap F-TRUTH-1: el Engine ahora SÍ rechaza AsignarPin sobre un terminal
+// riel-fijo (TERMINAL_NO_ASIGNABLE) — la aserción `doesNotMatch` que evitaba que el
+// prompt "prometiera un rechazo que el Engine todavía aceptaba" ya no tiene objeto
+// (el rechazo existe de verdad) y se retira. El TEXTO del prompt
+// (`opencode/agent/tecnia-bot.md`) está fuera del alcance de este writer (HD-W0-A es
+// sólo `nucleo/`) — este test sigue fijando lo que el prompt YA decía (asignable/
+// Conectar), sin exigirle que mencione el rechazo nuevo.
 // ════════════════════════════════════════════════════════════════════════════
 
 test("FX-6(c): la regla de proyecto físico dice que AsignarPin es sólo para terminales asignables, y que un puente se conecta con Conectar", () => {
@@ -259,8 +267,6 @@ test("FX-6(c): la regla de proyecto físico dice que AsignarPin es sólo para te
   const bloque = prompt.slice(iRegla, iRegla + 1200)
   assert.match(bloque, /asignable/i, "no menciona que AsignarPin depende de 'asignable' del vocabulario")
   assert.match(bloque, /`Conectar`/, "no dice que un puente se conecta con Conectar")
-  assert.doesNotMatch(bloque, /la tool (lo )?rechaza|el motor (lo )?rechaza|el engine (lo )?rechaza|se rechaza/i,
-    "el prompt no puede prometer un rechazo que el Engine (protegido) todavía acepta hoy (F-TRUTH-1, HD-W0-A pendiente)")
 })
 
 test("F-15: la excepción de 'un solo paso' (L65-71) sigue intacta y queda acotada a pedido explícito", () => {
