@@ -916,10 +916,20 @@ export function avisoDe(aviso: Aviso, placa: PlacaId): { texto: string | null } 
  *
  * "✋ ¡Probalo con el mouse!" NO se cae con la lista vacía, y es a propósito: ése
  * no encabeza avisos, es una invitación que se sostiene sola.
+ *
+ * F-04 (PHASE_3_WAVE_0_DESIGN.md, PHASE_2_SIMULATED_ROLE_TRIAL.md): un preset
+ * `interactivo` (boton, potenciometro, y cualquier combinación sensor→actuador)
+ * SIMULA una relación —botón que prende un LED, perilla que mueve un servo— y esa
+ * simulación se confundía con el proyecto físico real del alumno. El rótulo de acá
+ * antepone "Lámina de ejemplo — no es tu proyecto" a la invitación de siempre, sin
+ * sacarle la invitación: "¡Probalo con el mouse!" se conserva literal (lo pinea
+ * circuito.test.mjs), sólo que ahora no se puede leer como "esto es lo que armaste".
  */
+const ROTULO_LAMINA_EJEMPLO = "Lámina de ejemplo — no es tu proyecto: muestra cómo podría funcionar."
+
 export function bloqueDeAvisos(advertencias: string[], interactivo: boolean): string {
   const cabecera = interactivo
-    ? "✋ <strong>¡Probalo con el mouse!</strong> "
+    ? `${ROTULO_LAMINA_EJEMPLO} ✋ <strong>¡Probalo con el mouse!</strong> `
     : "💡 <strong>Atención:</strong> "
   const cuerpo = advertencias.map((f) => "• " + f).join(" ")
   if (cuerpo) return cabecera + cuerpo
@@ -2826,9 +2836,9 @@ const PLANTILLAS_PROTOBOARD: Record<string, { archivo: string; que: string }> = 
 }
 
 export default tool({
-  description: `ÚNICO método aprobado para generar cualquier circuito visual, esquema, diagrama animado o "circuito bonito" de Arduino/ESP32. Genera un HTML con piezas REALES (Wokwi Elements) y animación (el servo gira, el LED parpadea) que el alumno abre en el navegador SIN internet.
+  description: `Genera una LÁMINA de ejemplo (esquema visual, diagrama animado o "circuito bonito") de Arduino/ESP32 — NUNCA el proyecto físico real del alumno. Si las piezas que el alumno quiere armar/ver/cambiar están cubiertas por el Project Engine (el \`vocabulario\` que trae \`proyecto-fisico\` con \`leer\`), usá \`proyecto-fisico\` → \`vista-fisica\`, no esta tool: esta queda para piezas que el Engine no cubre, láminas/imprimibles pedidos explícitamente, o proyectos integradores de ejemplo. Genera un HTML con piezas REALES (Wokwi Elements) y animación (el servo gira, el LED parpadea) que el alumno abre en el navegador SIN internet.
 
-USALO SIEMPRE que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
+Dentro de esa frontera, usalo siempre que pidan un circuito visual/animado/bonito/esquema/"para mostrar". NUNCA dibujes vos un SVG o HTML a mano: este tool ya tiene todo hecho, solo elegís el circuito.
 
 PLACA: el arg 'placa' elige qué placa se DIBUJA. "esp32" (default, ESP32 DevKit) o "uno" (Arduino UNO, que es la que más se usa con Sensor Shield en las escuelas técnicas). Preguntale al docente con cuál trabaja ANTES de dibujar; si te dice UNO, pasá placa="uno" y los pines salen D0-D13, A0-A5, PWM en los ~ y el I2C en A4/A5, como en su placa. Si el componente que pide todavía no está portado a esa placa, el tool NO dibuja: te dice cuál falta, y eso se lo contás — nunca le muestres el dibujo de otra placa como si fuera el suyo. Y cuando el tool rebota un componente, NO completes el hueco inventando pines en el chat: lo que vos escribís es lo que el pibe cablea, igual que el dibujo. Si el docente tiene shield, varios módulos tienen ZÓCALO propio y no van pin por pin (el HC-SR04 del Sensor Shield entra en el zócalo URF01, NO en un par de pines digitales elegidos "por ejemplo"); el rechazo del tool ya te manda al zócalo cuando lo sabe, y el resto lo tenés en el skill 'placas', entrada 02. Si no lo tenés escrito en ningún lado, decí que no lo sabés — no lo estimes.
 
@@ -2992,6 +3002,12 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     // archivo ya existía, el de verdad es "…-2.html"). Se guarda el pedido y el aviso
     // se arma al final, con el nombre que quedó de verdad.
     let pedidoNoUsado: string | null = null
+    // F-04 (PHASE_3_WAVE_0_DESIGN.md): si el circuito que se armó es `interactivo`
+    // (r.interactivo, misma bandera que lee `bloqueDeAvisos`), la respuesta al modelo
+    // también rotula la lámina ANTES del cierre —no al final junto a los ⚠️, que es
+    // donde nadie lee primero—, para que el agente nunca lo presente como el proyecto
+    // del alumno. Queda vacío para cualquier circuito no interactivo (sin cambios).
+    let etiquetaLaminaEjemplo = ""
 
     // Cada rama arma el HTML y decide cómo se lo contamos; el guardado es uno solo
     // para todas (FIX auditoría B5/B7/B12: antes había tres copias de esa lógica).
@@ -3045,6 +3061,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       // eso vivía SOLO en la hoja. Ahora también llega al chat (FIX auditoría A/F).
       notas.push(...r.notas)
       conexiones = r.conexiones
+      if (r.interactivo) etiquetaLaminaEjemplo = `**${ROTULO_LAMINA_EJEMPLO}**\n\n`
       const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
       html = construirHTML(
         {
@@ -3158,6 +3175,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       // I2C o agotar el pool el día que se agregue uno grande. El canal es el mismo.
       notas.push(...r.notas)
       conexiones = r.conexiones
+      if (r.interactivo) etiquetaLaminaEjemplo = `**${ROTULO_LAMINA_EJEMPLO}**\n\n`
       const nombres = pedidos.map((p) => componenteDe(p.tipo).etiqueta).join(" + ")
       // Algunos presets tienen coreografía propia (el semáforo es una secuencia, no
       // tres LEDs parpadeando por su cuenta). FIX auditoría B9.
@@ -3269,6 +3287,6 @@ ${abierto
   ? `**Te lo abrí en el navegador.** (Si no apareció, doble clic en el archivo: \`${comoUrl(archivo)}\`)`
   : `**Abrilo en tu navegador (doble clic o pegá esto):**\n${comoUrl(archivo)}`}
 
-${cierre}${tablaPines}${aclaraciones}`
+${etiquetaLaminaEjemplo}${cierre}${tablaPines}${aclaraciones}`
   },
 })

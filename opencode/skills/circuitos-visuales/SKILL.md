@@ -5,9 +5,17 @@ description: Generar un circuito VISUAL profesional en HTML con piezas reales qu
 
 # Circuitos visuales en HTML — usá el tool `circuito`
 
-Para cualquier circuito visual, esquema, diagrama animado, "circuito bonito" o explicador de protoboard, **usá SIEMPRE el tool `circuito`**. Ese tool ya tiene todo resuelto (piezas reales, cables, animación, interacción) y genera el HTML solo.
+> ⚠️ **Primero, la frontera.** Este tool es para una lámina de ejemplo, un
+> imprimible pedido explícitamente, o un proyecto integrador de muestra —
+> **nunca** para el proyecto físico real del alumno. Si las piezas que piden
+> armar, ver o cambiar están cubiertas por el Project Engine (el
+> `vocabulario` que trae `proyecto-fisico leer`), el camino es
+> `proyecto-fisico` → `vista-fisica`, no este tool (ver la REGLA CRÍTICA —
+> proyecto físico del prompt).
 
-> ⛔ **NUNCA dibujes vos un archivo `.svg` o `.html` a mano.** Está prohibido inventar coordenadas de pines o escribir el HTML con `edit`/`write`. El tool `circuito` es el ÚNICO método aprobado. Si dibujás a mano, sale mal y se desalinea.
+Para cualquier circuito visual, esquema, diagrama animado, "circuito bonito" o explicador de protoboard que esté DENTRO de esa frontera, **usá el tool `circuito`**. Ese tool ya tiene todo resuelto (piezas reales, cables, animación, interacción) y genera el HTML solo.
+
+> ⛔ **NUNCA dibujes vos un archivo `.svg` o `.html` a mano.** Está prohibido inventar coordenadas de pines o escribir el HTML con `edit`/`write`. Para dibujar, el tool `circuito` es el método aprobado — no una lámina a mano. Si dibujás a mano, sale mal y se desalinea.
 
 ## Cómo usarlo
 
@@ -68,7 +76,7 @@ Un dibujo estático muestra las piezas. El simulador muestra **el lazo**: el alu
 
 El tool reparte los GPIO solo, y reparte bien: evita los de flash (GPIO6 a 11) y deja los strapping para el final. Pero **su pool automático saltea GPIO16 y GPIO17** (son los de la PSRAM en las placas que la traen), y las fichas de `proyectos-inet` traen el pinout EXACTO de cada proyecto — el semáforo, por ejemplo, arranca justo en GPIO16 y GPIO17.
 
-Si dejás que reparta solo, el circuito le va a mostrar al alumno pines distintos a los de su ficha de cátedra. Y como la regla del prompt dice que **el circuito es la fuente de verdad de los pines y el código lo sigue**, el alumno termina cableando contra el material del curso.
+Si dejás que reparta solo, el circuito le va a mostrar al alumno pines distintos a los de su ficha de cátedra. Y como el punto 4 de la regla del prompt dice que **el código de ejemplo de ESTA lámina tiene que seguir los pines que ella misma dibuja**, el alumno termina cableando contra el material del curso. (Esto es sólo para la lámina que genera este tool: si el alumno tiene un proyecto físico armado con `proyecto-fisico`, sus pines salen de `proyecto-fisico leer`, nunca de acá.)
 
 **La regla, entonces: si el circuito es de un proyecto del INET, pasale el pinout de la ficha con la sintaxis `componente:GPIO`.**
 
