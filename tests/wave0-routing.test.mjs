@@ -204,6 +204,49 @@ test("FX-2: no se borró la regla de codegen ante un pedido EXPLÍCITO de códig
 })
 
 // ════════════════════════════════════════════════════════════════════════════
+// FX-2b (verificación del orquestador sobre FX-2: el patrón real en T5 — a1, a2, a4
+// — ofrece C++ DESPUÉS de armar/explicar/corregir el proyecto físico, no sólo en el
+// turno de "comportamiento sin pedido de código"). El cierre general (L92, «¿Te
+// muestro cómo se conecta, o vamos al código?») sigue ahí para OTROS contextos
+// (código ya en marcha), pero tiene que quedar explícito que NO aplica mientras la
+// conversación es sobre el proyecto físico.
+// ════════════════════════════════════════════════════════════════════════════
+
+function bloqueProyectoFisico() {
+  const i = prompt.indexOf("REGLA CRÍTICA — proyecto físico")
+  assert.ok(i >= 0)
+  const iSiguiente = prompt.indexOf("REGLA CRÍTICA — circuitos visuales")
+  assert.ok(iSiguiente > i)
+  return prompt.slice(i, iSiguiente)
+}
+
+function bloqueCierreGeneral() {
+  const i = prompt.indexOf("TODOS tus mensajes terminan con una pregunta o una acción concreta")
+  assert.ok(i >= 0)
+  const iSiguiente = prompt.indexOf("Cuándo NO preguntar, que también importa")
+  assert.ok(iSiguiente > i)
+  return prompt.slice(i, iSiguiente)
+}
+
+test("FX-2b: la REGLA CRÍTICA — proyecto físico trae un cierre propio que NUNCA ofrece código, para TODO el tiempo que se está armando/corrigiendo (no sólo el turno de 'comportamiento sin código')", () => {
+  const bloque = bloqueProyectoFisico()
+  assert.match(bloque, /no apl(ica|ique)/i, "no aclara que el cierre general (el que ofrece código) no aplica mientras se trabaja el proyecto físico")
+
+  const preguntas = bloque.match(/¿[^?]+\?/g) ?? []
+  const cierresSinCodigo = preguntas.filter((p) => !/c[oó]digo|c\+\+|platformio/i.test(p))
+  assert.ok(cierresSinCodigo.length >= 2, `tienen que existir al menos DOS ejemplos de cierre del proyecto físico que no ofrezcan código: ${JSON.stringify(preguntas)}`)
+})
+
+test("FX-2b: el cierre general (L80-119) NO se borra (la tabla sigue intacta) pero trae un puntero explícito a la excepción del proyecto físico", () => {
+  const bloque = bloqueCierreGeneral()
+  // La tabla original (con el ejemplo que ofrece código) sigue ahí -- el bot sigue
+  // enseñando código en OTROS contextos, esto no es un ban total.
+  assert.match(bloque, /¿Te muestro cómo se conecta, o vamos al\s*código\?/, "la tabla de ejemplos de cierre no puede desaparecer")
+  assert.match(bloque, /proyecto f[íi]sico/i, "no apunta a la excepción del proyecto físico")
+  assert.match(bloque, /no apl(ica|ique)/i, "no aclara, en el lugar donde se modela ofrecer código, que esa alternativa no aplica en el proyecto físico")
+})
+
+// ════════════════════════════════════════════════════════════════════════════
 // FX-6(c) (F-TRUTH-1 MAJOR dentro del alcance, triage) — AsignarPin SÓLO en
 // terminales que el vocabulario marca asignable; un "puente" (la resistencia) se
 // conecta con Conectar, nunca con AsignarPin. El prompt NO puede prometer que la
