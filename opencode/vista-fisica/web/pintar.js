@@ -190,8 +190,25 @@ function pintarMotivo(doc, contenedor, instruccion, elementosPorEntidad) {
   const fila = doc.createElement("li")
   fila.setAttribute("data-motivo-codigo", instruccion.codigo)
   fila.setAttribute("data-motivo-severidad", instruccion.severidad)
-  const clasificacion = instruccion.clasificacion ? ` (${instruccion.clasificacion})` : ""
-  fila.textContent = `[${instruccion.severidad}] ${instruccion.codigo}${clasificacion}`
+  if (instruccion.clasificacion) fila.setAttribute("data-motivo-clasificacion", instruccion.clasificacion)
+
+  // FX-3 (RED-W0-UX (a), ronda de fixes): con explicación en texto llano YA resuelta
+  // del lado del servidor (`explicaciones-motivos.ts`), el alumno ve SÓLO esa
+  // explicación — nunca "[blocking]"/el código crudo ("REQUISITO_INSATISFECHO")/la
+  // clasificación entre paréntesis ("(representable)") como texto PRIMARIO. Esos tres
+  // datos siguen disponibles como `data-*` (arriba), para quien los necesite — mismo
+  // criterio que F-09 ya aplica para los ids crudos de componente/terminal
+  // (`plan-de-pintado.js::etiquetaDeExtremo`).
+  //
+  // SIN traducción (`explicacion: null`), se mantiene el fallback crudo de SIEMPRE
+  // (contrato Slice 2): un código que esta tabla no conoce todavía nunca se oculta,
+  // se ve tal cual.
+  if (instruccion.explicacion) {
+    fila.textContent = instruccion.explicacion
+  } else {
+    const clasificacion = instruccion.clasificacion ? ` (${instruccion.clasificacion})` : ""
+    fila.textContent = `[${instruccion.severidad}] ${instruccion.codigo}${clasificacion}`
+  }
 
   // Fase 2, Slice 2 (§3.4, resaltado C): `data-entidad-*` en la fila — presentación
   // pura, derivada de `motivo.entidad` (que `plan-de-pintado.js` ya calculaba desde
@@ -200,17 +217,6 @@ function pintarMotivo(doc, contenedor, instruccion, elementosPorEntidad) {
   if (instruccion.entidad) {
     fila.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
     fila.setAttribute("data-entidad-id", instruccion.entidad.id)
-  }
-
-  // Texto llano, YA resuelto del lado del servidor (`explicaciones-motivos.ts`) —
-  // este módulo no calcula nada, sólo lo agrega como un hijo más si vino. `null`
-  // (código desconocido para esa tabla) deja la fila cruda tal cual, sin agregar
-  // ningún hijo.
-  if (instruccion.explicacion) {
-    const textoLlano = doc.createElement("p")
-    textoLlano.setAttribute("data-motivo-explicacion", instruccion.codigo)
-    textoLlano.textContent = instruccion.explicacion
-    fila.appendChild(textoLlano)
   }
 
   contenedor.appendChild(fila)
