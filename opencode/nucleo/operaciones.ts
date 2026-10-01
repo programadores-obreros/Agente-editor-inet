@@ -384,6 +384,23 @@ function aplicarAsignarPin(proyecto: Proyecto, payload: { componente: string; te
   if (!tieneTerminalDeclarado(catalogo, componente.tipo, payload.terminal)) {
     return { proyecto, motivos: [rechazo("TERMINAL_NO_DECLARADO", { componente: payload.componente, terminal: payload.terminal })] }
   }
+  // HD-W0-A (docs/programacion-intencion/PHASE_3_PRE_HUMAN_TEST_DESIGN.md §1): un
+  // terminal que el catálogo declara `electrica: "riel-fijo"` (destino fijo — "va en
+  // el medio del cable", nunca se conecta directo a un pin de la placa, ver
+  // `catalogo-datos.ts`) nunca acepta `AsignarPin`, SIN excepción (incluido
+  // `pin: null`). La fuente de "asignable" es EXCLUSIVAMENTE el catálogo — la MISMA
+  // derivación que ya usan `terminalesNoRielFijo` (arriba) y
+  // `vista-fisica/vocabulario.ts::asignable` — NUNCA el tipo/id del componente (nada
+  // de hardcodear `"resistencia"`): el terminal real se busca en el catálogo por su
+  // id, igual que `tieneTerminalDeclarado`. Camino B: rechazo, la IR no cambia. Un
+  // documento HISTÓRICO que ya tenga este dato (de antes de esta decisión) sigue
+  // CARGANDO igual — el loader (`cargador.ts`) y la validación continua
+  // (`validar-tecnico.ts`, que sigue salteando `riel-fijo` a propósito) no cambian:
+  // esta invariancia gobierna SÓLO la operación NUEVA (PERSISTIBLE ⇒ RECARGABLE).
+  const terminalCatalogo = catalogo.obtenerComponente(componente.tipo)?.terminales.find((t) => t.id === payload.terminal)
+  if (terminalCatalogo && terminalCatalogo.electrica === "riel-fijo") {
+    return { proyecto, motivos: [rechazo("TERMINAL_NO_ASIGNABLE", { componente: payload.componente, terminal: payload.terminal, electrica: terminalCatalogo.electrica })] }
+  }
   if (payload.pin !== null) {
     const pines = proyecto.placa ? catalogo.pinesDePlaca(proyecto.placa) : undefined
     if (!pines?.some((p) => p.id === payload.pin)) {
