@@ -137,6 +137,14 @@ function forzarActorNavegador(valor: unknown): unknown {
   return valor
 }
 
+/**
+ * Phase 3 (contrato B7): las ÚNICAS operaciones que el navegador puede pedir. El resto
+ * (armar el circuito, `CambiarComponente`, ...) es del agente / de otros canales: un
+ * `tipo` fuera de esta lista es un error de INTEGRACIÓN, no de dominio — se rechaza
+ * acá con `OPERACION_NO_PERMITIDA_EN_NAVEGADOR` sin invocar al Engine.
+ */
+const OPERACIONES_PERMITIDAS_EN_NAVEGADOR: readonly string[] = ["AsignarPin", "SetComportamiento", "QuitarComportamiento"]
+
 function leerCuerpo(req: http.IncomingMessage, limiteBytes: number): Promise<{ ok: true; texto: string } | { ok: false; motivo: "demasiado_grande" | "error_de_lectura" }> {
   return new Promise((resolve) => {
     let bytesRecibidos = 0
@@ -227,6 +235,18 @@ async function manejarOperaciones(req: http.IncomingMessage, res: http.ServerRes
     return
   }
   const sobre = forzarActorNavegador(sobreCrudo)
+  // Phase 3 (contrato B7): lista blanca del NAVEGADOR. Se aplica DESPUÉS de validar
+  // Origin/Content-Type, leer el cuerpo y parsear el JSON, y ANTES de tocar el Engine.
+  // Un cuerpo que no es un objeto plano no tiene `tipo` que filtrar: sigue al Engine,
+  // que lo rechaza de forma estructurada (`SOBRE_OPERACION_INVALIDO`).
+  if (sobre !== null && typeof sobre === "object" && !Array.isArray(sobre)) {
+    const tipo = (sobre as Record<string, unknown>).tipo
+    if (typeof tipo !== "string" || !OPERACIONES_PERMITIDAS_EN_NAVEGADOR.includes(tipo)) {
+      const motivo = { codigo: "OPERACION_NO_PERMITIDA_EN_NAVEGADOR", categoria: "operacion", severidad: "blocking", clasificacion: "rechazo", datos: { tipo } }
+      responderJson(res, 200, { resultado: { ok: false, rechazadoPor: "transporte", motivos: [motivo] }, snapshot: servicio.snapshot() })
+      return
+    }
+  }
   // `servicio.aplicar` (composicion-raiz.ts → motor.ts) NUNCA lanza para un sobre mal
   // formado — `nucleo/operaciones.ts::analizarSobreOperacion`/
   // `nucleo/motor.ts::ejecutarLote` devuelven un `ResultadoTransaccion` con
