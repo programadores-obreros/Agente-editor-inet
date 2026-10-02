@@ -1431,3 +1431,21 @@ documento del mínimo vertical). Quedan congeladas con la recomendación de §23
 - El cambio en `opencode/agent/tecnia-bot.md` se limita a lo funcional que exige el
   vertical (HD-05), con RED, tests y evidencia. No es una optimización estructural.
 - Las demás HD-P3 / HD-P3D siguen congeladas.
+
+### Excepción declarada a HD-P3D-6: fixture de REA-02 (2026-10-02)
+
+- **Hallazgo (T2):** `tests/nucleo-rango-umbral-caminos.test.mjs` (REA-02, Phase 1, `c4cb0fa`)
+  arma su regla con una **resistencia** (`clase: "pasivo"`) como actuador y exige
+  `listo: true`. Sólo pasa mientras exista el bug que HD-P3-5 = A manda corregir: un
+  componente que no es salida aceptado en silencio como actuador. Con `ACTUADOR_INVALIDO`
+  queda `listo: false`.
+- **Conflicto:** HD-P3-5 = A (validar el actuador) contra HD-P3D-6 (ningún test de Phase 1 se
+  toca; si aparece una contradicción → STOP). El writer frenó; el orquestador verificó el
+  diagnóstico.
+- **Decisión humana (opción A):** MOD mínimo y declarado **sólo del fixture** de REA-02. El
+  actuador pasa a ser un LED con su resistencia en serie. La intención del test no cambia:
+  el warning de rango no afecta la readiness, `listo: true`, y los 4 caminos dan lo mismo.
+  Ninguna aserción se debilita.
+- **Alcance:** es el único archivo `tests/nucleo-*` modificado en este vertical. El freeze
+  verifica que `git diff 8b43c59 HEAD -- 'tests/nucleo-*'` contenga exactamente este
+  archivo.
