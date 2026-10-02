@@ -147,8 +147,10 @@ test("T3 opcionesRegla: sensores por capacidad, actuadores por clase, estados y 
   const o = vista(ctx).opcionesRegla
   assert.deepEqual(o.sensores, [{ id: ctx.pulsador, etiqueta: "Pulsador" }])
   assert.deepEqual(o.actuadores, [{ id: ctx.led, etiqueta: "LED" }])
-  assert.deepEqual(o.estados, [{ clave: "presionado", etiqueta: "presionado" }])
-  assert.deepEqual(o.salidas, [{ clave: "encendido", etiqueta: "encendido" }])
+  // MOD (T5, aditivo): `estados[i]`/`salidas[i]` pueden traer además `condicion`/`accion`
+  // (el payload canónico para el navegador, ver phase3-vista-reglas); acá sólo importan clave/etiqueta.
+  assert.deepEqual(o.estados.map(({ clave, etiqueta }) => ({ clave, etiqueta })), [{ clave: "presionado", etiqueta: "presionado" }])
+  assert.deepEqual(o.salidas.map(({ clave, etiqueta }) => ({ clave, etiqueta })), [{ clave: "encendido", etiqueta: "encendido" }])
   for (const lista of [o.sensores, o.actuadores]) assert.equal(lista.some((x) => x.id === ctx.resistencia), false)
   ctx.servicio.cerrar()
 })
@@ -191,7 +193,7 @@ test("T3 GUARD: ningún texto proyectado (frases, trazas, etiquetas, explicacion
   set(ctx, { cuando: { sensor: ctx.led }, entonces: { actuador: ctx.pulsador, accion: "encender" } })
   const v = vista(ctx)
   // los `id` son VALORES (nunca texto mostrado): se excluyen a propósito
-  const textos = [...textosDe(v.reglas.map((r) => ({ texto: r.texto, traza: r.traza, estado: r.frase.estado, salida: r.frase.salida, sensor: r.frase.sensor?.etiqueta, actuador: r.frase.actuador?.etiqueta, explicaciones: r.motivos.map((m) => m.explicacion) }))), ...textosDe(v.opcionesRegla.estados), ...textosDe(v.opcionesRegla.salidas), ...v.motivos.filter((m) => ["COMPORTAMIENTO_INCOMPLETO", "ACTUADOR_INVALIDO", "SENSOR_INVALIDO"].includes(m.codigo)).map((m) => m.explicacion ?? "")]
+  const textos = [...textosDe(v.reglas.map((r) => ({ texto: r.texto, traza: r.traza, estado: r.frase.estado, salida: r.frase.salida, sensor: r.frase.sensor?.etiqueta, actuador: r.frase.actuador?.etiqueta, explicaciones: r.motivos.map((m) => m.explicacion) }))), ...textosDe(v.opcionesRegla.estados.map((e) => e.etiqueta)), ...textosDe(v.opcionesRegla.salidas.map((e) => e.etiqueta)), ...v.motivos.filter((m) => ["COMPORTAMIENTO_INCOMPLETO", "ACTUADOR_INVALIDO", "SENSOR_INVALIDO"].includes(m.codigo)).map((m) => m.explicacion ?? "")]
   assert.ok(textos.length > 10)
   for (const t of textos) for (const re of PROHIBIDOS) assert.equal(re.test(t), false, `"${t}" contiene ${re}`)
   ctx.servicio.cerrar()
