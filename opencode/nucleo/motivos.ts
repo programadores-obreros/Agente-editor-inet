@@ -148,6 +148,21 @@
 //   se quitó; `datos { comportamiento, reglaQuitada }` lleva la regla COMPLETA quitada
 //   (para un undo futuro). Revisión +1; después `QuitarComponente` vuelve a estar
 //   permitido (`REMOCION_CON_DEPENDIENTES` sólo mira slots presentes de reglas vivas).
+//
+// Phase 3 (vertical #1, contrato B3) agrega, emitidos por `validar.ts::validarSemantico`
+// (categoria "semantica", severidad "blocking", clasificacion "representable" — Path A:
+// commitean y dejan `listo:false`, NUNCA "rechazo"), todos con `entidad {tipo:
+// "comportamiento", id}` y sin nombres de tipo (sólo datos del catálogo):
+// - `COMPORTAMIENTO_INCOMPLETO` — `datos { faltan }`, subconjunto de ["sensor",
+//   "estado" (la triada capacidad+comparador+umbral), "actuador", "salida" (la
+//   acción)], en ese orden.
+// - `ACTUADOR_INVALIDO` — `entonces.actuador` cuyo componente de catálogo tiene
+//   `clase !== "actuador"`; `datos { componente, clase }`. Tipo desconocido del
+//   catálogo: no se emite (ya existe `CATALOGO_COMPONENTE_DESCONOCIDO`). Un documento
+//   histórico con un actuador inválido carga igual y muestra este motivo.
+// - `SENSOR_INVALIDO` — `cuando.sensor` presente SIN triada cuyo catálogo no declara
+//   ninguna capacidad; `datos { componente }`. Con la triada presente no se emite
+//   (`CAPACIDAD_NO_DECLARADA` / `CAPACIDAD_INEXISTENTE_EN_CATALOGO` ya la cubren).
 
 // Phase 1.1 (RX) — hallazgo externo RX-01, CRÍTICO (revisión adversarial
 // independiente, reabre CP-01) agrega, categoria "estructural", clasificacion
@@ -368,7 +383,7 @@
  *   HARDWARE (pin/capacidad) como de CATÁLOGO/COMPONENTE — no hay una `categoria`
  *   "componente" separada en uso real hoy (existe en el enum de abajo, para no
  *   cerrar la puerta a Fase 2, pero Fase 1 no la emite).
- * - `categoria: "semantica"` es un passthrough vacío por diseño en el pipeline
+ * - `categoria: "semantica"` era un passthrough vacío por diseño (Phase 3 lo llena, ver arriba) en el pipeline
  *   continuo de `validarSemantico` (Gate 4) — pero el código YA existente
  *   `MAGNITUD_INCOMPATIBLE` (`catalogo.ts`, `propagarMagnitud`) usa esa MISMA
  *   `categoria` activamente FUERA de ese pipeline (durante `CambiarComponente`,

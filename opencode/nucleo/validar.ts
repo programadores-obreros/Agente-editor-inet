@@ -1,7 +1,7 @@
 // Agregador de validación + readiness. Gate 4 (T_diseno_consolidado.md §6).
 //
-// `validarProyecto` junta estructural + técnico + semántico (nivel 5, Fase 1 = []
-// passthrough — sin reglas propias todavía) y aplica el orden estable de
+// `validarProyecto` junta estructural + técnico + semántico (nivel 5, Phase 3: reglas
+// de comportamiento, ver `validarSemantico`) y aplica el orden estable de
 // `motivos.ts`. `derivarReadiness` deriva `incompleto`/`invalido`/`listo` como
 // predicados INDEPENDIENTES: `listo` nunca se guarda, siempre se recalcula.
 //
@@ -15,10 +15,47 @@ import { compararMotivos } from "./motivos.ts"
 import { validarEstructural } from "./validar-estructural.ts"
 import { validarTecnico } from "./validar-tecnico.ts"
 
-/** Nivel 5, semántico — Fase 1 no tiene reglas propias (passthrough explícito, no un
- * olvido: T_diseno_consolidado.md §6 lo dice literal). */
-export function validarSemantico(_proyecto: Proyecto, _catalogo: Catalogo): readonly Motivo[] {
-  return []
+/**
+ * Nivel 5, semántico (Phase 3, vertical #1, contrato B3). UNA función genérica, guiada
+ * ÚNICAMENTE por datos del catálogo (`clase`, `capacidades`) — nunca por un id de tipo.
+ * Los tres motivos son blocking + representable (Path A: el Engine commitea igual y el
+ * proyecto queda `listo:false`); jamás `clasificacion: "rechazo"`.
+ * - `COMPORTAMIENTO_INCOMPLETO`: `datos.faltan` ⊆ [sensor, estado (la triada), actuador,
+ *   salida (la acción)], en ese orden.
+ * - `ACTUADOR_INVALIDO`: `entonces.actuador` cuyo catálogo no es `clase:"actuador"`. Un
+ *   tipo desconocido del catálogo no se emite acá (`CATALOGO_COMPONENTE_DESCONOCIDO`).
+ * - `SENSOR_INVALIDO`: `cuando.sensor` SIN triada cuyo catálogo no declara NINGUNA
+ *   capacidad. Con la triada presente, la capacidad exacta ya la diagnostica otro nivel.
+ */
+export function validarSemantico(proyecto: Proyecto, catalogo: Catalogo): readonly Motivo[] {
+  const motivos: Motivo[] = []
+  for (const b of proyecto.comportamientos) {
+    const entidad = { tipo: "comportamiento" as const, id: b.id }
+    const semantico = (codigo: string, datos: Record<string, unknown>): Motivo => ({ codigo, categoria: "semantica", severidad: "blocking", clasificacion: "representable", entidad, datos })
+    const cuando = b.cuando
+    const entonces = b.entonces
+    const tieneEstado = cuando?.capacidad !== undefined && cuando.comparador !== undefined && cuando.umbral !== undefined
+
+    const faltan: string[] = []
+    if (cuando?.sensor === undefined) faltan.push("sensor")
+    if (!tieneEstado) faltan.push("estado")
+    if (entonces?.actuador === undefined) faltan.push("actuador")
+    if (entonces?.accion === undefined) faltan.push("salida")
+    if (faltan.length > 0) motivos.push(semantico("COMPORTAMIENTO_INCOMPLETO", { faltan }))
+
+    if (entonces?.actuador !== undefined) {
+      const comp = proyecto.componentes.find((c) => c.id === entonces.actuador)
+      const cat = comp ? catalogo.obtenerComponente(comp.tipo) : undefined
+      if (comp && cat && cat.clase !== "actuador") motivos.push(semantico("ACTUADOR_INVALIDO", { componente: comp.id, clase: cat.clase }))
+    }
+
+    if (cuando?.sensor !== undefined && !tieneEstado) {
+      const comp = proyecto.componentes.find((c) => c.id === cuando.sensor)
+      const cat = comp ? catalogo.obtenerComponente(comp.tipo) : undefined
+      if (comp && cat && cat.capacidades.length === 0) motivos.push(semantico("SENSOR_INVALIDO", { componente: comp.id }))
+    }
+  }
+  return motivos
 }
 
 export function validarProyecto(proyecto: Proyecto, catalogo: Catalogo): readonly Motivo[] {
