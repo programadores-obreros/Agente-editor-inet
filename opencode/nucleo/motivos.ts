@@ -318,6 +318,25 @@
 //   códigos pueden coexistir para la MISMA operación, nunca se fusionan. `datos: {
 //   umbral, unidad, rango }`. Ver `docs/programacion-intencion/IR-SPEC.md` §6.12.
 
+// Phase 3 — Pre-Human-Test Hardening, HD-W0-A (docs/programacion-intencion/
+// PHASE_3_PRE_HUMAN_TEST_DESIGN.md §1) agrega, categoria "operacion",
+// `severidad: "blocking"`, `clasificacion: "rechazo"` siempre, emitido por
+// `operaciones.ts` (`aplicarAsignarPin`), justo después de `TERMINAL_NO_DECLARADO` y
+// antes de `PIN_INEXISTENTE_EN_PLACA` (hermano directo de ambos, misma función, mismo
+// patrón de rechazo):
+// - `TERMINAL_NO_ASIGNABLE` — `AsignarPin` sobre un terminal que el catálogo declara
+//   `electrica: "riel-fijo"` (destino fijo — "va en el medio del cable", nunca se
+//   conecta directo a un pin de la placa) rechaza SIEMPRE, sin excepción (incluido
+//   `pin: null`). La fuente de "asignable" es EXCLUSIVAMENTE el catálogo (misma
+//   derivación que `terminalesNoRielFijo`/`vista-fisica/vocabulario.ts::asignable`) —
+//   nunca el tipo/id del componente. `datos: { componente, terminal, electrica }`
+//   (`electrica` da contexto genérico — hoy siempre `"riel-fijo"`, pero el campo no
+//   hardcodea ese string como el único motivo posible a futuro). El loader
+//   (`cargador.ts`) y la validación continua (`validar-tecnico.ts`, que sigue
+//   salteando `riel-fijo` a propósito) NO cambian: un documento histórico que ya
+//   tenga este dato sigue cargando igual — la invariancia gobierna sólo la operación
+//   NUEVA (PERSISTIBLE ⇒ RECARGABLE, ver `IR-SPEC.md` §6.11).
+
 /**
  * Categorías de motivo del núcleo completo (§5.1). Gate 1 sólo emite "operacion".
  *

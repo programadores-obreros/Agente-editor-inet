@@ -56,6 +56,10 @@ export function planDePintado(modeloDeVista, opciones = {}) {
       // La placa nunca tiene rol pedagógico Entrada/Salida (§3.3) — `null` explícito,
       // mismo campo que los componentes, para que `pintar.js` no necesite distinguir.
       etiquetaRol: null,
+      // PFX-1: la placa nunca es la pieza fusionada de nada — `null` explícito, mismo
+      // campo que los componentes, para que `pintar.js` no tenga que distinguir
+      // "placa" de "componente sin fusión".
+      agrupadoCon: null,
     })
   }
 
@@ -75,6 +79,12 @@ export function planDePintado(modeloDeVista, opciones = {}) {
       // texto GENÉRICA, nunca una tabla de clases/tipos ni un despacho por
       // `componente.tipo`.
       etiquetaRol: etiquetaDeRol(componente.rol),
+      // PFX-1 (RED-PHT-PHYSICAL-TRUTH F1): `componente.agrupadoCon` YA viene
+      // resuelto del servidor (`snapshot-a-vista.ts::reordenarParaAdyacencia`) — acá
+      // sólo se reenvía tal cual, nunca se decide de nuevo cuál pieza fusiona con
+      // cuál (eso sería la misma lógica física duplicada que PFX-2 corrigió del
+      // otro lado). `pintar.js` es quien agrupa de verdad, leyendo este dato.
+      agrupadoCon: componente.agrupadoCon,
     })
   }
 

@@ -90,6 +90,18 @@ export interface ComponenteVista {
    * `Componente.pines` ni siquiera tenga esa clave — `operaciones.ts`,
    * `terminalesNoRielFijo`). */
   readonly terminales: Readonly<Record<string, TerminalVista>>
+  /**
+   * PFX-1 (RED-PHT-PHYSICAL-TRUTH F1, criterio pedagógico del diseño §2 — verificado
+   * real en Chromium): `Componente.id` del ancla con la que esta pieza tiene que
+   * dibujarse en el MISMO contenedor (fila), ella primero — SÓLO cuando esta
+   * instancia es la resistencia de una fusión HD-W0-B
+   * (`snapshot-a-vista.ts::resolverFusionesSerie`/`reordenarParaAdyacencia`); `null`
+   * para TODO lo demás (el ancla misma, cualquier componente sin fusión, una
+   * resistencia huérfana o ambigua). Puramente de PRESENTACIÓN — nunca afecta
+   * `cables`/`gpiosDisponibles`/`motivos`. `plan-de-pintado.js`/`pintar.js` sólo
+   * OBEDECEN este dato (lo agrupan si viene seteado); nunca deciden de nuevo cuál
+   * pieza va con cuál. */
+  readonly agrupadoCon: string | null
 }
 
 /**

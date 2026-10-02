@@ -44,9 +44,20 @@ function nombreDe(datos: Datos, clave: string, nombres: ResolverNombreDeComponen
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Los 8 textos APROBADOS (§3.4/§10 R-4) — cita textual, sin parafrasear.
+//
+// Phase 3 — Pre-Human-Test Hardening, HD-W0-A (docs/programacion-intencion/
+// PHASE_3_PRE_HUMAN_TEST_DESIGN.md §1) agrega una 9na entrada, `TERMINAL_NO_ASIGNABLE`
+// — no es parte de los 8 textos ya aprobados por el Human Product Owner de Slice 2,
+// es la explicación pedagógica nueva que esa decisión pide (fila "Explicación
+// pedagógica" del diseño): mismo criterio de la tabla (`nombreDe`, nunca ids crudos),
+// evitando un pronombre con género fijo (el `componente` referido puede ser masculino
+// o femenino — "terminal" en español es siempre masculino, así que "lo" referido al
+// terminal es correcto sin importar el componente).
 // ════════════════════════════════════════════════════════════════════════════════════
 
 const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
+  TERMINAL_NO_ASIGNABLE: (datos, nombres) =>
+    `${nombreDe(datos, "componente", nombres)}: este terminal no se conecta directo a un pin de la placa, va en el medio del cable. Usá 'Conectar' para unirlo a la pieza que lo necesita.`,
   PIN_SIN_PULLUP_INTERNO: (datos, nombres) =>
     `El ${nombreDe(datos, "componente", nombres)} necesita la resistencia interna (pull-up) del pin, y ${campo(datos, "pin")} no la tiene: es sólo de entrada. Elegí otro pin.`,
   PIN_OCUPADO: (datos, nombres) =>

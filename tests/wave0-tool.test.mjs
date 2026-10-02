@@ -495,28 +495,29 @@ test("FX-6(a): un componente que NO es un 'puente' (el LED) no trae 'nota' (nunc
   assert.equal(led.nota, undefined)
 })
 
-test("FX-6(b): descripcionPines, si un terminal riel-fijo YA tiene un pin real en el IR (F-TRUTH-1: el Engine hoy no rechaza AsignarPin ahí), lo dice explícito -- nunca lo oculta detrás de 'puente'", async () => {
+test("FX-6(b): descripcionPines, si un terminal riel-fijo YA tiene un pin en el IR por un documento HISTÓRICO (previo a HD-W0-A), lo dice explícito -- nunca lo oculta detrás de 'puente'", async () => {
   const dirActivo = nuevoDir("wave0-fx6-descripcion-riel-fijo")
   const idProyecto = nuevoIdProyecto()
 
-  let r = parsearJson(
-    await llamarProyectoFisico(
-      { accion: "aplicar", idProyecto, baseRevision: 0, operaciones: [{ tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } }, { tipo: "AgregarComponente", payload: { tipo: "resistencia" } }] },
-      dirActivo,
-    ),
-  )
-  assert.equal(r.ok, true)
-  let lectura = parsearJson(await llamarProyectoFisico({ accion: "leer", idProyecto }, dirActivo))
-  const idResistencia = lectura.componentes.find((c) => c.tipo === "resistencia").id
+  // HD-W0-A (docs/programacion-intencion/PHASE_3_PRE_HUMAN_TEST_DESIGN.md §1): el
+  // Engine ahora RECHAZA AsignarPin sobre un terminal riel-fijo (TERMINAL_NO_ASIGNABLE)
+  // -- este fixture ya NO se puede armar con la operación (ni con pin:null, el
+  // rechazo es sin excepción). El caso que este test protege -- que
+  // 'descripcionPines' nunca oculta un pin que el IR YA tiene -- sigue siendo real
+  // para un documento ESCRITO ANTES de esta decisión: se construye el estado directo
+  // a disco con el almacén real (`crearAlmacen().guardar`), bypaseando la operación
+  // -- la CARGA no cambia (PERSISTIBLE ⇒ RECARGABLE, §1 fila "Carga (historia)" del
+  // diseño): `cargador.ts`/`validar-tecnico.ts` siguen intactos a propósito.
+  const { crearAlmacen } = await import(join(REPO, "opencode/nucleo/almacen.ts"))
+  const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
+  const catalogo = construirCatalogoMinimoReal()
+  const directorioDatos = directorioDeDatos(dirActivo)
+  const base = crearProyecto({ generadorId: () => idProyecto, ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash })
+  const proyectoHistorico = { ...base, placa: "esp32-devkit-v1", siguienteIdLocal: 1, componentes: [{ id: "cmp-0", tipo: "resistencia", pines: { a: "GPIO18" }, propiedades: {} }] }
+  const guardado = crearAlmacen({ directorio: directorioDatos, catalogo }).guardar(proyectoHistorico)
+  assert.equal(guardado.ok, true, `fixture: no se pudo escribir el documento histórico: ${JSON.stringify(guardado)}`)
 
-  // Fixture del defecto real (F-TRUTH-1): el Engine (protegido) hoy ACEPTA un
-  // AsignarPin sobre "a" (riel-fijo, sin destinoFijo) -- no se cierra ese gap acá.
-  r = parsearJson(
-    await llamarProyectoFisico({ accion: "aplicar", idProyecto, baseRevision: lectura.revision, operaciones: [{ tipo: "AsignarPin", payload: { componente: idResistencia, terminal: "a", pin: "GPIO18" } }] }, dirActivo),
-  )
-  assert.equal(r.ok, true, `fixture: el Engine tiene que aceptar esto hoy (gap heredado, F-TRUTH-1): ${JSON.stringify(r.motivos)}`)
-
-  lectura = parsearJson(await llamarProyectoFisico({ accion: "leer", idProyecto }, dirActivo))
-  const resistencia = lectura.componentes.find((c) => c.id === idResistencia)
+  const lectura = parsearJson(await llamarProyectoFisico({ accion: "leer", idProyecto }, dirActivo))
+  const resistencia = lectura.componentes.find((c) => c.id === "cmp-0")
   assert.match(resistencia.descripcionPines, /a → GPIO18/, `la descripción tiene que mostrar el pin REAL que el IR ya tiene, nunca 'puente (sin destino fijo)' cuando hay un valor: ${resistencia.descripcionPines}`)
 })
