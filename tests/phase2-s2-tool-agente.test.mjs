@@ -175,7 +175,9 @@ test("T-AG-02: tipo fuera de whitelist se rechaza EN LA TOOL, sin invocar el Eng
     const revisionAntes = servicio.snapshot().revision
     const discoAntes = leerDiscoCrudo(dirDatos, idProyecto)
 
-    const tiposInvalidos = ["SetComportamiento", "CambiarComponente", "CrearProyecto", "setplaca", "Foo", ""]
+    // MOD (contrato Phase 3 §A, DECISIONS 2531e09): SetComportamiento YA es un tipo permitido
+    // (whitelist de 8); CambiarComponente/CrearProyecto/tipos mal escritos siguen rechazados.
+    const tiposInvalidos = ["CambiarComponente", "CrearProyecto", "setplaca", "Foo", ""]
     for (const tipoInvalido of tiposInvalidos) {
       const r = parsearJson(await llamarTool({ accion: "aplicar", idProyecto, baseRevision: revisionAntes, operaciones: [{ tipo: tipoInvalido, payload: {} }] }, dirActivo))
       assert.equal(r.ok, false, `tipo ${JSON.stringify(tipoInvalido)} tendría que rechazarse`)
@@ -208,7 +210,10 @@ test("T-AG-02: un lote con UNA sola operación fuera de whitelist se rechaza ENT
           baseRevision: 0,
           operaciones: [
             { tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } },
-            { tipo: "SetComportamiento", payload: {} },
+            // MOD (contrato Phase 3 §A, DECISIONS 2531e09): antes `SetComportamiento`; ahora es un
+            // tipo permitido, así que la operación fuera de whitelist del lote mixto es
+            // `CambiarComponente` (sigue afuera) — misma intención: un lote mixto se rechaza ENTERO.
+            { tipo: "CambiarComponente", payload: {} },
           ],
         },
         dirActivo,
@@ -216,7 +221,7 @@ test("T-AG-02: un lote con UNA sola operación fuera de whitelist se rechaza ENT
     )
     assert.equal(r.ok, false)
     assert.equal(r.codigo, "OPERACION_FUERA_DE_WHITELIST")
-    assert.equal(r.tipo, "SetComportamiento")
+    assert.equal(r.tipo, "CambiarComponente")
     assert.equal(servicio.snapshot().revision, 0, "nada se aplicó, ni siquiera la SetPlaca válida del mismo lote")
     assert.equal(servicio.snapshot().proyecto.placa, null)
   } finally {
