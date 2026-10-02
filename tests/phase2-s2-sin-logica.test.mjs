@@ -23,9 +23,12 @@ const { pintar } = await import(join(REPO, "opencode/vista-fisica/web/pintar.js"
 // 1 + 2. Escaneo estático
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("web/*.js no contiene button-press/button-release/SetComportamiento", () => {
+test("web/*.js no contiene button-press/button-release", () => {
   const dirWeb = join(REPO, "opencode/vista-fisica/web")
-  const PATRONES_PROHIBIDOS = [/button-press/i, /button-release/i, /SetComportamiento/]
+  // MOD (contrato Phase 3 §A, DECISIONS 2531e09): se quita SÓLO /SetComportamiento/ — el
+  // navegador ahora edita la frase de nivel (HD-S2-10 sustituido). button-press/
+  // button-release siguen prohibidos; la guardia nueva vive en phase3-web-guard.test.mjs.
+  const PATRONES_PROHIBIDOS = [/button-press/i, /button-release/i]
   const archivos = readdirSync(dirWeb).filter((f) => f.endsWith(".js"))
   assert.ok(archivos.length > 0, "fixture: tiene que haber al menos un .js en vista-fisica/web")
   for (const archivo of archivos) {
