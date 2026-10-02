@@ -55,7 +55,28 @@ function nombreDe(datos: Datos, clave: string, nombres: ResolverNombreDeComponen
 // terminal es correcto sin importar el componente).
 // ════════════════════════════════════════════════════════════════════════════════════
 
+// Phase 3, vertical #1 (contrato B6): plantillas de las reglas. Nunca interpolan ids
+// internos, la `clase` de catálogo ni nombres de capacidad.
+const FALTANTE_EN_LENGUAJE_HUMANO: Readonly<Record<string, string>> = {
+  sensor: "qué entrada",
+  estado: "qué estado de la entrada",
+  actuador: "qué salida",
+  salida: "qué hace la salida",
+}
+
+function listaHumana(items: readonly string[]): string {
+  if (items.length <= 1) return items.join("")
+  return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`
+}
+
 const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
+  COMPORTAMIENTO_INCOMPLETO: (datos) => {
+    const faltan = Array.isArray(datos.faltan) ? datos.faltan.map((f) => FALTANTE_EN_LENGUAJE_HUMANO[String(f)]).filter((t): t is string => t !== undefined) : []
+    return `A la regla le falta: ${listaHumana(faltan)}.`
+  },
+  ACTUADOR_INVALIDO: (datos, nombres) => `${nombreDe(datos, "componente", nombres)} no es una salida: la regla no puede encenderlo. Elegí una salida.`,
+  SENSOR_INVALIDO: (datos, nombres) => `${nombreDe(datos, "componente", nombres)} no entrega un estado que la regla pueda leer. Elegí una entrada.`,
+  REMOCION_CON_DEPENDIENTES: () => "Este componente lo usa una regla. Quitá o cambiá la regla primero.",
   TERMINAL_NO_ASIGNABLE: (datos, nombres) =>
     `${nombreDe(datos, "componente", nombres)}: este terminal no se conecta directo a un pin de la placa, va en el medio del cable. Usá 'Conectar' para unirlo a la pieza que lo necesita.`,
   PIN_SIN_PULLUP_INTERNO: (datos, nombres) =>

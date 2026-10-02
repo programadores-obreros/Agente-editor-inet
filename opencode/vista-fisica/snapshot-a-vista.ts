@@ -29,7 +29,7 @@
 // (strapping: 0/2/12/15) si el catálogo lo acepta. Cerrarlo es una decisión de
 // producto sobre `nucleo/catalogo.ts`, no de este adaptador.
 
-import type { Proyecto, Componente } from "../nucleo/ir.ts"
+import type { Proyecto, Componente, ComportamientoRegla } from "../nucleo/ir.ts"
 import type { Catalogo, Terminal, Requisito } from "../nucleo/catalogo.ts"
 import type { RegistroPin, Placa } from "../nucleo/placas.ts"
 import type { Motivo } from "../nucleo/motivos.ts"
@@ -38,7 +38,7 @@ import { validarProyecto, derivarReadiness } from "../nucleo/validar.ts"
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA } from "./wokwi-render-datos.ts"
 import { etiquetaDeTerminal } from "./etiquetas-terminales.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista } from "./modelo-vista.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, FraseReglaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal — consulta `asignarPin()` (`nucleo/catalogo.ts`)
@@ -468,7 +468,72 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   // fusionadas, justo antes de su ancla; el resto conserva su orden de siempre.
   const componentesOrdenados = reordenarParaAdyacencia(componentesConValor, fusionesSerie)
 
-  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness }
+  const { reglas, opcionesRegla } = proyectarReglas(proyecto, catalogo, componentes, motivos)
+
+  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 3, vertical #1 (contrato B6): proyección de las reglas. Todo del lado del
+// servidor, determinista, sin LLM; el navegador sólo pinta lo que recibe.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** "presionado" ⇔ EXACTAMENTE la triada de nivel `estadoBooleano >= 1` (HD-P3-4). */
+function esCondicionPresionado(cuando: ComportamientoRegla["cuando"]): boolean {
+  const u = cuando?.umbral
+  return cuando?.capacidad === "estadoBooleano" && cuando.comparador === ">=" && u !== undefined && u.valor === 1 && u.unidad === "ninguna" && u.magnitud === "estadoBooleano"
+}
+
+const ETIQUETA_TRAZA = "Explicación de la regla — no es una simulación ni lo que pasa en la placa."
+
+function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: readonly ComponenteVista[], motivos: readonly MotivoVista[]): { reglas: readonly ReglaVista[]; opcionesRegla: OpcionesReglaVista } {
+  const etiquetaDe = (id: string): string => componentes.find((c) => c.id === id)?.nombre ?? "componente que ya no existe"
+  const ref = (id: string): ReferenciaVista => ({ id, etiqueta: etiquetaDe(id) })
+
+  const reglas: ReglaVista[] = proyecto.comportamientos.map((b) => {
+    const delaRegla = motivos.filter((m) => m.entidad?.tipo === "comportamiento" && m.entidad.id === b.id)
+    const incompleto = delaRegla.find((m) => m.codigo === "COMPORTAMIENTO_INCOMPLETO")
+    const faltanCrudo = incompleto?.datos?.faltan
+    const faltan: readonly string[] = Array.isArray(faltanCrudo) ? faltanCrudo.map(String) : []
+    const completa = incompleto === undefined
+
+    const cuando = b.cuando
+    const entonces = b.entonces
+    const tieneEstado = cuando?.capacidad !== undefined && cuando.comparador !== undefined && cuando.umbral !== undefined
+    const presionado = tieneEstado && esCondicionPresionado(cuando)
+    const salidaClave = entonces?.accion === undefined ? undefined : entonces.accion === "encender" ? "encendido" : "apagado"
+    const frase: FraseReglaVista = {
+      ...(cuando?.sensor !== undefined ? { sensor: ref(cuando.sensor) } : {}),
+      ...(tieneEstado ? { estado: presionado ? { clave: "presionado" as const, etiqueta: "presionado" } : { clave: "avanzada" as const, etiqueta: "condición avanzada" } } : {}),
+      ...(entonces?.actuador !== undefined ? { actuador: ref(entonces.actuador) } : {}),
+      ...(salidaClave !== undefined ? { salida: { clave: salidaClave, etiqueta: salidaClave } } : {}),
+    }
+
+    const canonica = completa && presionado && frase.sensor !== undefined && frase.actuador !== undefined && frase.salida !== undefined
+    if (!canonica) return { id: b.id, frase, texto: null, completa, faltan, motivos: delaRegla }
+
+    const s = frase.sensor!.etiqueta
+    const a = frase.actuador!.etiqueta
+    const salida = frase.salida!.etiqueta
+    const traza: TrazaReglaVista = {
+      etiqueta: ETIQUETA_TRAZA,
+      ramas: [`Si el ${s} está presionado → la condición es verdadera → el ${a} está ${salida}.`, `Si el ${s} no está presionado → la condición es falsa → el ${a} está apagado (reposo).`],
+      ...(salidaClave === "apagado" ? { nota: "Esta regla no cambia nada visible." } : {}),
+    }
+    return { id: b.id, frase, texto: `Mientras el ${s} esté presionado, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza }
+  })
+
+  // Opciones derivadas de datos de catálogo (capacidad / clase), nunca una tabla de tipos.
+  // `apagar`/"apagado" NO se ofrece (HD-P3D-2): con reposo = apagado no tiene efecto visible.
+  const sensores: ReferenciaVista[] = []
+  const actuadores: ReferenciaVista[] = []
+  for (const c of componentes) {
+    const cat = catalogo.obtenerComponente(c.tipo)
+    if (!cat) continue
+    if (cat.capacidades.some((cap) => cap.id === "estadoBooleano")) sensores.push({ id: c.id, etiqueta: c.nombre })
+    if (cat.clase === "actuador") actuadores.push({ id: c.id, etiqueta: c.nombre })
+  }
+  return { reglas, opcionesRegla: { sensores, estados: [{ clave: "presionado", etiqueta: "presionado" }], actuadores, salidas: [{ clave: "encendido", etiqueta: "encendido" }] } }
 }
 
 /**

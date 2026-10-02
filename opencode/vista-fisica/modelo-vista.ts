@@ -173,4 +173,58 @@ export interface ModeloDeVista {
   /** Tal cual `derivarReadiness()` — la vista nunca decide por su cuenta si el
    * proyecto está "listo". */
   readonly readiness: Readiness
+  /** Phase 3, vertical #1 (contrato B6): una entrada por regla del IR, en el orden de
+   * `Proyecto.comportamientos`. Aditivo. */
+  readonly reglas: readonly ReglaVista[]
+  /** Phase 3, vertical #1: qué puede elegir la frase editable, derivado del catálogo. */
+  readonly opcionesRegla: OpcionesReglaVista
+}
+
+/** `id` = valor (nunca se muestra); `etiqueta` = nombre humano con ordinal estable ("LED 2"). */
+export interface ReferenciaVista {
+  readonly id: string
+  readonly etiqueta: string
+}
+
+export interface OpcionVista {
+  readonly clave: string
+  readonly etiqueta: string
+}
+
+/** Los cuatro slots de la frase "Mientras el <sensor> esté <estado>, el <actuador> está <salida>."
+ * Un slot AUSENTE = vacío. `estado.clave: "avanzada"` = cualquier condición que no es
+ * exactamente "presionado" (la frase no la edita, sólo la nombra). */
+export interface FraseReglaVista {
+  readonly sensor?: ReferenciaVista
+  readonly estado?: { readonly clave: "presionado" | "avanzada"; readonly etiqueta: string }
+  readonly actuador?: ReferenciaVista
+  readonly salida?: { readonly clave: "encendido" | "apagado"; readonly etiqueta: string }
+}
+
+/** Explicación textual determinista de una regla completa con la condición "presionado".
+ * NO es una simulación ni un runtime. El reposo apagado es el contrato derivado (HD-P3D-1). */
+export interface TrazaReglaVista {
+  readonly etiqueta: string
+  readonly ramas: readonly string[]
+  readonly nota?: string
+}
+
+export interface ReglaVista {
+  readonly id: string
+  readonly frase: FraseReglaVista
+  /** Oración en texto llano; `null` salvo regla completa con la condición canónica "presionado". */
+  readonly texto: string | null
+  readonly completa: boolean
+  /** `COMPORTAMIENTO_INCOMPLETO.datos.faltan` (fuente única: el validador), `[]` si completa. */
+  readonly faltan: readonly string[]
+  /** Los motivos cuya entidad es esta regla. */
+  readonly motivos: readonly MotivoVista[]
+  readonly traza?: TrazaReglaVista
+}
+
+export interface OpcionesReglaVista {
+  readonly sensores: readonly ReferenciaVista[]
+  readonly estados: readonly OpcionVista[]
+  readonly actuadores: readonly ReferenciaVista[]
+  readonly salidas: readonly OpcionVista[]
 }

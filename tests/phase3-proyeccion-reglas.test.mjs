@@ -190,7 +190,8 @@ test("T3 GUARD: ningún texto proyectado (frases, trazas, etiquetas, explicacion
   set(ctx, { entonces: { actuador: ctx.pulsador } })
   set(ctx, { cuando: { sensor: ctx.led }, entonces: { actuador: ctx.pulsador, accion: "encender" } })
   const v = vista(ctx)
-  const textos = [...textosDe(v.reglas.map((r) => ({ ...r, frase: { ...r.frase, sensor: r.frase.sensor?.etiqueta, actuador: r.frase.actuador?.etiqueta }, motivos: r.motivos.map((m) => m.explicacion) }))), ...textosDe(v.opcionesRegla.estados), ...textosDe(v.opcionesRegla.salidas), ...v.motivos.filter((m) => ["COMPORTAMIENTO_INCOMPLETO", "ACTUADOR_INVALIDO", "SENSOR_INVALIDO"].includes(m.codigo)).map((m) => m.explicacion ?? "")]
+  // los `id` son VALORES (nunca texto mostrado): se excluyen a propósito
+  const textos = [...textosDe(v.reglas.map((r) => ({ texto: r.texto, traza: r.traza, estado: r.frase.estado, salida: r.frase.salida, sensor: r.frase.sensor?.etiqueta, actuador: r.frase.actuador?.etiqueta, explicaciones: r.motivos.map((m) => m.explicacion) }))), ...textosDe(v.opcionesRegla.estados), ...textosDe(v.opcionesRegla.salidas), ...v.motivos.filter((m) => ["COMPORTAMIENTO_INCOMPLETO", "ACTUADOR_INVALIDO", "SENSOR_INVALIDO"].includes(m.codigo)).map((m) => m.explicacion ?? "")]
   assert.ok(textos.length > 10)
   for (const t of textos) for (const re of PROHIBIDOS) assert.equal(re.test(t), false, `"${t}" contiene ${re}`)
   ctx.servicio.cerrar()
