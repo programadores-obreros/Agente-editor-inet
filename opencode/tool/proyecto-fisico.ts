@@ -41,12 +41,14 @@ import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vi
 import { descripcionPinesDeComponente, valoresValidosParaMotivos, vocabularioDesdeCatalogo } from "../vista-fisica/vocabulario.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
-// R-6: whitelist EXACTA e inmutable — SetComportamiento (HD-S2-10: nada de
-// lógica) y CambiarComponente (fuera del recorrido de este slice) quedan
-// afuera a propósito, igual que cualquier tipo desconocido/mal escrito.
+// R-6 (reabierto, Phase 3 — DECISIONS 2531e09, contrato B7): whitelist CERRADA de
+// EXACTAMENTE 8 tipos: los 6 de siempre más `SetComportamiento` y
+// `QuitarComportamiento`. Las reglas (comportamientos) pasan por el MISMO Project
+// Engine que todo lo demás: la tool sólo las transporta. `CambiarComponente` sigue
+// afuera, igual que cualquier tipo desconocido o mal escrito.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-const OPERACIONES_PERMITIDAS: readonly TipoOperacion[] = Object.freeze(["SetPlaca", "AgregarComponente", "QuitarComponente", "AsignarPin", "Conectar", "Desconectar"])
+const OPERACIONES_PERMITIDAS: readonly TipoOperacion[] = Object.freeze(["SetPlaca", "AgregarComponente", "QuitarComponente", "AsignarPin", "Conectar", "Desconectar", "SetComportamiento", "QuitarComportamiento"])
 
 /** Máximo de operaciones por llamada (R-6) — con más, se rechaza EXPLÍCITO, nunca se
  * trunca, aplica parcial ni se divide en varias transacciones (§3.1 del diseño). */
@@ -226,7 +228,10 @@ function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, catalo
     rol: rolPorId.get(componente.id) ?? null,
   }))
   const motivos = (vista?.motivos ?? []).map(proyectarMotivoParaAgente)
-  return { accion: "leer" as const, idProyecto, revision: snapshot.revision, componentes, motivos }
+  // Phase 3: las reglas salen de la MISMA proyección del servidor que usa la vista
+  // (`ModeloDeVista.reglas`) — ningún segundo cálculo acá.
+  const reglas = (vista?.reglas ?? []).map((r) => ({ id: r.id, texto: r.texto, completa: r.completa, faltan: r.faltan, frase: r.frase }))
+  return { accion: "leer" as const, idProyecto, revision: snapshot.revision, componentes, reglas, motivos }
 }
 
 /**
@@ -271,7 +276,7 @@ Toda salida empieza con un campo \`resultado\` (texto llano inequívoco): "SÓLO
 
 \`simular\`/\`aplicar\` necesitan:
 - \`baseRevision\`: la revisión que leíste con \`leer\` justo antes — si alguien más (el alumno desde el navegador, u otra llamada tuya) ya cambió el proyecto, la operación se rechaza con un motivo claro en vez de pisar ese cambio. Nunca inventes este número ni lo copies de una llamada vieja: si no lo tenés a mano, llamá \`leer\` primero.
-- \`operaciones\`: de 1 a ${MAXIMO_OPERACIONES} operaciones \`{tipo, payload}\`. Sólo se aceptan estos 6 tipos: ${OPERACIONES_PERMITIDAS.join(", ")}. Cualquier otro tipo (incluida cualquier forma de "comportamiento" o lógica condicional) se rechaza SIN tocar el proyecto — este slice no modela pulsador→LED ni ninguna otra regla, sólo arma piezas y cablea pines.
+- \`operaciones\`: de 1 a ${MAXIMO_OPERACIONES} operaciones \`{tipo, payload}\`. Sólo se aceptan estos 8 tipos (lista cerrada): ${OPERACIONES_PERMITIDAS.join(", ")}. Cualquier otro tipo (incluido CambiarComponente) se rechaza SIN tocar el proyecto. Las reglas ("mientras la entrada esté presionada, la salida está encendida") se crean con SetComportamiento y se quitan con QuitarComportamiento (por id, el que devuelve \`leer\`): pasan por el mismo Project Engine, que decide si entran. \`vocabulario.operaciones\` trae el payload EXACTO de ejemplo. Una regla de NIVEL describe un estado mientras la condición es verdadera; no es un evento ni una memoria ("cuando lo aprieto una vez", "que quede prendido" no se pueden expresar así).
 
 Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez de pisarlo.`,
   args: {

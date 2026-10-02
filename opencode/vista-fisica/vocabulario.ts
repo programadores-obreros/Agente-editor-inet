@@ -107,6 +107,9 @@ const PLACEHOLDER_COMPONENTE = "<id de un componente ya agregado — lo devuelve
 const PLACEHOLDER_TERMINAL = "<id de terminal — ver componentes[].terminales>"
 const PLACEHOLDER_PIN = "<id de pin de la placa, p. ej. GPIO4>"
 const PLACEHOLDER_CONEXION = "<id de conexión — lo devuelve 'leer'>"
+const PLACEHOLDER_PULSADOR = "<id del pulsador>"
+const PLACEHOLDER_LED = "<id del LED>"
+const PLACEHOLDER_REGLA = "<id de la regla>"
 
 /**
  * Deriva el vocabulario completo del catálogo REAL. `tiposPermitidos` es la whitelist
@@ -149,11 +152,26 @@ export function vocabularioDesdeCatalogo(catalogo: Catalogo, tiposPermitidos: re
       case "Desconectar":
         ejemplos.Desconectar = { conexion: PLACEHOLDER_CONEXION }
         break
+      case "SetComportamiento":
+        // Phase 3 (contrato B7): la forma EXACTA de "mientras <entrada> esté presionada,
+        // <salida> está encendida" (condición de NIVEL; reposo apagado = derivado, no se
+        // guarda). Los `<...>` son marcadores: el agente los reemplaza con ids de `leer`.
+        ejemplos.SetComportamiento = {
+          comportamiento: {
+            cuando: { sensor: PLACEHOLDER_PULSADOR, capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } },
+            entonces: { actuador: PLACEHOLDER_LED, accion: "encender" },
+          },
+        }
+        break
+      case "QuitarComportamiento":
+        ejemplos.QuitarComportamiento = { comportamiento: PLACEHOLDER_REGLA }
+        break
       default:
-        // SetComportamiento/CambiarComponente nunca están en la whitelist de R-6 — si
-        // algún día entraran, quedan sin ejemplo acá hasta que se declare uno a
-        // propósito (nunca se inventa un payload para un tipo que la tool todavía no
-        // soporta).
+        // CambiarComponente nunca está en la whitelist de la tool (los 8 tipos son
+        // SetPlaca, AgregarComponente, QuitarComponente, AsignarPin, Conectar,
+        // Desconectar, SetComportamiento, QuitarComportamiento) — si algún día entrara,
+        // queda sin ejemplo acá hasta que se declare uno a propósito (nunca se inventa
+        // un payload para un tipo que la tool todavía no soporta).
         break
     }
   }
