@@ -31,6 +31,7 @@
 
 import type { Componente, ComportamientoRegla, Conexion, Proyecto } from "./ir.ts"
 import { ACCIONES, COMPARADORES } from "./ir.ts"
+import { analizarFormaRegla } from "./regla-forma.ts"
 import type { Catalogo } from "./catalogo.ts"
 import { reemplazarSensor } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
@@ -44,7 +45,7 @@ import { materializarDatosPlanos, motivoEntradaNoPlano } from "./datos-planos.ts
 // (OPERATIONS.md §3): la crea directo `cargador.ts`, invocada por el motor (Gate 6).
 // ════════════════════════════════════════════════════════════════════════════════════
 
-export type TipoOperacion = "SetPlaca" | "AgregarComponente" | "QuitarComponente" | "AsignarPin" | "Conectar" | "Desconectar" | "SetComportamiento" | "CambiarComponente"
+export type TipoOperacion = "SetPlaca" | "AgregarComponente" | "QuitarComponente" | "AsignarPin" | "Conectar" | "Desconectar" | "SetComportamiento" | "QuitarComportamiento" | "CambiarComponente"
 
 export type SobreOperacion<P = unknown> = {
   readonly idOperacion: string
@@ -130,7 +131,7 @@ function tieneTerminalDeclarado(catalogo: Catalogo, tipoComponente: string, term
 // `docs/programacion-intencion/IR-SPEC.md` §6.11 y `OPERATIONS.md` §11.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-const TIPOS_OPERACION_VALIDOS: readonly TipoOperacion[] = ["SetPlaca", "AgregarComponente", "QuitarComponente", "AsignarPin", "Conectar", "Desconectar", "SetComportamiento", "CambiarComponente"]
+const TIPOS_OPERACION_VALIDOS: readonly TipoOperacion[] = ["SetPlaca", "AgregarComponente", "QuitarComponente", "AsignarPin", "Conectar", "Desconectar", "SetComportamiento", "QuitarComportamiento", "CambiarComponente"]
 const ACTORES_VALIDOS: readonly string[] = ["agente", "navegador"]
 /** Claves conocidas del sobre (`SobreOperacion`, §2 de OPERATIONS.md) — mismo criterio
  * fail-closed que `CLAVES_PROYECTO` en `cargador.ts` (Gate 2, hallazgo E2-03). */
@@ -231,16 +232,15 @@ function validarFormaPayload(tipo: TipoOperacion, payload: unknown): string | nu
       if (!esObjetoPlano(payload) || !esObjetoPlano(payload.comportamiento)) return "se espera {comportamiento: {...}}"
       const c = payload.comportamiento
       if (c.id !== undefined && !esString(c.id)) return "comportamiento.id debe ser string si está presente"
-      if (!esObjetoPlano(c.cuando) || !esString(c.cuando.sensor) || !esString(c.cuando.capacidad) || !esString(c.cuando.comparador)) {
-        return "comportamiento.cuando incompleto (se esperan sensor/capacidad/comparador)"
-      }
-      if (!esObjetoPlano(c.cuando.umbral) || typeof c.cuando.umbral.valor !== "number" || !esString(c.cuando.umbral.unidad) || !esString(c.cuando.umbral.magnitud)) {
-        return "comportamiento.cuando.umbral incompleto (se esperan valor numérico/unidad/magnitud)"
-      }
-      if (!esObjetoPlano(c.entonces) || !esString(c.entonces.actuador) || !esString(c.entonces.accion)) {
-        return "comportamiento.entonces incompleto (se esperan actuador/accion)"
-      }
-      return null
+      // Phase 3 (B2): UNA sola función de validez estructural, compartida con el
+      // cargador (`regla-forma.ts`) — PERSISTIBLE ⇒ RECARGABLE. Admite reglas parciales.
+      const forma = analizarFormaRegla(c)
+      return forma.ok ? null : forma.falla.razon
+    }
+    case "QuitarComportamiento": {
+      if (!esObjetoPlano(payload) || !esString(payload.comportamiento)) return "se espera {comportamiento: string}"
+      const claves = Object.keys(payload).filter((k) => k !== "comportamiento")
+      return claves.length > 0 ? `claves desconocidas en el payload: ${claves.join(", ")}` : null
     }
     case "CambiarComponente":
       return esObjetoPlano(payload) && esString(payload.componente) && esString(payload.tipoNuevo) ? null : "se espera {componente, tipoNuevo: string}"
@@ -321,6 +321,8 @@ function aplicarOperacionMaterializada(proyecto: Proyecto, operacion: SobreOpera
       return aplicarDesconectar(proyecto, operacion.payload as { conexion: string })
     case "SetComportamiento":
       return aplicarSetComportamiento(proyecto, operacion.payload as { comportamiento: Omit<ComportamientoRegla, "id"> & { id?: string } }, catalogo)
+    case "QuitarComportamiento":
+      return aplicarQuitarComportamiento(proyecto, operacion.payload as { comportamiento: string })
     case "CambiarComponente":
       return aplicarCambiarComponente(proyecto, operacion.payload as { componente: string; tipoNuevo: string }, catalogo)
     default:
@@ -369,7 +371,9 @@ function aplicarQuitarComponente(proyecto: Proyecto, payload: { componente: stri
   }
   const tieneDependientes =
     proyecto.conexiones.some((cx) => cx.desde.componente === payload.componente || cx.hasta.componente === payload.componente) ||
-    proyecto.comportamientos.some((b) => b.cuando.sensor === payload.componente || b.entonces.actuador === payload.componente)
+    // Phase 3 (B2/B5, HD-P3D-4 = A): cualquier slot PRESENTE que referencie al componente
+    // lo protege; una regla parcial sin ese slot no depende de él.
+    proyecto.comportamientos.some((b) => b.cuando?.sensor === payload.componente || b.entonces?.actuador === payload.componente)
   if (tieneDependientes) {
     return { proyecto, motivos: [rechazo("REMOCION_CON_DEPENDIENTES", { componente: payload.componente })] }
   }
@@ -460,6 +464,8 @@ function aplicarDesconectar(proyecto: Proyecto, payload: { conexion: string }): 
 // ── SetComportamiento ────────────────────────────────────────────────────────────────
 
 function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento: Omit<ComportamientoRegla, "id"> & { id?: string } }, catalogo: Catalogo): ResultadoAplicacion {
+  // Phase 3 (B2): `cuando`/`entonces` y cada campo pueden estar ausentes (regla parcial) —
+  // sólo se validan los campos PRESENTES. La forma ya la garantizó `analizarFormaRegla`.
   const { cuando, entonces } = payload.comportamiento
   // Phase 1.2 (hallazgo externo REA-01, CRÍTICO — re-auditoría externa,
   // PHASE_1_1_REGAUDIT_FINDINGS.md): `comparador`/`accion` son uniones LITERALES en
@@ -477,10 +483,10 @@ function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento:
   // "Camino B" que `UMBRAL_NO_FINITO` un poco más abajo), contra el MISMO dominio
   // normativo que usa el loader (`ir.ts::COMPARADORES`/`ACCIONES` — nunca una
   // segunda lista, esa divergencia silenciosa era la causa raíz exacta de REA-01).
-  if (!(COMPARADORES as readonly string[]).includes(cuando.comparador)) {
+  if (cuando?.comparador !== undefined && !(COMPARADORES as readonly string[]).includes(cuando.comparador)) {
     return { proyecto, motivos: [rechazo("VALOR_ENUM_DESCONOCIDO", { campo: "cuando.comparador", valorRecibido: cuando.comparador, dominioValido: COMPARADORES })] }
   }
-  if (!(ACCIONES as readonly string[]).includes(entonces.accion)) {
+  if (entonces?.accion !== undefined && !(ACCIONES as readonly string[]).includes(entonces.accion)) {
     return { proyecto, motivos: [rechazo("VALOR_ENUM_DESCONOCIDO", { campo: "entonces.accion", valorRecibido: entonces.accion, dominioValido: ACCIONES })] }
   }
   // Phase 1.1 (hallazgo externo E1-03, CRÍTICO): un `umbral.valor` NaN/±Infinity
@@ -494,21 +500,25 @@ function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento:
   // catálogo (eso SÍ se deja pasar y se diagnostica representable/blocking más
   // abajo, categoría A del brief §8.1/§9.1, mismo criterio que `PIN_OCUPADO` en
   // `AsignarPin`).
-  if (!Number.isFinite(cuando.umbral.valor)) {
+  if (cuando?.umbral !== undefined && !Number.isFinite(cuando.umbral.valor)) {
     return { proyecto, motivos: [rechazo("UMBRAL_NO_FINITO", { valor: String(cuando.umbral.valor) })] }
   }
-  const sensor = proyecto.componentes.find((c) => c.id === cuando.sensor)
-  if (!sensor) return { proyecto, motivos: [rechazo("REFERENCIA_INEXISTENTE", { componente: cuando.sensor })] }
-  const actuador = proyecto.componentes.find((c) => c.id === entonces.actuador)
-  if (!actuador) return { proyecto, motivos: [rechazo("REFERENCIA_INEXISTENTE", { componente: entonces.actuador })] }
-  const capacidadDeclarada = catalogo.obtenerComponente(sensor.tipo)?.capacidades.some((cap) => cap.id === cuando.capacidad)
-  if (!capacidadDeclarada) {
-    return { proyecto, motivos: [rechazo("CAPACIDAD_NO_DECLARADA", { componente: sensor.id, capacidad: cuando.capacidad })] }
+  const sensor = cuando?.sensor === undefined ? undefined : proyecto.componentes.find((c) => c.id === cuando.sensor)
+  if (cuando?.sensor !== undefined && !sensor) return { proyecto, motivos: [rechazo("REFERENCIA_INEXISTENTE", { componente: cuando.sensor })] }
+  const actuador = entonces?.actuador === undefined ? undefined : proyecto.componentes.find((c) => c.id === entonces.actuador)
+  if (entonces?.actuador !== undefined && !actuador) return { proyecto, motivos: [rechazo("REFERENCIA_INEXISTENTE", { componente: entonces.actuador })] }
+  // CAPACIDAD_NO_DECLARADA sólo cuando la capacidad está presente Y el sensor también
+  // (sin sensor no hay catálogo contra el cual comprobarla: lo diagnostica `validar-tecnico.ts`).
+  if (cuando?.capacidad !== undefined && sensor) {
+    const capacidadDeclarada = catalogo.obtenerComponente(sensor.tipo)?.capacidades.some((cap) => cap.id === cuando.capacidad)
+    if (!capacidadDeclarada) {
+      return { proyecto, motivos: [rechazo("CAPACIDAD_NO_DECLARADA", { componente: sensor.id, capacidad: cuando.capacidad })] }
+    }
   }
   const idExistente = payload.comportamiento.id
   const esReemplazo = idExistente !== undefined && proyecto.comportamientos.some((b) => b.id === idExistente)
   if (esReemplazo) {
-    const nueva: ComportamientoRegla = { id: idExistente, cuando, entonces }
+    const nueva: ComportamientoRegla = { id: idExistente, ...(cuando ? { cuando } : {}), ...(entonces ? { entonces } : {}) }
     // Phase 1.1 (hallazgo externo RX-04, MENOR): un reemplazo (upsert sobre un id YA
     // existente) commiteaba con `motivos:[]` — ningún rastro de que la intención
     // ANTERIOR con ese id fue descartada (brief §12: "reasons[]... también documenta
@@ -525,11 +535,24 @@ function aplicarSetComportamiento(proyecto: Proyecto, payload: { comportamiento:
     return { proyecto, motivos: [motivoContadorExcedeEnteroSeguro(proyecto.siguienteIdLocal)] }
   }
   const id = formatearIdLocal("beh", proyecto.siguienteIdLocal)
-  const nueva: ComportamientoRegla = { id, cuando, entonces }
+  const nueva: ComportamientoRegla = { id, ...(cuando ? { cuando } : {}), ...(entonces ? { entonces } : {}) }
   return {
     proyecto: { ...proyecto, siguienteIdLocal: proyecto.siguienteIdLocal + 1, comportamientos: [...proyecto.comportamientos, nueva] },
     motivos: [],
   }
+}
+
+// ── QuitarComportamiento ─────────────────────────────────────────────────────────────
+
+function aplicarQuitarComportamiento(proyecto: Proyecto, payload: { comportamiento: string }): ResultadoAplicacion {
+  const reglaQuitada = proyecto.comportamientos.find((b) => b.id === payload.comportamiento)
+  if (!reglaQuitada) {
+    return { proyecto, motivos: [rechazo("REFERENCIA_INEXISTENTE", { comportamiento: payload.comportamiento })] }
+  }
+  // Mismo patrón que `COMPORTAMIENTO_REEMPLAZADO`: info, sin `clasificacion`. Lleva la
+  // regla COMPLETA para que un undo futuro pueda restaurarla.
+  const motivoQuitado: Motivo = { codigo: "COMPORTAMIENTO_QUITADO", categoria: "operacion", severidad: "info", datos: { comportamiento: payload.comportamiento, reglaQuitada } }
+  return { proyecto: { ...proyecto, comportamientos: proyecto.comportamientos.filter((b) => b.id !== payload.comportamiento) }, motivos: [motivoQuitado] }
 }
 
 // ── CambiarComponente ────────────────────────────────────────────────────────────────
@@ -551,7 +574,7 @@ function aplicarCambiarComponente(proyecto: Proyecto, payload: { componente: str
 
   const motivos: Motivo[] = []
   const comportamientos = proyecto.comportamientos.map((b) => {
-    if (b.cuando.sensor !== payload.componente) return b // no relacionado: MISMA referencia
+    if (b.cuando?.sensor !== payload.componente) return b // no relacionado (o sin slot `cuando`): MISMA referencia
     const r = reemplazarSensor(b, catalogoNuevo, catalogo)
     if (r.motivo) motivos.push(r.motivo)
     return r.comportamiento

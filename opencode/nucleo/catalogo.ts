@@ -459,10 +459,15 @@ export interface ResultadoReemplazoSensor {
  * en `circuito.ts`, que sí recorta — divergencia intencional, T_diseno_consolidado.md §10.7).
  */
 export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNuevo: ComponenteCatalogo, catalogo: Pick<Catalogo, "unidades">): ResultadoReemplazoSensor {
-  const capacidadNueva = catalogoNuevo.capacidades.find((c) => c.id === comportamiento.cuando.capacidad)
+  // Phase 3 (B2): sin `cuando`, o sin la triada capacidad/umbral (regla parcial), no hay
+  // capacidad ni umbral que reevaluar contra el sensor nuevo: se devuelve la MISMA
+  // referencia, sin motivo (la completitud es un diagnóstico semántico aparte).
+  const cuando = comportamiento.cuando
+  if (!cuando || cuando.capacidad === undefined || cuando.umbral === undefined) return { comportamiento, motivo: null }
+  const capacidadNueva = catalogoNuevo.capacidades.find((c) => c.id === cuando.capacidad)
 
   // Rama D: el nuevo sensor no declara esa capacidad en absoluto (o con otra magnitud).
-  if (!capacidadNueva || capacidadNueva.magnitud !== comportamiento.cuando.umbral.magnitud) {
+  if (!capacidadNueva || capacidadNueva.magnitud !== cuando.umbral.magnitud) {
     return {
       comportamiento,
       motivo: {
@@ -471,12 +476,12 @@ export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNu
         severidad: "blocking",
         clasificacion: "representable",
         entidad: { tipo: "comportamiento", id: comportamiento.id },
-        datos: { capacidad: comportamiento.cuando.capacidad, nuevoTipo: catalogoNuevo.id },
+        datos: { capacidad: cuando.capacidad, nuevoTipo: catalogoNuevo.id },
       },
     }
   }
 
-  const unidadNueva = capacidadNueva.unidad ?? comportamiento.cuando.umbral.unidad
+  const unidadNueva = capacidadNueva.unidad ?? cuando.umbral.unidad
   // Phase 1.2 (REA-02): reusa `estaFueraDeRango` (arriba) — ya NO una closure local
   // duplicada acá. Mismo comportamiento exacto, ninguna regla nueva.
   const fueraDeRango = (valor: number): boolean => estaFueraDeRango(valor, capacidadNueva.rango)
@@ -485,8 +490,8 @@ export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNu
   // del sensor nuevo. Ojo con el orden: chequear el rango ANTES de "misma unidad
   // => éxito" es lo que distingue rama A de rama C (dos sensores en la misma unidad
   // pero con rangos distintos, ej. dht22 0-60°C reemplazado por un sensor 0-25°C).
-  if (unidadNueva === comportamiento.cuando.umbral.unidad) {
-    if (fueraDeRango(comportamiento.cuando.umbral.valor)) {
+  if (unidadNueva === cuando.umbral.unidad) {
+    if (fueraDeRango(cuando.umbral.valor)) {
       return {
         comportamiento,
         motivo: {
@@ -495,7 +500,7 @@ export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNu
           severidad: "warning",
           clasificacion: "representable",
           entidad: { tipo: "comportamiento", id: comportamiento.id },
-          datos: { umbral: comportamiento.cuando.umbral.valor, rango: capacidadNueva.rango },
+          datos: { umbral: cuando.umbral.valor, rango: capacidadNueva.rango },
         },
       }
     }
@@ -515,11 +520,11 @@ export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNu
   // REALES de `Magnitud`/`Unidad` ya fue confirmado por `validar-tecnico.ts` (Gate 4)
   // antes de que cualquier código de Gate 3 corra sobre un proyecto real — acá sólo
   // hace falta el cast para que TypeScript lo sepa en este límite de módulo.
-  const propagacion = propagarMagnitud(comportamiento.cuando.umbral as Cantidad, capacidadNueva.magnitud ?? (comportamiento.cuando.umbral.magnitud as Magnitud), unidadNueva as Unidad, catalogo)
+  const propagacion = propagarMagnitud(cuando.umbral as Cantidad, capacidadNueva.magnitud ?? (cuando.umbral.magnitud as Magnitud), unidadNueva as Unidad, catalogo)
   if (propagacion.ok) {
     const comportamientoConvertido: ComportamientoRegla = {
       ...comportamiento,
-      cuando: { ...comportamiento.cuando, umbral: propagacion.valor },
+      cuando: { ...cuando, umbral: propagacion.valor },
     }
     return { comportamiento: comportamientoConvertido, motivo: propagacion.motivo ?? null }
   }
@@ -529,7 +534,7 @@ export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNu
   // conversión). Se preserva sin recortar, igual criterio que rama C, para no
   // rechazar la operación completa (R1: "D incompatible → representable blocking,
   // nunca la operación entera se rechaza por esto").
-  if (fueraDeRango(comportamiento.cuando.umbral.valor)) {
+  if (fueraDeRango(cuando.umbral.valor)) {
     return {
       comportamiento,
       motivo: {
@@ -538,7 +543,7 @@ export function reemplazarSensor(comportamiento: ComportamientoRegla, catalogoNu
         severidad: "warning",
         clasificacion: "representable",
         entidad: { tipo: "comportamiento", id: comportamiento.id },
-        datos: { umbral: comportamiento.cuando.umbral.valor, rango: capacidadNueva.rango },
+        datos: { umbral: cuando.umbral.valor, rango: capacidadNueva.rango },
       },
     }
   }

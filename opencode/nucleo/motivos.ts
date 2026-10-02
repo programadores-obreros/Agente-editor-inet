@@ -137,6 +137,17 @@
 //   este motivo documenta esa decisión determinista (mismo patrón que
 //   `UNIDAD_CONVERTIDA`, `catalogo.ts`). La semántica upsert no cambia — sigue
 //   commiteando igual, `ok:true`.
+//
+// Phase 3 (vertical #1, contrato B4) agrega la operación `QuitarComportamiento`
+// (payload `{ comportamiento: id }`, claves exactas), emitida por `operaciones.ts`
+// (`aplicarQuitarComportamiento`):
+// - `REFERENCIA_INEXISTENTE` — código YA existente: el `id` no es el de ninguna regla;
+//   `datos { comportamiento }`, rechazo, sin mutar.
+// - `COMPORTAMIENTO_QUITADO` — categoria "operacion", severidad "info" (nunca
+//   `clasificacion`, mismo patrón que `COMPORTAMIENTO_REEMPLAZADO`) — la regla existía y
+//   se quitó; `datos { comportamiento, reglaQuitada }` lleva la regla COMPLETA quitada
+//   (para un undo futuro). Revisión +1; después `QuitarComponente` vuelve a estar
+//   permitido (`REMOCION_CON_DEPENDIENTES` sólo mira slots presentes de reglas vivas).
 
 // Phase 1.1 (RX) — hallazgo externo RX-01, CRÍTICO (revisión adversarial
 // independiente, reabre CP-01) agrega, categoria "estructural", clasificacion

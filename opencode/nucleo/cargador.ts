@@ -17,6 +17,7 @@ import { canonicalizar, congelarProfundo } from "./canonico.ts"
 import { analizarIdsLocales, compararIdsLocales, generarIdProyectoAleatorio, validarIdsYContador, type GeneradorIdProyecto } from "./id.ts"
 import { analizarConexionesInvalidas } from "./conexion.ts"
 import { materializarDatosPlanos, motivoEntradaNoPlano } from "./datos-planos.ts"
+import { analizarFormaRegla } from "./regla-forma.ts"
 
 export const SCHEMA_VERSION_SOPORTADA = "1.0.0"
 
@@ -219,12 +220,15 @@ export function validarFormaProyecto(docCrudo: unknown): ResultadoCarga {
     if (!r.ok) return rechazo(r.codigo, r.datos)
     comportamientosValidados.push(r.valor)
   }
+  // Phase 3 (B2): una regla parcial sólo referencia lo que tiene presente.
   for (const b of comportamientosValidados) {
-    if (!idsComponentes.has(b.cuando.sensor)) {
-      return rechazo("REFERENCIA_ROTA_AL_CARGAR", { comportamiento: b.id, componente: b.cuando.sensor })
+    const sensor = b.cuando?.sensor
+    if (sensor !== undefined && !idsComponentes.has(sensor)) {
+      return rechazo("REFERENCIA_ROTA_AL_CARGAR", { comportamiento: b.id, componente: sensor })
     }
-    if (!idsComponentes.has(b.entonces.actuador)) {
-      return rechazo("REFERENCIA_ROTA_AL_CARGAR", { comportamiento: b.id, componente: b.entonces.actuador })
+    const actuador = b.entonces?.actuador
+    if (actuador !== undefined && !idsComponentes.has(actuador)) {
+      return rechazo("REFERENCIA_ROTA_AL_CARGAR", { comportamiento: b.id, componente: actuador })
     }
   }
 
@@ -313,10 +317,6 @@ type ResultadoValidacion<T> = { readonly ok: true; readonly valor: T } | { reado
 const CLAVES_COMPONENTE = ["id", "tipo", "pines", "propiedades"] as const
 const CLAVES_CONEXION = ["id", "desde", "hasta"] as const
 const CLAVES_EXTREMO_CONEXION = ["componente", "terminal"] as const
-const CLAVES_COMPORTAMIENTO = ["id", "cuando", "entonces"] as const
-const CLAVES_CUANDO_COMPORTAMIENTO = ["sensor", "capacidad", "comparador", "umbral"] as const
-const CLAVES_UMBRAL_COMPORTAMIENTO = ["valor", "unidad", "magnitud"] as const
-const CLAVES_ENTONCES_COMPORTAMIENTO = ["actuador", "accion"] as const
 
 function clavesDesconocidasDe(obj: Record<string, unknown>, conocidas: readonly string[]): readonly string[] {
   return Object.keys(obj).filter((k) => !conocidas.includes(k))
@@ -407,63 +407,49 @@ function validarConexion(cx: unknown): ResultadoValidacion<Conexion> {
 const COMPARADORES_VALIDOS = new Set<string>(COMPARADORES)
 const ACCIONES_VALIDAS = new Set<string>(ACCIONES)
 
+// Phase 3 (vertical #1, contrato B2): la FORMA de la regla (parcial o completa) la decide
+// `regla-forma.ts::analizarFormaRegla`, la MISMA función que usa `operaciones.ts` — acá
+// sólo se traduce su falla a los códigos de carga de siempre y se agregan los chequeos
+// propios del loader (dominios de enum, finitud del umbral).
 function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRegla> {
   if (!esObjeto(b)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", razon: "no es un objeto" } }
-  const clavesDesconocidasRaiz = clavesDesconocidasDe(b, CLAVES_COMPORTAMIENTO)
-  if (clavesDesconocidasRaiz.length > 0) {
-    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", claves: clavesDesconocidasRaiz } }
+  const { id } = b
+  const forma = analizarFormaRegla(b)
+  // `id` se exige ANTES que cualquier falla de forma que no sea una clave desconocida
+  // de la raíz (mismo orden de siempre: claves de la raíz, luego `id`, luego los slots).
+  if (!forma.ok && forma.falla.codigo === "CLAVE_DESCONOCIDA" && forma.falla.campo === "comportamiento") {
+    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", claves: forma.falla.claves } }
   }
-  const { id, cuando, entonces } = b
   if (typeof id !== "string" || id.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", campo: "id" } }
   }
-  if (!esObjeto(cuando)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando" } }
-  const clavesDesconocidasCuando = clavesDesconocidasDe(cuando, CLAVES_CUANDO_COMPORTAMIENTO)
-  if (clavesDesconocidasCuando.length > 0) {
-    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando", claves: clavesDesconocidasCuando } }
+  if (!forma.ok) {
+    const { codigo, campo, claves } = forma.falla
+    return codigo === "CLAVE_DESCONOCIDA"
+      ? { ok: false, codigo, datos: { entidad: "comportamiento", comportamiento: id, campo, claves } }
+      : { ok: false, codigo, datos: { entidad: "comportamiento", comportamiento: id, campo } }
   }
-  const { sensor, capacidad, comparador, umbral } = cuando
-  if (typeof sensor !== "string" || typeof capacidad !== "string" || typeof comparador !== "string" || !COMPARADORES_VALIDOS.has(comparador)) {
+  const { cuando, entonces } = forma.valor
+  // Phase 1.2 (REA-01): dominio normativo único (`ir.ts::COMPARADORES`/`ACCIONES`).
+  if (cuando?.comparador !== undefined && !COMPARADORES_VALIDOS.has(cuando.comparador)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando" } }
   }
-  if (!esObjeto(umbral)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral" } }
-  const clavesDesconocidasUmbral = clavesDesconocidasDe(umbral, CLAVES_UMBRAL_COMPORTAMIENTO)
-  if (clavesDesconocidasUmbral.length > 0) {
-    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral", claves: clavesDesconocidasUmbral } }
+  // Phase 1.1 (hallazgo externo E1-03): `typeof NaN === "number"` — NaN/±Infinity no son
+  // representables en el JSON persistido (ver `canonico.ts`): rechazo ESTRUCTURAL de
+  // forma (código distinto al de la segunda línea de defensa, `UMBRAL_NO_FINITO`,
+  // `validar-estructural.ts`: momento de carga vs. momento de operación).
+  if (cuando?.umbral !== undefined && !Number.isFinite(cuando.umbral.valor)) {
+    return { ok: false, codigo: "UMBRAL_NO_FINITO_AL_CARGAR", datos: { entidad: "comportamiento", comportamiento: id, valor: String(cuando.umbral.valor) } }
   }
-  if (typeof umbral.valor !== "number" || typeof umbral.unidad !== "string" || typeof umbral.magnitud !== "string") {
-    return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "cuando.umbral" } }
-  }
-  // Phase 1.1 (hallazgo externo E1-03): `typeof umbral.valor !== "number"` NO alcanza
-  // — `typeof NaN === "number"` y `typeof Infinity === "number"` son ciertos los dos,
-  // así que el chequeo de arriba solo los deja pasar. Ninguno de los dos es
-  // representable en el documento JSON persistido (`JSON.stringify(NaN)` y
-  // `JSON.stringify(Infinity)` dan `null`, ver `canonico.ts`): aceptar acá dejaría a
-  // la memoria (con el número real) desincronizada del disco (con `null`) apenas se
-  // persistiera una vez — rechazo ESTRUCTURAL de forma, no un problema
-  // técnico/semántico de catálogo (eso es `validar-tecnico.ts`, representable).
-  // Código distinto del que usa la segunda línea de defensa de Gate 4
-  // (`UMBRAL_NO_FINITO`, `validar-estructural.ts`) — mismo criterio de distinción
-  // momento-de-carga vs. momento-de-operación que ya usa `REFERENCIA_ROTA_AL_CARGAR`
-  // frente a `REFERENCIA_INEXISTENTE` más abajo en este mismo archivo.
-  if (!Number.isFinite(umbral.valor)) {
-    return { ok: false, codigo: "UMBRAL_NO_FINITO_AL_CARGAR", datos: { entidad: "comportamiento", comportamiento: id, valor: String(umbral.valor) } }
-  }
-  if (!esObjeto(entonces)) return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces" } }
-  const clavesDesconocidasEntonces = clavesDesconocidasDe(entonces, CLAVES_ENTONCES_COMPORTAMIENTO)
-  if (clavesDesconocidasEntonces.length > 0) {
-    return { ok: false, codigo: "CLAVE_DESCONOCIDA", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces", claves: clavesDesconocidasEntonces } }
-  }
-  const { actuador, accion } = entonces
-  if (typeof actuador !== "string" || typeof accion !== "string" || !ACCIONES_VALIDAS.has(accion)) {
+  if (entonces?.accion !== undefined && !ACCIONES_VALIDAS.has(entonces.accion)) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", comportamiento: id, campo: "entonces" } }
   }
   return {
     ok: true,
     valor: {
       id,
-      cuando: { sensor, capacidad, comparador: comparador as ComportamientoRegla["cuando"]["comparador"], umbral: { valor: umbral.valor, unidad: umbral.unidad, magnitud: umbral.magnitud } },
-      entonces: { actuador, accion: accion as ComportamientoRegla["entonces"]["accion"] },
+      ...(cuando ? { cuando: cuando as ComportamientoRegla["cuando"] } : {}),
+      ...(entonces ? { entonces: entonces as ComportamientoRegla["entonces"] } : {}),
     },
   }
 }

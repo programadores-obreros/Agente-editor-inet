@@ -71,17 +71,21 @@ export function validarEstructural(proyecto: Proyecto): readonly Motivo[] {
   for (const idDuplicada of analisisConexiones.duplicadas) {
     motivos.push({ codigo: "CONEXION_DUPLICADA", categoria: "estructural", severidad: "blocking", clasificacion: "rechazo", entidad: { tipo: "conexion", id: idDuplicada } })
   }
+  // Phase 3 (B2): una regla parcial sólo se chequea en lo que tiene presente.
   for (const b of proyecto.comportamientos) {
-    if (!idsComponentes.has(b.cuando.sensor)) motivos.push(refRota("comportamiento", b.id, b.cuando.sensor))
-    if (!idsComponentes.has(b.entonces.actuador)) motivos.push(refRota("comportamiento", b.id, b.entonces.actuador))
-    if (!Number.isFinite(b.cuando.umbral.valor)) {
+    const sensor = b.cuando?.sensor
+    if (sensor !== undefined && !idsComponentes.has(sensor)) motivos.push(refRota("comportamiento", b.id, sensor))
+    const actuador = b.entonces?.actuador
+    if (actuador !== undefined && !idsComponentes.has(actuador)) motivos.push(refRota("comportamiento", b.id, actuador))
+    const umbral = b.cuando?.umbral
+    if (umbral !== undefined && !Number.isFinite(umbral.valor)) {
       motivos.push({
         codigo: "UMBRAL_NO_FINITO",
         categoria: "estructural",
         severidad: "blocking",
         clasificacion: "rechazo",
         entidad: { tipo: "comportamiento", id: b.id },
-        datos: { valor: String(b.cuando.umbral.valor) },
+        datos: { valor: String(umbral.valor) },
       })
     }
   }

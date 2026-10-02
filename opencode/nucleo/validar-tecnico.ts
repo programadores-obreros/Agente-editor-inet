@@ -131,13 +131,18 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
   // `ComportamientoRegla` contra el catálogo VIGENTE. Si el sensor no existe o su
   // `tipo` no tiene definición de catálogo, ya se reportó arriba (referencial /
   // `CATALOGO_COMPONENTE_DESCONOCIDO`) — acá sólo se salta, nunca se duplica.
+  // Phase 3 (B2): sólo se diagnostica lo PRESENTE — sin sensor, o sin la triada
+  // capacidad/comparador/umbral, no hay nada dimensional que comparar (la completitud
+  // es un diagnóstico semántico aparte, `validar.ts`).
   for (const comportamiento of proyecto.comportamientos) {
-    const sensor = proyecto.componentes.find((c) => c.id === comportamiento.cuando.sensor)
+    const cuando = comportamiento.cuando
+    if (!cuando || cuando.sensor === undefined || cuando.capacidad === undefined || cuando.umbral === undefined) continue
+    const sensor = proyecto.componentes.find((c) => c.id === cuando.sensor)
     if (!sensor) continue
     const compCatalogoSensor = catalogo.obtenerComponente(sensor.tipo)
     if (!compCatalogoSensor) continue
 
-    const capacidadReal = compCatalogoSensor.capacidades.find((cap) => cap.id === comportamiento.cuando.capacidad)
+    const capacidadReal = compCatalogoSensor.capacidades.find((cap) => cap.id === cuando.capacidad)
     if (!capacidadReal) {
       motivos.push({
         codigo: "CAPACIDAD_INEXISTENTE_EN_CATALOGO",
@@ -145,7 +150,7 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
         severidad: "blocking",
         clasificacion: "representable",
         entidad: { tipo: "comportamiento", id: comportamiento.id },
-        datos: { sensor: sensor.id, tipo: sensor.tipo, capacidad: comportamiento.cuando.capacidad },
+        datos: { sensor: sensor.id, tipo: sensor.tipo, capacidad: cuando.capacidad },
       })
       continue
     }
@@ -154,9 +159,9 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
     // no tienen nada dimensional que comparar — se usa el propio umbral como
     // "destino" en ese caso, lo que hace que `propagarMagnitud` compare consigo
     // mismo y nunca reporte incompatibilidad por un dato que el catálogo no exige.
-    const magnitudDestino = (capacidadReal.magnitud ?? comportamiento.cuando.umbral.magnitud) as Magnitud
-    const unidadDestino = (capacidadReal.unidad ?? comportamiento.cuando.umbral.unidad) as Unidad
-    const propagacion = propagarMagnitud(comportamiento.cuando.umbral as Cantidad, magnitudDestino, unidadDestino, catalogo)
+    const magnitudDestino = (capacidadReal.magnitud ?? cuando.umbral.magnitud) as Magnitud
+    const unidadDestino = (capacidadReal.unidad ?? cuando.umbral.unidad) as Unidad
+    const propagacion = propagarMagnitud(cuando.umbral as Cantidad, magnitudDestino, unidadDestino, catalogo)
     // Sólo importa la incompatibilidad (`!ok`): un `ok:true` — aunque haya requerido
     // conversión — significa que el umbral SIGUE siendo representable contra esta
     // capacidad; el `valor`/motivo `UNIDAD_CONVERTIDA` que devolvería no aplica acá
@@ -197,7 +202,7 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
         severidad: "warning",
         clasificacion: "representable",
         entidad: { tipo: "comportamiento", id: comportamiento.id },
-        datos: { umbral: comportamiento.cuando.umbral.valor, unidad: comportamiento.cuando.umbral.unidad, rango: capacidadReal.rango },
+        datos: { umbral: cuando.umbral.valor, unidad: cuando.umbral.unidad, rango: capacidadReal.rango },
       })
     }
   }

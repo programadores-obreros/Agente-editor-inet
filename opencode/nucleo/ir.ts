@@ -60,26 +60,46 @@ export type Comparador = (typeof COMPARADORES)[number]
 export const ACCIONES = ["encender", "apagar"] as const
 export type Accion = (typeof ACCIONES)[number]
 
+// Phase 3 (vertical #1, contrato B2): una regla puede estar INCOMPLETA y seguir siendo
+// representable. `cuando?`/`entonces?` son slots opcionales y, dentro de cada uno, cada
+// campo es opcional por slot semántico (sensor | estado = capacidad+comparador+umbral |
+// actuador | salida = accion). Clave AUSENTE = slot vacío (nunca `null`); un sub-objeto
+// presente y vacío no es válido. La completitud NO se guarda: es un diagnóstico derivado
+// (validador). La forma es un superconjunto aditivo: toda regla completa anterior sigue
+// siendo válida y `schemaVersion` no cambia. La validez estructural vive en
+// `regla-forma.ts` (una sola función para la operación y el cargador).
+
+/**
+ * Condición de NIVEL (el nombre `cuando` es heredado del IR; la semántica es "mientras").
+ * Significado: en todo instante en que "sensor está en el estado" es verdadero, el
+ * actuador ESTÁ en `entonces.accion`. No hay eventos, flancos, latch ni memoria.
+ * La triada `capacidad` + `comparador` + `umbral` va completa o ausente.
+ */
 export interface CuandoComportamiento {
   /** Componente.id del sensor — debe existir (verificado al cargar, R2). */
-  readonly sensor: string
+  readonly sensor?: string
   /** Capacidad declarada por el catálogo del sensor (Gate 3/4 la valida). */
-  readonly capacidad: string
-  readonly comparador: Comparador
-  readonly umbral: UmbralComportamiento
+  readonly capacidad?: string
+  readonly comparador?: Comparador
+  readonly umbral?: UmbralComportamiento
 }
 
 export interface EntoncesComportamiento {
   /** Componente.id del actuador — debe existir (verificado al cargar, R2). */
-  readonly actuador: string
-  readonly accion: Accion
+  readonly actuador?: string
+  /**
+   * Estado SOSTENIDO del actuador mientras la condición de nivel es verdadera (no una
+   * acción puntual). Estado de REPOSO (condición falsa, HD-P3D-1): apagado — es
+   * DERIVADO de este contrato, nunca se guarda en el IR.
+   */
+  readonly accion?: Accion
 }
 
 export interface ComportamientoRegla {
   /** "beh-<n>", mismo contador que cmp/conn. */
   readonly id: string
-  readonly cuando: CuandoComportamiento
-  readonly entonces: EntoncesComportamiento
+  readonly cuando?: CuandoComportamiento
+  readonly entonces?: EntoncesComportamiento
 }
 
 export interface MetadataProyecto {
