@@ -1379,3 +1379,55 @@ HD-S2-*, HD-P3-* y HD-W0-*). El HUMAN PRODUCT OWNER resolvió:
   de un dominio separado futuro.
 - **HD-07 DEFERRED** — Modo Vivo: transporte, ownership del puerto serie, lifecycle del
   Live Service y contrato del Live Runtime sin decidir; sigue PROPOSED / NOT IMPLEMENTED.
+
+## Phase 3 — Vertical semántico #1 ("mientras"): valores de HD-P3D y reapertura acotada (2026-10-02)
+
+Confirmación del HUMAN PRODUCT OWNER antes de empezar el vertical #1. Nada de lo
+histórico se borra ni se reescribe: cada decisión reemplazada conserva su texto original
+donde estaba.
+
+### Valores de HD-P3D-1..10 (elimina una ambigüedad histórica)
+
+`PHASE_3_WAVE_0_DESIGN.md:3` declaraba "HD-P3D-1..10 congeladas", pero ningún documento
+registraba qué opción había quedado en cada una. La tabla de opciones vive en
+`PHASE_3_MINIMUM_VERTICAL_DESIGN.md` §23 (la confirmación humana la citó como "§23 de
+`PHASE_3_WAVE_0_DESIGN.md`": es una anomalía de referencia, y el contenido corresponde al
+documento del mínimo vertical). Quedan congeladas con la recomendación de §23:
+
+- **HD-P3D-1 = A** — estado de reposo de un actuador digital = apagado. Se deriva y se
+  documenta; no se guarda en el IR.
+- **HD-P3D-2 = A** — la frase editable no ofrece `apagar`.
+- **HD-P3D-3 = B** — `schemaVersion` sube sólo si el documento contiene una regla
+  incompleta, y sólo si el contrato de representación realmente lo exige.
+- **HD-P3D-4 = A** — quitar un componente referenciado por una regla se rechaza, con un
+  texto nuevo. Sin cascada silenciosa.
+- **HD-P3D-5 = A** — no se renombra `cuando` en el IR; se documenta como "condición de
+  nivel".
+- **HD-P3D-6** — §23 no tiene opción para esta fila: dice "**Resuelto por diseño** (R-1)".
+  La regla vacía `{}` se sigue rechazando (`tests/nucleo-operaciones.test.mjs:778`), la
+  regla nace con un slot y ningún test de Phase 1 se toca. Si un writer encuentra otra
+  contradicción → STOP. Se registra tal cual, sin agregarle un valor.
+- **HD-P3D-7 = A** — Wave 0 de correcciones antes de Phase 3. Ya cumplida (merge `ff8342c`).
+- **HD-P3D-8 = A** — F-01/F-02 al backlog de producto. Ya cumplida.
+- **HD-P3D-9 = A** — el reposo aparece sólo en el trazado pedagógico, no en la frase editable.
+- **HD-P3D-10** — ver la reapertura de abajo.
+
+### Reapertura acotada: el agente emite `SetComportamiento` y `QuitarComportamiento`
+
+| OLD DECISION | SUPERSEDED BY | NEW DECISION | EVIDENCE |
+|---|---|---|---|
+| **HD-S2-10 = NO** (este archivo, Phase 2 Slice 2): ninguna `ComportamientoRegla` pulsador → LED; materializada en la whitelist R-6 de `opencode/tool/proyecto-fisico.ts`, que excluye `SetComportamiento` | PHASE 3 SEMANTIC VERTICAL #1 | El agente puede emitir **`SetComportamiento`** hacia el Project Engine a través de `proyecto-fisico` | REAL HUMAN TEST #1 (`PHASE_3_REAL_HUMAN_TEST_REPORT.md` §E2): el agente comprendió "mientras aprieto el pulsador se prenda el LED", pero no podía materializarlo en el proyecto |
+| **HD-P3-7 = A** (`PHASE_3_DISCOVERY.md`; `PHASE_3_MINIMUM_VERTICAL_DESIGN.md` §0): edición sólo por el navegador; `proyecto-fisico` no recibe `SetComportamiento` | PHASE 3 SEMANTIC VERTICAL #1 | Opción **C** de la tabla original de HD-P3-7 ("las dos"): el navegador (frase editable, whitelist espejo en el servidor) **y** el agente | Ídem |
+| **HD-P3D-10 = A** (`PHASE_3_MINIMUM_VERTICAL_DESIGN.md` §23): `QuitarComportamiento` excluido del agente | PHASE 3 SEMANTIC VERTICAL #1 | El agente puede emitir **`QuitarComportamiento`**, con la misma autoridad del Engine | Simetría operativa: corregir o deshacer una intención semántica sin mutación directa |
+
+**Contrato que NO cambia:**
+- La cadena de autoridad es lenguaje natural → el agente interpreta → operación tipada →
+  Project Engine → validación → commit/reject → IR canónica.
+- El agente no escribe JSON ni el IR, no saltea `baseRevision`, el dry-run, las
+  transacciones ni la validación.
+- La whitelist de la tool sigue **explícita y cerrada**: agrega exactamente esos dos tipos.
+- Hay dos productores legítimos de intención (el agente y la frase del navegador) sobre
+  el MISMO Engine y la MISMA IR. No es una segunda verdad.
+- El cambio en `opencode/agent/tecnia-bot.md` se limita a lo funcional que exige el
+  vertical (HD-05), con RED, tests y evidencia. No es una optimización estructural.
+- Las demás HD-P3 / HD-P3D siguen congeladas.
