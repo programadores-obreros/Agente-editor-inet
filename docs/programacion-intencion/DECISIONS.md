@@ -1351,3 +1351,31 @@ diseño delega en el writer):
   proyecciones de vista entre sí (donde `explicacion` está en ambos lados, no
   rompe nada) — este caso puntual compara vista contra `validacion.motivos`/HTTP
   crudo, donde sí hacía falta el ajuste.
+
+## Contexto de desarrollo V2.1 — decisiones humanas HD-01..HD-07 (2026-10-02)
+
+Adopción del contexto de desarrollo auditado: paquete V2.1 FINAL (sha256
+`2c1012ce31068b920f9192a9ae5d21a17c263777571f5bce574735f19ff3ccc7`), árbol adoptable de
+13 archivos (agregado `4d027f1f4fffc34000a31c2151644869cd7e5cef4e05da5c0eb4f923bf8d315b`)
+copiado byte a byte. Los IDs HD-01..HD-07 son propios de este registro (distintos de
+HD-S2-*, HD-P3-* y HD-W0-*). El HUMAN PRODUCT OWNER resolvió:
+
+- **HD-01 DECIDED** — punto de lanzamiento canónico = `tecnia-bot/`. Una sola doctrina:
+  los worktrees son checkouts operativos de ramas del mismo proyecto, no doctrinas
+  independientes.
+- **HD-02 DECIDED** — Gentle AI global conservative hasta el MVP. Una evaluación
+  workspace-scoped requerirá su propio dry-run.
+- **HD-03 DECIDED** — memoria forward-only: sin migrar, borrar ni mover la memoria
+  histórica.
+- **HD-04 DECIDED** — `nucleo-ir.md` no se adopta ahora; se reconsidera cuando el modelo
+  semántico de Phase 3 esté estable. No revoca los invariantes congelados: la IR es la
+  fuente canónica, la vista física es proyección y el Project Engine es la única
+  autoridad de mutación.
+- **HD-05 DECIDED** — la optimización estructural del prompt runtime
+  (`opencode/agent/tecnia-bot.md`) va en un ciclo separado; los cambios funcionales del
+  MVP pueden modificarlo dentro de su vertical, con RED/tests/evidencia.
+- **HD-06 DEFERRED** — para el MVP la IR sigue siendo el estado semántico/deseado
+  canónico; no se agrega estado observed/runtime/physical. No es un rechazo permanente
+  de un dominio separado futuro.
+- **HD-07 DEFERRED** — Modo Vivo: transporte, ownership del puerto serie, lifecycle del
+  Live Service y contrato del Live Runtime sin decidir; sigue PROPOSED / NOT IMPLEMENTED.
