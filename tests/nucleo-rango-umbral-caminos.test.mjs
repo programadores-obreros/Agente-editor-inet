@@ -73,6 +73,8 @@ const catalogo = construirCatalogo(
 
 const PLACA = "esp32-devkit-v1"
 const PIN_SENSOR = catalogo.pinesDePlaca(PLACA).find((p) => p.capacidades.entradaDigital).id
+// MOD (db797c5): pin de salida digital distinto del del sensor, para el LED actuador.
+const PIN_LED = "GPIO18"
 
 before(() => {
   rmSync(DIR_BASE, { recursive: true, force: true })
@@ -114,7 +116,13 @@ function construirCaminoA() {
   const { motor } = crearMotorReal(dir, "camino-a")
   motor.aplicar(op("SetPlaca", { placa: PLACA }, motor.getProyecto().revision))
   motor.aplicar(op("AgregarComponente", { tipo: "dht22" }, motor.getProyecto().revision))
+  // MOD (excepción declarada a HD-P3D-6, db797c5): el actuador de la regla es un `led`
+  // REAL (cmp-1) con su resistencia en serie (cmp-2) — antes era una `resistencia`
+  // usada como actuador, que Phase 3 (ACTUADOR_INVALIDO) ya no acepta en silencio.
+  motor.aplicar(op("AgregarComponente", { tipo: "led" }, motor.getProyecto().revision))
   motor.aplicar(op("AgregarComponente", { tipo: "resistencia" }, motor.getProyecto().revision))
+  motor.aplicar(op("Conectar", { desde: { componente: "cmp-1", terminal: "anodo" }, hasta: { componente: "cmp-2", terminal: "a" } }, motor.getProyecto().revision))
+  motor.aplicar(op("AsignarPin", { componente: "cmp-1", terminal: "anodo", pin: PIN_LED }, motor.getProyecto().revision))
   motor.aplicar(op("AsignarPin", { componente: "cmp-0", terminal: "senal", pin: PIN_SENSOR }, motor.getProyecto().revision))
   const r = motor.aplicar(
     op(
@@ -166,7 +174,13 @@ function construirCaminoD() {
   motor.aplicar(op("SetPlaca", { placa: PLACA }, motor.getProyecto().revision))
   // Arranca con el sensor de rango AMPLIO: 200°C es compatible acá — sin warning.
   motor.aplicar(op("AgregarComponente", { tipo: "sensor-rango-amplio-fixture" }, motor.getProyecto().revision))
+  // MOD (excepción declarada a HD-P3D-6, db797c5): el actuador de la regla es un `led`
+  // REAL (cmp-1) con su resistencia en serie (cmp-2) — antes era una `resistencia`
+  // usada como actuador, que Phase 3 (ACTUADOR_INVALIDO) ya no acepta en silencio.
+  motor.aplicar(op("AgregarComponente", { tipo: "led" }, motor.getProyecto().revision))
   motor.aplicar(op("AgregarComponente", { tipo: "resistencia" }, motor.getProyecto().revision))
+  motor.aplicar(op("Conectar", { desde: { componente: "cmp-1", terminal: "anodo" }, hasta: { componente: "cmp-2", terminal: "a" } }, motor.getProyecto().revision))
+  motor.aplicar(op("AsignarPin", { componente: "cmp-1", terminal: "anodo", pin: PIN_LED }, motor.getProyecto().revision))
   motor.aplicar(op("AsignarPin", { componente: "cmp-0", terminal: "senal", pin: PIN_SENSOR }, motor.getProyecto().revision))
   const rSet = motor.aplicar(
     op(
