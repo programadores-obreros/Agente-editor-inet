@@ -90,7 +90,7 @@ test("T3 pintar(modelo completo): contenedor con la acción encastrada y un drop
   assert.equal(mientras.type, "tecnia_mientras")
   assert.equal(mientras.hijo.type, "tecnia_hacer")
   assert.deepEqual(valoresDe(reg), COMPLETO)
-  assert.deepEqual(reg.ws.bloques.map((b) => b.etiquetas), [["Mientras el", "esté"], [", el", "está"]])
+  assert.deepEqual(reg.ws.bloques.map((b) => b.etiquetas), [["Mientras el", "esté"], ["el", "está"]])
   const f = campoDe(reg, "s0")
   assert.deepEqual(f.opciones.map((o) => o[1]).slice(1), ["cmp-1"])
   assert.deepEqual(f.opciones.map((o) => o[0]).slice(1), ["Pulsador"])
@@ -262,4 +262,13 @@ test("T3 guarda: el módulo no usa serialización, XML, generadores ni lee Block
   assert.ok(!/^\s*import\b[^\n]*[Bb]lockly/m.test(src), "no importa Blockly")
   assert.ok(!/globalThis\.Blockly|window\.Blockly|\bwindow\b|\bdocument\b/.test(src))
   assert.ok(!/localStorage|sessionStorage|indexedDB|fetch\(/.test(src), "nada se persiste")
+})
+
+test("T9b presentación: el texto fijo del servidor se muestra sin coma inicial y no se repite «mientras» como etiqueta estática", async () => {
+  const { reg } = await montar()
+  const def = reg.definiciones.find((d) => d.type === "tecnia_mientras")
+  assert.ok(!/mientras/i.test(def.message0), "el «Mientras el» ya viene del servidor")
+  const { adaptador, reg: reg2 } = await montar()
+  adaptador.pintar(modelo(VACIO, { id: null }))
+  assert.ok(reg2.ws.bloques.every((b) => b.etiquetas.every((t) => !/^[,\s]/.test(t))))
 })
