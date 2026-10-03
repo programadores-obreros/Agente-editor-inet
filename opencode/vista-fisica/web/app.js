@@ -13,7 +13,7 @@ import { planDePintado } from "./plan-de-pintado.js"
 import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 import { crearClienteHttp } from "./cliente-http.js"
-import { crearPanelVistaLogica } from "./vista-logica-ui.js"
+import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -217,6 +217,11 @@ export function crearControladorReglas({ obtenerSnapshot, enviar, alCambiar }) {
     let cuerpo = null
     try {
       cuerpo = await enviar({ ...operacion, baseRevision: obtenerSnapshot().revision })
+    } catch (error) {
+      // El envío falló (red, respuesta que no es JSON): gana el snapshot autoritativo, nunca lo que se eligió.
+      pendiente = false
+      alCambiar()
+      throw error
     } finally {
       pendiente = false
     }
@@ -395,7 +400,7 @@ function repintar() {
   const secciones = pintar(document, instrucciones, {
     onCambioGpio: manejarCambioGpio,
     onCambioRegla: manejarCambioRegla,
-    onQuitarRegla: (evento) => controladorReglas.quitar(evento),
+    onQuitarRegla: (evento) => avisarSiFalla(controladorReglas.quitar(evento)),
     onAgregarRegla: () => controladorReglas.agregar(),
     onAlternarTraza: (evento) => controladorReglas.alternarTraza(evento),
   })
@@ -499,7 +504,12 @@ function restaurarFocoRegla(raizReglas) {
 
 function manejarCambioRegla({ reglaId, slot, valor }) {
   focoReglaPendiente = capturarFocoRegla()
-  controladorReglas.cambiar({ reglaId, slot, valor })
+  avisarSiFalla(controladorReglas.cambiar({ reglaId, slot, valor }))
+}
+
+/** Si el envío de la frase falla, el controlador ya repintó desde el snapshot; acá sólo se avisa. */
+function avisarSiFalla(promesa) {
+  Promise.resolve(promesa).catch(() => mostrarEstado(MENSAJE_NO_SE_PUDO_GUARDAR))
 }
 
 /** F-11: el coalescer real de esta página — `enviar`/`obtenerValorServidor` leen

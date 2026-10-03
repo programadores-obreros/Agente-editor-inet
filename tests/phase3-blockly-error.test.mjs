@@ -82,6 +82,7 @@ test("T9e vista lógica: un cambio ignorado por el controlador (ocupado) tampoco
 
 test("T9e la frase: app.js avisa con el mismo mensaje cuando falla un cambio o un quitar de la frase", () => {
   const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
-  assert.match(app, /No se pudo guardar el cambio\. Volvé a intentar\./)
+  assert.match(app, /MENSAJE_NO_SE_PUDO_GUARDAR/)
   assert.match(app, /\.catch\(/)
+  assert.ok(readFileSync(join(REPO, "opencode/vista-fisica/web/vista-logica-ui.js"), "utf8").includes(MENSAJE), "el texto vive en un solo lugar")
 })

@@ -8,12 +8,28 @@ import { crearAdaptadorBlockly } from "./adaptador-blockly.js"
 import { proyectarModeloLogico } from "./vista-logica.js"
 import { AVISO_VARIAS_REGLAS } from "./plan-de-pintado.js"
 
+export const MENSAJE_NO_SE_PUDO_GUARDAR = "No se pudo guardar el cambio. Volvé a intentar."
+
 /**
  * @param {{ Blockly: object, contenedor: Element, controlador: { cambiar: Function, quitar: Function },
  *   media?: string, mensajes?: object, alError?: (error: unknown) => void }} config
  */
 export function crearVistaLogica({ Blockly, contenedor, controlador, media, mensajes, alError = () => {} }) {
-  const enviar = (promesa) => Promise.resolve(promesa).catch(alError)
+  // Gana el snapshot: si el controlador ignoró el cambio (false) o el envío falló, se repinta lo último autoritativo.
+  let ultimo = null
+  const reponer = () => {
+    if (ultimo) adaptador.pintar(proyectarModeloLogico(ultimo.snapshot?.vista ?? {}), { deshabilitado: ultimo.deshabilitado })
+  }
+  const enviar = (promesa) =>
+    Promise.resolve(promesa).then(
+      (resultado) => {
+        if (resultado === false) reponer()
+      },
+      (error) => {
+        reponer()
+        alError(error)
+      },
+    )
   const adaptador = crearAdaptadorBlockly({
     Blockly,
     contenedor,
@@ -25,6 +41,7 @@ export function crearVistaLogica({ Blockly, contenedor, controlador, media, mens
   return {
     /** Pinta SIEMPRE desde el snapshot autoritativo; devuelve el modelo (para textos junto al bloque). */
     repintar(snapshot, { deshabilitado = false } = {}) {
+      ultimo = { snapshot, deshabilitado }
       const modelo = proyectarModeloLogico(snapshot?.vista ?? {})
       adaptador.pintar(modelo, { deshabilitado })
       return modelo
@@ -44,6 +61,9 @@ const MENSAJE_SIN_BLOCKLY = "La vista lógica no está disponible en esta págin
  */
 export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elementoEstado, botonQuitar, controlador, media }) {
   let vista = null
+  const mostrarEstado = (texto) => {
+    elementoEstado.textContent = texto ?? ""
+  }
   botonQuitar.addEventListener("click", () => vista?.quitar())
 
   return {
@@ -53,7 +73,7 @@ export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elemento
         botonQuitar.disabled = true
         return null
       }
-      vista ??= crearVistaLogica({ Blockly, contenedor: lienzo, controlador, ...(media === undefined ? {} : { media }) })
+      vista ??= crearVistaLogica({ Blockly, contenedor: lienzo, controlador, alError: () => mostrarEstado(MENSAJE_NO_SE_PUDO_GUARDAR), ...(media === undefined ? {} : { media }) })
       const modelo = vista.repintar(snapshot, { deshabilitado })
       const lineas = modelo.regla ? [...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : [])] : []
       if (modelo.hayVarias) lineas.push(`Se muestra la primera regla. ${AVISO_VARIAS_REGLAS}`)
@@ -61,9 +81,7 @@ export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elemento
       botonQuitar.disabled = deshabilitado || !modelo.regla || modelo.regla.id === null
       return modelo
     },
-    mostrarEstado(texto) {
-      elementoEstado.textContent = texto ?? ""
-    },
+    mostrarEstado,
     destruir() {
       vista?.destruir()
       vista = null
