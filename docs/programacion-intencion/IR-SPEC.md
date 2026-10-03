@@ -1021,3 +1021,9 @@ versión según los datos haría depender el sello del contenido y agregaría un
 
 **id provisto inexistente.** Un `SetComportamiento` con un `id` que no existe crea una regla nueva con un id del
 Engine (`beh-N`); un test lo fija.
+
+## 11. Phase 3 — vertical semántico #2 (Blockly): la IR no cambia
+
+La IR **no cambia** con el vertical de Blockly (HD-P3-4 = A confirmada): ningún campo, ninguna versión de esquema. No entra a la IR ni
+queda en disco nada de Blockly (ni XML ni JSON de workspace, ni ids de bloque, posiciones, conexiones o layout). El workspace es
+descartable y se reconstruye siempre desde la IR, a través del snapshot del servidor; destruirlo y recrearlo da los mismos campos.

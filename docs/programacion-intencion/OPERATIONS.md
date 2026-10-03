@@ -757,3 +757,15 @@ DESPUÉS de validar `Origin`/`Content-Type` y de leer/parsear el cuerpo, y ANTES
 `{resultado:{ok:false, rechazadoPor:"transporte", motivos:[{codigo:"OPERACION_NO_PERMITIDA_EN_NAVEGADOR", categoria:"operacion",
 severidad:"blocking", clasificacion:"rechazo", datos:{tipo}}]}, snapshot}`; el Engine no se invoca y nada se persiste. Un cuerpo que no
 es un objeto plano sigue yendo al Engine. Es un error de integración, no de dominio.
+
+### 13.1. Phase 3 — vertical #2: la vista lógica (Blockly) como tercer productor
+
+La vista lógica (Blockly, `PHASE_3_VERTICAL_2_BLOCKLY_CONTRACT.md`) es un **tercer productor** de operaciones, junto al agente y a
+la frase. Usa **sólo** `SetComportamiento` y `QuitarComportamiento` por la whitelist del navegador de arriba, con el mismo
+controlador que la frase (`crearControladorReglas`), la `baseRevision` del último snapshot y a lo sumo una operación en vuelo. No se
+agrega ninguna operación nueva (ni mover, ni conectar, ni guardar workspace) y el Engine no cambia.
+
+**Lista blanca de assets del servidor.** `construirRutasDeAssets` incluye ahora los cuatro módulos nuevos de `vista-fisica/web/`
+(`cliente-http.js`, `vista-logica.js`, `adaptador-blockly.js`, `vista-logica-ui.js`) y los dos archivos vendorizados de Blockly 13.3.0
+(`blockly_compressed.js`, `blockly-es.js`, desde `opencode/tecniabot-web/`). La CSP **no cambia**
+(`script-src 'self'`, sin `unsafe-eval`); un test fija la cadena exacta.

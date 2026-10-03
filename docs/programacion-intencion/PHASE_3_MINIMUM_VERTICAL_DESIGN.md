@@ -2,6 +2,8 @@
 
 > **Nota (vertical #1 implementado):** el contrato de implementación `PHASE_3_VERTICAL_1_CONTRACT.md` (§A "Partes del diseño sustituidas") reemplaza partes de este diseño por decisiones humanas posteriores (p. ej. la tool SÍ acepta `SetComportamiento`/`QuitarComponente` de reglas, whitelist de 8). Este documento se conserva sin reescribir.
 
+> **Nota (vertical #2 implementado):** el §14 (adaptador Blockly) quedó implementado como indica `PHASE_3_VERTICAL_2_BLOCKLY_CONTRACT.md`, que prevalece sobre este diseño en ese punto.
+
 **Estado: PROPOSED — HUMAN APPROVAL REQUIRED.** No autoriza writers ni implementación.
 
 **Base:** `main` local `822249e`; producto congelado del Slice 2 `cc6794c`.
