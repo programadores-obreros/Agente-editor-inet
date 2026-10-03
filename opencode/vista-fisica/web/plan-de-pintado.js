@@ -225,7 +225,7 @@ function opcionesDelSlot(base, actual) {
 }
 
 /** Valor actual de un slot: `frase[slot]` ya viene del servidor ({id, etiqueta} o {clave, etiqueta}). */
-function valorActualDe(frase, slot) {
+export function valorActualDe(frase, slot) {
   const f = frase[slot]
   return f ? { valor: f.id ?? f.clave, etiqueta: f.etiqueta } : null
 }
