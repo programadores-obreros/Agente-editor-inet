@@ -164,8 +164,13 @@ test("F-15: el código/platformio.ini/compilar quedan acotados a un pedido EXPL�
     "no acota la regla a un pedido explícito de código/programa/subir a la placa")
   assert.match(bloque, /LED/, "el ejemplo de comportamiento no menciona el LED")
   assert.match(bloque, /pulsador/, "el ejemplo de comportamiento no menciona el pulsador")
-  assert.match(bloque, /todav[ií]a no se puede construir|TODAV[ÍI]A NO SE PUEDE CONSTRUIR/i,
-    "no dice que esa relación todavía no se puede construir en el proyecto físico de esta versión")
+  // MOD (contrato Phase 3 §A, DECISIONS 2531e09): antes este test fijaba "todavía no se puede
+  // construir" la relación pulsador→LED. Esa verdad cambió: una regla de NIVEL ("mientras") SÍ se
+  // construye con `SetComportamiento`. Se conservan las anclas y la cláusula de pedido EXPLÍCITO.
+  const comportamiento = bloqueComportamientoSinCodigo()
+  assert.match(comportamiento, /SetComportamiento/, "el bloque de comportamiento no nombra SetComportamiento (la regla de nivel SÍ se construye)")
+  assert.match(comportamiento, /mientras/i, "el bloque de comportamiento no habla de la regla 'mientras'")
+  assert.doesNotMatch(comportamiento, /TODAV[ÍI]A NO SE PUEDE CONSTRUIR/, "sigue diciendo que la relación pulsador→LED todavía no se puede construir")
 })
 
 // ════════════════════════════════════════════════════════════════════════════
