@@ -191,6 +191,21 @@ export interface OpcionVista {
   readonly etiqueta: string
 }
 
+/** Opción del slot "estado": `condicion` es el payload canónico que el navegador copia tal cual
+ * al armar la regla entera (el navegador no conoce capacidades ni comparadores). */
+export interface OpcionEstadoVista extends OpcionVista {
+  readonly condicion: {
+    readonly capacidad: string
+    readonly comparador: string
+    readonly umbral: { readonly valor: number; readonly unidad: string; readonly magnitud: string }
+  }
+}
+
+/** Opción del slot "salida": `accion` es el valor que el navegador copia a `entonces.accion`. */
+export interface OpcionSalidaVista extends OpcionVista {
+  readonly accion: string
+}
+
 /** Los cuatro slots de la frase "Mientras el <sensor> esté <estado>, el <actuador> está <salida>."
  * Un slot AUSENTE = vacío. `estado.clave: "avanzada"` = cualquier condición que no es
  * exactamente "presionado" (la frase no la edita, sólo la nombra). */
@@ -220,11 +235,33 @@ export interface ReglaVista {
   /** Los motivos cuya entidad es esta regla. */
   readonly motivos: readonly MotivoVista[]
   readonly traza?: TrazaReglaVista
+  /** La regla guardada (sin `id`), tal cual está en el IR: el navegador la reenvía ENTERA
+   * (con un slot cambiado) en cada edición — un único `SetComportamiento`. */
+  readonly forma: { readonly cuando?: unknown; readonly entonces?: unknown }
+  /** Nota para una condición avanzada (la frase sólo edita "presionado"); `null` en cualquier otro caso. */
+  readonly aviso: string | null
+}
+
+/** Una opción de un slot de la frase. `parche` es lo que esa opción le agrega a la regla guardada
+ * (`cuando`/`entonces` parciales): el navegador lo mezcla sin saber qué significa. */
+export interface OpcionSlotVista {
+  readonly valor: string
+  readonly etiqueta: string
+  readonly parche: { readonly cuando?: Readonly<Record<string, unknown>>; readonly entonces?: Readonly<Record<string, unknown>> }
+}
+
+/** Un slot de la frase, en orden: `prefijo` es el texto fijo que va antes del selector. */
+export interface SlotFraseVista {
+  readonly slot: "sensor" | "estado" | "actuador" | "salida"
+  readonly prefijo: string
+  readonly opciones: readonly OpcionSlotVista[]
 }
 
 export interface OpcionesReglaVista {
+  /** Los cuatro slots de la frase, en orden, con sus opciones y parches (fuente única para el navegador). */
+  readonly slots: readonly SlotFraseVista[]
   readonly sensores: readonly ReferenciaVista[]
-  readonly estados: readonly OpcionVista[]
+  readonly estados: readonly OpcionEstadoVista[]
   readonly actuadores: readonly ReferenciaVista[]
-  readonly salidas: readonly OpcionVista[]
+  readonly salidas: readonly OpcionSalidaVista[]
 }

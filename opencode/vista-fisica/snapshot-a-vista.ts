@@ -38,7 +38,7 @@ import { validarProyecto, derivarReadiness } from "../nucleo/validar.ts"
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA } from "./wokwi-render-datos.ts"
 import { etiquetaDeTerminal } from "./etiquetas-terminales.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, FraseReglaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista } from "./modelo-vista.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, FraseReglaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal — consulta `asignarPin()` (`nucleo/catalogo.ts`)
@@ -478,12 +478,18 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
 // servidor, determinista, sin LLM; el navegador sólo pinta lo que recibe.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-/** "presionado" ⇔ EXACTAMENTE la triada de nivel `estadoBooleano >= 1` (HD-P3-4). */
+/** La triada de nivel que significa "presionado" (HD-P3-4): vive SÓLO acá; el navegador la
+ * recibe en `opcionesRegla.estados[i].condicion` y la copia tal cual. */
+const CONDICION_PRESIONADO = { capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } } as const
+
+/** "presionado" ⇔ EXACTAMENTE esa triada. */
 function esCondicionPresionado(cuando: ComportamientoRegla["cuando"]): boolean {
   const u = cuando?.umbral
-  return cuando?.capacidad === "estadoBooleano" && cuando.comparador === ">=" && u !== undefined && u.valor === 1 && u.unidad === "ninguna" && u.magnitud === "estadoBooleano"
+  const c = CONDICION_PRESIONADO
+  return cuando?.capacidad === c.capacidad && cuando.comparador === c.comparador && u !== undefined && u.valor === c.umbral.valor && u.unidad === c.umbral.unidad && u.magnitud === c.umbral.magnitud
 }
 
+const AVISO_CONDICION_AVANZADA = "Esta regla usa una condición avanzada: se puede mirar, pero esta frase sólo sabe armar «presionado»."
 const ETIQUETA_TRAZA = "Explicación de la regla — no es una simulación ni lo que pasa en la placa."
 
 function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: readonly ComponenteVista[], motivos: readonly MotivoVista[]): { reglas: readonly ReglaVista[]; opcionesRegla: OpcionesReglaVista } {
@@ -510,7 +516,9 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     }
 
     const canonica = completa && presionado && frase.sensor !== undefined && frase.actuador !== undefined && frase.salida !== undefined
-    if (!canonica) return { id: b.id, frase, texto: null, completa, faltan, motivos: delaRegla }
+    const aviso = tieneEstado && !presionado ? AVISO_CONDICION_AVANZADA : null
+    const forma = { ...(cuando ? { cuando: JSON.parse(JSON.stringify(cuando)) } : {}), ...(entonces ? { entonces: JSON.parse(JSON.stringify(entonces)) } : {}) }
+    if (!canonica) return { id: b.id, frase, texto: null, completa, faltan, motivos: delaRegla, forma, aviso }
 
     const s = frase.sensor!.etiqueta
     const a = frase.actuador!.etiqueta
@@ -520,7 +528,7 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
       ramas: [`Si el ${s} está presionado → la condición es verdadera → el ${a} está ${salida}.`, `Si el ${s} no está presionado → la condición es falsa → el ${a} está apagado (reposo).`],
       ...(salidaClave === "apagado" ? { nota: "Esta regla no cambia nada visible." } : {}),
     }
-    return { id: b.id, frase, texto: `Mientras el ${s} esté presionado, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza }
+    return { id: b.id, frase, texto: `Mientras el ${s} esté presionado, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza, forma, aviso }
   })
 
   // Opciones derivadas de datos de catálogo (capacidad / clase), nunca una tabla de tipos.
@@ -533,7 +541,13 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     if (cat.capacidades.some((cap) => cap.id === "estadoBooleano")) sensores.push({ id: c.id, etiqueta: c.nombre })
     if (cat.clase === "actuador") actuadores.push({ id: c.id, etiqueta: c.nombre })
   }
-  return { reglas, opcionesRegla: { sensores, estados: [{ clave: "presionado", etiqueta: "presionado" }], actuadores, salidas: [{ clave: "encendido", etiqueta: "encendido" }] } }
+  const slots: SlotFraseVista[] = [
+    { slot: "sensor", prefijo: "Mientras el", opciones: sensores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { cuando: { sensor: o.id } } })) },
+    { slot: "estado", prefijo: "esté", opciones: [{ valor: "presionado", etiqueta: "presionado", parche: { cuando: CONDICION_PRESIONADO } }] },
+    { slot: "actuador", prefijo: ", el", opciones: actuadores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { entonces: { actuador: o.id } } })) },
+    { slot: "salida", prefijo: "está", opciones: [{ valor: "encendido", etiqueta: "encendido", parche: { entonces: { accion: "encender" } } }] },
+  ]
+  return { reglas, opcionesRegla: { slots, sensores, estados: [{ clave: "presionado", etiqueta: "presionado", condicion: CONDICION_PRESIONADO }], actuadores, salidas: [{ clave: "encendido", etiqueta: "encendido", accion: "encender" }] } }
 }
 
 /**

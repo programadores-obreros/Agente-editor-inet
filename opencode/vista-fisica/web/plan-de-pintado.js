@@ -30,6 +30,13 @@
  */
 export function planDePintado(modeloDeVista, opciones = {}) {
   const conexionActiva = opciones.conexionActiva ?? true
+  // Phase 3 (T5): estado de la UI de la frase, siempre un DATO de entrada (esta función sigue
+  // siendo pura). `operacionPendiente`: hay una operación en vuelo; `reglaNueva`: el alumno
+  // apretó "Agregar regla" (frase vacía, todavía no existe en el IR); `trazasAbiertas`: ids de
+  // las reglas cuya explicación se pidió a demanda.
+  const operacionPendiente = opciones.operacionPendiente ?? false
+  const reglaNueva = opciones.reglaNueva ?? false
+  const trazasAbiertas = opciones.trazasAbiertas ?? []
   const instrucciones = []
 
   // W0-8 (PHASE_3_WAVE_0_DESIGN.md): "si el proyecto no tiene placa NI componentes" —
@@ -133,6 +140,8 @@ export function planDePintado(modeloDeVista, opciones = {}) {
     }
   }
 
+  instrucciones.push(...instruccionesDeReglas(modeloDeVista, { deshabilitado: !conexionActiva || operacionPendiente, reglaNueva, trazasAbiertas }))
+
   // Panel de motivos: tal cual `modeloDeVista.motivos` (ya proyectado 1:1 desde
   // `validarProyecto()`, orden estable de `nucleo/motivos.ts::compararMotivos`) — este
   // módulo no reordena ni filtra, sólo elige qué campos mostrar.
@@ -196,4 +205,71 @@ function etiquetaDeExtremo(extremo, componentesPorId) {
   const nombreComponente = componente ? componente.nombre : extremo.componente
   const etiquetaTerminal = componente?.terminales?.[extremo.terminal]?.etiqueta ?? extremo.terminal
   return `${nombreComponente} (${etiquetaTerminal})`
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 3 (T5, contrato B7): la FRASE editable de cada regla. Todo viene del servidor
+// (`reglas`/`opcionesRegla.slots`): acá sólo se ordena en instrucciones. Ninguna tabla de clases,
+// capacidades ni estados, y ni siquiera se nombran los slots; un id sólo viaja como `valor` de una opción, nunca como texto.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const AVISO_VARIAS_REGLAS = "Hay varias reglas: la herramienta todavía no analiza si se contradicen."
+const PLACEHOLDER_SLOT = "[elegí…]"
+
+/** Opciones del slot + (si el valor actual no está entre ellas) la opción del valor actual, para
+ * que el select nunca muestre otra cosa que lo que la regla tiene de verdad. */
+function opcionesDelSlot(base, actual) {
+  const opciones = base.map((o) => ({ valor: o.valor, etiqueta: o.etiqueta }))
+  if (!actual || opciones.some((o) => o.valor === actual.valor)) return opciones
+  return [...opciones, actual]
+}
+
+/** Valor actual de un slot: `frase[slot]` ya viene del servidor ({id, etiqueta} o {clave, etiqueta}). */
+function valorActualDe(frase, slot) {
+  const f = frase[slot]
+  return f ? { valor: f.id ?? f.clave, etiqueta: f.etiqueta } : null
+}
+
+function instruccionDeFrase(regla, opciones, config) {
+  const frase = regla ? regla.frase : {}
+  // Los slots (orden, texto fijo, opciones) los dicta el servidor: acá no se nombra ninguno.
+  const selectores = (opciones.slots ?? []).map((definicion) => {
+    const actual = valorActualDe(frase, definicion.slot)
+    return {
+      slot: definicion.slot,
+      prefijo: definicion.prefijo,
+      opciones: opcionesDelSlot(definicion.opciones, actual),
+      valorActual: actual ? actual.valor : null,
+      placeholder: actual ? null : PLACEHOLDER_SLOT,
+      deshabilitado: config.deshabilitado,
+    }
+  })
+  const trazaAbierta = regla !== null && regla.traza !== undefined && config.trazasAbiertas.includes(regla.id)
+  return {
+    tipo: "reglaFrase",
+    reglaId: regla ? regla.id : null,
+    selectores,
+    cierre: ".",
+    explicaciones: regla ? regla.motivos.map((m) => m.explicacion).filter((t) => typeof t === "string" && t !== "") : [],
+    aviso: regla ? (regla.aviso ?? null) : null,
+    conTraza: regla !== null && regla.traza !== undefined,
+    etiquetaTraza: "¿Qué pasaría si…?",
+    traza: trazaAbierta ? regla.traza : null,
+    deshabilitado: config.deshabilitado,
+  }
+}
+
+function instruccionesDeReglas(modeloDeVista, config) {
+  const reglas = modeloDeVista.reglas ?? []
+  const opciones = modeloDeVista.opcionesRegla ?? { slots: [] }
+  const salida = []
+  for (const regla of reglas) salida.push(instruccionDeFrase(regla, opciones, config))
+  if (reglas.length > 1) salida.push({ tipo: "reglaAviso", texto: AVISO_VARIAS_REGLAS })
+  if (reglas.length === 0) {
+    // Límite de UI = 1 regla: "Agregar regla" sólo aparece sin reglas, y no crea nada — sólo
+    // muestra una frase vacía; la regla nace con el primer selector.
+    if (config.reglaNueva) salida.push(instruccionDeFrase(null, opciones, config))
+    else salida.push({ tipo: "reglaAgregar", etiqueta: "Agregar regla", deshabilitado: config.deshabilitado })
+  }
+  return salida
 }

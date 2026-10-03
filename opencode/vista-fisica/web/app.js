@@ -158,6 +158,110 @@ export function elegirSelectorParaFoco(disponibles, focoAnterior) {
   return disponibles.find((s) => s.componenteId === focoAnterior.componenteId && s.terminalId === focoAnterior.terminalId) ?? null
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 3 (T5, contrato B7) — la FRASE editable de las reglas. Funciones PURAS (dependencias
+// inyectadas, testeables sin DOM ni red). El navegador sigue sin ser autoridad: arma la
+// regla ENTERA a partir de lo que el servidor proyectó (`reglas[i].forma`, `opcionesRegla`)
+// y manda UN `SetComportamiento` por cambio; el Engine decide. No hay tablas de clases,
+// capacidades ni estados acá: cada opción de `opcionesRegla.slots` trae su `parche`.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** Arma la operación de UN cambio de la frase. `regla`: el elemento de `vista.reglas`, o
+ * `null` para una regla nueva (nace con ese único slot y SIN id: lo asigna el Engine).
+ * La opción elegida trae su `parche` (qué le agrega a la regla): acá sólo se mezcla. */
+export function construirOperacionRegla({ regla, slot, valor, opcionesRegla }) {
+  const forma = regla ? regla.forma : {}
+  const parche = buscarOpcion(slot, valor, opcionesRegla).parche
+  const cuando = forma.cuando || parche.cuando ? { ...forma.cuando, ...parche.cuando } : undefined
+  const entonces = forma.entonces || parche.entonces ? { ...forma.entonces, ...parche.entonces } : undefined
+  const comportamiento = { ...(regla ? { id: regla.id } : {}), ...(cuando ? { cuando } : {}), ...(entonces ? { entonces } : {}) }
+  return { tipo: "SetComportamiento", payload: { comportamiento } }
+}
+
+function buscarOpcion(slot, valor, opcionesRegla) {
+  const definicion = (opcionesRegla.slots ?? []).find((s) => s.slot === slot)
+  return definicion?.opciones.find((o) => o.valor === valor)
+}
+
+/** Foco de la frase tras repintar: el control equivalente (misma regla y slot) o `null`. */
+export function elegirControlReglaParaFoco(disponibles, focoAnterior) {
+  if (!focoAnterior) return null
+  return disponibles.find((c) => c.reglaId === focoAnterior.reglaId && c.slot === focoAnterior.slot) ?? null
+}
+
+function valorEsOpcion(slot, valor, opcionesRegla) {
+  return valor !== null && valor !== undefined && buscarOpcion(slot, valor, opcionesRegla) !== undefined
+}
+
+/**
+ * Controlador de la frase. Garantías (F-11 se mantiene): a lo sumo UNA operación en vuelo
+ * (la propia o una externa, ej. un cambio de GPIO), todos los controles deshabilitados
+ * mientras tanto, y un repintado SIEMPRE desde el snapshot de la respuesta (`alCambiar`
+ * lo dispara el llamador). "Agregar regla" no crea nada: la regla nace con el primer selector.
+ * - `obtenerSnapshot()`: el último snapshot autoritativo (`{revision, vista}`).
+ * - `enviar({tipo, payload, baseRevision})`: hace el POST; resuelve con `{resultado}`.
+ */
+export function crearControladorReglas({ obtenerSnapshot, enviar, alCambiar }) {
+  let pendiente = false
+  let externa = false
+  let reglaNueva = false
+  const trazasAbiertas = new Set()
+
+  const ocupado = () => pendiente || externa
+
+  async function ejecutar(operacion) {
+    pendiente = true
+    alCambiar()
+    let cuerpo = null
+    try {
+      cuerpo = await enviar({ ...operacion, baseRevision: obtenerSnapshot().revision })
+    } finally {
+      pendiente = false
+    }
+    if (cuerpo?.resultado?.ok) reglaNueva = false
+    alCambiar()
+    return true
+  }
+
+  return {
+    opciones: () => ({ operacionPendiente: ocupado(), reglaNueva, trazasAbiertas: [...trazasAbiertas] }),
+    marcarOperacionExterna(valor) {
+      externa = Boolean(valor)
+    },
+    agregar() {
+      if (ocupado()) return false
+      reglaNueva = true
+      alCambiar()
+      return true
+    },
+    async cambiar({ reglaId, slot, valor }) {
+      if (ocupado()) return false
+      const snapshot = obtenerSnapshot()
+      if (!snapshot?.vista) return false
+      const { opcionesRegla } = snapshot.vista
+      // Sólo valores OFRECIDOS: "condición avanzada" (no editable) y vaciar un slot no envían nada.
+      if (!valorEsOpcion(slot, valor, opcionesRegla)) return false
+      const regla = reglaId === null ? null : (snapshot.vista.reglas.find((r) => r.id === reglaId) ?? null)
+      if (reglaId !== null && regla === null) return false
+      return ejecutar(construirOperacionRegla({ regla, slot, valor, opcionesRegla }))
+    },
+    async quitar({ reglaId }) {
+      if (ocupado()) return false
+      if (reglaId === null) {
+        reglaNueva = false
+        alCambiar()
+        return true
+      }
+      return ejecutar({ tipo: "QuitarComportamiento", payload: { comportamiento: reglaId } })
+    },
+    alternarTraza({ reglaId }) {
+      if (trazasAbiertas.has(reglaId)) trazasAbiertas.delete(reglaId)
+      else trazasAbiertas.add(reglaId)
+      alCambiar()
+    },
+  }
+}
+
 let contenedores = null
 let elementoRevision = null
 let elementoReadiness = null
@@ -169,6 +273,7 @@ if (enNavegador) {
     circuito: document.getElementById("circuito"),
     cables: document.getElementById("cables"),
     controles: document.getElementById("controles"),
+    reglas: document.getElementById("reglas"),
     motivos: document.getElementById("motivos"),
   }
   elementoRevision = document.getElementById("revision")
@@ -280,12 +385,19 @@ function repintar() {
 
   if (!ultimoSnapshot.vista) return
   const focoAnterior = capturarFocoActual()
-  const instrucciones = planDePintado(ultimoSnapshot.vista, { conexionActiva: estadoConexion === "conectado" })
-  const secciones = pintar(document, instrucciones, { onCambioGpio: manejarCambioGpio })
+  const instrucciones = planDePintado(ultimoSnapshot.vista, { conexionActiva: estadoConexion === "conectado", ...controladorReglas.opciones() })
+  const secciones = pintar(document, instrucciones, {
+    onCambioGpio: manejarCambioGpio,
+    onCambioRegla: manejarCambioRegla,
+    onQuitarRegla: (evento) => controladorReglas.quitar(evento),
+    onAgregarRegla: () => controladorReglas.agregar(),
+    onAlternarTraza: (evento) => controladorReglas.alternarTraza(evento),
+  })
   for (const clave of Object.keys(contenedores)) {
     contenedores[clave].replaceChildren(secciones[clave])
   }
   restaurarFoco(secciones.controles, focoAnterior)
+  restaurarFocoRegla(secciones.reglas)
 }
 
 async function cargarSnapshot() {
@@ -328,40 +440,84 @@ async function enviarCambioGpio({ componenteId, terminalId, valor }) {
     payload: { componente: componenteId, terminal: terminalId, pin: valor },
   }
 
+  // Una operación de GPIO en vuelo también bloquea la frase (a lo sumo UNA operación global).
+  controladorReglas.marcarOperacionExterna(true)
+  try {
+    await enviarSobre(sobre, { repintarAhora: true })
+  } finally {
+    controladorReglas.marcarOperacionExterna(false)
+  }
+}
+
+/** POST de un sobre + manejo común de la respuesta (GPIO y frase comparten esto). SIEMPRE se
+ * repinta desde `cuerpo.snapshot` (la respuesta del servidor) — nunca desde lo que el selector
+ * mostraba antes del POST. `repintarAhora: false` lo usa la frase, que repinta ella misma al
+ * terminar (para no pintar dos veces seguidas con la operación todavía "pendiente"). */
+async function enviarSobre(sobre, { repintarAhora }) {
   const respuesta = await fetch("/api/operaciones", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(sobre),
   })
   const cuerpo = await respuesta.json()
-  // SIEMPRE se repinta desde `cuerpo.snapshot` (la respuesta del servidor) — nunca
-  // desde lo que el selector mostraba antes del POST.
   ultimoSnapshot = cuerpo.snapshot
 
   if (cuerpo.resultado.ok) {
-    // Path A (blocking representable) también cae acá con ok:true — el motivo, si lo
-    // hay, ya se muestra en el panel de motivos vía `planDePintado`/`pintar`; no hace
-    // falta un mensaje transitorio aparte.
+    // Path A (blocking representable) también cae acá con ok:true — el motivo, si lo hay, ya se
+    // muestra en el panel de motivos vía `planDePintado`/`pintar`.
     mostrarEstado(null)
-    repintar()
-    return
+    if (repintarAhora) repintar()
+    return cuerpo
   }
 
   const desactualizada = cuerpo.resultado.motivos.some((m) => m.codigo === "BASE_REVISION_DESACTUALIZADA")
   if (desactualizada) {
-    // Conflicto stale: "otro cambio llegó primero" — se vuelve a pedir el snapshot
-    // (nunca se asume que el que ya vino en la respuesta del rechazo es el más
-    // reciente) y se repinta desde ahí.
+    // Conflicto stale: "otro cambio llegó primero" — se vuelve a pedir el snapshot (nunca se asume
+    // que el de la respuesta del rechazo es el más reciente) y se repinta desde ahí.
     mostrarEstado("otro cambio llegó primero — se actualizó a la revisión vigente")
     await cargarSnapshot()
-    return
+    return cuerpo
   }
 
-  // Path B: rechazo de dominio (no stale) — la vista se queda en el snapshot
-  // autoritativo que ya trajo la respuesta (sin cambios, porque el Engine rechazó);
-  // sólo se muestra el motivo.
+  // Path B: rechazo de dominio (no stale) — la vista queda en el snapshot autoritativo que ya
+  // trajo la respuesta (sin cambios); sólo se muestra el motivo.
   mostrarEstado(descripcionDeMotivos(cuerpo.resultado.motivos))
-  repintar()
+  if (repintarAhora) repintar()
+  return cuerpo
+}
+
+/** La frase: un `SetComportamiento`/`QuitarComportamiento` por cambio, con `baseRevision` del
+ * ÚLTIMO snapshot autoritativo (nunca optimista). */
+async function enviarOperacionRegla({ tipo, payload, baseRevision }) {
+  return enviarSobre({ idOperacion: siguienteIdOperacion(), actor: "navegador", baseRevision, tipo, payload }, { repintarAhora: false })
+}
+
+const controladorReglas = crearControladorReglas({ obtenerSnapshot: () => ultimoSnapshot, enviar: enviarOperacionRegla, alCambiar: () => (enNavegador ? repintar() : undefined) })
+
+/** Foco de la frase: se captura al cambiar un select y se restaura cuando la operación termina
+ * (mientras está pendiente los selects están deshabilitados y no pueden tener el foco). */
+let focoReglaPendiente = null
+
+function capturarFocoRegla() {
+  const activo = document.activeElement
+  if (!activo || typeof activo.getAttribute !== "function") return null
+  const reglaId = activo.getAttribute("data-regla-id")
+  const slot = activo.getAttribute("data-slot")
+  return reglaId && slot ? { reglaId, slot } : null
+}
+
+function restaurarFocoRegla(raizReglas) {
+  if (!focoReglaPendiente || controladorReglas.opciones().operacionPendiente || typeof raizReglas.querySelectorAll !== "function") return
+  const disponibles = [...raizReglas.querySelectorAll("select[data-regla-id][data-slot]")].map((e) => ({ reglaId: e.getAttribute("data-regla-id"), slot: e.getAttribute("data-slot"), elemento: e }))
+  const elegido = elegirControlReglaParaFoco(disponibles.map(({ reglaId, slot }) => ({ reglaId, slot })), focoReglaPendiente)
+  focoReglaPendiente = null
+  const match = elegido && disponibles.find((c) => c.reglaId === elegido.reglaId && c.slot === elegido.slot)
+  if (match && typeof match.elemento.focus === "function") match.elemento.focus()
+}
+
+function manejarCambioRegla({ reglaId, slot, valor }) {
+  focoReglaPendiente = capturarFocoRegla()
+  controladorReglas.cambiar({ reglaId, slot, valor })
 }
 
 /** F-11: el coalescer real de esta página — `enviar`/`obtenerValorServidor` leen

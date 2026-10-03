@@ -26,9 +26,12 @@
 /**
  * @param {Document} doc
  * @param {readonly object[]} instrucciones - salida de `planDePintado`.
- * @param {{ onCambioGpio?: (evento: { componenteId: string, terminalId: string, valor: string | null }) => void }} [manejadores]
- * @returns {{ circuito: Element, cables: Element, controles: Element, motivos: Element }}
- *   Cuatro raíces NUEVAS (nunca reusa ni muta un elemento existente) — el llamador
+ * @param {{ onCambioGpio?: (evento: { componenteId: string, terminalId: string, valor: string | null }) => void,
+ *   onCambioRegla?: (e: { reglaId: string | null, slot: string, valor: string | null }) => void,
+ *   onQuitarRegla?: (e: { reglaId: string | null }) => void, onAgregarRegla?: () => void,
+ *   onAlternarTraza?: (e: { reglaId: string }) => void }} [manejadores]
+ * @returns {{ circuito: Element, cables: Element, controles: Element, reglas: Element, motivos: Element }}
+ *   Cinco raíces NUEVAS (nunca reusa ni muta un elemento existente) — el llamador
  *   (`app.js`) las monta donde corresponda (ej. `contenedor.replaceChildren(raiz)`).
  *   Reconstruir siempre desde cero, en vez de diffear el DOM anterior, es a
  *   propósito: la misma disciplina que el resto del slice ("nunca reconstruir
@@ -40,6 +43,7 @@ export function pintar(doc, instrucciones, manejadores = {}) {
     circuito: doc.createElement("div"),
     cables: doc.createElement("ul"),
     controles: doc.createElement("div"),
+    reglas: doc.createElement("div"),
     motivos: doc.createElement("ul"),
   }
 
@@ -69,6 +73,21 @@ export function pintar(doc, instrucciones, manejadores = {}) {
     }
     if (instruccion.tipo === "selectorGpio") {
       pintarSelectorGpio(doc, raiz.controles, instruccion, manejadores)
+      continue
+    }
+    if (instruccion.tipo === "reglaFrase") {
+      pintarReglaFrase(doc, raiz.reglas, instruccion, elementosPorEntidad, manejadores)
+      continue
+    }
+    if (instruccion.tipo === "reglaAviso") {
+      const aviso = doc.createElement("p")
+      aviso.setAttribute("data-aviso-reglas", "true")
+      aviso.textContent = instruccion.texto
+      raiz.reglas.appendChild(aviso)
+      continue
+    }
+    if (instruccion.tipo === "reglaAgregar") {
+      raiz.reglas.appendChild(crearBoton(doc, "agregar-regla", instruccion.etiqueta, instruccion.deshabilitado, () => avisar(manejadores.onAgregarRegla)))
       continue
     }
     if (instruccion.tipo === "panelMotivo") {
@@ -276,4 +295,113 @@ function pintarMotivo(doc, contenedor, instruccion, elementosPorEntidad) {
     const afectado = elementosPorEntidad.get(`${instruccion.entidad.tipo}:${instruccion.entidad.id}`)
     if (afectado) afectado.setAttribute("data-afectado", instruccion.severidad)
   }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Phase 3 (T5): la frase editable. Tonto a propósito: construye lo que la instrucción
+// describe y avisa al llamador; nunca decide qué se manda ni qué significa un valor.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+function avisar(manejador, evento) {
+  if (typeof manejador === "function") manejador(evento)
+}
+
+function crearBoton(doc, accion, texto, deshabilitado, alClick) {
+  const boton = doc.createElement("button")
+  boton.setAttribute("type", "button")
+  boton.setAttribute("data-accion", accion)
+  boton.textContent = texto
+  boton.disabled = Boolean(deshabilitado)
+  if (typeof boton.addEventListener === "function") boton.addEventListener("click", alClick)
+  return boton
+}
+
+function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, manejadores) {
+  const idTexto = instruccion.reglaId ?? ""
+  const caja = doc.createElement("div")
+  caja.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
+  // Resaltado de los motivos de la regla (`panelMotivo` con entidad "comportamiento" marca
+  // `data-afectado` sobre este elemento, mismo mecanismo que los componentes).
+  if (instruccion.reglaId !== null) elementosPorEntidad.set(`comportamiento:${instruccion.reglaId}`, caja)
+
+  const frase = doc.createElement("p")
+  frase.setAttribute("data-frase", "true")
+  for (const sel of instruccion.selectores) {
+    const prefijo = doc.createElement("span")
+    prefijo.textContent = `${sel.prefijo} `
+    frase.appendChild(prefijo)
+
+    const selector = doc.createElement("select")
+    selector.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
+    selector.setAttribute("data-slot", sel.slot)
+    if (sel.placeholder !== null) {
+      const vacia = doc.createElement("option")
+      vacia.setAttribute("value", "")
+      vacia.textContent = sel.placeholder
+      selector.appendChild(vacia)
+    }
+    for (const opcion of sel.opciones) {
+      const o = doc.createElement("option")
+      o.setAttribute("value", opcion.valor)
+      o.textContent = opcion.etiqueta
+      selector.appendChild(o)
+    }
+    selector.value = sel.valorActual ?? ""
+    selector.disabled = Boolean(sel.deshabilitado)
+    if (typeof selector.addEventListener === "function") {
+      selector.addEventListener("change", () => avisar(manejadores.onCambioRegla, { reglaId: instruccion.reglaId, slot: sel.slot, valor: selector.value === "" ? null : selector.value }))
+    }
+    frase.appendChild(selector)
+    const espacio = doc.createElement("span")
+    espacio.textContent = " "
+    frase.appendChild(espacio)
+  }
+  const cierre = doc.createElement("span")
+  cierre.textContent = instruccion.cierre
+  frase.appendChild(cierre)
+  caja.appendChild(frase)
+
+  if (instruccion.aviso) {
+    const aviso = doc.createElement("p")
+    aviso.setAttribute("data-aviso-condicion-avanzada", "true")
+    aviso.textContent = instruccion.aviso
+    caja.appendChild(aviso)
+  }
+
+  if (instruccion.explicaciones.length > 0) {
+    const lista = doc.createElement("ul")
+    lista.setAttribute("data-regla-motivos", "true")
+    for (const texto of instruccion.explicaciones) {
+      const fila = doc.createElement("li")
+      fila.textContent = texto
+      lista.appendChild(fila)
+    }
+    caja.appendChild(lista)
+  }
+
+  caja.appendChild(crearBoton(doc, "quitar-regla", "Quitar regla", instruccion.deshabilitado, () => avisar(manejadores.onQuitarRegla, { reglaId: instruccion.reglaId })))
+  if (instruccion.conTraza) {
+    caja.appendChild(crearBoton(doc, "alternar-traza", instruccion.etiquetaTraza, instruccion.deshabilitado, () => avisar(manejadores.onAlternarTraza, { reglaId: instruccion.reglaId })))
+  }
+  if (instruccion.traza) {
+    const traza = doc.createElement("div")
+    traza.setAttribute("data-traza", "true")
+    const etiqueta = doc.createElement("p")
+    etiqueta.textContent = instruccion.traza.etiqueta
+    traza.appendChild(etiqueta)
+    const ramas = doc.createElement("ul")
+    for (const texto of instruccion.traza.ramas) {
+      const rama = doc.createElement("li")
+      rama.textContent = texto
+      ramas.appendChild(rama)
+    }
+    traza.appendChild(ramas)
+    if (instruccion.traza.nota) {
+      const nota = doc.createElement("p")
+      nota.textContent = instruccion.traza.nota
+      traza.appendChild(nota)
+    }
+    caja.appendChild(traza)
+  }
+  contenedor.appendChild(caja)
 }

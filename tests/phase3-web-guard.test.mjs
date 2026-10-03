@@ -7,8 +7,9 @@
 // - un literal de comparador entre comillas (">=", etc.): la condición no se arma acá
 //   (el operador JS `>=` suelto, en una comparación numérica, es legítimo y NO matchea);
 // - `.clase` / `clase ===` / `"clase"`: el navegador no mira clases de catálogo;
-// - `=== "actuador"|"entrada"|"sensor"|"pasivo"` (y `case "..."`): clasificar por clase
-//   en el navegador. Usar la palabra "actuador" como NOMBRE de slot no matchea.
+// - `clase|rol|tipo === "actuador"|"entrada"|...`: clasificar un COMPONENTE por su clase en
+//   el navegador. Comparar el NOMBRE de un slot de la frase (`slot === "actuador"`) es
+//   legítimo y no matchea (el slot es vocabulario de la frase, no clasificación de hardware).
 
 import test from "node:test"
 import assert from "node:assert/strict"
@@ -29,7 +30,7 @@ const PATRONES = [
   [/estadoBooleano/, "estadoBooleano (la capacidad es del servidor)"],
   [/["'`](>=|<=|>|<)["'`]/, "literal de comparador (la condición es del servidor)"],
   [/\.clase\b|\bclase\s*===|["']clase["']/, "mirar la clase de catálogo"],
-  [/(===|!==|case)\s*["'](actuador|entrada|sensor|pasivo)["']/, "clasificar por clase de catálogo"],
+  [/\b(clase|rol|tipo)\s*(===|!==)\s*["'](actuador|entrada|sensor|pasivo|salida)["']/, "clasificar un componente por su clase/rol"],
 ]
 
 test("T5 guardia: web/*.js no contiene código de placa ni tablas de clase/capacidad/estado", () => {
@@ -53,6 +54,7 @@ test("T5 guardia: el navegador sí manda SetComportamiento/QuitarComportamiento 
   const app = readFileSync(join(dirWeb, "app.js"), "utf8")
   assert.match(app, /SetComportamiento/)
   assert.match(app, /QuitarComportamiento/)
-  const tipos = [...app.matchAll(/tipo:\s*"([A-Za-z]+)"/g)].map((m) => m[1])
+  // (sólo tipos de OPERACIÓN, que empiezan en mayúscula; `{tipo: "error"}` es un evento del EventSource)
+  const tipos = [...app.matchAll(/tipo:\s*"([A-Z][A-Za-z]+)"/g)].map((m) => m[1])
   for (const t of tipos) assert.ok(["AsignarPin", "SetComportamiento", "QuitarComportamiento"].includes(t), `tipo no permitido en el navegador: ${t}`)
 })
