@@ -162,7 +162,7 @@ test("T9d cualquier otro /assets/blockly/media/<x> es 404: sin servir carpetas n
 
 test("T9d la lista blanca sigue siendo explícita: cada nombre es una cadena literal, sin lectura de directorios", () => {
   const src = readFileSync(join(REPO, "opencode/servidor/servidor-proyecto.ts"), "utf8")
-  const bloque = /function construirRutasDeAssets[\s\S]*?\n}\n/.exec(src)[0]
+  const bloque = /function construirRutasDeAssets[\s\S]*?\n}\n/.exec(src)[0].replace(/\/\/.*$/gm, "")
   assert.match(bloque, /\["blockly\/media\/sprites\.svg"/)
   assert.ok(!/readdirSync|\.\.\.|glob/i.test(bloque))
 })
