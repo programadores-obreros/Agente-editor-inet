@@ -7,7 +7,8 @@
 // pintado desde el mismo modelo da exactamente los mismos campos.
 //
 // Forma fija: un bloque contenedor «mientras» con UN bloque de acción encastrado, y un dropdown
-// por campo del modelo. Los nombres de campo, los textos fijos y las opciones los dicta el
+// por campo del modelo (los campos se reparten por índice: la primera mitad en el contenedor y el
+// resto en la acción; la forma fija de 4 campos queda 2+2). Los nombres de campo, los textos fijos y las opciones los dicta el
 // modelo (que viene del servidor); acá no se nombra ninguno.
 
 const TIPO_MIENTRAS = "tecnia_mientras"
@@ -72,10 +73,26 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     const campo = modeloActual.regla.campos.find((c) => c.slot === evento.name)
     if (!campo) return
     const valor = evento.newValue
-    if (valor === SENTINELA || valor === campo.valor) return
+    if (valor === SENTINELA) {
+      // Gana el snapshot: "— elegí —" nunca es una edición. Si la regla ya tenía valor, el campo vuelve a él.
+      if (campo.valor !== null) restaurar(evento.blockId, campo)
+      return
+    }
+    if (valor === campo.valor) return
     alEditar({ reglaId: modeloActual.regla.id, slot: campo.slot, valor })
   }
   workspace.addChangeListener(alCambiarCampo)
+
+  function restaurar(idBloque, campo) {
+    const bloque = workspace.getBlockById(idBloque)
+    if (!bloque) return
+    Blockly.Events.disable()
+    try {
+      bloque.setFieldValue(campo.valor, campo.slot)
+    } finally {
+      Blockly.Events.enable()
+    }
+  }
 
   function construir(campos) {
     const mitad = Math.ceil(campos.length / 2)
