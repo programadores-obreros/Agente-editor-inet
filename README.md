@@ -223,7 +223,7 @@ Ambas son *copyleft*: si modificás y redistribuís, compartí tus cambios bajo 
 
 > Tecnia Bot se instala **junto a** OpenCode (MIT), no lo incluye ni lo modifica; por eso las licencias no se pisan.
 
-**Terceros:** la biblioteca visual incluye [Wokwi Elements](https://github.com/wokwi/wokwi-elements) (MIT), redistribuida en `opencode/tecniabot-web/` con su licencia original (`LICENSE-wokwi-elements`).
+**Terceros:** la biblioteca visual incluye [Wokwi Elements](https://github.com/wokwi/wokwi-elements) (MIT), redistribuida en `opencode/tecniabot-web/` con su licencia original (`LICENSE-wokwi-elements`). La vista lógica usa [Blockly](https://github.com/google/blockly) 13.3.0 (Apache-2.0), vendorizado en el mismo directorio (`blockly_compressed.js`, `blockly-es.js`, `LICENSE-blockly` y `BLOCKLY-VERSION.md` con origen y hashes); sirve sólo como vista, sin generadores ni CDN.
 
 ---
 
