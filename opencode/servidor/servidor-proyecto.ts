@@ -63,6 +63,8 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
     // Phase 3 (vertical #2, contrato §11): Blockly 13.3.0 vendorizado (núcleo + mensajes es), sin medios.
     ["blockly_compressed.js", join(DIR_TECNIABOT_WEB, "blockly_compressed.js")],
     ["blockly-es.js", join(DIR_TECNIABOT_WEB, "blockly-es.js")],
+    // Único medio que Blockly pide (sprites del menú desplegable), con la ruta que resuelve `media` de la inyección.
+    ["blockly/media/sprites.svg", join(DIR_TECNIABOT_WEB, "blockly-media", "sprites.svg")],
     ["app.js", join(DIR_VISTA_FISICA_WEB, "app.js")],
     ["pintar.js", join(DIR_VISTA_FISICA_WEB, "pintar.js")],
     ["plan-de-pintado.js", join(DIR_VISTA_FISICA_WEB, "plan-de-pintado.js")],
@@ -376,7 +378,8 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
       const nombre = ruta.slice("/assets/".length)
       const asset = assets.get(nombre) // lista blanca — ver construirRutasDeAssets()
       if (!asset) return responderTexto(res, 404, "No encontrado")
-      return responderBuffer(res, 200, "text/javascript; charset=utf-8", asset, req.method === "HEAD")
+      const tipo = nombre.endsWith(".svg") ? "image/svg+xml" : "text/javascript; charset=utf-8"
+      return responderBuffer(res, 200, tipo, asset, req.method === "HEAD")
     }
 
     if (ruta === "/api/proyecto") {

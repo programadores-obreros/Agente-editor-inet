@@ -283,6 +283,7 @@ if (process.platform === "win32") {
         join(configDir, "tecniabot-web", "componentes-extra.js"),
         join(configDir, "tecniabot-web", "blockly_compressed.js"),
         join(configDir, "tecniabot-web", "blockly-es.js"),
+        join(configDir, "tecniabot-web", "blockly-media", "sprites.svg"),
       ]
       for (const archivoOffline of archivosOffline) {
         const hallazgos = escanearArchivo(archivoOffline).filter((h) => h.clasificacion === "carga-real")

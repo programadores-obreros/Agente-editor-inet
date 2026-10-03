@@ -12,15 +12,17 @@
 |---|---|---|---|
 | `blockly_compressed.js` | `blockly_compressed.js` | 640346 | `d3f46af56951a7aed27f09f872dca66ed70a932ca8be9aade3d9df06ceacd078` |
 | `blockly-es.js` | `msg/es.js` | 56482 | `432e126da36a91203029c418a0d399c3dadbb9811730e22b9ee9930ce62c60a1` |
+| `blockly-media/sprites.svg` | `media/sprites.svg` | 1775 | `862de0ee081fa9baf504e673736d7446439c15246452258cab964a82566ef40f` |
 
 ## Alcance
 
 - Infraestructura de **presentación** únicamente: no es modelo de dominio, ni persistencia, ni backend de
   código. No se vendorizan generadores (no generators): ni JavaScript, ni Python, ni otros.
 - Se cargan como `<script>` clásicos (UMD): primero el núcleo, después los mensajes en español.
-- Sin medios (`media/`): con `sounds: false` y sin papelera, zoom ni arrastre, Blockly no pide ninguno
-  (la flecha del dropdown es SVG en línea). Si una prueba en navegador real demostrara que hace falta uno,
-  sería un cambio aparte y declarado.
+- Un solo medio: `media/sprites.svg` (íconos del menú desplegable de los campos). Lo pidió Blockly en el navegador
+  real al abrir un dropdown (`/assets/blockly/media/sprites.svg`, 404 sin él). Se sirve por una entrada explícita de
+  la lista blanca con `image/svg+xml`; cualquier otra ruta bajo `/assets/blockly/media/` da 404. Los sonidos están
+  desactivados (`sounds: false`) y no se vendoriza ningún otro medio.
 
 ## Estrategia offline
 
