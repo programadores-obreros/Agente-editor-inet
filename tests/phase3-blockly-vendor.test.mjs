@@ -112,3 +112,57 @@ test("T8 código propio: sin generadores ni serialización, sin remotos, y el ad
   assert.match(adaptador, /media\s*=\s*"\/assets\/blockly\/media\/"/)
   assert.ok(!/https?:\/\//.test(adaptador.replace(/\/\/.*$/gm, "")), "ninguna URL remota")
 })
+
+// ── T9d: el único medio que Blockly pide (sprites del menú desplegable), servido por entrada explícita ──
+const SPRITES = { ruta: "blockly-media/sprites.svg", sha256: "862de0ee081fa9baf504e673736d7446439c15246452258cab964a82566ef40f", bytes: 1775 }
+
+test("T9d sprites.svg vendorizado: byte-idéntico al del tarball (sha256 + tamaño), documentado en BLOCKLY-VERSION.md, escáner offline 0", () => {
+  const buf = readFileSync(join(dirVendor, SPRITES.ruta))
+  assert.equal(sha(buf), SPRITES.sha256)
+  assert.equal(buf.length, SPRITES.bytes)
+  const nota = readFileSync(join(dirVendor, "BLOCKLY-VERSION.md"), "utf8")
+  assert.ok(nota.includes(SPRITES.sha256) && nota.includes(String(SPRITES.bytes)) && nota.includes("sprites.svg"))
+  assert.deepEqual(escanearArchivo(join(dirVendor, SPRITES.ruta)).filter((h) => h.clasificacion === "carga-real"), [])
+})
+
+test("T9d el servidor sirve GET /assets/blockly/media/sprites.svg: 200, image/svg+xml, mismas cabeceras de seguridad, CSP sin cambios, byte-idéntico", async () => {
+  const servicio = obtenerServicioDeProyectoConVista({ directorio: nuevoDir("p3-vend2"), idProyecto: nuevoIdProyecto("p3-vend2") })
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const r = await fetch(new URL("/assets/blockly/media/sprites.svg", servidor.url))
+    assert.equal(r.status, 200)
+    assert.match(r.headers.get("content-type"), /^image\/svg\+xml/)
+    assert.equal(r.headers.get("content-security-policy"), CSP_ACTUAL)
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff")
+    assert.equal(sha(Buffer.from(await r.arrayBuffer())), SPRITES.sha256)
+    // los .js siguen igual
+    const js = await fetch(new URL("/assets/blockly_compressed.js", servidor.url))
+    assert.match(js.headers.get("content-type"), /^text\/javascript/)
+    await js.arrayBuffer()
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+test("T9d cualquier otro /assets/blockly/media/<x> es 404: sin servir carpetas ni unir rutas", async () => {
+  const servicio = obtenerServicioDeProyectoConVista({ directorio: nuevoDir("p3-vend3"), idProyecto: nuevoIdProyecto("p3-vend3") })
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    for (const ruta of ["/assets/blockly/media/", "/assets/blockly/media", "/assets/blockly/media/click.mp3", "/assets/blockly/media/dropdown-arrow.svg", "/assets/blockly/media/../sprites.svg", "/assets/blockly/media/%2e%2e/sprites.svg", "/assets/blockly-media/sprites.svg", "/assets/blockly/"]) {
+      const r = await fetch(new URL(ruta, servidor.url))
+      assert.equal(r.status, 404, ruta)
+      await r.arrayBuffer()
+    }
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+test("T9d la lista blanca sigue siendo explícita: cada nombre es una cadena literal, sin lectura de directorios", () => {
+  const src = readFileSync(join(REPO, "opencode/servidor/servidor-proyecto.ts"), "utf8")
+  const bloque = /function construirRutasDeAssets[\s\S]*?\n}\n/.exec(src)[0]
+  assert.match(bloque, /\["blockly\/media\/sprites\.svg"/)
+  assert.ok(!/readdirSync|\.\.\.|glob/i.test(bloque))
+})
