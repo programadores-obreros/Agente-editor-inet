@@ -185,3 +185,11 @@ llamar a `construirCatalogo()` nunca se propaga al catálogo ya construido. La
 extensibilidad puramente declarativa (agregar un componente nuevo como DATO en
 `datos.componentes` ANTES de llamar acá) no cambia: el freeze corre sobre la copia
 completa, después de recibir los datos, nunca antes.
+
+## 9. Phase 3 — qué dato del catálogo decide los roles en una regla
+
+- **Actuador de una regla:** `ComponenteCatalogo.clase === "actuador"` es la autoridad (`ACTUADOR_INVALIDO` en
+  `validar.ts::validarSemantico`, sin nombres de tipo). Un componente de otra clase (p. ej. `entrada`, `pasivo`) no es una salida válida.
+- **Sensor de una regla:** se elige por **capacidad declarada**, no por tipo: para "presionado" es `estadoBooleano` (la declara el pulsador).
+  Un componente sin ninguna capacidad usado como sensor sin estado da `SENSOR_INVALIDO`.
+- La proyección (`opcionesRegla`) deriva sus listas del catálogo con esos dos datos; no hay tablas por tipo. Ver `OPERATIONS.md` §13.

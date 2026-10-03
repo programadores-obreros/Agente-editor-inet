@@ -980,3 +980,44 @@ de todo `opencode/nucleo/` (el otro import de `node:fs` autorizado, para Gate 7,
 - `Almacen`/`crearAlmacen()` (Gate 7) es un PUERTO INTERNO del composition root, nunca
   una segunda autoridad de escritura (Phase 1.1, hallazgo externo E3-04b — ver
   `DECISIONS.md`, entrada "Almacen es un puerto interno del composition root").
+
+## 10. Phase 3 — vertical semántico #1: regla PARCIAL y semántica de NIVEL
+
+Fuente: `PHASE_3_VERTICAL_1_CONTRACT.md` §B1/§B2 (decisiones humanas en `DECISIONS.md`,
+HD-P3D-1/3/5). Implementado en `ir.ts` y `regla-forma.ts` (T1).
+
+**Forma de una regla parcial.** `ComportamientoRegla { id; cuando?; entonces? }`, y dentro de cada
+slot cada campo es opcional por slot semántico:
+
+| Slot | Campos | Notas |
+|---|---|---|
+| sensor | `cuando.sensor` | |
+| estado | `cuando.capacidad` + `cuando.comparador` + `cuando.umbral` | **triada atómica**: las tres juntas o ninguna |
+| actuador | `entonces.actuador` | |
+| salida | `entonces.accion` | |
+
+- Clave **ausente** = slot vacío. `null` explícito → rechazo estructural.
+- Un sub-objeto **presente y vacío** (`cuando: {}` / `entonces: {}`) se rechaza: el slot vacío tiene una sola forma canónica, la clave ausente.
+- La regla tiene al menos UN slot presente (`{}` se sigue rechazando, `tests/nucleo-operaciones.test.mjs:777-778`).
+- Claves desconocidas (regla, `cuando`, `umbral`, `entonces`) se rechazan. Todo campo presente se valida como antes.
+- La completitud **no se guarda**: es un diagnóstico derivado (`COMPORTAMIENTO_INCOMPLETO`, ver `OPERATIONS.md` §13).
+
+**PERSISTIBLE ⇒ RECARGABLE por UNA función.** `regla-forma.ts::analizarFormaRegla` es la única validez
+estructural; la usan `operaciones.ts::validarFormaPayload` y el cargador `cargador.ts::validarComportamiento`.
+Cada puerta traduce su falla a su propio código (`PAYLOAD_OPERACION_INVALIDO` en la operación;
+`CLAVE_DESCONOCIDA`/`CAMPO_REQUERIDO_FALTANTE` en la carga) y comprueba los dominios de enum con su código.
+Todo sitio que desreferencia `cuando`/`entonces` tolera slots ausentes (operaciones, `reemplazarSensor`,
+cargador, `validar-estructural`, `validar-tecnico`).
+
+**Semántica de NIVEL.** `cuando` es un nombre heredado: significa "condición de nivel" (HD-P3D-5, no se
+renombra). Una regla dice: *en todo instante en que "sensor está en el estado" es verdadero, el actuador ESTÁ
+en `accion`*. No hay eventos, flancos, latch ni memoria. **Estado de reposo** (condición falsa) de un actuador
+digital = **apagado** (HD-P3D-1): es **derivado del contrato, nunca se guarda en el IR**.
+
+**`schemaVersion` NO se sube** (`SCHEMA_VERSION_SOPORTADA` sigue en `"1.0.0"`, contrato B1; HD-P3D-3 = B "sólo
+si realmente lo exige"). La forma nueva es un superconjunto aditivo, y un producto anterior que lea una regla
+incompleta la **rechaza** al cargar (`CAMPO_REQUERIDO_FALTANTE`): falla cerrado, no la reinterpreta. Subir la
+versión según los datos haría depender el sello del contenido y agregaría una mutación implícita sin necesidad.
+
+**id provisto inexistente.** Un `SetComportamiento` con un `id` que no existe crea una regla nueva con un id del
+Engine (`beh-N`); un test lo fija.

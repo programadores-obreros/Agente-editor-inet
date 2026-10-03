@@ -1,5 +1,7 @@
 # Phase 3: diseño del mínimo vertical ("Mientras el pulsador esté presionado…")
 
+> **Nota (vertical #1 implementado):** el contrato de implementación `PHASE_3_VERTICAL_1_CONTRACT.md` (§A "Partes del diseño sustituidas") reemplaza partes de este diseño por decisiones humanas posteriores (p. ej. la tool SÍ acepta `SetComportamiento`/`QuitarComponente` de reglas, whitelist de 8). Este documento se conserva sin reescribir.
+
 **Estado: PROPOSED — HUMAN APPROVAL REQUIRED.** No autoriza writers ni implementación.
 
 **Base:** `main` local `822249e`; producto congelado del Slice 2 `cc6794c`.

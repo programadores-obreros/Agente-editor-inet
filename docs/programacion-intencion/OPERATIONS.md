@@ -55,7 +55,7 @@ cero — no hay un `Proyecto` previo sobre el cual "aplicar" la operación. El m
 archivo (`TipoOperacion`) tiene 8 miembros, no 9: se excluye `CrearProyecto` del
 dispatch (queda documentado acá para que no se lea como un olvido).
 
-## 4. Conjunto de operaciones de Fase 1 (8, no 10)
+## 4. Conjunto de operaciones de Fase 1 (8, no 10) — Phase 3 suma `QuitarComportamiento` (9 en total)
 
 Del conjunto de C+R1 del diseño consolidado (§6.1), Fase 1 implementa 8 operaciones de
 mutación real sobre un proyecto existente. **`FijarPropiedad` (SetProperty) queda
@@ -72,7 +72,8 @@ rango sin esa clasificación sería improvisar sobre un contrato sin cerrar.
 | `AsignarPin` | `{componente: string; terminal: string; pin: string \| null}` | `REFERENCIA_INEXISTENTE` (componente) · `TERMINAL_NO_DECLARADO` (terminal no existe en el catálogo del componente) · `PIN_INEXISTENTE_EN_PLACA` (el pin no existe en la placa activa) | `PIN_OCUPADO`, `CAPACIDAD_PIN_INCOMPATIBLE`, `PIN_FLASH_RESERVADO`, `PIN_STRAPPING`, `PIN_UART_USB`, `PIN_SIN_PULLUP_INTERNO` (gate final de hardening, D1/D2/D5/D7 — `COMPONENT-CATALOG.md` §6), `PIN_INEXISTENTE_EN_DOCUMENTO` (gate final de hardening, D10 — el pin asignado deja de existir en el registro de la placa VIGENTE, ej. tras un `SetPlaca` posterior o un documento editado a mano) (los detecta `validarProyecto`/`validar-tecnico.ts`, Gate 4 — la operación en sí NO los chequea, así que un pin ocupado, incompatible o restringido SE ASIGNA igual) |
 | `Conectar` | `{desde: Extremo; hasta: Extremo}` | `REFERENCIA_INEXISTENTE` (componente) · `TERMINAL_NO_DECLARADO` (terminal) · `AUTOCONEXION_INVALIDA` (mismo componente+terminal en los dos extremos — decisión del orquestador: dos extremos DISTINTOS es invariante estructural) · `CONEXION_DUPLICADA` (el mismo par exacto ya está conectado, sin importar el orden de los extremos — decisión del orquestador: un par de terminales conectado a lo sumo una vez; Phase 1.1, hallazgo E2-01: ambos códigos se REUSAN también desde `validar-estructural.ts`, Gate 4, categoría `estructural`, así que el invariante corre en TODA puerta — loader, `proyectoInicial`/construcción del motor, post-commit, `validarProyecto` directo — no sólo dentro de esta operación) | — |
 | `Desconectar` | `{conexion: string}` | `REFERENCIA_INEXISTENTE` si no existe | — |
-| `SetComportamiento` | `{comportamiento: {id?; cuando; entonces}}` | `REFERENCIA_INEXISTENTE` (sensor/actuador no existen) · `CAPACIDAD_NO_DECLARADA` (la `capacidad` no está en el catálogo del sensor) · `UMBRAL_NO_FINITO` (Phase 1.1, hallazgo E1-03: `umbral.valor` no es `Number.isFinite` — NaN/±Infinity no son representables en el documento JSON persistido) | `CAPACIDAD_INEXISTENTE_EN_CATALOGO`, `MAGNITUD_INCOMPATIBLE` (Phase 1.1, hallazgo E1-03: los detecta `validarProyecto`/`validar-tecnico.ts`, Gate 4 — la operación en sí NO los chequea, así que un comportamiento con capacidad/magnitud/unidad ya incompatibles con el catálogo vigente SE ACEPTA igual, mismo criterio que `PIN_OCUPADO` de `AsignarPin`) |
+| `SetComportamiento` | `{comportamiento: {id?; cuando?; entonces?}}` — Phase 3: acepta la regla PARCIAL (`IR-SPEC.md` §10); campos presentes se validan igual | `REFERENCIA_INEXISTENTE` (sensor/actuador no existen) · `CAPACIDAD_NO_DECLARADA` (la `capacidad` no está en el catálogo del sensor) · `UMBRAL_NO_FINITO` (Phase 1.1, hallazgo E1-03: `umbral.valor` no es `Number.isFinite` — NaN/±Infinity no son representables en el documento JSON persistido) | `CAPACIDAD_INEXISTENTE_EN_CATALOGO`, `MAGNITUD_INCOMPATIBLE` (Phase 1.1, hallazgo E1-03: los detecta `validarProyecto`/`validar-tecnico.ts`, Gate 4 — la operación en sí NO los chequea, así que un comportamiento con capacidad/magnitud/unidad ya incompatibles con el catálogo vigente SE ACEPTA igual, mismo criterio que `PIN_OCUPADO` de `AsignarPin`) |
+| `QuitarComportamiento` | `{comportamiento: string}` (claves exactas; otra forma → `PAYLOAD_OPERACION_INVALIDO`) — Phase 3 | `REFERENCIA_INEXISTENTE` `{comportamiento}` si no existe | — (emite el info `COMPORTAMIENTO_QUITADO` `{comportamiento, reglaQuitada}`, sin `clasificacion`, ver §13) |
 | `CambiarComponente` | `{componente: string; tipoNuevo: string}` | `REFERENCIA_INEXISTENTE` (componente) · `TIPO_CATALOGO_DESCONOCIDO` (tipoNuevo no existe) | `RANGO_INCOMPATIBLE_AL_REEMPLAZAR`, `CAPACIDAD_INCOMPATIBLE_AL_REEMPLAZAR`, `UNIDAD_CONVERTIDA` (vía `reemplazarSensor`, Gate 3 — la operación SIEMPRE commitea si `tipoNuevo` existe; lo que cambia por rama es qué motivo deja) |
 
 Dos códigos son NUEVOS en este documento (no estaban en la tabla de Gate 3/`COMPONENT-CATALOG.md`,
@@ -613,12 +614,12 @@ cuenta (`proyecto-fisico.ts:1-26`, T-AG-01).
   con una sola operación inválida no aplica ninguna, ni siquiera las anteriores del
   mismo lote (T-AG-02/T-AG-04).
 
-**Whitelist exacta e inmutable** (R-6, `OPERACIONES_PERMITIDAS`,
-`proyecto-fisico.ts:42`): `SetPlaca`, `AgregarComponente`, `QuitarComponente`,
-`AsignarPin`, `Conectar`, `Desconectar`. Quedan afuera a propósito
-`SetComportamiento` (HD-S2-10: ninguna lógica pulsador→LED) y `CambiarComponente`
-(fuera del recorrido de este slice); cualquier otro `tipo` (desconocido, mal
-escrito o `CrearProyecto`) se rechaza EN LA TOOL, sin invocar el Engine.
+**Whitelist exacta e inmutable** (R-6, `OPERACIONES_PERMITIDAS`): HISTÓRICO, Phase 2 Slice 2 —
+`SetPlaca`, `AgregarComponente`, `QuitarComponente`, `AsignarPin`, `Conectar`, `Desconectar`, con
+`SetComportamiento` (HD-S2-10: ninguna lógica pulsador→LED) y `CambiarComponente` afuera.
+> **SUPERSEDIDO (Phase 3, `DECISIONS.md` 2531e09 + `PHASE_3_VERTICAL_1_CONTRACT.md` §A, ver §13):** la
+> whitelist es ahora de **8 tipos** (los 6 de arriba + `SetComportamiento` + `QuitarComportamiento`);
+> `CambiarComponente` sigue afuera. Cualquier otro `tipo` se rechaza EN LA TOOL, sin invocar el Engine.
 **Límite de 20 operaciones por llamada** (`MAXIMO_OPERACIONES`,
 `proyecto-fisico.ts:46`), en una única transacción atómica: con más de 20 se
 RECHAZA explícito — nunca se trunca, aplica parcial ni se divide en varias
@@ -724,3 +725,35 @@ explicación determinista, por los dos caminos (T-AG-05, convergencia de caminos
 La diferencia es únicamente el actor forzado (`"agente"` vs. `"navegador"`) y el
 transporte (tool de OpenCode vs. `POST /api/operaciones`) — la autoridad semántica
 es una sola, en los dos casos.
+
+## 13. Phase 3 — vertical semántico #1 (regla de nivel pulsador→LED)
+
+Fuente: `PHASE_3_VERTICAL_1_CONTRACT.md` §B2–§B7.
+
+**`QuitarComportamiento`.** Payload `{comportamiento: id}`. No existe → rechazo `REFERENCIA_INEXISTENTE`
+`{comportamiento}`. Existe → se quita, info `COMPORTAMIENTO_QUITADO` (`categoria operacion`, `severidad info`, sin
+`clasificacion`, mismo patrón que `COMPORTAMIENTO_REEMPLAZADO`) con `datos {comportamiento, reglaQuitada}` (la regla
+completa, para un undo futuro), revisión +1. Después, `QuitarComponente` vuelve a estar permitido.
+
+**`QuitarComponente` (HD-P3D-4 = A).** Un componente referenciado por cualquier slot PRESENTE de una regla sigue
+rechazándose con `REMOCION_CON_DEPENDIENTES`. Texto llano nuevo: "Este componente lo usa una regla. Quitá o cambiá
+la regla primero."
+
+**Motivos semánticos nuevos** (`validar.ts::validarSemantico`, una función genérica guiada por datos del catálogo, sin
+nombres de tipo). Los tres son `categoria semantica`, `severidad blocking`, `clasificacion representable` (Path A: se
+commitea y el proyecto queda `listo:false`; **nunca** `rechazo`), `entidad {comportamiento, id}`:
+- `COMPORTAMIENTO_INCOMPLETO` — `datos {faltan}` ⊆ `["sensor","estado","actuador","salida"]`, en ese orden.
+- `ACTUADOR_INVALIDO` — `entonces.actuador` con `ComponenteCatalogo.clase !== "actuador"`; `datos {componente, clase}`
+  (tipo desconocido del catálogo: no se emite). Corrige el bug conocido "un pulsador se acepta como actuador". Un
+  documento histórico con un actuador inválido carga igual y muestra el motivo.
+- `SENSOR_INVALIDO` — `cuando.sensor` SIN triada, cuyo catálogo no declara ninguna capacidad; `datos {componente}`. Con
+  la triada presente no se emite (`CAPACIDAD_NO_DECLARADA` / `CAPACIDAD_INEXISTENTE_EN_CATALOGO` ya la cubren).
+
+**Whitelist de la tool `proyecto-fisico`: 8 tipos** (ver el HISTÓRICO superseded en §12). `leer` expone `reglas` (misma
+proyección del servidor) y `vocabulario.operaciones` trae los ejemplos de `SetComportamiento` y `QuitarComportamiento`.
+
+**Whitelist del NAVEGADOR** (`POST /api/operaciones`): `AsignarPin`, `SetComportamiento`, `QuitarComportamiento`. Se aplica
+DESPUÉS de validar `Origin`/`Content-Type` y de leer/parsear el cuerpo, y ANTES del Engine. Otro `tipo` → HTTP 200
+`{resultado:{ok:false, rechazadoPor:"transporte", motivos:[{codigo:"OPERACION_NO_PERMITIDA_EN_NAVEGADOR", categoria:"operacion",
+severidad:"blocking", clasificacion:"rechazo", datos:{tipo}}]}, snapshot}`; el Engine no se invoca y nada se persiste. Un cuerpo que no
+es un objeto plano sigue yendo al Engine. Es un error de integración, no de dominio.
