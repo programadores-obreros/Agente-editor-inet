@@ -188,7 +188,7 @@ if (process.platform === "win32") {
       assert.ok(existsSync(join(configDir, "servidor", "servidor-proyecto.ts")), "falta servidor-proyecto.ts instalado")
       assert.ok(existsSync(join(configDir, "vista-fisica", "vista-real.ts")), "falta opencode/vista-fisica instalado")
       assert.ok(existsSync(join(configDir, "vista-fisica", "web", "index.html")), "falta vista-fisica/web instalado")
-      for (const asset of ["app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js"]) {
+      for (const asset of ["app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js"]) {
         assert.ok(existsSync(join(configDir, "vista-fisica", "web", asset)), `falta vista-fisica/web/${asset}`)
       }
       assert.ok(existsSync(join(configDir, "tool", "vista-fisica.ts")), "falta el tool en sí")
@@ -275,6 +275,10 @@ if (process.platform === "win32") {
         join(configDir, "vista-fisica", "web", "pintar.js"),
         join(configDir, "vista-fisica", "web", "plan-de-pintado.js"),
         join(configDir, "vista-fisica", "web", "estado-conexion.js"),
+        join(configDir, "vista-fisica", "web", "cliente-http.js"),
+        join(configDir, "vista-fisica", "web", "vista-logica.js"),
+        join(configDir, "vista-fisica", "web", "adaptador-blockly.js"),
+        join(configDir, "vista-fisica", "web", "vista-logica-ui.js"),
         join(configDir, "tecniabot-web", "wokwi-bundle.js"),
         join(configDir, "tecniabot-web", "componentes-extra.js"),
       ]

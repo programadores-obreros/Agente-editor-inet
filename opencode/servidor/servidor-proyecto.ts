@@ -68,6 +68,11 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
     // pediría `/assets/estado-conexion.js` y caería en el 404 genérico, rompiendo el
     // ES module de `app.js` entero (import no resuelto).
     ["estado-conexion.js", join(DIR_VISTA_FISICA_WEB, "estado-conexion.js")],
+    // Phase 3 (vertical #2): módulos que importa `app.js` (cliente HTTP compartido y vista lógica).
+    ["cliente-http.js", join(DIR_VISTA_FISICA_WEB, "cliente-http.js")],
+    ["vista-logica.js", join(DIR_VISTA_FISICA_WEB, "vista-logica.js")],
+    ["adaptador-blockly.js", join(DIR_VISTA_FISICA_WEB, "adaptador-blockly.js")],
+    ["vista-logica-ui.js", join(DIR_VISTA_FISICA_WEB, "vista-logica-ui.js")],
   ])
 }
 

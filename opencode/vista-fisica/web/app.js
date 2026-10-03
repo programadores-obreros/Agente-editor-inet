@@ -12,6 +12,7 @@
 import { planDePintado } from "./plan-de-pintado.js"
 import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
+import { crearClienteHttp } from "./cliente-http.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -400,18 +401,17 @@ function repintar() {
   restaurarFocoRegla(secciones.reglas)
 }
 
-async function cargarSnapshot() {
-  const respuesta = await fetch("/api/proyecto")
-  ultimoSnapshot = await respuesta.json()
-  repintar()
-}
-
-/** Mensajes MÍNIMOS a partir de los códigos de motivo — nunca se inventa una causa
- * que `nucleo/motivos.ts` no produjo (PHASE_2_SLICE_1_DESIGN.md §2.8/§2.9). */
-function descripcionDeMotivos(motivos) {
-  if (!motivos || motivos.length === 0) return "rechazado"
-  return motivos.map((m) => m.codigo).join(", ")
-}
+/** Cliente HTTP compartido (GPIO, frase): ver `cliente-http.js`. `fetch` se resuelve en cada llamada. */
+const cliente = crearClienteHttp({
+  fetch: (...argumentos) => fetch(...argumentos),
+  aplicarSnapshot: (snapshot) => {
+    ultimoSnapshot = snapshot
+  },
+  repintar: () => repintar(),
+  mostrarEstado: (texto) => mostrarEstado(texto),
+})
+const cargarSnapshot = () => cliente.cargarSnapshot()
+const enviarSobre = (sobre, opciones) => cliente.enviarSobre(sobre, opciones)
 
 /** F-11: el valor que el servidor tiene HOY para (componenteId, terminalId), leído de
  * `ultimoSnapshot` — `null` si el terminal no está asignado (o no existe). Es lo que
@@ -447,43 +447,6 @@ async function enviarCambioGpio({ componenteId, terminalId, valor }) {
   } finally {
     controladorReglas.marcarOperacionExterna(false)
   }
-}
-
-/** POST de un sobre + manejo común de la respuesta (GPIO y frase comparten esto). SIEMPRE se
- * repinta desde `cuerpo.snapshot` (la respuesta del servidor) — nunca desde lo que el selector
- * mostraba antes del POST. `repintarAhora: false` lo usa la frase, que repinta ella misma al
- * terminar (para no pintar dos veces seguidas con la operación todavía "pendiente"). */
-async function enviarSobre(sobre, { repintarAhora }) {
-  const respuesta = await fetch("/api/operaciones", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(sobre),
-  })
-  const cuerpo = await respuesta.json()
-  ultimoSnapshot = cuerpo.snapshot
-
-  if (cuerpo.resultado.ok) {
-    // Path A (blocking representable) también cae acá con ok:true — el motivo, si lo hay, ya se
-    // muestra en el panel de motivos vía `planDePintado`/`pintar`.
-    mostrarEstado(null)
-    if (repintarAhora) repintar()
-    return cuerpo
-  }
-
-  const desactualizada = cuerpo.resultado.motivos.some((m) => m.codigo === "BASE_REVISION_DESACTUALIZADA")
-  if (desactualizada) {
-    // Conflicto stale: "otro cambio llegó primero" — se vuelve a pedir el snapshot (nunca se asume
-    // que el de la respuesta del rechazo es el más reciente) y se repinta desde ahí.
-    mostrarEstado("otro cambio llegó primero — se actualizó a la revisión vigente")
-    await cargarSnapshot()
-    return cuerpo
-  }
-
-  // Path B: rechazo de dominio (no stale) — la vista queda en el snapshot autoritativo que ya
-  // trajo la respuesta (sin cambios); sólo se muestra el motivo.
-  mostrarEstado(descripcionDeMotivos(cuerpo.resultado.motivos))
-  if (repintarAhora) repintar()
-  return cuerpo
 }
 
 /** La frase: un `SetComportamiento`/`QuitarComportamiento` por cambio, con `baseRevision` del
