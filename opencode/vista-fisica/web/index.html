@@ -74,9 +74,9 @@
 
   /* W0-8 (PHASE_3_WAVE_0_DESIGN.md): "Este proyecto todavía no tiene componentes..."
      — nunca una superficie vacía sin ningún indicio (`pintar.js::pintarEstadoVacio`). */
-  /* Vista lógica (Phase 3, vertical #2): el lienzo de Blockly necesita un alto propio (no crece solo). */
+  /* Vista lógica (Phase 3, vertical #2): el lienzo de Blockly necesita un alto DEFINITIVO (con sólo min-height el contenedor interno mide 0 y todo queda recortado). */
   #vista-logica.ancha { grid-column: 1 / -1; }
-  #vista-logica-lienzo { min-height: 260px; border: 1px solid currentColor; border-radius: 6px; position: relative; }
+  #vista-logica-lienzo { height: 260px; min-height: 260px; border: 1px solid currentColor; border-radius: 6px; position: relative; }
   #vista-logica-texto { white-space: pre-line; font-size: 13px; margin: 6px 0; }
   #vista-logica-estado { min-height: 1.2em; font-size: 13px; }
   [data-estado-vacio] { font-style: italic; opacity: .8; }

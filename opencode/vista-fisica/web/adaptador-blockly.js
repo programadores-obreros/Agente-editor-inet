@@ -63,6 +63,12 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     move: { scrollbars: { horizontal: true, vertical: false }, drag: false, wheel: false },
   })
 
+  // Blockly mide su contenedor: tras inyectar (y tras cada pintado) hay que avisarle, o queda en tamaño 0.
+  const medir = () => {
+    if (typeof Blockly.svgResize === "function") Blockly.svgResize(workspace)
+  }
+  medir()
+
   let destruido = false
   let modeloActual = null
   let firmaActual = null
@@ -145,6 +151,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         }
       }
       if (typeof workspace.resize === "function") workspace.resize()
+      medir()
     } finally {
       Blockly.Events.enable()
     }
