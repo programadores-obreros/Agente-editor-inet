@@ -90,7 +90,7 @@ test("T8 escáner offline: 0 cargas reales en los dos archivos vendorizados", ()
 })
 
 test("T8 index.html carga Blockly núcleo y luego es.js, como <script> clásicos y externos, ANTES de app.js, sin inline ni remotos", () => {
-  const html = readFileSync(join(dirWeb, "index.html"), "utf8")
+  const html = readFileSync(join(dirWeb, "index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "")
   const srcs = [...html.matchAll(/<script\b([^>]*)>/g)].map((m) => m[1])
   const rutas = srcs.map((a) => /src="([^"]+)"/.exec(a)?.[1])
   assert.ok(!rutas.includes(undefined), "ningún <script> inline")

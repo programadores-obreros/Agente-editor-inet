@@ -60,6 +60,9 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
   return new Map([
     ["wokwi-bundle.js", join(DIR_TECNIABOT_WEB, "wokwi-bundle.js")],
     ["componentes-extra.js", join(DIR_TECNIABOT_WEB, "componentes-extra.js")],
+    // Phase 3 (vertical #2, contrato §11): Blockly 13.3.0 vendorizado (núcleo + mensajes es), sin medios.
+    ["blockly_compressed.js", join(DIR_TECNIABOT_WEB, "blockly_compressed.js")],
+    ["blockly-es.js", join(DIR_TECNIABOT_WEB, "blockly-es.js")],
     ["app.js", join(DIR_VISTA_FISICA_WEB, "app.js")],
     ["pintar.js", join(DIR_VISTA_FISICA_WEB, "pintar.js")],
     ["plan-de-pintado.js", join(DIR_VISTA_FISICA_WEB, "plan-de-pintado.js")],

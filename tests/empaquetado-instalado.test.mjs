@@ -281,6 +281,8 @@ if (process.platform === "win32") {
         join(configDir, "vista-fisica", "web", "vista-logica-ui.js"),
         join(configDir, "tecniabot-web", "wokwi-bundle.js"),
         join(configDir, "tecniabot-web", "componentes-extra.js"),
+        join(configDir, "tecniabot-web", "blockly_compressed.js"),
+        join(configDir, "tecniabot-web", "blockly-es.js"),
       ]
       for (const archivoOffline of archivosOffline) {
         const hallazgos = escanearArchivo(archivoOffline).filter((h) => h.clasificacion === "carga-real")
