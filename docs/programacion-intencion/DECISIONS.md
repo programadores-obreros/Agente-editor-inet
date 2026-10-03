@@ -1449,3 +1449,46 @@ documento del mínimo vertical). Quedan congeladas con la recomendación de §23
 - **Alcance:** es el único archivo `tests/nucleo-*` modificado en este vertical. El freeze
   verifica que `git diff 8b43c59 HEAD -- 'tests/nucleo-*'` contenga exactamente este
   archivo.
+
+## Phase 3 — Vertical semántico #2: Blockly semántico mínimo (2026-10-03)
+
+Decisiones del HUMAN PRODUCT OWNER después del discovery del vertical #2. Nada histórico se
+borra.
+
+### Genealogía de HD-P3-10
+
+| OLD DECISION | SUPERSEDED BY | NEW DECISION | EVIDENCE / RATIONALE |
+|---|---|---|---|
+| **HD-P3-10 = A** (`PHASE_3_DISCOVERY.md`; `PHASE_3_MINIMUM_VERTICAL_DESIGN.md` §0): "Blockly sólo después de validar la frase con estudiantes" | PHASE 3 SEMANTIC VERTICAL #2 (**D1 = A**) | La frase editable y el Blockly semántico mínimo se validan **juntos** en el REAL HUMAN TEST #2, después del freeze de este vertical. El test **no** se ejecuta en este ciclo | La frase nació después del REAL HUMAN TEST #1, así que ningún alumno la usó todavía. Las dos vistas comparten proyección y vocabulario, y una sola ronda humana puede observar ambas y separar qué entendió el alumno de cada una |
+
+### Decisiones del vertical #2
+
+- **D1 = A:** la de arriba.
+- **D2 = A:** **Blockly 13.3.0**, vendorizado localmente en `opencode/tecniabot-web/`, con el mismo
+  patrón que el bundle de Wokwi.
+  - Origen: tarball oficial del registro npm, `blockly-13.3.0.tgz`
+    (`sha512-qAHFGMGTSF67Lupr3pjZz9LQu4JCFdN76CMZxegBKiveZreK08yXhaCz0g9q9/xe5GEdoeFT3POAlQavPIRPEw==`,
+    shasum `18947fe0f4992bbf1ee5051e2d18dabee7ee9581`, verificados).
+  - Se incluye sólo el núcleo (`blockly_compressed.js`), los mensajes en español (`msg/es.js`)
+    y los medios estrictamente necesarios.
+  - Licencia Apache-2.0, documentada junto a los archivos.
+  - Footprint aproximado: ~0,7 MB sin comprimir. El instalador copia carpetas de `opencode/`,
+    así que **no** depende de `node_modules`.
+  - pnpm sigue siendo la única política de paquetes. Blockly es **infraestructura de
+    presentación**: no es modelo de dominio, ni persistencia, ni backend de código.
+- **D3:**
+  - sonidos de Blockly desactivados;
+  - el servidor sirve localmente sólo los medios estrictamente necesarios;
+  - **la CSP no se relaja**: sin `unsafe-eval`, sin orígenes externos, sin CDN;
+  - `servidor-proyecto.ts` cambia sólo para servir esos assets de forma local y segura;
+  - si Blockly exigiera relajar la CSP, es un blocker, no un ajuste.
+- **D4:** sección **"Vista lógica"** junto a la frase editable, que se mantiene.
+  - El workspace es fijo y semántico, sin toolbox general, para una sola regla, orientado al
+    caso de nivel ("mientras").
+  - Se edita con campos y opciones semánticas, y se reconstruye entero desde la IR.
+  - No es un editor libre ni una biblioteca genérica de bloques; el drag-and-drop no es objetivo.
+- **HD-P3-4 = A (confirmada):** la IR **no cambia**. La recomendación histórica "B cuando llegue
+  Blockly" (`PHASE_3_DISCOVERY.md`) **no se activa**. "presionado" sigue siendo la proyección
+  determinista de `estadoBooleano >= 1`. No entran a la IR block IDs, workspace JSON/XML,
+  posiciones, conexiones visuales, layout, estado de toolbox ni metadata de Blockly.
+- Las demás HD-P3 / HD-P3D y las decisiones del vertical #1 siguen vigentes.
