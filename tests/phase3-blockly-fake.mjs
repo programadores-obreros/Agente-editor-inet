@@ -2,7 +2,7 @@
 // la API real 13.3.0; mismo comportamiento relevante: con los eventos deshabilitados no se dispara nada.
 
 export function fabricarBlockly() {
-  const reg = { inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false }
+  const reg = { svgResizes: [], inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false }
   class FieldDropdown {
     constructor(opciones) { this.opciones = opciones; this.valor = opciones[0][1]; this.habilitado = true }
     getValue() { return this.valor }
@@ -25,6 +25,7 @@ export function fabricarBlockly() {
       enable() { reg.nivelEventos-- },
       isEnabled() { return reg.nivelEventos === 0 },
     },
+    svgResize(ws) { reg.svgResizes.push(ws) },
     defineBlocksWithJsonArray(arr) { for (const d of arr) { reg.definiciones.push(d); Blockly.Blocks[d.type] = d } },
     inject(contenedor, opciones) {
       reg.inyecciones.push({ contenedor, opciones })

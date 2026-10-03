@@ -172,3 +172,9 @@ test("T9 app.js: el lienzo NO está entre los contenedores que repintar() reempl
   assert.match(app, /crearPanelVistaLogica/)
   assert.match(app, /panelVistaLogica\??\.repintar\(/)
 })
+
+test("T9c index.html: el lienzo declara un alto DEFINITIVO en px (no sólo min-height), si no Blockly mide 0 y queda recortado", () => {
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
+  const regla = /#vista-logica-lienzo\s*\{([^}]*)\}/.exec(html)[1]
+  assert.match(regla, /(^|[;\s])height:\s*\d+px/)
+})

@@ -272,3 +272,12 @@ test("T9b presentación: el texto fijo del servidor se muestra sin coma inicial 
   adaptador.pintar(modelo(VACIO, { id: null }))
   assert.ok(reg2.ws.bloques.every((b) => b.etiquetas.every((t) => !/^[,\s]/.test(t))))
 })
+
+test("T9c Blockly necesita medir su contenedor: svgResize(workspace) tras inyectar y tras cada pintado", async () => {
+  const { adaptador, reg } = await montar()
+  assert.equal(reg.svgResizes.length, 1, "una vez tras inyectar")
+  assert.equal(reg.svgResizes[0], reg.ws)
+  adaptador.pintar(modelo(COMPLETO, { etiquetas: ["Pulsador", "presionado", "LED", "encendido"] }))
+  assert.equal(reg.svgResizes.length, 2, "y de nuevo al pintar")
+  assert.equal(reg.nivelEventos, 0)
+})
