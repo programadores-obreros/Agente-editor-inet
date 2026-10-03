@@ -14,7 +14,7 @@
 const TIPO_MIENTRAS = "tecnia_mientras"
 const TIPO_HACER = "tecnia_hacer"
 const SENTINELA = "__sin_valor__"
-const MENSAJES = { sentinela: "— elegí —", mientras: "mientras", hacer: "hacer" }
+const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:" }
 
 /** Opciones del dropdown: centinela primero, luego las del servidor y, si el valor actual no es
  * una de ellas (p. ej. una condición que la vista no sabe armar), el valor actual con su etiqueta. */
@@ -36,7 +36,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     Blockly.defineBlocksWithJsonArray([
       {
         type: TIPO_MIENTRAS,
-        message0: `${textos.mientras} %1`,
+        message0: "%1",
         args0: [{ type: "input_dummy", name: "CAMPOS" }],
         message1: "%1",
         args1: [{ type: "input_statement", name: "ACCION" }],
@@ -102,7 +102,8 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     for (const [bloque, delBloque] of reparto) {
       const entrada = bloque.getInput("CAMPOS")
       for (const campo of delBloque) {
-        entrada.appendField(new Blockly.FieldLabel(campo.prefijo))
+        // el texto fijo viene del servidor; una coma inicial (de la frase corrida) no se muestra suelta
+        entrada.appendField(new Blockly.FieldLabel(campo.prefijo.replace(/^[,\s]+/, "")))
         entrada.appendField(new Blockly.FieldDropdown(opcionesDeCampo(campo, textos)), campo.slot)
       }
     }
