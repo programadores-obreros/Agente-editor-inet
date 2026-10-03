@@ -6,6 +6,7 @@
 
 import { crearAdaptadorBlockly } from "./adaptador-blockly.js"
 import { proyectarModeloLogico } from "./vista-logica.js"
+import { AVISO_VARIAS_REGLAS } from "./plan-de-pintado.js"
 
 /**
  * @param {{ Blockly: object, contenedor: Element, controlador: { cambiar: Function, quitar: Function },
@@ -30,5 +31,42 @@ export function crearVistaLogica({ Blockly, contenedor, controlador, media, mens
     },
     quitar: () => adaptador.quitar(),
     destruir: () => adaptador.destruir(),
+  }
+}
+
+const MENSAJE_SIN_BLOCKLY = "La vista lógica no está disponible en esta página. La frase editable de arriba sigue funcionando."
+
+/**
+ * Panel de la página (T9): el contenedor de Blockly se inyecta UNA vez, de forma perezosa, en el primer
+ * repintado; los textos (motivos, aviso, "varias reglas") y el botón "Quitar regla" salen del modelo,
+ * siempre desde el snapshot autoritativo. Sin Blockly (asset ausente) muestra un mensaje llano y no
+ * toca nada más. Los elementos son opacos: sólo `textContent`, `disabled` y `addEventListener`.
+ */
+export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elementoEstado, botonQuitar, controlador, media }) {
+  let vista = null
+  botonQuitar.addEventListener("click", () => vista?.quitar())
+
+  return {
+    repintar(snapshot, { deshabilitado = false } = {}) {
+      if (!Blockly) {
+        elementoTexto.textContent = MENSAJE_SIN_BLOCKLY
+        botonQuitar.disabled = true
+        return null
+      }
+      vista ??= crearVistaLogica({ Blockly, contenedor: lienzo, controlador, ...(media === undefined ? {} : { media }) })
+      const modelo = vista.repintar(snapshot, { deshabilitado })
+      const lineas = modelo.regla ? [...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : [])] : []
+      if (modelo.hayVarias) lineas.push(`Se muestra la primera regla. ${AVISO_VARIAS_REGLAS}`)
+      elementoTexto.textContent = lineas.join("\n")
+      botonQuitar.disabled = deshabilitado || !modelo.regla || modelo.regla.id === null
+      return modelo
+    },
+    mostrarEstado(texto) {
+      elementoEstado.textContent = texto ?? ""
+    },
+    destruir() {
+      vista?.destruir()
+      vista = null
+    },
   }
 }

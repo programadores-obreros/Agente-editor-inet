@@ -13,6 +13,7 @@ import { planDePintado } from "./plan-de-pintado.js"
 import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 import { crearClienteHttp } from "./cliente-http.js"
+import { crearPanelVistaLogica } from "./vista-logica-ui.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -268,6 +269,9 @@ let elementoRevision = null
 let elementoReadiness = null
 let elementoEstado = null
 let elementoConexion = null
+/** Panel "Vista lógica" (Phase 3, vertical #2): su contenedor NO está en `contenedores`, así que
+ * `repintar()` nunca lo reemplaza; se crea una vez más abajo, con el mismo controlador de la frase. */
+let panelVistaLogica = null
 
 if (enNavegador) {
   contenedores = {
@@ -334,6 +338,7 @@ function siguienteIdOperacion() {
 
 function mostrarEstado(texto) {
   elementoEstado.textContent = texto ?? ""
+  panelVistaLogica?.mostrarEstado(texto)
 }
 
 /** F-11: lo que tenía el foco ANTES de repintar, si era un selector de GPIO (tiene
@@ -399,6 +404,8 @@ function repintar() {
   }
   restaurarFoco(secciones.controles, focoAnterior)
   restaurarFocoRegla(secciones.reglas)
+  // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
+  panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado" })
 }
 
 /** Cliente HTTP compartido (GPIO, frase): ver `cliente-http.js`. `fetch` se resuelve en cada llamada. */
@@ -456,6 +463,18 @@ async function enviarOperacionRegla({ tipo, payload, baseRevision }) {
 }
 
 const controladorReglas = crearControladorReglas({ obtenerSnapshot: () => ultimoSnapshot, enviar: enviarOperacionRegla, alCambiar: () => (enNavegador ? repintar() : undefined) })
+
+if (enNavegador) {
+  panelVistaLogica = crearPanelVistaLogica({
+    // `Blockly` es el global del <script> vendorizado; si el asset faltara, el panel lo dice y la frase sigue.
+    Blockly: typeof Blockly === "undefined" ? undefined : Blockly,
+    lienzo: document.getElementById("vista-logica-lienzo"),
+    elementoTexto: document.getElementById("vista-logica-texto"),
+    elementoEstado: document.getElementById("vista-logica-estado"),
+    botonQuitar: document.getElementById("vista-logica-quitar"),
+    controlador: controladorReglas,
+  })
+}
 
 /** Foco de la frase: se captura al cambiar un select y se restaura cuando la operación termina
  * (mientras está pendiente los selects están deshabilitados y no pueden tener el foco). */

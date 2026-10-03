@@ -213,7 +213,7 @@ function etiquetaDeExtremo(extremo, componentesPorId) {
 // capacidades ni estados, y ni siquiera se nombran los slots; un id sólo viaja como `valor` de una opción, nunca como texto.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-const AVISO_VARIAS_REGLAS = "Hay varias reglas: la herramienta todavía no analiza si se contradicen."
+export const AVISO_VARIAS_REGLAS = "Hay varias reglas: la herramienta todavía no analiza si se contradicen."
 const PLACEHOLDER_SLOT = "[elegí…]"
 
 /** Opciones del slot + (si el valor actual no está entre ellas) la opción del valor actual, para

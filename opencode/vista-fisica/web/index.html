@@ -74,6 +74,11 @@
 
   /* W0-8 (PHASE_3_WAVE_0_DESIGN.md): "Este proyecto todavía no tiene componentes..."
      — nunca una superficie vacía sin ningún indicio (`pintar.js::pintarEstadoVacio`). */
+  /* Vista lógica (Phase 3, vertical #2): el lienzo de Blockly necesita un alto propio (no crece solo). */
+  #vista-logica.ancha { grid-column: 1 / -1; }
+  #vista-logica-lienzo { min-height: 260px; border: 1px solid currentColor; border-radius: 6px; position: relative; }
+  #vista-logica-texto { white-space: pre-line; font-size: 13px; margin: 6px 0; }
+  #vista-logica-estado { min-height: 1.2em; font-size: 13px; }
   [data-estado-vacio] { font-style: italic; opacity: .8; }
 </style>
 </head>
@@ -101,6 +106,14 @@
   <section>
     <h2>Reglas</h2>
     <div id="reglas"></div>
+  </section>
+  <section id="vista-logica" class="ancha">
+    <h2>Vista lógica</h2>
+    <p id="vista-logica-etiqueta">Es la misma regla de arriba, armada con bloques: leé de izquierda a derecha, «mientras … hacer …». Elegí cada campo de la lista.</p>
+    <div id="vista-logica-lienzo" role="group" aria-label="Vista lógica de la regla"></div>
+    <div id="vista-logica-estado" role="status" aria-live="polite"></div>
+    <div id="vista-logica-texto"></div>
+    <button type="button" id="vista-logica-quitar" disabled>Quitar regla</button>
   </section>
   <section>
     <h2>Motivos</h2>
