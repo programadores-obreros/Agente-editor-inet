@@ -76,6 +76,11 @@ function piezasDentroDe(elemento) {
   const anidadas = (elemento.hijos ?? []).flatMap(piezasDentroDe)
   return [...propias, ...anidadas]
 }
+/** Physical View UX #1: los contenedores de pieza (`<figure>`), estén donde estén. */
+function figurasDe(elemento) {
+  const propias = elemento.tagName === "figure" ? [elemento] : []
+  return [...propias, ...(elemento.hijos ?? []).flatMap(figurasDe)]
+}
 /** Busca, recursivamente, el primer `<figcaption>`. */
 function figcaptionDentroDe(elemento) {
   if (elemento.tagName === "figcaption") return elemento
@@ -222,7 +227,8 @@ test("B4: planDePintado muestra las 3 filas de cable exactas, con etiquetas huma
     .filter((i) => i.tipo === "filaCable")
     .map((i) => `${i.desde} → ${i.hasta}`)
     .sort()
-  const esperado = ["GPIO18 (D18) → Resistencia (pata B)", "Resistencia (pata A) → LED (ánodo (+))", "LED (cátodo (−)) → GND"].sort()
+  // Physical View UX #1: el riel del cátodo se nombra con el terminal de potencia resuelto ("GND (masa)").
+  const esperado = ["GPIO18 (D18) → Resistencia (pata B)", "Resistencia (pata A) → LED (ánodo (+))", "LED (cátodo (−)) → GND (masa)"].sort()
   assert.deepEqual(filas, esperado)
 })
 
@@ -502,9 +508,11 @@ test("PFX-1 (pintar), integración real: un Pulsador SIN fusión nunca cae dentr
   const plan = planDePintado(vista)
   const raiz = pintar(documentoFake(), plan)
 
-  assert.equal(raiz.circuito.hijos.length, 3, "la placa + un contenedor para el grupo fusionado + otro para el pulsador — nunca más piezas sueltas")
-  const grupo = raiz.circuito.hijos.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-led"))
-  const contenedorPulsador = raiz.circuito.hijos.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-pushbutton"))
+  // Physical View UX #1: el circuito son zonas; los contenedores de piezas viven adentro.
+  const figuras = figurasDe(raiz.circuito)
+  assert.equal(figuras.length, 3, "la placa + un contenedor para el grupo fusionado + otro para el pulsador — nunca más piezas sueltas")
+  const grupo = figuras.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-led"))
+  const contenedorPulsador = figuras.find((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-pushbutton"))
   assert.ok(grupo && contenedorPulsador)
   assert.notEqual(grupo, contenedorPulsador, "el pulsador NUNCA comparte contenedor con el grupo Resistencia+LED")
   assert.deepEqual(
@@ -524,8 +532,9 @@ test("PFX-1 (pintar), integración real: 2 LEDs + 2 Resistencias — dos grupos 
   const plan = planDePintado(vista)
   const raiz = pintar(documentoFake(), plan)
 
-  assert.equal(raiz.circuito.hijos.length, 3, "la placa + dos grupos, uno por cada par LED+Resistencia")
-  const grupos = raiz.circuito.hijos.filter((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-led"))
+  const figuras = figurasDe(raiz.circuito)
+  assert.equal(figuras.length, 3, "la placa + dos grupos, uno por cada par LED+Resistencia")
+  const grupos = figuras.filter((c) => piezasDentroDe(c).some((p) => p.tagName === "wokwi-led"))
   assert.equal(grupos.length, 2)
   for (const grupo of grupos) {
     const piezas = piezasDentroDe(grupo)

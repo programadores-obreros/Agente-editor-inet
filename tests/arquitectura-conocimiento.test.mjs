@@ -356,8 +356,12 @@ test("J: un dht22 en el proyecto produce una instrucción visible y un aviso pin
   assert.ok(!instrucciones.some((i) => i.tipo === "crearElemento" && i.entidad.id === dht.id), "nunca se dibuja con un tag inventado")
 
   const raiz = pintar({ createElement: elementoFake }, instrucciones)
-  const aviso = raiz.circuito.hijos.find((h) => h.atributos["data-sin-representacion"] === "true")
+  // Physical View UX #1: el aviso vive DENTRO de la zona de su pieza (el dht22 es un sensor: Entrada).
+  const todos = (n) => [n, ...(n.hijos ?? []).flatMap(todos)]
+  const aviso = todos(raiz.circuito).find((h) => h.atributos?.["data-sin-representacion"] === "true")
   assert.ok(aviso, "el aviso tiene que quedar en el circuito")
+  const zonaEntrada = todos(raiz.circuito).find((h) => h.atributos?.["data-zona-piezas"] === "entrada")
+  assert.ok(zonaEntrada?.hijos.includes(aviso), "el aviso queda en la zona Entrada, junto a donde estaría la pieza")
   assert.equal(aviso.atributos["data-entidad-id"], dht.id)
   assert.match(aviso.textContent, /DHT22/)
 })

@@ -135,12 +135,13 @@ export const ELEMENTO_WOKWI_POR_TIPO: Readonly<Record<string, string>> = {
 // Fase 2, Slice 2 (§3.2, HD-S2-2/3/4): `pulsador.senal → "1.l"`, `pulsador.gnd →
 // "2.l"`. `el.pinInfo` REAL de `wokwi-pushbutton` (Chromium headless, ARCH-S2-
 // PHYSICAL/INFORME.md §2): `[{"name":"1.l"},{"name":"2.l"},{"name":"1.r"},
-// {"name":"2.r"}]` — 4 terminales, un par izquierdo (`1.l`/`2.l`) puenteado
-// internamente y un par derecho (`1.r`/`2.r`) puenteado internamente; el pulsador
-// conecta ambos pares SÓLO al presionar (topología real de un tactile switch de 4
-// patas). Como `1.l≡2.l` (mismo nodo interno), la elección de CUÁL pin de cada lado
-// dibujar para `senal`/`gnd` es puramente cosmética (informe §2, "cualquiera de las
-// 4 combinaciones es correcta") — nunca una decisión eléctrica nueva.
+// {"name":"2.r"}]` — 4 terminales, DOS contactos. Corrección (Physical View UX #1,
+// verificado contra https://docs.wokwi.com/parts/wokwi-pushbutton): `1.l`/`1.r` son
+// el MISMO contacto ("first contact (left / right)") y `2.l`/`2.r` el otro; los dos
+// lados de un mismo contacto están SIEMPRE unidos, y presionar une el contacto 1 con
+// el 2. El comentario anterior decía "1.l≡2.l", que es falso; el mapeo de abajo
+// (senal→contacto 1, gnd→contacto 2) siempre fue correcto. Elegir el lado izquierdo
+// o derecho de un mismo contacto es cosmético: ver `ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO`.
 // Fase 3, Wave 0 (HD-W0-B): `resistencia.a/b -> "1"/"2"` — `el.pinInfo` REAL de
 // `wokwi-resistor` (Chromium headless, EXP-B): `[{"name":"1"},{"name":"2"}]`, sin
 // polaridad (coincide con `catalogo-datos.ts:40-43`, "es un puente, no tiene
@@ -164,6 +165,19 @@ export const TERMINAL_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<st
 // distinguirlo visualmente del LED rojo — cosmético, revisable, nunca semántico
 // (informe ARCH-S2-PHYSICAL confirma que `color` es un atributo puramente visual del
 // custom element, sin efecto eléctrico).
+/**
+ * Pines de la pieza que son el MISMO nodo eléctrico que el ancla de
+ * `TERMINAL_WOKWI_POR_TIPO` (Physical View UX #1). El esquema elige, entre ellos, el
+ * que queda del lado de su destino para no dar vuelta el cable alrededor de la pieza:
+ * es una elección de PRESENTACIÓN entre puntos ya unidos, nunca una conexión nueva.
+ * La primera entrada es siempre el ancla de `TERMINAL_WOKWI_POR_TIPO`.
+ * Evidencia: https://docs.wokwi.com/parts/wokwi-pushbutton ("Since both belong to the
+ * same contact, they are always connected").
+ */
+export const ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<string, readonly string[]>>>> = {
+  pulsador: { senal: ["1.l", "1.r"], gnd: ["2.l", "2.r"] },
+}
+
 export const ATRIBUTOS_POR_TIPO: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   led: { color: "red" },
   pulsador: { color: "green" },

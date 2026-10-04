@@ -32,10 +32,10 @@ import { crearConocimiento, type ComponentKnowledge } from "../conocimiento/cono
 import { validarProyecto, derivarReadiness } from "../nucleo/validar.ts"
 // Component System Foundation #1 (F5): datos de render y textos salen de los ANEXOS de
 // `conocimiento/` (representación, pedagogía es-AR), no del núcleo semántico.
-import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
-import { etiquetaDeTerminal, nombreDeComponente } from "../conocimiento/anexos/pedagogia-es-AR.ts"
+import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA, ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO, POTENCIA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
+import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, FraseReglaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista } from "./modelo-vista.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal de UN tipo de componente.
@@ -161,8 +161,13 @@ function resolverTerminal(componente: Componente, terminal: Terminal, pinesDePla
 
 // Las CUATRO variantes de `TerminalVista` (`modelo-vista.ts`) comparten el campo
 // `nombreWokwiPieza` — accesible sin narrowing previo.
-function extremoDeTerminal(componenteId: string, terminalId: string, terminalVista: TerminalVista): ExtremoCableVista {
-  return { tipo: "terminal", componente: componenteId, terminal: terminalId, nombreWokwi: terminalVista.nombreWokwiPieza }
+function extremoDeTerminal(componenteId: string, terminalId: string, terminalVista: TerminalVista, tipo?: string): ExtremoCableVista {
+  // Physical View UX #1: anclas equivalentes (mismo nodo de la pieza, anexo de
+  // representación); siempre empieza por el ancla de siempre.
+  const ancla = terminalVista.nombreWokwiPieza
+  const equivalentes = tipo !== undefined ? ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO[tipo]?.[terminalId] : undefined
+  const anclasWokwi = ancla === null ? [] : [ancla, ...(equivalentes ?? []).filter((a) => a !== ancla)]
+  return { tipo: "terminal", componente: componenteId, terminal: terminalId, nombreWokwi: ancla, anclasWokwi }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -186,6 +191,7 @@ interface FusionSerie {
   readonly terminalLibre: string
   readonly conexionId: string
   readonly ohmios: unknown
+  readonly requisito: Requisito["tipo"]
 }
 
 /**
@@ -275,6 +281,7 @@ function resolverFusionesSerie(proyecto: Proyecto, catalogo: Catalogo, terminale
         // D-03/§4 del modelo normativo: el valor del requisito es una `Cantidad`; acá
         // sólo viaja el número si la unidad es ohm (si no, `undefined`: no se adivina).
         ohmios: req.spec.valor?.unidad === "ohm" ? req.spec.valor.valor : undefined,
+        requisito: req.tipo,
       })
     }
   }
@@ -329,7 +336,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   const placaId = proyecto.placa
   const placaCatalogo: Placa | undefined = placaId !== null ? catalogo.placas.find((p) => p.id === placaId) : undefined
   const placa: PlacaVista | null = placaCatalogo
-    ? { id: placaCatalogo.id, elementoWokwi: ELEMENTO_WOKWI_POR_PLACA[placaCatalogo.id] ?? "", escala: ESCALA_WOKWI_POR_PLACA[placaCatalogo.id] ?? 1 }
+    ? { id: placaCatalogo.id, elementoWokwi: ELEMENTO_WOKWI_POR_PLACA[placaCatalogo.id] ?? "", escala: ESCALA_WOKWI_POR_PLACA[placaCatalogo.id] ?? 1, nombre: nombreDePlaca(placaCatalogo.id) ?? placaCatalogo.id }
     : null
   const pinesDePlaca: readonly RegistroPin[] = (placaId !== null ? catalogo.pinesDePlaca(placaId) : undefined) ?? []
 
@@ -358,7 +365,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
     // PFX-1: `agrupadoCon` se resuelve recién en `reordenarParaAdyacencia` (abajo,
     // necesita la fusión ya calculada) — acá siempre `null`, nunca una segunda
     // decisión de agrupamiento.
-    return { id: componente.id, tipo: componente.tipo, nombre, elementoWokwi, atributos, rol, terminales, agrupadoCon: null }
+    return { id: componente.id, tipo: componente.tipo, nombre, elementoWokwi, atributos, rol, terminales, agrupadoCon: null, zona: rol ?? "otras", explicacion: null }
   })
 
   function terminalesDe(componenteId: string): Readonly<Record<string, TerminalVista>> {
@@ -388,11 +395,26 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   // no cambia), nunca al final del todo donde los cables de OTRO componente puedan
   // intercalarse en el medio. `conexionesFusionadasEmitidas` evita que el bucle de
   // abajo la vuelva a agregar.
+  const conocimiento = crearConocimiento(catalogo)
+  const tipoDe = (componenteId: string): string | undefined => proyecto.componentes.find((c) => c.id === componenteId)?.tipo
+  const extremo = (componenteId: string, terminalId: string): ExtremoCableVista => extremoDeTerminal(componenteId, terminalId, terminalVistaDe(componenteId, terminalId), tipoDe(componenteId))
+  // Physical View UX #1: el camino de un cable es el grupo de su pieza; una resistencia
+  // fusionada pertenece al camino del componente que la requiere.
+  const anclaDeResistencia = new Map([...fusionesSerie.values()].map((f) => [f.resistenciaId, f.componenteId] as const))
+  const caminoDe = (componenteId: string): string => anclaDeResistencia.get(componenteId) ?? componenteId
+  function potenciaDe(componente: Componente, terminalId: string): { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[] } | null {
+    const terminal = catalogo.obtenerComponente(componente.tipo)?.terminales.find((t) => t.id === terminalId)
+    if (placaId === null || !terminal) return null
+    const destino = conocimiento.resolverDestino(placaId, terminal)
+    if (destino.kind !== "potencia") return null
+    return { id: destino.id, etiqueta: ETIQUETA_DE_TERMINAL_DE_POTENCIA[destino.id] ?? destino.id, anclasWokwi: POTENCIA_WOKWI_POR_PLACA[placaId]?.[destino.id] ?? [] }
+  }
   const cables: CableVista[] = []
   const conexionesFusionadasEmitidas = new Set<string>()
   for (const componente of proyecto.componentes) {
     for (const [terminalId, terminalVista] of Object.entries(terminalesDe(componente.id))) {
-      const extremoTerminal = extremoDeTerminal(componente.id, terminalId, terminalVista)
+      const extremoTerminal = extremoDeTerminal(componente.id, terminalId, terminalVista, componente.tipo)
+      const camino = caminoDe(componente.id)
       if (terminalVista.estado === "asignado") {
         const extremoPin: ExtremoCableVista = { tipo: "pinPlaca", pinSemantico: terminalVista.pinSemantico, nombreWokwi: terminalVista.nombreWokwiPlaca }
         // HD-W0-B: si este (componente,terminal) fusiona, el extremo del lado del
@@ -400,16 +422,16 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
         // instancia puente — corrección del orquestador sobre EXP-B: nunca la pata
         // conectada otra vez, siempre la que la IR deja sin usar.
         const fusion = fusionesSerie.get(claveAncla(componente.id, terminalId))
-        const hastaPin = fusion ? extremoDeTerminal(fusion.resistenciaId, fusion.terminalLibre, terminalVistaDe(fusion.resistenciaId, fusion.terminalLibre)) : extremoTerminal
-        cables.push({ id: `cable-pin-${componente.id}-${terminalId}`, desde: extremoPin, hasta: hastaPin })
+        const hastaPin = fusion ? extremo(fusion.resistenciaId, fusion.terminalLibre) : extremoTerminal
+        cables.push({ id: `cable-pin-${componente.id}-${terminalId}`, desde: extremoPin, hasta: hastaPin, camino })
         if (fusion) {
-          const desde = extremoDeTerminal(fusion.resistenciaId, fusion.terminalConectado, terminalVistaDe(fusion.resistenciaId, fusion.terminalConectado))
-          const hasta = extremoDeTerminal(fusion.componenteId, fusion.terminalId, terminalVistaDe(fusion.componenteId, fusion.terminalId))
-          cables.push({ id: `cable-conexion-${fusion.conexionId}`, desde, hasta })
+          const desde = extremo(fusion.resistenciaId, fusion.terminalConectado)
+          const hasta = extremo(fusion.componenteId, fusion.terminalId)
+          cables.push({ id: `cable-conexion-${fusion.conexionId}`, desde, hasta, camino })
           conexionesFusionadasEmitidas.add(fusion.conexionId)
         }
       } else if (terminalVista.estado === "rielFijo") {
-        cables.push({ id: `cable-riel-${componente.id}-${terminalId}`, desde: extremoTerminal, hasta: { tipo: "rielFijo", destino: terminalVista.destino } })
+        cables.push({ id: `cable-riel-${componente.id}-${terminalId}`, desde: extremoTerminal, hasta: { tipo: "rielFijo", destino: terminalVista.destino, potencia: potenciaDe(componente, terminalId) }, camino })
       }
       // "sinAsignar"/"puente": sin cable propio — un puente sólo se cablea si la IR
       // trae una `Conexion` real (bucle de abajo); inventar un cable para un terminal
@@ -418,16 +440,15 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   }
   for (const conexion of proyecto.conexiones) {
     if (conexionesFusionadasEmitidas.has(conexion.id)) continue // ya se emitió arriba, contigua a su pin
-    const desde = extremoDeTerminal(conexion.desde.componente, conexion.desde.terminal, terminalVistaDe(conexion.desde.componente, conexion.desde.terminal))
-    const hasta = extremoDeTerminal(conexion.hasta.componente, conexion.hasta.terminal, terminalVistaDe(conexion.hasta.componente, conexion.hasta.terminal))
-    cables.push({ id: `cable-conexion-${conexion.id}`, desde, hasta })
+    const desde = extremo(conexion.desde.componente, conexion.desde.terminal)
+    const hasta = extremo(conexion.hasta.componente, conexion.hasta.terminal)
+    cables.push({ id: `cable-conexion-${conexion.id}`, desde, hasta, camino: caminoDe(conexion.desde.componente) })
   }
 
   // GPIO ofrecidos: sólo para terminales que NO son riel-fijo (el catálogo declara
   // cuáles) — un terminal riel-fijo/puente nunca ofrece un selector, no tiene pin que
   // elegir.
   const gpiosDisponibles: Record<string, Record<string, readonly OpcionGpioVista[]>> = {}
-  const conocimiento = crearConocimiento(catalogo)
   for (const componente of proyecto.componentes) {
     const compCatalogo = catalogo.obtenerComponente(componente.tipo)
     if (!compCatalogo) continue
@@ -467,11 +488,55 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
 
   // HD-W0-B (adyacencia): ver `reordenarParaAdyacencia` — sólo mueve piezas
   // fusionadas, justo antes de su ancla; el resto conserva su orden de siempre.
-  const componentesOrdenados = reordenarParaAdyacencia(componentesConValor, fusionesSerie)
+  const componentesOrdenados = reordenarParaAdyacencia(componentesConZona(componentesConValor, fusionesSerie, proyecto, catalogo), fusionesSerie)
 
   const { reglas, opcionesRegla } = proyectarReglas(proyecto, catalogo, componentes, motivos)
 
-  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla }
+  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla, zonas: zonasDelEsquema(placa, componentesOrdenados) }
+}
+
+/**
+ * Physical View UX #1: una resistencia (o la pieza que sea) que existe por el REQUISITO
+ * de otra va a la zona de esa otra y explica para qué está (anexo de pedagogía). Lo
+ * derivado no se persiste: sale de la IR + el catálogo en cada proyección (D-06).
+ */
+function componentesConZona(componentes: readonly ComponenteVista[], fusionesSerie: ReadonlyMap<string, FusionSerie>, proyecto: Proyecto, catalogo: Catalogo): readonly ComponenteVista[] {
+  const porId = new Map(componentes.map((c) => [c.id, c] as const))
+  const fusionDeResistencia = new Map([...fusionesSerie.values()].map((f) => [f.resistenciaId, f] as const))
+  return componentes.map((c) => {
+    const fusion = fusionDeResistencia.get(c.id)
+    const relacion = fusion ? { anclaId: fusion.componenteId, requisito: fusion.requisito } : requisitoQueCumple(c.id, proyecto, catalogo)
+    const ancla = relacion ? porId.get(relacion.anclaId) : undefined
+    if (!relacion || !ancla) return c
+    return { ...c, zona: ancla.zona, explicacion: explicacionDeRequisito(relacion.requisito, ancla.nombre) ?? null }
+  })
+}
+
+/**
+ * Physical View UX #1 (red-team #1): una pieza conectada (UNA sola conexión) al terminal
+ * de otra que DECLARA un requisito por ese tipo de pieza en ese terminal (p. ej. el LED
+ * pide `resistencia-serie` en el ánodo) pertenece a la zona de esa otra, aunque todavía
+ * no haya pin asignado para fusionarlas en el dibujo. Sale de la IR + el requisito del
+ * catálogo; nunca de un nombre ni de un tipo escrito acá.
+ */
+function requisitoQueCumple(componenteId: string, proyecto: Proyecto, catalogo: Catalogo): { readonly anclaId: string; readonly requisito: Requisito["tipo"] } | null {
+  const instancia = proyecto.componentes.find((c) => c.id === componenteId)
+  const conexiones = proyecto.conexiones.filter((cx) => cx.desde.componente === componenteId || cx.hasta.componente === componenteId)
+  if (!instancia || conexiones.length !== 1) return null
+  const cx = conexiones[0]
+  if (!cx) return null
+  const otro = cx.desde.componente === componenteId ? cx.hasta : cx.desde
+  const tipoOtro = proyecto.componentes.find((c) => c.id === otro.componente)?.tipo
+  const requisito = tipoOtro ? catalogo.obtenerComponente(tipoOtro)?.requisitos.find((r) => r.enTerminal === otro.terminal && tipoEsperadoDeRequisito(r) === instancia.tipo) : undefined
+  return requisito ? { anclaId: otro.componente, requisito: requisito.tipo } : null
+}
+
+/** Zonas en orden de lectura; `otras` sólo si alguna pieza cae ahí. */
+function zonasDelEsquema(placa: PlacaVista | null, componentes: readonly ComponenteVista[]): readonly ZonaVista[] {
+  if (placa === null && componentes.length === 0) return []
+  const roles: ZonaVista["rol"][] = ["entrada", "controlador", "salida"]
+  if (componentes.some((c) => c.zona === "otras")) roles.push("otras")
+  return roles.map((rol) => ({ rol, ...ZONAS_DEL_CIRCUITO[rol] }))
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════

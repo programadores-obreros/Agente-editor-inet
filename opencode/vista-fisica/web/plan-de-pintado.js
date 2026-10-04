@@ -47,6 +47,15 @@ export function planDePintado(modeloDeVista, opciones = {}) {
     instrucciones.push({ tipo: "estadoVacio", texto: "Este proyecto todavía no tiene componentes. Pedile a Tecnia Bot que lo arme." })
   }
 
+  // Physical View UX #1: con `zonas` (servidor), el circuito se arma en zonas de lectura
+  // — Entrada | Controlador | Salida — y cada pieza va a la suya. Sin `zonas` (modelos
+  // viejos o fixtures mínimos) todo queda exactamente como antes.
+  const zonas = modeloDeVista.zonas ?? []
+  const conZonas = zonas.length > 0
+  for (const zona of zonas) {
+    instrucciones.push({ tipo: "zonaCircuito", rol: zona.rol, titulo: zona.titulo, descripcion: zona.descripcion })
+  }
+
   if (modeloDeVista.placa) {
     instrucciones.push({
       tipo: "crearElemento",
@@ -67,6 +76,7 @@ export function planDePintado(modeloDeVista, opciones = {}) {
       // campo que los componentes, para que `pintar.js` no tenga que distinguir
       // "placa" de "componente sin fusión".
       agrupadoCon: null,
+      ...(conZonas ? { zona: "controlador", nombre: modeloDeVista.placa.nombre, explicacion: null, camino: null } : {}),
     })
   }
 
@@ -81,6 +91,7 @@ export function planDePintado(modeloDeVista, opciones = {}) {
         tipo: "piezaSinRepresentacion",
         entidad: { tipo: "componente", id: componente.id },
         texto: `${componente.nombre}: todavía no tiene dibujo (no es un componente con soporte oficial).`,
+        ...(conZonas ? { zona: componente.zona } : {}),
       })
       continue
     }
@@ -101,6 +112,7 @@ export function planDePintado(modeloDeVista, opciones = {}) {
       // cuál (eso sería la misma lógica física duplicada que PFX-2 corrigió del
       // otro lado). `pintar.js` es quien agrupa de verdad, leyendo este dato.
       agrupadoCon: componente.agrupadoCon,
+      ...(conZonas ? { zona: componente.zona, nombre: componente.nombre, explicacion: componente.explicacion, camino: componente.agrupadoCon ?? componente.id } : {}),
     })
   }
 
@@ -121,6 +133,35 @@ export function planDePintado(modeloDeVista, opciones = {}) {
 
   // Selector de GPIO: uno por (componente, terminal) que el modelo ofrezca —
   // `gpiosDisponibles` ya excluye los terminales riel-fijo (no tienen selector).
+  // Physical View UX #1: los cables DIBUJADOS. Este plan sólo dice QUÉ se une con QUÉ
+  // (entidad + anclas de la pieza Wokwi, ya resueltas por el servidor) y qué rótulo va
+  // del lado de la placa; DÓNDE pasa cada cable lo decide `cableado.js` en el
+  // navegador, midiendo las piezas reales. Un extremo sin ancla dibujable (pin sin
+  // representación física, riel sin placa) no se dibuja: queda en la lista de texto.
+  if (conZonas && modeloDeVista.placa) {
+    const componentesPorIdEsquema = new Map(modeloDeVista.componentes.map((componente) => [componente.id, componente]))
+    const cables = []
+    for (const cable of modeloDeVista.cables) {
+      const desde = extremoDibujable(cable.desde, modeloDeVista.placa.id)
+      const hasta = extremoDibujable(cable.hasta, modeloDeVista.placa.id)
+      if (!desde || !hasta) {
+        // Nunca se omite en silencio: la pieza avisa que esa conexión existe pero no se
+        // puede dibujar (p. ej. un GPIO válido sin pin en la pieza de la placa).
+        const pieza = [cable.desde, cable.hasta].find((e) => e.tipo === "terminal")
+        if (pieza) {
+          instrucciones.push({
+            tipo: "notaConexion",
+            entidad: { tipo: "componente", id: pieza.componente },
+            texto: `Conexión sin dibujo: ${etiquetaDeExtremo(cable.desde, componentesPorIdEsquema)} → ${etiquetaDeExtremo(cable.hasta, componentesPorIdEsquema)}.`,
+          })
+        }
+        continue
+      }
+      cables.push({ id: cable.id, camino: cable.camino ?? null, desde, hasta })
+    }
+    instrucciones.push({ tipo: "cableado", cables })
+  }
+
   for (const componente of modeloDeVista.componentes) {
     const porTerminal = modeloDeVista.gpiosDisponibles[componente.id] ?? {}
     for (const terminalId of Object.keys(porTerminal)) {
@@ -142,7 +183,7 @@ export function planDePintado(modeloDeVista, opciones = {}) {
         // paréntesis ("D18", lo que el alumno ve dibujado) — antes mostraba SÓLO el
         // rótulo de la placa, que nunca coincidía con lo que el bot decía, rompiendo
         // la sensación de "estamos mirando lo mismo" (ONE PHYSICAL TRUTH).
-        opciones: porTerminal[terminalId].map((opcion) => ({ valor: opcion.pinSemantico, etiqueta: `${opcion.pinSemantico} (${opcion.nombreWokwi})` })),
+        opciones: opcionesDelSelector(porTerminal[terminalId], terminalVista),
         valorActual,
         deshabilitado: !conexionActiva, // B2 — sin conexion viva, el selector no se puede tocar
       })
@@ -176,6 +217,32 @@ export function planDePintado(modeloDeVista, opciones = {}) {
 // (`snapshot-a-vista.ts::rolDeClase`) para mostrarlo ("entrada" -> "Entrada") — una
 // transformación de texto GENÉRICA (nunca mira `componente.tipo` ni ninguna clase de
 // catálogo): el browser no tiene ninguna tabla de clases/tipos.
+/** Opciones del selector de GPIO. Physical View UX #1 (red-team): si el proyecto YA
+ * tiene un pin que no está entre las opciones ofrecidas (p. ej. GPIO0, válido pero sin
+ * pin en la pieza de la placa), se agrega ESE valor para que el selector muestre lo que
+ * la IR dice de verdad, nunca un selector en blanco. No es una opción nueva: es el
+ * valor actual. */
+function opcionesDelSelector(ofrecidas, terminalVista) {
+  const opciones = ofrecidas.map((opcion) => ({ valor: opcion.pinSemantico, etiqueta: `${opcion.pinSemantico} (${opcion.nombreWokwi})` }))
+  if (!terminalVista || terminalVista.estado !== "asignado" || opciones.some((o) => o.valor === terminalVista.pinSemantico)) return opciones
+  const rotulo = terminalVista.nombreWokwiPlaca === null ? "sin pin físico en esta placa" : terminalVista.nombreWokwiPlaca
+  return [...opciones, { valor: terminalVista.pinSemantico, etiqueta: `${terminalVista.pinSemantico} (${rotulo})` }]
+}
+
+function extremoDibujable(extremo, placaId) {
+  if (extremo.tipo === "pinPlaca") {
+    if (extremo.nombreWokwi === null) return null
+    return { entidad: { tipo: "placa", id: placaId }, anclas: [extremo.nombreWokwi], etiqueta: `${extremo.pinSemantico} (${extremo.nombreWokwi})`, potencia: false }
+  }
+  if (extremo.tipo === "rielFijo") {
+    if (!extremo.potencia || extremo.potencia.anclasWokwi.length === 0) return null
+    return { entidad: { tipo: "placa", id: placaId }, anclas: [...extremo.potencia.anclasWokwi], etiqueta: extremo.potencia.etiqueta, potencia: true }
+  }
+  const anclas = extremo.anclasWokwi ?? (extremo.nombreWokwi ? [extremo.nombreWokwi] : [])
+  if (anclas.length === 0) return null
+  return { entidad: { tipo: "componente", id: extremo.componente }, anclas: [...anclas], etiqueta: null, potencia: false }
+}
+
 function etiquetaDeRol(rol) {
   if (!rol) return null
   return rol.charAt(0).toUpperCase() + rol.slice(1)
@@ -209,7 +276,9 @@ function etiquetaDeExtremo(extremo, componentesPorId) {
     // cable) — mismo criterio que la opción del selector, más arriba.
     return `${extremo.pinSemantico} (${extremo.nombreWokwi})`
   }
-  if (extremo.tipo === "rielFijo") return extremo.destino
+  // Physical View UX #1: si el servidor resolvió el terminal de potencia de la placa,
+  // se nombra ése ("GND (masa)"); si no, el destino crudo de siempre.
+  if (extremo.tipo === "rielFijo") return extremo.potencia ? extremo.potencia.etiqueta : extremo.destino
   const componente = componentesPorId.get(extremo.componente)
   const nombreComponente = componente ? componente.nombre : extremo.componente
   const etiquetaTerminal = componente?.terminales?.[extremo.terminal]?.etiqueta ?? extremo.terminal

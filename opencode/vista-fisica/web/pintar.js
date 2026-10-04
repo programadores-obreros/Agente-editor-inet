@@ -62,9 +62,31 @@ export function pintar(doc, instrucciones, manejadores = {}) {
   // `snapshot-a-vista.ts::reordenarParaAdyacencia`): acá sólo se obedece ese orden.
   const gruposPendientes = new Map()
 
+  // Physical View UX #1: `rol` -> la caja de piezas de esa zona del esquema
+  // (`zonaCircuito`). Sólo en memoria de esta llamada, mismo patrón que los mapas de arriba.
+  const zonasPorRol = new Map()
+  // id de componente -> su <figure> en el esquema (para notas de conexión).
+  const figurasPorEntidad = new Map()
+
   for (const instruccion of instrucciones) {
+    if (instruccion.tipo === "notaConexion") {
+      // Physical View UX #1: la nota va dentro del contenedor de su pieza (o, si la pieza
+      // no tiene contenedor propio, al final del circuito) — siempre visible.
+      const figura = figurasPorEntidad.get(instruccion.entidad.id)
+      const nota = doc.createElement("p")
+      nota.setAttribute("data-nota-conexion", instruccion.entidad.id)
+      nota.textContent = instruccion.texto
+      ;(figura ?? raiz.circuito).appendChild(nota)
+      continue
+    }
+    if (instruccion.tipo === "zonaCircuito") {
+      pintarZona(doc, raiz.circuito, instruccion, zonasPorRol)
+      continue
+    }
     if (instruccion.tipo === "crearElemento") {
-      pintarElemento(doc, raiz.circuito, instruccion, elementosPorEntidad, gruposPendientes)
+      const zona = instruccion.zona ? zonasPorRol.get(instruccion.zona) : undefined
+      if (zona) pintarPiezaEnZona(doc, zona, instruccion, elementosPorEntidad, gruposPendientes, figurasPorEntidad)
+      else pintarElemento(doc, raiz.circuito, instruccion, elementosPorEntidad, gruposPendientes)
       continue
     }
     if (instruccion.tipo === "filaCable") {
@@ -99,7 +121,8 @@ export function pintar(doc, instrucciones, manejadores = {}) {
       continue
     }
     if (instruccion.tipo === "piezaSinRepresentacion") {
-      pintarPiezaSinRepresentacion(doc, raiz.circuito, instruccion, elementosPorEntidad)
+      const zona = instruccion.zona ? zonasPorRol.get(instruccion.zona) : undefined
+      pintarPiezaSinRepresentacion(doc, zona ?? raiz.circuito, instruccion, elementosPorEntidad)
       continue
     }
     // Instrucción de un tipo que este pintor no conoce todavía — se ignora, nunca se
@@ -125,6 +148,103 @@ function pintarEstadoVacio(doc, contenedor, instruccion) {
 // Component System Foundation #1 (D-17): una pieza del proyecto sin representación
 // (hoy dht22/ntc) se MUESTRA como aviso en el circuito, nunca se omite en silencio.
 // Queda registrada como elemento de su entidad para que un motivo pueda resaltarla.
+// Physical View UX #1: una zona del esquema — título + frase corta (anexo de pedagogía,
+// ya resueltos por el servidor) y la caja donde caen sus piezas. Es un <section> con
+// encabezado propio, así el rol se lee por TEXTO y por POSICIÓN, nunca sólo por color.
+function pintarZona(doc, contenedor, instruccion, zonasPorRol) {
+  contenedor.setAttribute("data-esquema", "true")
+  const zona = doc.createElement("section")
+  zona.setAttribute("data-zona", instruccion.rol)
+  zona.setAttribute("aria-label", instruccion.titulo)
+  const titulo = doc.createElement("h3")
+  titulo.setAttribute("data-zona-titulo", instruccion.rol)
+  titulo.textContent = instruccion.titulo
+  zona.appendChild(titulo)
+  const descripcion = doc.createElement("p")
+  descripcion.setAttribute("data-zona-descripcion", instruccion.rol)
+  descripcion.textContent = instruccion.descripcion
+  zona.appendChild(descripcion)
+  const piezas = doc.createElement("div")
+  piezas.setAttribute("data-zona-piezas", instruccion.rol)
+  zona.appendChild(piezas)
+  contenedor.appendChild(zona)
+  zonasPorRol.set(instruccion.rol, piezas)
+}
+
+// Physical View UX #1: cada pieza del esquema va en su propia <figure> enfocable, con el
+// NOMBRE de la pieza debajo (el rol ya lo dice la zona). Una pieza que existe por el
+// requisito de otra (`agrupadoCon`, la resistencia del LED) abre un grupo: la pieza
+// ancla llega después y se suma a la MISMA fila; la explicación de para qué está queda
+// visible dentro del grupo. `data-camino` es la identidad del grupo para resaltar sus
+// cables (`cableado.js`).
+function pintarPiezaEnZona(doc, contenedor, instruccion, elementosPorEntidad, gruposPendientes, figurasPorEntidad) {
+  const elemento = doc.createElement(instruccion.tag)
+  elemento.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
+  elemento.setAttribute("data-entidad-id", instruccion.entidad.id)
+  for (const [clave, valor] of Object.entries(instruccion.atributos)) {
+    if (clave === "style") continue // el tamaño en el esquema lo da el CSS de la zona, no la escala de la placa
+    elemento.setAttribute(clave, valor)
+  }
+  elementosPorEntidad.set(`${instruccion.entidad.tipo}:${instruccion.entidad.id}`, elemento)
+
+  const pieza = doc.createElement("span")
+  pieza.setAttribute("data-pieza", instruccion.entidad.id)
+  pieza.appendChild(elemento)
+  const nombre = doc.createElement("span")
+  nombre.setAttribute("data-nombre-pieza", instruccion.entidad.id)
+  nombre.textContent = instruccion.nombre ?? ""
+  pieza.appendChild(nombre)
+
+  if (instruccion.agrupadoCon) {
+    const grupo = crearFiguraDeZona(doc, instruccion.agrupadoCon, instruccion.agrupadoCon)
+    grupo.setAttribute("aria-label", instruccion.nombre ?? "")
+    grupo.setAttribute("data-grupo-fusion", "true")
+    const fila = doc.createElement("span")
+    fila.setAttribute("data-fila-fusion", "true")
+    fila.appendChild(pieza)
+    grupo.appendChild(fila)
+    if (instruccion.explicacion) grupo.appendChild(crearExplicacion(doc, instruccion.entidad.id, `${instruccion.nombre}: ${instruccion.explicacion}`))
+    contenedor.appendChild(grupo)
+    figurasPorEntidad.set(instruccion.entidad.id, grupo)
+    gruposPendientes.set(instruccion.agrupadoCon, { grupo, fila, nombres: [instruccion.nombre] })
+    return elemento
+  }
+
+  const pendiente = gruposPendientes.get(instruccion.entidad.id)
+  if (pendiente) {
+    pendiente.fila.appendChild(pieza)
+    figurasPorEntidad.set(instruccion.entidad.id, pendiente.grupo)
+    pendiente.grupo.setAttribute("aria-label", [...pendiente.nombres, instruccion.nombre].join(" y "))
+    gruposPendientes.delete(instruccion.entidad.id)
+    return elemento
+  }
+
+  const figura = crearFiguraDeZona(doc, instruccion.entidad.id, instruccion.camino ?? (instruccion.entidad.tipo === "placa" ? "placa" : instruccion.entidad.id))
+  figura.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
+  figura.setAttribute("aria-label", instruccion.nombre ?? "")
+  figura.appendChild(pieza)
+  if (instruccion.explicacion) figura.appendChild(crearExplicacion(doc, instruccion.entidad.id, instruccion.explicacion))
+  contenedor.appendChild(figura)
+  figurasPorEntidad.set(instruccion.entidad.id, figura)
+  return elemento
+}
+
+function crearFiguraDeZona(doc, entidadId, camino) {
+  const figura = doc.createElement("figure")
+  figura.setAttribute("data-entidad-tipo", "componente")
+  figura.setAttribute("data-entidad-id", entidadId)
+  figura.setAttribute("data-camino", camino)
+  figura.setAttribute("tabindex", "0")
+  return figura
+}
+
+function crearExplicacion(doc, entidadId, texto) {
+  const explicacion = doc.createElement("figcaption")
+  explicacion.setAttribute("data-explicacion-de", entidadId)
+  explicacion.textContent = texto
+  return explicacion
+}
+
 function pintarPiezaSinRepresentacion(doc, contenedor, instruccion, elementosPorEntidad) {
   const aviso = doc.createElement("p")
   aviso.setAttribute("data-sin-representacion", "true")

@@ -80,6 +80,57 @@
   #vista-logica-texto { white-space: pre-line; font-size: 13px; margin: 6px 0; }
   #vista-logica-estado { min-height: 1.2em; font-size: 13px; }
   [data-estado-vacio] { font-style: italic; opacity: .8; }
+
+  /* ── Physical View UX #1: esquema por zonas (Entrada | Controlador | Salida). ──
+     Sólo presentación: QUÉ va en cada zona y QUÉ se conecta lo decide el servidor
+     (IR + ComponentKnowledge); el ruteo de los cables, `ruteo.js`. El rol se lee por
+     el título, la posición y el borde de cada zona, nunca sólo por el color. */
+  header { opacity: .85; }
+  #revision, #readiness, #conexion { font-size: 12px; }
+  #seccion-circuito { grid-column: 1 / -1; }
+  #seccion-circuito > h2 { font-size: 15px; }
+  #circuito { overflow-x: auto; }
+  #circuito > [data-esquema] {
+    flex: 1 1 100%; /* #circuito es flex (modo viejo): el esquema ocupa todo el ancho */
+    position: relative; display: grid; grid-template-columns: minmax(180px, 1fr) auto minmax(240px, 1fr);
+    align-items: stretch; min-width: 900px; max-width: 1360px; padding: 12px; border-radius: 10px;
+    background: #f6f5ef; color: #1f2937; color-scheme: light;
+  }
+  [data-zona] { padding: 10px 14px 18px; border-radius: 8px; display: flex; flex-direction: column; }
+  [data-zona] h3 { margin: 0; font-size: 18px; letter-spacing: .02em; }
+  [data-zona] > p { margin: 2px 0 10px; font-size: 14px; }
+  [data-zona="entrada"] { border: 2px solid #60a5fa; background: #eef5ff; }
+  [data-zona="salida"] { border: 2px dashed #f87171; background: #fff1f1; }
+  [data-zona="controlador"] { padding: 10px 176px 64px; text-align: center; }
+  [data-zona="otras"] { grid-column: 1 / -1; margin-top: 12px; border: 2px dotted #9ca3af; }
+  [data-zona-piezas] { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; min-height: 240px; }
+  [data-zona] figure { margin: 0; padding: 8px 10px; border-radius: 8px; display: inline-flex; flex-direction: column; align-items: center; gap: 6px; }
+  [data-zona] figure:focus-visible, [data-zona] figure:hover { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+  /* El nombre va ARRIBA de la pieza: debajo queda libre para los cables. */
+  [data-pieza] { display: inline-flex; flex-direction: column-reverse; align-items: center; gap: 4px; }
+  [data-nombre-pieza] { font-size: 15px; font-weight: 600; }
+  [data-fila-fusion] { display: flex; align-items: flex-end; gap: 36px; padding-bottom: 40px; }
+  [data-zona="controlador"] [data-zona-piezas] { padding-top: 40px; }
+  [data-explicacion-de] { font-size: 14px; max-width: 240px; text-align: center; }
+  [data-nota-conexion] { margin: 0; font-size: 13px; max-width: 240px; text-align: center; border-left: 3px solid #b45309; padding-left: 6px; }
+  [data-zona] [data-sin-representacion] { border: 2px dashed #6b7280; border-radius: 8px; padding: 8px 10px; font-size: 14px; max-width: 240px; }
+  [data-zona] wokwi-esp32-devkit-v1 { display: inline-block; zoom: 1.7; }
+  [data-zona] wokwi-pushbutton, [data-zona] wokwi-led, [data-zona] wokwi-resistor { display: inline-block; zoom: 1.5; }
+  svg[data-cableado] { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  svg[data-cableado] .cable polyline { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+  svg[data-cableado] .cable .linea { stroke: currentColor; stroke-width: 3; }
+  svg[data-cableado] .cable .borde { stroke: #f6f5ef; stroke-width: 9; }
+  svg[data-cableado] .cable circle { fill: currentColor; }
+  svg[data-cableado] .cable text { font: 600 13px ui-sans-serif, system-ui, sans-serif; fill: #111827; paint-order: stroke; stroke: #f6f5ef; stroke-width: 4px; }
+  svg[data-cableado] .color-0 { color: #2563eb; }
+  svg[data-cableado] .color-1 { color: #c2410c; }
+  svg[data-cableado] .color-2 { color: #15803d; }
+  svg[data-cableado] .color-3 { color: #7e22ce; }
+  svg[data-cableado] .color-4 { color: #be185d; }
+  svg[data-cableado] .cable-potencia { color: #111827; }
+  svg[data-cableado] .cable-potencia .linea { stroke-dasharray: 8 4; }
+  svg[data-cableado] .atenuado { opacity: .18; }
+  svg[data-cableado] .resaltado .linea { stroke-width: 5; }
 </style>
 </head>
 <body>
@@ -91,16 +142,16 @@
 </header>
 <div id="estado" role="status" aria-live="polite"></div>
 <main>
-  <section>
-    <h2>Circuito</h2>
+  <section id="seccion-circuito">
+    <h2>Mi circuito</h2>
     <div id="circuito"></div>
   </section>
   <section>
-    <h2>Cables</h2>
+    <h2>Conexiones</h2>
     <ul id="cables"></ul>
   </section>
   <section>
-    <h2>Controles</h2>
+    <h2>Pines elegidos</h2>
     <div id="controles"></div>
   </section>
   <section>

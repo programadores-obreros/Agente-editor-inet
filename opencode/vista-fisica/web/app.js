@@ -14,6 +14,7 @@ import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 import { crearClienteHttp } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
+import { dibujarCableado } from "./cableado.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -407,10 +408,42 @@ function repintar() {
   for (const clave of Object.keys(contenedores)) {
     contenedores[clave].replaceChildren(secciones[clave])
   }
+  // Physical View UX #1: los cables se dibujan DESPUÉS de montar (hay que medir las
+  // piezas reales) y se vuelven a dibujar si cambia el tamaño (ver `programarCableado`).
+  ultimoCableado = instrucciones.find((i) => i.tipo === "cableado") ?? null
+  programarCableado()
   restaurarFoco(secciones.controles, focoAnterior)
   restaurarFocoRegla(secciones.reglas)
   // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
   panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado" })
+}
+
+/** Physical View UX #1: la instrucción `cableado` del último repintado y el redibujo
+ * diferido. Las piezas Wokwi terminan de renderizar su contenido un instante después de
+ * insertarse, y la ventana puede cambiar de tamaño: en los dos casos se vuelve a medir y
+ * a dibujar desde la MISMA instrucción (nunca se decide nada nuevo acá). */
+let ultimoCableado = null
+let cableadoProgramado = false
+
+function programarCableado() {
+  if (!enNavegador || cableadoProgramado) return
+  cableadoProgramado = true
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      cableadoProgramado = false
+      const piezas = piezasDelCircuito()
+      if (piezas) dibujarCableado(document, piezas, ultimoCableado)
+    }),
+  )
+}
+
+function piezasDelCircuito() {
+  return contenedores?.circuito?.firstElementChild ?? null
+}
+
+if (enNavegador && typeof ResizeObserver === "function") {
+  new ResizeObserver(() => programarCableado()).observe(document.getElementById("circuito"))
+  customElements.whenDefined("wokwi-esp32-devkit-v1").then(() => programarCableado())
 }
 
 /** Cliente HTTP compartido (GPIO, frase): ver `cliente-http.js`. `fetch` se resuelve en cada llamada. */

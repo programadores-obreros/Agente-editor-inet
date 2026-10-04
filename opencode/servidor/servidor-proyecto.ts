@@ -78,6 +78,9 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
     ["vista-logica.js", join(DIR_VISTA_FISICA_WEB, "vista-logica.js")],
     ["adaptador-blockly.js", join(DIR_VISTA_FISICA_WEB, "adaptador-blockly.js")],
     ["vista-logica-ui.js", join(DIR_VISTA_FISICA_WEB, "vista-logica-ui.js")],
+    // Physical View UX #1: cables dibujados del esquema (geometría pura + capa de DOM).
+    ["ruteo.js", join(DIR_VISTA_FISICA_WEB, "ruteo.js")],
+    ["cableado.js", join(DIR_VISTA_FISICA_WEB, "cableado.js")],
   ])
 }
 

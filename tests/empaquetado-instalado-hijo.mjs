@@ -86,7 +86,7 @@ async function modoServidorHappy() {
     const estadoIndex = rIndex.status
     await rIndex.arrayBuffer()
 
-    const ASSETS = ["wokwi-bundle.js", "componentes-extra.js", "blockly_compressed.js", "blockly-es.js", "blockly/media/sprites.svg", "app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js"]
+    const ASSETS = ["wokwi-bundle.js", "componentes-extra.js", "blockly_compressed.js", "blockly-es.js", "blockly/media/sprites.svg", "app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js", "ruteo.js", "cableado.js"]
     const estadoAssets = {}
     for (const nombre of ASSETS) {
       const r = await fetch(new URL(`/assets/${nombre}`, servidor.url))

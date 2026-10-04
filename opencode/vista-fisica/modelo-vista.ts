@@ -22,6 +22,8 @@ export interface PlacaVista {
   /** Cosmético (`wokwi-render-datos.ts`, portado de `circuito.ts`) — nunca afecta
    * ninguna regla eléctrica. */
   readonly escala: number
+  /** Physical View UX #1: nombre para el estudiante (anexo de pedagogía), p. ej. "ESP32 DevKit". */
+  readonly nombre: string
 }
 
 /**
@@ -102,6 +104,16 @@ export interface ComponenteVista {
    * OBEDECEN este dato (lo agrupan si viene seteado); nunca deciden de nuevo cuál
    * pieza va con cuál. */
   readonly agrupadoCon: string | null
+  /**
+   * Physical View UX #1: zona del esquema. `entrada`/`salida` salen de la `clase` del
+   * catálogo (`rolDeClase`); una pieza que existe por el REQUISITO de otra (la
+   * resistencia en serie de un LED, `agrupadoCon`) va a la zona de esa otra; lo demás
+   * va a `otras`. Nunca se omite una pieza: siempre tiene zona.
+   */
+  readonly zona: "entrada" | "salida" | "otras"
+  /** Physical View UX #1: para qué está la pieza, si existe por un requisito de otra
+   * (anexo de pedagogía, `explicacionDeRequisito`). `null` si no hay nada que explicar. */
+  readonly explicacion: string | null
 }
 
 /**
@@ -122,13 +134,34 @@ export type MotivoVista = Motivo & { readonly explicacion: string | null }
  * `TerminalVista.asignado.nombreWokwiPlaca` — ver esa nota. */
 export type ExtremoCableVista =
   | { readonly tipo: "pinPlaca"; readonly pinSemantico: string; readonly nombreWokwi: string | null }
-  | { readonly tipo: "terminal"; readonly componente: string; readonly terminal: string; readonly nombreWokwi: string | null }
-  | { readonly tipo: "rielFijo"; readonly destino: string }
+  | {
+      readonly tipo: "terminal"
+      readonly componente: string
+      readonly terminal: string
+      readonly nombreWokwi: string | null
+      /** Physical View UX #1: pines de la pieza que son el MISMO nodo que `nombreWokwi`
+       * (anexo de representación). El esquema elige el del lado de su destino. Siempre
+       * empieza por `nombreWokwi` (o es `[]` si no hay ancla). */
+      readonly anclasWokwi: readonly string[]
+    }
+  | {
+      readonly tipo: "rielFijo"
+      readonly destino: string
+      /** Physical View UX #1: a qué terminal de potencia de la placa va ese riel, resuelto
+       * por `ComponentKnowledge.resolverDestino` (D-05: físicamente conectable, nunca un
+       * GPIO asignable), con su etiqueta pedagógica y los pines de la pieza Wokwi de la
+       * placa que lo representan. `null` si no hay placa o no resuelve. */
+      readonly potencia: { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[] } | null
+    }
 
 export interface CableVista {
   readonly id: string
   readonly desde: ExtremoCableVista
   readonly hasta: ExtremoCableVista
+  /** Physical View UX #1: a qué grupo del esquema pertenece este cable (id del componente
+   * ancla: el LED para el camino GPIO→resistencia→LED→GND). Sirve para resaltar el
+   * camino completo; es identidad del proyecto, no una nueva. */
+  readonly camino: string | null
 }
 
 export interface OpcionGpioVista {
@@ -178,6 +211,10 @@ export interface ModeloDeVista {
   readonly reglas: readonly ReglaVista[]
   /** Phase 3, vertical #1: qué puede elegir la frase editable, derivado del catálogo. */
   readonly opcionesRegla: OpcionesReglaVista
+  /** Physical View UX #1: las zonas del esquema físico, en orden de lectura (entrada →
+   * controlador → salida → otras), con sus textos del anexo de pedagogía. `otras` sólo
+   * aparece si hay alguna pieza ahí. Vacío si el proyecto no tiene placa ni piezas. */
+  readonly zonas: readonly ZonaVista[]
 }
 
 /** `id` = valor (nunca se muestra); `etiqueta` = nombre humano con ordinal estable ("LED 2"). */
@@ -264,4 +301,11 @@ export interface OpcionesReglaVista {
   readonly estados: readonly OpcionEstadoVista[]
   readonly actuadores: readonly ReferenciaVista[]
   readonly salidas: readonly OpcionSalidaVista[]
+}
+
+/** Physical View UX #1: una zona del esquema físico (texto del anexo de pedagogía). */
+export interface ZonaVista {
+  readonly rol: "entrada" | "controlador" | "salida" | "otras"
+  readonly titulo: string
+  readonly descripcion: string
 }

@@ -238,8 +238,9 @@ test("F-09: los cables del Pulsador muestran 'Pulsador (señal)' y 'Pulsador (GN
   const cableSenal = filasCable.find((f) => f.desde === "Pulsador (señal)" || f.hasta === "Pulsador (señal)")
   assert.ok(cableSenal, `ningun cable muestra 'Pulsador (señal)': ${JSON.stringify(filasCable)}`)
 
-  const cableGnd = filasCable.find((f) => f.desde === "Pulsador (GND)" && f.hasta === "GND")
-  assert.ok(cableGnd, `el cable del GND tiene que ser 'Pulsador (GND) -> GND': ${JSON.stringify(filasCable)}`)
+  // Physical View UX #1: el destino es el terminal de potencia de la placa, "GND (masa)".
+  const cableGnd = filasCable.find((f) => f.desde === "Pulsador (GND)" && f.hasta === "GND (masa)")
+  assert.ok(cableGnd, `el cable del GND tiene que ser 'Pulsador (GND) -> GND (masa)': ${JSON.stringify(filasCable)}`)
 
   servicio.cerrar()
 })
@@ -272,8 +273,8 @@ test("F-09: con DOS LED, los cables del catodo distinguen 'LED (cátodo (−))' 
   const { plan } = pintarCompleto(vista)
   const filasCable = plan.filter((i) => i.tipo === "filaCable")
 
-  const cableUno = filasCable.find((f) => f.desde === "LED (cátodo (−))" && f.hasta === "GND")
-  const cableDos = filasCable.find((f) => f.desde === "LED 2 (cátodo (−))" && f.hasta === "GND")
+  const cableUno = filasCable.find((f) => f.desde === "LED (cátodo (−))" && f.hasta === "GND (masa)")
+  const cableDos = filasCable.find((f) => f.desde === "LED 2 (cátodo (−))" && f.hasta === "GND (masa)")
   assert.ok(cableUno, `falta el cable del primer LED, sin ordinal: ${JSON.stringify(filasCable)}`)
   assert.ok(cableDos, `falta el cable del segundo LED, CON ordinal: ${JSON.stringify(filasCable)}`)
 

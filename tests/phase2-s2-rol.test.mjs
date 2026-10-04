@@ -185,28 +185,35 @@ test("fix v2-gpio34-blocking.png: ningún rótulo de rol es hijo DIRECTO de #cir
   const doc = documentoFake()
   const raiz = pintar(doc, instrucciones)
 
-  // Ningún rótulo de rol ("Entrada"/"Salida") es hijo DIRECTO de #circuito.
+  // Physical View UX #1: el rol ahora lo dice la ZONA (título "Entrada"/"Salida"), y
+  // cada pieza lleva su NOMBRE en el mismo contenedor. Mismo invariante que el defecto
+  // original: nada suelto como hijo directo de #circuito — sólo zonas.
+  const todos = (n) => [n, ...(n.hijos ?? []).flatMap(todos)]
   for (const hijo of raiz.circuito.hijos) {
-    assert.equal(hijo.atributos["data-rol-de-componente"], undefined, "un rótulo de rol nunca puede ser hijo directo de #circuito (defecto original)")
+    assert.ok(hijo.atributos["data-zona"], "los únicos hijos directos de #circuito son zonas (ningún rótulo ni pieza suelta)")
   }
+  const zona = (rol) => raiz.circuito.hijos.find((z) => z.atributos["data-zona"] === rol)
+  const tituloDe = (rol) => todos(zona(rol)).find((n) => n.atributos?.["data-zona-titulo"] === rol).textContent
 
-  // El contenedor del pulsador tiene, adentro, la pieza Y su rótulo, con el MISMO
-  // data-entidad-id — nunca en otra línea del flex-wrap.
-  const contenedorPulsador = raiz.circuito.hijos.find((c) => (c.hijos ?? []).some((h) => h.tagName === "wokwi-pushbutton"))
-  assert.ok(contenedorPulsador, "hay un contenedor con la pieza del pulsador adentro")
-  const piezaPulsador = contenedorPulsador.hijos.find((h) => h.tagName === "wokwi-pushbutton")
-  const rotuloPulsador = contenedorPulsador.hijos.find((h) => h.atributos["data-rol-de-componente"] === idPulsador)
-  assert.ok(rotuloPulsador, "el rótulo del pulsador está en el MISMO contenedor que su pieza")
-  assert.equal(rotuloPulsador.textContent, "Entrada")
+  // El contenedor del pulsador tiene, adentro, la pieza Y su nombre, con el MISMO
+  // data-entidad-id — y vive en la zona Entrada.
+  const contenedorPulsador = todos(zona("entrada")).find((n) => n.tagName === "figure" && todos(n).some((h) => h.tagName === "wokwi-pushbutton"))
+  assert.ok(contenedorPulsador, "hay un contenedor con la pieza del pulsador adentro, en la zona Entrada")
+  assert.equal(tituloDe("entrada"), "Entrada")
+  const piezaPulsador = todos(contenedorPulsador).find((h) => h.tagName === "wokwi-pushbutton")
+  const nombrePulsador = todos(contenedorPulsador).find((h) => h.atributos?.["data-nombre-pieza"] === idPulsador)
+  assert.ok(nombrePulsador, "el nombre del pulsador está en el MISMO contenedor que su pieza")
+  assert.equal(nombrePulsador.textContent, "Pulsador")
   assert.equal(piezaPulsador.atributos["data-entidad-id"], idPulsador)
   assert.equal(contenedorPulsador.atributos["data-entidad-id"], idPulsador, "el contenedor repite el mismo data-entidad-id que la pieza")
 
-  // Ídem para el LED ("Salida") -- no queda "suelto entre el LED y el pulsador".
-  const contenedorLed = raiz.circuito.hijos.find((c) => (c.hijos ?? []).some((h) => h.tagName === "wokwi-led"))
+  // Ídem para el LED, en la zona Salida.
+  const contenedorLed = todos(zona("salida")).find((n) => n.tagName === "figure" && todos(n).some((h) => h.tagName === "wokwi-led"))
   assert.ok(contenedorLed)
-  const rotuloLed = contenedorLed.hijos.find((h) => h.atributos["data-rol-de-componente"] === idLed)
-  assert.ok(rotuloLed, "el rótulo del LED está en el MISMO contenedor que su pieza")
-  assert.equal(rotuloLed.textContent, "Salida")
+  assert.equal(tituloDe("salida"), "Salida")
+  const nombreLed = todos(contenedorLed).find((h) => h.atributos?.["data-nombre-pieza"] === idLed)
+  assert.ok(nombreLed, "el nombre del LED está en el MISMO contenedor que su pieza")
+  assert.equal(nombreLed.textContent, "LED")
   assert.equal(contenedorLed.atributos["data-entidad-id"], idLed)
 
   // data-afectado/el mapa en memoria NO se rompen: el motivo blocking del pulsador

@@ -273,7 +273,9 @@ test("planDePintado: crea la placa y el LED, filas de cable con sus etiquetas, s
   // ("GPIO4"), rompiendo la sensación de "estamos mirando lo mismo" (ONE PHYSICAL
   // TRUTH). `GPIO_X` es "GPIO4" (`phase2-helpers.mjs`).
   assert.ok(filasCable.some((f) => f.desde === `${GPIO_X} (D4)` || f.hasta === `${GPIO_X} (D4)`), `la fila del anodo muestra el nombre semántico + el rótulo de la placa ('${GPIO_X} (D4)')`)
-  assert.ok(filasCable.some((f) => f.desde === "GND" || f.hasta === "GND"), "la fila del catodo muestra GND")
+  // Physical View UX #1: el riel se nombra con el terminal de potencia que resuelve
+  // ComponentKnowledge (D-05), con su etiqueta pedagógica: "GND (masa)".
+  assert.ok(filasCable.some((f) => f.desde === "GND (masa)" || f.hasta === "GND (masa)"), "la fila del catodo muestra GND (masa)")
 
   const selector = plan.find((i) => i.tipo === "selectorGpio" && i.componenteId === idComponente && i.terminalId === "anodo")
   assert.ok(selector)

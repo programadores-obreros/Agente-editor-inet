@@ -62,6 +62,32 @@ export const ETIQUETA_DE_TERMINAL_DE_POTENCIA: Readonly<Record<string, string>> 
 }
 
 /**
+ * Zonas del esquema físico (Physical View UX #1): el rol pedagógico de cada parte del
+ * circuito, con una frase corta para el estudiante. La ASIGNACIÓN de una pieza a una
+ * zona no sale de acá: sale de la `clase` del catálogo (`snapshot-a-vista.ts::rolDeClase`)
+ * y del requisito que agrupa a la resistencia con su LED.
+ */
+export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "salida" | "otras", { readonly titulo: string; readonly descripcion: string }>> = {
+  entrada: { titulo: "Entrada", descripcion: "Lo que el ESP32 lee." },
+  controlador: { titulo: "Controlador", descripcion: "Lee la entrada y decide la salida." },
+  salida: { titulo: "Salida", descripcion: "Lo que el ESP32 maneja." },
+  otras: { titulo: "Otras piezas", descripcion: "Todavía no forman parte de una entrada o una salida." },
+}
+
+/**
+ * Para qué está una pieza que existe por un REQUISITO de otra (Physical View UX #1).
+ * Clave: el tipo de requisito del núcleo; `{componente}` es el nombre de la pieza que
+ * lo pide. Texto pedagógico: nunca entra al núcleo ni al hash.
+ */
+export const EXPLICACION_DE_REQUISITO: Readonly<Record<string, string>> = {
+  "resistencia-serie": "Protege al {componente} limitando la corriente.",
+}
+
+export function explicacionDeRequisito(tipoRequisito: string, nombreComponente: string): string | undefined {
+  return EXPLICACION_DE_REQUISITO[tipoRequisito]?.replace("{componente}", nombreComponente)
+}
+
+/**
  * Si el terminal no tiene etiqueta todavía, se devuelve su propio id (comportamiento de
  * Wave 0: nunca se inventa un texto). Para los tipos oficialmente soportados, la suite de
  * admisión exige etiqueta para todos sus terminales, así que este respaldo no se usa.
