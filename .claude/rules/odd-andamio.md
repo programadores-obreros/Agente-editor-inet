@@ -24,8 +24,8 @@ que es lo que permite retomar después de una interrupción sin depender del wor
 **Esta decisión ya está tomada. No la vuelvas a discutir cada sesión.** Si alguna vez hay
 que cambiarla, se cambia acá, con el motivo escrito al lado.
 
-**Y una advertencia sobre este documento en particular, aprendida rompiéndola:** es la
-única regla del repo **sin guardián**. El bloque de seguridad tiene un job de CI, el
+**Y una advertencia sobre este documento en particular, aprendida rompiéndola:** es una
+de las reglas del repo **sin guardián**. El bloque de seguridad tiene un job de CI, el
 frontmatter YAML tiene otro, los tests se verifican por mutación, el `.iss` se compila en
 CI. Éste depende de que alguien se acuerde — y en la v0.4.1 se quedó dos días atrás
 mientras el trabajo seguía, con tareas ya mergeadas sin tildar.

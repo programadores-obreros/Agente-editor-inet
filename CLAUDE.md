@@ -14,6 +14,33 @@ sostiene memoria de progreso por sesión. Este CLAUDE.md es la doctrina de **des
 del repo — no el prompt del bot (ese es `opencode/agent/tecnia-bot.md`, auditado aparte,
 no se toca acá).
 
+## Precedencia: una sola voz normativa
+
+Las sesiones de desarrollo arrancan desde la raíz de `tecnia-bot/`. Si la sesión se abrió
+desde otro repo (por ejemplo, el checkout de OpenCode), las reglas de ese repo no aplican acá.
+
+| Fuente | Qué es | ¿Crea doctrina? |
+|---|---|---|
+| Código + tests + CI | La realidad ejecutable y el enforcement | Es lo que la doctrina describe y protege |
+| Este `CLAUDE.md` | La única doctrina textual normativa del desarrollo | Sí |
+| `.claude/rules/*.md` | El detalle, por ruta, de una regla de este archivo | Sólo el detalle de lo que este archivo ya establece |
+| Docs de arquitectura (`docs/programacion-intencion/`) | Especificación y referencia | Sólo lo que este archivo o un test adopta |
+| Skills de desarrollo (`.claude/skills/`) | Procedimientos | No |
+| Engram, auto-memory, informes en `~/tecnia-bot-docs` | Memoria y evidencia | No |
+| Gentle AI (SDD, judgment-day, revisores) | Herramientas opcionales, sólo si se invocan | No |
+| Hooks | Enforcement de normas que ya están acá | No |
+| Preferencias globales (`~/.claude/`) | Preferencias personales de trabajo | No para este repo |
+| `opencode/agent/tecnia-bot.md` + `opencode/skills/` | Gobiernan la experiencia del alumno | No para el desarrollo: son código bajo prueba |
+
+- Si el texto contradice al código, a los tests o a CI, no se elige en silencio: se corrige
+  el texto o se abre la decisión. Una implementación vieja no se convierte en decisión de
+  arquitectura por el solo hecho de existir.
+- **Memoria no es norma.** Si una memoria contradice este archivo, una rule, un test o CI,
+  la memoria está desactualizada.
+- Cada regla vive en un solo lugar; en los demás va un puntero.
+- Para probar el bot como lo ve el alumno, sin el contexto de desarrollo:
+  `scripts/producto-local.sh` (perfil aislado).
+
 ## Arquitectura esencial
 
 - **CURRENT** (verificado en código): el Project Engine vive en
@@ -21,9 +48,12 @@ no se toca acá).
   `Conexion`, `ComportamientoRegla`, sin I/O), mutada transaccionalmente por
   `crearMotorDeProyecto` (clona → aplicadores puros → valida → commit persiste-primero).
   La vista física (`opencode/vista-fisica/*`) proyecta esa IR a HTML/canvas. El agente
-  expone esto vía los tools `proyecto-fisico`/`vista-fisica`; `circuito.ts` (legado,
-  Wokwi/HTML standalone) queda para piezas no cubiertas, láminas y proyectos
-  integradores — nunca compite con `proyecto-fisico` como fuente de verdad de pines.
+  expone esto vía los tools `proyecto-fisico`/`vista-fisica`. `circuito.ts` (Wokwi/HTML
+  standalone) es **LEGACY FROZEN**: sigue funcionando y es la única fuente de pines para
+  las piezas que el catálogo de `nucleo` todavía no cubre (láminas y proyectos
+  integradores incluidos); para las piezas que el catálogo sí cubre, la verdad es
+  `proyecto-fisico`. No se le agregan piezas ni conocimiento nuevo; la convergencia con
+  el catálogo es posterior e incremental.
   `platformio.ts` compila/flashea/diagnostica de forma determinista; **no genera**
   `platformio.ini`/`main.cpp` — eso es responsabilidad del LLM vía prompt/skill
   (`docs/programacion-intencion/CURRENT-ARCHITECTURE.md:213-216`). No hay daemon, ni
@@ -126,12 +156,8 @@ herramienta.
 
 ### `odd/` es andamio, no producto — POLÍTICA
 
-Trabajo sustancial (varios pasos coordinados, o progreso recuperable) crea
-`odd/tasks/<nombre>.md`: objetivo, alcance autorizado, checklist, verificación, próximo
-paso. **No se commitea** (gitignored a propósito): es andamio del proceso, no producto;
-lo que sobrevive es el código, sus tests y el commit. Copia de recuperación en Engram,
-topic `odd/<nombre>/tasks`. Cerralo explícitamente cuando el trabajo termina; si vas a
-dejar de mantenerlo, decilo en el chat.
+El trabajo sustancial lleva un documento de seguimiento en `odd/tasks/<nombre>.md`, que
+**no se commitea**. La regla completa vive en `.claude/rules/odd-andamio.md`.
 
 ### Costura de ramas: por verificabilidad, no por tema ni por líneas
 
