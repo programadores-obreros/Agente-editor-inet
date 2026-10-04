@@ -24,16 +24,17 @@ import type { Proyecto } from "../nucleo/ir.ts"
 import type { Motivo } from "../nucleo/motivos.ts"
 import type { Catalogo } from "../nucleo/catalogo.ts"
 import type { ModeloDeVista, MotivoVista } from "./modelo-vista.ts"
-import { construirCatalogoMinimoReal } from "../nucleo/adaptadores/hash-catalogo.node.ts"
+import { CATALOGO_ACTIVO } from "../nucleo/catalogo-activo.ts"
 import { proyectarVista, explicarMotivos } from "./snapshot-a-vista.ts"
 
-// Igual que `composicion-raiz.ts::CATALOGO_REAL`: puro y determinista, se calcula una
-// única vez por proceso — todos los llamados a `vistaDeProyectoConCatalogoReal`
-// comparten el mismo catálogo (mismos datos, mismo hash).
-const CATALOGO_REAL = construirCatalogoMinimoReal()
+// Component System Foundation #1, F1 (D-01 condición 2): esta vista YA NO construye su
+// propio catálogo (antes había dos instancias por proceso: ésta y la de la raíz de
+// composición). Usa el que le inyecta la raíz por `calcularVista(proyecto, catalogo)` y,
+// para los llamados sin inyección, la MISMA instancia activa del runtime.
+const CATALOGO_REAL = CATALOGO_ACTIVO
 
-export function vistaDeProyectoConCatalogoReal(proyecto: Proyecto): ModeloDeVista {
-  return proyectarVista(proyecto, CATALOGO_REAL)
+export function vistaDeProyectoConCatalogoReal(proyecto: Proyecto, catalogo: Catalogo = CATALOGO_REAL): ModeloDeVista {
+  return proyectarVista(proyecto, catalogo)
 }
 
 /**

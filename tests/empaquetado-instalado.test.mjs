@@ -64,7 +64,7 @@ function listarArchivos(dir) {
  * scratchpad, docs ni tests". Devuelve la lista de infracciones (vacía si todo OK). */
 function verificarAllowlist(configDir) {
   const infracciones = []
-  for (const carpeta of ["nucleo", "servidor"]) {
+  for (const carpeta of ["nucleo", "servidor", "conocimiento"]) {
     const base = join(configDir, carpeta)
     for (const archivo of listarArchivos(base)) {
       const rel = relative(base, archivo)
@@ -188,6 +188,9 @@ if (process.platform === "win32") {
       assert.ok(existsSync(join(configDir, "servidor", "servidor-proyecto.ts")), "falta servidor-proyecto.ts instalado")
       assert.ok(existsSync(join(configDir, "vista-fisica", "vista-real.ts")), "falta opencode/vista-fisica instalado")
       assert.ok(existsSync(join(configDir, "vista-fisica", "web", "index.html")), "falta vista-fisica/web instalado")
+      // Component System Foundation #1: la fachada de conocimiento y sus anexos.
+      assert.ok(existsSync(join(configDir, "conocimiento", "conocimiento-activo.ts")), "falta opencode/conocimiento instalado")
+      assert.ok(existsSync(join(configDir, "conocimiento", "anexos", "representacion.ts")), "falta conocimiento/anexos instalado")
       for (const asset of ["app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js"]) {
         assert.ok(existsSync(join(configDir, "vista-fisica", "web", asset)), `falta vista-fisica/web/${asset}`)
       }
@@ -198,6 +201,7 @@ if (process.platform === "win32") {
       assert.ok(!existsSync(join(configDir, "tool", "nucleo")), "nucleo/ terminó DENTRO de tool/")
       assert.ok(!existsSync(join(configDir, "tool", "servidor")), "servidor/ terminó DENTRO de tool/")
       assert.ok(!existsSync(join(configDir, "tool", "vista-fisica")), "vista-fisica/ (carpeta) terminó DENTRO de tool/")
+      assert.ok(!existsSync(join(configDir, "tool", "conocimiento")), "conocimiento/ terminó DENTRO de tool/")
 
       const agenteMd = readFileSync(join(configDir, "agent", "tecnia-bot.md"), "utf8")
       assert.match(agenteMd, /vista-fisica:\s*"allow"/, 'falta el permiso vista-fisica: "allow" en el agente instalado')
@@ -320,6 +324,7 @@ if (process.platform === "win32") {
       assert.ok(!existsSync(join(configDir, "nucleo")), "uninstall.sh dejó nucleo/ instalado")
       assert.ok(!existsSync(join(configDir, "servidor")), "uninstall.sh dejó servidor/ instalado")
       assert.ok(!existsSync(join(configDir, "vista-fisica")), "uninstall.sh dejó vista-fisica/ instalado")
+      assert.ok(!existsSync(join(configDir, "conocimiento")), "uninstall.sh dejó conocimiento/ instalado")
     } finally {
       // Nunca deja el chmod 000 pisado: sin esto, rmSync de abajo no podría ni
       // listar fuenteDir/ para borrarlo.

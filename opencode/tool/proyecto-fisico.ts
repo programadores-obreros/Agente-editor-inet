@@ -33,12 +33,12 @@ import type { Componente, Proyecto } from "../nucleo/ir.ts"
 import type { Catalogo } from "../nucleo/catalogo.ts"
 import type { ModeloDeVista, MotivoVista } from "../vista-fisica/modelo-vista.ts"
 import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
-// Phase 3, Wave 0 (W-W0-TOOL, F-07/F-13, PHASE_3_WAVE_0_DESIGN.md): `vocabulario.ts` es
-// PURO — sólo `import type` hacia `nucleo/*` (se borran en runtime), CERO imports de
-// valor. Por eso se importa ESTÁTICO acá (a diferencia de `../servidor/*` y
-// `../vista-fisica/vista-real.ts`, más abajo): no puede romper el loop de carga del
-// registry de tools si `servidor/` faltara, porque no toca ese árbol en absoluto.
-import { descripcionPinesDeComponente, valoresValidosParaMotivos, vocabularioDesdeCatalogo } from "../vista-fisica/vocabulario.ts"
+// Component System Foundation #1 (F6): el vocabulario y el conocimiento de componentes
+// salen de `../conocimiento/` (ComponentKnowledge), ya no de la vista. Como ahora el
+// vocabulario importa VALORES (la fachada, el núcleo), se carga perezoso igual que
+// `../servidor/*` (criterio D13, abajo) — nunca estático en el top-level.
+type ModuloVocabulario = typeof import("../conocimiento/vocabulario.ts")
+type ModuloConocimientoActivo = typeof import("../conocimiento/conocimiento-activo.ts")
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // R-6 (reabierto, Phase 3 — DECISIONS 2531e09, contrato B7): whitelist CERRADA de
@@ -74,22 +74,34 @@ type ModuloVistaReal = typeof import("../vista-fisica/vista-real.ts")
 
 interface DependenciasProyectoFisico {
   readonly obtenerServicioDeProyectoConVista: ModuloServicioConVista["obtenerServicioDeProyectoConVista"]
+  /** Sólo TEXTO: la explicación en lenguaje llano de los motivos (presentación de la
+   * vista). Ningún hecho de componente sale de acá. */
   readonly explicarMotivosConCatalogoReal: ModuloVistaReal["explicarMotivosConCatalogoReal"]
-  /** Phase 3, Wave 0 (F-07/F-13): el MISMO catálogo real que ya usa
-   * `explicarMotivosConCatalogoReal` — para derivar `vocabulario`, `valoresValidos` y
-   * `descripcionPines`, sin construir una segunda instancia. */
-  readonly catalogoReal: ModuloVistaReal["catalogoReal"]
+  /** F6 (D-01 condición 3): el ComponentKnowledge del runtime — la MISMA instancia de
+   * catálogo que usa la raíz de composición. De acá salen `vocabulario`,
+   * `valoresValidos`, `descripcionPines` y los nombres. */
+  readonly conocimiento: ModuloConocimientoActivo["CONOCIMIENTO_ACTIVO"]
+  readonly vocabularioDesdeCatalogo: ModuloVocabulario["vocabularioDesdeCatalogo"]
+  readonly valoresValidosParaMotivos: ModuloVocabulario["valoresValidosParaMotivos"]
+  readonly descripcionPinesDeComponente: ModuloVocabulario["descripcionPinesDeComponente"]
 }
 
 async function cargarDependencias(): Promise<DependenciasProyectoFisico> {
   let modServicio: ModuloServicioConVista
   let modVistaReal: ModuloVistaReal
+  let modVocabulario: ModuloVocabulario
+  let modConocimiento: ModuloConocimientoActivo
   try {
-    ;[modServicio, modVistaReal] = await Promise.all([import("../servidor/servicio-con-vista.ts"), import("../vista-fisica/vista-real.ts")])
+    ;[modServicio, modVistaReal, modVocabulario, modConocimiento] = await Promise.all([
+      import("../servidor/servicio-con-vista.ts"),
+      import("../vista-fisica/vista-real.ts"),
+      import("../conocimiento/vocabulario.ts"),
+      import("../conocimiento/conocimiento-activo.ts"),
+    ])
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
     throw new Error(
-      `Falta la carpeta "servidor" de Tecnia Bot (no se pudo cargar ../servidor/ junto a esta tool: ${detalle}). ` +
+      `Falta una carpeta de Tecnia Bot ("servidor", "vista-fisica" o "conocimiento") junto a esta tool (no se pudo cargar: ${detalle}). ` +
         `Esto pasa con una instalación incompleta o interrumpida a mitad de una actualización. Reinstalá ` +
         `Tecnia Bot (o corré "Reparar Tecnia Bot" desde el menú inicio en Windows) para arreglarlo.`,
     )
@@ -97,7 +109,10 @@ async function cargarDependencias(): Promise<DependenciasProyectoFisico> {
   return {
     obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista,
     explicarMotivosConCatalogoReal: modVistaReal.explicarMotivosConCatalogoReal,
-    catalogoReal: modVistaReal.catalogoReal,
+    conocimiento: modConocimiento.CONOCIMIENTO_ACTIVO,
+    vocabularioDesdeCatalogo: modVocabulario.vocabularioDesdeCatalogo,
+    valoresValidosParaMotivos: modVocabulario.valoresValidosParaMotivos,
+    descripcionPinesDeComponente: modVocabulario.descripcionPinesDeComponente,
   }
 }
 
@@ -202,29 +217,29 @@ function proyectarMotivoParaAgente(motivo: MotivoVista) {
 }
 
 /**
- * F-13 (PHASE_3_WAVE_0_DESIGN.md): `nombre` (nombreVisible del catálogo) y
+ * F-13 (PHASE_3_WAVE_0_DESIGN.md): `nombre` (anexo de pedagogía, vía ComponentKnowledge) y
  * `descripcionPines` (texto llano, `vocabulario.ts::descripcionPinesDeComponente`) por
  * componente — derivados del IR + el catálogo REAL, nunca de una tabla hardcodeada.
  * `catalogo.obtenerComponente(componente.tipo)` puede dar `undefined` si el catálogo
  * cambió desde que se creó el componente (gap heredado, documentado): el fallback usa
  * el `tipo` crudo como nombre, nunca explota.
  */
-function resumenDeComponente(componente: Componente, catalogo: Catalogo) {
-  const catalogoComponente = catalogo.obtenerComponente(componente.tipo)
+function resumenDeComponente(componente: Componente, deps: DependenciasProyectoFisico) {
+  const catalogo: Catalogo = deps.conocimiento.catalogo
   return {
     id: componente.id,
     tipo: componente.tipo,
-    nombre: catalogoComponente?.nombreVisible ?? componente.tipo,
+    nombre: (catalogo.obtenerComponente(componente.tipo) ? deps.conocimiento.nombre("componente", componente.tipo) : undefined) ?? componente.tipo,
     pines: componente.pines,
-    descripcionPines: descripcionPinesDeComponente(componente, catalogo),
+    descripcionPines: deps.descripcionPinesDeComponente(componente, catalogo),
   }
 }
 
-function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, catalogo: Catalogo) {
+function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, deps: DependenciasProyectoFisico) {
   const vista = snapshot.vista
   const rolPorId = new Map((vista?.componentes ?? []).map((c) => [c.id, c.rol] as const))
   const componentes = snapshot.proyecto.componentes.map((componente) => ({
-    ...resumenDeComponente(componente, catalogo),
+    ...resumenDeComponente(componente, deps),
     rol: rolPorId.get(componente.id) ?? null,
   }))
   const motivos = (vista?.motivos ?? []).map(proyectarMotivoParaAgente)
@@ -367,12 +382,12 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
         )
       }
 
-      const catalogo = deps.catalogoReal()
+      const catalogo = deps.conocimiento.catalogo
 
       if (args.accion === "leer") {
         const snapshot = servicio.snapshot() as SnapshotConVista
-        const vocabulario = vocabularioDesdeCatalogo(catalogo, OPERACIONES_PERMITIDAS)
-        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, catalogo), vocabulario }, null, 2)
+        const vocabulario = deps.vocabularioDesdeCatalogo(catalogo, OPERACIONES_PERMITIDAS, deps.conocimiento)
+        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, deps), vocabulario }, null, 2)
       }
 
       // ── 'simular' / 'aplicar': baseRevision y operaciones son obligatorios. ────────
@@ -436,7 +451,7 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       // TERMINAL_NO_DECLARADO, del `Proyecto` vigente) — sobre los motivos CRUDOS del
       // Engine (`resultado.motivos`, con `datos`), nunca sobre `motivos` ya proyectados
       // para el agente (esos pierden `datos` a propósito, ver `proyectarMotivoParaAgente`).
-      const valoresValidos = valoresValidosParaMotivos(resultado.motivos, catalogo, proyectoParaNombres)
+      const valoresValidos = deps.valoresValidosParaMotivos(resultado.motivos, catalogo, proyectoParaNombres)
 
       const esStale = resultado.motivos.some((m) => m.codigo === "BASE_REVISION_DESACTUALIZADA")
       const resultadoTexto = lineaDeResultado(args.accion, resultado.ok, {

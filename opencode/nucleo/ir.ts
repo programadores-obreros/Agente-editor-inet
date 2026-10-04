@@ -112,7 +112,10 @@ export interface Proyecto {
   readonly schemaVersion: string
   /** Legible por humanos (§11 del brief). Ver `catalogoHash` para identidad de contenido. */
   readonly catalogoVersion: string
-  /** Identidad de contenido del catálogo vigente en el último commit exitoso (Gate 3/6). */
+  /** createdWith (Component System Foundation #1, D-03): identidad SEMÁNTICA del
+   * catálogo con el que se CREÓ el proyecto. Inmutable: ni la carga, ni el commit, ni
+   * una revalidación o migración futura la reescriben. El catálogo activo se expone en
+   * runtime (`Snapshot.catalogoActivo`), no acá. */
   readonly catalogoHash: string
   /** Monotónica, sube +1 sólo en commit (Gate 6), nunca por operación individual dentro de un lote. */
   readonly revision: number

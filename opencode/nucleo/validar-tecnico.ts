@@ -74,7 +74,7 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
     for (const terminal of compCatalogo.terminales) {
       const pinId = componente.pines[terminal.id]
       if (pinId === null || pinId === undefined) continue // incompleto — eso es readiness, no acá
-      if (terminal.electrica === "riel-fijo") continue // no ocupa un pin de la placa
+      if (!terminal.asignable) continue // no ocupa un pin de la placa (D-04: `asignable` derivado en el catálogo)
 
       const yaOcupadoPor = ocupacionPines.get(pinId)
       if (yaOcupadoPor !== undefined && yaOcupadoPor !== componente.id) {

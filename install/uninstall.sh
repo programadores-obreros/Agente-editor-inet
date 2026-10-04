@@ -447,7 +447,7 @@ fi
 # Borra los directorios que hayan quedado vacíos (tecniabot-web, skills, plugins,
 # themes, y las tres carpetas de Phase 2 que sumó D12: nucleo, servidor,
 # vista-fisica -- ver install.sh, mismo criterio y mismo comentario).
-find "$CONFIG_DIR/tecniabot-web" "$CONFIG_DIR/skills" "$CONFIG_DIR/plugins" "$CONFIG_DIR/themes" "$CONFIG_DIR/nucleo" "$CONFIG_DIR/servidor" "$CONFIG_DIR/vista-fisica" -type d -empty -delete 2>/dev/null || true
+find "$CONFIG_DIR/tecniabot-web" "$CONFIG_DIR/skills" "$CONFIG_DIR/plugins" "$CONFIG_DIR/themes" "$CONFIG_DIR/nucleo" "$CONFIG_DIR/servidor" "$CONFIG_DIR/vista-fisica" "$CONFIG_DIR/conocimiento" -type d -empty -delete 2>/dev/null || true
 
 # El mensaje final tampoco afirma de mas: si algo quedo sin borrar, se dice que
 # la desinstalacion fue PARCIAL y se lista que quedo y donde.

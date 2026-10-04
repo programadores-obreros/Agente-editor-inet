@@ -14,7 +14,7 @@ SRC="$REPO_DIR/opencode"
 
 echo "==> Instalando Tecnia Bot en: $CONFIG_DIR"
 
-mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,nucleo,servidor,vista-fisica}
+mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,nucleo,servidor,vista-fisica,conocimiento}
 
 # Copiamos todo el contenido de cada carpeta (asi los archivos nuevos
 # se instalan solos, sin tener que actualizar este script cada vez).
@@ -33,6 +33,9 @@ cp -r "$SRC/command/." "$CONFIG_DIR/command/"
 cp -r "$SRC/nucleo/."       "$CONFIG_DIR/nucleo/"
 cp -r "$SRC/servidor/."     "$CONFIG_DIR/servidor/"
 cp -r "$SRC/vista-fisica/." "$CONFIG_DIR/vista-fisica/"
+# Component System Foundation #1: fachada ComponentKnowledge + anexos, hermana de
+# nucleo/ (la importan tool/ y vista-fisica/ con `../conocimiento/...`).
+cp -r "$SRC/conocimiento/." "$CONFIG_DIR/conocimiento/"
 
 # Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
 cp -r "$SRC/plugins/." "$CONFIG_DIR/plugins/"
@@ -46,7 +49,7 @@ cp -r "$SRC/tecniabot-web/." "$CONFIG_DIR/tecniabot-web/"
 # Habilita actualizar limpio (borra huérfanos) y desinstalar sin tocar lo del usuario.
 MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
 VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || echo "0.0.0")"
-NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes nucleo servidor vista-fisica -type f | LC_ALL=C sort)"
+NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes nucleo servidor vista-fisica conocimiento -type f | LC_ALL=C sort)"
 
 # Borrar huérfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
 if [ -f "$MANIFEST" ]; then

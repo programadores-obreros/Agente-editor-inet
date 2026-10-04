@@ -42,6 +42,10 @@ const { debeAbrirNuevaPestana, resumenDelProyecto, obtenerServidorVistaFisica } 
 const { directorioDeDatos } = await import(join(REPO, "opencode/vista-fisica/ubicacion-proyecto.ts"))
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { construirCatalogoMinimoReal } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
+// Component System Foundation #1: los nombres visibles salieron del núcleo semántico
+// (D-10); se leen del anexo de pedagogía es-AR, su único dueño.
+const { nombreDeComponente, nombreDePlaca } = await import(join(REPO, "opencode/conocimiento/anexos/pedagogia-es-AR.ts"))
+const { crearConocimiento } = await import(join(REPO, "opencode/conocimiento/conocimiento.ts"))
 
 function parsearJson(texto) {
   return JSON.parse(texto)
@@ -142,7 +146,7 @@ test("F-07: vocabulario.placas/componentes coincide EXACTAMENTE con catalogo.pla
   for (const placa of catalogo.placas) {
     const entrada = vocabulario.placas.find((p) => p.id === placa.id)
     assert.ok(entrada, `falta la placa ${placa.id} en el vocabulario`)
-    assert.equal(entrada.nombre, placa.nombreVisible)
+    assert.equal(entrada.nombre, nombreDePlaca(placa.id))
     assert.deepEqual(entrada.alias, placa.alias)
   }
 
@@ -153,7 +157,7 @@ test("F-07: vocabulario.placas/componentes coincide EXACTAMENTE con catalogo.pla
   for (const componente of catalogo.componentes) {
     const entrada = vocabulario.componentes.find((c) => c.tipo === componente.id)
     assert.ok(entrada, `falta el componente ${componente.id} en el vocabulario`)
-    assert.equal(entrada.nombre, componente.nombreVisible)
+    assert.equal(entrada.nombre, nombreDeComponente(componente.id))
     assert.equal(entrada.clase, componente.clase)
     assert.deepEqual(
       entrada.terminales.map((t) => t.id).sort(),
@@ -351,14 +355,14 @@ test("resumenDelProyecto (función pura): vacío vs. armado, sin pasar por HTTP/
   const catalogo = construirCatalogoMinimoReal()
   const servicio = obtenerServicioDeProyectoConVista({ directorio: dirDatos, idProyecto })
   try {
-    assert.match(resumenDelProyecto(servicio.snapshot(), catalogo), /VACÍO/, "proyecto recién creado: vacío")
+    assert.match(resumenDelProyecto(servicio.snapshot(), crearConocimiento(catalogo)), /VACÍO/, "proyecto recién creado: vacío")
 
     let r = servicio.aplicar({ idOperacion: "w0-1", actor: "agente", baseRevision: 0, tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } })
     assert.equal(r.ok, true)
     r = servicio.aplicar({ idOperacion: "w0-2", actor: "agente", baseRevision: 1, tipo: "AgregarComponente", payload: { tipo: "led" } })
     assert.equal(r.ok, true)
 
-    const resumenArmado = resumenDelProyecto(servicio.snapshot(), catalogo)
+    const resumenArmado = resumenDelProyecto(servicio.snapshot(), crearConocimiento(catalogo))
     assert.match(resumenArmado, /Muestra:/)
     assert.match(resumenArmado, /ESP32 DevKit/)
     assert.match(resumenArmado, /LED/)

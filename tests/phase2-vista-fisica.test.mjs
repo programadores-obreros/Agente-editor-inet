@@ -28,6 +28,7 @@ const REPO = join(TESTS_DIR, "..")
 
 const { proyectarVista, gpiosCandidatosPara } = await import(join(REPO, "opencode/vista-fisica/snapshot-a-vista.ts"))
 const { vistaDeProyectoConCatalogoReal } = await import(join(REPO, "opencode/vista-fisica/vista-real.ts"))
+const { crearConocimiento } = await import(join(REPO, "opencode/conocimiento/conocimiento.ts"))
 const { planDePintado } = await import(join(REPO, "opencode/vista-fisica/web/plan-de-pintado.js"))
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -128,14 +129,15 @@ test("gpiosDisponibles incluye GPIO16/GPIO18 (validos, verificados en phase2-hel
   // (confirmado contra el bundle real, `tests/phase2-wokwi-pinout.test.mjs`) — antes
   // de este fix, se ofrecía con el nombre INVENTADO "D6". Este assert cambió de
   // "se ofrece" a "NO se ofrece" como parte del fix de B1, no por una regresión.
-  assert.ok(!semanticos.includes("GPIO6"), "B1: GPIO6 no tiene pin fisico real en el renderer -- ya no se ofrece, aunque asignarPin() lo siga aceptando (gap heredado, backlog)")
+  // Component System Foundation #1 (RT-9): además, GPIO6 es flash (bloqueante para
+  // ComponentKnowledge), así que ni siquiera llega al filtro de representación.
+  assert.ok(!semanticos.includes("GPIO6"), "GPIO6 (flash, bloqueante, y sin pin fisico real en el renderer) no se ofrece")
 
   servicio.cerrar()
 })
 
 test("gpiosCandidatosPara: sin placa elegida (placaId === null) da SIEMPRE []", () => {
-  const terminalAnodo = catalogo.obtenerComponente("led").terminales.find((t) => t.id === "anodo")
-  assert.deepEqual(gpiosCandidatosPara(catalogo, null, terminalAnodo), [])
+  assert.deepEqual(gpiosCandidatosPara(crearConocimiento(catalogo), null, "led", "anodo"), [])
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════

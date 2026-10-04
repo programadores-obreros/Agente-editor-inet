@@ -62,19 +62,44 @@ export interface RegistroPin {
   readonly enPoolAutomatico: PoolAutomatico
 }
 
+/**
+ * Backend de COMPILACIÓN (toolchain). No es significado del proyecto: no entra al
+ * hash semántico. El elemento de render Wokwi ya NO vive acá: es dato de
+ * representación (`conocimiento/anexos/representacion.ts`, D-09 del Decision Freeze).
+ */
 export interface BackendsPlaca {
   readonly platformio: { readonly board: string; readonly platform: string; readonly framework: string }
-  /** El custom element de Wokwi, como DATO (nunca como método: eso es capa de render). */
-  readonly wokwi: { readonly elemento: string }
+}
+
+/**
+ * Terminal de potencia de la placa (D-05 del Decision Freeze): GND, 3V3, 5V, VIN.
+ * Es un terminal FÍSICO y CONECTABLE (los terminales `riel-fijo` de los componentes
+ * terminan acá) pero NO es un GPIO lógico: no está en `pines`, no se ofrece para
+ * `AsignarPin` y una asignación a él se rechaza. physicalConnectable ≠ logicalAssignable.
+ */
+export interface TerminalPotencia {
+  readonly id: "GND" | "3V3" | "5V" | "VIN"
+  readonly rol: "tierra" | "alimentacion"
+  /** Tensión nominal como `Cantidad` (magnitud `tension`, unidad `volt`). Ausente si
+   * no hay un valor único honesto (p. ej. el VIN del UNO, entrada variable). */
+  readonly tension?: { readonly valor: number; readonly unidad: "volt"; readonly magnitud: "tension" }
+}
+
+/** A qué terminal de potencia (o pin i2c) resuelve cada `destinoFijo` en ESTA placa. */
+export interface DestinosDeRiel {
+  readonly GND: TerminalPotencia["id"]
+  readonly V3: TerminalPotencia["id"]
+  readonly V5: TerminalPotencia["id"]
+  readonly VLOGICA: TerminalPotencia["id"]
 }
 
 export interface Placa {
   /** Identidad semántica estable, kebab-case ASCII. Nunca se reutiliza. */
   readonly id: string
   readonly schemaVersion: string
-  /** Lo que ve la docente: "ESP32 DevKit", "Arduino UNO". */
-  readonly nombreVisible: string
-  /** Alias humanos/LLM. Normalizados en la resolución, nunca en el dato. */
+  /** Alias humanos/LLM: vocabulario de ENTRADA, no significado (fuera del hash
+   * semántico). Normalizados en la resolución, nunca en el dato. El nombre que ve la
+   * docente vive en el anexo de pedagogía (D-10). */
   readonly alias: readonly string[]
   readonly backends: BackendsPlaca
   readonly voltaje: "3V3" | "5V"
@@ -83,6 +108,8 @@ export interface Placa {
   readonly pines: readonly RegistroPin[]
   /** Referencian `RegistroPin.id`, nunca repiten el valor (evita una segunda fuente). */
   readonly i2c: { readonly sda: string; readonly scl: string }
+  readonly terminalesDePotencia: readonly TerminalPotencia[]
+  readonly destinosDeRiel: DestinosDeRiel
 }
 
 /**
@@ -181,19 +208,26 @@ const ESP32_PINES: readonly RegistroPin[] = [...ESP32_GPIO_VALIDOS, ...ESP32_GPI
 const PLACA_ESP32_DEVKIT_V1: Placa = {
   id: "esp32-devkit-v1",
   schemaVersion: "1.0.0",
-  nombreVisible: "ESP32 DevKit",
   // B_board_design.md §3: alias humanos/LLM. Deliberadamente SIN "esp32dev" ni el
   // elemento Wokwi — ver la regla "backend id != alias implícito" (§4 punto 6) y los
   // tests platformio-id-no-es-semantico / wokwi-id-no-es-semantico.
   alias: ["esp32", "esp32 devkit", "devkit", "esp-32", "esp32 dev kit"],
   backends: {
     platformio: { board: "esp32dev", platform: "espressif32@6.12.0", framework: "arduino" }, // ejemplos/blink-esp32/platformio.ini:4-6
-    wokwi: { elemento: "wokwi-esp32-devkit-v1" }, // circuito.ts:640
   },
   voltaje: "3V3",
   adcMax: 4095, // circuito.ts:648
   pines: ESP32_PINES,
   i2c: { sda: "GPIO21", scl: "GPIO22" }, // circuito.ts:646
+  // circuito.ts:656-667 (`rielWokwi` del ESP32): el riel de 5V sale por VIN ("VIN a
+  // secas"), 3.3V por 3V3, y hay masa física (dos GND en la pieza: GND.1/GND.2 — eso es
+  // representación, no semántica). No hay un pin "5V" separado en esta placa.
+  terminalesDePotencia: [
+    { id: "GND", rol: "tierra" },
+    { id: "3V3", rol: "alimentacion", tension: { valor: 3.3, unidad: "volt", magnitud: "tension" } },
+    { id: "VIN", rol: "alimentacion", tension: { valor: 5, unidad: "volt", magnitud: "tension" } },
+  ],
+  destinosDeRiel: { GND: "GND", V3: "3V3", V5: "VIN", VLOGICA: "3V3" },
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -246,16 +280,24 @@ const UNO_PINES: readonly RegistroPin[] = [
 const PLACA_ARDUINO_UNO: Placa = {
   id: "arduino-uno",
   schemaVersion: "1.0.0",
-  nombreVisible: "Arduino UNO",
   alias: ["uno", "arduino uno", "arduino", "arduino uno original", "arduino uno clon"],
   backends: {
     platformio: { board: "uno", platform: "atmelavr@5.2.0", framework: "arduino" }, // ejemplos/blink-uno/platformio.ini:4-6
-    wokwi: { elemento: "wokwi-arduino-uno" }, // circuito.ts:696
   },
   voltaje: "5V",
   adcMax: 1023, // circuito.ts:707
   pines: UNO_PINES,
   i2c: { sda: "A4", scl: "A5" }, // circuito.ts:703, skills/educabot/SKILL.md:52,102
+  // circuito.ts:704-727 (riel del UNO: 5V, 3.3V, GND) + docs/wokwi-pinout-dump.md:49-52
+  // (la pieza tiene `5V`, `VIN` y tres GND). VIN sin tensión declarada: es una entrada
+  // variable, no un valor único (no se inventa).
+  terminalesDePotencia: [
+    { id: "GND", rol: "tierra" },
+    { id: "3V3", rol: "alimentacion", tension: { valor: 3.3, unidad: "volt", magnitud: "tension" } },
+    { id: "5V", rol: "alimentacion", tension: { valor: 5, unidad: "volt", magnitud: "tension" } },
+    { id: "VIN", rol: "alimentacion" },
+  ],
+  destinosDeRiel: { GND: "GND", V3: "3V3", V5: "5V", VLOGICA: "5V" },
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════

@@ -26,14 +26,13 @@ import { REPO, nuevoDir, nuevoIdProyecto, prepararProyectoConLed, catalogo, op, 
 const { gpiosCandidatosPara, proyectarVista } = await import(join(REPO, "opencode/vista-fisica/snapshot-a-vista.ts"))
 const { nombreWokwiDePin } = await import(join(REPO, "opencode/vista-fisica/wokwi-render-datos.ts"))
 const { planDePintado } = await import(join(REPO, "opencode/vista-fisica/web/plan-de-pintado.js"))
+const { crearConocimiento } = await import(join(REPO, "opencode/conocimiento/conocimiento.ts"))
 
 test("B1: TODOS los GPIO que gpiosCandidatosPara ofrece para el anodo del LED en esp32-devkit-v1 tienen un nombreWokwi que existe REALMENTE en pinInfo (nunca D0/D1/D3/D6-D11/D37/D38 inventados)", () => {
   const dir = nuevoDir("b1-gpios-ofrecidos")
   const { servicio } = prepararProyectoConLed(dir, nuevoIdProyecto())
   const proyecto = servicio.snapshot().proyecto
-  const terminalAnodo = catalogo.obtenerComponente("led").terminales.find((t) => t.id === "anodo")
-
-  const opciones = gpiosCandidatosPara(catalogo, proyecto.placa, terminalAnodo)
+  const opciones = gpiosCandidatosPara(crearConocimiento(catalogo), proyecto.placa, "led", "anodo")
   assert.ok(opciones.length > 0, "fixture: tiene que haber al menos un candidato")
 
   for (const opcion of opciones) {

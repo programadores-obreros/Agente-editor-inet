@@ -22,8 +22,11 @@ import { canonicalizar, clonarProfundo, congelarProfundo } from "./canonico.ts"
 // Tipos (T_diseno_consolidado.md §4.1)
 // ════════════════════════════════════════════════════════════════════════════════════
 
-export type Magnitud = "temperatura" | "distancia" | "humedad" | "estadoBooleano" | "porcentaje"
-export type Unidad = "celsius" | "fahrenheit" | "cm" | "porcentaje" | "ninguna"
+// Component System Foundation #1 (D-03/D-05 del Decision Freeze): `resistencia`/`ohm`
+// para el valor del requisito del LED como `Cantidad` (nunca un número suelto) y
+// `tension`/`volt` para los terminales de potencia de la placa.
+export type Magnitud = "temperatura" | "distancia" | "humedad" | "estadoBooleano" | "porcentaje" | "resistencia" | "tension"
+export type Unidad = "celsius" | "fahrenheit" | "cm" | "porcentaje" | "ninguna" | "ohm" | "volt"
 
 export interface Cantidad {
   readonly valor: number
@@ -38,7 +41,12 @@ export interface Rango {
 
 export type DestinoFijo = "V5" | "V3" | "VLOGICA" | "GND" | "SDA" | "SCL" | { readonly externo: string }
 
-export interface Terminal {
+/**
+ * Terminal tal como lo DECLARAN los datos (`catalogo-datos.ts`, fixtures). No trae
+ * `asignable`: eso no es dato fuente, se deriva una sola vez en `construirCatalogo`
+ * (D-04 del Decision Freeze) — ver `Terminal`, abajo.
+ */
+export interface TerminalDatos {
   readonly id: string
   readonly rol: "alimentacion" | "tierra" | "senal" | "anodo" | "catodo"
   readonly electrica: "digital" | "analogica" | "riel-fijo"
@@ -68,6 +76,26 @@ export interface Terminal {
   readonly direccion?: "entrada" | "salida" | "bidireccional"
 }
 
+/**
+ * Terminal tal como lo EXPONE un catálogo construido. `asignable` es la ÚNICA
+ * derivación autorizada (D-04): `true` si el terminal acepta `AsignarPin` (un GPIO
+ * lógico). Ningún consumidor vuelve a interpretar `electrica` por su cuenta — leen
+ * este campo (o la fachada `conocimiento/`).
+ *
+ * `asignable: false` NO significa "no se puede conectar": un terminal `riel-fijo` es
+ * físicamente real y se conecta (a un terminal de potencia de la placa o con
+ * `Conectar`); lo que no tiene es un GPIO lógico propio. Físicamente conectable ≠
+ * lógicamente asignable (D-05).
+ */
+export interface Terminal extends TerminalDatos {
+  readonly asignable: boolean
+}
+
+/** La regla única de D-04. Sólo la usa `construirCatalogo`. */
+function derivarAsignable(terminal: TerminalDatos): boolean {
+  return terminal.electrica !== "riel-fijo"
+}
+
 export interface Capacidad {
   readonly id: string
   readonly magnitud?: Magnitud
@@ -76,22 +104,49 @@ export interface Capacidad {
   readonly resolucion?: Cantidad
 }
 
+/**
+ * Relación determinista declarada por un componente (D-12/§4 del modelo normativo).
+ * `spec.valor`, cuando existe, es una `Cantidad` (p. ej. 220 ohm), nunca un número
+ * suelto. Un tipo de requisito sin evaluador en `evaluarRequisito` queda como
+ * "no verificado por el motor" en la admisión (nunca se finge que se valida).
+ */
 export interface Requisito {
   readonly tipo: "resistencia-serie" | "capacidad-pin" | "resistencia-pull" | "componente-auxiliar"
   readonly enTerminal?: string
-  readonly spec: Readonly<Record<string, unknown>>
+  readonly spec: Readonly<Record<string, unknown>> & { readonly tipoComponente?: string; readonly valor?: Cantidad }
 }
 
-export interface ComponenteCatalogo {
+/**
+ * Componente tal como lo declaran los datos. Sin nombres visibles ni textos: eso es
+ * pedagogía y vive en el anexo `conocimiento/anexos/pedagogia-es-AR.ts` (D-10). Sin
+ * datos de renderer: anexo de representación (D-09).
+ */
+export interface ComponenteDatos {
   readonly id: string
-  readonly nombreVisible: string
   readonly clase: "sensor" | "actuador" | "pasivo" | "entrada"
-  readonly terminales: readonly Terminal[]
+  readonly terminales: readonly TerminalDatos[]
   readonly capacidades: readonly Capacidad[]
   readonly requisitos: readonly Requisito[]
+  /** D-11: acciones que ESTE actuador ofrece (ids de `DEFINICIONES_ACCION`). */
+  readonly acciones?: readonly string[]
   readonly compatibilidades?: { readonly placas?: readonly string[] }
-  readonly pedagogico?: { readonly conceptos?: readonly string[] }
 }
+
+/** Componente tal como lo expone un catálogo construido (terminales con `asignable`). */
+export interface ComponenteCatalogo extends Omit<ComponenteDatos, "terminales"> {
+  readonly terminales: readonly Terminal[]
+}
+
+/**
+ * D-11: registro global de DEFINICIONES de acción. Cada actuador declara cuáles ofrece
+ * (`ComponenteDatos.acciones`); una acción es aplicable a un componente si y sólo si su
+ * tipo la declara. Sin parámetros todavía (servo y similares: pendiente ON-04).
+ */
+export interface DefinicionAccion {
+  readonly id: string
+}
+
+export const DEFINICIONES_ACCION: readonly DefinicionAccion[] = [{ id: "encender" }, { id: "apagar" }]
 
 export interface ConversionUnidad {
   readonly de: Unidad
@@ -119,14 +174,88 @@ export interface Catalogo {
 
 export interface DatosCatalogo {
   readonly version: string
-  readonly componentes: readonly ComponenteCatalogo[]
+  readonly componentes: readonly ComponenteDatos[]
   readonly placas: readonly Placa[]
   readonly unidades?: { readonly conversiones: readonly ConversionUnidad[] }
 }
 
-/** JSON canónico del catálogo SIN el campo `hash` (R4 — el hash nunca se incluye a sí mismo). */
+// ════════════════════════════════════════════════════════════════════════════════════
+// Identidad semántica del catálogo (D-03 del Decision Freeze)
+// ════════════════════════════════════════════════════════════════════════════════════
+//
+// `catalogoHash` representa lo que un proyecto SIGNIFICA, no cómo se muestra. Se
+// calcula sobre una proyección con LISTA BLANCA explícita: un campo nuevo que alguien
+// agregue a los datos NO entra al hash hasta que se lo agregue acá a propósito. Así un
+// dato de presentación no puede colarse por accidente.
+//
+// ENTRA: ids de tipo, clase, terminales (rol, eléctrica, dirección, requisitos de pin,
+// destinoFijo) con su `asignable` derivado, capacidades con magnitud/unidad/rango,
+// requisitos con su `Cantidad`, acciones declaradas, compatibilidades, placas (pines
+// con capacidades/restricciones/pool, terminales de potencia, destinos de riel, i2c,
+// tensión lógica, tope ADC, schemaVersion), conversiones de unidad y definiciones de
+// acción.
+//
+// NO ENTRA: nombres visibles y textos (anexo de pedagogía), alias de entrada,
+// etiquetas serigrafiadas de pin, datos de renderer (anexo de representación),
+// backend de compilación (PlatformIO: toolchain, no significado), procedencia,
+// madurez, y la etiqueta `version` (legible; la identidad es el hash).
+
+function sinIndefinidos<T extends Record<string, unknown>>(objeto: T): Partial<T> {
+  const salida: Record<string, unknown> = {}
+  for (const [clave, valor] of Object.entries(objeto)) if (valor !== undefined) salida[clave] = valor
+  return salida as Partial<T>
+}
+
+function proyeccionSemanticaTerminal(terminal: TerminalDatos): unknown {
+  return sinIndefinidos({
+    id: terminal.id,
+    rol: terminal.rol,
+    electrica: terminal.electrica,
+    direccion: terminal.direccion,
+    requierePwm: terminal.requierePwm,
+    requierePullUpInterno: terminal.requierePullUpInterno,
+    destinoFijo: terminal.destinoFijo,
+    asignable: derivarAsignable(terminal),
+  })
+}
+
+function proyeccionSemanticaPlaca(placa: Placa): unknown {
+  return {
+    id: placa.id,
+    schemaVersion: placa.schemaVersion,
+    voltaje: placa.voltaje,
+    adcMax: placa.adcMax,
+    i2c: placa.i2c,
+    pines: placa.pines.map((pin) => ({ id: pin.id, banco: pin.banco, numero: pin.numero, capacidades: pin.capacidades, restricciones: pin.restricciones, enPoolAutomatico: pin.enPoolAutomatico })),
+    // `?? []`: fixtures de test viejos (placas sintéticas) pueden no declararlos.
+    terminalesDePotencia: (placa.terminalesDePotencia ?? []).map((t) => sinIndefinidos({ id: t.id, rol: t.rol, tension: t.tension })),
+    destinosDeRiel: placa.destinosDeRiel,
+  }
+}
+
+/** La proyección exacta que identifica al catálogo semántico (exportada para tests). */
+export function proyeccionSemanticaCatalogo(datos: DatosCatalogo): unknown {
+  return {
+    componentes: datos.componentes.map((c) =>
+      sinIndefinidos({
+        id: c.id,
+        clase: c.clase,
+        terminales: c.terminales.map(proyeccionSemanticaTerminal),
+        capacidades: c.capacidades,
+        requisitos: c.requisitos,
+        acciones: c.acciones,
+        compatibilidades: c.compatibilidades,
+      }),
+    ),
+    placas: datos.placas.map(proyeccionSemanticaPlaca),
+    unidades: datos.unidades,
+    acciones: DEFINICIONES_ACCION,
+  }
+}
+
+/** JSON canónico de la identidad SEMÁNTICA del catálogo (R4: sin el campo `hash`). */
 export function canonicalizarCatalogo(datos: DatosCatalogo): string {
-  return canonicalizar(datos)
+  return canonicalizar(proyeccionSemanticaCatalogo(datos))
 }
 
 export function construirCatalogo(datos: DatosCatalogo, hasher: (texto: string) => string): Catalogo {
@@ -154,12 +283,21 @@ export function construirCatalogo(datos: DatosCatalogo, hasher: (texto: string) 
   // extensibilidad puramente declarativa (agregar un componente nuevo como DATO en
   // `datos.componentes` antes de llamar acá) sigue intacta: el freeze corre DESPUÉS,
   // sobre la copia completa, nunca antes.
-  const componentesAislados = congelarProfundo(clonarProfundo(datos.componentes))
+  // D-04: `asignable` se deriva ACÁ, una sola vez, sobre la copia aislada — antes del
+  // freeze. Es la única derivación autorizada del repo.
+  const componentesConAsignable: readonly ComponenteCatalogo[] = clonarProfundo(datos.componentes).map((c) => ({
+    ...c,
+    terminales: c.terminales.map((t) => ({ ...t, asignable: derivarAsignable(t) })),
+  }))
+  const componentesAislados = congelarProfundo(componentesConAsignable)
   const placasAisladas = congelarProfundo(clonarProfundo(datos.placas))
   const unidadesAisladas = datos.unidades ? congelarProfundo(clonarProfundo(datos.unidades)) : undefined
   const porTipo = new Map(componentesAislados.map((c) => [c.id, c]))
   const porPlaca = new Map(placasAisladas.map((p) => [p.id, p]))
-  return {
+  // Component System Foundation #1 (guardia A): el objeto catálogo TAMBIÉN se congela —
+  // antes sólo lo estaban sus colecciones, y `catalogo.hash` (la identidad semántica)
+  // se podía reasignar en runtime.
+  const catalogo: Catalogo = {
     version: datos.version,
     hash,
     componentes: componentesAislados,
@@ -169,6 +307,7 @@ export function construirCatalogo(datos: DatosCatalogo, hasher: (texto: string) 
     tienePlaca: (id) => porPlaca.has(id),
     pinesDePlaca: (id) => porPlaca.get(id)?.pines,
   }
+  return Object.freeze(catalogo)
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -181,6 +320,11 @@ export function construirCatalogo(datos: DatosCatalogo, hasher: (texto: string) 
  * catálogo de los componentes conectados a ese terminal. Esta función no camina la
  * IR — es una regla pura, testeable sin proyecto real.
  */
+/** Tipos de requisito con evaluador REAL en `evaluarRequisito` (abajo). La admisión de
+ * componentes (`conocimiento/admision.ts`) no da por verificado un requisito cuyo tipo
+ * no esté acá: nunca se finge una validación que el motor no hace. */
+export const TIPOS_DE_REQUISITO_CON_EVALUADOR: ReadonlySet<Requisito["tipo"]> = new Set(["resistencia-serie"])
+
 export function evaluarRequisito(catalogoComponente: ComponenteCatalogo, conectadosPorTerminal: Readonly<Record<string, readonly string[]>>): readonly Motivo[] {
   const motivos: Motivo[] = []
   for (const req of catalogoComponente.requisitos) {

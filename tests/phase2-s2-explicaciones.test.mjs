@@ -25,6 +25,9 @@ const { planDePintado } = await import(join(REPO, "opencode/vista-fisica/web/pla
 const { pintar } = await import(join(REPO, "opencode/vista-fisica/web/pintar.js"))
 const { explicacionDeMotivo } = await import(join(REPO, "opencode/vista-fisica/explicaciones-motivos.ts"))
 const { LED, PULSADOR } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
+// Component System Foundation #1: los nombres visibles salieron del núcleo semántico
+// (D-10); se leen del anexo de pedagogía es-AR, su único dueño.
+const { nombreDeComponente } = await import(join(REPO, "opencode/conocimiento/anexos/pedagogia-es-AR.ts"))
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // "document" fake — MISMO patrón que tests/phase2-pintar.test.mjs (createElement/
@@ -105,7 +108,7 @@ test("PIN_SIN_PULLUP_INTERNO: pulsador.senal en GPIO34 (solo-entrada)", () => {
   assert.equal(motivo.entidad.id, idPulsador)
   assert.equal(
     motivo.explicacion,
-    `El ${PULSADOR.nombreVisible} necesita la resistencia interna (pull-up) del pin, y GPIO34 no la tiene: es sólo de entrada. Elegí otro pin.`,
+    `El ${nombreDeComponente(PULSADOR.id)} necesita la resistencia interna (pull-up) del pin, y GPIO34 no la tiene: es sólo de entrada. Elegí otro pin.`,
   )
 })
 
@@ -128,7 +131,7 @@ test("PIN_OCUPADO: LED.anodo y pulsador.senal en el MISMO pin (GPIO4)", () => {
   const motivo = motivoDe(vista, "PIN_OCUPADO")
   assert.deepEqual(motivo.datos, { pin: "GPIO4", ocupadoPor: idLed })
   assert.equal(motivo.entidad.id, idPulsador)
-  assert.equal(motivo.explicacion, `GPIO4 ya lo está usando otro componente (${LED.nombreVisible}). Cada pin puede tener una sola conexión de señal.`)
+  assert.equal(motivo.explicacion, `GPIO4 ya lo está usando otro componente (${nombreDeComponente(LED.id)}). Cada pin puede tener una sola conexión de señal.`)
 })
 
 test("REQUISITO_INSATISFECHO: LED sin resistencia en serie conectada al ánodo", () => {
@@ -145,7 +148,7 @@ test("REQUISITO_INSATISFECHO: LED sin resistencia en serie conectada al ánodo",
   const motivo = motivoDe(vista, "REQUISITO_INSATISFECHO")
   assert.deepEqual(motivo.datos, { componente: "led", requisito: "resistencia-serie", terminal: "anodo", esperado: "resistencia" })
   assert.equal(motivo.entidad.id, idLed)
-  assert.equal(motivo.explicacion, `Al ${LED.nombreVisible} le falta algo que necesita para funcionar sin riesgo (resistencia-serie en anodo).`)
+  assert.equal(motivo.explicacion, `Al ${nombreDeComponente(LED.id)} le falta algo que necesita para funcionar sin riesgo (resistencia-serie en anodo).`)
 })
 
 test("PIN_STRAPPING: pulsador.senal en GPIO2 (severidad info, resto de la clase)", () => {
@@ -211,7 +214,7 @@ test("CAPACIDAD_PIN_INCOMPATIBLE: LED.anodo (salida) en GPIO34 (solo-entrada, si
   const motivo = motivoDe(vista, "CAPACIDAD_PIN_INCOMPATIBLE")
   assert.deepEqual(motivo.datos, { terminal: "anodo", pin: "GPIO34", requierePwm: false })
   assert.equal(motivo.entidad.id, idLed)
-  assert.equal(motivo.explicacion, `GPIO34 no puede hacer lo que necesita el ${LED.nombreVisible} en anodo.`)
+  assert.equal(motivo.explicacion, `GPIO34 no puede hacer lo que necesita el ${nombreDeComponente(LED.id)} en anodo.`)
 })
 
 test("PIN_INEXISTENTE_EN_DOCUMENTO: pulsador.senal asignado en ESP32 (GPIO4), después SetPlaca a arduino-uno", () => {

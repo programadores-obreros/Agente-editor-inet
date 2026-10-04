@@ -71,10 +71,19 @@ export function planDePintado(modeloDeVista, opciones = {}) {
   }
 
   for (const componente of modeloDeVista.componentes) {
-    // Sin dato Wokwi para este tipo (gap documentado en `wokwi-render-datos.ts`: hoy
-    // sólo "led"/"pulsador"/"resistencia" tienen tabla de render) — no se inventa un tag: se omite
-    // la instrucción de creación para ese componente, nunca se dibuja con un tag falso.
-    if (!componente.elementoWokwi) continue
+    // Sin dato Wokwi para este tipo (anexo `conocimiento/anexos/representacion.ts`: hoy
+    // sólo "led"/"pulsador"/"resistencia" tienen tabla de render) — no se inventa un tag
+    // ni se dibuja con un tag falso. Component System Foundation #1 (D-17): tampoco se
+    // omite EN SILENCIO — la pieza existe en el proyecto, así que se avisa visiblemente
+    // que todavía no tiene dibujo (no es un componente con soporte oficial).
+    if (!componente.elementoWokwi) {
+      instrucciones.push({
+        tipo: "piezaSinRepresentacion",
+        entidad: { tipo: "componente", id: componente.id },
+        texto: `${componente.nombre}: todavía no tiene dibujo (no es un componente con soporte oficial).`,
+      })
+      continue
+    }
     instrucciones.push({
       tipo: "crearElemento",
       entidad: { tipo: "componente", id: componente.id },

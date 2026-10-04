@@ -28,6 +28,7 @@ import { join } from "node:path"
 import type { Proyecto } from "./ir.ts"
 import type { Catalogo } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
+import { catalogoDeCreacionCoincide } from "./identidad-catalogo.ts"
 import type { Almacen, ResultadoCargaAlmacen, ResultadoGuardar } from "./motor.ts"
 import { cargarProyecto } from "./cargador.ts"
 import { canonicalizar } from "./canonico.ts"
@@ -189,14 +190,22 @@ export function crearAlmacen(deps: DependenciasAlmacen): Almacen {
     }
 
     // Version-skew (R11/R2): el catálogo activo cambió desde que se guardó — se
-    // AVISA, nunca se muta el proyecto ni se rechaza la carga.
-    if (resultado.proyecto.catalogoHash !== deps.catalogo.hash) {
+    // AVISA, nunca se muta el proyecto ni se rechaza la carga. D-03 (Decision Freeze):
+    // el hash guardado es createdWith e inmutable; se compara contra el activo a
+    // través de la tabla fija de identidades heredadas (`identidad-catalogo.ts`, I-11)
+    // para no marcar como desfase un proyecto de antes del cambio de dominio del hash.
+    if (!catalogoDeCreacionCoincide(resultado.proyecto.catalogoHash, deps.catalogo.hash)) {
       const diagnostico: Motivo[] = [
         {
           codigo: "CATALOGO_CAMBIO_DETECTADO",
           categoria: "almacen",
           severidad: "info",
-          datos: { catalogoHashGuardado: resultado.proyecto.catalogoHash, catalogoHashActivo: deps.catalogo.hash },
+          datos: {
+            catalogoVersionGuardada: resultado.proyecto.catalogoVersion,
+            catalogoHashGuardado: resultado.proyecto.catalogoHash,
+            catalogoVersionActiva: deps.catalogo.version,
+            catalogoHashActivo: deps.catalogo.hash,
+          },
         },
       ]
       return { ok: true, proyecto: resultado.proyecto, diagnostico }

@@ -44,7 +44,7 @@ import { crearAlmacen } from "./almacen.ts"
 import { crearProyecto } from "./cargador.ts"
 import { validarProyecto, derivarReadiness } from "./validar.ts"
 import { canonicalizar } from "./canonico.ts"
-import { construirCatalogoMinimoReal } from "./adaptadores/hash-catalogo.node.ts"
+import { CATALOGO_ACTIVO } from "./catalogo-activo.ts"
 
 /**
  * DTO plano del proyecto — lo que la vista (writer siguiente) y cualquier otro
@@ -60,8 +60,14 @@ import { construirCatalogoMinimoReal } from "./adaptadores/hash-catalogo.node.ts
 export interface Snapshot {
   readonly idProyecto: string
   readonly revision: number
+  /** createdWith (D-03): el catálogo semántico con el que se creó el proyecto.
+   * Inmutable: nunca se reescribe al recargar ni al commitear. */
   readonly catalogoVersion: string
   readonly catalogoHash: string
+  /** validatedWith en runtime (D-03, I-7): el catálogo activo contra el que se valida
+   * ESTE snapshot. No se persiste. Si difiere de createdWith (con la tabla de
+   * identidades heredadas), `validacion.motivos` trae `CATALOGO_CAMBIO_DETECTADO`. */
+  readonly catalogoActivo: { readonly version: string; readonly hash: string }
   readonly proyecto: Proyecto
   readonly validacion: {
     readonly motivos: readonly Motivo[]
@@ -108,12 +114,11 @@ export interface OpcionesServicioDeProyecto {
   readonly calcularVista?: (proyecto: Proyecto, catalogo: Catalogo) => unknown
 }
 
-// El catálogo real de producción — el MISMO que usa Phase 1 (adaptadores/
-// hash-catalogo.node.ts). Se calcula una única vez por proceso: es puro y
-// determinista (mismos datos, mismo hash), y todos los proyectos de Slice 1
-// comparten el mismo catálogo activo — la raíz no agrega reglas de dominio propias,
-// todo pasa por el motor con este catálogo.
-const CATALOGO_REAL: Catalogo = construirCatalogoMinimoReal()
+// El catálogo real de producción: la ÚNICA instancia del runtime (`catalogo-activo.ts`,
+// Component System Foundation #1, F1). La raíz no la construye ni agrega reglas de
+// dominio propias: todo pasa por el motor con este catálogo, y la vista lo recibe
+// inyectado por `calcularVista`.
+const CATALOGO_REAL: Catalogo = CATALOGO_ACTIVO
 
 const registro = new Map<string, ServicioDeProyecto>()
 
@@ -180,18 +185,25 @@ function claveDelServicio(directorio: string, idProyecto: string): string {
   return `${normalizarDirectorio(directorio)}::${idProyecto}`
 }
 
-function construirProyectoInicial(almacen: ReturnType<typeof crearAlmacen>, idProyecto: string, crearSiNoExiste: boolean): Proyecto {
+/**
+ * DR-03 (Engineering Baseline 2026) / D-03 del Decision Freeze: antes esta función
+ * devolvía `cargado.proyecto` y DESCARTABA `cargado.diagnostico`, así que el aviso
+ * `CATALOGO_CAMBIO_DETECTADO` que el almacén sí detectaba se perdía antes de llegar al
+ * snapshot. Ahora el diagnóstico de carga viaja con el proyecto y el snapshot lo expone.
+ * El proyecto NO se muta ni se migra: createdWith queda como estaba.
+ */
+function construirProyectoInicial(almacen: ReturnType<typeof crearAlmacen>, idProyecto: string, crearSiNoExiste: boolean): { readonly proyecto: Proyecto; readonly diagnosticoDeCarga: readonly Motivo[] } {
   if (almacen.existe(idProyecto)) {
     const cargado = almacen.cargar(idProyecto)
     if (!cargado.ok) {
       throw new Error(`composicion-raiz: el proyecto "${idProyecto}" existe en disco pero no se pudo cargar: ${JSON.stringify(cargado.motivos)}`)
     }
-    return cargado.proyecto
+    return { proyecto: cargado.proyecto, diagnosticoDeCarga: cargado.diagnostico ?? [] }
   }
   if (!crearSiNoExiste) {
     throw new Error(`composicion-raiz: el proyecto "${idProyecto}" no existe y crearSiNoExiste=false`)
   }
-  return crearProyecto({ generadorId: () => idProyecto, catalogoVersion: CATALOGO_REAL.version, catalogoHash: CATALOGO_REAL.hash })
+  return { proyecto: crearProyecto({ generadorId: () => idProyecto, catalogoVersion: CATALOGO_REAL.version, catalogoHash: CATALOGO_REAL.hash }), diagnosticoDeCarga: [] }
 }
 
 /**
@@ -215,7 +227,10 @@ function construirServicio(clave: string, directorio: string, idProyecto: string
   // retiene por fuera para llamar guardar()/cargar() directo (mismo contrato que
   // motor.ts/almacen.ts ya documentan sobre "Almacen es un puerto interno").
   const almacen = crearAlmacen({ directorio, catalogo: CATALOGO_REAL })
-  const proyectoInicial = construirProyectoInicial(almacen, idProyecto, crearSiNoExiste)
+  const { proyecto: proyectoInicial, diagnosticoDeCarga } = construirProyectoInicial(almacen, idProyecto, crearSiNoExiste)
+  // Sólo el aviso de catálogo sigue vigente durante toda la vida del servicio: el
+  // createdWith del proyecto es inmutable y el catálogo activo no cambia en el runtime.
+  const avisosDeCatalogo: readonly Motivo[] = diagnosticoDeCarga.filter((m) => m.codigo === "CATALOGO_CAMBIO_DETECTADO")
   const motor = crearMotorDeProyecto({ proyectoInicial, catalogo: CATALOGO_REAL, almacen })
 
   const listeners = new Set<(evento: { readonly revision: number }) => void>()
@@ -247,13 +262,17 @@ function construirServicio(clave: string, directorio: string, idProyecto: string
     // mutar lo devuelto nunca toca el canónico congelado del motor, y dos llamadas
     // sin operación en el medio dan JSON idéntico (determinismo).
     const proyectoPlano: Proyecto = JSON.parse(canonicalizar(proyecto))
-    const motivos: readonly Motivo[] = validarProyecto(proyecto, CATALOGO_REAL)
-    const readiness = derivarReadiness(proyecto, motivos)
+    const motivosDeValidacion: readonly Motivo[] = validarProyecto(proyecto, CATALOGO_REAL)
+    // D-03, I-9: el desfase de catálogo es procedencia (`info`), no veredicto — la
+    // readiness se deriva sólo de la validación, igual que antes.
+    const readiness = derivarReadiness(proyecto, motivosDeValidacion)
+    const motivos: readonly Motivo[] = [...avisosDeCatalogo, ...motivosDeValidacion]
     const base: Snapshot = {
       idProyecto: proyectoPlano.id,
       revision: proyectoPlano.revision,
       catalogoVersion: proyectoPlano.catalogoVersion,
       catalogoHash: proyectoPlano.catalogoHash,
+      catalogoActivo: { version: CATALOGO_REAL.version, hash: CATALOGO_REAL.hash },
       proyecto: proyectoPlano,
       // JSON.parse(JSON.stringify(...)) por el mismo motivo: motivos[] no sale de
       // congelarProfundo (son objetos frescos de validarProyecto), pero el

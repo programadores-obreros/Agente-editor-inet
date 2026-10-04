@@ -20,7 +20,7 @@ $Src = Join-Path $RepoDir "opencode"
 
 Write-Host "==> Instalando Tecnia Bot en: $ConfigDir"
 
-foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "nucleo", "servidor", "vista-fisica")) {
+foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir $sub) | Out-Null
 }
 
@@ -44,6 +44,9 @@ Copy-Item (Join-Path $Src "command\*") (Join-Path $ConfigDir "command\") -Recurs
 Copy-Item (Join-Path $Src "nucleo\*")       (Join-Path $ConfigDir "nucleo\")       -Recurse -Force
 Copy-Item (Join-Path $Src "servidor\*")     (Join-Path $ConfigDir "servidor\")     -Recurse -Force
 Copy-Item (Join-Path $Src "vista-fisica\*") (Join-Path $ConfigDir "vista-fisica\") -Recurse -Force
+# Component System Foundation #1: fachada ComponentKnowledge + anexos, hermana de
+# nucleo\ (la importan tool\ y vista-fisica\ con rutas ..\conocimiento\...).
+Copy-Item (Join-Path $Src "conocimiento\*") (Join-Path $ConfigDir "conocimiento\") -Recurse -Force
 
 # Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
 Copy-Item (Join-Path $Src "plugins\*") (Join-Path $ConfigDir "plugins\") -Recurse -Force
@@ -63,7 +66,7 @@ $Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else {
 
 # Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
 # coincidan con las que escribe el instalador de Linux).
-$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "nucleo", "servidor", "vista-fisica")) {
+$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento")) {
     Get-ChildItem -Path (Join-Path $Src $sub) -Recurse -File | ForEach-Object {
         $rel = $_.FullName.Substring($Src.Length + 1) -replace '\\', '/'
         $rel

@@ -85,7 +85,13 @@ como punto diferido en `DECISIONS.md`.
 
 `Proyecto.schemaVersion`: versión de la FORMA del documento persistido (la que
 `cargador.ts` compara contra `SCHEMA_VERSION_SOPORTADA`). `Proyecto.catalogoVersion`/
-`catalogoHash`: el catálogo vigente en el último commit exitoso.
+`catalogoHash`: **createdWith** — la identidad semántica del catálogo con el que se
+creó el proyecto. Inmutable: no la reescriben la carga, el commit ni una
+revalidación o migración futura (Component System Foundation #1, D-03). El catálogo
+activo se expone en runtime (`Snapshot.catalogoActivo`) y un desfase se informa con
+`CATALOGO_CAMBIO_DETECTADO` (`info`, no bloquea). Hasta el catálogo 2.0.0 este texto
+decía "el catálogo vigente en el último commit exitoso", pero ningún commit lo
+refrescaba (hallazgo DR-03).
 
 **Lo que NO existe, a propósito:** un par separado `createdWithCatalogVersion`/
 `validatedWithCatalogVersion` (o el equivalente en español,
@@ -959,7 +965,11 @@ registro.
 
 ## 8. `catalogoHash` — algoritmo (R4, implementado en Gate 3)
 
-`sha256(canonicalizar(catalogoSinCampoHash))`. `canonicalizar()` es la MISMA función
+`sha256(canonicalizar(proyeccionSemanticaCatalogo(datos)))` desde el catálogo 2.0.0:
+sólo el núcleo semántico (lista blanca explícita en `catalogo.ts`), sin nombres
+visibles, alias, datos de renderer, backend de compilación ni la etiqueta `version`.
+Los proyectos guardados con el dominio anterior se comparan por la tabla fija
+`identidad-catalogo.ts::IDENTIDADES_HEREDADAS`. `canonicalizar()` es la MISMA función
 de `canonico.ts` (claves ordenadas, arrays preservados — igual que §3). El hash real
 (`createHash("sha256")`) vive ÚNICAMENTE en
 `opencode/nucleo/adaptadores/hash-catalogo.node.ts` — único import de `node:crypto`

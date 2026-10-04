@@ -102,7 +102,7 @@ function motivoContadorExcedeEnteroSeguro(siguienteIdLocal: number): Motivo {
 function terminalesNoRielFijo(catalogo: Catalogo, tipo: string): readonly string[] {
   const comp = catalogo.obtenerComponente(tipo)
   if (!comp) return []
-  return comp.terminales.filter((t) => t.electrica !== "riel-fijo").map((t) => t.id)
+  return comp.terminales.filter((t) => t.asignable).map((t) => t.id)
 }
 
 function tieneTerminalDeclarado(catalogo: Catalogo, tipoComponente: string, terminalId: string): boolean {
@@ -401,9 +401,18 @@ function aplicarAsignarPin(proyecto: Proyecto, payload: { componente: string; te
   // CARGANDO igual — el loader (`cargador.ts`) y la validación continua
   // (`validar-tecnico.ts`, que sigue salteando `riel-fijo` a propósito) no cambian:
   // esta invariancia gobierna SÓLO la operación NUEVA (PERSISTIBLE ⇒ RECARGABLE).
+  // Component System Foundation #1 (D-04): la fuente es `Terminal.asignable`, derivado
+  // UNA vez en `construirCatalogo` — este archivo ya no interpreta `electrica`.
   const terminalCatalogo = catalogo.obtenerComponente(componente.tipo)?.terminales.find((t) => t.id === payload.terminal)
-  if (terminalCatalogo && terminalCatalogo.electrica === "riel-fijo") {
+  if (terminalCatalogo && !terminalCatalogo.asignable) {
     return { proyecto, motivos: [rechazo("TERMINAL_NO_ASIGNABLE", { componente: payload.componente, terminal: payload.terminal, electrica: terminalCatalogo.electrica })] }
+  }
+  // D-05: GND/3V3/5V/VIN son terminales de potencia REALES de la placa (físicamente
+  // conectables) pero no GPIO lógicos: asignarlos como pin se rechaza con el mismo
+  // código, y no con `PIN_INEXISTENTE_EN_PLACA`, que sería falso (sí existen).
+  const placaActual = proyecto.placa ? catalogo.placas.find((p) => p.id === proyecto.placa) : undefined
+  if (payload.pin !== null && placaActual?.terminalesDePotencia?.some((t) => t.id === payload.pin)) {
+    return { proyecto, motivos: [rechazo("TERMINAL_NO_ASIGNABLE", { componente: payload.componente, terminal: payload.terminal, pin: payload.pin, placa: proyecto.placa, terminalDePotencia: true })] }
   }
   if (payload.pin !== null) {
     const pines = proyecto.placa ? catalogo.pinesDePlaca(proyecto.placa) : undefined
@@ -567,7 +576,7 @@ function aplicarCambiarComponente(proyecto: Proyecto, payload: { componente: str
   // existe con el mismo id; terminales que no existían antes arrancan sin asignar.
   const pinesNuevos: Record<string, string | null> = {}
   for (const t of catalogoNuevo.terminales) {
-    if (t.electrica === "riel-fijo") continue
+    if (!t.asignable) continue
     pinesNuevos[t.id] = componente.pines[t.id] ?? null
   }
   const componenteCambiado: Componente = { ...componente, tipo: payload.tipoNuevo, pines: pinesNuevos }

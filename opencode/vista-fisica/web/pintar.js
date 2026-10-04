@@ -98,6 +98,10 @@ export function pintar(doc, instrucciones, manejadores = {}) {
       pintarEstadoVacio(doc, raiz.circuito, instruccion)
       continue
     }
+    if (instruccion.tipo === "piezaSinRepresentacion") {
+      pintarPiezaSinRepresentacion(doc, raiz.circuito, instruccion, elementosPorEntidad)
+      continue
+    }
     // Instrucción de un tipo que este pintor no conoce todavía — se ignora, nunca se
     // inventa un render: el mismo criterio fail-closed que `plan-de-pintado.js` ya
     // aplica para un componente sin tabla de render (se omite, no se dibuja con un
@@ -116,6 +120,19 @@ function pintarEstadoVacio(doc, contenedor, instruccion) {
   parrafo.setAttribute("data-estado-vacio", "true")
   parrafo.textContent = instruccion.texto
   contenedor.appendChild(parrafo)
+}
+
+// Component System Foundation #1 (D-17): una pieza del proyecto sin representación
+// (hoy dht22/ntc) se MUESTRA como aviso en el circuito, nunca se omite en silencio.
+// Queda registrada como elemento de su entidad para que un motivo pueda resaltarla.
+function pintarPiezaSinRepresentacion(doc, contenedor, instruccion, elementosPorEntidad) {
+  const aviso = doc.createElement("p")
+  aviso.setAttribute("data-sin-representacion", "true")
+  aviso.setAttribute("data-entidad-tipo", instruccion.entidad.tipo)
+  aviso.setAttribute("data-entidad-id", instruccion.entidad.id)
+  aviso.textContent = instruccion.texto
+  contenedor.appendChild(aviso)
+  elementosPorEntidad.set(`${instruccion.entidad.tipo}:${instruccion.entidad.id}`, aviso)
 }
 
 function pintarElemento(doc, contenedor, instruccion, elementosPorEntidad, gruposPendientes) {

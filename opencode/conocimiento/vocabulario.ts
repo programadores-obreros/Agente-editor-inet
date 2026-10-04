@@ -1,0 +1,278 @@
+// Vocabulario del proyecto físico — Phase 3, Wave 0 (writer W-W0-TOOL,
+// PHASE_3_WAVE_0_DESIGN.md, fila F-07).
+//
+// F-07 (PHASE_2_SIMULATED_ROLE_TRIAL.md): `leer` (`tool/proyecto-fisico.ts`) no
+// exponía el vocabulario válido (ids de placa, tipos de componente, terminales, forma
+// de los payloads) — el docente simulado (T1) necesitó ~16 llamadas de prueba y error
+// para armar ESP32+LED+pulsador: probó `esp32`/`esp32dev`/"ESP32 DevKit" antes de
+// acertar `esp32-devkit-v1`, y `boton`/`button`/`pushbutton` antes de `pulsador`.
+//
+// Este módulo DERIVA el vocabulario del catálogo REAL (`catalogo.componentes`/
+// `catalogo.placas`, el mismo que construye `vista-real.ts`/`hash-catalogo.node.ts`)
+// — nunca una lista hardcodeada en paralelo: agregar o cambiar un componente/placa en
+// el catálogo (Gate 3) actualiza el vocabulario solo, sin tocar este archivo.
+//
+// Component System Foundation #1 (F6, D-12 del Decision Freeze): este módulo se mudó de
+// `vista-fisica/` a `conocimiento/` — el vocabulario del agente es CONOCIMIENTO, no una
+// vista (antes el agente obtenía catálogo y vocabulario a través de la vista). Los
+// nombres salen del anexo de pedagogía y cada terminal asignable trae sus pines
+// permitidos por placa, derivados de `ComponentKnowledge.pinesPermitidos`: la IA elige
+// de esa lista, no inventa pines. `vista-fisica/vocabulario.ts` sólo reexporta.
+//
+// No toca `servidor/` ni la vista: `tool/proyecto-fisico.ts` lo puede importar estático
+// sin romper el loop de carga del registry de tools (criterio D13).
+
+import type { Catalogo, ComponenteCatalogo } from "../nucleo/catalogo.ts"
+import type { Componente, Proyecto } from "../nucleo/ir.ts"
+import type { Motivo } from "../nucleo/motivos.ts"
+import type { TipoOperacion } from "../nucleo/operaciones.ts"
+import { crearConocimiento, type ComponentKnowledge } from "./conocimiento.ts"
+import { nombreDeComponente, nombreDePlaca } from "./anexos/pedagogia-es-AR.ts"
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// vocabularioDesdeCatalogo — placas/componentes/terminales + ejemplos de payload
+// ════════════════════════════════════════════════════════════════════════════════════
+
+export interface PlacaVocabulario {
+  readonly id: string
+  readonly nombre: string
+  readonly alias: readonly string[]
+}
+
+export interface TerminalVocabulario {
+  readonly id: string
+  /** Por ahora, el mismo id (W-W0-TOOL): la etiqueta humana ("ánodo (+)") es
+   * responsabilidad de W-W0-VIEW, no de esta tool — ver PHASE_3_WAVE_0_DESIGN.md,
+   * fila F-09/W-W0-VIEW. */
+  readonly nombre: string
+  /** `true` si el terminal acepta `AsignarPin` — `Terminal.asignable`, la única
+   * derivación (D-04, `nucleo/catalogo.ts::construirCatalogo`). */
+  readonly asignable: boolean
+  /** Sólo para terminales asignables (D-12): pines válidos por placa, recomendados
+   * primero. Fuera de esta lista, el Engine diagnostica o rechaza. */
+  readonly pinesPermitidos?: Readonly<Record<string, readonly string[]>>
+}
+
+export interface ComponenteVocabulario {
+  readonly tipo: string
+  readonly nombre: string
+  readonly clase: ComponenteCatalogo["clase"]
+  readonly terminales: readonly TerminalVocabulario[]
+  /** FX-6(a) (F-TRUTH-1, ronda de fixes): sólo para un componente "puente" (TODOS
+   * sus terminales son `riel-fijo` SIN `destinoFijo` — ej. la Resistencia,
+   * `catalogo-datos.ts:40-43`, "es un puente, no tiene polaridad"): cómo conectarlo
+   * de verdad, ya que ninguno de sus terminales acepta `AsignarPin`. Derivado 100%
+   * del catálogo real (nunca un nombre hardcodeado) — ver `notaDeConexionRequerida`,
+   * abajo. `undefined` para cualquier otro componente, o si el catálogo todavía no
+   * declara ningún requisito que lo necesite (nunca se inventa una nota sin una
+   * fuente real). */
+  readonly nota?: string
+}
+
+export interface VocabularioProyectoFisico {
+  readonly placas: readonly PlacaVocabulario[]
+  readonly componentes: readonly ComponenteVocabulario[]
+  /** Un ejemplo de payload por tipo de la whitelist (el array que el llamador pasa en
+   * `tiposPermitidos` — `proyecto-fisico.ts::OPERACIONES_PERMITIDAS`, nunca duplicada
+   * acá: única fuente de verdad de "qué tipos acepta esta tool"). SIEMPRE con ids
+   * reales del catálogo donde los hay (placa/tipo/terminal/pin); un id que sólo existe
+   * en TIEMPO DE EJECUCIÓN (el id de un componente ya agregado, el de una conexión) se
+   * deja como un placeholder legible entre `<…>`, nunca inventado como si fuera real. */
+  readonly operaciones: Readonly<Partial<Record<TipoOperacion, unknown>>>
+}
+
+function terminalesVocabulario(componente: ComponenteCatalogo, conocimiento: ComponentKnowledge): readonly TerminalVocabulario[] {
+  return componente.terminales.map((terminal) => {
+    if (!terminal.asignable) return { id: terminal.id, nombre: terminal.id, asignable: false }
+    const pinesPermitidos: Record<string, readonly string[]> = {}
+    for (const placa of conocimiento.catalogo.placas) pinesPermitidos[placa.id] = conocimiento.pinesPermitidos(placa.id, componente.id, terminal.id).map((p) => p.id)
+    return { id: terminal.id, nombre: terminal.id, asignable: true, pinesPermitidos }
+  })
+}
+
+function primerTerminalAsignable(componente: ComponenteCatalogo): string | undefined {
+  return componente.terminales.find((terminal) => terminal.asignable)?.id
+}
+
+/**
+ * FX-6(a) (F-TRUTH-1, ronda de fixes): un componente "puente" (TODOS sus
+ * terminales `riel-fijo` SIN `destinoFijo`) no se asigna a un pin: se agrega al
+ * proyecto y se `Conectar`-a al terminal que lo REQUIERE como `requisito` (ej. el
+ * ánodo del LED, `catalogo-datos.ts:24`, "resistencia-serie"). Derivado 100% del
+ * catálogo real: busca, entre TODOS los componentes del catálogo, el primero cuyo
+ * `requisitos` pida ESTE tipo de componente (`Requisito.spec.tipoComponente`,
+ * mismo campo que ya lee `nucleo/catalogo.ts::evaluarRequisito`), y arma la nota
+ * con su `nombreVisible` + el terminal exacto que el requisito declara
+ * (`Requisito.enTerminal`) — nunca un nombre hardcodeado en paralelo.
+ * `undefined` si el componente no es un puente, o si ningún otro componente del
+ * catálogo todavía lo requiere (nunca se inventa una nota sin una fuente real).
+ */
+function notaDeConexionRequerida(componente: ComponenteCatalogo, catalogo: Catalogo): string | undefined {
+  const esPuente = componente.terminales.length > 0 && componente.terminales.every((terminal) => !terminal.asignable && terminal.destinoFijo === undefined)
+  if (!esPuente) return undefined
+  for (const otro of catalogo.componentes) {
+    const requisito = otro.requisitos.find((r) => typeof r.spec.tipoComponente === "string" && r.spec.tipoComponente === componente.id)
+    if (requisito?.enTerminal) return `no se asigna a pines; se agrega y se conecta al ${requisito.enTerminal} del ${nombreDeComponente(otro.id) ?? otro.id} (puente en el cable)`
+  }
+  return undefined
+}
+
+const PLACEHOLDER_COMPONENTE = "<id de un componente ya agregado — lo devuelve 'leer'>"
+const PLACEHOLDER_TERMINAL = "<id de terminal — ver componentes[].terminales>"
+const PLACEHOLDER_PIN = "<id de pin de la placa, p. ej. GPIO4>"
+const PLACEHOLDER_CONEXION = "<id de conexión — lo devuelve 'leer'>"
+const PLACEHOLDER_PULSADOR = "<id del pulsador>"
+const PLACEHOLDER_LED = "<id del LED>"
+const PLACEHOLDER_REGLA = "<id de la regla>"
+
+/**
+ * Deriva el vocabulario completo del catálogo REAL. `tiposPermitidos` es la whitelist
+ * de R-6 — pasada por el llamador (nunca reconstruida acá) para que la tool siga
+ * siendo la única fuente de verdad de "qué tipos acepta".
+ */
+export function vocabularioDesdeCatalogo(catalogo: Catalogo, tiposPermitidos: readonly TipoOperacion[], conocimiento: ComponentKnowledge = crearConocimiento(catalogo)): VocabularioProyectoFisico {
+  const placas: readonly PlacaVocabulario[] = catalogo.placas.map((placa) => ({ id: placa.id, nombre: nombreDePlaca(placa.id) ?? placa.id, alias: placa.alias }))
+  const componentes: readonly ComponenteVocabulario[] = catalogo.componentes.map((componente) => {
+    const nota = notaDeConexionRequerida(componente, catalogo)
+    return { tipo: componente.id, nombre: nombreDeComponente(componente.id) ?? componente.id, clase: componente.clase, terminales: terminalesVocabulario(componente, conocimiento), ...(nota !== undefined ? { nota } : {}) }
+  })
+
+  const primeraPlaca = catalogo.placas[0]
+  const primerComponente = catalogo.componentes[0]
+  const terminalDeEjemplo = primerComponente ? (primerTerminalAsignable(primerComponente) ?? PLACEHOLDER_TERMINAL) : PLACEHOLDER_TERMINAL
+  // D-12: el pin de ejemplo es el primero PERMITIDO (y recomendado) para ese terminal —
+  // antes era el primer pin de la placa (GPIO0, de strapping).
+  const primerPinDeLaPlaca =
+    primeraPlaca && primerComponente && terminalDeEjemplo !== PLACEHOLDER_TERMINAL
+      ? (conocimiento.pinesPermitidos(primeraPlaca.id, primerComponente.id, terminalDeEjemplo)[0]?.id ?? PLACEHOLDER_PIN)
+      : PLACEHOLDER_PIN
+
+  const ejemplos: Partial<Record<TipoOperacion, unknown>> = {}
+  for (const tipo of tiposPermitidos) {
+    switch (tipo) {
+      case "SetPlaca":
+        if (primeraPlaca) ejemplos.SetPlaca = { placa: primeraPlaca.id }
+        break
+      case "AgregarComponente":
+        if (primerComponente) ejemplos.AgregarComponente = { tipo: primerComponente.id }
+        break
+      case "QuitarComponente":
+        ejemplos.QuitarComponente = { componente: PLACEHOLDER_COMPONENTE }
+        break
+      case "AsignarPin":
+        ejemplos.AsignarPin = { componente: PLACEHOLDER_COMPONENTE, terminal: terminalDeEjemplo, pin: primerPinDeLaPlaca }
+        break
+      case "Conectar":
+        ejemplos.Conectar = {
+          desde: { componente: PLACEHOLDER_COMPONENTE, terminal: terminalDeEjemplo },
+          hasta: { componente: "<id de otro componente>", terminal: PLACEHOLDER_TERMINAL },
+        }
+        break
+      case "Desconectar":
+        ejemplos.Desconectar = { conexion: PLACEHOLDER_CONEXION }
+        break
+      case "SetComportamiento":
+        // Phase 3 (contrato B7): la forma EXACTA de "mientras <entrada> esté presionada,
+        // <salida> está encendida" (condición de NIVEL; reposo apagado = derivado, no se
+        // guarda). Los `<...>` son marcadores: el agente los reemplaza con ids de `leer`.
+        ejemplos.SetComportamiento = {
+          comportamiento: {
+            cuando: { sensor: PLACEHOLDER_PULSADOR, capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } },
+            entonces: { actuador: PLACEHOLDER_LED, accion: "encender" },
+          },
+        }
+        break
+      case "QuitarComportamiento":
+        ejemplos.QuitarComportamiento = { comportamiento: PLACEHOLDER_REGLA }
+        break
+      default:
+        // CambiarComponente nunca está en la whitelist de la tool (los 8 tipos son
+        // SetPlaca, AgregarComponente, QuitarComponente, AsignarPin, Conectar,
+        // Desconectar, SetComportamiento, QuitarComportamiento) — si algún día entrara,
+        // queda sin ejemplo acá hasta que se declare uno a propósito (nunca se inventa
+        // un payload para un tipo que la tool todavía no soporta).
+        break
+    }
+  }
+
+  return { placas, componentes, operaciones: ejemplos }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// valoresValidosParaMotivos — F-07 (continuación): ante PLACA_DESCONOCIDA/
+// TIPO_CATALOGO_DESCONOCIDO/TERMINAL_NO_DECLARADO, la tool agrega los valores válidos,
+// DERIVADOS del catálogo (y, para TERMINAL_NO_DECLARADO, del `Proyecto` vigente — hace
+// falta para saber el `tipo` del componente al que se le pidió un terminal
+// inexistente).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const CODIGOS_CON_VALORES_VALIDOS: ReadonlySet<string> = new Set(["PLACA_DESCONOCIDA", "TIPO_CATALOGO_DESCONOCIDO", "TERMINAL_NO_DECLARADO"])
+
+function idsDeTerminalesDelComponente(datosMotivo: Motivo["datos"], catalogo: Catalogo, proyecto: Proyecto): readonly string[] | undefined {
+  const idComponente = datosMotivo && typeof datosMotivo.componente === "string" ? datosMotivo.componente : undefined
+  if (!idComponente) return undefined
+  const componente = proyecto.componentes.find((c: Componente) => c.id === idComponente)
+  if (!componente) return undefined
+  const catalogoComponente = catalogo.obtenerComponente(componente.tipo)
+  return catalogoComponente?.terminales.map((terminal) => terminal.id)
+}
+
+/**
+ * `undefined` si ningún motivo del lote pide valores válidos — el llamador omite la
+ * clave `valoresValidos` del todo en ese caso, nunca la deja vacía/`null` sin motivo.
+ */
+export function valoresValidosParaMotivos(motivos: readonly Motivo[], catalogo: Catalogo, proyecto: Proyecto): Readonly<Record<string, unknown>> | undefined {
+  let salida: Record<string, unknown> | undefined
+  for (const motivo of motivos) {
+    if (!CODIGOS_CON_VALORES_VALIDOS.has(motivo.codigo)) continue
+    salida ??= {}
+    if (motivo.codigo === "PLACA_DESCONOCIDA") {
+      salida.placas = catalogo.placas.map((placa) => placa.id)
+    } else if (motivo.codigo === "TIPO_CATALOGO_DESCONOCIDO") {
+      salida.tipos = catalogo.componentes.map((componente) => componente.id)
+    } else if (motivo.codigo === "TERMINAL_NO_DECLARADO") {
+      const terminales = idsDeTerminalesDelComponente(motivo.datos, catalogo, proyecto)
+      if (terminales) salida.terminales = terminales
+    }
+  }
+  return salida
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// descripcionPinesDeComponente — F-13: 'leer' agrega, por componente, una descripción
+// en texto llano de sus terminales ("anodo → GPIO4, catodo → GND (fijo)") — derivada
+// del IR (`Componente.pines`) y del catálogo (`Terminal.destinoFijo` para los rieles
+// fijos), nunca de una tabla de pines hardcodeada.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+function destinoLegible(destinoFijo: string | { readonly externo: string }): string {
+  return typeof destinoFijo === "string" ? destinoFijo : destinoFijo.externo
+}
+
+function descripcionDeUnTerminal(idTerminal: string, catalogoComponente: ComponenteCatalogo | undefined, pinAsignado: string | null): string {
+  const terminal = catalogoComponente?.terminales.find((t) => t.id === idTerminal)
+  if (terminal && !terminal.asignable) {
+    // FX-6(b) (F-TRUTH-1, ronda de fixes). PFX-3 (RED-PHT-INVARIANTS H2): desde
+    // HD-W0-A (`c9fb79c`, `nucleo/operaciones.ts::aplicarAsignarPin`,
+    // `TERMINAL_NO_ASIGNABLE`) el Engine SÍ rechaza hoy un `AsignarPin` NUEVO sobre
+    // un terminal riel-fijo (ej. la pata de la Resistencia) — esta rama ya no cubre
+    // una operación válida de hoy. Sigue siendo necesaria para un documento
+    // HISTÓRICO, de ANTES de HD-W0-A, que ya tenga ese pin persistido: el loader no
+    // migra ni limpia ese dato (PERSISTIBLE ⇒ RECARGABLE, `pht-engine.test.mjs` A9),
+    // así que `descripcionPines` tiene que seguir diciendo la verdad sobre lo que el
+    // IR YA tiene, nunca ocultarlo detrás de "puente (sin destino fijo)".
+    if (pinAsignado !== null) return `${idTerminal} → ${pinAsignado} (asignado directo — fuera del patrón esperado para este terminal)`
+    return terminal.destinoFijo !== undefined ? `${idTerminal} → ${destinoLegible(terminal.destinoFijo)} (fijo)` : `${idTerminal} → puente (sin destino fijo)`
+  }
+  return `${idTerminal} → ${pinAsignado ?? "sin asignar"}`
+}
+
+/** Un componente con un `tipo` que el catálogo vigente ya no reconoce (no debería
+ * pasar para un `Proyecto` ya validado por el Engine, pero esta función es pura y no
+ * asume eso) describe sus terminales por las claves que YA tiene `Componente.pines`
+ * — nunca explota por catálogo ausente. */
+export function descripcionPinesDeComponente(componente: Componente, catalogo: Catalogo): string {
+  const catalogoComponente = catalogo.obtenerComponente(componente.tipo)
+  const idsTerminales = catalogoComponente ? catalogoComponente.terminales.map((t) => t.id) : Object.keys(componente.pines)
+  return idsTerminales.map((idTerminal) => descripcionDeUnTerminal(idTerminal, catalogoComponente, componente.pines[idTerminal] ?? null)).join(", ")
+}

@@ -6,10 +6,11 @@
 //
 // Reglas duras (BOARD-CONTRACT, PHASE_2_SLICE_1_DESIGN.md §2.6):
 // - NUNCA reimplementa una regla eléctrica: los GPIO ofrecidos salen ÚNICAMENTE de
-//   `asignarPin()` (`nucleo/catalogo.ts`), pin por pin — la MISMA función que usa el
-//   Engine, nunca una copia.
+//   `ComponentKnowledge.pinesPermitidos` (`conocimiento/conocimiento.ts`), que usa las
+//   MISMAS funciones del núcleo que el Engine (`asignarPin` + `evaluarRestriccionesPin`).
+//   La vista sólo agrega la restricción de representación (ver `gpiosCandidatosPara`).
 // - Los backend ids (el tag de Wokwi) son datos OPACOS de render, nunca identidad —
-//   se leen tal cual de `Placa.backends.wokwi.elemento`/`wokwi-render-datos.ts`.
+//   se leen tal cual del anexo de representación (`conocimiento/anexos/representacion.ts`).
 // - Los motivos se proyectan TAL CUAL de `validarProyecto()`/`derivarReadiness()` —
 //   la vista nunca inventa una causa ni reclasifica severidad.
 // - `circuito.ts` NO se importa (prohibido en Fase 1) — sólo se reusan tablas de
@@ -17,56 +18,53 @@
 // - `pinouts.json` NO es una fuente acá — no es un catálogo de placa (BOARD-CONTRACT
 //   §5).
 //
-// Límite conocido, heredado y NO resuelto por este módulo (informe ARCH-C §7.1,
-// diseño §2.6): `asignarPin()` filtra por `RegistroPin.capacidades`
-// (salidaDigital/entradaDigital/pwm/adc) — eso SÍ excluye los pines `soloEntrada`
-// (su `capacidades.salidaDigital` es `false`, `nucleo/placas.ts::crearPinEsp32`).
-// Pero `asignarPin()` NUNCA mira `RegistroPin.restricciones`
-// (flashReservado/strapping/uartUsb): ningún validador de Fase 1 consume ese campo
-// hoy (verificado: `rg restriccion -i` sobre `validar-tecnico.ts`/`catalogo.ts` da
-// cero resultados). Esta vista NO cierra ese gap por su cuenta — mostraría como
-// "disponible para el ánodo" un GPIO reservado a flash (6-11) o de arranque
-// (strapping: 0/2/12/15) si el catálogo lo acepta. Cerrarlo es una decisión de
-// producto sobre `nucleo/catalogo.ts`, no de este adaptador.
+// Component System Foundation #1 (RT-9/D8): el límite que antes se documentaba acá
+// (la vista ofrecía pines que `evaluarRestriccionesPin` marca bloqueantes, como
+// GPIO34–39 para el pulsador) quedó cerrado al derivar las opciones de
+// `ComponentKnowledge`. Los pines con un aviso NO bloqueante (strapping 2/12/15, UART
+// 1/3) se siguen ofreciendo: son válidos, el motivo se muestra al validar.
 
 import type { Proyecto, Componente, ComportamientoRegla } from "../nucleo/ir.ts"
 import type { Catalogo, Terminal, Requisito } from "../nucleo/catalogo.ts"
 import type { RegistroPin, Placa } from "../nucleo/placas.ts"
 import type { Motivo } from "../nucleo/motivos.ts"
-import { asignarPin } from "../nucleo/catalogo.ts"
+import { crearConocimiento, type ComponentKnowledge } from "../conocimiento/conocimiento.ts"
 import { validarProyecto, derivarReadiness } from "../nucleo/validar.ts"
-import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA } from "./wokwi-render-datos.ts"
-import { etiquetaDeTerminal } from "./etiquetas-terminales.ts"
+// Component System Foundation #1 (F5): datos de render y textos salen de los ANEXOS de
+// `conocimiento/` (representación, pedagogía es-AR), no del núcleo semántico.
+import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
+import { etiquetaDeTerminal, nombreDeComponente } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
 import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, FraseReglaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista } from "./modelo-vista.ts"
 
 /**
- * Candidatos de GPIO para UN terminal — consulta `asignarPin()` (`nucleo/catalogo.ts`)
- * pin por pin sobre TODOS los pines de la placa vigente. Nunca reimplementa la regla:
- * un pin queda afuera si y sólo si `asignarPin(terminal, pin) !== null` (rechazo
- * técnico), exactamente el mismo criterio que usa `validarTecnico()` para diagnosticar
- * `CAPACIDAD_PIN_INCOMPATIBLE` post-commit.
+ * Candidatos de GPIO para UN terminal de UN tipo de componente.
  *
- * Revisión post red-team (Hallazgo B1, MAJOR, P2-RED-B/INFORME.md): ADEMÁS, un pin
- * sólo se ofrece si `nombreWokwiDePin()` le da un nombre REAL (no `null`) — la
- * intersección entre "el Engine/catálogo lo acepta" y "el renderer lo puede
- * dibujar". Es una restricción de PRESENTACIÓN (no se puede dibujar un cable a un
- * pin que no existe en la pieza Wokwi), nunca una regla eléctrica nueva: el gap de
- * `asignarPin()` no filtrando `RegistroPin.restricciones` sigue siendo el mismo,
- * documentado y NO cerrado acá (`DECISIONS.md`, backlog de Fase 1).
+ * Component System Foundation #1 (RT-9/D8): la vista ya NO decide qué GPIO son válidos.
+ * El conjunto sale ÚNICAMENTE de `ComponentKnowledge.pinesPermitidos` (eléctricamente
+ * válido y lógicamente asignable para ESE uso: compatible con `asignarPin` y sin motivo
+ * bloqueante de `evaluarRestriccionesPin` — p. ej. GPIO34–39 para el pulsador, sin
+ * pull-up interno). Esta función sólo le aplica una restricción EXPLÍCITA de
+ * REPRESENTACIÓN: `nombreWokwiDePin()` tiene que dar un pin real de la pieza
+ * (`representableByCurrentRenderer`). Un GPIO válido que el renderer no puede dibujar
+ * (GPIO0) queda afuera de las opciones de la vista, pero sigue siendo válido para el
+ * conocimiento y para el Engine: nunca se lo redefine como inválido.
  *
- * `placaId === null` (proyecto sin placa elegida) da SIEMPRE `[]` — no hay pines que
- * ofrecer todavía (mismo criterio que `detectarIncompleto`, `nucleo/validar.ts`).
+ * El orden es una decisión de presentación: el de la placa (`placa.pines`), igual que
+ * antes. El Engine sigue siendo la defensa final (`AsignarPin` + `validarProyecto`).
+ *
+ * `placaId === null` (proyecto sin placa elegida) da SIEMPRE `[]`.
  */
-export function gpiosCandidatosPara(catalogo: Catalogo, placaId: string | null, terminal: Terminal): readonly OpcionGpioVista[] {
+export function gpiosCandidatosPara(conocimiento: ComponentKnowledge, placaId: string | null, tipo: string, terminalId: string): readonly OpcionGpioVista[] {
   if (placaId === null) return []
-  const pines = catalogo.pinesDePlaca(placaId)
+  const pines = conocimiento.placa(placaId)?.pines
   if (!pines) return []
+  const permitidos = new Set(conocimiento.pinesPermitidos(placaId, tipo, terminalId).map((p) => p.id))
   const candidatos: OpcionGpioVista[] = []
   for (const pin of pines) {
-    if (asignarPin(terminal, pin) !== null) continue // rechazo técnico del catálogo
+    if (!permitidos.has(pin.id)) continue // autoridad electrónica: ComponentKnowledge
     const nombreWokwi = nombreWokwiDePin(pin)
-    if (nombreWokwi === null) continue // sin pin fisico real en el renderer — no se puede ofrecer
+    if (nombreWokwi === null) continue // límite de representación, no eléctrico
     candidatos.push({ pinSemantico: pin.id, nombreWokwi })
   }
   return candidatos
@@ -109,7 +107,7 @@ function resolverNombreDeComponente(proyecto: Proyecto, catalogo: Catalogo): Res
   return (idOTipo) => {
     const instancia = proyecto.componentes.find((c) => c.id === idOTipo)
     const tipo = instancia ? instancia.tipo : idOTipo
-    return catalogo.obtenerComponente(tipo)?.nombreVisible ?? idOTipo
+    return catalogo.obtenerComponente(tipo) ? (nombreDeComponente(tipo) ?? idOTipo) : idOTipo
   }
 }
 
@@ -145,8 +143,8 @@ function resolverDestinoFijo(terminal: Terminal): string | undefined {
  * (`nombreWokwiPieza`, que para el pulsador es literalmente `"1.l"`/`"2.l"`, el pin
  * INTERNO del custom element, no un texto para un estudiante). */
 function resolverTerminal(componente: Componente, terminal: Terminal, pinesDePlaca: readonly RegistroPin[], nombreWokwiPieza: string | null): TerminalVista {
-  const etiqueta = etiquetaDeTerminal(terminal.id)
-  if (terminal.electrica === "riel-fijo") {
+  const etiqueta = etiquetaDeTerminal(terminal.id, componente.tipo)
+  if (!terminal.asignable) {
     const destino = resolverDestinoFijo(terminal)
     if (destino === undefined) return { estado: "puente", nombreWokwiPieza, etiqueta }
     return { estado: "rielFijo", destino, nombreWokwiPieza, etiqueta }
@@ -274,7 +272,9 @@ function resolverFusionesSerie(proyecto: Proyecto, catalogo: Catalogo, terminale
         terminalConectado: extremoR.terminal,
         terminalLibre: terminalLibre.id,
         conexionId: conexion.id,
-        ohmios: req.spec.ohmios,
+        // D-03/§4 del modelo normativo: el valor del requisito es una `Cantidad`; acá
+        // sólo viaja el número si la unidad es ohm (si no, `undefined`: no se adivina).
+        ohmios: req.spec.valor?.unidad === "ohm" ? req.spec.valor.valor : undefined,
       })
     }
   }
@@ -329,7 +329,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   const placaId = proyecto.placa
   const placaCatalogo: Placa | undefined = placaId !== null ? catalogo.placas.find((p) => p.id === placaId) : undefined
   const placa: PlacaVista | null = placaCatalogo
-    ? { id: placaCatalogo.id, elementoWokwi: placaCatalogo.backends.wokwi.elemento, escala: ESCALA_WOKWI_POR_PLACA[placaCatalogo.id] ?? 1 }
+    ? { id: placaCatalogo.id, elementoWokwi: ELEMENTO_WOKWI_POR_PLACA[placaCatalogo.id] ?? "", escala: ESCALA_WOKWI_POR_PLACA[placaCatalogo.id] ?? 1 }
     : null
   const pinesDePlaca: readonly RegistroPin[] = (placaId !== null ? catalogo.pinesDePlaca(placaId) : undefined) ?? []
 
@@ -351,7 +351,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
         terminales[terminal.id] = resolverTerminal(componente, terminal, pinesDePlaca, nombreWokwiPieza)
       }
     }
-    const nombreBase = compCatalogo ? compCatalogo.nombreVisible : componente.tipo // fail-closed: nunca inventa un nombre
+    const nombreBase = compCatalogo ? (nombreDeComponente(componente.tipo) ?? componente.tipo) : componente.tipo // fail-closed: nunca inventa un nombre
     const ocurrencia = (ocurrenciasPorTipo.get(componente.tipo) ?? 0) + 1
     ocurrenciasPorTipo.set(componente.tipo, ocurrencia)
     const nombre = ocurrencia === 1 ? nombreBase : `${nombreBase} ${ocurrencia}`
@@ -427,13 +427,14 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   // cuáles) — un terminal riel-fijo/puente nunca ofrece un selector, no tiene pin que
   // elegir.
   const gpiosDisponibles: Record<string, Record<string, readonly OpcionGpioVista[]>> = {}
+  const conocimiento = crearConocimiento(catalogo)
   for (const componente of proyecto.componentes) {
     const compCatalogo = catalogo.obtenerComponente(componente.tipo)
     if (!compCatalogo) continue
     const porTerminal: Record<string, readonly OpcionGpioVista[]> = {}
     for (const terminal of compCatalogo.terminales) {
-      if (terminal.electrica === "riel-fijo") continue
-      porTerminal[terminal.id] = gpiosCandidatosPara(catalogo, placaId, terminal)
+      if (!terminal.asignable) continue
+      porTerminal[terminal.id] = gpiosCandidatosPara(conocimiento, placaId, componente.tipo, terminal.id)
     }
     gpiosDisponibles[componente.id] = porTerminal
   }

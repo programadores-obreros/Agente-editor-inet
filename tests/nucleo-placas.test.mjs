@@ -28,6 +28,9 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 // El módulo real de Gate 1, TDD: en RED todavía no existe / no exporta esto.
 const placas = await import(join(REPO, "opencode/nucleo/placas.ts"))
+// Component System Foundation #1 (D-09): el elemento Wokwi de la placa salió del núcleo
+// semántico (`Placa.backends.wokwi`) al anexo de representación, su único dueño.
+const { ELEMENTO_WOKWI_POR_PLACA } = await import(join(REPO, "opencode/conocimiento/anexos/representacion.ts"))
 
 const {
   REGISTRO_PLACAS,
@@ -75,9 +78,9 @@ test("board-id-estable: id semántico único y distinto de los ids de backend", 
   assert.match(e.id, /^[a-z0-9-]+$/, "id debe ser kebab-case ASCII")
   assert.match(u.id, /^[a-z0-9-]+$/, "id debe ser kebab-case ASCII")
   assert.notEqual(e.id, e.backends.platformio.board, "id no puede ser el board de PlatformIO")
-  assert.notEqual(e.id, e.backends.wokwi.elemento, "id no puede ser el elemento de Wokwi")
+  assert.notEqual(e.id, ELEMENTO_WOKWI_POR_PLACA[e.id], "id no puede ser el elemento de Wokwi")
   assert.notEqual(u.id, u.backends.platformio.board, "id no puede ser el board de PlatformIO")
-  assert.notEqual(u.id, u.backends.wokwi.elemento, "id no puede ser el elemento de Wokwi")
+  assert.notEqual(u.id, ELEMENTO_WOKWI_POR_PLACA[u.id], "id no puede ser el elemento de Wokwi")
 })
 
 // ─────────────────────────────────── 2. alias-resuelve-a-id ───────────────────────────
@@ -109,7 +112,7 @@ test("platformio-id-no-es-semantico: 'esp32dev' sin declarar como alias da PLACA
 })
 
 test("wokwi-id-no-es-semantico: 'wokwi-esp32-devkit-v1' sin declarar como alias da PLACA_DESCONOCIDA", () => {
-  assert.equal(esp32().backends.wokwi.elemento, "wokwi-esp32-devkit-v1")
+  assert.equal(ELEMENTO_WOKWI_POR_PLACA[esp32().id], "wokwi-esp32-devkit-v1")
   assert.ok(
     !esp32().alias.some((a) => normalizarAlias(a) === normalizarAlias("wokwi-esp32-devkit-v1")),
     "el elemento wokwi no debe estar declarado como alias en el registro por defecto",

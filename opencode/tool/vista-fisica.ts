@@ -16,6 +16,7 @@ import { tool } from "@opencode-ai/plugin"
 import type { ServicioDeProyecto, Snapshot } from "../nucleo/composicion-raiz.ts"
 import type { ServidorProyecto } from "../servidor/servidor-proyecto.ts"
 import type { Catalogo } from "../nucleo/catalogo.ts"
+import type { ComponentKnowledge } from "../conocimiento/conocimiento.ts"
 import type { ModeloDeVista } from "../vista-fisica/modelo-vista.ts"
 
 // Fase 2, Slice 2 (§3.1 del diseño, PHASE_2_SLICE_2_DESIGN.md, "Módulo compartido"):
@@ -59,7 +60,7 @@ function claveDeServidor(directorioDatos: string, idProyecto: string): string {
 
 type ModuloServicioConVista = typeof import("../servidor/servicio-con-vista.ts")
 type ModuloServidorProyecto = typeof import("../servidor/servidor-proyecto.ts")
-type ModuloVistaReal = typeof import("../vista-fisica/vista-real.ts")
+type ModuloConocimientoActivo = typeof import("../conocimiento/conocimiento-activo.ts")
 
 /**
  * Carga PEREZOSA de `../servidor/*` (D13, PHASE_2_SLICE_1_HARDENING_DESIGN.md,
@@ -88,29 +89,29 @@ type ModuloVistaReal = typeof import("../vista-fisica/vista-real.ts")
 async function cargarServidor(): Promise<{
   obtenerServicioDeProyectoConVista: ModuloServicioConVista["obtenerServicioDeProyectoConVista"]
   iniciarServidor: ModuloServidorProyecto["iniciarServidor"]
-  /** Phase 3, Wave 0 (W-W0-TOOL, F-05): el MISMO catálogo real que ya usa
-   * `tool/proyecto-fisico.ts` — para nombrar placa/componentes en el resumen del
-   * snapshot (`resumenDelProyecto`, más abajo), sin construir una segunda instancia. */
-  catalogoReal: ModuloVistaReal["catalogoReal"]
+  /** Component System Foundation #1 (F6): el ComponentKnowledge del runtime (MISMA
+   * instancia de catálogo que la raíz de composición) — para nombrar placa/componentes
+   * en el resumen del snapshot. Ya no se toma de la vista (`vista-real`). */
+  conocimiento: ModuloConocimientoActivo["CONOCIMIENTO_ACTIVO"]
 }> {
   let modServicio: ModuloServicioConVista
   let modServidor: ModuloServidorProyecto
-  let modVistaReal: ModuloVistaReal
+  let modConocimiento: ModuloConocimientoActivo
   try {
-    ;[modServicio, modServidor, modVistaReal] = await Promise.all([
+    ;[modServicio, modServidor, modConocimiento] = await Promise.all([
       import("../servidor/servicio-con-vista.ts"),
       import("../servidor/servidor-proyecto.ts"),
-      import("../vista-fisica/vista-real.ts"),
+      import("../conocimiento/conocimiento-activo.ts"),
     ])
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
     throw new Error(
-      `Falta la carpeta "servidor" de Tecnia Bot (no se pudo cargar ../servidor/ junto a esta tool: ${detalle}). ` +
+      `Falta una carpeta de Tecnia Bot ("servidor" o "conocimiento") junto a esta tool (no se pudo cargar: ${detalle}). ` +
         `Esto pasa con una instalación incompleta o interrumpida a mitad de una actualización. Reinstalá ` +
         `Tecnia Bot (o corré "Reparar Tecnia Bot" desde el menú inicio en Windows) para arreglarlo.`,
     )
   }
-  return { obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista, iniciarServidor: modServidor.iniciarServidor, catalogoReal: modVistaReal.catalogoReal }
+  return { obtenerServicioDeProyectoConVista: modServicio.obtenerServicioDeProyectoConVista, iniciarServidor: modServidor.iniciarServidor, conocimiento: modConocimiento.CONOCIMIENTO_ACTIVO }
 }
 
 /**
@@ -209,20 +210,20 @@ export function mensajeYaAbierta(url: string): string {
  * bot afirmó que había piezas — la tool no le informa al agente que está vacío"):
  * resumen en texto llano del snapshot vigente, derivado del `Proyecto` (IR) y del
  * catálogo — nunca de una tabla hardcodeada ni de lo que el agente "cree" que armó.
- * `ModeloDeVista.placa`/`.componentes` (modelo-vista.ts) no traen `nombreVisible`
- * (sólo ids/datos de render Wokwi) — por eso hace falta el `Catalogo` acá, el MISMO
- * que ya usa el resto de `vista-fisica/` (`vista-real.ts::catalogoReal`).
+ * `ModeloDeVista.placa`/`.componentes` (modelo-vista.ts) no traen nombres legibles
+ * (sólo ids/datos de render Wokwi) — por eso hace falta el ComponentKnowledge acá
+ * (F6: catálogo + nombres del anexo de pedagogía, nunca a través de la vista).
  */
-export function resumenDelProyecto(snapshot: SnapshotConVista, catalogo: Catalogo): string {
+export function resumenDelProyecto(snapshot: SnapshotConVista, conocimiento: Pick<ComponentKnowledge, "catalogo" | "nombre">): string {
+  const catalogo: Catalogo = conocimiento.catalogo
   const proyecto = snapshot.proyecto
   if (!proyecto.placa && proyecto.componentes.length === 0) {
     return "Abrí la vista, pero el proyecto está VACÍO: todavía no tiene placa ni componentes."
   }
 
-  const nombrePlaca = proyecto.placa ? (catalogo.placas.find((placa) => placa.id === proyecto.placa)?.nombreVisible ?? proyecto.placa) : "sin placa"
+  const nombrePlaca = proyecto.placa ? ((catalogo.tienePlaca(proyecto.placa) ? conocimiento.nombre("placa", proyecto.placa) : undefined) ?? proyecto.placa) : "sin placa"
   const piezas = proyecto.componentes.map((componente) => {
-    const catalogoComponente = catalogo.obtenerComponente(componente.tipo)
-    const nombre = catalogoComponente?.nombreVisible ?? componente.tipo
+    const nombre = (catalogo.obtenerComponente(componente.tipo) ? conocimiento.nombre("componente", componente.tipo) : undefined) ?? componente.tipo
     const asignados = Object.entries(componente.pines)
       .filter((entrada): entrada is [string, string] => entrada[1] !== null)
       .map(([terminal, pin]) => `${terminal} en ${pin}`)
@@ -288,8 +289,8 @@ La respuesta siempre incluye un resumen del proyecto (vacío, o placa/piezas/pin
     // abriendo la vista igual, nunca rompe el flujo principal por un resumen no crítico.
     let resumen: string
     try {
-      const { catalogoReal } = await cargarServidor()
-      resumen = resumenDelProyecto(servicio.snapshot() as SnapshotConVista, catalogoReal())
+      const { conocimiento } = await cargarServidor()
+      resumen = resumenDelProyecto(servicio.snapshot() as SnapshotConVista, conocimiento)
     } catch {
       resumen = "(no pude armar un resumen del proyecto)"
     }
