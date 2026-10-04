@@ -435,6 +435,77 @@ test("monitor en macOS con puerto malicioso: RECHAZA y no lanza osascript ni nad
   }
 })
 
+// ── monitor en Windows: whitelist del puerto antes de llegar a cmd.exe ────────
+//
+// La rama de Windows lanza `cmd /c start ... cmd /k pio ... --port <puerto>`.
+// Aunque se arme como array para `Bun.spawn`, el que recibe la linea es
+// `cmd.exe`, y cmd.exe vuelve a leer su linea de comandos: `&`, `|`, `^`, `<`,
+// `>` son operadores para el. Hasta este test el puerto llegaba sin validar
+// (la whitelist vivia solo en la rama de macOS).
+//
+// Historia honesta (ver Engineering Baseline, DR-01): la inyeccion NO se
+// reprodujo en una VM — quedo como hallazgo PLAUSIBLE por lectura de codigo y
+// se endurecio de forma preventiva. Este test fija el CONTRATO, no un exploit:
+// en win32 sólo pasa `COM<n>`, y lo demas se rechaza ANTES de cualquier spawn.
+// Ningun valor de aca se ejecuta: `Bun.spawn` es el falso de arriba.
+
+function comoWin32() {
+  return Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+}
+
+test("monitor en Windows con puerto valido: lanza cmd /c start con el MISMO argv de antes del cambio", async () => {
+  const original = comoWin32()
+  try {
+    escenario()
+    const r = await mod.default.execute({ action: "monitor", port: "COM3", baud: 115200 }, ctx)
+    assert.match(r, /Abri una ventana nueva/, "un puerto valido tiene que abrir el monitor, no rechazarlo")
+
+    const lanzado = spawns.find((s) => s.cmd[0] === "cmd")
+    assert.ok(lanzado, `no lanzo cmd: ${lanzados().join(" | ")}`)
+    // El argv completo, igual al que armaba el codigo antes del cambio: el fix
+    // sólo puede RECHAZAR, nunca cambiar lo que se ejecuta con un puerto valido.
+    const pioPath = lanzado.cmd[6]
+    assert.deepEqual(lanzado.cmd, [
+      "cmd", "/c", "start", "Monitor Serial - COM3", "cmd", "/k",
+      pioPath, "device", "monitor", "--port", "COM3", "--baud", "115200",
+    ])
+  } finally {
+    Object.defineProperty(process, "platform", original)
+  }
+})
+
+test("monitor en Windows con puerto invalido: RECHAZA antes de cualquier spawn y no lanza cmd", async () => {
+  // Metacaracteres de cmd.exe pegados a un puerto real, y formas que no son
+  // `COM<n>`. El marcador es texto inerte: nunca llega a ejecutarse.
+  const invalidos = [
+    "COM3&echo TECNIA_MARCADOR",
+    "COM3|echo TECNIA_MARCADOR",
+    "COM3^&echo TECNIA_MARCADOR",
+    "COM3>TECNIA_MARCADOR",
+    "COM3 TECNIA_MARCADOR",
+    '"COM3"',
+    "/dev/ttyUSB0",
+    "cualquier cosa",
+  ]
+  const original = comoWin32()
+  try {
+    for (const puerto of invalidos) {
+      spawns = []
+      escenario()
+      const r = await mod.default.execute({ action: "monitor", port: puerto }, ctx)
+      assert.match(r, /No reconozco ese puerto/, `deberia rechazar: ${JSON.stringify(puerto)}`)
+      assert.match(r, /COM3/, "tiene que decir que forma se esperaba")
+      assert.equal(indice("cmd /c"), -1, `abrio cmd con ${JSON.stringify(puerto)}: ${lanzados().join(" | ")}`)
+      // El unico spawn esperado es el pre-chequeo `pio --version` de execute():
+      // nada se lanzo con el puerto invalido adentro.
+      assert.equal(spawns.length, 1, `se lanzo algo de mas con ${JSON.stringify(puerto)}: ${lanzados().join(" | ")}`)
+      assert.ok(!lanzados().some((l) => l.includes("TECNIA_MARCADOR")), "el puerto invalido no debe llegar a ningun spawn")
+    }
+  } finally {
+    Object.defineProperty(process, "platform", original)
+  }
+})
+
 // ── recortarSalida (pura) ────────────────────────────────────────────────────
 
 test("recortarSalida: lo corto pasa entero, con o sin CRLF", () => {
