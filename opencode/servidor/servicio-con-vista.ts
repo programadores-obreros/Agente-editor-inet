@@ -30,7 +30,8 @@
 // (los tests, que fabrican fixtures aislados a propósito, quedan exceptuados, mismo
 // criterio que scripts/guardia-composicion-raiz.mjs para `crearAlmacen`).
 
-import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeSync } from "node:fs"
+import { closeSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs"
+import { randomBytes } from "node:crypto"
 import { hostname } from "node:os"
 import { join, resolve } from "node:path"
 import type { OpcionesServicioDeProyecto, ServicioDeProyecto } from "../nucleo/composicion-raiz.ts"
@@ -84,12 +85,15 @@ function directorioCanonico(directorio: string): string {
 // `Almacen` sobre el mismo directorio a propósito (aislamiento de fixtures) y no se
 // pueden romper; este candado sólo protege el CAMINO DE PRODUCCIÓN (este módulo).
 //
-// Por qué `fs.openSync(ruta, "wx")` y no el patrón de `almacen.ts`: `"wx"` es
-// `O_CREAT | O_EXCL | O_WRONLY` — el sistema operativo garantiza que la creación es
-// ATÓMICA (si el archivo ya existe, `open()` falla con `EEXIST`, sin ninguna ventana
-// entre "leer si existe" y "escribir"), a diferencia del CAS de `almacen.ts::guardar`
-// (leer disco, comparar revisión, RECIÉN DESPUÉS escribir — ahí sí hay una ventana,
-// documentada como el límite de E3-07 que H5 reabrió con evidencia ejecutable).
+// Por qué una creación EXCLUSIVA y no el patrón de `almacen.ts`: el sistema operativo
+// garantiza que crear-si-no-existe es ATÓMICO (si el archivo ya existe, falla con
+// `EEXIST`, sin ninguna ventana entre "leer si existe" y "escribir"), a diferencia del
+// CAS de `almacen.ts::guardar` (leer disco, comparar revisión, RECIÉN DESPUÉS escribir
+// — ahí sí hay una ventana, documentada como el límite de E3-07 que H5 reabrió con
+// evidencia ejecutable). DR-53: la creación exclusiva es un `link()` desde un temporal
+// ya escrito (ver `publicarCandado`), así el candado nunca se ve vacío; antes era
+// `openSync(ruta, "wx")` + escritura, y un competidor que leía el archivo vacío en el
+// medio lo pisaba. Un candado ilegible ya no se recupera: se rechaza.
 //
 // Límites documentados, NO cerrados en esta ronda:
 // - Reuso de PID: si el proceso dueño original murió y el sistema operativo reasignó
@@ -146,22 +150,58 @@ function estaVivo(pid: number): boolean {
   }
 }
 
+/** `null` = el candado existe pero no se puede interpretar (vacío, cortado, JSON sin
+ * los campos del dueño, o ilegible). Eso NO es "libre": puede ser un dueño vivo a
+ * mitad de publicar (DR-53) — quien llama decide, y nunca lo trata como permiso. */
 function leerCandado(rutaLock: string): ContenidoCandado | null {
   try {
     const contenido: unknown = JSON.parse(readFileSync(rutaLock, "utf8"))
     if (contenido !== null && typeof contenido === "object" && "pid" in contenido && "hostname" in contenido) return contenido as ContenidoCandado
     return null
   } catch {
-    return null // no legible/no JSON -> tratado como "corrupto", se recupera (mismo criterio que un pid muerto)
+    return null
   }
 }
 
-function escribirCandado(rutaLock: string, contenido: ContenidoCandado, modo: "wx" | "w"): void {
-  const fd = openSync(rutaLock, modo)
+// Errores de `link()` que significan "este filesystem no tiene hard links" (FAT/exFAT,
+// algunos montajes de red) — ahí, y SÓLO ahí, se cae al camino `"wx"`.
+const SIN_HARD_LINKS = new Set(["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EXDEV", "EMLINK"])
+
+/** Escribe el contenido COMPLETO en un temporal único del mismo directorio y recién
+ * después lo hace visible bajo `rutaLock`. Nadie puede ver jamás el candado vacío o
+ * a medias (DR-53).
+ *   - "crear": `link(temporal, rutaLock)` — crea SÓLO si no existe (`EEXIST` si no),
+ *     igual que `"wx"`, pero ya con el contenido adentro. Ese `link` es el punto en el
+ *     que el candado pasa a tener dueño: el sistema operativo garantiza un solo
+ *     ganador. Sin hard links se usa `"wx"` + escritura: el archivo puede quedar
+ *     vacío un instante, y por eso `tomarCandado` nunca pisa un candado ilegible.
+ *   - "reemplazar" (recuperar un candado de un dueño muerto): `rename(temporal,
+ *     rutaLock)` — reemplazo atómico, nunca hay una ventana con el archivo vacío. */
+function publicarCandado(rutaLock: string, contenido: ContenidoCandado, modo: "crear" | "reemplazar"): void {
+  const temporal = `${rutaLock}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`
+  writeFileSync(temporal, JSON.stringify(contenido), { flag: "wx" })
   try {
-    writeSync(fd, JSON.stringify(contenido))
+    if (modo === "reemplazar") {
+      renameSync(temporal, rutaLock)
+      return
+    }
+    try {
+      linkSync(temporal, rutaLock)
+    } catch (error) {
+      if (!SIN_HARD_LINKS.has((error as NodeJS.ErrnoException).code ?? "")) throw error
+      const fd = openSync(rutaLock, "wx")
+      try {
+        writeSync(fd, JSON.stringify(contenido))
+      } finally {
+        closeSync(fd)
+      }
+    }
   } finally {
-    closeSync(fd)
+    try {
+      unlinkSync(temporal)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error // ENOENT: el rename ya lo movió
+    }
   }
 }
 
@@ -185,19 +225,50 @@ function tomarCandado(directorio: string, idProyecto: string): { rutaLock: strin
   const rutaLock = join(directorio, `${idProyecto}.lock`)
   const contenido: ContenidoCandado = { pid: process.pid, hostname: hostname(), creado: new Date().toISOString() }
   try {
-    escribirCandado(rutaLock, contenido, "wx")
+    publicarCandado(rutaLock, contenido, "crear")
     return { rutaLock, contenido }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
     const existente = leerCandado(rutaLock)
-    if (existente && existente.hostname === contenido.hostname && estaVivo(existente.pid)) {
+    if (!existente) {
+      // DR-53: existe pero no se puede leer. NO prueba que esté libre: puede ser otro
+      // proceso a mitad de publicarlo. Pisarlo era exactamente el doble dueño. Se
+      // rechaza y el archivo queda intacto.
+      throw new Error(
+        `servicio-con-vista: el proyecto "${idProyecto}" tiene un candado que no se puede leer (${rutaLock}) — puede estar abriéndolo otro proceso. Probá de nuevo; si ningún otro proceso lo tiene abierto, borrá ese archivo a mano.`,
+      )
+    }
+    if (existente.hostname === contenido.hostname && estaVivo(existente.pid)) {
       throw new Error(
         `servicio-con-vista: el proyecto "${idProyecto}" en "${directorio}" ya está abierto en otro proceso (pid ${existente.pid}) — cerralo ahí antes de abrirlo acá.`,
       )
     }
-    // Dueño anterior muerto (o candado corrupto/no legible) — se recupera: el
-    // reemplazo queda registrado en el propio archivo (nuevo pid/hostname/creado).
-    escribirCandado(rutaLock, contenido, "w")
+    // Dueño anterior muerto — se recupera. DR-54: el `rename` de "reemplazar" es atómico
+    // pero NO condicional; si dos procesos leían el mismo candado vencido, el segundo
+    // pisaba al primero, que ya era dueño vivo. Por eso sólo recupera quien gana el
+    // RECLAMO `<candado>.recuperando` (creación exclusiva, como el candado), y con el
+    // reclamo en mano reemplaza únicamente si el candado sigue siendo EXACTAMENTE el
+    // vencido que inspeccionó. Nadie más reemplaza mientras exista el reclamo.
+    const rutaReclamo = `${rutaLock}.recuperando`
+    try {
+      publicarCandado(rutaReclamo, contenido, "crear")
+    } catch (errorReclamo) {
+      if ((errorReclamo as NodeJS.ErrnoException).code !== "EEXIST") throw errorReclamo
+      throw new Error(
+        `servicio-con-vista: otro proceso está recuperando el candado del proyecto "${idProyecto}" (${rutaReclamo}). Probá de nuevo; si ningún otro proceso lo está abriendo, borrá ese archivo a mano.`,
+      )
+    }
+    try {
+      const actual = leerCandado(rutaLock)
+      if (!actual || actual.pid !== existente.pid || actual.hostname !== existente.hostname || actual.creado !== existente.creado) {
+        throw new Error(
+          `servicio-con-vista: el candado del proyecto "${idProyecto}" cambió mientras se recuperaba (${rutaLock}) — otro proceso lo tomó primero. Probá de nuevo.`,
+        )
+      }
+      publicarCandado(rutaLock, contenido, "reemplazar")
+    } finally {
+      liberarCandadoSiPropio(rutaReclamo, contenido)
+    }
     return { rutaLock, contenido }
   }
 }
