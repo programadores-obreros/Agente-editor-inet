@@ -36,16 +36,32 @@ const HIJO = join(TESTS_DIR, "phase2-candado-proceso-hijo.mjs")
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 
 /** Lanza un hijo real y lo lleva hasta "LISTO" (módulo ya importado) — recién
- * después de esto el orquestador dispara "ABRIR". Devuelve el proceso más una
- * promesa del resultado (la línea JSON post-"ABRIR"). */
+ * después de esto el orquestador dispara "ABRIR". Devuelve el proceso, una promesa
+ * del resultado (la línea JSON post-"ABRIR") y una promesa del CIERRE del proceso.
+ *
+ * G-10 — POR QUÉ EL CIERRE SE ESCUCHA ACÁ, DESDE EL SPAWN. Antes cada test agregaba
+ * `proc.on("close")` al final, después de mandar CERRAR. Si el hijo ya había cerrado
+ * (el perdedor sale apenas informa), ese evento no vuelve a dispararse y el test se
+ * quedaba esperando para siempre: se vio colgado ~29 min bajo carga. Y si un hijo se
+ * cae antes de informar, el test tiene que FALLAR con el motivo, no colgarse: por eso
+ * el cierre temprano rechaza las promesas pendientes. */
 function lanzarHijoHastaListo(directorio, idProyecto, etiqueta) {
+  const proc = spawn(process.execPath, [HIJO, directorio, idProyecto, etiqueta], { env: { ...process.env, REPO_OBJ: REPO }, stdio: ["pipe", "pipe", "inherit"] })
+  const cerrado = new Promise((resolve) => proc.on("close", (codigo, senal) => resolve({ codigo, senal })))
   return new Promise((resolveListo, reject) => {
-    const proc = spawn(process.execPath, [HIJO, directorio, idProyecto, etiqueta], { env: { ...process.env, REPO_OBJ: REPO }, stdio: ["pipe", "pipe", "inherit"] })
     let buffer = ""
     let lineasVistas = 0
     let resolverResultado
-    const resultado = new Promise((r) => {
-      resolverResultado = r
+    let rechazarResultado
+    const resultado = new Promise((resolve, rechazar) => {
+      resolverResultado = resolve
+      rechazarResultado = rechazar
+    })
+    resultado.catch(() => {}) // quien lo espera recibe igual el rechazo; esto sólo evita el "unhandled" mientras nadie lo espera todavía
+    cerrado.then(({ codigo, senal }) => {
+      const motivo = `el hijo "${etiqueta}" terminó (código ${codigo}, señal ${senal})`
+      if (lineasVistas < 1) reject(new Error(`${motivo} antes de anunciar LISTO`))
+      else if (lineasVistas < 2) rechazarResultado(new Error(`${motivo} antes de informar su resultado`))
     })
     proc.stdout.on("data", (d) => {
       buffer += d.toString()
@@ -57,7 +73,7 @@ function lanzarHijoHastaListo(directorio, idProyecto, etiqueta) {
         lineasVistas += 1
         if (lineasVistas === 1) {
           // "LISTO"
-          resolveListo({ proc, resultado })
+          resolveListo({ proc, resultado, cerrado })
         } else if (lineasVistas === 2) {
           resolverResultado(JSON.parse(linea))
         }
@@ -78,7 +94,7 @@ async function lanzarHijoUnaVez(directorio, idProyecto, etiqueta) {
   enviar(hijo.proc, "ABRIR")
   const resultado = await hijo.resultado
   if (resultado.abrio) enviar(hijo.proc, "CERRAR")
-  await new Promise((r) => hijo.proc.on("close", r))
+  await hijo.cerrado
   return resultado
 }
 
@@ -105,8 +121,15 @@ test("H5: dos procesos de SO reales sobre el MISMO directorio+idProyecto — el 
 
   // El que ganó sigue vivo sosteniendo el candado (esperando "CERRAR") — hay que
   // liberarlo para que el proceso termine limpio, sin importar cuál haya ganado.
-  for (const hijo of [hijoA, hijoB]) enviar(hijo.proc, "CERRAR")
-  await Promise.all([hijoA, hijoB].map((h) => new Promise((r) => h.proc.on("close", r))))
+  //
+  // G-10 — POR QUÉ SÓLO AL QUE ABRIÓ. Antes se mandaba CERRAR a LOS DOS. El perdedor
+  // no espera nada: sale apenas informa su resultado, así que escribirle a un stdin
+  // ya cerrado daba EPIPE (1 de cada ~40 corridas bajo carga). El protocolo del hijo
+  // dice que sólo el que abrió espera CERRAR, igual que `lanzarHijoUnaVez`. Si los dos
+  // abrieran (el bug que este test existe para atrapar), los dos reciben CERRAR, los
+  // dos cierran, y la aserción de "exactamente uno" de abajo falla igual.
+  for (const [hijo, resultado] of [[hijoA, r1], [hijoB, r2]]) if (resultado.abrio) enviar(hijo.proc, "CERRAR")
+  await Promise.all([hijoA.cerrado, hijoB.cerrado])
 
   assert.equal(abrieron.length, 1, `EXACTAMENTE uno de los dos procesos tiene que abrir el servicio — resultado: ${JSON.stringify([r1, r2])}`)
   assert.equal(fallaron.length, 1, "el otro tiene que fallar al abrir (nunca al commitear con un resultado ok:true silenciosamente perdido)")
@@ -238,5 +261,5 @@ test("H5: la tool (opencode/tool/vista-fisica.ts), con OTRO proceso dueño del c
   )
 
   enviar(hijo.proc, "CERRAR")
-  await new Promise((r) => hijo.proc.on("close", r))
+  await hijo.cerrado
 })
