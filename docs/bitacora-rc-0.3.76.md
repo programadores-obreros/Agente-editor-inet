@@ -1,5 +1,7 @@
 # Bitácora de la release candidate 0.3.76
 
+> **Documento histórico** (RC 0.3.76). Registro de esa prueba: no describe el estado actual del repo.
+
 Registro de lo que se probó, dónde, y qué falta. Se actualiza a medida que avanza la
 prueba de `docs/prueba-rc.md`. La regla que gobernó esta RC: **todo se reproduce y se
 arregla en la VM antes de tocar una máquina real.**

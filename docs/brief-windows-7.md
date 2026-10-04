@@ -1,5 +1,8 @@
 # Brief — Windows 7 y Tecnia Bot: qué se comunica, dónde y con qué palabras
 
+> **Documento histórico** (5 de septiembre de 2026, rama `feat/instalador-detecta-win7`).
+> Es una foto de ese momento: no describe el estado actual del repo.
+
 > Estado al 5 de septiembre de 2026 · rama `feat/instalador-detecta-win7`, sin publicar.
 > Este documento es la **única fuente de verdad** para comunicar el tema en el repo
 > y en la web. Los datos duros están verificados contra el código fuente de OpenCode

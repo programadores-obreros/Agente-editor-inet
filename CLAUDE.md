@@ -68,7 +68,7 @@ Mentiras típicas del instrumento, ya vistas en producción:
 | Lo que medí | Lo que estaba midiendo en realidad |
 |---|---|
 | `cmd \| tail; echo $?` | el exit code del `tail`, no el del comando |
-| `/^X$/.test("X\n")` | `$` matchea antes de un newline final en JS — no es Python |
+| `/^X$/.test("X\n")` | creí que `$` matchea antes de un newline final — eso es Python, no JS (en JS sin flag `m` da `false`) |
 | `Test-Path auth.json` | el archivo sigue existiendo: lo correcto es mirar si quedó el bloque `google` |
 
 Reglas concretas: exit codes sin pipe; nunca `sleep` a ciegas, esperar un centinela
@@ -77,7 +77,7 @@ assert mide el mundo, no el reporte del mundo.
 
 **Los tests se verifican por mutación**: rompé a propósito la línea que el test dice
 proteger y confirmá que se pone rojo. Si sigue verde, el test es un adorno (antecedente:
-seis tests huecos en v0.3.69, `CHANGELOG.md:216`). Varios archivos de `tests/` llevan en
+seis tests huecos en v0.3.69, `CHANGELOG.md` sección `[0.3.69]`). Varios archivos de `tests/` llevan en
 su encabezado la historia de cómo fallaron la primera vez. Eso es a propósito: **cuando
 arregles un test hueco, dejá escrito por qué era hueco**, o alguien lo va a "simplificar"
 de vuelta.

@@ -139,6 +139,9 @@ Docente hace doble clic en el acceso directo (Inno Setup [Icons])
 
 ## 4. Contrato de las 9 tools
 
+> **Sección histórica** (Fase 0, previa a `proyecto-fisico.ts`/`vista-fisica.ts`). Hoy hay
+> 11 archivos en `opencode/tool/`; esta tabla no describe el estado actual.
+
 | Tool | Archivo:líneas | Acción vía `args` | Efecto de lado observado | Estado |
 |---|---|---|---|---|
 | `memoria` | `memoria.ts` (~133L exec) | `accion: leer\|guardar` | fs: `tecnia-memoria.md` (escritura atómica) | archivo |

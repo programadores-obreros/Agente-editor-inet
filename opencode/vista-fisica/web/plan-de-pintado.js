@@ -72,7 +72,7 @@ export function planDePintado(modeloDeVista, opciones = {}) {
 
   for (const componente of modeloDeVista.componentes) {
     // Sin dato Wokwi para este tipo (gap documentado en `wokwi-render-datos.ts`: hoy
-    // sólo "led"/"pulsador" tienen tabla de render) — no se inventa un tag: se omite
+    // sólo "led"/"pulsador"/"resistencia" tienen tabla de render) — no se inventa un tag: se omite
     // la instrucción de creación para ese componente, nunca se dibuja con un tag falso.
     if (!componente.elementoWokwi) continue
     instrucciones.push({

@@ -1,5 +1,8 @@
 # Tecnia Bot — qué se construyó
 
+> **Documento histórico** (v0.3.75, 26 de agosto de 2026). Es una foto de ese momento:
+> no describe el estado actual del repo. Para el estado vigente, ver `README.md` y `CLAUDE.md`.
+
 > Estado al 26 de agosto de 2026 · v0.3.75 · Todos los números de este
 > documento están medidos sobre el repositorio, no estimados.
 

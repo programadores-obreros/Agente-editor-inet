@@ -2936,7 +2936,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
      * Ahora: no venir es el default; venir mal se RECHAZA con el mismo mensaje que
      * una placa que no sabemos dibujar.
      */
-    const PLACA_INVALIDA = " placa-invalida" // no existe en PLACAS: cae al rechazo de abajo
+    const PLACA_INVALIDA = "\u0000placa-invalida" // no existe en PLACAS: cae al rechazo de abajo
     // Un shield es la MISMA placa con los pines sacados a ternas (ver SHIELDS): se
     // resuelve a su base y se avisa, en vez de rebotar una placa que sí sabemos dibujar.
     const shieldPedido = typeof args.placa === "string" ? shieldDe(args.placa) : null

@@ -54,7 +54,7 @@ Tecnia Bot se apoya en herramientas abiertas y estándar. Nada es a medida cuand
 | **Big Pickle** (gratis, sin cuenta) | El modelo de lenguaje por defecto cuando no hay API key (`opencode/big-pickle`), servido por [OpenCode Zen](https://opencode.ai/zen). Gratis **por tiempo limitado**; mientras dure esa etapa, OpenCode puede usar las conversaciones para mejorar el modelo — ver [Instalación](#-instalación). |
 | **Google Gemini 3.5 Flash-Lite** (gratis) | El modelo del agente cuando hay una API key de Google (`google/gemini-3.5-flash-lite`), vía la free tier de [Google AI Studio](https://aistudio.google.com/apikey). Se fija la versión explícita (no un alias `-latest`): un alias cambia solo, sin quedar registrado en ningún commit (ver CHANGELOG 0.3.63). El modelo **no** vive en el frontmatter del agente sino en `opencode.json` → `agent.tecnia-bot.model`, que escribe el instalador: OpenCode mezcla los agentes `.md` **encima** del JSON, así que un `model:` en el `.md` pisaría la elección. Detalle en [docs/api-key-google.md](docs/api-key-google.md). |
 | **[Bun](https://bun.sh)** | Runtime de OpenCode: las herramientas del agente corren sobre Bun. |
-| **TypeScript** | Las 9 herramientas del agente (`platformio`, `circuito`, `imprimible`, `ficha`, `ayuda`, `actualizar`, `perfil`, `memoria`, `clave`). |
+| **TypeScript** | Las 11 herramientas del agente (`proyecto-fisico`, `vista-fisica`, `platformio`, `circuito`, `imprimible`, `ficha`, `ayuda`, `actualizar`, `perfil`, `memoria`, `clave`) y el Project Engine (`opencode/nucleo/`). |
 | **[PlatformIO](https://platformio.org)** | Compila y carga el firmware a la placa real. |
 | **Arduino UNO / ESP32** | El hardware objetivo del programa INET. |
 | **[Wokwi Elements](https://github.com/wokwi/wokwi-elements)** (MIT) | Las piezas realistas de los circuitos visuales. |
@@ -131,7 +131,7 @@ Probá:
 Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https://opencode.ai)** — no lo reemplaza ni lo modifica. Agrega:
 
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
-- **9 herramientas** — `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género), `memoria` (progreso de la compu) y `clave` (ver, probar contra Google y cambiar la API key de esta compu).
+- **11 herramientas** — `proyecto-fisico` (operaciones sobre el proyecto físico, vía el Project Engine), `vista-fisica` (abre la vista física viva en el navegador), `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género), `memoria` (progreso de la compu) y `clave` (ver, probar contra Google y cambiar la API key de esta compu).
 - **20 bases de conocimiento** (skills) — ver abajo.
 - **5 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/clave`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
@@ -149,14 +149,18 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 ```
 ├── opencode/               # La capa educativa (esto es lo que se instala)
 │   ├── agent/              # El agente: tecnia-bot.md
-│   ├── tool/               # 9 herramientas .ts (platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria, clave)
+│   ├── tool/               # 11 herramientas .ts (proyecto-fisico, vista-fisica, platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria, clave)
+│   ├── nucleo/             # Project Engine: IR, catálogo, placas, operaciones, motor transaccional, persistencia
+│   ├── vista-fisica/       # Proyección de la IR a la vista física y lógica (Blockly), y su cliente web
+│   ├── servidor/           # Servidor HTTP local (127.0.0.1) de la vista física
 │   ├── skills/             # 20 bases de conocimiento
-│   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
+│   ├── command/            # Comandos: /diagnostico, /reparar, /actualizar, /clave, /ayuda
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
 │   └── tecniabot-web/      # Biblioteca visual (piezas Wokwi), pinouts.json y el micro-sitio de /ayuda (sitio/)
 ├── install/                # bootstrap.{sh,ps1} (todo-en-uno) e install.{sh,ps1} (solo la capa)
 ├── installer/              # tecnia-bot.iss (Inno Setup) + branding del .exe
+├── scripts/                # Guardias y utilidades de desarrollo (manifest de fichas, seguridad, notas de release)
 ├── tests/                  # Smoke tests (Node puro, sin dependencias)
 ├── docs/                   # Guías de instalación + capturas
 ├── ejemplos/               # Sketches de ejemplo (blink, servo-teclado — UNO y ESP32)
