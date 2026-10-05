@@ -217,7 +217,8 @@ test("12: rechazo del Engine → el borrador QUEDA editable, la IR no cambió, s
     await h.controlador.cambiar({ reglaId: id, slot: "valor", valor: "18" })
     assert.equal(enviados.length, 2, "se intentó una vez")
     assert.equal(JSON.stringify(ctx.servicio.snapshot().proyecto), antes, "la IR no cambió")
-    assert.deepEqual(h.controlador.borrador().partes, { capacidad: "temperatura", comparador: "<", valor: "18" }, "el borrador sigue")
+    // el número queda atado a la unidad vigente cuando se escribió (fix post-auditoría: contexto del número)
+    assert.deepEqual(h.controlador.borrador().partes, { capacidad: "temperatura", comparador: "<", valor: "18", unidad: "celsius" }, "el borrador sigue")
     assert.equal(fraseDe(h).borrador.texto, TEXTO_SIN_ENVIAR)
   }))
 
@@ -235,7 +236,7 @@ test("13 (OD-4): stale → NUNCA se reintenta solo; el borrador se revalida y la
     h.descongelar() // llega el snapshot autoritativo
     await new Promise((r) => setTimeout(r, 5))
     assert.equal(h.enviados.length, 2, "nada se reenvió solo")
-    assert.deepEqual(h.controlador.borrador().partes, { capacidad: "temperatura", comparador: ">", valor: "30" }, "revalidado: todo sigue ofrecido")
+    assert.deepEqual(h.controlador.borrador().partes, { capacidad: "temperatura", comparador: ">", valor: "30", unidad: "celsius" }, "revalidado: todo sigue ofrecido (el número, con la unidad en que se escribió)")
     await h.controlador.cambiar({ reglaId: id, slot: "valor", valor: "31" }) // interacción explícita
     assert.equal(h.enviados.length, 3)
     assert.equal(regla0(ctx).cuando.umbral.valor, 31)
@@ -263,6 +264,67 @@ test("14: revalidación con un snapshot nuevo: se conserva sólo lo que sigue of
     assert.equal(h.controlador.opciones().avisoBorrador, AVISO_BORRADOR_DESCARTADO)
     assert.equal(regla0(ctx).cuando.umbral.valor, 10, "la condición del otro actor queda intacta")
   }))
+
+// ── Corrección post-auditoría (REJECT localizado en 2dbf802): un número del borrador NUNCA sobrevive a
+// la pérdida del contexto semántico (capacidad/unidad) en que se escribió. ──
+
+test("14b (regresión de auditoría): DHT22 → humedad → 70 → la entrada pasa a NTC → la revalidación descarta capacidad, unidad Y número; nada se materializa hasta re-escribir el número", () =>
+  cerrando(proyecto(), async (ctx) => {
+    const h = harness(ctx)
+    const id = await reglaConEntrada(ctx, h) // DHT22
+    await h.controlador.cambiar({ reglaId: id, slot: "capacidad", valor: "humedad" })
+    await h.controlador.cambiar({ reglaId: id, slot: "valor", valor: "70" })
+    assert.deepEqual(h.controlador.borrador().partes, { capacidad: "humedad", valor: "70", unidad: "porcentaje" })
+    const opsAntes = h.enviados.length
+    // cambio autoritativo externo: la entrada pasa a ser el NTC (no tiene humedad; su única capacidad es otra)
+    ok(ctx.servicio, "SetComportamiento", { comportamiento: { id, cuando: { sensor: "cmp-2" } } })
+    const revisado = h.controlador.borrador()
+    assert.equal(revisado.partes.capacidad, undefined, "humedad no permanece")
+    assert.equal(revisado.partes.unidad, undefined, "la unidad dependiente anterior no permanece")
+    assert.equal(revisado.partes.valor, undefined, "«70» no permanece")
+    assert.deepEqual(revisado.partes, {})
+    assert.equal(h.enviados.length, opsAntes, "la revalidación sola no envía nada")
+    // lo predeterminado para NTC (capacidad única, unidad canónica) se re-deriva, pero sin heredar el 70
+    assert.equal(selector(h, "capacidad").valorActual, "temperatura")
+    assert.equal(selector(h, "unidad").valorActual, "celsius")
+    assert.equal(selector(h, "valor").valorActual, "", "el número está vacío")
+    // una interacción explícita posterior NO materializa 70 °C
+    await h.controlador.cambiar({ reglaId: id, slot: "comparador", valor: ">" })
+    assert.equal(h.enviados.length, opsAntes, "sin operación: falta el número")
+    assert.deepEqual(regla0(ctx).cuando, { sensor: "cmp-2" }, "la IR no recibió ningún umbral")
+    // sólo si el estudiante vuelve a escribir 70, explícitamente, bajo el contexto nuevo
+    await h.controlador.cambiar({ reglaId: id, slot: "valor", valor: "70" })
+    assert.equal(h.enviados.length, opsAntes + 1)
+    assert.deepEqual(regla0(ctx).cuando, { sensor: "cmp-2", capacidad: "temperatura", comparador: ">", umbral: { valor: 70, unidad: "celsius", magnitud: "temperatura" } })
+  }))
+
+test("14c: si el contexto del número se CONSERVA (otra instancia con la misma capacidad), el número se conserva", () =>
+  cerrando(proyecto(), async (ctx) => {
+    const h = harness(ctx)
+    const id = await reglaConEntrada(ctx, h) // DHT22
+    await h.controlador.cambiar({ reglaId: id, slot: "capacidad", valor: "humedad" })
+    await h.controlador.cambiar({ reglaId: id, slot: "valor", valor: "70" })
+    ok(ctx.servicio, "SetComportamiento", { comportamiento: { id, cuando: { sensor: "cmp-3" } } }) // DHT22 2
+    assert.deepEqual(h.controlador.borrador().partes, { capacidad: "humedad", valor: "70", unidad: "porcentaje" })
+  }))
+
+test("14d (función pura, datos genéricos): un número escrito sobre un PREDETERMINADO también se descarta si ese predeterminado cambia", async () => {
+  const { aplicarEleccionAlGrupo, revalidarGrupo } = await import(join(REPO, "opencode/vista-fisica/web/plan-de-pintado.js"))
+  // Dos reglas sintéticas: la entrada sólo ofrece UNA capacidad (predeterminada), distinta en cada una.
+  const regla = (cap, unidad) => ({
+    id: "beh-1",
+    slots: [
+      { slot: "capacidad", grupoAtomico: "g", opciones: [{ valor: cap, etiqueta: cap, parche: {} }], predeterminado: cap },
+      { slot: "comparador", grupoAtomico: "g", opciones: [{ valor: ">", etiqueta: "mayor a", parche: {} }] },
+      { slot: "valor", grupoAtomico: "g", tipo: "numero", destino: ["cuando", "umbral", "valor"], opciones: [] },
+      { slot: "unidad", grupoAtomico: "g", opciones: [], opcionesPor: { depende: "capacidad", listas: { [cap]: { opciones: [{ valor: unidad, etiqueta: unidad, parche: {} }], predeterminado: unidad } } }, vaciaAlCambiar: ["valor"] },
+    ],
+  })
+  const conNumero = aplicarEleccionAlGrupo(regla("cap-a", "u-a"), {}, "valor", "70")
+  assert.deepEqual(conNumero, { valor: "70", capacidad: "cap-a", unidad: "u-a" }, "el número fija el contexto vigente (aunque fuera predeterminado)")
+  assert.deepEqual(revalidarGrupo(regla("cap-b", "u-b"), conNumero), {}, "otro predeterminado → el número no se hereda")
+  assert.deepEqual(revalidarGrupo(regla("cap-a", "u-a"), conNumero), conNumero, "mismo contexto → se conserva")
+})
 
 test("15: Descartar borra SÓLO el borrador; la regla incompleta persistida queda igual", () =>
   cerrando(proyecto(), async (ctx) => {

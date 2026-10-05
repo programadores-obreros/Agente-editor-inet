@@ -369,7 +369,32 @@ export function aplicarEleccionAlGrupo(regla, partes, slot, valor) {
     if (s.tipo !== "numero" && nuevas[s.slot] !== undefined && despues[s.slot] !== nuevas[s.slot]) delete nuevas[s.slot]
     if (s.vaciaAlCambiar && antes[s.slot] !== despues[s.slot]) for (const k of s.vaciaAlCambiar) delete nuevas[k]
   }
+  // Un número escrito queda atado al CONTEXTO en que se escribió: los slots cuyo cambio lo vacían
+  // (y aquéllos de los que dependen sus opciones) se fijan con el valor vigente, aunque fuera un
+  // predeterminado. Así la revalidación puede saber si ese contexto se perdió (ver `revalidarGrupo`).
+  const definicion = slotsDelGrupo(regla).find((s) => s.slot === slot)
+  if (definicion?.tipo === "numero" && typeof valor === "string" && valor.trim() !== "") {
+    for (const d of contextoDe(regla, slot)) if (despues[d] !== undefined) nuevas[d] = despues[d]
+  }
   return nuevas
+}
+
+/** Los slots del grupo de los que depende el sentido de `slot`: los que lo vacían al cambiar
+ * (`vaciaAlCambiar`) y, transitivamente, aquéllos de los que dependen sus opciones (`opcionesPor`).
+ * Sale sólo de lo que declaró el servidor. */
+function contextoDe(regla, slot) {
+  const slots = slotsDelGrupo(regla)
+  const porNombre = new Map(slots.map((s) => [s.slot, s]))
+  const contexto = new Set()
+  const pendientes = slots.filter((s) => s.vaciaAlCambiar?.includes(slot)).map((s) => s.slot)
+  while (pendientes.length > 0) {
+    const nombre = pendientes.pop()
+    if (contexto.has(nombre)) continue
+    contexto.add(nombre)
+    const depende = porNombre.get(nombre)?.opcionesPor?.depende
+    if (depende) pendientes.push(depende)
+  }
+  return contexto
 }
 
 /**
@@ -379,12 +404,30 @@ export function aplicarEleccionAlGrupo(regla, partes, slot, valor) {
  */
 export function revalidarGrupo(regla, partes) {
   if (!regla || slotsDelGrupo(regla).length === 0) return null
+  const slots = slotsDelGrupo(regla)
   const { valores } = estadoDelGrupo(regla, partes)
   const vigentes = {}
-  for (const s of slotsDelGrupo(regla)) {
+  const perdidos = new Set()
+  for (const s of slots) {
     const p = partes[s.slot]
     if (p === undefined) continue
     if (s.tipo === "numero" || valores[s.slot] === p) vigentes[s.slot] = p
+    else perdidos.add(s.slot)
+  }
+  // Lo que dependía de una elección perdida se pierde con ella (en el orden de los slots): las
+  // opciones que dependían de ese slot (`opcionesPor`) y lo que su cambio vacía (`vaciaAlCambiar`).
+  // Así un número escrito para una capacidad que ya no está nunca pasa a significar otra cosa.
+  for (const s of slots) {
+    if (s.opcionesPor && perdidos.has(s.opcionesPor.depende)) {
+      delete vigentes[s.slot]
+      perdidos.add(s.slot)
+    }
+    if (perdidos.has(s.slot) && s.vaciaAlCambiar) {
+      for (const k of s.vaciaAlCambiar) {
+        delete vigentes[k]
+        perdidos.add(k)
+      }
+    }
   }
   return vigentes
 }
