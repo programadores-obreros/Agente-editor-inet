@@ -9,10 +9,17 @@
 // - `componentesShippeados`: los tipos que trae el catálogo, ordenados.
 // - `oficiales`: los ids oficialmente soportados (placas y componentes), ordenados (D-17).
 //   Entrar o salir de esta lista es una decisión, nunca un efecto colateral.
+// - `anterior`: la identidad fijada INMEDIATAMENTE anterior. Un proyecto creado con ella
+//   tiene que seguir recargando, sin reescribir `createdWith` y mostrando
+//   `CATALOGO_CAMBIO_DETECTADO` (test genérico `catalogo-extensible.test.mjs`).
+//
+// 2.2.0 — Component Knowledge D0: se agrega `interruptor` (cambio menor). No entra a
+// `oficiales`: le falta la revisión eléctrica HUMANA del par (interruptor, esp32-devkit-v1).
 
 export const CATALOGO_FIJADO = Object.freeze({
-  version: "2.1.0",
-  hash: "8bc928045bdf5915756103ef67bdad7a5ef0acfeb15cf4f069a86ee7dd43ff9a",
-  componentesShippeados: Object.freeze(["dht22", "led", "ntc", "pulsador", "resistencia"]),
+  version: "2.2.0",
+  hash: "150f74bd74b272a8334ec8bba53a1221c6e711dae42f87bf6fa2b466063b95db",
+  componentesShippeados: Object.freeze(["dht22", "interruptor", "led", "ntc", "pulsador", "resistencia"]),
   oficiales: Object.freeze(["esp32-devkit-v1", "led", "pulsador", "resistencia"]),
+  anterior: Object.freeze({ version: "2.1.0", hash: "8bc928045bdf5915756103ef67bdad7a5ef0acfeb15cf4f069a86ee7dd43ff9a" }),
 })

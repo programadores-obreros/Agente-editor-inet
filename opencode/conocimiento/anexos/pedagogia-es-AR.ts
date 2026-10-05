@@ -17,6 +17,7 @@ export const NOMBRE_DE_COMPONENTE: Readonly<Record<string, string>> = {
   pulsador: "Pulsador",
   dht22: "DHT22",
   ntc: "Sensor de temperatura NTC",
+  interruptor: "Interruptor",
 }
 
 export const NOMBRE_DE_PLACA: Readonly<Record<string, string>> = {
@@ -29,6 +30,8 @@ export const CONCEPTOS_DE_COMPONENTE: Readonly<Record<string, readonly string[]>
   pulsador: ["entrada digital", "INPUT_PULLUP"],
   dht22: ["sensor digital", "temperatura", "humedad"],
   ntc: ["sensor analógico", "temperatura", "termistor"],
+  // D0: lo que lo distingue del pulsador es pedagógico: queda en la posición en que lo dejan.
+  interruptor: ["entrada digital", "INPUT_PULLUP", "estado mantenido"],
 }
 
 /**
@@ -40,6 +43,7 @@ export const ETIQUETA_POR_TIPO_Y_TERMINAL: Readonly<Record<string, Readonly<Reco
   led: { anodo: "ánodo (+)", catodo: "cátodo (−)" },
   resistencia: { a: "pata A", b: "pata B" },
   pulsador: { senal: "señal", gnd: "GND" },
+  interruptor: { senal: "señal", gnd: "GND" },
 }
 
 /** Tabla genérica de Wave 0 (F-09), por id de terminal: se conserva tal cual como
@@ -95,6 +99,8 @@ export function explicacionDeRequisito(tipoRequisito: string, nombreComponente: 
  */
 export const ETIQUETA_DE_ESTADO_BOOLEANO: Readonly<Record<string, Readonly<Record<string, { readonly verdadero: string; readonly falso: string }>>>> = {
   pulsador: { estadoBooleano: { verdadero: "presionado", falso: "suelto" } },
+  // D0: mismo significado que el pulsador (verdadero = contacto cerrado), otro rótulo.
+  interruptor: { estadoBooleano: { verdadero: "cerrado", falso: "abierto" } },
 }
 
 /**

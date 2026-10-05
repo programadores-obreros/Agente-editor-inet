@@ -125,6 +125,11 @@ export const ELEMENTO_WOKWI_POR_TIPO: Readonly<Record<string, string>> = {
   led: "wokwi-led",
   pulsador: "wokwi-pushbutton",
   resistencia: "wokwi-resistor",
+  // Component Knowledge D0: `wokwi-slide-switch`, ya definido en el mismo bundle (sin asset
+  // nuevo). `el.pinInfo` REAL en Chromium headless contra el bundle del repo (sha256
+  // 4f860e90…a06d): `["1","2","3"]`; docs.wokwi.com/parts/wokwi-slide-switch: 1 = terminal
+  // izquierdo, 2 = COMÚN, 3 = terminal derecho; a la izquierda une 1-2, a la derecha 3-2.
+  interruptor: "wokwi-slide-switch",
 }
 
 // docs/wokwi-pinout-dump.md:79 (`wokwi-led | A C`, confirmado contra el bundle real)
@@ -152,6 +157,10 @@ export const TERMINAL_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<st
   led: { anodo: "A", catodo: "C" },
   pulsador: { senal: "1.l", gnd: "2.l" },
   resistencia: { a: "1", b: "2" },
+  // D0: el interruptor (dos terminales) se dibuja con el COMÚN (2) hacia el GPIO y un extremo
+  // (1) hacia GND: es el cableado real de un interruptor deslizante de 3 patas usado como
+  // simple contacto. La pata 3 queda sin conectar (elección de presentación, no eléctrica).
+  interruptor: { senal: "2", gnd: "1" },
 }
 
 // circuito.ts:949-975 (`COMPONENTES.led`, color por índice `[red,yellow,green][i%3]`

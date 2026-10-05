@@ -31,6 +31,7 @@ const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD
 const { ejecutarOperacion } = await import(join(REPO, "opencode/nucleo/operaciones.ts"))
 const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
 const { crearAlmacen } = await import(join(REPO, "opencode/nucleo/almacen.ts"))
+const { CATALOGO_FIJADO } = await import(join(REPO, "tests/fixtures/catalogo-fijado.mjs"))
 const { validarProyecto, derivarReadiness } = await import(join(REPO, "opencode/nucleo/validar.ts"))
 const { construirOperacionRegla } = await import(join(REPO, "opencode/vista-fisica/web/app.js"))
 const { proyectarModeloLogico } = await import(join(REPO, "opencode/vista-fisica/web/vista-logica.js"))
@@ -295,7 +296,8 @@ test("17: la relación complementaria es semántica: está en la proyección del
   assert.equal(sha256Hex(canonicalizar(proyeccion)), catalogo.hash)
   const sinComplemento = { ...proyeccion, acciones: proyeccion.acciones.map(({ id }) => ({ id })) }
   assert.notEqual(sha256Hex(canonicalizar(sinComplemento)), catalogo.hash)
-  assert.equal(catalogo.version, "2.1.0")
+  // Component Knowledge D0: la versión fijada vive en una sola fuente (F2a-3); acá se repetía.
+  assert.equal(catalogo.version, CATALOGO_FIJADO.version)
   assert.notEqual(catalogo.hash, HASH_2_0_0)
 })
 

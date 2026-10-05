@@ -126,7 +126,40 @@ export const NTC: ComponenteDatos = {
   compatibilidades: { placas: ["esp32-devkit-v1", "arduino-uno"] },
 }
 
-export const COMPONENTES_CATALOGO_MINIMO: readonly ComponenteDatos[] = [LED, RESISTENCIA, PULSADOR, DHT22, NTC]
+// ── interruptor ─────────────────────────────────────────────────────────────────────
+// Component Knowledge D0 (canario "sólo datos"): un contacto de estado MANTENIDO (queda
+// abierto o cerrado hasta que lo vuelvan a mover), a diferencia del pulsador, que es
+// MOMENTÁNEO. Para el núcleo los dos son la misma forma: una entrada binaria leída con el
+// pull-up interno del pin. La diferencia (mantenido vs. momentáneo) es pedagógica y de
+// representación: hoy ningún evaluador la consume, así que no entra al núcleo (anexo de
+// pedagogía + evidencia, `component-knowledge/20_D0_IMPLEMENTATION_REPORT.md`).
+//
+// Modelo eléctrico (ESP32): `senal` a un GPIO configurado con pull-up interno (≈45 kΩ
+// típ., ESP32 Series Datasheet v5.3, Tabla 5-3); `gnd` a la masa de la placa. Contacto
+// abierto → el pull-up deja el pin en ALTO; contacto cerrado → el pin queda en BAJO. Un pin
+// solo-entrada (GPIO34-39) no tiene pull-up interno (datasheet, apéndice IO_MUX), y eso lo
+// diagnostica `PIN_SIN_PULLUP_INTERNO` a partir de `requierePullUpInterno`, sin ninguna
+// regla nueva. Corriente por el contacto cerrado ≈ 3,3 V / 45 kΩ ≈ 73 µA (inferido), muy
+// por debajo del rating típico de un interruptor deslizante (100 mA @ 12 V DC, C&K OS102011MS2QN1).
+//
+// Capacidad: la MISMA `estadoBooleano` del pulsador, con el mismo significado: verdadero =
+// contacto cerrado. Los rótulos para el alumno ("cerrado"/"abierto") viven en el anexo de
+// pedagogía; la tríada canónica es la de `estado-booleano.ts` (no se redefine acá).
+export const INTERRUPTOR: ComponenteDatos = {
+  id: "interruptor",
+  clase: "entrada",
+  terminales: [
+    { id: "senal", rol: "senal", electrica: "digital", direccion: "entrada", requierePullUpInterno: true },
+    { id: "gnd", rol: "tierra", electrica: "riel-fijo", destinoFijo: "GND" },
+  ],
+  capacidades: [{ id: "estadoBooleano", magnitud: "estadoBooleano", unidad: "ninguna" }],
+  requisitos: [],
+  // Placas existentes en el catálogo. La validez eléctrica por placa NO sale de esta lista:
+  // sale de la revisión humana por par (componente, placa) en `conocimiento/anexos/revision-electrica.ts`.
+  compatibilidades: { placas: ["esp32-devkit-v1", "arduino-uno"] },
+}
+
+export const COMPONENTES_CATALOGO_MINIMO: readonly ComponenteDatos[] = [LED, RESISTENCIA, PULSADOR, DHT22, NTC, INTERRUPTOR]
 
 // Sólo °C↔°F (T_diseno_consolidado.md §4.1: "unidades? ... sólo °C↔°F"). Ningún
 // componente shippeado usa Fahrenheit hoy — esta conversión existe para que la rama B
@@ -145,4 +178,7 @@ export const CONVERSIONES_UNIDAD_MINIMAS: readonly ConversionUnidad[] = [
 // encender ↔ apagar (de ella se deriva el reposo de una regla de nivel). Cambia el
 // significado de una regla con `apagar`: los proyectos creados con 2.0.0 lo muestran con
 // `CATALOGO_CAMBIO_DETECTADO` (no se migran, `createdWith` no se reescribe).
-export const VERSION_CATALOGO_MINIMO = "2.1.0"
+// 2.2.0 — Component Knowledge D0: se agrega `interruptor` (cambio MENOR: se suma un tipo sin
+// cambiar el significado de los existentes). Los proyectos creados con 2.1.0 lo ven con
+// `CATALOGO_CAMBIO_DETECTADO` (informativo; `createdWith` no se reescribe ni se migra).
+export const VERSION_CATALOGO_MINIMO = "2.2.0"
