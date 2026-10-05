@@ -225,6 +225,17 @@ export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string
     const registradas = new Set(DEFINICIONES_ACCION.map((d) => d.id))
     acciones = declaradas.length > 0 && declaradas.every((a) => registradas.has(a))
     if (!acciones) problemas.push("acciones: el actuador no declara acciones registradas")
+    // Semantic Vertical #3: un complemento declarado tiene que ser coherente (simétrico y
+    // registrado); de él se deriva el reposo de una regla de nivel.
+    for (const a of declaradas) {
+      const complemento = DEFINICIONES_ACCION.find((d) => d.id === a)?.complementaria
+      if (complemento === undefined) continue
+      const vuelta = DEFINICIONES_ACCION.find((d) => d.id === complemento)?.complementaria
+      if (!registradas.has(complemento) || vuelta !== a) {
+        problemas.push(`acciones: el complemento de "${a}" no es simétrico o no está registrado`)
+        acciones = false
+      }
+    }
   }
 
   // ── representación Wokwi (check 9) ──

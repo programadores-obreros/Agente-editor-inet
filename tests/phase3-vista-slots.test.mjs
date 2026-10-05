@@ -29,9 +29,16 @@ test("T5b opcionesRegla.slots: cuatro slots ordenados, con el texto fijo de la f
   assert.ok(Array.isArray(slots), "opcionesRegla.slots")
   assert.deepEqual(slots.map((s) => [s.slot, s.prefijo]), [["sensor", "Mientras el"], ["estado", "esté"], ["actuador", ", el"], ["salida", "está"]])
   assert.deepEqual(slots[0].opciones, [{ valor: c.pulsador, etiqueta: "Pulsador", parche: { cuando: { sensor: c.pulsador } } }])
-  assert.deepEqual(slots[1].opciones, [{ valor: "presionado", etiqueta: "presionado", parche: { cuando: CONDICION } }])
+  // Semantic Vertical #3: "suelto" = estadoBooleano < 1 (complemento exacto) y "apagado" = apagar.
+  assert.deepEqual(slots[1].opciones, [
+    { valor: "presionado", etiqueta: "presionado", parche: { cuando: CONDICION } },
+    { valor: "suelto", etiqueta: "suelto", parche: { cuando: { ...CONDICION, comparador: "<" } } },
+  ])
   assert.deepEqual(slots[2].opciones, [{ valor: c.led, etiqueta: "LED", parche: { entonces: { actuador: c.led } } }])
-  assert.deepEqual(slots[3].opciones, [{ valor: "encendido", etiqueta: "encendido", parche: { entonces: { accion: "encender" } } }])
+  assert.deepEqual(slots[3].opciones, [
+    { valor: "encendido", etiqueta: "encendido", parche: { entonces: { accion: "encender" } } },
+    { valor: "apagado", etiqueta: "apagado", parche: { entonces: { accion: "apagar" } } },
+  ])
   c.servicio.cerrar()
 })
 
@@ -45,6 +52,7 @@ test("T5b reglas[i].aviso: la nota de condición avanzada la pone el servidor; n
   set({ cuando: { sensor: c.pulsador, ...CONDICION, comparador: ">" }, entonces: { actuador: c.led, accion: "encender" } })
   const [canonica, avanzada] = vistaDe(c).reglas
   assert.equal(canonica.aviso, null)
-  assert.equal(avanzada.aviso, "Esta regla usa una condición avanzada: se puede mirar, pero esta frase sólo sabe armar «presionado».")
+  // Semantic Vertical #3: la nota nombra los estados ofrecidos (antes sólo «presionado»).
+  assert.equal(avanzada.aviso, "Esta regla usa una condición avanzada: se puede mirar, pero esta frase sólo sabe armar «presionado» o «suelto».")
   c.servicio.cerrar()
 })

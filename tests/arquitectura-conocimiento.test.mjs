@@ -37,7 +37,11 @@ const { pintar } = await import(join(REPO, "opencode/vista-fisica/web/pintar.js"
 const conocimiento = CONOCIMIENTO_ACTIVO
 const HASH_HEREDADO = "708fe82235f66231afdb5a6040d7b903b4f80bb8473901df66889703e16c9870"
 /** Par (versión, hash semántico) fijado: si el hash cambia, la versión tiene que subir. */
-const IDENTIDAD_FIJADA = { version: "2.0.0", hash: "878011f7ec8c586adc632db819e5bcb05fc7731237d21caf01de222574a3a2f6" }
+// Semantic Vertical #3: el complemento encender ↔ apagar (DEFINICIONES_ACCION) cambió el
+// significado del catálogo → 2.1.0. La identidad 2.0.0 queda como destino de la tabla de
+// identidades heredadas (Foundation #1), que NO se encadena: un proyecto 2.0.0 muestra desfase.
+const IDENTIDAD_2_0_0 = { version: "2.0.0", hash: "878011f7ec8c586adc632db819e5bcb05fc7731237d21caf01de222574a3a2f6" }
+const IDENTIDAD_FIJADA = { version: "2.1.0", hash: "8bc928045bdf5915756103ef67bdad7a5ef0acfeb15cf4f069a86ee7dd43ff9a" }
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // A — sólo lectura
@@ -173,7 +177,7 @@ test("D: identidad fijada — si el hash semántico cambia, VERSION_CATALOGO_MIN
 
 test("D/I-11: la tabla de identidades heredadas mapea el hash del dominio viejo al semántico fijado", () => {
   assert.ok(Object.isFrozen(IDENTIDADES_HEREDADAS))
-  assert.deepEqual({ ...IDENTIDADES_HEREDADAS }, { [HASH_HEREDADO]: IDENTIDAD_FIJADA.hash })
+  assert.deepEqual({ ...IDENTIDADES_HEREDADAS }, { [HASH_HEREDADO]: IDENTIDAD_2_0_0.hash })
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -254,13 +258,17 @@ test("G: el desfase NO bloquea: misma readiness que el mismo proyecto sin desfas
   }
 })
 
-test("I-11: un proyecto guardado con el hash del dominio VIEJO no muestra desfase (identidad heredada)", () => {
+test("I-11: un proyecto con el hash del dominio VIEJO se reconoce como 2.0.0; con el catálogo 2.1.0 el desfase SE VE (no se encadena ni se oculta)", () => {
+  // Antes de Semantic Vertical #3 este proyecto no mostraba desfase (2.0.0 = activo). El
+  // complemento encender ↔ apagar es un cambio semántico real: ahora tiene que verse.
   const { directorio, idProyecto } = proyectoGuardado(HASH_HEREDADO)
   const servicio = obtenerServicioDeProyecto({ directorio, idProyecto })
   try {
     const s = servicio.snapshot()
     assert.equal(s.catalogoHash, HASH_HEREDADO, "createdWith se conserva tal cual")
-    assert.ok(!s.validacion.motivos.some((m) => m.codigo === "CATALOGO_CAMBIO_DETECTADO"), JSON.stringify(s.validacion.motivos))
+    const aviso = s.validacion.motivos.find((m) => m.codigo === "CATALOGO_CAMBIO_DETECTADO")
+    assert.ok(aviso, JSON.stringify(s.validacion.motivos))
+    assert.equal(aviso.severidad, "info")
   } finally {
     servicio.cerrar()
   }

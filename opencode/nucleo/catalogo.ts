@@ -141,12 +141,40 @@ export interface ComponenteCatalogo extends Omit<ComponenteDatos, "terminales"> 
  * D-11: registro global de DEFINICIONES de acción. Cada actuador declara cuáles ofrece
  * (`ComponenteDatos.acciones`); una acción es aplicable a un componente si y sólo si su
  * tipo la declara. Sin parámetros todavía (servo y similares: pendiente ON-04).
+ *
+ * En una regla de NIVEL, el id guardado en `entonces.accion` es un ESTADO OBJETIVO
+ * sostenido ("encender" = el actuador está encendido mientras la condición es verdadera),
+ * no una acción puntual (Semantic Vertical #3, ver `ir.ts::EntoncesComportamiento`).
  */
 export interface DefinicionAccion {
   readonly id: string
+  /**
+   * Semantic Vertical #3 (OPEN-2): el estado objetivo COMPLEMENTARIO declarado. Es lo
+   * único que permite derivar el estado de REPOSO de una regla de nivel (reposo =
+   * complemento del objetivo) y normalizar "salvo cuando". Es semántica del catálogo:
+   * entra al hash. Ausente = no hay complemento: nadie lo calcula ni lo inventa.
+   */
+  readonly complementaria?: string
 }
 
-export const DEFINICIONES_ACCION: readonly DefinicionAccion[] = [{ id: "encender" }, { id: "apagar" }]
+export const DEFINICIONES_ACCION: readonly DefinicionAccion[] = [
+  { id: "encender", complementaria: "apagar" },
+  { id: "apagar", complementaria: "encender" },
+]
+
+/**
+ * Semantic Vertical #3: el complemento DECLARADO de `accion` para un tipo de actuador, o
+ * `undefined`. Hay complemento sólo si (1) el registro lo declara, (2) la relación es
+ * simétrica en el registro y (3) el tipo ofrece las DOS acciones. Nunca una negación
+ * genérica ni una rama por componente. `registro` es inyectable para fixtures de test.
+ */
+export function complementoDeAccion(componente: Pick<ComponenteCatalogo, "acciones">, accion: string, registro: readonly DefinicionAccion[] = DEFINICIONES_ACCION): string | undefined {
+  const declaradas = componente.acciones ?? []
+  if (!declaradas.includes(accion)) return undefined
+  const complemento = registro.find((d) => d.id === accion)?.complementaria
+  if (complemento === undefined || !declaradas.includes(complemento)) return undefined
+  return registro.find((d) => d.id === complemento)?.complementaria === accion ? complemento : undefined
+}
 
 export interface ConversionUnidad {
   readonly de: Unidad

@@ -90,9 +90,10 @@ test("T5 plan: regla canónica -> una frase con los cuatro selectores y valores 
   assert.equal(f.cierre, ".")
   assert.deepEqual(f.selectores.map((s) => s.valorActual), [ctx.pulsador, "presionado", ctx.led, "encendido"])
   assert.deepEqual(f.selectores[0].opciones, [{ valor: ctx.pulsador, etiqueta: "Pulsador" }])
-  assert.deepEqual(f.selectores[1].opciones, [{ valor: "presionado", etiqueta: "presionado" }])
+  // Semantic Vertical #3: las opciones de estado/salida salen de ComponentKnowledge.
+  assert.deepEqual(f.selectores[1].opciones, [{ valor: "presionado", etiqueta: "presionado" }, { valor: "suelto", etiqueta: "suelto" }])
   assert.deepEqual(f.selectores[2].opciones, [{ valor: ctx.led, etiqueta: "LED" }])
-  assert.deepEqual(f.selectores[3].opciones, [{ valor: "encendido", etiqueta: "encendido" }])
+  assert.deepEqual(f.selectores[3].opciones, [{ valor: "encendido", etiqueta: "encendido" }, { valor: "apagado", etiqueta: "apagado" }])
   for (const s of f.selectores) assert.equal(s.placeholder, null)
   assert.equal(f.conTraza, true)
   assert.equal(f.traza, null, "la traza NO viaja salvo que se pida")
@@ -154,7 +155,7 @@ test("T5 plan: condición avanzada -> el selector de estado muestra 'condición 
   const [f] = reglasDe(planDePintado(vistaDe(ctx.servicio)))
   const estado = f.selectores[1]
   assert.equal(estado.valorActual, "avanzada")
-  assert.deepEqual(estado.opciones, [{ valor: "presionado", etiqueta: "presionado" }, { valor: "avanzada", etiqueta: "condición avanzada" }])
+  assert.deepEqual(estado.opciones, [{ valor: "presionado", etiqueta: "presionado" }, { valor: "suelto", etiqueta: "suelto" }, { valor: "avanzada", etiqueta: "condición avanzada" }])
   assert.equal(typeof f.aviso, "string")
   assert.equal(f.conTraza, false)
   ctx.servicio.cerrar()

@@ -248,9 +248,14 @@ export interface OpcionSalidaVista extends OpcionVista {
  * exactamente "presionado" (la frase no la edita, sólo la nombra). */
 export interface FraseReglaVista {
   readonly sensor?: ReferenciaVista
-  readonly estado?: { readonly clave: "presionado" | "avanzada"; readonly etiqueta: string }
+  /** Semantic Vertical #3: `clave` = rótulo del estado de la entrada (anexo de pedagogía:
+   * "presionado"/"suelto") o "avanzada". Es un identificador de la vista; la semántica
+   * es la tríada canónica (`nucleo/estado-booleano.ts`), nunca este texto. */
+  readonly estado?: { readonly clave: string; readonly etiqueta: string }
   readonly actuador?: ReferenciaVista
-  readonly salida?: { readonly clave: "encendido" | "apagado"; readonly etiqueta: string }
+  /** Semantic Vertical #3: `clave` = rótulo del estado objetivo ("encendido"/"apagado"),
+   * identificador de la vista; la semántica es `entonces.accion`. */
+  readonly salida?: { readonly clave: string; readonly etiqueta: string }
 }
 
 /** Explicación textual determinista de una regla completa con la condición "presionado".

@@ -1492,3 +1492,36 @@ borra.
   determinista de `estadoBooleano >= 1`. No entran a la IR block IDs, workspace JSON/XML,
   posiciones, conexiones visuales, layout, estado de toolbox ni metadata de Blockly.
 - Las demás HD-P3 / HD-P3D y las decisiones del vertical #1 siguen vigentes.
+
+## Semantic Vertical #3 — expresividad binaria mínima (2026-10-04)
+
+Design Gate: `~/tecnia-bot-docs/semantic-vertical-3/SEMANTIC_VERTICAL_3_DESIGN_GATE.md` (fuera del
+repo). Modelo **M1 aprobado** por el HUMAN PRODUCT OWNER, con decisiones OPEN-1..5 ratificadas
+(OPEN-5 con enmienda). Nada histórico se borra: las decisiones reemplazadas conservan su texto donde
+estaban.
+
+| OLD DECISION | SUPERSEDED BY | NEW DECISION | REASON / EVIDENCE |
+|---|---|---|---|
+| **HD-P3D-1 = A**: estado de reposo de un actuador digital = apagado (derivado, no se guarda) | SEMANTIC VERTICAL #3 (OPEN-1) | Para un actuador **binario** con complemento **declarado**, reposo = **complemento del estado objetivo**. Sigue siendo derivado, no se guarda, no es un "si no" almacenado | Human Test #2 y #3: límite de expresividad repetido; en HT3 el participante esperó "encendido y apagado" y propuso "que el LED estaría todo el tiempo prendido salvo cuando apriete el botón" (`physical-view-human-test-3/DECISION_INPUT.md`, E-20/E-21) |
+| **HD-P3D-2 = A**: la frase editable no ofrece `apagar` | SEMANTIC VERTICAL #3 (OPEN-1) | `apagar` se ofrece si el tipo del actuador lo declara (opciones derivadas de ComponentKnowledge) | Con reposo complementario, "mientras presionado → apagado" deja de ser degenerado: es exactamente la intención de HT3 |
+
+Decisiones ratificadas:
+
+- **OPEN-2:** la relación complementaria vive en `DEFINICIONES_ACCION.complementaria` (catálogo, entra
+  al hash semántico). Catálogo **2.0.0 → 2.1.0**. Proyectos viejos no se migran, `createdWith` no se
+  reescribe, el desfase se ve con `CATALOGO_CAMBIO_DETECTADO`. Un documento viejo con `apagar` cambia
+  de significado (de "no cambia nada visible" a "apagado mientras…, encendido fuera") y lo muestra.
+- **OPEN-3:** HD-P3D-9 sigue vigente: la frase no dice "si no". La traza explica el reposo derivado
+  ("…→ la condición es falsa → el LED está encendido (reposo)."). El texto de la traza no se persiste.
+- **OPEN-4:** "presionado" = `estadoBooleano >= 1`, "suelto" = `estadoBooleano < 1` (complementos
+  exactos), fuente única `nucleo/estado-booleano.ts`. Se elimina la duplicación que había en
+  `snapshot-a-vista.ts` (`CONDICION_PRESIONADO`) y en el vocabulario del agente. Otras tríadas
+  equivalentes siguen como "condición avanzada".
+- **OPEN-5 (con enmienda):** "salvo/excepto cuando C, X" se normaliza a `{C, complemento de X}` **sólo**
+  si ComponentKnowledge declara el complemento de X. El agente nunca lo calcula ni lo inventa; sin
+  complemento declarado pide aclaración o informa que no es representable. "Que quede prendido" sin
+  condición sigue fuera del modelo de nivel (no se reinterpreta como latch).
+- **D-11 (Component System Decision Freeze):** se implementa `ACCION_NO_SOPORTADA` — estado objetivo
+  que el tipo del actuador no declara. Blocking, representable, persistible; nunca un rechazo.
+- `entonces.accion` **no se renombra**; se documenta como estado objetivo sostenido (`ir.ts`,
+  `IR-SPEC.md`). El esquema y `schemaVersion` no cambian.

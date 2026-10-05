@@ -22,6 +22,9 @@ import { validarTecnico } from "./validar-tecnico.ts"
  * proyecto queda `listo:false`); jamás `clasificacion: "rechazo"`.
  * - `COMPORTAMIENTO_INCOMPLETO`: `datos.faltan` ⊆ [sensor, estado (la triada), actuador,
  *   salida (la acción)], en ese orden.
+ * - `ACCION_NO_SOPORTADA` (Semantic Vertical #3, D-11): `entonces.accion` que el tipo del
+ *   actuador no declara (`ComponenteCatalogo.acciones`); `datos { componente, accion,
+ *   soportadas }`. Blocking y representable, nunca un rechazo de la operación.
  * - `ACTUADOR_INVALIDO`: `entonces.actuador` cuyo catálogo no es `clase:"actuador"`. Un
  *   tipo desconocido del catálogo no se emite acá (`CATALOGO_COMPONENTE_DESCONOCIDO`).
  * - `SENSOR_INVALIDO`: `cuando.sensor` SIN triada cuyo catálogo no declara NINGUNA
@@ -47,6 +50,13 @@ export function validarSemantico(proyecto: Proyecto, catalogo: Catalogo): readon
       const comp = proyecto.componentes.find((c) => c.id === entonces.actuador)
       const cat = comp ? catalogo.obtenerComponente(comp.tipo) : undefined
       if (comp && cat && cat.clase !== "actuador") motivos.push(semantico("ACTUADOR_INVALIDO", { componente: comp.id, clase: cat.clase }))
+      // Semantic Vertical #3 (D-11): el estado objetivo tiene que estar entre los que el
+      // TIPO del actuador declara. Representable: la regla se guarda, recarga y edita;
+      // sólo deja el proyecto no-listo. Cubre también una entrada usada como actuador.
+      const accion = entonces.accion
+      if (comp && cat && accion !== undefined && !(cat.acciones ?? []).includes(accion)) {
+        motivos.push(semantico("ACCION_NO_SOPORTADA", { componente: comp.id, accion, soportadas: [...(cat.acciones ?? [])] }))
+      }
     }
 
     if (cuando?.sensor !== undefined && !tieneEstado) {

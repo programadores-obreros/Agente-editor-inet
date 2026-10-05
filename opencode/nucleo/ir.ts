@@ -88,9 +88,17 @@ export interface EntoncesComportamiento {
   /** Componente.id del actuador — debe existir (verificado al cargar, R2). */
   readonly actuador?: string
   /**
-   * Estado SOSTENIDO del actuador mientras la condición de nivel es verdadera (no una
-   * acción puntual). Estado de REPOSO (condición falsa, HD-P3D-1): apagado — es
-   * DERIVADO de este contrato, nunca se guarda en el IR.
+   * Conserva su nombre histórico, pero en una regla de NIVEL significa: ESTADO OBJETIVO
+   * SOSTENIDO del actuador mientras la condición es verdadera ("encender" = está
+   * encendido). NO es una acción puntual; una acción puntual/evento sería otro concepto
+   * y no forma parte del modelo de nivel.
+   *
+   * Estado de REPOSO (condición falsa) — Semantic Vertical #3, supersede HD-P3D-1: para
+   * un actuador BINARIO cuyo catálogo declara un complemento del estado objetivo
+   * (`catalogo.ts::DEFINICIONES_ACCION.complementaria`, que el tipo ofrece), el reposo es
+   * ese complemento (objetivo "encender" → reposo apagado; "apagar" → reposo encendido).
+   * Es DERIVADO: nunca se guarda en el IR, no es un "si no" almacenado ni un campo nuevo.
+   * Sin complemento declarado, la regla no define el reposo (nadie lo inventa).
    */
   readonly accion?: Accion
 }

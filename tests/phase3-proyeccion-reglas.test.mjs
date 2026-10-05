@@ -131,26 +131,28 @@ test("T3 etiquetas con ordinal estable: dos LED -> 'LED' y 'LED 2'; nunca ids in
   ctx.servicio.cerrar()
 })
 
-test("T3 apagar es el caso degenerado: ramas 'apagado' y nota explícita", () => {
+test("T3 apagar (Semantic Vertical #3, supersede HD-P3D-1): el reposo es el complemento declarado — encendido; ya no es un caso degenerado", () => {
   const ctx = preparar()
   set(ctx, completa(ctx, "apagar"))
   const [regla] = vista(ctx).reglas
   assert.equal(regla.texto, "Mientras el Pulsador esté presionado, el LED está apagado.")
   assert.equal(regla.frase.salida.clave, "apagado")
-  assert.deepEqual(regla.traza.ramas, ["Si el Pulsador está presionado → la condición es verdadera → el LED está apagado.", "Si el Pulsador no está presionado → la condición es falsa → el LED está apagado (reposo)."])
-  assert.equal(regla.traza.nota, "Esta regla no cambia nada visible.")
+  assert.deepEqual(regla.traza.ramas, ["Si el Pulsador está presionado → la condición es verdadera → el LED está apagado.", "Si el Pulsador no está presionado → la condición es falsa → el LED está encendido (reposo)."])
+  assert.equal(regla.traza.nota, undefined, "la nota 'no cambia nada visible' desaparece: la regla sí cambia algo")
   ctx.servicio.cerrar()
 })
 
-test("T3 opcionesRegla: sensores por capacidad, actuadores por clase, estados y salidas cerradas; la resistencia no aparece; apagar no se ofrece", () => {
+test("T3 opcionesRegla: sensores por capacidad, actuadores por clase, estados y salidas desde ComponentKnowledge (presionado/suelto, encendido/apagado); la resistencia no aparece", () => {
   const ctx = preparar(["resistencia"])
   const o = vista(ctx).opcionesRegla
   assert.deepEqual(o.sensores, [{ id: ctx.pulsador, etiqueta: "Pulsador" }])
   assert.deepEqual(o.actuadores, [{ id: ctx.led, etiqueta: "LED" }])
   // MOD (T5, aditivo): `estados[i]`/`salidas[i]` pueden traer además `condicion`/`accion`
   // (el payload canónico para el navegador, ver phase3-vista-reglas); acá sólo importan clave/etiqueta.
-  assert.deepEqual(o.estados.map(({ clave, etiqueta }) => ({ clave, etiqueta })), [{ clave: "presionado", etiqueta: "presionado" }])
-  assert.deepEqual(o.salidas.map(({ clave, etiqueta }) => ({ clave, etiqueta })), [{ clave: "encendido", etiqueta: "encendido" }])
+  // Semantic Vertical #3 (supersede HD-P3D-2): `apagado` y `suelto` se ofrecen porque el
+  // conocimiento los declara (LED: encender/apagar; pulsador: estadoBooleano verdadero/falso).
+  assert.deepEqual(o.estados.map(({ clave, etiqueta }) => ({ clave, etiqueta })), [{ clave: "presionado", etiqueta: "presionado" }, { clave: "suelto", etiqueta: "suelto" }])
+  assert.deepEqual(o.salidas.map(({ clave, etiqueta }) => ({ clave, etiqueta })), [{ clave: "encendido", etiqueta: "encendido" }, { clave: "apagado", etiqueta: "apagado" }])
   for (const lista of [o.sensores, o.actuadores]) assert.equal(lista.some((x) => x.id === ctx.resistencia), false)
   ctx.servicio.cerrar()
 })

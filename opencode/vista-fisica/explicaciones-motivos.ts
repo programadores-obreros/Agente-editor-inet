@@ -14,6 +14,11 @@
 // (de instancia o de tipo de catálogo) en un nombre legible — esta tabla nunca
 // importa `nucleo/catalogo-datos.ts` ni construye su propio catálogo paralelo.
 
+// Semantic Vertical #3: el rótulo de un estado objetivo ("apagado") sale del anexo de
+// pedagogía, nunca de una tabla propia. El texto de `ACCION_NO_SOPORTADA` es NUEVO y
+// queda pendiente de aprobación humana (los textos aprobados de arriba no cambian).
+import { etiquetaDeEstadoObjetivo } from "../conocimiento/anexos/pedagogia-es-AR.ts"
+
 /** `idOTipo`: o bien un `Componente.id` de instancia ("cmp-0"), o bien un
  * `ComponenteCatalogo.id` de tipo ("led") — el resolver decide cuál es (ver
  * `snapshot-a-vista.ts::resolverNombreDeComponente`). Nunca lanza: si no puede
@@ -75,6 +80,10 @@ const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
     return `A la regla le falta: ${listaHumana(faltan)}.`
   },
   ACTUADOR_INVALIDO: (datos, nombres) => `${nombreDe(datos, "componente", nombres)} no es una salida: la regla no puede encenderlo. Elegí una salida.`,
+  ACCION_NO_SOPORTADA: (datos, nombres) => {
+    const estado = typeof datos.accion === "string" ? (etiquetaDeEstadoObjetivo(datos.accion) ?? datos.accion) : "ese estado"
+    return `${nombreDe(datos, "componente", nombres)} no puede quedar ${estado}: no es un estado que tenga. Elegí otro estado u otra salida.`
+  },
   SENSOR_INVALIDO: (datos, nombres) => `${nombreDe(datos, "componente", nombres)} no entrega un estado que la regla pueda leer. Elegí una entrada.`,
   REMOCION_CON_DEPENDIENTES: () => "Este componente lo usa una regla. Quitá o cambiá la regla primero.",
   TERMINAL_NO_ASIGNABLE: (datos, nombres) =>

@@ -13,10 +13,11 @@
 
 import type { Catalogo, ComponenteCatalogo, DefinicionAccion, Terminal } from "../nucleo/catalogo.ts"
 import type { Placa, RegistroPin, TerminalPotencia } from "../nucleo/placas.ts"
-import { asignarPin, evaluarRestriccionesPin, DEFINICIONES_ACCION } from "../nucleo/catalogo.ts"
+import { asignarPin, evaluarRestriccionesPin, complementoDeAccion, DEFINICIONES_ACCION } from "../nucleo/catalogo.ts"
+import { condicionBooleanaCanonica, MAGNITUD_BOOLEANA, VALORES_BOOLEANOS, type CondicionBooleana, type ValorBooleano } from "../nucleo/estado-booleano.ts"
 import { congelarProfundo } from "../nucleo/canonico.ts"
 import { ATRIBUTOS_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, ELEMENTO_WOKWI_POR_TIPO, ESCALA_WOKWI_POR_PLACA, POTENCIA_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO } from "./anexos/representacion.ts"
-import { CONCEPTOS_DE_COMPONENTE, ETIQUETA_DE_TERMINAL_DE_POTENCIA, ETIQUETA_POR_TIPO_Y_TERMINAL, etiquetaDeTerminal, nombreDeComponente, nombreDePlaca } from "./anexos/pedagogia-es-AR.ts"
+import { CONCEPTOS_DE_COMPONENTE, ETIQUETA_DE_TERMINAL_DE_POTENCIA, ETIQUETA_POR_TIPO_Y_TERMINAL, etiquetaDeEstadoBooleano, etiquetaDeEstadoObjetivo, etiquetaDeTerminal, nombreDeComponente, nombreDePlaca } from "./anexos/pedagogia-es-AR.ts"
 import { assetDeRepresentacionWokwi, procedenciaDe, type RegistroProcedencia } from "./anexos/procedencia.ts"
 
 export type TipoEntidad = "componente" | "placa"
@@ -57,6 +58,23 @@ export interface RepresentacionWokwi {
   readonly assetId: string
 }
 
+/** Semantic Vertical #3: un valor de una capacidad booleana de una ENTRADA, listo para una
+ * regla de nivel: la condición canónica (núcleo) + su rótulo (anexo). */
+export interface EstadoDeEntrada {
+  readonly capacidad: string
+  readonly valor: ValorBooleano
+  readonly etiqueta: string
+  readonly condicion: CondicionBooleana
+}
+
+/** Semantic Vertical #3: un estado objetivo que un ACTUADOR declara (id de
+ * `DEFINICIONES_ACCION`), con su rótulo y su complemento DECLARADO (si existe). */
+export interface EstadoDeSalida {
+  readonly accion: string
+  readonly etiqueta: string
+  readonly complemento?: { readonly accion: string; readonly etiqueta: string }
+}
+
 export interface ComponentKnowledge {
   /** La MISMA instancia del catálogo (congelada). No se construye otra. */
   readonly catalogo: Catalogo
@@ -68,6 +86,14 @@ export interface ComponentKnowledge {
   terminalesDePotencia(placa: string): readonly TerminalDePotenciaConocido[]
   pinesPermitidos(placa: string, tipo: string, terminalId: string): readonly PinPermitido[]
   acciones(tipo: string): readonly DefinicionAccion[]
+  /** Complemento DECLARADO de `accion` para ese tipo (reposo de una regla de nivel), o
+   * `undefined`. Nunca se calcula una negación genérica. */
+  complementoDe(tipo: string, accion: string): string | undefined
+  /** Valores booleanos que una entrada ofrece a una regla, en orden canónico. Sólo los
+   * que tienen rótulo en el anexo (sin rótulo no se ofrece). */
+  estadosDeEntrada(tipo: string): readonly EstadoDeEntrada[]
+  /** Estados objetivo que un actuador declara, con rótulo y complemento declarado. */
+  estadosDeSalida(tipo: string): readonly EstadoDeSalida[]
   representacionWokwi(kind: TipoEntidad, id: string): RepresentacionWokwi | undefined
   nombre(kind: TipoEntidad, id: string): string | undefined
   etiquetaDeTerminal(tipo: string, terminalId: string): string | undefined
@@ -129,6 +155,38 @@ export function crearConocimiento(catalogo: Catalogo): ComponentKnowledge {
     acciones(tipo) {
       const declaradas = catalogo.obtenerComponente(tipo)?.acciones ?? []
       return DEFINICIONES_ACCION.filter((d) => declaradas.includes(d.id))
+    },
+
+    complementoDe(tipo, accion) {
+      const componente = catalogo.obtenerComponente(tipo)
+      return componente ? complementoDeAccion(componente, accion) : undefined
+    },
+
+    estadosDeEntrada(tipo) {
+      const estados: EstadoDeEntrada[] = []
+      for (const capacidad of catalogo.obtenerComponente(tipo)?.capacidades ?? []) {
+        if (capacidad.magnitud !== MAGNITUD_BOOLEANA) continue
+        for (const valor of VALORES_BOOLEANOS) {
+          const etiqueta = etiquetaDeEstadoBooleano(tipo, capacidad.id, valor)
+          if (etiqueta !== undefined) estados.push({ capacidad: capacidad.id, valor, etiqueta, condicion: condicionBooleanaCanonica(capacidad.id, valor) })
+        }
+      }
+      return congelarProfundo(estados)
+    },
+
+    estadosDeSalida(tipo) {
+      const componente = catalogo.obtenerComponente(tipo)
+      if (!componente) return []
+      const estados: EstadoDeSalida[] = []
+      for (const definicion of DEFINICIONES_ACCION) {
+        if (!(componente.acciones ?? []).includes(definicion.id)) continue
+        const etiqueta = etiquetaDeEstadoObjetivo(definicion.id)
+        if (etiqueta === undefined) continue
+        const complemento = complementoDeAccion(componente, definicion.id)
+        const etiquetaComplemento = complemento !== undefined ? etiquetaDeEstadoObjetivo(complemento) : undefined
+        estados.push({ accion: definicion.id, etiqueta, ...(complemento !== undefined && etiquetaComplemento !== undefined ? { complemento: { accion: complemento, etiqueta: etiquetaComplemento } } : {}) })
+      }
+      return congelarProfundo(estados)
     },
 
     representacionWokwi(kind, id) {

@@ -141,4 +141,8 @@ export const CONVERSIONES_UNIDAD_MINIMAS: readonly ConversionUnidad[] = [
 // 2.0.0 — Component System Foundation #1: cambio único y coordinado del dominio de
 // identidad (hash semántico sin presentación, terminales de potencia, `asignable`
 // derivado, requisito con `Cantidad`, acciones declaradas). Ver `identidad-catalogo.ts`.
-export const VERSION_CATALOGO_MINIMO = "2.0.0"
+// 2.1.0 — Semantic Vertical #3: `DEFINICIONES_ACCION` declara la relación complementaria
+// encender ↔ apagar (de ella se deriva el reposo de una regla de nivel). Cambia el
+// significado de una regla con `apagar`: los proyectos creados con 2.0.0 lo muestran con
+// `CATALOGO_CAMBIO_DETECTADO` (no se migran, `createdWith` no se reescribe).
+export const VERSION_CATALOGO_MINIMO = "2.1.0"

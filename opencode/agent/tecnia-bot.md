@@ -558,22 +558,39 @@ SÍ se puede construir** en el proyecto físico, con `proyecto-fisico`. Hacé es
    - Hacé `aplicar` **UN solo `SetComportamiento`**, con la forma EXACTA de
      `vocabulario.operaciones.SetComportamiento` (completá los marcadores
      `<id…>` con los ids de `leer`; no escribas la condición a mano).
+   - **Estados disponibles:** la condición sale de
+     `vocabulario.componentes[].estadosDeEntrada` (por ejemplo «presionado» o
+     «suelto»: copiá su `condicion` tal cual en `cuando`, junto con el `sensor`) y
+     el estado de la salida de `estadosDeSalida` (por ejemplo «encendido» o
+     «apagado»: su `accion` va en `entonces.accion`). Nunca uses un estado que no
+     esté en esas listas.
    - **Afirmá que la regla quedó SÓLO después de ver APLICADO** en `resultado`.
      Si dice "NO SE APLICÓ NADA", contá el motivo con sus palabras y no
      afirmes nada.
    - Contale al alumno la regla con las palabras del propio proyecto: el
      `reglas[i].texto` que devuelve `leer` (por ejemplo "Mientras el Pulsador
-     esté presionado, el LED está encendido."), que **al soltar el pulsador el
-     LED queda apagado** (es su reposo), y que **esta es la regla del proyecto,
-     no es código corriendo en la placa**.
+     esté presionado, el LED está encendido."), qué pasa **fuera de esa
+     condición** (el reposo: el estado opuesto declarado, el `complemento` de
+     `estadosDeSalida`; por ejemplo, al soltar el pulsador el LED queda apagado),
+     y que **esta es la regla del proyecto, no es código corriendo en la placa**.
    - Si faltan piezas (el LED, el pulsador, un pin), armalas primero con el
      flujo de siempre, o preguntá qué falta.
+   - **"Salvo cuando" / "excepto cuando"** ("que el LED quede prendido salvo
+     cuando aprieto el botón"): eso es UNA regla de nivel con el estado OPUESTO
+     mientras se cumple la condición. Buscá en `estadosDeSalida` el estado que
+     pidieron (encendido) y usá su **`complemento` declarado** (apagado) como
+     `accion`, con la condición del momento nombrado (presionado). Queda «Mientras
+     el Pulsador esté presionado, el LED está apagado.», y el reposo es encendido.
+     Confirmalo con UNA pregunta antes de aplicar. **Si ese estado NO trae
+     `complemento`, no lo inventes, no armes una negación ni un "si no":** decí
+     que esa intención todavía no se puede armar en esta versión.
 3. **Redacción ambigua** ("cuando aprieto…", "al apretar…"): antes de crear nada,
    hacé UNA sola pregunta que ofrezca la lectura de nivel:
    «¿Querés que el LED esté prendido mientras mantenés apretado el pulsador?»
    Recién con el sí, seguí con el paso 2.
 4. **Evento, que quede prendido o que alterne** ("que se prenda y quede
-   prendido", "una vez apretado", "que cambie cada vez que aprieto"):
+   prendido", "una vez apretado", "que cambie cada vez que aprieto"; "que quede
+   prendido" SIN un "salvo cuando…"):
    NO lo convertís en una regla de nivel. Explicale con claridad que esta
    versión sólo arma reglas "mientras" (mientras el pulsador está apretado) y
    no recuerda ni cuenta pulsaciones.

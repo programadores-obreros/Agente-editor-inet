@@ -1024,6 +1024,16 @@ renombra). Una regla dice: *en todo instante en que "sensor está en el estado" 
 en `accion`*. No hay eventos, flancos, latch ni memoria. **Estado de reposo** (condición falsa) de un actuador
 digital = **apagado** (HD-P3D-1): es **derivado del contrato, nunca se guarda en el IR**.
 
+> **Superseded por Semantic Vertical #3 (ver `DECISIONS.md`, "Semantic Vertical #3").** `entonces.accion`
+> conserva su nombre, pero en una regla de nivel es el **estado objetivo sostenido** del actuador, no una acción
+> puntual. El **reposo** de un actuador **binario** es el **complemento declarado** del estado objetivo
+> (`DEFINICIONES_ACCION.complementaria`, catálogo 2.1.0): "encender" → reposo apagado (idéntico a antes),
+> "apagar" → reposo encendido. Sigue siendo **derivado** y no se guarda. Sin complemento declarado, el reposo no
+> está definido. Las formas **canónicas** de una condición booleana son `estadoBooleano >= 1` (verdadero, p. ej.
+> "presionado") y `estadoBooleano < 1` (falso, p. ej. "suelto"), con fuente única `nucleo/estado-booleano.ts`;
+> cualquier otra tríada equivalente es representable y se proyecta como "condición avanzada". El esquema y
+> `schemaVersion` no cambian.
+
 **`schemaVersion` NO se sube** (`SCHEMA_VERSION_SOPORTADA` sigue en `"1.0.0"`, contrato B1; HD-P3D-3 = B "sólo
 si realmente lo exige"). La forma nueva es un superconjunto aditivo, y un producto anterior que lea una regla
 incompleta la **rechaza** al cargar (`CAMPO_REQUERIDO_FALTANTE`): falla cerrado, no la reinterpreta. Subir la

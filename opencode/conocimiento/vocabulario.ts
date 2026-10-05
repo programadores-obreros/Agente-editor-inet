@@ -67,6 +67,19 @@ export interface ComponenteVocabulario {
    * declara ningún requisito que lo necesite (nunca se inventa una nota sin una
    * fuente real). */
   readonly nota?: string
+  /**
+   * Semantic Vertical #3: estados que una ENTRADA ofrece a una regla de nivel, con la
+   * condición canónica YA ARMADA (`nucleo/estado-booleano.ts`). El agente la copia tal
+   * cual en `SetComportamiento.cuando` (más el `sensor`); nunca escribe la tríada a mano.
+   */
+  readonly estadosDeEntrada?: readonly { readonly estado: string; readonly condicion: { readonly capacidad: string; readonly comparador: string; readonly umbral: { readonly valor: number; readonly unidad: string; readonly magnitud: string } } }[]
+  /**
+   * Semantic Vertical #3: estados objetivo que un ACTUADOR declara (`accion` va en
+   * `SetComportamiento.entonces.accion`) y su `complemento` SÓLO si el catálogo lo declara.
+   * "Salvo cuando C, X" se arma como `{C, complemento de X}`; sin `complemento`, esa
+   * intención no es representable: no se inventa una negación.
+   */
+  readonly estadosDeSalida?: readonly { readonly estado: string; readonly accion: string; readonly complemento?: { readonly estado: string; readonly accion: string } }[]
 }
 
 export interface VocabularioProyectoFisico {
@@ -134,9 +147,20 @@ export function vocabularioDesdeCatalogo(catalogo: Catalogo, tiposPermitidos: re
   const placas: readonly PlacaVocabulario[] = catalogo.placas.map((placa) => ({ id: placa.id, nombre: nombreDePlaca(placa.id) ?? placa.id, alias: placa.alias }))
   const componentes: readonly ComponenteVocabulario[] = catalogo.componentes.map((componente) => {
     const nota = notaDeConexionRequerida(componente, catalogo)
-    return { tipo: componente.id, nombre: nombreDeComponente(componente.id) ?? componente.id, clase: componente.clase, terminales: terminalesVocabulario(componente, conocimiento), ...(nota !== undefined ? { nota } : {}) }
+    const estadosDeEntrada = conocimiento.estadosDeEntrada(componente.id).map((e) => ({ estado: e.etiqueta, condicion: e.condicion }))
+    const estadosDeSalida = componente.clase === "actuador" ? conocimiento.estadosDeSalida(componente.id).map((e) => ({ estado: e.etiqueta, accion: e.accion, ...(e.complemento ? { complemento: { estado: e.complemento.etiqueta, accion: e.complemento.accion } } : {}) })) : []
+    return {
+      tipo: componente.id,
+      nombre: nombreDeComponente(componente.id) ?? componente.id,
+      clase: componente.clase,
+      terminales: terminalesVocabulario(componente, conocimiento),
+      ...(nota !== undefined ? { nota } : {}),
+      ...(estadosDeEntrada.length > 0 ? { estadosDeEntrada } : {}),
+      ...(estadosDeSalida.length > 0 ? { estadosDeSalida } : {}),
+    }
   })
 
+  const condicionDeEjemplo = componentes.flatMap((c) => c.estadosDeEntrada ?? [])[0]?.condicion ?? {}
   const primeraPlaca = catalogo.placas[0]
   const primerComponente = catalogo.componentes[0]
   const terminalDeEjemplo = primerComponente ? (primerTerminalAsignable(primerComponente) ?? PLACEHOLDER_TERMINAL) : PLACEHOLDER_TERMINAL
@@ -175,9 +199,12 @@ export function vocabularioDesdeCatalogo(catalogo: Catalogo, tiposPermitidos: re
         // Phase 3 (contrato B7): la forma EXACTA de "mientras <entrada> esté presionada,
         // <salida> está encendida" (condición de NIVEL; reposo apagado = derivado, no se
         // guarda). Los `<...>` son marcadores: el agente los reemplaza con ids de `leer`.
+        // Semantic Vertical #3: la condición sale de la forma canónica (núcleo) vía el
+        // conocimiento de la primera entrada booleana del catálogo, nunca escrita a mano
+        // acá; los demás estados están en `componentes[].estadosDe*`.
         ejemplos.SetComportamiento = {
           comportamiento: {
-            cuando: { sensor: PLACEHOLDER_PULSADOR, capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } },
+            cuando: { sensor: PLACEHOLDER_PULSADOR, ...condicionDeEjemplo },
             entonces: { actuador: PLACEHOLDER_LED, accion: "encender" },
           },
         }

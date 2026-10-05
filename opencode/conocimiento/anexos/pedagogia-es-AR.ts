@@ -88,6 +88,34 @@ export function explicacionDeRequisito(tipoRequisito: string, nombreComponente: 
 }
 
 /**
+ * Semantic Vertical #3: cómo se le nombra al alumno cada VALOR de una capacidad booleana,
+ * por (tipo de componente, capacidad). La semántica (la tríada canónica) vive en
+ * `nucleo/estado-booleano.ts`; esto es sólo el rótulo. Sin rótulo, el estado no se ofrece
+ * en la frase ni en Blockly (no se inventa un texto).
+ */
+export const ETIQUETA_DE_ESTADO_BOOLEANO: Readonly<Record<string, Readonly<Record<string, { readonly verdadero: string; readonly falso: string }>>>> = {
+  pulsador: { estadoBooleano: { verdadero: "presionado", falso: "suelto" } },
+}
+
+/**
+ * Semantic Vertical #3: cómo se nombra cada ESTADO OBJETIVO de un actuador (el id de
+ * `DEFINICIONES_ACCION`), en la forma "el LED está ___". Por id de acción: el rótulo es
+ * el mismo para cualquier actuador que la declare.
+ */
+export const ETIQUETA_DE_ESTADO_OBJETIVO: Readonly<Record<string, string>> = {
+  encender: "encendido",
+  apagar: "apagado",
+}
+
+export function etiquetaDeEstadoBooleano(tipo: string, capacidad: string, valor: "verdadero" | "falso"): string | undefined {
+  return ETIQUETA_DE_ESTADO_BOOLEANO[tipo]?.[capacidad]?.[valor]
+}
+
+export function etiquetaDeEstadoObjetivo(accion: string): string | undefined {
+  return ETIQUETA_DE_ESTADO_OBJETIVO[accion]
+}
+
+/**
  * Si el terminal no tiene etiqueta todavía, se devuelve su propio id (comportamiento de
  * Wave 0: nunca se inventa un texto). Para los tipos oficialmente soportados, la suite de
  * admisión exige etiqueta para todos sus terminales, así que este respaldo no se usa.

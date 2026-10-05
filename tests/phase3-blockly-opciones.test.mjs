@@ -66,7 +66,8 @@ test("T2 las opciones del modelo son EXACTAMENTE las del servidor (valor+etiquet
   const m = proyectarModeloLogico(vista)
   const esperado = vista.opcionesRegla.slots.map((s) => s.opciones.map(({ valor, etiqueta }) => ({ valor, etiqueta })))
   assert.deepEqual(m.regla.campos.map((f) => f.opciones), esperado)
-  assert.deepEqual(m.regla.campos.map((f) => f.opciones.map((o) => o.etiqueta)), [["Pulsador"], ["presionado"], ["LED"], ["encendido"]])
+  // Semantic Vertical #3: estados y salidas vienen del conocimiento (presionado/suelto, encendido/apagado).
+  assert.deepEqual(m.regla.campos.map((f) => f.opciones.map((o) => o.etiqueta)), [["Pulsador"], ["presionado", "suelto"], ["LED"], ["encendido", "apagado"]])
   c.servicio.cerrar()
 })
 

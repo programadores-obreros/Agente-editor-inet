@@ -160,6 +160,10 @@
 //   `clase !== "actuador"`; `datos { componente, clase }`. Tipo desconocido del
 //   catálogo: no se emite (ya existe `CATALOGO_COMPONENTE_DESCONOCIDO`). Un documento
 //   histórico con un actuador inválido carga igual y muestra este motivo.
+// - `ACCION_NO_SOPORTADA` — Semantic Vertical #3 (D-11): `entonces.accion` que el tipo
+//   del actuador no declara en su catálogo; `datos { componente, accion, soportadas }`.
+//   Blocking + representable: la regla se persiste y se puede corregir. Un documento
+//   histórico con una acción no soportada carga igual y muestra este motivo.
 // - `SENSOR_INVALIDO` — `cuando.sensor` presente SIN triada cuyo catálogo no declara
 //   ninguna capacidad; `datos { componente }`. Con la triada presente no se emite
 //   (`CAPACIDAD_NO_DECLARADA` / `CAPACIDAD_INEXISTENTE_EN_CATALOGO` ya la cubren).

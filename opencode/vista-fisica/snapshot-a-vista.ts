@@ -30,12 +30,13 @@ import type { RegistroPin, Placa } from "../nucleo/placas.ts"
 import type { Motivo } from "../nucleo/motivos.ts"
 import { crearConocimiento, type ComponentKnowledge } from "../conocimiento/conocimiento.ts"
 import { validarProyecto, derivarReadiness } from "../nucleo/validar.ts"
+import { valorBooleanoDeCondicion } from "../nucleo/estado-booleano.ts"
 // Component System Foundation #1 (F5): datos de render y textos salen de los ANEXOS de
 // `conocimiento/` (representación, pedagogía es-AR), no del núcleo semántico.
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA, ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO, POTENCIA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
-import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito } from "../conocimiento/anexos/pedagogia-es-AR.ts"
+import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista } from "./modelo-vista.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal de UN tipo de componente.
@@ -490,7 +491,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   // fusionadas, justo antes de su ancla; el resto conserva su orden de siempre.
   const componentesOrdenados = reordenarParaAdyacencia(componentesConZona(componentesConValor, fusionesSerie, proyecto, catalogo), fusionesSerie)
 
-  const { reglas, opcionesRegla } = proyectarReglas(proyecto, catalogo, componentes, motivos)
+  const { reglas, opcionesRegla } = proyectarReglas(proyecto, catalogo, componentes, motivos, conocimiento)
 
   return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla, zonas: zonasDelEsquema(placa, componentesOrdenados) }
 }
@@ -544,23 +545,43 @@ function zonasDelEsquema(placa: PlacaVista | null, componentes: readonly Compone
 // servidor, determinista, sin LLM; el navegador sólo pinta lo que recibe.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-/** La triada de nivel que significa "presionado" (HD-P3-4): vive SÓLO acá; el navegador la
- * recibe en `opcionesRegla.estados[i].condicion` y la copia tal cual. */
-const CONDICION_PRESIONADO = { capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } } as const
+// Semantic Vertical #3: la forma canónica de "presionado"/"suelto" ya NO vive acá (antes
+// `CONDICION_PRESIONADO`): sale de `nucleo/estado-booleano.ts` (única fuente normativa)
+// y sus rótulos del anexo de pedagogía, a través de ComponentKnowledge
+// (`estadosDeEntrada`/`estadosDeSalida`). Esta función sólo arma la proyección.
 
-/** "presionado" ⇔ EXACTAMENTE esa triada. */
-function esCondicionPresionado(cuando: ComportamientoRegla["cuando"]): boolean {
-  const u = cuando?.umbral
-  const c = CONDICION_PRESIONADO
-  return cuando?.capacidad === c.capacidad && cuando.comparador === c.comparador && u !== undefined && u.valor === c.umbral.valor && u.unidad === c.umbral.unidad && u.magnitud === c.umbral.magnitud
-}
-
-const AVISO_CONDICION_AVANZADA = "Esta regla usa una condición avanzada: se puede mirar, pero esta frase sólo sabe armar «presionado»."
 const ETIQUETA_TRAZA = "Explicación de la regla — no es una simulación ni lo que pasa en la placa."
 
-function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: readonly ComponenteVista[], motivos: readonly MotivoVista[]): { reglas: readonly ReglaVista[]; opcionesRegla: OpcionesReglaVista } {
+/** La nota de condición avanzada nombra los estados que la frase SÍ sabe armar (los de
+ * las opciones ofrecidas), nunca una lista escrita acá. */
+function avisoCondicionAvanzada(estados: readonly { readonly etiqueta: string }[]): string {
+  const nombres = estados.map((e) => `«${e.etiqueta}»`)
+  const lista = nombres.length <= 1 ? nombres.join("") : `${nombres.slice(0, -1).join(", ")} o ${nombres[nombres.length - 1]}`
+  return `Esta regla usa una condición avanzada: se puede mirar, pero esta frase sólo sabe armar ${lista}.`
+}
+
+function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: readonly ComponenteVista[], motivos: readonly MotivoVista[], conocimiento: ComponentKnowledge): { reglas: readonly ReglaVista[]; opcionesRegla: OpcionesReglaVista } {
   const etiquetaDe = (id: string): string => componentes.find((c) => c.id === id)?.nombre ?? "componente que ya no existe"
   const ref = (id: string): ReferenciaVista => ({ id, etiqueta: etiquetaDe(id) })
+  const tipoDe = (id: string | undefined): string | undefined => (id === undefined ? undefined : proyecto.componentes.find((c) => c.id === id)?.tipo)
+
+  // Opciones de la frase/Blockly: SALEN del conocimiento de las piezas del proyecto
+  // (entradas con capacidad booleana rotulada; estados que cada actuador declara).
+  const sensores: ReferenciaVista[] = []
+  const actuadores: ReferenciaVista[] = []
+  const estados: OpcionEstadoVista[] = []
+  const salidas: OpcionSalidaVista[] = []
+  for (const c of componentes) {
+    const cat = catalogo.obtenerComponente(c.tipo)
+    if (!cat) continue
+    const deEntrada = conocimiento.estadosDeEntrada(c.tipo)
+    if (deEntrada.length > 0) sensores.push({ id: c.id, etiqueta: c.nombre })
+    for (const e of deEntrada) if (!estados.some((x) => x.clave === e.etiqueta)) estados.push({ clave: e.etiqueta, etiqueta: e.etiqueta, condicion: e.condicion })
+    if (cat.clase === "actuador") {
+      actuadores.push({ id: c.id, etiqueta: c.nombre })
+      for (const e of conocimiento.estadosDeSalida(c.tipo)) if (!salidas.some((x) => x.accion === e.accion)) salidas.push({ clave: e.etiqueta, etiqueta: e.etiqueta, accion: e.accion })
+    }
+  }
 
   const reglas: ReglaVista[] = proyecto.comportamientos.map((b) => {
     const delaRegla = motivos.filter((m) => m.entidad?.tipo === "comportamiento" && m.entidad.id === b.id)
@@ -568,52 +589,61 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     const faltanCrudo = incompleto?.datos?.faltan
     const faltan: readonly string[] = Array.isArray(faltanCrudo) ? faltanCrudo.map(String) : []
     const completa = incompleto === undefined
+    const accionNoSoportada = delaRegla.some((m) => m.codigo === "ACCION_NO_SOPORTADA")
 
     const cuando = b.cuando
     const entonces = b.entonces
     const tieneEstado = cuando?.capacidad !== undefined && cuando.comparador !== undefined && cuando.umbral !== undefined
-    const presionado = tieneEstado && esCondicionPresionado(cuando)
-    const salidaClave = entonces?.accion === undefined ? undefined : entonces.accion === "encender" ? "encendido" : "apagado"
+    // Estado de la entrada: canónico (núcleo) + rótulo del tipo del sensor; sin sensor
+    // elegido todavía, el rótulo de la opción ofrecida con esa misma condición.
+    const valor = tieneEstado ? valorBooleanoDeCondicion(cuando) : undefined
+    const tipoSensor = tipoDe(cuando?.sensor)
+    const estadoEntrada =
+      valor === undefined
+        ? undefined
+        : tipoSensor !== undefined
+          ? conocimiento.estadosDeEntrada(tipoSensor).find((e) => e.capacidad === cuando?.capacidad && e.valor === valor)
+          : estados.find((e) => e.condicion.capacidad === cuando?.capacidad && valorBooleanoDeCondicion(e.condicion) === valor)
+    const salidaEtiqueta = entonces?.accion === undefined ? undefined : (etiquetaDeEstadoObjetivo(entonces.accion) ?? entonces.accion)
     const frase: FraseReglaVista = {
       ...(cuando?.sensor !== undefined ? { sensor: ref(cuando.sensor) } : {}),
-      ...(tieneEstado ? { estado: presionado ? { clave: "presionado" as const, etiqueta: "presionado" } : { clave: "avanzada" as const, etiqueta: "condición avanzada" } } : {}),
+      ...(tieneEstado ? { estado: estadoEntrada ? { clave: estadoEntrada.etiqueta, etiqueta: estadoEntrada.etiqueta } : { clave: "avanzada", etiqueta: "condición avanzada" } } : {}),
       ...(entonces?.actuador !== undefined ? { actuador: ref(entonces.actuador) } : {}),
-      ...(salidaClave !== undefined ? { salida: { clave: salidaClave, etiqueta: salidaClave } } : {}),
+      ...(salidaEtiqueta !== undefined ? { salida: { clave: salidaEtiqueta, etiqueta: salidaEtiqueta } } : {}),
     }
 
-    const canonica = completa && presionado && frase.sensor !== undefined && frase.actuador !== undefined && frase.salida !== undefined
-    const aviso = tieneEstado && !presionado ? AVISO_CONDICION_AVANZADA : null
+    const canonica = completa && !accionNoSoportada && estadoEntrada !== undefined && frase.sensor !== undefined && frase.actuador !== undefined && frase.salida !== undefined
+    const aviso = tieneEstado && estadoEntrada === undefined ? avisoCondicionAvanzada(estados) : null
     const forma = { ...(cuando ? { cuando: JSON.parse(JSON.stringify(cuando)) } : {}), ...(entonces ? { entonces: JSON.parse(JSON.stringify(entonces)) } : {}) }
-    if (!canonica) return { id: b.id, frase, texto: null, completa, faltan, motivos: delaRegla, forma, aviso }
+    if (!canonica || estadoEntrada === undefined || entonces?.accion === undefined) return { id: b.id, frase, texto: null, completa, faltan, motivos: delaRegla, forma, aviso }
 
     const s = frase.sensor!.etiqueta
     const a = frase.actuador!.etiqueta
     const salida = frase.salida!.etiqueta
+    // Reposo (Semantic Vertical #3, supersede HD-P3D-1): el complemento DECLARADO del
+    // estado objetivo. Derivado, nunca guardado; si el tipo no declara complemento, la
+    // traza lo dice en vez de inventar un estado.
+    const tipoActuador = tipoDe(entonces.actuador)
+    const complemento = tipoActuador !== undefined ? conocimiento.complementoDe(tipoActuador, entonces.accion) : undefined
+    const reposo = complemento !== undefined ? etiquetaDeEstadoObjetivo(complemento) : undefined
+    const ramaFalsa =
+      reposo !== undefined
+        ? `Si el ${s} no está ${estadoEntrada.etiqueta} → la condición es falsa → el ${a} está ${reposo} (reposo).`
+        : `Si el ${s} no está ${estadoEntrada.etiqueta} → la condición es falsa → la regla no dice cómo queda el ${a} (no tiene un estado opuesto declarado).`
     const traza: TrazaReglaVista = {
       etiqueta: ETIQUETA_TRAZA,
-      ramas: [`Si el ${s} está presionado → la condición es verdadera → el ${a} está ${salida}.`, `Si el ${s} no está presionado → la condición es falsa → el ${a} está apagado (reposo).`],
-      ...(salidaClave === "apagado" ? { nota: "Esta regla no cambia nada visible." } : {}),
+      ramas: [`Si el ${s} está ${estadoEntrada.etiqueta} → la condición es verdadera → el ${a} está ${salida}.`, ramaFalsa],
     }
-    return { id: b.id, frase, texto: `Mientras el ${s} esté presionado, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza, forma, aviso }
+    return { id: b.id, frase, texto: `Mientras el ${s} esté ${estadoEntrada.etiqueta}, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza, forma, aviso }
   })
 
-  // Opciones derivadas de datos de catálogo (capacidad / clase), nunca una tabla de tipos.
-  // `apagar`/"apagado" NO se ofrece (HD-P3D-2): con reposo = apagado no tiene efecto visible.
-  const sensores: ReferenciaVista[] = []
-  const actuadores: ReferenciaVista[] = []
-  for (const c of componentes) {
-    const cat = catalogo.obtenerComponente(c.tipo)
-    if (!cat) continue
-    if (cat.capacidades.some((cap) => cap.id === "estadoBooleano")) sensores.push({ id: c.id, etiqueta: c.nombre })
-    if (cat.clase === "actuador") actuadores.push({ id: c.id, etiqueta: c.nombre })
-  }
   const slots: SlotFraseVista[] = [
     { slot: "sensor", prefijo: "Mientras el", opciones: sensores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { cuando: { sensor: o.id } } })) },
-    { slot: "estado", prefijo: "esté", opciones: [{ valor: "presionado", etiqueta: "presionado", parche: { cuando: CONDICION_PRESIONADO } }] },
+    { slot: "estado", prefijo: "esté", opciones: estados.map((e) => ({ valor: e.clave, etiqueta: e.etiqueta, parche: { cuando: { ...e.condicion } } })) },
     { slot: "actuador", prefijo: ", el", opciones: actuadores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { entonces: { actuador: o.id } } })) },
-    { slot: "salida", prefijo: "está", opciones: [{ valor: "encendido", etiqueta: "encendido", parche: { entonces: { accion: "encender" } } }] },
+    { slot: "salida", prefijo: "está", opciones: salidas.map((o) => ({ valor: o.clave, etiqueta: o.etiqueta, parche: { entonces: { accion: o.accion } } })) },
   ]
-  return { reglas, opcionesRegla: { slots, sensores, estados: [{ clave: "presionado", etiqueta: "presionado", condicion: CONDICION_PRESIONADO }], actuadores, salidas: [{ clave: "encendido", etiqueta: "encendido", accion: "encender" }] } }
+  return { reglas, opcionesRegla: { slots, sensores, estados, actuadores, salidas } }
 }
 
 /**
