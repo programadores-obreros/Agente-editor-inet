@@ -29,6 +29,7 @@
  * @param {{ onCambioGpio?: (evento: { componenteId: string, terminalId: string, valor: string | null }) => void,
  *   onCambioRegla?: (e: { reglaId: string | null, slot: string, valor: string | null }) => void,
  *   onQuitarRegla?: (e: { reglaId: string | null }) => void, onAgregarRegla?: () => void,
+ *   onDescartarBorrador?: (e: { reglaId: string | null }) => void,
  *   onAlternarTraza?: (e: { reglaId: string }) => void }} [manejadores]
  * @returns {{ circuito: Element, cables: Element, controles: Element, reglas: Element, motivos: Element }}
  *   Cinco raíces NUEVAS (nunca reusa ni muta un elemento existente) — el llamador
@@ -534,6 +535,21 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
     ayuda.setAttribute("data-ayuda-regla", "true")
     ayuda.textContent = instruccion.ayuda
     caja.appendChild(ayuda)
+  }
+
+  // Numeric Conditions S2: lo elegido de la condición todavía no se guardó (borrador efímero).
+  if (instruccion.borrador) {
+    const borrador = doc.createElement("p")
+    borrador.setAttribute("data-borrador-regla", "true")
+    borrador.textContent = instruccion.borrador.texto
+    caja.appendChild(borrador)
+    caja.appendChild(crearBoton(doc, "descartar-borrador", instruccion.borrador.descartar, instruccion.deshabilitado, () => avisar(manejadores.onDescartarBorrador, { reglaId: instruccion.reglaId })))
+  }
+  if (instruccion.avisoBorrador) {
+    const aviso = doc.createElement("p")
+    aviso.setAttribute("data-aviso-borrador", "true")
+    aviso.textContent = instruccion.avisoBorrador
+    caja.appendChild(aviso)
   }
 
   if (instruccion.explicaciones.length > 0) {

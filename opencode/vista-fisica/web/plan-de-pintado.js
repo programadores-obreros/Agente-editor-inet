@@ -190,7 +190,8 @@ export function planDePintado(modeloDeVista, opciones = {}) {
     }
   }
 
-  instrucciones.push(...instruccionesDeReglas(modeloDeVista, { deshabilitado: !conexionActiva || operacionPendiente, reglaNueva, trazasAbiertas }))
+  // Numeric Conditions S2: el borrador del grupo (del controlador) y su aviso, sólo para pintar.
+  instrucciones.push(...instruccionesDeReglas(modeloDeVista, { deshabilitado: !conexionActiva || operacionPendiente, reglaNueva, trazasAbiertas, borrador: opciones.borrador ?? null, avisoBorrador: opciones.avisoBorrador ?? null }))
 
   // Panel de motivos: tal cual `modeloDeVista.motivos` (ya proyectado 1:1 desde
   // `validarProyecto()`, orden estable de `nucleo/motivos.ts::compararMotivos`) — este
@@ -301,6 +302,93 @@ function opcionesDelSlot(base, actual) {
   return [...opciones, actual]
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Numeric Conditions S2 — GRUPO atómico y su borrador efímero. Funciones PURAS sobre lo que el
+// servidor proyectó (`regla.slots` con `grupoAtomico`/`predeterminado`/`opcionesPor`/
+// `vaciaAlCambiar`): acá no se sabe qué es una capacidad ni una unidad. El borrador
+// (`partes`: slot → valor elegido o texto escrito) vive en el controlador de reglas (app.js);
+// estas funciones sólo calculan qué vale, qué se ofrece y si el grupo está completo.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Lo que escribió el estudiante como número: acepta coma o punto decimal y espacios alrededor.
+ * Sólo dígitos (sin exponentes, hexadecimales ni "Infinity"); si no es un número así, `null`.
+ */
+export function interpretarNumero(texto) {
+  if (typeof texto === "number") return Number.isFinite(texto) ? texto : null
+  if (typeof texto !== "string") return null
+  const limpio = texto.trim().replace(",", ".")
+  if (!/^-?\d+(\.\d+)?$/.test(limpio)) return null
+  const n = Number(limpio)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Los slots del grupo atómico de una regla, en el orden del servidor (vacío si no hay grupo). */
+export function slotsDelGrupo(regla) {
+  return (regla?.slots ?? []).filter((s) => typeof s.grupoAtomico === "string")
+}
+
+/**
+ * Estado del grupo con estas `partes`: por slot, el valor vigente (elegido y todavía ofrecido, o
+ * el `predeterminado` de la lista), sus opciones (las de `opcionesPor` según el slot del que
+ * dependen) y si el grupo entero está completo. El número es el TEXTO escrito.
+ */
+export function estadoDelGrupo(regla, partes = {}) {
+  const valores = {}
+  const opciones = {}
+  let completo = true
+  for (const slot of slotsDelGrupo(regla)) {
+    if (slot.tipo === "numero") {
+      const texto = typeof partes[slot.slot] === "string" ? partes[slot.slot] : ""
+      valores[slot.slot] = texto
+      opciones[slot.slot] = []
+      if (interpretarNumero(texto) === null) completo = false
+      continue
+    }
+    const lista = slot.opcionesPor ? (slot.opcionesPor.listas[valores[slot.opcionesPor.depende]] ?? { opciones: [] }) : { opciones: slot.opciones, predeterminado: slot.predeterminado }
+    const elegido = partes[slot.slot]
+    const ofrecido = (v) => v !== undefined && lista.opciones.some((o) => o.valor === v)
+    const valor = ofrecido(elegido) ? elegido : ofrecido(lista.predeterminado) ? lista.predeterminado : undefined
+    valores[slot.slot] = valor
+    opciones[slot.slot] = lista.opciones
+    if (valor === undefined) completo = false
+  }
+  return { valores, opciones, completo }
+}
+
+/**
+ * Las `partes` después de elegir `valor` en `slot`: se descartan las elecciones que dejaron de
+ * ofrecerse y, si un slot con `vaciaAlCambiar` cambió de valor vigente, se vacían esos slots
+ * (OD-2: cambiar la unidad vacía el número; no hay conversión en el borrador).
+ */
+export function aplicarEleccionAlGrupo(regla, partes, slot, valor) {
+  const antes = estadoDelGrupo(regla, partes).valores
+  const nuevas = { ...partes, [slot]: valor }
+  const despues = estadoDelGrupo(regla, nuevas).valores
+  for (const s of slotsDelGrupo(regla)) {
+    if (s.tipo !== "numero" && nuevas[s.slot] !== undefined && despues[s.slot] !== nuevas[s.slot]) delete nuevas[s.slot]
+    if (s.vaciaAlCambiar && antes[s.slot] !== despues[s.slot]) for (const k of s.vaciaAlCambiar) delete nuevas[k]
+  }
+  return nuevas
+}
+
+/**
+ * Revalida un borrador contra la regla de un snapshot nuevo (OD-4): conserva sólo lo que sigue
+ * ofrecido. `null` si la regla ya no tiene grupo que armar (desapareció, o alguien ya completó
+ * la condición por otro camino): el borrador no tiene más sentido y se descarta.
+ */
+export function revalidarGrupo(regla, partes) {
+  if (!regla || slotsDelGrupo(regla).length === 0) return null
+  const { valores } = estadoDelGrupo(regla, partes)
+  const vigentes = {}
+  for (const s of slotsDelGrupo(regla)) {
+    const p = partes[s.slot]
+    if (p === undefined) continue
+    if (s.tipo === "numero" || valores[s.slot] === p) vigentes[s.slot] = p
+  }
+  return vigentes
+}
+
 /** Valor actual de un slot: `frase[slot]` ya viene del servidor ({id, etiqueta} o {clave, etiqueta}). */
 export function valorActualDe(frase, slot) {
   const f = frase[slot]
@@ -309,9 +397,15 @@ export function valorActualDe(frase, slot) {
 
 function instruccionDeFrase(regla, opciones, config) {
   const frase = regla ? regla.frase : {}
+  // Numeric Conditions S2: si esta regla tiene un grupo que se está armando, sus slots muestran
+  // lo del borrador (que es del controlador, no de esta función).
+  const partes = regla && config.borrador?.reglaId === regla.id ? config.borrador.partes : {}
+  const grupo = regla ? estadoDelGrupo(regla, partes) : { valores: {}, opciones: {} }
+  const sinEnviar = Object.keys(partes).length > 0
   // Los slots (orden, texto fijo, opciones) los dicta el servidor: acá no se nombra ninguno. Si la
   // regla trae los suyos (dependen de la entrada elegida), se usan ésos.
   const selectores = ((regla && regla.slots) ?? opciones.slots ?? []).map((definicion) => {
+    if (typeof definicion.grupoAtomico === "string") return selectorDelGrupo(definicion, grupo, config)
     const actual = valorActualDe(frase, definicion.slot)
     // Numeric Conditions S1: un slot "numero" es un campo de texto con el número que se lee.
     if (definicion.tipo === "numero") {
@@ -335,11 +429,25 @@ function instruccionDeFrase(regla, opciones, config) {
     explicaciones: regla ? regla.motivos.map((m) => m.explicacion).filter((t) => typeof t === "string" && t !== "") : [],
     aviso: regla ? (regla.aviso ?? null) : null,
     ayuda: regla ? (regla.ayuda ?? null) : null,
+    borrador: regla && sinEnviar ? { texto: TEXTO_SIN_ENVIAR, descartar: "Descartar" } : null,
+    avisoBorrador: config.avisoBorrador ?? null,
     conTraza: regla !== null && regla.traza !== undefined,
     etiquetaTraza: "¿Qué pasaría si…?",
     traza: trazaAbierta ? regla.traza : null,
     deshabilitado: config.deshabilitado,
   }
+}
+
+/** Texto del borrador (pendiente de aprobación): lo elegido de la condición todavía no se guardó. */
+export const TEXTO_SIN_ENVIAR = "Sin enviar: la condición se guarda cuando esté completa."
+
+function selectorDelGrupo(definicion, grupo, config) {
+  const valor = grupo.valores[definicion.slot]
+  if (definicion.tipo === "numero") {
+    return { slot: definicion.slot, prefijo: definicion.prefijo, tipo: "numero", valorActual: valor ?? "", deshabilitado: config.deshabilitado }
+  }
+  const lista = (grupo.opciones[definicion.slot] ?? []).map((o) => ({ valor: o.valor, etiqueta: o.etiqueta }))
+  return { slot: definicion.slot, prefijo: definicion.prefijo, opciones: lista, valorActual: valor ?? null, placeholder: valor === undefined ? PLACEHOLDER_SLOT : null, deshabilitado: config.deshabilitado }
 }
 
 function instruccionesDeReglas(modeloDeVista, config) {

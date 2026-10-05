@@ -6,8 +6,12 @@
 
 import { crearAdaptadorBlockly } from "./adaptador-blockly.js"
 import { proyectarModeloLogico } from "./vista-logica.js"
+import { TEXTO_SIN_ENVIAR } from "./plan-de-pintado.js"
 
 export const MENSAJE_NO_SE_PUDO_GUARDAR = "No se pudo guardar el cambio. Volvé a intentar."
+
+/** Numeric Conditions S2: el borrador vive en el controlador de reglas (el mismo de la frase). */
+const borradorDe = (controlador) => (typeof controlador?.borrador === "function" ? controlador.borrador() : null)
 
 /**
  * @param {{ Blockly: object, contenedor: Element, controlador: { cambiar: Function, quitar: Function },
@@ -17,7 +21,7 @@ export function crearVistaLogica({ Blockly, contenedor, controlador, media, mens
   // Gana el snapshot: si el controlador ignoró el cambio (false) o el envío falló, se repinta lo último autoritativo.
   let ultimo = null
   const reponer = () => {
-    if (ultimo) adaptador.pintar(proyectarModeloLogico(ultimo.snapshot?.vista ?? {}), { deshabilitado: ultimo.deshabilitado })
+    if (ultimo) adaptador.pintar(proyectarModeloLogico(ultimo.snapshot?.vista ?? {}, borradorDe(controlador)), { deshabilitado: ultimo.deshabilitado })
   }
   const enviar = (promesa) =>
     Promise.resolve(promesa).then(
@@ -41,7 +45,7 @@ export function crearVistaLogica({ Blockly, contenedor, controlador, media, mens
     /** Pinta SIEMPRE desde el snapshot autoritativo; devuelve el modelo (para textos junto al bloque). */
     repintar(snapshot, { deshabilitado = false } = {}) {
       ultimo = { snapshot, deshabilitado }
-      const modelo = proyectarModeloLogico(snapshot?.vista ?? {})
+      const modelo = proyectarModeloLogico(snapshot?.vista ?? {}, borradorDe(controlador))
       adaptador.pintar(modelo, { deshabilitado })
       return modelo
     },
@@ -74,7 +78,7 @@ export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elemento
       }
       vista ??= crearVistaLogica({ Blockly, contenedor: lienzo, controlador, alError: () => mostrarEstado(MENSAJE_NO_SE_PUDO_GUARDAR), ...(media === undefined ? {} : { media }) })
       const modelo = vista.repintar(snapshot, { deshabilitado })
-      const lineas = modelo.regla ? [...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : []), ...(modelo.regla.ayuda ? [modelo.regla.ayuda] : [])] : []
+      const lineas = modelo.regla ? [...(modelo.regla.sinEnviar ? [TEXTO_SIN_ENVIAR] : []), ...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : []), ...(modelo.regla.ayuda ? [modelo.regla.ayuda] : [])] : []
       if (modelo.hayVarias) lineas.push("Se muestra la primera regla; las demás están en la sección Reglas.")
       elementoTexto.textContent = lineas.join("\n")
       botonQuitar.disabled = deshabilitado || !modelo.regla || modelo.regla.id === null

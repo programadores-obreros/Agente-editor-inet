@@ -9,7 +9,11 @@
 // elegir en el selector. Si el POST tarda o falla, la vista se queda mostrando el
 // último snapshot autoritativo recibido.
 
-import { planDePintado } from "./plan-de-pintado.js"
+import { planDePintado, interpretarNumero, estadoDelGrupo, aplicarEleccionAlGrupo, revalidarGrupo, slotsDelGrupo } from "./plan-de-pintado.js"
+
+// La interpretación del número vive con las funciones del grupo (plan-de-pintado.js); se re-exporta
+// acá porque es parte de la API de este módulo desde S1.
+export { interpretarNumero }
 import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 import { crearClienteHttp } from "./cliente-http.js"
@@ -217,23 +221,30 @@ function colocar(objeto, camino, valor) {
   return { ...actual, [clave]: colocar(actual[clave], resto, valor) }
 }
 
-/**
- * Lo que escribió el estudiante como número: acepta coma o punto decimal y espacios alrededor.
- * Sólo dígitos (sin exponentes, hexadecimales ni "Infinity"); si no es un número así, `null`.
- */
-export function interpretarNumero(texto) {
-  if (typeof texto === "number") return Number.isFinite(texto) ? texto : null
-  if (typeof texto !== "string") return null
-  const limpio = texto.trim().replace(",", ".")
-  if (!/^-?\d+(\.\d+)?$/.test(limpio)) return null
-  const n = Number(limpio)
-  return Number.isFinite(n) ? n : null
-}
-
 /** Foco de la frase tras repintar: el control equivalente (misma regla y slot) o `null`. */
 export function elegirControlReglaParaFoco(disponibles, focoAnterior) {
   if (!focoAnterior) return null
   return disponibles.find((c) => c.reglaId === focoAnterior.reglaId && c.slot === focoAnterior.slot) ?? null
+}
+
+/**
+ * Numeric Conditions S2: la operación que materializa un grupo COMPLETO de una regla ya
+ * persistida. Misma composición que S1, con varias partes a la vez: se mezcla el `parche` de cada
+ * opción elegida (en el orden de los slots) y el número va a su `destino`. UNA SetComportamiento.
+ */
+export function componerGrupo(regla, partes) {
+  const { valores, opciones, completo } = estadoDelGrupo(regla, partes)
+  if (!completo) return null
+  let forma = { ...(regla.forma.cuando ? { cuando: regla.forma.cuando } : {}), ...(regla.forma.entonces ? { entonces: regla.forma.entonces } : {}) }
+  for (const slot of slotsDelGrupo(regla)) {
+    if (slot.tipo === "numero") {
+      forma = colocar(forma, slot.destino, interpretarNumero(valores[slot.slot]))
+      continue
+    }
+    const parche = opciones[slot.slot].find((o) => o.valor === valores[slot.slot]).parche
+    forma = mezclar(forma, parche)
+  }
+  return { tipo: "SetComportamiento", payload: { comportamiento: { id: regla.id, ...forma } } }
 }
 
 /** ¿Es una edición real? Una opción ofrecida, o (slot "numero") un número válido distinto del guardado. */
@@ -256,15 +267,41 @@ function valorEsEdicion(slot, valor, regla, opcionesRegla) {
  * - `obtenerSnapshot()`: el último snapshot autoritativo (`{revision, vista}`).
  * - `enviar({tipo, payload, baseRevision})`: hace el POST; resuelve con `{resultado}`.
  */
+/** Numeric Conditions S2 (texto pendiente de aprobación): la regla cambió por otro lado mientras
+ * se armaba su condición, y el borrador ya no aplica. */
+export const AVISO_BORRADOR_DESCARTADO = "La regla cambió mientras armabas la condición; revisala."
+
 export function crearControladorReglas({ obtenerSnapshot, enviar, alCambiar }) {
   let pendiente = false
   let externa = false
   let reglaNueva = false
   const trazasAbiertas = new Set()
+  // Numeric Conditions S2: el ÚNICO borrador (lo comparten la frase y la vista lógica). Sólo las
+  // partes del grupo atómico de UNA regla ya persistida; nunca IR, nunca estado del Engine.
+  let borrador = null // { reglaId, partes }
+  let avisoBorrador = null
+
+  const reglaDelSnapshot = (reglaId) => obtenerSnapshot()?.vista?.reglas.find((r) => r.id === reglaId) ?? null
+
+  /** El borrador revalidado contra el snapshot autoritativo vigente (OD-4): conserva sólo lo que
+   * sigue ofrecido; si la regla ya no tiene grupo que armar, se descarta con un aviso. */
+  function borradorVigente() {
+    if (!borrador) return null
+    const partes = revalidarGrupo(reglaDelSnapshot(borrador.reglaId), borrador.partes)
+    if (partes === null) {
+      borrador = null
+      avisoBorrador = AVISO_BORRADOR_DESCARTADO
+      return null
+    }
+    borrador = { reglaId: borrador.reglaId, partes }
+    return borrador
+  }
 
   const ocupado = () => pendiente || externa
 
-  async function ejecutar(operacion) {
+  /** `siAcepta` corre ANTES del repintado final, sólo si el Engine aceptó (Numeric Conditions S2:
+   * destruir el borrador recién con la respuesta autoritativa). */
+  async function ejecutar(operacion, { siAcepta } = {}) {
     pendiente = true
     alCambiar()
     let cuerpo = null
@@ -278,13 +315,52 @@ export function crearControladorReglas({ obtenerSnapshot, enviar, alCambiar }) {
     } finally {
       pendiente = false
     }
-    if (cuerpo?.resultado?.ok) reglaNueva = false
+    if (cuerpo?.resultado?.ok) {
+      reglaNueva = false
+      siAcepta?.()
+    }
     alCambiar()
     return true
   }
 
+  /** Una elección del grupo atómico: actualiza el borrador y, si el grupo quedó COMPLETO, manda UNA
+   * operación. El borrador se destruye SÓLO si el Engine la aceptó; si la rechaza (o es stale), el
+   * borrador queda para seguir editando y nunca se reenvía solo (OD-4). */
+  async function cambiarEnGrupo(regla, slot, valor) {
+    const vigente = borradorVigente()
+    const partesPrevias = vigente && vigente.reglaId === regla.id ? vigente.partes : {}
+    const partes = aplicarEleccionAlGrupo(regla, partesPrevias, slot, valor)
+    borrador = { reglaId: regla.id, partes }
+    avisoBorrador = null
+    const operacion = componerGrupo(regla, partes)
+    if (operacion === null) {
+      alCambiar()
+      return true
+    }
+    return ejecutar(operacion, {
+      siAcepta: () => {
+        borrador = null
+      },
+    })
+  }
+
+  function valorDelGrupoValido(regla, definicion, valor) {
+    if (definicion.tipo === "numero") return typeof valor === "string"
+    const vigente = borrador && borrador.reglaId === regla.id ? borrador.partes : {}
+    return (estadoDelGrupo(regla, { ...vigente }).opciones[definicion.slot] ?? []).some((o) => o.valor === valor)
+  }
+
   return {
-    opciones: () => ({ operacionPendiente: ocupado(), reglaNueva, trazasAbiertas: [...trazasAbiertas] }),
+    opciones: () => ({ operacionPendiente: ocupado(), reglaNueva, trazasAbiertas: [...trazasAbiertas], borrador: borradorVigente(), avisoBorrador }),
+    /** Numeric Conditions S2: el borrador vigente (para la vista lógica: misma fuente que la frase). */
+    borrador: () => borradorVigente(),
+    /** Cancelar: descarta SÓLO el borrador; la regla incompleta ya persistida queda como está (B2/B7). */
+    descartarBorrador() {
+      borrador = null
+      avisoBorrador = null
+      alCambiar()
+      return true
+    },
     marcarOperacionExterna(valor) {
       externa = Boolean(valor)
     },
@@ -301,6 +377,12 @@ export function crearControladorReglas({ obtenerSnapshot, enviar, alCambiar }) {
       const { opcionesRegla } = snapshot.vista
       const regla = reglaId === null ? null : (snapshot.vista.reglas.find((r) => r.id === reglaId) ?? null)
       if (reglaId !== null && regla === null) return false
+      // Numeric Conditions S2: una parte del grupo atómico va al borrador, no al Engine.
+      const definicionGrupo = regla ? definicionDeSlot(slot, regla, opcionesRegla) : undefined
+      if (definicionGrupo && typeof definicionGrupo.grupoAtomico === "string") {
+        if (!valorDelGrupoValido(regla, definicionGrupo, valor)) return false
+        return cambiarEnGrupo(regla, slot, valor)
+      }
       // Sólo valores OFRECIDOS (o un número válido nuevo): "condición avanzada" (no editable),
       // vaciar un slot o repetir el mismo número no envían nada.
       if (!valorEsEdicion(slot, valor, regla, opcionesRegla)) return false
@@ -313,7 +395,7 @@ export function crearControladorReglas({ obtenerSnapshot, enviar, alCambiar }) {
         alCambiar()
         return true
       }
-      return ejecutar({ tipo: "QuitarComportamiento", payload: { comportamiento: reglaId } })
+      return ejecutar({ tipo: "QuitarComportamiento", payload: { comportamiento: reglaId } }, { siAcepta: () => { if (borrador?.reglaId === reglaId) borrador = null } })
     },
     alternarTraza({ reglaId }) {
       if (trazasAbiertas.has(reglaId)) trazasAbiertas.delete(reglaId)
@@ -457,6 +539,7 @@ function repintar() {
     onQuitarRegla: (evento) => avisarSiFalla(controladorReglas.quitar(evento)),
     onAgregarRegla: () => controladorReglas.agregar(),
     onAlternarTraza: (evento) => controladorReglas.alternarTraza(evento),
+    onDescartarBorrador: () => controladorReglas.descartarBorrador(),
   })
   for (const clave of Object.keys(contenedores)) {
     contenedores[clave].replaceChildren(secciones[clave])

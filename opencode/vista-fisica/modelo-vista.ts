@@ -318,6 +318,19 @@ export interface SlotFraseVista {
    * interpreta como número y lo coloca en `destino` (camino dentro de la regla); el Engine decide. */
   readonly tipo?: "opciones" | "numero"
   readonly destino?: readonly string[]
+  /** Numeric Conditions S2: el slot es parte de un GRUPO que la IR sólo acepta completo (la
+   * tríada de la condición). Mientras el grupo no esté completo, lo elegido vive en un borrador
+   * efímero del navegador; nunca llega al Engine por partes. */
+  readonly grupoAtomico?: string
+  /** Numeric Conditions S2: valor elegido de antemano porque la fuente normativa lo declara (p.
+   * ej. la única capacidad disponible). Nunca un valor semántico inventado. */
+  readonly predeterminado?: string
+  /** Numeric Conditions S2: las opciones de este slot dependen del valor de OTRO slot del grupo
+   * (`depende`): una lista, con su predeterminado, por cada valor posible de ese slot. */
+  readonly opcionesPor?: { readonly depende: string; readonly listas: Readonly<Record<string, { readonly opciones: readonly OpcionSlotVista[]; readonly predeterminado?: string }>> }
+  /** Numeric Conditions S2 (OD-2): si el valor de este slot cambia en el borrador, estos otros
+   * slots del grupo se vacían (p. ej. cambiar la unidad vacía el número). */
+  readonly vaciaAlCambiar?: readonly string[]
 }
 
 export interface OpcionesReglaVista {

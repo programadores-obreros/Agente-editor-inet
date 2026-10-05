@@ -9,7 +9,7 @@
 //
 // Límite de UI = una regla: se proyecta la primera; `hayVarias` avisa de que hay más.
 
-import { valorActualDe } from "./plan-de-pintado.js"
+import { valorActualDe, estadoDelGrupo } from "./plan-de-pintado.js"
 
 /**
  * @param {{ reglas?: readonly object[], opcionesRegla?: { slots?: readonly object[] } }} vista
@@ -18,7 +18,7 @@ import { valorActualDe } from "./plan-de-pintado.js"
  *   faltan: readonly string[], avanzada: boolean, aviso: string | null, motivos: readonly string[] },
  *   hayVarias: boolean }}
  */
-export function proyectarModeloLogico(vista) {
+export function proyectarModeloLogico(vista, borrador = null) {
   const reglas = vista?.reglas ?? []
   const slots = vista?.opcionesRegla?.slots ?? []
   const hayVarias = reglas.length > 1
@@ -28,7 +28,25 @@ export function proyectarModeloLogico(vista) {
   const frase = existente ? existente.frase : {}
   // Numeric Conditions S1: si la regla trae sus propios slots (dependen de la entrada elegida), se usan ésos.
   const definiciones = (existente && existente.slots) ?? slots
+  // Numeric Conditions S2: el borrador del grupo atómico (el MISMO del controlador que usa la frase)
+  // se superpone a los slots del grupo; el workspace nunca lo guarda.
+  const partes = existente && borrador?.reglaId === existente.id ? borrador.partes : {}
+  const grupo = existente ? estadoDelGrupo(existente, partes) : { valores: {}, opciones: {} }
   const campos = definiciones.map((definicion) => {
+    if (typeof definicion.grupoAtomico === "string") {
+      const valor = grupo.valores[definicion.slot]
+      const opcionesGrupo = (grupo.opciones[definicion.slot] ?? []).map((o) => ({ valor: o.valor, etiqueta: o.etiqueta }))
+      const numero = definicion.tipo === "numero"
+      return {
+        slot: definicion.slot,
+        prefijo: definicion.prefijo,
+        valor: numero ? (valor === "" ? null : valor) : (valor ?? null),
+        etiquetaActual: numero ? (valor ?? "") : (opcionesGrupo.find((o) => o.valor === valor)?.etiqueta ?? null),
+        opciones: opcionesGrupo,
+        ...(numero ? { tipo: "numero" } : {}),
+        ...(definicion.grupo ? { grupo: definicion.grupo } : {}),
+      }
+    }
     const actual = valorActualDe(frase, definicion.slot)
     return {
       slot: definicion.slot,
@@ -52,6 +70,8 @@ export function proyectarModeloLogico(vista) {
       avanzada: avisoServidor !== null,
       aviso: avisoServidor,
       ayuda: existente ? (existente.ayuda ?? null) : null,
+      // Numeric Conditions S2: hay partes elegidas que todavía no se guardaron.
+      sinEnviar: Object.keys(partes).length > 0,
       motivos: existente ? existente.motivos.map((m) => m.explicacion).filter((t) => typeof t === "string" && t !== "") : [],
     },
     hayVarias,

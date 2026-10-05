@@ -38,6 +38,7 @@ import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUI
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
 import { cuantitativasParaCrear, reconocerCondicionNumerica, ROTULO_COMPARADOR, COMPLEMENTO_COMPARADOR, cantidadEnTexto, ayudaDeRango, rangoEnTexto, simboloDe, formatearNumero, type CondicionNumerica } from "./condicion-numerica.ts"
 import { COMPARADORES } from "../nucleo/ir.ts"
+import type { CapacidadCuantitativa } from "../conocimiento/cuantitativo.ts"
 import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista, OpcionSlotVista } from "./modelo-vista.ts"
 
 /**
@@ -698,6 +699,13 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     })
     const sensorPropio = opcionesSensor.some((o) => o.reemplazaCuando === true)
     const estadosDelSensor = conocimiento.estadosDeEntrada(tipoSensor)
+    // Numeric Conditions S2: la entrada es cuantitativa y la regla todavía no tiene condición →
+    // se ofrecen los slots del GRUPO de la condición, vacíos, para armarla en un borrador.
+    const tieneTriada = b.cuando?.capacidad !== undefined
+    const cuantitativas = cuantitativasParaCrear(conocimiento, tipoSensor)
+    if (!tieneTriada && cuantitativas.length > 0 && estadosDelSensor.length === 0) {
+      return [...slotsGrupoNumerico(cuantitativas, { ...slotSensor, opciones: opcionesSensor, grupo: "cuando" }), { ...slotActuador, grupo: "entonces" }, { ...slotSalida, grupo: "entonces" }]
+    }
     const estadosPropios = estadosDelSensor.length !== estados.length || estadosDelSensor.some((e, i) => e.etiqueta !== estados[i]?.etiqueta)
     if (!numerica && !sensorPropio && !estadosPropios) return undefined
 
@@ -724,6 +732,42 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
       // conversión no es posible (sin conversión declarada, capacidad no disponible, unidad
       // guardada ajena), esa unidad no se ofrece: nunca se inventa una cantidad.
       { slot: "unidad", prefijo: "", opciones: opcionesDeUnidad(numerica, tipoSensor, umbralGuardado), grupo: "cuando" },
+    ]
+  }
+
+  /**
+   * Numeric Conditions S2: los slots de la condición numérica de una regla que todavía no la
+   * tiene. Forman un GRUPO atómico: el navegador junta capacidad, comparador, número y unidad en
+   * un borrador efímero y manda UN `SetComportamiento` recién cuando el grupo está completo.
+   * Todo dato sale de Component Knowledge: capacidades disponibles con su rótulo, unidades
+   * ofrecidas por capacidad y su unidad canónica (único predeterminado de unidad). La capacidad
+   * sólo viene elegida de antemano si es la única disponible. Comparador y número, nunca.
+   */
+  function slotsGrupoNumerico(cuantitativas: readonly CapacidadCuantitativa[], sensorEnRegla: SlotFraseVista): SlotFraseVista[] {
+    const grupo = { grupo: "cuando" as const, grupoAtomico: "condicion" }
+    return [
+      {
+        slot: "capacidad",
+        prefijo: "Mientras la lectura de",
+        opciones: cuantitativas.map((c) => ({ valor: c.capacidad, etiqueta: c.etiqueta!, parche: { cuando: { capacidad: c.capacidad, umbral: { magnitud: c.magnitud, unidad: c.unidadCanonica } } } })),
+        ...grupo,
+        ...(cuantitativas.length === 1 ? { predeterminado: cuantitativas[0]!.capacidad } : {}),
+      },
+      { ...sensorEnRegla, prefijo: "del" },
+      { slot: "comparador", prefijo: "sea", opciones: COMPARADORES.map((c) => ({ valor: c, etiqueta: ROTULO_COMPARADOR[c], parche: { cuando: { comparador: c } } })), ...grupo },
+      { slot: "valor", prefijo: "", opciones: [], tipo: "numero", destino: ["cuando", "umbral", "valor"], ...grupo },
+      {
+        slot: "unidad",
+        prefijo: "",
+        opciones: [],
+        ...grupo,
+        opcionesPor: {
+          depende: "capacidad",
+          listas: Object.fromEntries(cuantitativas.map((c) => [c.capacidad, { opciones: c.unidades.map((u) => ({ valor: u.id, etiqueta: u.simbolo, parche: { cuando: { umbral: { unidad: u.id } } } })), predeterminado: c.unidadCanonica }])),
+        },
+        // OD-2: en el borrador no hay conversión (no hay cantidad persistida); cambiar la unidad vacía el número.
+        vaciaAlCambiar: ["valor"],
+      },
     ]
   }
 
