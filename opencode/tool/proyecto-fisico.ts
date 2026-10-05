@@ -32,6 +32,7 @@ import type { ResultadoTransaccion } from "../nucleo/motor.ts"
 import type { Componente, Proyecto } from "../nucleo/ir.ts"
 import type { Catalogo } from "../nucleo/catalogo.ts"
 import type { ModeloDeVista, MotivoVista } from "../vista-fisica/modelo-vista.ts"
+import type { CapacidadCuantitativa } from "../conocimiento/cuantitativo.ts"
 import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
 // Component System Foundation #1 (F6): el vocabulario y el conocimiento de componentes
 // salen de `../conocimiento/` (ComponentKnowledge), ya no de la vista. Como ahora el
@@ -39,6 +40,10 @@ import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vi
 // `../servidor/*` (criterio D13, abajo) — nunca estático en el top-level.
 type ModuloVocabulario = typeof import("../conocimiento/vocabulario.ts")
 type ModuloConocimientoActivo = typeof import("../conocimiento/conocimiento-activo.ts")
+// Numeric Conditions S3 (OD-S3-1 = B): el criterio de "se puede ofrecer para crear" y los
+// rótulos de los comparadores son los de S1 (`vista-fisica/condicion-numerica.ts`), nunca
+// una copia. Importa el núcleo como valor (`COMPARADORES`): perezoso, mismo criterio D13.
+type ModuloCondicionNumerica = typeof import("../vista-fisica/condicion-numerica.ts")
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // R-6 (reabierto, Phase 3 — DECISIONS 2531e09, contrato B7): whitelist CERRADA de
@@ -84,6 +89,8 @@ interface DependenciasProyectoFisico {
   readonly vocabularioDesdeCatalogo: ModuloVocabulario["vocabularioDesdeCatalogo"]
   readonly valoresValidosParaMotivos: ModuloVocabulario["valoresValidosParaMotivos"]
   readonly descripcionPinesDeComponente: ModuloVocabulario["descripcionPinesDeComponente"]
+  readonly disponibleParaCrear: ModuloCondicionNumerica["disponibleParaCrear"]
+  readonly rotuloComparador: ModuloCondicionNumerica["ROTULO_COMPARADOR"]
 }
 
 async function cargarDependencias(): Promise<DependenciasProyectoFisico> {
@@ -91,12 +98,14 @@ async function cargarDependencias(): Promise<DependenciasProyectoFisico> {
   let modVistaReal: ModuloVistaReal
   let modVocabulario: ModuloVocabulario
   let modConocimiento: ModuloConocimientoActivo
+  let modCondicionNumerica: ModuloCondicionNumerica
   try {
-    ;[modServicio, modVistaReal, modVocabulario, modConocimiento] = await Promise.all([
+    ;[modServicio, modVistaReal, modVocabulario, modConocimiento, modCondicionNumerica] = await Promise.all([
       import("../servidor/servicio-con-vista.ts"),
       import("../vista-fisica/vista-real.ts"),
       import("../conocimiento/vocabulario.ts"),
       import("../conocimiento/conocimiento-activo.ts"),
+      import("../vista-fisica/condicion-numerica.ts"),
     ])
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
@@ -113,6 +122,8 @@ async function cargarDependencias(): Promise<DependenciasProyectoFisico> {
     vocabularioDesdeCatalogo: modVocabulario.vocabularioDesdeCatalogo,
     valoresValidosParaMotivos: modVocabulario.valoresValidosParaMotivos,
     descripcionPinesDeComponente: modVocabulario.descripcionPinesDeComponente,
+    disponibleParaCrear: modCondicionNumerica.disponibleParaCrear,
+    rotuloComparador: modCondicionNumerica.ROTULO_COMPARADOR,
   }
 }
 
@@ -235,6 +246,57 @@ function resumenDeComponente(componente: Componente, deps: DependenciasProyectoF
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Numeric Conditions S3 (OD-S3-1 = B): proyección cuantitativa PARA EL AGENTE. No es
+// conocimiento nuevo: cada capacidad sale tal cual de `capacidadesCuantitativas(tipo)` de
+// la fachada (CK-REQ-N1), y `disponible` es el criterio de creación de S1
+// (`disponibleParaCrear`). Acá no hay ningún tipo, capacidad, unidad, símbolo, rango ni
+// umbral escrito: sólo se elige qué campos ve el agente para resolver una frase.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+function capacidadParaAgente(capacidad: CapacidadCuantitativa, deps: DependenciasProyectoFisico) {
+  return {
+    capacidad: capacidad.capacidad,
+    etiqueta: capacidad.etiqueta,
+    magnitud: capacidad.magnitud,
+    unidadCanonica: capacidad.unidadCanonica,
+    unidades: capacidad.unidades.map((u) => ({ id: u.id, simbolo: u.simbolo })),
+    rango: capacidad.rango,
+    disponible: deps.disponibleParaCrear(capacidad),
+  }
+}
+
+function capacidadesParaAgente(tipo: string, deps: DependenciasProyectoFisico) {
+  const r = deps.conocimiento.capacidadesCuantitativas(tipo)
+  return r.ok ? r.valor.map((c) => capacidadParaAgente(c, deps)) : []
+}
+
+/** Marcadores del ejemplo: dicen de qué campo de esta misma proyección sale cada valor;
+ * nunca un id, una capacidad o una unidad reales. */
+const EJEMPLO_CONDICION_NUMERICA = Object.freeze({
+  comportamiento: {
+    cuando: {
+      sensor: "<id del sensor — condicionesNumericas.sensores[].id>",
+      capacidad: "<capacidades[].capacidad de ese sensor>",
+      comparador: "<uno de condicionesNumericas.comparadores[].comparador>",
+      umbral: { valor: "<el número que dijo el alumno, como número>", unidad: "<capacidades[].unidades[].id; sin unidad clara, unidadCanonica>", magnitud: "<capacidades[].magnitud>" },
+    },
+    entonces: { actuador: "<id del actuador>", accion: "<vocabulario.componentes[].estadosDeSalida[].accion>" },
+  },
+})
+
+function condicionesNumericasParaAgente(proyecto: Proyecto, deps: DependenciasProyectoFisico) {
+  const nombreDeTipo = (tipo: string) => deps.conocimiento.nombre("componente", tipo) ?? tipo
+  const sensores = proyecto.componentes
+    .map((componente) => ({ id: componente.id, tipo: componente.tipo, nombre: nombreDeTipo(componente.tipo), capacidades: capacidadesParaAgente(componente.tipo, deps) }))
+    .filter((s) => s.capacidades.length > 0)
+  const catalogo = deps.conocimiento.catalogo.componentes
+    .map((componente) => ({ tipo: componente.id, nombre: nombreDeTipo(componente.id), capacidades: capacidadesParaAgente(componente.id, deps) }))
+    .filter((t) => t.capacidades.length > 0)
+  const comparadores = (Object.keys(deps.rotuloComparador) as (keyof typeof deps.rotuloComparador)[]).map((comparador) => ({ comparador, significado: deps.rotuloComparador[comparador] }))
+  return { comparadores, sensores, catalogo, ejemplo: { SetComportamiento: EJEMPLO_CONDICION_NUMERICA } }
+}
+
 function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, deps: DependenciasProyectoFisico) {
   const vista = snapshot.vista
   const rolPorId = new Map((vista?.componentes ?? []).map((c) => [c.id, c.rol] as const))
@@ -283,7 +345,7 @@ export default tool({
 Para no adivinar ids: llamá \`leer\` primero: trae el vocabulario válido (placas, componentes, terminales, ejemplos).
 
 Tres \`accion\`:
-- \`leer\`: snapshot resumido — revisión, componentes (id/tipo/nombre/rol/pines/descripcionPines) y los motivos vigentes con su explicación en texto llano, MÁS \`vocabulario\` (placas/componentes/terminales/operaciones de ejemplo, derivados del catálogo real).
+- \`leer\`: snapshot resumido — revisión, componentes (id/tipo/nombre/rol/pines/descripcionPines) y los motivos vigentes con su explicación en texto llano, MÁS \`vocabulario\` (placas/componentes/terminales/operaciones de ejemplo, derivados del catálogo real) y \`condicionesNumericas\` (los comparadores, y para cada sensor del proyecto y cada tipo del catálogo sus capacidades medibles con etiqueta, magnitud, unidades, unidad canónica, rango y si se pueden usar: los datos para armar una regla con un número, nunca escritos a mano).
 - \`simular\`: dry-run — nunca persiste, nunca sube la revisión, sólo anticipa qué pasaría.
 - \`aplicar\`: commitea de verdad, todo o nada (una transacción atómica: o entran TODAS las operaciones del lote, o ninguna).
 
@@ -387,7 +449,8 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       if (args.accion === "leer") {
         const snapshot = servicio.snapshot() as SnapshotConVista
         const vocabulario = deps.vocabularioDesdeCatalogo(catalogo, OPERACIONES_PERMITIDAS, deps.conocimiento)
-        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, deps), vocabulario }, null, 2)
+        const condicionesNumericas = condicionesNumericasParaAgente(snapshot.proyecto, deps)
+        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, deps), vocabulario, condicionesNumericas }, null, 2)
       }
 
       // ── 'simular' / 'aplicar': baseRevision y operaciones son obligatorios. ────────
