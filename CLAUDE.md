@@ -147,6 +147,12 @@ local — son dos mecanismos de enforcement distintos, no se fusionan. El gestor
 temporales fijas, ver `tests/circuito.test.mjs`); si delegás a varios agentes, que editen
 en paralelo pero que la suite la corra uno solo, serializada.
 
+### Entregas revisables: protocolo tecnia-delivery
+
+Toda entrega que deba auditar Tecnia Review se declara con el productor externo
+`tecnia-deliver`; `READY_FOR_REVIEW` no es aprobación y Claude nunca escribe `REVIEWED`.
+Cuándo y cómo: `.claude/rules/entrega-tecnia-review.md`.
+
 ### Antes de `git checkout`/`restore`/`clean`: mirá qué vas a descartar
 
 Un `M` en `git status` es trabajo sin commitear, no ruido de fondo. La pregunta es
@@ -190,7 +196,7 @@ Nunca agregues `Co-Authored-By` ni ninguna atribución de IA.
 
 - `docs/programacion-intencion/` — documentación vigente (KEBAB-CASE) e histórica
   (`PHASE_N_...`, SNAKE_CASE).
-- `.claude/rules/*.md` — reglas path-scoped (ver arriba).
+- `.claude/rules/*.md` — reglas path-scoped (ver arriba); `entrega-tecnia-review.md` aplica a toda entrega revisable.
 - `.claude/skills/freeze-trazabilidad/`, `.claude/skills/validacion-vm-windows/` —
   workflows reutilizables extraídos de este documento.
 - `opencode/agent/tecnia-bot.md` — auditado aparte; este CLAUDE.md no lo gobierna.
