@@ -11,14 +11,15 @@
 // sale de `catalogo` (núcleo). Vive fuera de `nucleo/` y de `vista-fisica/`; `nucleo/`
 // nunca importa este directorio.
 
-import type { Catalogo, ComponenteCatalogo, DefinicionAccion, Terminal } from "../nucleo/catalogo.ts"
+import type { Cantidad, Catalogo, ComponenteCatalogo, DefinicionAccion, Terminal } from "../nucleo/catalogo.ts"
 import type { Placa, RegistroPin, TerminalPotencia } from "../nucleo/placas.ts"
 import { asignarPin, evaluarRestriccionesPin, complementoDeAccion, DEFINICIONES_ACCION } from "../nucleo/catalogo.ts"
 import { condicionBooleanaCanonica, MAGNITUD_BOOLEANA, VALORES_BOOLEANOS, type CondicionBooleana, type ValorBooleano } from "../nucleo/estado-booleano.ts"
 import { congelarProfundo } from "../nucleo/canonico.ts"
 import { ATRIBUTOS_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, ELEMENTO_WOKWI_POR_TIPO, ESCALA_WOKWI_POR_PLACA, POTENCIA_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO } from "./anexos/representacion.ts"
-import { CONCEPTOS_DE_COMPONENTE, ETIQUETA_DE_TERMINAL_DE_POTENCIA, ETIQUETA_POR_TIPO_Y_TERMINAL, etiquetaDeEstadoBooleano, etiquetaDeEstadoObjetivo, etiquetaDeTerminal, nombreDeComponente, nombreDePlaca } from "./anexos/pedagogia-es-AR.ts"
+import { CONCEPTOS_DE_COMPONENTE, ETIQUETA_DE_TERMINAL_DE_POTENCIA, ETIQUETA_POR_TIPO_Y_TERMINAL, etiquetaDeCapacidad, etiquetaDeEstadoBooleano, etiquetaDeEstadoObjetivo, etiquetaDeTerminal, nombreDeComponente, nombreDePlaca } from "./anexos/pedagogia-es-AR.ts"
 import { assetDeRepresentacionWokwi, procedenciaDe, type RegistroProcedencia } from "./anexos/procedencia.ts"
+import * as Cuantitativo from "./cuantitativo.ts"
 
 export type TipoEntidad = "componente" | "placa"
 
@@ -100,6 +101,17 @@ export interface ComponentKnowledge {
   etiquetaDeTerminalDePotencia(id: string): string | undefined
   conceptos(tipo: string): readonly string[]
   procedencia(assetId: string): RegistroProcedencia | undefined
+  // ── CK-REQ-N1: conocimiento cuantitativo (`cuantitativo.ts`, contrato CK_REQ_N1) ──
+  /** Capacidades cuantitativas del tipo (las booleanas no), con magnitud, unidad canónica,
+   * unidades ofrecidas, rango/resolución declarados y disponibilidad semántica. */
+  capacidadesCuantitativas(tipo: string): Cuantitativo.ResultadoCuantitativo<readonly Cuantitativo.CapacidadCuantitativa[]>
+  capacidadCuantitativa(tipo: string, capacidad: string): Cuantitativo.ResultadoCuantitativo<Cuantitativo.CapacidadCuantitativa>
+  /** Metadatos de una unidad registrada (símbolo, UCUM). */
+  unidad(id: string): Cuantitativo.ResultadoCuantitativo<Cuantitativo.UnidadConocida>
+  /** Convierte una cantidad física entre unidades con conversión DECLARADA; resultado normalizado. */
+  convertirCantidad(cantidad: Cuantitativo.CantidadFisica, unidadDestino: string): Cuantitativo.ResultadoCuantitativo<Cantidad>
+  /** Igual, validando además la capacidad (existe, cuantitativa, disponible, unidades ofrecidas). */
+  convertirParaCapacidad(tipo: string, capacidad: string, cantidad: Cuantitativo.CantidadFisica, unidadDestino: string): Cuantitativo.ResultadoCuantitativo<Cantidad>
 }
 
 function ordenarPines(a: { readonly recomendado: boolean; readonly numero: number }, b: { readonly recomendado: boolean; readonly numero: number }): number {
@@ -205,6 +217,11 @@ export function crearConocimiento(catalogo: Catalogo): ComponentKnowledge {
     etiquetaDeTerminalDePotencia: (id) => ETIQUETA_DE_TERMINAL_DE_POTENCIA[id],
     conceptos: (tipo) => CONCEPTOS_DE_COMPONENTE[tipo] ?? [],
     procedencia: (assetId) => procedenciaDe(assetId),
+    capacidadesCuantitativas: (tipo) => Cuantitativo.capacidadesCuantitativas(catalogo, tipo, etiquetaDeCapacidad),
+    capacidadCuantitativa: (tipo, capacidad) => Cuantitativo.capacidadCuantitativa(catalogo, tipo, capacidad, etiquetaDeCapacidad),
+    unidad: (id) => Cuantitativo.unidad(id),
+    convertirCantidad: (cantidad, unidadDestino) => Cuantitativo.convertirCantidad(catalogo, cantidad, unidadDestino),
+    convertirParaCapacidad: (tipo, capacidad, cantidad, unidadDestino) => Cuantitativo.convertirParaCapacidad(catalogo, tipo, capacidad, cantidad, unidadDestino, etiquetaDeCapacidad),
   }
   return Object.freeze(conocimiento)
 }

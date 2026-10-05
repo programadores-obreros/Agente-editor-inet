@@ -113,6 +113,21 @@ export const ETIQUETA_DE_ESTADO_OBJETIVO: Readonly<Record<string, string>> = {
   apagar: "apagado",
 }
 
+/**
+ * CK-REQ-N1: cómo se nombra al alumno cada CAPACIDAD cuantitativa, por id de capacidad (los
+ * ids de capacidad son globales: la `temperatura` de un DHT22 y la de un NTC son la misma
+ * capacidad). En minúscula, como sustantivo ("la temperatura del DHT22"); la frase la arma
+ * quien la consuma. Presentación: no entra al hash ni a la disponibilidad semántica.
+ */
+export const ETIQUETA_DE_CAPACIDAD: Readonly<Record<string, string>> = {
+  temperatura: "temperatura",
+  humedad: "humedad relativa",
+}
+
+export function etiquetaDeCapacidad(capacidad: string): string | undefined {
+  return Object.hasOwn(ETIQUETA_DE_CAPACIDAD, capacidad) ? ETIQUETA_DE_CAPACIDAD[capacidad] : undefined
+}
+
 export function etiquetaDeEstadoBooleano(tipo: string, capacidad: string, valor: "verdadero" | "falso"): string | undefined {
   return ETIQUETA_DE_ESTADO_BOOLEANO[tipo]?.[capacidad]?.[valor]
 }
