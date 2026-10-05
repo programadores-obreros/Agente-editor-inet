@@ -2,10 +2,16 @@
 // D-17 / 05-COMPONENT-ADMISSION-CONTRACT.md).
 //
 // Suite determinista, sin UI (D-14): para cada placa y cada tipo de componente del
-// catálogo calcula flags de soporte INDEPENDIENTES (no hay un enum lineal: hoy `dht22`
-// se valida pero no se dibuja). `officiallySupported` se DERIVA de los flags; nunca se
-// declara a mano. El único dato humano es la revisión eléctrica (`REVISION_ELECTRICA`):
-// ningún flag lo aprueba la IA ni un importador.
+// catálogo calcula flags de soporte INDEPENDIENTES (no hay un enum lineal: un tipo puede
+// estar validado sin estar dibujado). `officiallySupported` se DERIVA de los flags; nunca se
+// declara a mano. El único dato humano es la revisión eléctrica
+// (`anexos/revision-electrica.ts`): ningún flag lo aprueba la IA ni un importador.
+//
+// Component Knowledge F2a: este módulo es sólo REGLAS de admisión. No contiene datos de
+// piezas: la revisión eléctrica (por par componente/placa, CK-04) y el golden de pines
+// Wokwi viven en anexos, y los vocabularios válidos (clases, roles, eléctricas, unidades por
+// magnitud) salen de `nucleo/registros/vocabulario.ts`, la misma fuente de la que se derivan
+// los tipos del catálogo.
 //
 // El flag `tests` del contrato es la propia suite (`tests/componentes-admision.test.mjs`)
 // corriendo en `pnpm test`: no se calcula acá.
@@ -15,56 +21,43 @@
 import type { ComponenteCatalogo, Requisito } from "../nucleo/catalogo.ts"
 import { DEFINICIONES_ACCION, TIPOS_DE_REQUISITO_CON_EVALUADOR } from "../nucleo/catalogo.ts"
 import type { Placa } from "../nucleo/placas.ts"
+import { CLASES, ELECTRICAS, ROLES_DE_TERMINAL, unidadesDeMagnitud } from "../nucleo/registros/vocabulario.ts"
 import { nombreWokwiDePin } from "./anexos/representacion.ts"
+import { PINES_VERIFICADOS_WOKWI } from "./anexos/golden-wokwi.ts"
+import { REVISIONES_DE_COMPONENTE, REVISIONES_DE_PLACA } from "./anexos/revision-electrica.ts"
 import type { ComponentKnowledge } from "./conocimiento.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
-// Datos humanos y golden
+// Revisión eléctrica (dato en `anexos/revision-electrica.ts`)
 // ════════════════════════════════════════════════════════════════════════════════════
 
-/**
- * Revisión eléctrica HUMANA (D-13): sin una entrada acá, `electrico` es `false` aunque
- * los checks derivados pasen. Foundation #1 sólo declara el conjunto inicial (D-17).
- */
-export const REVISION_ELECTRICA: Readonly<Record<string, { readonly revisadoPor: string; readonly evidencia: string }>> = {
-  "esp32-devkit-v1": {
-    revisadoPor: "revisión humana del Component System Decision Freeze (2026-10-04)",
-    evidencia: "nucleo/placas.ts (pines, restricciones y terminales de potencia contra circuito.ts:624-667 y docs/wokwi-pinout-dump.md)",
-  },
-  led: {
-    revisadoPor: "revisión humana del Component System Decision Freeze (2026-10-04)",
-    evidencia: "nucleo/catalogo-datos.ts::LED (circuito.ts:947-975, 220 ohm en serie)",
-  },
-  resistencia: {
-    revisadoPor: "revisión humana del Component System Decision Freeze (2026-10-04)",
-    evidencia: "nucleo/catalogo-datos.ts::RESISTENCIA (puente sin polaridad, circuito.ts:117)",
-  },
-  pulsador: {
-    revisadoPor: "revisión humana del Component System Decision Freeze (2026-10-04)",
-    evidencia: "nucleo/catalogo-datos.ts::PULSADOR (INPUT_PULLUP, circuito.ts:1089-1105)",
-  },
+function revisadoComponente(tipo: string): boolean {
+  return REVISIONES_DE_COMPONENTE.some((r) => r.tipo === tipo)
+}
+
+function revisadaPlaca(placa: string): boolean {
+  return REVISIONES_DE_PLACA.some((r) => r.placa === placa)
 }
 
 /**
- * Golden de representación: los pines que el custom element Wokwi REAL expone
- * (`el.pinInfo`, leído contra el bundle del repo). Un ancla del anexo de representación
- * que no esté acá no cuenta como verificada.
- * Fuentes: docs/wokwi-pinout-dump.md (UNO :17-63, LED :79, pushbutton :82) y la cabecera
- * de `anexos/representacion.ts` (los 30 pines del ESP32 y los de `wokwi-resistor`).
+ * CK-04: ¿hay revisión eléctrica humana de `tipo` PARA `placa`? Es un reporte: no entra en
+ * los flags ni en `officiallySupported` (el flag `electrico` sigue siendo "revisado para
+ * alguna placa").
  */
-export const PINES_VERIFICADOS_WOKWI: Readonly<Record<string, readonly string[]>> = {
-  "wokwi-led": ["A", "C"],
-  "wokwi-pushbutton": ["1.l", "2.l", "1.r", "2.r"],
-  "wokwi-resistor": ["1", "2"],
-  "wokwi-esp32-devkit-v1": [
-    "3V3", "D12", "D13", "D14", "D15", "D18", "D19", "D2", "D21", "D22", "D23", "D25", "D26", "D27", "D32", "D33",
-    "D34", "D35", "D4", "D5", "EN", "GND.1", "GND.2", "RX0", "RX2", "TX0", "TX2", "VIN", "VN", "VP",
-  ],
-  "wokwi-arduino-uno": [
-    "A5.2", "A4.2", "AREF", "GND.1", "13", "12", "11", "10", "9", "8", "7", "6", "5", "4", "3", "2", "1", "0",
-    "IOREF", "RESET", "3.3V", "5V", "GND.2", "GND.3", "VIN", "A0", "A1", "A2", "A3", "A4", "A5",
-  ],
+export function compatibilidadRevisada(tipo: string, placa: string): boolean {
+  return REVISIONES_DE_COMPONENTE.some((r) => r.tipo === tipo && r.placa === placa)
 }
+
+/**
+ * Vista DERIVADA por id de las revisiones (placas y componentes), con la forma que tenía antes
+ * de F2a. La fuente es el anexo; esto sólo la reexpone.
+ */
+export const REVISION_ELECTRICA: Readonly<Record<string, { readonly revisadoPor: string; readonly evidencia: string }>> = Object.freeze(
+  Object.fromEntries([
+    ...REVISIONES_DE_PLACA.map((r) => [r.placa, Object.freeze({ revisadoPor: r.revisadoPor, evidencia: r.evidencia })] as const),
+    ...REVISIONES_DE_COMPONENTE.map((r) => [r.tipo, Object.freeze({ revisadoPor: r.revisadoPor, evidencia: r.evidencia })] as const),
+  ]),
+)
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Tipos
@@ -93,23 +86,14 @@ export interface InformeDeAdmision {
 }
 
 const ID_ESTABLE = /^[a-z0-9]+(-[a-z0-9]+)*$/
-const CLASES = new Set(["sensor", "actuador", "pasivo", "entrada"])
-const ROLES = new Set(["alimentacion", "tierra", "senal", "anodo", "catodo"])
-const ELECTRICAS = new Set(["digital", "analogica", "riel-fijo"])
-const UNIDAD_DE_MAGNITUD: Readonly<Record<string, readonly string[]>> = {
-  temperatura: ["celsius", "fahrenheit"],
-  distancia: ["cm"],
-  humedad: ["porcentaje"],
-  porcentaje: ["porcentaje"],
-  estadoBooleano: ["ninguna"],
-  resistencia: ["ohm"],
-  tension: ["volt"],
-}
+const CLASES_VALIDAS: ReadonlySet<string> = new Set(CLASES)
+const ROLES_VALIDOS: ReadonlySet<string> = new Set(ROLES_DE_TERMINAL)
+const ELECTRICAS_VALIDAS: ReadonlySet<string> = new Set(ELECTRICAS)
 
 function esCantidadValida(c: unknown): boolean {
   if (typeof c !== "object" || c === null) return false
   const { valor, unidad, magnitud } = c as { valor?: unknown; unidad?: unknown; magnitud?: unknown }
-  return typeof valor === "number" && Number.isFinite(valor) && typeof magnitud === "string" && (UNIDAD_DE_MAGNITUD[magnitud] ?? []).includes(unidad as string)
+  return typeof valor === "number" && Number.isFinite(valor) && typeof magnitud === "string" && unidadesDeMagnitud(magnitud).includes(unidad as string)
 }
 
 function derivar(flags: FlagsDeSoporte): boolean {
@@ -173,20 +157,20 @@ export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string
   }
   if (!ID_ESTABLE.test(componente.id)) fallaSemantica(`id "${componente.id}" no es kebab-case ASCII`)
   if (conocimiento.catalogo.componentes.filter((c) => c.id === componente.id).length !== 1) fallaSemantica(`id "${componente.id}" duplicado`)
-  if (!CLASES.has(componente.clase)) fallaSemantica(`clase "${componente.clase}" inválida`)
+  if (!CLASES_VALIDAS.has(componente.clase)) fallaSemantica(`clase "${componente.clase}" inválida`)
   if (componente.terminales.length === 0) fallaSemantica("sin terminales")
   const idsTerminales = new Set<string>()
   for (const t of componente.terminales) {
     if (idsTerminales.has(t.id)) fallaSemantica(`terminal "${t.id}" duplicado`)
     idsTerminales.add(t.id)
-    if (!ROLES.has(t.rol)) fallaSemantica(`terminal "${t.id}" con rol inválido`)
-    if (!ELECTRICAS.has(t.electrica)) fallaSemantica(`terminal "${t.id}" con eléctrica inválida`)
+    if (!ROLES_VALIDOS.has(t.rol)) fallaSemantica(`terminal "${t.id}" con rol inválido`)
+    if (!ELECTRICAS_VALIDAS.has(t.electrica)) fallaSemantica(`terminal "${t.id}" con eléctrica inválida`)
     // `asignable` sólo derivado (D-04): tiene que coincidir con la regla única.
     if (t.asignable !== (t.electrica !== "riel-fijo")) fallaSemantica(`terminal "${t.id}" con asignable no derivado`)
     if (t.asignable && t.direccion === undefined) fallaSemantica(`terminal asignable "${t.id}" sin dirección`)
   }
   for (const c of componente.capacidades) {
-    if (c.magnitud !== undefined && !(UNIDAD_DE_MAGNITUD[c.magnitud] ?? []).includes(c.unidad as string)) fallaSemantica(`capacidad "${c.id}" con unidad incoherente`)
+    if (c.magnitud !== undefined && !unidadesDeMagnitud(c.magnitud).includes(c.unidad as string)) fallaSemantica(`capacidad "${c.id}" con unidad incoherente`)
     if (c.rango && (!esCantidadValida(c.rango.min) || !esCantidadValida(c.rango.max) || c.rango.min.valor > c.rango.max.valor)) fallaSemantica(`capacidad "${c.id}" con rango inválido`)
   }
   const placasCompatibles = componente.compatibilidades?.placas ?? []
@@ -213,7 +197,7 @@ export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string
     }
   }
   for (const r of componente.requisitos) if (!chequearRequisito(componente, r, problemas)) electrico = false
-  if (!REVISION_ELECTRICA[componente.id]) {
+  if (!revisadoComponente(componente.id)) {
     problemas.push("electrico: sin revisión eléctrica humana")
     electrico = false
   }
@@ -307,7 +291,7 @@ export function admitirPlaca(conocimiento: ComponentKnowledge, id: string): Info
 
   // ── eléctrico (revisión humana) ──
   let electrico = semantico
-  if (!REVISION_ELECTRICA[placa.id]) {
+  if (!revisadaPlaca(placa.id)) {
     problemas.push("electrico: sin revisión eléctrica humana")
     electrico = false
   }

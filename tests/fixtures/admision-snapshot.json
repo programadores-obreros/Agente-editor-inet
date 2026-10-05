@@ -1,0 +1,131 @@
+[
+  {
+    "kind": "placa",
+    "id": "esp32-devkit-v1",
+    "categoria": "placa",
+    "flags": {
+      "semantico": true,
+      "electrico": true,
+      "representacion": {
+        "wokwi": true
+      },
+      "acciones": null,
+      "pedagogia": true,
+      "procedencia": true
+    },
+    "officiallySupported": true,
+    "problemas": []
+  },
+  {
+    "kind": "placa",
+    "id": "arduino-uno",
+    "categoria": "placa",
+    "flags": {
+      "semantico": true,
+      "electrico": false,
+      "representacion": {
+        "wokwi": true
+      },
+      "acciones": null,
+      "pedagogia": true,
+      "procedencia": true
+    },
+    "officiallySupported": false,
+    "problemas": [
+      "electrico: sin revisión eléctrica humana"
+    ]
+  },
+  {
+    "kind": "componente",
+    "id": "led",
+    "categoria": "actuador",
+    "flags": {
+      "semantico": true,
+      "electrico": true,
+      "representacion": {
+        "wokwi": true
+      },
+      "acciones": true,
+      "pedagogia": true,
+      "procedencia": true
+    },
+    "officiallySupported": true,
+    "problemas": []
+  },
+  {
+    "kind": "componente",
+    "id": "resistencia",
+    "categoria": "pasivo",
+    "flags": {
+      "semantico": true,
+      "electrico": true,
+      "representacion": {
+        "wokwi": true
+      },
+      "acciones": null,
+      "pedagogia": true,
+      "procedencia": true
+    },
+    "officiallySupported": true,
+    "problemas": []
+  },
+  {
+    "kind": "componente",
+    "id": "pulsador",
+    "categoria": "entrada",
+    "flags": {
+      "semantico": true,
+      "electrico": true,
+      "representacion": {
+        "wokwi": true
+      },
+      "acciones": null,
+      "pedagogia": true,
+      "procedencia": true
+    },
+    "officiallySupported": true,
+    "problemas": []
+  },
+  {
+    "kind": "componente",
+    "id": "dht22",
+    "categoria": "sensor",
+    "flags": {
+      "semantico": true,
+      "electrico": false,
+      "representacion": {
+        "wokwi": false
+      },
+      "acciones": null,
+      "pedagogia": false,
+      "procedencia": false
+    },
+    "officiallySupported": false,
+    "problemas": [
+      "electrico: sin revisión eléctrica humana",
+      "representacion.wokwi: sin entrada en el anexo",
+      "pedagogia: terminal \"vcc\" caería al id crudo"
+    ]
+  },
+  {
+    "kind": "componente",
+    "id": "ntc",
+    "categoria": "sensor",
+    "flags": {
+      "semantico": true,
+      "electrico": false,
+      "representacion": {
+        "wokwi": false
+      },
+      "acciones": null,
+      "pedagogia": false,
+      "procedencia": false
+    },
+    "officiallySupported": false,
+    "problemas": [
+      "electrico: sin revisión eléctrica humana",
+      "representacion.wokwi: sin entrada en el anexo",
+      "pedagogia: terminal \"vcc\" caería al id crudo"
+    ]
+  }
+]

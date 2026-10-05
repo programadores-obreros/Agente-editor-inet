@@ -19,6 +19,7 @@ const { evaluarRequisito, asignarPin, propagarMagnitud, reemplazarSensor, constr
 const { LED, DHT22, NTC, COMPONENTES_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, VERSION_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
 const { construirCatalogoMinimoReal, sha256Hex } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
 const { REGISTRO_PLACAS } = await import(join(REPO, "opencode/nucleo/placas.ts"))
+const { CATALOGO_FIJADO } = await import(join(REPO, "tests/fixtures/catalogo-fijado.mjs"))
 
 // ─────────────────────────────────── fixtures de test (no-producto) ───────────────────
 
@@ -264,7 +265,7 @@ test("version-skew-catalogo-cambiado-detectado", () => {
 
 test("contenido-minimo-shippeado: led/resistencia/pulsador/dht22/ntc", () => {
   const ids = COMPONENTES_CATALOGO_MINIMO.map((c) => c.id).sort()
-  assert.deepEqual(ids, ["dht22", "led", "ntc", "pulsador", "resistencia"])
+  assert.deepEqual(ids, CATALOGO_FIJADO.componentesShippeados)
   assert.ok(CONVERSIONES_UNIDAD_MINIMAS.every((c) => c.magnitud === "temperatura"), "sólo °C↔°F por ahora (§4.3)")
   assert.ok(PLACAS_CATALOGO_MINIMO.some((p) => p.id === "esp32-devkit-v1"))
 })

@@ -26,11 +26,12 @@ const { sha256Hex } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-
 const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, VERSION_CATALOGO_MINIMO } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
 const { ejecutarOperacion } = await import(join(REPO, "opencode/nucleo/operaciones.ts"))
 const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
+const { CATALOGO_FIJADO } = await import(join(REPO, "tests/fixtures/catalogo-fijado.mjs"))
 
 const conocimiento = CONOCIMIENTO_ACTIVO
 const catalogo = conocimiento.catalogo
 
-const OFICIALES = ["esp32-devkit-v1", "led", "pulsador", "resistencia"]
+const OFICIALES = CATALOGO_FIJADO.oficiales
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // 1-3. Lista fijada y flags
@@ -213,4 +214,96 @@ test("F7 sensibilidad: un riel-fijo sin destino en un componente NO pasivo apaga
   const sinDestino = { ...pulsador, terminales: pulsador.terminales.map((t) => (t.id === "gnd" ? { id: "gnd", rol: "tierra", electrica: "riel-fijo" } : t)) }
   const otro = crearConocimiento(catalogoCon(COMPONENTES_CATALOGO_MINIMO.map((c) => (c.id === "pulsador" ? sinDestino : c))))
   assert.equal(admitirComponente(otro, "pulsador").flags.electrico, false)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 7. Component Knowledge F2a — invariantes generativos (S2), snapshot de admisión (S9) y
+//    admisión sin datos de piezas (`component-knowledge/18_F2A_SCOPE.md` §2, §6).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const { readFileSync } = await import("node:fs")
+const { UNIDADES, MAGNITUDES, ROLES_DE_TERMINAL, ELECTRICAS, DIRECCIONES, CLASES, unidadesDeMagnitud } = await import(join(REPO, "opencode/nucleo/registros/vocabulario.ts"))
+const { DEFINICIONES_ACCION } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
+const { REVISIONES_DE_COMPONENTE, REVISIONES_DE_PLACA } = await import(join(REPO, "opencode/conocimiento/anexos/revision-electrica.ts"))
+const { PINES_VERIFICADOS_WOKWI } = await import(join(REPO, "opencode/conocimiento/anexos/golden-wokwi.ts"))
+const { compatibilidadRevisada } = await import(join(REPO, "opencode/conocimiento/admision.ts"))
+
+const unicos = (xs) => new Set(xs).size === xs.length
+const esCantidadDe = (c, magnitud, unidad) => typeof c?.valor === "number" && Number.isFinite(c.valor) && c.magnitud === magnitud && c.unidad === unidad
+
+test("F2a/S2: los registros son coherentes entre sí y están congelados", () => {
+  for (const [m, def] of Object.entries(MAGNITUDES)) for (const u of def.unidades) assert.ok(Object.hasOwn(UNIDADES, u), `${m} usa la unidad no registrada ${u}`)
+  for (const [u, def] of Object.entries(UNIDADES)) assert.equal(typeof def.ucum, "string", u)
+  for (const r of [UNIDADES, MAGNITUDES, ROLES_DE_TERMINAL, ELECTRICAS, DIRECCIONES, CLASES]) assert.ok(Object.isFrozen(r))
+  assert.deepEqual(unidadesDeMagnitud("no-existe"), [])
+  assert.deepEqual(unidadesDeMagnitud("toString"), [], "sólo claves propias del registro")
+})
+
+test("F2a/S2: todo componente del catálogo usa sólo vocabulario registrado y referencias que resuelven", () => {
+  const acciones = new Set(DEFINICIONES_ACCION.map((d) => d.id))
+  assert.ok(unicos(catalogo.componentes.map((c) => c.id)), "ids de componente únicos")
+  for (const c of catalogo.componentes) {
+    assert.ok(CLASES.includes(c.clase), `${c.id}: clase`)
+    assert.ok(unicos(c.terminales.map((t) => t.id)), `${c.id}: terminales únicos`)
+    for (const t of c.terminales) {
+      assert.ok(ROLES_DE_TERMINAL.includes(t.rol), `${c.id}.${t.id}: rol`)
+      assert.ok(ELECTRICAS.includes(t.electrica), `${c.id}.${t.id}: eléctrica`)
+      if (t.direccion !== undefined) assert.ok(DIRECCIONES.includes(t.direccion), `${c.id}.${t.id}: dirección`)
+    }
+    assert.ok(unicos(c.capacidades.map((k) => k.id)), `${c.id}: capacidades únicas`)
+    for (const k of c.capacidades) {
+      if (k.magnitud === undefined) continue
+      assert.ok(unidadesDeMagnitud(k.magnitud).includes(k.unidad), `${c.id}.${k.id}: unidad de su magnitud`)
+      if (k.rango) {
+        assert.ok(esCantidadDe(k.rango.min, k.magnitud, k.unidad) && esCantidadDe(k.rango.max, k.magnitud, k.unidad), `${c.id}.${k.id}: rango en la unidad de la capacidad`)
+        assert.ok(k.rango.min.valor <= k.rango.max.valor, `${c.id}.${k.id}: min ≤ max`)
+      }
+    }
+    for (const r of c.requisitos) {
+      if (r.enTerminal !== undefined) assert.ok(c.terminales.some((t) => t.id === r.enTerminal), `${c.id}: requisito ${r.tipo} apunta a un terminal real`)
+      if (r.spec.valor !== undefined) assert.ok(unidadesDeMagnitud(r.spec.valor.magnitud).includes(r.spec.valor.unidad), `${c.id}: valor del requisito ${r.tipo}`)
+    }
+    for (const a of c.acciones ?? []) assert.ok(acciones.has(a), `${c.id}: acción ${a} registrada`)
+    for (const p of c.compatibilidades?.placas ?? []) assert.ok(catalogo.tienePlaca(p), `${c.id}: placa compatible ${p}`)
+  }
+  for (const conv of catalogo.unidades?.conversiones ?? []) {
+    assert.ok(unidadesDeMagnitud(conv.magnitud).includes(conv.de) && unidadesDeMagnitud(conv.magnitud).includes(conv.a), `conversión ${conv.de}→${conv.a}`)
+  }
+  for (const placa of catalogo.placas) {
+    assert.ok(unicos(placa.pines.map((p) => p.id)), `${placa.id}: pines únicos`)
+    for (const t of placa.terminalesDePotencia) if (t.tension !== undefined) assert.ok(esCantidadDe(t.tension, "tension", "volt"), `${placa.id}.${t.id}: tensión`)
+  }
+})
+
+test("F2a/S2: cobertura cruzada de los anexos de admisión (revisión eléctrica y golden Wokwi)", () => {
+  for (const r of REVISIONES_DE_COMPONENTE) {
+    assert.ok(catalogo.obtenerComponente(r.tipo), `revisión de un tipo inexistente: ${r.tipo}`)
+    assert.ok(catalogo.tienePlaca(r.placa), `revisión para una placa inexistente: ${r.placa}`)
+    assert.ok(r.revisadoPor.length > 0 && r.revisadoPor !== "auto", `${r.tipo}: revisión humana`)
+  }
+  for (const r of REVISIONES_DE_PLACA) assert.ok(catalogo.tienePlaca(r.placa), `revisión de una placa inexistente: ${r.placa}`)
+  assert.ok(unicos(REVISIONES_DE_COMPONENTE.map((r) => `${r.tipo}@${r.placa}`)), "una revisión por par")
+  const elementosUsados = new Set([
+    ...catalogo.componentes.map((c) => conocimiento.representacionWokwi("componente", c.id)?.elemento),
+    ...catalogo.placas.map((p) => conocimiento.representacionWokwi("placa", p.id)?.elemento),
+  ])
+  for (const elemento of Object.keys(PINES_VERIFICADOS_WOKWI)) assert.ok(elementosUsados.has(elemento), `golden de un elemento que nadie usa: ${elemento}`)
+})
+
+test("F2a/CK-04: la revisión eléctrica es por par (componente, placa)", () => {
+  assert.equal(compatibilidadRevisada("led", "esp32-devkit-v1"), true)
+  assert.equal(compatibilidadRevisada("led", "arduino-uno"), false, "el UNO no tiene revisión eléctrica todavía")
+  assert.equal(compatibilidadRevisada("dht22", "esp32-devkit-v1"), false)
+})
+
+test("F2a/S9: admitirCatalogo es IDÉNTICO al snapshot fijado antes de F2a", () => {
+  const snapshot = JSON.parse(readFileSync(join(REPO, "tests/fixtures/admision-snapshot.json"), "utf8"))
+  assert.deepEqual(JSON.parse(JSON.stringify(admitirCatalogo(conocimiento))), snapshot)
+})
+
+test("F2a (estático): conocimiento/admision.ts no contiene ningún id de componente ni de placa", () => {
+  const ids = new Set([...catalogo.componentes.map((c) => c.id), ...catalogo.placas.map((p) => p.id)])
+  const fuente = readFileSync(join(REPO, "opencode/conocimiento/admision.ts"), "utf8")
+  const encontrados = [...new Set(fuente.split(/[^a-z0-9-]+/).filter((token) => ids.has(token)))]
+  assert.deepEqual(encontrados, [])
 })

@@ -33,6 +33,7 @@ const { ejecutarOperacion } = await import(join(REPO, "opencode/nucleo/operacion
 const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
 const { planDePintado } = await import(join(REPO, "opencode/vista-fisica/web/plan-de-pintado.js"))
 const { pintar } = await import(join(REPO, "opencode/vista-fisica/web/pintar.js"))
+const { CATALOGO_FIJADO } = await import(join(REPO, "tests/fixtures/catalogo-fijado.mjs"))
 
 const conocimiento = CONOCIMIENTO_ACTIVO
 const HASH_HEREDADO = "708fe82235f66231afdb5a6040d7b903b4f80bb8473901df66889703e16c9870"
@@ -41,7 +42,8 @@ const HASH_HEREDADO = "708fe82235f66231afdb5a6040d7b903b4f80bb8473901df66889703e
 // significado del catálogo → 2.1.0. La identidad 2.0.0 queda como destino de la tabla de
 // identidades heredadas (Foundation #1), que NO se encadena: un proyecto 2.0.0 muestra desfase.
 const IDENTIDAD_2_0_0 = { version: "2.0.0", hash: "878011f7ec8c586adc632db819e5bcb05fc7731237d21caf01de222574a3a2f6" }
-const IDENTIDAD_FIJADA = { version: "2.1.0", hash: "8bc928045bdf5915756103ef67bdad7a5ef0acfeb15cf4f069a86ee7dd43ff9a" }
+// Component Knowledge F2a: el par fijado vive en `tests/fixtures/catalogo-fijado.mjs` (una sola fuente).
+const IDENTIDAD_FIJADA = { version: CATALOGO_FIJADO.version, hash: CATALOGO_FIJADO.hash }
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // A — sólo lectura
@@ -321,7 +323,7 @@ test("H: AsignarPin a GND y AsignarPin del cátodo se rechazan con TERMINAL_NO_A
 // ════════════════════════════════════════════════════════════════════════════════════
 
 test("I: la admisión pasa para el conjunto inicial (ESP32, LED, resistencia, pulsador)", () => {
-  assert.deepEqual(oficialmenteSoportados(conocimiento), ["esp32-devkit-v1", "led", "pulsador", "resistencia"])
+  assert.deepEqual(oficialmenteSoportados(conocimiento), CATALOGO_FIJADO.oficiales)
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════

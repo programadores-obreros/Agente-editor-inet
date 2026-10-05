@@ -17,6 +17,7 @@ import type { Placa, RegistroPin, Restriccion } from "./placas.ts"
 import type { ComportamientoRegla } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
 import { canonicalizar, clonarProfundo, congelarProfundo } from "./canonico.ts"
+import type { CLASES, DIRECCIONES, ELECTRICAS, MAGNITUDES, ROLES_DE_TERMINAL, UNIDADES } from "./registros/vocabulario.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Tipos (T_diseno_consolidado.md §4.1)
@@ -25,8 +26,10 @@ import { canonicalizar, clonarProfundo, congelarProfundo } from "./canonico.ts"
 // Component System Foundation #1 (D-03/D-05 del Decision Freeze): `resistencia`/`ohm`
 // para el valor del requisito del LED como `Cantidad` (nunca un número suelto) y
 // `tension`/`volt` para los terminales de potencia de la placa.
-export type Magnitud = "temperatura" | "distancia" | "humedad" | "estadoBooleano" | "porcentaje" | "resistencia" | "tension"
-export type Unidad = "celsius" | "fahrenheit" | "cm" | "porcentaje" | "ninguna" | "ohm" | "volt"
+// Component Knowledge F2a (CK-01): los vocabularios son datos (`registros/vocabulario.ts`)
+// y estos tipos se DERIVAN de ellos. Sólo cambió de dónde sale el tipo, no su valor.
+export type Magnitud = keyof typeof MAGNITUDES
+export type Unidad = keyof typeof UNIDADES
 
 export interface Cantidad {
   readonly valor: number
@@ -48,8 +51,8 @@ export type DestinoFijo = "V5" | "V3" | "VLOGICA" | "GND" | "SDA" | "SCL" | { re
  */
 export interface TerminalDatos {
   readonly id: string
-  readonly rol: "alimentacion" | "tierra" | "senal" | "anodo" | "catodo"
-  readonly electrica: "digital" | "analogica" | "riel-fijo"
+  readonly rol: (typeof ROLES_DE_TERMINAL)[number]
+  readonly electrica: (typeof ELECTRICAS)[number]
   readonly requierePwm?: boolean
   readonly destinoFijo?: DestinoFijo
   /**
@@ -73,7 +76,7 @@ export interface TerminalDatos {
    * para lo primero (circuito.ts: GPIO_SOLO_ENTRADA, Gate 1). `undefined` en un
    * terminal `riel-fijo` es correcto: no se le asigna un pin, va directo al riel.
    */
-  readonly direccion?: "entrada" | "salida" | "bidireccional"
+  readonly direccion?: (typeof DIRECCIONES)[number]
 }
 
 /**
@@ -123,7 +126,7 @@ export interface Requisito {
  */
 export interface ComponenteDatos {
   readonly id: string
-  readonly clase: "sensor" | "actuador" | "pasivo" | "entrada"
+  readonly clase: (typeof CLASES)[number]
   readonly terminales: readonly TerminalDatos[]
   readonly capacidades: readonly Capacidad[]
   readonly requisitos: readonly Requisito[]
