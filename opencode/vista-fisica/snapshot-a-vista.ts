@@ -36,7 +36,9 @@ import { valorBooleanoDeCondicion } from "../nucleo/estado-booleano.ts"
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA, ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO, POTENCIA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
 import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista } from "./modelo-vista.ts"
+import { cuantitativasParaCrear, reconocerCondicionNumerica, ROTULO_COMPARADOR, COMPLEMENTO_COMPARADOR, cantidadEnTexto, ayudaDeRango, rangoEnTexto, simboloDe, formatearNumero, type CondicionNumerica } from "./condicion-numerica.ts"
+import { COMPARADORES } from "../nucleo/ir.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista, OpcionSlotVista } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal de UN tipo de componente.
@@ -333,7 +335,12 @@ function reordenarParaAdyacencia(componentes: readonly ComponenteVista[], fusion
   return resultado
 }
 
-export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDeVista {
+/**
+ * `conocimiento` es la fachada de Component Knowledge; por defecto, la del propio `catalogo`.
+ * Sólo un test la inyecta (p. ej. la fachada de un catálogo de prueba): la vista nunca
+ * construye conocimiento propio.
+ */
+export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo, conocimientoInyectado?: ComponentKnowledge): ModeloDeVista {
   const placaId = proyecto.placa
   const placaCatalogo: Placa | undefined = placaId !== null ? catalogo.placas.find((p) => p.id === placaId) : undefined
   const placa: PlacaVista | null = placaCatalogo
@@ -396,7 +403,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
   // no cambia), nunca al final del todo donde los cables de OTRO componente puedan
   // intercalarse en el medio. `conexionesFusionadasEmitidas` evita que el bucle de
   // abajo la vuelva a agregar.
-  const conocimiento = crearConocimiento(catalogo)
+  const conocimiento = conocimientoInyectado ?? crearConocimiento(catalogo)
   const tipoDe = (componenteId: string): string | undefined => proyecto.componentes.find((c) => c.id === componenteId)?.tipo
   const extremo = (componenteId: string, terminalId: string): ExtremoCableVista => extremoDeTerminal(componenteId, terminalId, terminalVistaDe(componenteId, terminalId), tipoDe(componenteId))
   // Physical View UX #1: el camino de un cable es el grupo de su pieza; una resistencia
@@ -466,7 +473,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo): ModeloDe
 
   // Fase 2, Slice 2 (§3.4): cada motivo se proyecta TAL CUAL (mismo criterio de
   // siempre) MÁS una `explicacion` en texto llano — ver `explicarMotivos` más abajo.
-  const motivos: readonly MotivoVista[] = explicarMotivos(motivosBase, proyecto, catalogo)
+  const motivos: readonly MotivoVista[] = explicarMotivos(motivosBase, proyecto, catalogo, conocimiento)
 
   // HD-W0-B (diseño §2, fila "Pieza"): el `value` (ohmios) de una instancia
   // FUSIONADA sale de `Requisito.spec.ohmios` — nunca un número fijo en
@@ -566,7 +573,8 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
   const tipoDe = (id: string | undefined): string | undefined => (id === undefined ? undefined : proyecto.componentes.find((c) => c.id === id)?.tipo)
 
   // Opciones de la frase/Blockly: SALEN del conocimiento de las piezas del proyecto
-  // (entradas con capacidad booleana rotulada; estados que cada actuador declara).
+  // (entradas con capacidad booleana rotulada o cuantitativa disponible; estados que cada
+  // actuador declara).
   const sensores: ReferenciaVista[] = []
   const actuadores: ReferenciaVista[] = []
   const estados: OpcionEstadoVista[] = []
@@ -575,13 +583,19 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     const cat = catalogo.obtenerComponente(c.tipo)
     if (!cat) continue
     const deEntrada = conocimiento.estadosDeEntrada(c.tipo)
-    if (deEntrada.length > 0) sensores.push({ id: c.id, etiqueta: c.nombre })
+    if (deEntrada.length > 0 || cuantitativasParaCrear(conocimiento, c.tipo).length > 0) sensores.push({ id: c.id, etiqueta: c.nombre })
     for (const e of deEntrada) if (!estados.some((x) => x.clave === e.etiqueta)) estados.push({ clave: e.etiqueta, etiqueta: e.etiqueta, condicion: e.condicion })
     if (cat.clase === "actuador") {
       actuadores.push({ id: c.id, etiqueta: c.nombre })
       for (const e of conocimiento.estadosDeSalida(c.tipo)) if (!salidas.some((x) => x.accion === e.accion)) salidas.push({ clave: e.etiqueta, etiqueta: e.etiqueta, accion: e.accion })
     }
   }
+
+  const slotSensor: SlotFraseVista = { slot: "sensor", prefijo: "Mientras el", opciones: sensores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { cuando: { sensor: o.id } } })) }
+  const slotEstado: SlotFraseVista = { slot: "estado", prefijo: "esté", opciones: estados.map((e) => ({ valor: e.clave, etiqueta: e.etiqueta, parche: { cuando: { ...e.condicion } } })) }
+  const slotActuador: SlotFraseVista = { slot: "actuador", prefijo: ", el", opciones: actuadores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { entonces: { actuador: o.id } } })) }
+  const slotSalida: SlotFraseVista = { slot: "salida", prefijo: "está", opciones: salidas.map((o) => ({ valor: o.clave, etiqueta: o.etiqueta, parche: { entonces: { accion: o.accion } } })) }
+  const slots: SlotFraseVista[] = [slotSensor, slotEstado, slotActuador, slotSalida]
 
   const reglas: ReglaVista[] = proyecto.comportamientos.map((b) => {
     const delaRegla = motivos.filter((m) => m.entidad?.tipo === "comportamiento" && m.entidad.id === b.id)
@@ -604,22 +618,35 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
         : tipoSensor !== undefined
           ? conocimiento.estadosDeEntrada(tipoSensor).find((e) => e.capacidad === cuando?.capacidad && e.valor === valor)
           : estados.find((e) => e.condicion.capacidad === cuando?.capacidad && valorBooleanoDeCondicion(e.condicion) === valor)
+    // Numeric Conditions S1: si no es un estado booleano canónico, ¿es una condición numérica que
+    // Component Knowledge permite nombrar? Una regla YA guardada se reconoce aunque su capacidad
+    // hoy no se ofrezca para crear (N-4): se muestra con una nota, nunca como «avanzada».
+    const numerica = tieneEstado && estadoEntrada === undefined ? reconocerCondicionNumerica(cuando, tipoSensor, conocimiento) : undefined
     const salidaEtiqueta = entonces?.accion === undefined ? undefined : (etiquetaDeEstadoObjetivo(entonces.accion) ?? entonces.accion)
     const frase: FraseReglaVista = {
       ...(cuando?.sensor !== undefined ? { sensor: ref(cuando.sensor) } : {}),
-      ...(tieneEstado ? { estado: estadoEntrada ? { clave: estadoEntrada.etiqueta, etiqueta: estadoEntrada.etiqueta } : { clave: "avanzada", etiqueta: "condición avanzada" } } : {}),
+      ...(tieneEstado ? { estado: estadoEntrada ? { clave: estadoEntrada.etiqueta, etiqueta: estadoEntrada.etiqueta } : numerica ? { clave: "numerica", etiqueta: textoDeCondicion(numerica, numerica.comparador) } : { clave: "avanzada", etiqueta: "condición avanzada" } } : {}),
+      ...(numerica ? partesNumericas(numerica) : {}),
       ...(entonces?.actuador !== undefined ? { actuador: ref(entonces.actuador) } : {}),
       ...(salidaEtiqueta !== undefined ? { salida: { clave: salidaEtiqueta, etiqueta: salidaEtiqueta } } : {}),
     }
 
-    const canonica = completa && !accionNoSoportada && estadoEntrada !== undefined && frase.sensor !== undefined && frase.actuador !== undefined && frase.salida !== undefined
-    const aviso = tieneEstado && estadoEntrada === undefined ? avisoCondicionAvanzada(estados) : null
+    // Una condición numérica con un problema bloqueante propio (unidad que no corresponde,
+    // capacidad que ya no existe) se MUESTRA, pero no se lee como una oración verdadera.
+    const condicionConProblema = numerica !== undefined && delaRegla.some((m) => CODIGOS_CONDICION_INVALIDA.includes(m.codigo))
+    const lectura = estadoEntrada !== undefined ? lecturaBooleana(estadoEntrada.etiqueta) : numerica && !condicionConProblema ? lecturaNumerica(numerica) : undefined
+    const canonica = completa && !accionNoSoportada && lectura !== undefined && frase.sensor !== undefined && frase.actuador !== undefined && frase.salida !== undefined
+    const aviso = tieneEstado && estadoEntrada === undefined ? (numerica ? (numerica.disponible ? null : AVISO_CONDICION_NO_DISPONIBLE) : avisoCondicionAvanzada(estados)) : null
+    const ayuda = numerica ? ayudaDeRango(numerica.capacidad, conocimiento) : null
     const forma = { ...(cuando ? { cuando: JSON.parse(JSON.stringify(cuando)) } : {}), ...(entonces ? { entonces: JSON.parse(JSON.stringify(entonces)) } : {}) }
-    if (!canonica || estadoEntrada === undefined || entonces?.accion === undefined) return { id: b.id, frase, texto: null, completa, faltan, motivos: delaRegla, forma, aviso }
+    const slotsPropios = slotsDeRegla(b, numerica)
+    const extra = { ...(slotsPropios ? { slots: slotsPropios } : {}), ...(ayuda !== null ? { ayuda } : {}) }
+    if (!canonica || lectura === undefined || entonces?.accion === undefined) return { id: b.id, frase, texto: null, completa, faltan, motivos: delaRegla, forma, aviso, ...extra }
 
     const s = frase.sensor!.etiqueta
     const a = frase.actuador!.etiqueta
     const salida = frase.salida!.etiqueta
+    const sujeto = lectura.sujeto(s)
     // Reposo (Semantic Vertical #3, supersede HD-P3D-1): el complemento DECLARADO del
     // estado objetivo. Derivado, nunca guardado; si el tipo no declara complemento, la
     // traza lo dice en vez de inventar un estado.
@@ -628,8 +655,8 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     const reposo = complemento !== undefined ? etiquetaDeEstadoObjetivo(complemento) : undefined
     const ramaFalsa =
       reposo !== undefined
-        ? `Si el ${s} no está ${estadoEntrada.etiqueta} → la condición es falsa → el ${a} está ${reposo} (reposo).`
-        : `Si el ${s} no está ${estadoEntrada.etiqueta} → la condición es falsa → la regla no dice cómo queda el ${a} (no tiene un estado opuesto declarado).`
+        ? `Si ${sujeto} ${lectura.falsa} → la condición es falsa → el ${a} está ${reposo} (reposo).`
+        : `Si ${sujeto} ${lectura.falsa} → la condición es falsa → la regla no dice cómo queda el ${a} (no tiene un estado opuesto declarado).`
     // Multi-Rule Safety (modelo B): si otra regla también reclama este actuador, la traza
     // NO afirma el reposo ni un estado como verdad (no hay ganador ni prioridad): dice lo
     // que esta regla pide y que, sola, no puede determinar cómo queda el actuador.
@@ -638,25 +665,125 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
       ? {
           etiqueta: ETIQUETA_TRAZA,
           ramas: [
-            `Si el ${s} está ${estadoEntrada.etiqueta} → la condición es verdadera → esta regla pide que el ${a} esté ${salida}.`,
+            `Si ${sujeto} ${lectura.verdadera} → la condición es verdadera → esta regla pide que el ${a} esté ${salida}.`,
             `Esta regla no puede determinar por sí sola cómo queda el ${a}, porque otra regla también intenta gobernarlo.`,
           ],
           nota: `Cada salida puede tener una sola regla: dejá una sola regla para el ${a}.`,
         }
       : {
           etiqueta: ETIQUETA_TRAZA,
-          ramas: [`Si el ${s} está ${estadoEntrada.etiqueta} → la condición es verdadera → el ${a} está ${salida}.`, ramaFalsa],
+          ramas: [`Si ${sujeto} ${lectura.verdadera} → la condición es verdadera → el ${a} está ${salida}.`, ramaFalsa],
         }
-    return { id: b.id, frase, texto: `Mientras el ${s} esté ${estadoEntrada.etiqueta}, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza, forma, aviso }
+    return { id: b.id, frase, texto: `Mientras ${sujeto} ${lectura.enFrase}, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza, forma, aviso, ...extra }
   })
 
-  const slots: SlotFraseVista[] = [
-    { slot: "sensor", prefijo: "Mientras el", opciones: sensores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { cuando: { sensor: o.id } } })) },
-    { slot: "estado", prefijo: "esté", opciones: estados.map((e) => ({ valor: e.clave, etiqueta: e.etiqueta, parche: { cuando: { ...e.condicion } } })) },
-    { slot: "actuador", prefijo: ", el", opciones: actuadores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { entonces: { actuador: o.id } } })) },
-    { slot: "salida", prefijo: "está", opciones: salidas.map((o) => ({ valor: o.clave, etiqueta: o.etiqueta, parche: { entonces: { accion: o.accion } } })) },
-  ]
+  /**
+   * Numeric Conditions S1: los slots de UNA regla, cuando los globales no le sirven tal cual:
+   * - su condición es numérica (capacidad, comparador, valor y unidad, en vez de «estado»), o
+   * - el sensor elegido ofrece otros estados que la lista global (D0, L-3: dos entradas con la
+   *   misma capacidad y rótulos distintos), o
+   * - cambiar a otro sensor de la lista dejaría una condición que ese sensor no declara (N-10).
+   * Todo sale de datos (catálogo y Component Knowledge); ningún tipo ni capacidad se nombra acá.
+   */
+  function slotsDeRegla(b: ComportamientoRegla, numerica: CondicionNumerica | undefined): readonly SlotFraseVista[] | undefined {
+    const tipoSensor = tipoDe(b.cuando?.sensor)
+    if (tipoSensor === undefined) return undefined
+    const capacidadGuardada = b.cuando?.capacidad
+    // N-10: el sensor nuevo conserva la condición sólo si declara la MISMA capacidad; si no, el
+    // `cuando` se reemplaza por el sensor solo (regla incompleta, representable).
+    const opcionesSensor = slotSensor.opciones.map((o) => {
+      const tipoNuevo = tipoDe(o.valor)
+      const conserva = capacidadGuardada === undefined || (tipoNuevo !== undefined && (catalogo.obtenerComponente(tipoNuevo)?.capacidades ?? []).some((c) => c.id === capacidadGuardada))
+      return conserva ? o : { ...o, reemplazaCuando: true }
+    })
+    const sensorPropio = opcionesSensor.some((o) => o.reemplazaCuando === true)
+    const estadosDelSensor = conocimiento.estadosDeEntrada(tipoSensor)
+    const estadosPropios = estadosDelSensor.length !== estados.length || estadosDelSensor.some((e, i) => e.etiqueta !== estados[i]?.etiqueta)
+    if (!numerica && !sensorPropio && !estadosPropios) return undefined
+
+    const sensorEnRegla: SlotFraseVista = { ...slotSensor, opciones: opcionesSensor, grupo: "cuando" }
+    const entonces: SlotFraseVista[] = [{ ...slotActuador, grupo: "entonces" }, { ...slotSalida, grupo: "entonces" }]
+    // Numérica: se lee «Mientras la lectura de [capacidad] del [entrada] sea [comparador] [número]
+    // [unidad], el …»; la capacidad va antes que la entrada, como en la frase.
+    if (numerica) return [...slotsNumericos(b, numerica, tipoSensor, sensorEnRegla), ...entonces]
+    return [sensorEnRegla, { slot: "estado", prefijo: "esté", opciones: estadosDelSensor.map((e) => ({ valor: e.etiqueta, etiqueta: e.etiqueta, parche: { cuando: { ...e.condicion } } })), grupo: "cuando" }, ...entonces]
+  }
+
+  function slotsNumericos(b: ComportamientoRegla, numerica: CondicionNumerica, tipoSensor: string, sensorEnRegla: SlotFraseVista): SlotFraseVista[] {
+    const umbralGuardado = b.cuando!.umbral!
+    return [
+      // Capacidad: las que se pueden crear con ESTE sensor; la guardada, aunque ya no se ofrezca,
+      // sigue visible como valor actual (el navegador la agrega a las opciones).
+      { slot: "capacidad", prefijo: "Mientras la lectura de", opciones: cuantitativasParaCrear(conocimiento, tipoSensor).map((c) => ({ valor: c.capacidad, etiqueta: c.etiqueta!, parche: { cuando: { capacidad: c.capacidad, umbral: { magnitud: c.magnitud, unidad: c.unidadCanonica } } } })), grupo: "cuando" },
+      { ...sensorEnRegla, prefijo: "del" },
+      { slot: "comparador", prefijo: "sea", opciones: COMPARADORES.map((c) => ({ valor: c, etiqueta: ROTULO_COMPARADOR[c], parche: { cuando: { comparador: c } } })), grupo: "cuando" },
+      { slot: "valor", prefijo: "", opciones: [], grupo: "cuando", tipo: "numero", destino: ["cuando", "umbral", "valor"] },
+      // Unidad (N-3): cambiar SÓLO la unidad conserva la cantidad física. Cada unidad que la
+      // capacidad ofrece trae como parche el umbral YA convertido por Component Knowledge
+      // (`convertirParaCapacidad`, normalizado allá: acá no se redondea ni se recorta). Si la
+      // conversión no es posible (sin conversión declarada, capacidad no disponible, unidad
+      // guardada ajena), esa unidad no se ofrece: nunca se inventa una cantidad.
+      { slot: "unidad", prefijo: "", opciones: opcionesDeUnidad(numerica, tipoSensor, umbralGuardado), grupo: "cuando" },
+    ]
+  }
+
+  function opcionesDeUnidad(numerica: CondicionNumerica, tipoSensor: string, umbralGuardado: { readonly valor: number; readonly unidad: string; readonly magnitud: string }): OpcionSlotVista[] {
+    const opciones: OpcionSlotVista[] = []
+    for (const u of numerica.capacidad.unidades) {
+      if (u.id === umbralGuardado.unidad) {
+        opciones.push({ valor: u.id, etiqueta: u.simbolo, parche: {} })
+        continue
+      }
+      const convertida = conocimiento.convertirParaCapacidad(tipoSensor, numerica.capacidad.capacidad, umbralGuardado, u.id)
+      if (convertida.ok) opciones.push({ valor: u.id, etiqueta: u.simbolo, parche: { cuando: { umbral: { valor: convertida.valor.valor, unidad: convertida.valor.unidad, magnitud: convertida.valor.magnitud } } } })
+    }
+    return opciones
+  }
+
   return { reglas, opcionesRegla: { slots, sensores, estados, actuadores, salidas } }
+}
+
+/** Numeric Conditions S1: motivos bloqueantes que hablan de la CONDICIÓN misma. */
+const CODIGOS_CONDICION_INVALIDA: readonly string[] = ["MAGNITUD_INCOMPATIBLE", "CAPACIDAD_INEXISTENTE_EN_CATALOGO"]
+
+/** N-4: texto pendiente de aprobación (N-11 aplica el mismo criterio). */
+const AVISO_CONDICION_NO_DISPONIBLE = "Esta condición está guardada en el proyecto, pero todavía no se puede elegir para armar reglas nuevas."
+
+/** Cómo se lee una condición en la frase y en la traza (sujeto + predicado). */
+interface LecturaCondicion {
+  sujeto(sensor: string): string
+  readonly enFrase: string
+  readonly verdadera: string
+  readonly falsa: string
+}
+
+function lecturaBooleana(estado: string): LecturaCondicion {
+  return { sujeto: (s) => `el ${s}`, enFrase: `esté ${estado}`, verdadera: `está ${estado}`, falsa: `no está ${estado}` }
+}
+
+function lecturaNumerica(n: CondicionNumerica): LecturaCondicion {
+  const cantidad = cantidadEnTexto(n.valor, n.simbolo)
+  return {
+    // Component Knowledge da el rótulo como sustantivo sin artículo; «la lectura de» lo hace
+    // gramatical para cualquier capacidad sin que A decida su género.
+    sujeto: (s) => `la lectura de ${n.etiquetaCapacidad} del ${s}`,
+    enFrase: `sea ${ROTULO_COMPARADOR[n.comparador]} ${cantidad}`,
+    verdadera: `es ${ROTULO_COMPARADOR[n.comparador]} ${cantidad}`,
+    falsa: `es ${ROTULO_COMPARADOR[COMPLEMENTO_COMPARADOR[n.comparador]]} ${cantidad}`,
+  }
+}
+
+function textoDeCondicion(n: CondicionNumerica, comparador: keyof typeof ROTULO_COMPARADOR): string {
+  return `lectura de ${n.etiquetaCapacidad} ${ROTULO_COMPARADOR[comparador]} ${cantidadEnTexto(n.valor, n.simbolo)}`
+}
+
+function partesNumericas(n: CondicionNumerica): Pick<FraseReglaVista, "capacidad" | "comparador" | "valor" | "unidad"> {
+  return {
+    capacidad: { clave: n.capacidad.capacidad, etiqueta: n.etiquetaCapacidad },
+    comparador: { clave: n.comparador, etiqueta: ROTULO_COMPARADOR[n.comparador] },
+    valor: { clave: String(n.valor), etiqueta: formatearNumero(n.valor) },
+    unidad: { clave: n.unidad, etiqueta: n.simbolo },
+  }
 }
 
 /**
@@ -681,7 +808,29 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
  * `BASE_REVISION_DESACTUALIZADA`, `ENTRADA_NO_ES_DATO_PLANO`, ...) no están en la
  * tabla de `explicaciones-motivos.ts` — dan `explicacion: null` sin mirar `nombres`.
  */
-export function explicarMotivos(motivos: readonly Motivo[], proyecto: Proyecto, catalogo: Catalogo): readonly MotivoVista[] {
+export function explicarMotivos(motivos: readonly Motivo[], proyecto: Proyecto, catalogo: Catalogo, conocimiento: ComponentKnowledge = crearConocimiento(catalogo)): readonly MotivoVista[] {
   const nombres = resolverNombreDeComponente(proyecto, catalogo)
-  return motivos.map((motivo) => ({ ...motivo, explicacion: explicacionDeMotivo(motivo.codigo, datosParaExplicacion(motivo), nombres) }))
+  return motivos.map((motivo) => ({ ...motivo, explicacion: explicacionDeMotivo(motivo.codigo, { ...datosParaExplicacion(motivo), ...datosDeCondicionNumerica(motivo, proyecto, conocimiento) }, nombres) }))
+}
+
+/**
+ * Numeric Conditions S1 (N-11): para un motivo sobre la condición de una regla, lo que la
+ * explicación necesita nombrar y la IR/el motivo no traen en texto: el sensor de la regla y, si
+ * Component Knowledge lo describe (CK-REQ-N1), el rótulo de la capacidad, la cantidad guardada y
+ * el rango con sus símbolos. Sin ese contrato sólo se agrega el sensor; la plantilla que necesite
+ * más no da explicación (nunca se inventa un rótulo ni una unidad).
+ */
+function datosDeCondicionNumerica(motivo: Motivo, proyecto: Proyecto, conocimiento: ComponentKnowledge): Readonly<Record<string, unknown>> {
+  if (motivo.entidad?.tipo !== "comportamiento") return {}
+  const cuando = proyecto.comportamientos.find((b) => b.id === motivo.entidad?.id)?.cuando
+  if (!cuando?.sensor) return {}
+  const base = { sensorDeRegla: cuando.sensor }
+  const tipo = proyecto.componentes.find((c) => c.id === cuando.sensor)?.tipo
+  if (tipo === undefined || !cuando.capacidad || !cuando.umbral) return base
+  const r = conocimiento.capacidadCuantitativa(tipo, cuando.capacidad)
+  if (!r.ok || r.valor.etiqueta === null) return base
+  const capacidad = r.valor
+  const cantidad = cantidadEnTexto(cuando.umbral.valor, simboloDe(capacidad, cuando.umbral.unidad, conocimiento))
+  const rango = rangoEnTexto(capacidad, conocimiento)
+  return { ...base, etiquetaCapacidad: capacidad.etiqueta, cantidadGuardada: cantidad, ...(rango !== null ? { rangoEnTexto: rango } : {}) }
 }

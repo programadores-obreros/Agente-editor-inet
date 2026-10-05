@@ -79,6 +79,13 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     const campo = modeloActual.regla.campos.find((c) => c.slot === evento.name)
     if (!campo) return
     const valor = evento.newValue
+    // Numeric Conditions S1: un campo de número manda lo que se escribió; si es lo mismo que se
+    // lee (o quedó vacío), no es una edición. El controlador lo interpreta y el Engine decide.
+    if (campo.tipo === "numero") {
+      if (valor === (campo.etiquetaActual ?? "") || String(valor).trim() === "") return
+      alEditar({ reglaId: modeloActual.regla.id, slot: campo.slot, valor })
+      return
+    }
     if (valor === SENTINELA) {
       // Gana el snapshot: "— elegí —" nunca es una edición. Si la regla ya tenía valor, el campo vuelve a él.
       if (campo.valor !== null) restaurar(evento.blockId, campo)
@@ -101,16 +108,23 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   }
 
   function construir(campos) {
-    const mitad = Math.ceil(campos.length / 2)
     const contenedorBloque = workspace.newBlock(TIPO_MIENTRAS)
     const accion = workspace.newBlock(TIPO_HACER)
-    const reparto = [[contenedorBloque, campos.slice(0, mitad)], [accion, campos.slice(mitad)]]
+    // Si el servidor dice en qué bloque va cada campo (`grupo`), se respeta; si no, la forma fija
+    // de siempre: la primera mitad en el «mientras» y el resto en el «hacer».
+    const conGrupo = campos.every((c) => c.grupo === "cuando" || c.grupo === "entonces")
+    const mitad = Math.ceil(campos.length / 2)
+    const reparto = conGrupo
+      ? [[contenedorBloque, campos.filter((c) => c.grupo === "cuando")], [accion, campos.filter((c) => c.grupo === "entonces")]]
+      : [[contenedorBloque, campos.slice(0, mitad)], [accion, campos.slice(mitad)]]
     for (const [bloque, delBloque] of reparto) {
       const entrada = bloque.getInput("CAMPOS")
       for (const campo of delBloque) {
         // el texto fijo viene del servidor; una coma inicial (de la frase corrida) no se muestra suelta
-        entrada.appendField(new Blockly.FieldLabel(campo.prefijo.replace(/^[,\s]+/, "")))
-        entrada.appendField(new Blockly.FieldDropdown(opcionesDeCampo(campo, textos)), campo.slot)
+        const prefijo = campo.prefijo.replace(/^[,\s]+/, "")
+        if (prefijo !== "") entrada.appendField(new Blockly.FieldLabel(prefijo))
+        if (campo.tipo === "numero") entrada.appendField(new Blockly.FieldTextInput(campo.etiquetaActual ?? ""), campo.slot)
+        else entrada.appendField(new Blockly.FieldDropdown(opcionesDeCampo(campo, textos)), campo.slot)
       }
     }
     contenedorBloque.getInput("ACCION").connection.connect(accion.previousConnection)
@@ -134,7 +148,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         return
       }
       const campos = modelo.regla.campos
-      const firma = JSON.stringify(campos.map((c) => [c.slot, c.prefijo, opcionesDeCampo(c, textos)]))
+      const firma = JSON.stringify(campos.map((c) => [c.slot, c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)]))
       if (firma !== firmaActual) {
         firmaActual = null
         workspace.clear()
@@ -146,7 +160,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         for (const bloque of bloques) {
           const f = bloque.getField(campo.slot)
           if (!f) continue
-          bloque.setFieldValue(campo.valor ?? SENTINELA, campo.slot)
+          bloque.setFieldValue(campo.tipo === "numero" ? (campo.etiquetaActual ?? "") : (campo.valor ?? SENTINELA), campo.slot)
           if (typeof f.setEnabled === "function") f.setEnabled(!deshabilitado)
         }
       }

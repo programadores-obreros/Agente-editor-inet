@@ -174,16 +174,60 @@ export function elegirSelectorParaFoco(disponibles, focoAnterior) {
  * La opción elegida trae su `parche` (qué le agrega a la regla): acá sólo se mezcla. */
 export function construirOperacionRegla({ regla, slot, valor, opcionesRegla }) {
   const forma = regla ? regla.forma : {}
-  const parche = buscarOpcion(slot, valor, opcionesRegla).parche
-  const cuando = forma.cuando || parche.cuando ? { ...forma.cuando, ...parche.cuando } : undefined
-  const entonces = forma.entonces || parche.entonces ? { ...forma.entonces, ...parche.entonces } : undefined
+  const definicion = definicionDeSlot(slot, regla, opcionesRegla)
+  // Numeric Conditions S1: un slot "numero" no tiene opciones; el servidor dice DÓNDE va el número
+  // (`destino`) y el navegador sólo lo coloca ahí. Qué significa, lo decide el Engine.
+  if (definicion?.tipo === "numero") {
+    const comportamiento = { ...(regla ? { id: regla.id } : {}), ...colocar(forma, definicion.destino, interpretarNumero(valor)) }
+    return { tipo: "SetComportamiento", payload: { comportamiento } }
+  }
+  const opcion = definicion?.opciones.find((o) => o.valor === valor)
+  const parche = opcion.parche
+  // `reemplazaCuando` (N-10): la entrada nueva no declara la condición guardada, así que la regla
+  // queda con la entrada sola (incompleta pero representable) en vez de una condición ajena.
+  const cuando = opcion.reemplazaCuando ? parche.cuando : forma.cuando || parche.cuando ? mezclar(forma.cuando, parche.cuando) : undefined
+  const entonces = forma.entonces || parche.entonces ? mezclar(forma.entonces, parche.entonces) : undefined
   const comportamiento = { ...(regla ? { id: regla.id } : {}), ...(cuando ? { cuando } : {}), ...(entonces ? { entonces } : {}) }
   return { tipo: "SetComportamiento", payload: { comportamiento } }
 }
 
-function buscarOpcion(slot, valor, opcionesRegla) {
-  const definicion = (opcionesRegla.slots ?? []).find((s) => s.slot === slot)
-  return definicion?.opciones.find((o) => o.valor === valor)
+/** Los slots de ESA regla si el servidor los dio (dependen de la entrada elegida), si no los globales. */
+function definicionDeSlot(slot, regla, opcionesRegla) {
+  const slots = regla?.slots ?? opcionesRegla.slots ?? []
+  return slots.find((s) => s.slot === slot)
+}
+
+function esObjetoPlano(v) {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+}
+
+/** Mezcla de datos planos, campo por campo y en profundidad (sin nombres de campo). */
+function mezclar(base, parche) {
+  if (!esObjetoPlano(base) || !esObjetoPlano(parche)) return parche ?? base
+  const salida = { ...base }
+  for (const [clave, valor] of Object.entries(parche)) salida[clave] = esObjetoPlano(valor) && esObjetoPlano(base[clave]) ? mezclar(base[clave], valor) : valor
+  return salida
+}
+
+/** Copia de `objeto` con `valor` en `camino` (los objetos intermedios se copian, nunca se mutan). */
+function colocar(objeto, camino, valor) {
+  if (camino.length === 0) return valor
+  const [clave, ...resto] = camino
+  const actual = esObjetoPlano(objeto) ? objeto : {}
+  return { ...actual, [clave]: colocar(actual[clave], resto, valor) }
+}
+
+/**
+ * Lo que escribió el estudiante como número: acepta coma o punto decimal y espacios alrededor.
+ * Sólo dígitos (sin exponentes, hexadecimales ni "Infinity"); si no es un número así, `null`.
+ */
+export function interpretarNumero(texto) {
+  if (typeof texto === "number") return Number.isFinite(texto) ? texto : null
+  if (typeof texto !== "string") return null
+  const limpio = texto.trim().replace(",", ".")
+  if (!/^-?\d+(\.\d+)?$/.test(limpio)) return null
+  const n = Number(limpio)
+  return Number.isFinite(n) ? n : null
 }
 
 /** Foco de la frase tras repintar: el control equivalente (misma regla y slot) o `null`. */
@@ -192,8 +236,16 @@ export function elegirControlReglaParaFoco(disponibles, focoAnterior) {
   return disponibles.find((c) => c.reglaId === focoAnterior.reglaId && c.slot === focoAnterior.slot) ?? null
 }
 
-function valorEsOpcion(slot, valor, opcionesRegla) {
-  return valor !== null && valor !== undefined && buscarOpcion(slot, valor, opcionesRegla) !== undefined
+/** ¿Es una edición real? Una opción ofrecida, o (slot "numero") un número válido distinto del guardado. */
+function valorEsEdicion(slot, valor, regla, opcionesRegla) {
+  if (valor === null || valor === undefined) return false
+  const definicion = definicionDeSlot(slot, regla, opcionesRegla)
+  if (!definicion) return false
+  if (definicion.tipo === "numero") {
+    const n = interpretarNumero(valor)
+    return n !== null && String(n) !== regla?.frase?.[slot]?.clave
+  }
+  return definicion.opciones.some((o) => o.valor === valor)
 }
 
 /**
@@ -247,10 +299,11 @@ export function crearControladorReglas({ obtenerSnapshot, enviar, alCambiar }) {
       const snapshot = obtenerSnapshot()
       if (!snapshot?.vista) return false
       const { opcionesRegla } = snapshot.vista
-      // Sólo valores OFRECIDOS: "condición avanzada" (no editable) y vaciar un slot no envían nada.
-      if (!valorEsOpcion(slot, valor, opcionesRegla)) return false
       const regla = reglaId === null ? null : (snapshot.vista.reglas.find((r) => r.id === reglaId) ?? null)
       if (reglaId !== null && regla === null) return false
+      // Sólo valores OFRECIDOS (o un número válido nuevo): "condición avanzada" (no editable),
+      // vaciar un slot o repetir el mismo número no envían nada.
+      if (!valorEsEdicion(slot, valor, regla, opcionesRegla)) return false
       return ejecutar(construirOperacionRegla({ regla, slot, valor, opcionesRegla }))
     },
     async quitar({ reglaId }) {

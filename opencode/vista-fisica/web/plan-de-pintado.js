@@ -309,9 +309,14 @@ export function valorActualDe(frase, slot) {
 
 function instruccionDeFrase(regla, opciones, config) {
   const frase = regla ? regla.frase : {}
-  // Los slots (orden, texto fijo, opciones) los dicta el servidor: acá no se nombra ninguno.
-  const selectores = (opciones.slots ?? []).map((definicion) => {
+  // Los slots (orden, texto fijo, opciones) los dicta el servidor: acá no se nombra ninguno. Si la
+  // regla trae los suyos (dependen de la entrada elegida), se usan ésos.
+  const selectores = ((regla && regla.slots) ?? opciones.slots ?? []).map((definicion) => {
     const actual = valorActualDe(frase, definicion.slot)
+    // Numeric Conditions S1: un slot "numero" es un campo de texto con el número que se lee.
+    if (definicion.tipo === "numero") {
+      return { slot: definicion.slot, prefijo: definicion.prefijo, tipo: "numero", valorActual: actual ? actual.etiqueta : "", deshabilitado: config.deshabilitado }
+    }
     return {
       slot: definicion.slot,
       prefijo: definicion.prefijo,
@@ -329,6 +334,7 @@ function instruccionDeFrase(regla, opciones, config) {
     cierre: ".",
     explicaciones: regla ? regla.motivos.map((m) => m.explicacion).filter((t) => typeof t === "string" && t !== "") : [],
     aviso: regla ? (regla.aviso ?? null) : null,
+    ayuda: regla ? (regla.ayuda ?? null) : null,
     conTraza: regla !== null && regla.traza !== undefined,
     etiquetaTraza: "¿Qué pasaría si…?",
     traza: trazaAbierta ? regla.traza : null,

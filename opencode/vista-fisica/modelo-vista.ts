@@ -256,6 +256,13 @@ export interface FraseReglaVista {
   /** Semantic Vertical #3: `clave` = rótulo del estado objetivo ("encendido"/"apagado"),
    * identificador de la vista; la semántica es `entonces.accion`. */
   readonly salida?: { readonly clave: string; readonly etiqueta: string }
+  /** Numeric Conditions S1: partes de una condición NUMÉRICA reconocida (sólo con el contrato
+   * cuantitativo de Component Knowledge, CK-REQ-N1). `clave` es el valor que viaja en una edición
+   * (id de capacidad, comparador del dominio, número, id de unidad); `etiqueta`, lo que se lee. */
+  readonly capacidad?: { readonly clave: string; readonly etiqueta: string }
+  readonly comparador?: { readonly clave: string; readonly etiqueta: string }
+  readonly valor?: { readonly clave: string; readonly etiqueta: string }
+  readonly unidad?: { readonly clave: string; readonly etiqueta: string }
 }
 
 /** Explicación textual determinista de una regla completa con la condición "presionado".
@@ -282,6 +289,11 @@ export interface ReglaVista {
   readonly forma: { readonly cuando?: unknown; readonly entonces?: unknown }
   /** Nota para una condición avanzada (la frase sólo edita "presionado"); `null` en cualquier otro caso. */
   readonly aviso: string | null
+  /** Numeric Conditions S1: los slots de ESTA regla cuando no son los globales (opciones que
+   * dependen del sensor elegido). Ausente = usar `opcionesRegla.slots`. */
+  readonly slots?: readonly SlotFraseVista[]
+  /** Numeric Conditions S1 (N-6): ayuda contextual que NO es parte de la frase («Mide de X a Y.»). */
+  readonly ayuda?: string
 }
 
 /** Una opción de un slot de la frase. `parche` es lo que esa opción le agrega a la regla guardada
@@ -290,13 +302,22 @@ export interface OpcionSlotVista {
   readonly valor: string
   readonly etiqueta: string
   readonly parche: { readonly cuando?: Readonly<Record<string, unknown>>; readonly entonces?: Readonly<Record<string, unknown>> }
+  /** Numeric Conditions S1 (N-10): `true` = el `cuando` del parche REEMPLAZA al guardado en vez de
+   * mezclarse (cambiar a un sensor que no declara la capacidad de la regla deja sólo el sensor). */
+  readonly reemplazaCuando?: boolean
 }
 
 /** Un slot de la frase, en orden: `prefijo` es el texto fijo que va antes del selector. */
 export interface SlotFraseVista {
-  readonly slot: "sensor" | "estado" | "actuador" | "salida"
+  readonly slot: "sensor" | "estado" | "actuador" | "salida" | "capacidad" | "comparador" | "valor" | "unidad"
   readonly prefijo: string
   readonly opciones: readonly OpcionSlotVista[]
+  /** Numeric Conditions S1: parte del bloque «mientras» (`cuando`) o del «hacer» (`entonces`). */
+  readonly grupo?: "cuando" | "entonces"
+  /** Numeric Conditions S1: `"numero"` = valor libre (no una opción). El navegador sólo lo
+   * interpreta como número y lo coloca en `destino` (camino dentro de la regla); el Engine decide. */
+  readonly tipo?: "opciones" | "numero"
+  readonly destino?: readonly string[]
 }
 
 export interface OpcionesReglaVista {

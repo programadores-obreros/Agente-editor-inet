@@ -27,7 +27,8 @@ import { etiquetaDeEstadoObjetivo } from "../conocimiento/anexos/pedagogia-es-AR
 export type ResolverNombreDeComponente = (idOTipo: string) => string
 
 type Datos = Readonly<Record<string, unknown>>
-type Plantilla = (datos: Datos, nombres: ResolverNombreDeComponente) => string
+/** `null` = con estos datos no hay una explicación honesta (nunca se inventa una parte). */
+type Plantilla = (datos: Datos, nombres: ResolverNombreDeComponente) => string | null
 
 /** Valor crudo de `datos[clave]`, como string — si falta, se usa el propio NOMBRE de
  * la clave (nunca una oración inventada): no debería pasar con los ocho códigos de
@@ -105,6 +106,26 @@ const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
   CAPACIDAD_PIN_INCOMPATIBLE: (datos, nombres) =>
     `${campo(datos, "pin")} no puede hacer lo que necesita el ${nombreDe(datos, "componente", nombres)} en ${campo(datos, "terminal")}.`,
   PIN_INEXISTENTE_EN_DOCUMENTO: (datos) => `${campo(datos, "pin")} no existe en esta placa. Elegí otro pin.`,
+  // Numeric Conditions S1 (N-11): mecanismo aprobado; el TEXTO está pendiente de aprobación
+  // externa/humana. Los rótulos, símbolos y el rango declarado llegan de Component Knowledge
+  // (CK-REQ-N1) a través de `datos` (`snapshot-a-vista.ts::datosDeCondicionNumerica`); sin ellos,
+  // no hay explicación. No afirman consecuencias físicas ni presentan el rango del catálogo como
+  // un dato verificado: sólo qué no coincide y qué revisar.
+  UMBRAL_FUERA_DE_RANGO: (datos, nombres) =>
+    textos(datos, ["etiquetaCapacidad", "cantidadGuardada", "rangoEnTexto", "sensorDeRegla"])
+      ? `El rango declarado en el catálogo para la lectura de ${campo(datos, "etiquetaCapacidad")} del ${nombreDe(datos, "sensorDeRegla", nombres)} es ${campo(datos, "rangoEnTexto")}. ${campo(datos, "cantidadGuardada")} queda fuera de ese rango: revisá el número de la regla.`
+      : null,
+  MAGNITUD_INCOMPATIBLE: (datos, nombres) =>
+    textos(datos, ["etiquetaCapacidad", "cantidadGuardada", "sensorDeRegla"])
+      ? `La regla compara la lectura de ${campo(datos, "etiquetaCapacidad")} del ${nombreDe(datos, "sensorDeRegla", nombres)} con ${campo(datos, "cantidadGuardada")}, que no es una unidad de ${campo(datos, "etiquetaCapacidad")}. Elegí una unidad que corresponda.`
+      : null,
+  CAPACIDAD_INEXISTENTE_EN_CATALOGO: (datos, nombres) =>
+    textos(datos, ["sensorDeRegla"]) ? `El ${nombreDe(datos, "sensorDeRegla", nombres)} ya no ofrece la medición que usa esta regla. Elegí otra condición.` : null,
+}
+
+/** Todos los campos están y son texto no vacío. */
+function textos(datos: Datos, claves: readonly string[]): boolean {
+  return claves.every((k) => typeof datos[k] === "string" && datos[k] !== "")
 }
 
 /**

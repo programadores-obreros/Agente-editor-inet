@@ -463,10 +463,34 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
 
   const frase = doc.createElement("p")
   frase.setAttribute("data-frase", "true")
-  for (const sel of instruccion.selectores) {
-    const prefijo = doc.createElement("span")
-    prefijo.textContent = `${sel.prefijo} `
-    frase.appendChild(prefijo)
+  // Puntuación: un texto fijo que empieza con coma (o el cierre) va pegado al control anterior,
+  // y un texto fijo vacío no deja un espacio de más.
+  const siguienteEmpiezaConPuntuacion = (i) => /^[,.;:]/.test(i + 1 < instruccion.selectores.length ? instruccion.selectores[i + 1].prefijo : instruccion.cierre)
+  for (const [indice, sel] of instruccion.selectores.entries()) {
+    if (sel.prefijo !== "") {
+      const prefijo = doc.createElement("span")
+      prefijo.textContent = `${sel.prefijo} `
+      frase.appendChild(prefijo)
+    }
+
+    if (sel.tipo === "numero") {
+      // Numeric Conditions S1: el número se escribe; el controlador lo interpreta y el Engine decide.
+      const campoNumero = doc.createElement("input")
+      campoNumero.setAttribute("type", "text")
+      campoNumero.setAttribute("inputmode", "decimal")
+      campoNumero.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
+      campoNumero.setAttribute("data-slot", sel.slot)
+      campoNumero.value = sel.valorActual
+      campoNumero.disabled = Boolean(sel.deshabilitado)
+      if (typeof campoNumero.addEventListener === "function") {
+        campoNumero.addEventListener("change", () => avisar(manejadores.onCambioRegla, { reglaId: instruccion.reglaId, slot: sel.slot, valor: campoNumero.value }))
+      }
+      frase.appendChild(campoNumero)
+      const espacioNumero = doc.createElement("span")
+      espacioNumero.textContent = siguienteEmpiezaConPuntuacion(indice) ? "" : " "
+      frase.appendChild(espacioNumero)
+      continue
+    }
 
     const selector = doc.createElement("select")
     selector.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
@@ -490,7 +514,7 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
     }
     frase.appendChild(selector)
     const espacio = doc.createElement("span")
-    espacio.textContent = " "
+    espacio.textContent = siguienteEmpiezaConPuntuacion(indice) ? "" : " "
     frase.appendChild(espacio)
   }
   const cierre = doc.createElement("span")
@@ -503,6 +527,13 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
     aviso.setAttribute("data-aviso-condicion-avanzada", "true")
     aviso.textContent = instruccion.aviso
     caja.appendChild(aviso)
+  }
+
+  if (instruccion.ayuda) {
+    const ayuda = doc.createElement("p")
+    ayuda.setAttribute("data-ayuda-regla", "true")
+    ayuda.textContent = instruccion.ayuda
+    caja.appendChild(ayuda)
   }
 
   if (instruccion.explicaciones.length > 0) {

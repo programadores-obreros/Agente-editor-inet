@@ -26,7 +26,9 @@ export function proyectarModeloLogico(vista) {
 
   const existente = reglas[0] ?? null
   const frase = existente ? existente.frase : {}
-  const campos = slots.map((definicion) => {
+  // Numeric Conditions S1: si la regla trae sus propios slots (dependen de la entrada elegida), se usan ésos.
+  const definiciones = (existente && existente.slots) ?? slots
+  const campos = definiciones.map((definicion) => {
     const actual = valorActualDe(frase, definicion.slot)
     return {
       slot: definicion.slot,
@@ -34,6 +36,9 @@ export function proyectarModeloLogico(vista) {
       valor: actual ? actual.valor : null,
       etiquetaActual: actual ? actual.etiqueta : null,
       opciones: definicion.opciones.map((o) => ({ valor: o.valor, etiqueta: o.etiqueta })),
+      // "numero" = un valor que se escribe (sin opciones); `grupo` dice en qué bloque va.
+      ...(definicion.tipo === "numero" ? { tipo: "numero" } : {}),
+      ...(definicion.grupo ? { grupo: definicion.grupo } : {}),
     }
   })
   const avisoServidor = existente ? (existente.aviso ?? null) : null
@@ -46,6 +51,7 @@ export function proyectarModeloLogico(vista) {
       // El servidor avisa de una condición que la vista no sabe armar: ese aviso ES la señal.
       avanzada: avisoServidor !== null,
       aviso: avisoServidor,
+      ayuda: existente ? (existente.ayuda ?? null) : null,
       motivos: existente ? existente.motivos.map((m) => m.explicacion).filter((t) => typeof t === "string" && t !== "") : [],
     },
     hayVarias,

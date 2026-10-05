@@ -15,10 +15,22 @@ export function fabricarBlockly() {
     setEnabled(h) { this.habilitado = h }
   }
   class FieldLabel { constructor(texto) { this.texto = texto } }
+  // Numeric Conditions S1: campo de texto libre (mismo nombre que la API real); acepta cualquier texto.
+  class FieldTextInput {
+    constructor(texto) { this.valor = texto; this.habilitado = true }
+    getValue() { return this.valor }
+    setValue(v) {
+      const antes = this.valor
+      this.valor = v
+      if (antes !== v && this.bloque) this.bloque.workspace.disparar({ type: "change", element: "field", name: this.nombre, newValue: v, oldValue: antes, blockId: this.bloque.id, isUiEvent: false })
+    }
+    setEnabled(h) { this.habilitado = h }
+  }
   const Blockly = {
     Blocks: {},
     FieldDropdown,
     FieldLabel,
+    FieldTextInput,
     Events: {
       BLOCK_CHANGE: "change",
       disable() { reg.nivelEventos++ },

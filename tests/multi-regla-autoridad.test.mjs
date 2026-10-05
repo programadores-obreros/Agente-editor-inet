@@ -189,11 +189,13 @@ test("10/14: documento persistido con dos dueños → recarga, mismo diagnóstic
   assert.ok(antes.includes('"cmp-1"'), "el documento original tenía los dos dueños")
 })
 
-test("11: condición avanzada (DHT22) + condición común sobre el mismo actuador → conflicto", () => {
+// Numeric Conditions S1 + CK-REQ-N1: la regla del DHT22 ya no se proyecta como «avanzada» sino
+// como condición numérica; el conflicto de autoridad es el mismo.
+test("11: condición numérica (DHT22) + condición común sobre el mismo actuador → conflicto", () => {
   conflicto([regla("cmp-5", CALOR, "cmp-1", "encender"), regla("cmp-0", PRESIONADO, "cmp-1", "encender")], (s) => {
     exigirConflicto(s, s.proyecto.comportamientos.map((b) => b.id), "cmp-1")
-    const avanzada = s.vista.reglas.find((r) => r.frase.estado?.clave === "avanzada")
-    assert.ok(avanzada.motivos.some((m) => m.codigo === CODIGO), "la regla avanzada también lo muestra")
+    const numerica = s.vista.reglas.find((r) => r.frase.estado?.clave === "numerica")
+    assert.ok(numerica.motivos.some((m) => m.codigo === CODIGO), "la regla numérica también lo muestra")
   })
 })
 

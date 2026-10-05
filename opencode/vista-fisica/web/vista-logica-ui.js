@@ -74,7 +74,7 @@ export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elemento
       }
       vista ??= crearVistaLogica({ Blockly, contenedor: lienzo, controlador, alError: () => mostrarEstado(MENSAJE_NO_SE_PUDO_GUARDAR), ...(media === undefined ? {} : { media }) })
       const modelo = vista.repintar(snapshot, { deshabilitado })
-      const lineas = modelo.regla ? [...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : [])] : []
+      const lineas = modelo.regla ? [...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : []), ...(modelo.regla.ayuda ? [modelo.regla.ayuda] : [])] : []
       if (modelo.hayVarias) lineas.push("Se muestra la primera regla; las demás están en la sección Reglas.")
       elementoTexto.textContent = lineas.join("\n")
       botonQuitar.disabled = deshabilitado || !modelo.regla || modelo.regla.id === null

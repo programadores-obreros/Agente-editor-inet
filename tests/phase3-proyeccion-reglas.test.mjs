@@ -103,19 +103,26 @@ test("T3 slots de la frase de una regla parcial: sólo lo presente", () => {
   ctx.servicio.cerrar()
 })
 
-test("T3 condición avanzada: otra comparación sobre el mismo estado, o un sensor de temperatura -> estado 'avanzada', texto null, sin traza", () => {
+// Numeric Conditions S1 + CK-REQ-N1: la regla del DHT22 YA NO es «avanzada» (supersede la
+// expectativa anterior, que sólo valía mientras Component Knowledge no describía capacidades
+// cuantitativas): se proyecta como condición numérica. Las tríadas booleanas no canónicas siguen
+// siendo «avanzada».
+test("T3 condición avanzada: otra comparación sobre el mismo estado -> 'avanzada', texto null, sin traza; un sensor de temperatura -> condición numérica", () => {
   const ctx = preparar(["dht22"])
   set(ctx, { cuando: { sensor: ctx.pulsador, capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 0, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: ctx.led, accion: "encender" } })
   set(ctx, { cuando: { sensor: ctx.pulsador, capacidad: "estadoBooleano", comparador: ">", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: ctx.led, accion: "encender" } })
   set(ctx, { cuando: { sensor: ctx.dht22, capacidad: "temperatura", comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } }, entonces: { actuador: ctx.led, accion: "encender" } })
   const reglas = vista(ctx).reglas
   assert.equal(reglas.length, 3)
-  for (const r of reglas) {
+  for (const r of reglas.slice(0, 2)) {
     assert.deepEqual(r.frase.estado, { clave: "avanzada", etiqueta: "condición avanzada" })
     assert.equal(r.texto, null)
     assert.equal(r.traza, undefined)
     assert.equal(r.completa, true)
   }
+  assert.equal(reglas[2].frase.estado.clave, "numerica")
+  assert.equal(reglas[2].texto, "Mientras la lectura de temperatura del DHT22 sea mayor a 30 °C, el LED está encendido.")
+  assert.equal(reglas[2].completa, true)
   ctx.servicio.cerrar()
 })
 
