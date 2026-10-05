@@ -24,28 +24,68 @@ import type { Placa } from "../nucleo/placas.ts"
 import { CLASES, ELECTRICAS, ROLES_DE_TERMINAL, unidadesDeMagnitud } from "../nucleo/registros/vocabulario.ts"
 import { nombreWokwiDePin } from "./anexos/representacion.ts"
 import { PINES_VERIFICADOS_WOKWI } from "./anexos/golden-wokwi.ts"
-import { REVISIONES_DE_COMPONENTE, REVISIONES_DE_PLACA } from "./anexos/revision-electrica.ts"
+import { REVISIONES_DE_COMPONENTE, REVISIONES_DE_PLACA, type RevisionDeComponente, type RevisionDePlaca } from "./anexos/revision-electrica.ts"
 import type { ComponentKnowledge } from "./conocimiento.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Revisión eléctrica (dato en `anexos/revision-electrica.ts`)
 // ════════════════════════════════════════════════════════════════════════════════════
 
-function revisadoComponente(tipo: string): boolean {
-  return REVISIONES_DE_COMPONENTE.some((r) => r.tipo === tipo)
+/**
+ * Marcadores que la convención del repo reserva para una revisión NO humana. `auto` es el que
+ * ya documentan la procedencia ("Revisión HUMANA (nunca 'auto')") y D-13 ("ningún flag lo
+ * aprueba la IA ni un importador").
+ */
+const MARCADORES_DE_REVISION_NO_HUMANA: ReadonlySet<string> = new Set(["auto"])
+
+/**
+ * La ÚNICA regla de "revisor humano válido" de la admisión (post-D0, cierra L-5): un texto no
+ * vacío que no sea un marcador de revisión no humana, comparado sin distinguir mayúsculas ni
+ * espacios alrededor. La usan la revisión eléctrica (componente, placa, par) y la procedencia.
+ * Antes la revisión eléctrica sólo miraba si existía una entrada para el id, sin leer
+ * `revisadoPor`. No autentica a nadie: hace cumplir la convención declarada en los anexos.
+ */
+export function esRevisorHumano(revisadoPor: unknown): boolean {
+  if (typeof revisadoPor !== "string") return false
+  const normalizado = revisadoPor.trim().toLowerCase()
+  return normalizado.length > 0 && !MARCADORES_DE_REVISION_NO_HUMANA.has(normalizado)
 }
 
-function revisadaPlaca(placa: string): boolean {
-  return REVISIONES_DE_PLACA.some((r) => r.placa === placa)
+/** Revisiones eléctricas que lee la admisión. Por defecto, el anexo; inyectable en tests. */
+export interface RevisionesElectricas {
+  readonly componentes: readonly RevisionDeComponente[]
+  readonly placas: readonly RevisionDePlaca[]
+}
+
+export const REVISIONES_DEL_ANEXO: RevisionesElectricas = Object.freeze({ componentes: REVISIONES_DE_COMPONENTE, placas: REVISIONES_DE_PLACA })
+
+type EstadoDeRevision = "valida" | "no-humana" | "ausente"
+
+function estadoDeRevision(candidatas: readonly { readonly revisadoPor: unknown }[]): EstadoDeRevision {
+  if (candidatas.length === 0) return "ausente"
+  return candidatas.some((r) => esRevisorHumano(r.revisadoPor)) ? "valida" : "no-humana"
+}
+
+function revisionDeComponente(tipo: string, revisiones: RevisionesElectricas): EstadoDeRevision {
+  return estadoDeRevision(revisiones.componentes.filter((r) => r.tipo === tipo))
+}
+
+function revisionDePlaca(placa: string, revisiones: RevisionesElectricas): EstadoDeRevision {
+  return estadoDeRevision(revisiones.placas.filter((r) => r.placa === placa))
+}
+
+/** El problema que se reporta para una revisión eléctrica que no es válida. */
+function problemaDeRevision(estado: Exclude<EstadoDeRevision, "valida">): string {
+  return estado === "ausente" ? "electrico: sin revisión eléctrica humana" : "electrico: la revisión eléctrica no es humana (revisadoPor vacío o marcador de revisión automática)"
 }
 
 /**
- * CK-04: ¿hay revisión eléctrica humana de `tipo` PARA `placa`? Es un reporte: no entra en
- * los flags ni en `officiallySupported` (el flag `electrico` sigue siendo "revisado para
- * alguna placa").
+ * CK-04: ¿hay revisión eléctrica humana VÁLIDA de `tipo` PARA `placa`? Es un reporte: no
+ * entra en los flags ni en `officiallySupported` (el flag `electrico` sigue siendo "revisado
+ * para alguna placa").
  */
-export function compatibilidadRevisada(tipo: string, placa: string): boolean {
-  return REVISIONES_DE_COMPONENTE.some((r) => r.tipo === tipo && r.placa === placa)
+export function compatibilidadRevisada(tipo: string, placa: string, revisiones: RevisionesElectricas = REVISIONES_DEL_ANEXO): boolean {
+  return revisiones.componentes.some((r) => r.tipo === tipo && r.placa === placa && esRevisorHumano(r.revisadoPor))
 }
 
 /**
@@ -112,8 +152,7 @@ function chequearProcedencia(conocimiento: ComponentKnowledge, assetId: string |
     registro.fuente.version.length > 0 &&
     /^[0-9a-f]{64}$/.test(registro.fuente.sha256) &&
     registro.licencia.spdx.length > 0 &&
-    registro.revisadoPor.length > 0 &&
-    registro.revisadoPor !== "auto"
+    esRevisorHumano(registro.revisadoPor)
   if (!completo) problemas.push(`procedencia: el registro de "${assetId}" está incompleto`)
   return completo
 }
@@ -140,7 +179,7 @@ function chequearRequisito(componente: ComponenteCatalogo, requisito: Requisito,
   return ok
 }
 
-export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string): InformeDeAdmision {
+export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string, revisiones: RevisionesElectricas = REVISIONES_DEL_ANEXO): InformeDeAdmision {
   const problemas: string[] = []
   const componente = conocimiento.tipoComponente(tipo)
   if (!componente) {
@@ -197,8 +236,9 @@ export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string
     }
   }
   for (const r of componente.requisitos) if (!chequearRequisito(componente, r, problemas)) electrico = false
-  if (!revisadoComponente(componente.id)) {
-    problemas.push("electrico: sin revisión eléctrica humana")
+  const revisionComponente = revisionDeComponente(componente.id, revisiones)
+  if (revisionComponente !== "valida") {
+    problemas.push(problemaDeRevision(revisionComponente))
     electrico = false
   }
 
@@ -258,7 +298,7 @@ export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string
 // Placas
 // ════════════════════════════════════════════════════════════════════════════════════
 
-export function admitirPlaca(conocimiento: ComponentKnowledge, id: string): InformeDeAdmision {
+export function admitirPlaca(conocimiento: ComponentKnowledge, id: string, revisiones: RevisionesElectricas = REVISIONES_DEL_ANEXO): InformeDeAdmision {
   const problemas: string[] = []
   const placa: Placa | undefined = conocimiento.placa(id)
   if (!placa) {
@@ -291,8 +331,9 @@ export function admitirPlaca(conocimiento: ComponentKnowledge, id: string): Info
 
   // ── eléctrico (revisión humana) ──
   let electrico = semantico
-  if (!revisadaPlaca(placa.id)) {
-    problemas.push("electrico: sin revisión eléctrica humana")
+  const revisionPlaca = revisionDePlaca(placa.id, revisiones)
+  if (revisionPlaca !== "valida") {
+    problemas.push(problemaDeRevision(revisionPlaca))
     electrico = false
   }
 
@@ -337,16 +378,16 @@ export function admitirPlaca(conocimiento: ComponentKnowledge, id: string): Info
 }
 
 /** Informe de TODO el catálogo: placas primero, después componentes, en orden de datos. */
-export function admitirCatalogo(conocimiento: ComponentKnowledge): readonly InformeDeAdmision[] {
+export function admitirCatalogo(conocimiento: ComponentKnowledge, revisiones: RevisionesElectricas = REVISIONES_DEL_ANEXO): readonly InformeDeAdmision[] {
   return [
-    ...conocimiento.catalogo.placas.map((p) => admitirPlaca(conocimiento, p.id)),
-    ...conocimiento.catalogo.componentes.map((c) => admitirComponente(conocimiento, c.id)),
+    ...conocimiento.catalogo.placas.map((p) => admitirPlaca(conocimiento, p.id, revisiones)),
+    ...conocimiento.catalogo.componentes.map((c) => admitirComponente(conocimiento, c.id, revisiones)),
   ]
 }
 
 /** Ids oficialmente soportados, ordenados (para fijarlos en un test). */
-export function oficialmenteSoportados(conocimiento: ComponentKnowledge): readonly string[] {
-  return admitirCatalogo(conocimiento)
+export function oficialmenteSoportados(conocimiento: ComponentKnowledge, revisiones: RevisionesElectricas = REVISIONES_DEL_ANEXO): readonly string[] {
+  return admitirCatalogo(conocimiento, revisiones)
     .filter((i) => i.officiallySupported)
     .map((i) => i.id)
     .sort()

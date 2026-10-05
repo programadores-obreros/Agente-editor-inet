@@ -37,7 +37,7 @@ const OFICIALES = CATALOGO_FIJADO.oficiales
 // 1-3. Lista fijada y flags
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("F7: la lista de oficialmente soportados es EXACTAMENTE ESP32 + LED + resistencia + pulsador (D-17)", () => {
+test("F7: la lista de oficialmente soportados es EXACTAMENTE la fijada en tests/fixtures/catalogo-fijado.mjs (D-17)", () => {
   assert.deepEqual(oficialmenteSoportados(conocimiento), OFICIALES)
 })
 
@@ -84,7 +84,7 @@ test("F7: el Arduino UNO tiene representación pero no revisión eléctrica: no 
   assert.equal(informe.officiallySupported, false)
 })
 
-test("F7: la revisión eléctrica humana sólo existe para el conjunto inicial", () => {
+test("F7: la revisión eléctrica humana existe exactamente para los oficiales fijados", () => {
   assert.deepEqual(Object.keys(REVISION_ELECTRICA).sort(), OFICIALES)
 })
 
@@ -306,4 +306,69 @@ test("F2a (estático): conocimiento/admision.ts no contiene ningún id de compon
   const fuente = readFileSync(join(REPO, "opencode/conocimiento/admision.ts"), "utf8")
   const encontrados = [...new Set(fuente.split(/[^a-z0-9-]+/).filter((token) => ids.has(token)))]
   assert.deepEqual(encontrados, [])
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 8. Post-D0 Electrical Review Hardening #1 — la REGLA de admisión (no sólo un invariante de
+//    test) exige un revisor humano válido para la revisión eléctrica (cierra L-5).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const { esRevisorHumano, REVISIONES_DEL_ANEXO } = await import(join(REPO, "opencode/conocimiento/admision.ts"))
+const { procedenciaDe } = await import(join(REPO, "opencode/conocimiento/anexos/procedencia.ts"))
+
+/** Copia de las revisiones del anexo con el `revisadoPor` de las que cumplan `elegir` reemplazado. */
+function revisionesCon(revisadoPor, elegir) {
+  return {
+    componentes: REVISIONES_DEL_ANEXO.componentes.map((r) => (elegir(r) ? { ...r, revisadoPor } : r)),
+    placas: REVISIONES_DEL_ANEXO.placas.map((r) => (elegir(r) ? { ...r, revisadoPor } : r)),
+  }
+}
+
+test("L-5: esRevisorHumano rechaza el marcador de revisión automática y los revisores vacíos o no textuales", () => {
+  for (const malo of ["auto", "AUTO", " Auto ", "", "   ", undefined, null, 0, {}]) assert.equal(esRevisorHumano(malo), false, JSON.stringify(malo))
+  assert.equal(esRevisorHumano("revisión humana del product owner"), true)
+})
+
+test("L-5: toda revisión legítima existente (eléctrica y de procedencia) sigue siendo válida", () => {
+  for (const r of [...REVISIONES_DEL_ANEXO.componentes, ...REVISIONES_DEL_ANEXO.placas]) assert.equal(esRevisorHumano(r.revisadoPor), true, r.revisadoPor)
+  assert.equal(esRevisorHumano(procedenciaDe("wokwi-elements-bundle").revisadoPor), true)
+})
+
+test("L-5 (regla de producción): revisadoPor='auto' no deja revisado al par ni da electrico=true", () => {
+  for (const marcador of ["auto", " AUTO ", ""]) {
+    const revisiones = revisionesCon(marcador, (r) => r.tipo === "interruptor")
+    assert.equal(compatibilidadRevisada("interruptor", "esp32-devkit-v1", revisiones), false, marcador)
+    const informe = admitirComponente(conocimiento, "interruptor", revisiones)
+    assert.equal(informe.flags.electrico, false, marcador)
+    assert.equal(informe.officiallySupported, false, marcador)
+    assert.ok(informe.problemas.includes("electrico: la revisión eléctrica no es humana (revisadoPor vacío o marcador de revisión automática)"), JSON.stringify(informe.problemas))
+  }
+})
+
+test("L-5 (regla de producción): un marcador no humano nunca da officiallySupported, para ningún tipo ni placa", () => {
+  const todoAuto = revisionesCon("auto", () => true)
+  assert.deepEqual(oficialmenteSoportados(conocimiento, todoAuto), [])
+  for (const informe of admitirCatalogo(conocimiento, todoAuto)) {
+    assert.equal(informe.flags.electrico, false, informe.id)
+    assert.equal(informe.officiallySupported, false, informe.id)
+  }
+  assert.equal(admitirPlaca(conocimiento, "esp32-devkit-v1", todoAuto).flags.electrico, false)
+})
+
+test("revisión humana registrada: (interruptor, esp32-devkit-v1) revisado; (interruptor, arduino-uno) NO", () => {
+  assert.equal(compatibilidadRevisada("interruptor", "esp32-devkit-v1"), true)
+  assert.equal(compatibilidadRevisada("interruptor", "arduino-uno"), false)
+  assert.ok(!REVISIONES_DEL_ANEXO.componentes.some((r) => r.tipo === "interruptor" && r.placa === "arduino-uno"))
+})
+
+test("interruptor es oficial SÓLO como resultado derivado: todos los flags genéricos verdaderos; sin su revisión, no", () => {
+  const informe = admitirComponente(conocimiento, "interruptor")
+  assert.deepEqual(informe.flags, { semantico: true, electrico: true, representacion: { wokwi: true }, acciones: null, pedagogia: true, procedencia: true })
+  assert.deepEqual(informe.problemas, [])
+  assert.equal(informe.officiallySupported, true)
+  const sinSuRevision = { ...REVISIONES_DEL_ANEXO, componentes: REVISIONES_DEL_ANEXO.componentes.filter((r) => r.tipo !== "interruptor") }
+  const sin = admitirComponente(conocimiento, "interruptor", sinSuRevision)
+  assert.equal(sin.flags.electrico, false)
+  assert.equal(sin.officiallySupported, false)
+  assert.deepEqual(sin.problemas, ["electrico: sin revisión eléctrica humana"])
 })
