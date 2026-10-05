@@ -160,6 +160,11 @@
 //   `clase !== "actuador"`; `datos { componente, clase }`. Tipo desconocido del
 //   catálogo: no se emite (ya existe `CATALOGO_COMPONENTE_DESCONOCIDO`). Un documento
 //   histórico con un actuador inválido carga igual y muestra este motivo.
+// - `MULTIPLES_AUTORIDADES_ACTUADOR` — Multi-Rule Safety (modelo B): dos o más reglas
+//   reclaman el mismo actuador (`entonces.actuador`, por referencia, aunque estén
+//   incompletas). Uno por regla involucrada; `datos { actuador, comportamiento, otras }`
+//   (`otras` ordenadas por id). Blocking + representable: nunca se rechaza la operación,
+//   nunca se elige un ganador; un documento histórico con varios dueños carga igual.
 // - `ACCION_NO_SOPORTADA` — Semantic Vertical #3 (D-11): `entonces.accion` que el tipo
 //   del actuador no declara en su catálogo; `datos { componente, accion, soportadas }`.
 //   Blocking + representable: la regla se persiste y se puede corregir. Un documento

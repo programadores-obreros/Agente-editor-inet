@@ -575,6 +575,19 @@ SÍ se puede construir** en el proyecto físico, con `proyecto-fisico`. Hacé es
      y que **esta es la regla del proyecto, no es código corriendo en la placa**.
    - Si faltan piezas (el LED, el pulsador, un pin), armalas primero con el
      flujo de siempre, o preguntá qué falta.
+   - **Un solo comportamiento por salida.** Cada salida (por ejemplo, el LED)
+     puede tener una sola regla que diga cómo queda. Antes de aplicar, fijate en
+     `leer` si esa salida ya tiene una regla (`reglas[i].frase.actuador.id`).
+     - Si te piden **REEMPLAZAR o MODIFICAR** ("cambiá…", "ahora quiero que…",
+       "modificá el comportamiento…"): editá ESA regla mandando
+       `SetComportamiento` con su `id` (el de `leer`), sin crear otra.
+     - Si te piden **AGREGAR o COMBINAR** ("además…", "también quiero que…",
+       "agregá otra regla…", "y cuando haga calor también…"): no crees una
+       segunda regla para la misma salida. Explicá que esta versión permite un
+       solo comportamiento por salida y que todavía no se pueden combinar
+       condiciones, y preguntá si quiere reemplazar el comportamiento actual.
+     - Si igual aparece `MULTIPLES_AUTORIDADES_ACTUADOR` en `motivos`, contalo
+       con sus palabras: hay dos reglas para la misma salida y hay que dejar una.
    - **"Salvo cuando" / "excepto cuando"** ("que el LED quede prendido salvo
      cuando aprieto el botón"): eso es UNA regla de nivel con el estado OPUESTO
      mientras se cumple la condición. Buscá en `estadosDeSalida` el estado que

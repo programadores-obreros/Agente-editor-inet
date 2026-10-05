@@ -12,6 +12,7 @@ import type { Proyecto } from "./ir.ts"
 import type { Catalogo } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
 import { compararMotivos } from "./motivos.ts"
+import { compararIdsLocales } from "./id.ts"
 import { validarEstructural } from "./validar-estructural.ts"
 import { validarTecnico } from "./validar-tecnico.ts"
 
@@ -22,6 +23,9 @@ import { validarTecnico } from "./validar-tecnico.ts"
  * proyecto queda `listo:false`); jamás `clasificacion: "rechazo"`.
  * - `COMPORTAMIENTO_INCOMPLETO`: `datos.faltan` ⊆ [sensor, estado (la triada), actuador,
  *   salida (la acción)], en ese orden.
+ * - `MULTIPLES_AUTORIDADES_ACTUADOR` (Multi-Rule Safety, modelo B): dos o más reglas con
+ *   el mismo `entonces.actuador` (aunque estén incompletas). Uno por regla involucrada;
+ *   `datos { actuador, comportamiento, otras }`. Blocking y representable.
  * - `ACCION_NO_SOPORTADA` (Semantic Vertical #3, D-11): `entonces.accion` que el tipo del
  *   actuador no declara (`ComponenteCatalogo.acciones`); `datos { componente, accion,
  *   soportadas }`. Blocking y representable, nunca un rechazo de la operación.
@@ -63,6 +67,41 @@ export function validarSemantico(proyecto: Proyecto, catalogo: Catalogo): readon
       const comp = proyecto.componentes.find((c) => c.id === cuando.sensor)
       const cat = comp ? catalogo.obtenerComponente(comp.tipo) : undefined
       if (comp && cat && cat.capacidades.length === 0) motivos.push(semantico("SENSOR_INVALIDO", { componente: comp.id }))
+    }
+  }
+  motivos.push(...autoridadesMultiples(proyecto))
+  return motivos
+}
+
+/**
+ * Multi-Rule Safety (modelo B): en el modelo LEVEL cada actuador tiene como máximo UN
+ * propietario semántico de su estado sostenido. La propiedad se DERIVA del IR por
+ * referencia: una regla reclama un actuador desde que existe `entonces.actuador = X`,
+ * aunque esté incompleta. Si dos o más reglas reclaman el mismo actuador, CADA una
+ * recibe `MULTIPLES_AUTORIDADES_ACTUADOR` (blocking, representable): nunca se rechaza
+ * la operación, nunca se elige un ganador. No depende del orden del array, de los ids,
+ * de la condición, de la acción, del catálogo ni de la vista. No se persiste nada.
+ */
+function autoridadesMultiples(proyecto: Proyecto): readonly Motivo[] {
+  const reglasPorActuador = new Map<string, string[]>()
+  for (const b of proyecto.comportamientos) {
+    const actuador = b.entonces?.actuador
+    if (actuador === undefined) continue
+    reglasPorActuador.set(actuador, [...(reglasPorActuador.get(actuador) ?? []), b.id])
+  }
+  const motivos: Motivo[] = []
+  for (const [actuador, reglas] of reglasPorActuador) {
+    if (reglas.length < 2) continue
+    const ordenadas = [...reglas].sort(compararIdsLocales)
+    for (const id of ordenadas) {
+      motivos.push({
+        codigo: "MULTIPLES_AUTORIDADES_ACTUADOR",
+        categoria: "semantica",
+        severidad: "blocking",
+        clasificacion: "representable",
+        entidad: { tipo: "comportamiento", id },
+        datos: { actuador, comportamiento: id, otras: ordenadas.filter((x) => x !== id) },
+      })
     }
   }
   return motivos

@@ -137,7 +137,7 @@ test("T5 plan: 0 reglas -> botón Agregar regla; con reglaNueva -> una frase vac
   ctx.servicio.cerrar()
 })
 
-test("T5 plan: con una regla NO hay 'Agregar regla' (límite de UI = 1); con varias, se muestran todas más el aviso", () => {
+test("T5 plan: con una regla NO hay 'Agregar regla' (límite de UI = 1); con varias, se muestran todas, SIN aviso genérico (Multi-Rule Safety, OPEN-7)", () => {
   const ctx = preparar()
   setRegla(ctx, { cuando: { sensor: ctx.pulsador } })
   assert.equal(planDePintado(vistaDe(ctx.servicio)).filter((i) => i.tipo === "reglaAgregar").length, 0)
@@ -145,7 +145,9 @@ test("T5 plan: con una regla NO hay 'Agregar regla' (límite de UI = 1); con var
   setRegla(ctx, { entonces: { actuador: ctx.led } })
   const plan = planDePintado(vistaDe(ctx.servicio))
   assert.equal(reglasDe(plan).length, 2)
-  assert.deepEqual(plan.filter((i) => i.tipo === "reglaAviso").map((i) => i.texto), ["Hay varias reglas: la herramienta todavía no analiza si se contradicen."])
+  // Multi-Rule Safety (OPEN-7): el aviso genérico se retiró; un conflicto sobre la misma
+  // salida se diagnostica con MULTIPLES_AUTORIDADES_ACTUADOR en cada regla.
+  assert.equal(plan.filter((i) => i.tipo === "reglaAviso").length, 0)
   ctx.servicio.cerrar()
 })
 

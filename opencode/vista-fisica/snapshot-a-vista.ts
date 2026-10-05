@@ -630,10 +630,23 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
       reposo !== undefined
         ? `Si el ${s} no está ${estadoEntrada.etiqueta} → la condición es falsa → el ${a} está ${reposo} (reposo).`
         : `Si el ${s} no está ${estadoEntrada.etiqueta} → la condición es falsa → la regla no dice cómo queda el ${a} (no tiene un estado opuesto declarado).`
-    const traza: TrazaReglaVista = {
-      etiqueta: ETIQUETA_TRAZA,
-      ramas: [`Si el ${s} está ${estadoEntrada.etiqueta} → la condición es verdadera → el ${a} está ${salida}.`, ramaFalsa],
-    }
+    // Multi-Rule Safety (modelo B): si otra regla también reclama este actuador, la traza
+    // NO afirma el reposo ni un estado como verdad (no hay ganador ni prioridad): dice lo
+    // que esta regla pide y que, sola, no puede determinar cómo queda el actuador.
+    const enConflicto = delaRegla.some((m) => m.codigo === "MULTIPLES_AUTORIDADES_ACTUADOR")
+    const traza: TrazaReglaVista = enConflicto
+      ? {
+          etiqueta: ETIQUETA_TRAZA,
+          ramas: [
+            `Si el ${s} está ${estadoEntrada.etiqueta} → la condición es verdadera → esta regla pide que el ${a} esté ${salida}.`,
+            `Esta regla no puede determinar por sí sola cómo queda el ${a}, porque otra regla también intenta gobernarlo.`,
+          ],
+          nota: `Cada salida puede tener una sola regla: dejá una sola regla para el ${a}.`,
+        }
+      : {
+          etiqueta: ETIQUETA_TRAZA,
+          ramas: [`Si el ${s} está ${estadoEntrada.etiqueta} → la condición es verdadera → el ${a} está ${salida}.`, ramaFalsa],
+        }
     return { id: b.id, frase, texto: `Mientras el ${s} esté ${estadoEntrada.etiqueta}, el ${a} está ${salida}.`, completa, faltan, motivos: delaRegla, traza, forma, aviso }
   })
 

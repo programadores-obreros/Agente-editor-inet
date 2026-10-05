@@ -6,7 +6,6 @@
 
 import { crearAdaptadorBlockly } from "./adaptador-blockly.js"
 import { proyectarModeloLogico } from "./vista-logica.js"
-import { AVISO_VARIAS_REGLAS } from "./plan-de-pintado.js"
 
 export const MENSAJE_NO_SE_PUDO_GUARDAR = "No se pudo guardar el cambio. Volvé a intentar."
 
@@ -76,7 +75,7 @@ export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elemento
       vista ??= crearVistaLogica({ Blockly, contenedor: lienzo, controlador, alError: () => mostrarEstado(MENSAJE_NO_SE_PUDO_GUARDAR), ...(media === undefined ? {} : { media }) })
       const modelo = vista.repintar(snapshot, { deshabilitado })
       const lineas = modelo.regla ? [...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : [])] : []
-      if (modelo.hayVarias) lineas.push(`Se muestra la primera regla. ${AVISO_VARIAS_REGLAS}`)
+      if (modelo.hayVarias) lineas.push("Se muestra la primera regla; las demás están en la sección Reglas.")
       elementoTexto.textContent = lineas.join("\n")
       botonQuitar.disabled = deshabilitado || !modelo.regla || modelo.regla.id === null
       return modelo

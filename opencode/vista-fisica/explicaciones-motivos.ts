@@ -80,6 +80,11 @@ const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
     return `A la regla le falta: ${listaHumana(faltan)}.`
   },
   ACTUADOR_INVALIDO: (datos, nombres) => `${nombreDe(datos, "componente", nombres)} no es una salida: la regla no puede encenderlo. Elegí una salida.`,
+  // Multi-Rule Safety: texto NUEVO, pendiente de aprobación humana. No nombra ganador.
+  MULTIPLES_AUTORIDADES_ACTUADOR: (datos, nombres) => {
+    const actuador = nombreDe(datos, "actuador", nombres)
+    return `Hay más de una regla que intenta decidir cómo queda el ${actuador}. Por ahora, cada salida puede tener una sola regla. Revisá esas reglas y dejá una sola para el ${actuador}.`
+  },
   ACCION_NO_SOPORTADA: (datos, nombres) => {
     const estado = typeof datos.accion === "string" ? (etiquetaDeEstadoObjetivo(datos.accion) ?? datos.accion) : "ese estado"
     return `${nombreDe(datos, "componente", nombres)} no puede quedar ${estado}: no es un estado que tenga. Elegí otro estado u otra salida.`

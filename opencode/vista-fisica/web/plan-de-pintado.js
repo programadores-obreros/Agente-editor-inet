@@ -291,7 +291,6 @@ function etiquetaDeExtremo(extremo, componentesPorId) {
 // capacidades ni estados, y ni siquiera se nombran los slots; un id sólo viaja como `valor` de una opción, nunca como texto.
 // ════════════════════════════════════════════════════════════════════════════════════
 
-export const AVISO_VARIAS_REGLAS = "Hay varias reglas: la herramienta todavía no analiza si se contradicen."
 const PLACEHOLDER_SLOT = "[elegí…]"
 
 /** Opciones del slot + (si el valor actual no está entre ellas) la opción del valor actual, para
@@ -342,7 +341,9 @@ function instruccionesDeReglas(modeloDeVista, config) {
   const opciones = modeloDeVista.opcionesRegla ?? { slots: [] }
   const salida = []
   for (const regla of reglas) salida.push(instruccionDeFrase(regla, opciones, config))
-  if (reglas.length > 1) salida.push({ tipo: "reglaAviso", texto: AVISO_VARIAS_REGLAS })
+  // Multi-Rule Safety: ya no hay aviso genérico de "varias reglas". Reglas sobre salidas
+  // distintas son válidas; sobre la MISMA salida, el servidor da el motivo preciso en
+  // cada regla involucrada (MULTIPLES_AUTORIDADES_ACTUADOR).
   if (reglas.length === 0) {
     // Límite de UI = 1 regla: "Agregar regla" sólo aparece sin reglas, y no crea nada — sólo
     // muestra una frase vacía; la regla nace con el primer selector.

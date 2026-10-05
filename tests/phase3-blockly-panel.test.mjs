@@ -133,13 +133,14 @@ test("T9 condición avanzada: el aviso del servidor se muestra como texto (no s�
   c.servicio.cerrar()
 })
 
-test("T9 varias reglas: se avisa que se muestra sólo la primera", async () => {
+test("T9 varias reglas: se avisa que se muestra sólo la primera (Multi-Rule Safety: sin el aviso genérico de contradicciones)", async () => {
   const c = preparar()
   set(c, { cuando: { sensor: c.pulsador } })
   set(c, { entonces: { actuador: c.led, accion: "encender" } })
   const m = await montar(c)
   m.panel.repintar(m.estado.snapshot, { deshabilitado: false })
-  assert.match(m.el.texto.textContent, /varias reglas/i)
+  assert.match(m.el.texto.textContent, /Se muestra la primera regla/)
+  assert.doesNotMatch(m.el.texto.textContent, /no analiza si se contradicen/, "OPEN-7: el aviso genérico se retiró")
   c.servicio.cerrar()
 })
 

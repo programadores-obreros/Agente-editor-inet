@@ -1525,3 +1525,37 @@ Decisiones ratificadas:
   que el tipo del actuador no declara. Blocking, representable, persistible; nunca un rechazo.
 - `entonces.accion` **no se renombra**; se documenta como estado objetivo sostenido (`ir.ts`,
   `IR-SPEC.md`). El esquema y `schemaVersion` no cambian.
+
+## Multi-Rule Safety — un único dueño semántico por actuador (2026-10-04)
+
+Design Gate: `~/tecnia-bot-docs/multi-rule-safety/MULTI_RULE_SAFETY_DESIGN_GATE.md` (fuera del repo).
+**Modelo B aprobado** por el HUMAN PRODUCT OWNER, decisiones OPEN-1..7 congeladas.
+
+| OLD | SUPERSEDED BY | NEW | REASON / EVIDENCE |
+|---|---|---|---|
+| Las reglas (comportamientos) no tenían ninguna invariante semántica entre sí; varias reglas sólo producían el aviso genérico "Hay varias reglas: la herramienta todavía no analiza si se contradicen." (`plan-de-pintado.js`) | MULTI-RULE SAFETY IMPLEMENTATION #1 | **Un único propietario semántico del estado sostenido por actuador** (modelo LEVEL). Varias reglas sobre el mismo actuador → `MULTIPLES_AUTORIDADES_ACTUADOR`; el aviso genérico se retira | COMPLEX INTEGRATION TEST #1 (`~/tecnia-bot-docs/complex-integration-test-1/`): "presionado→encendido" + "presionado→apagado" sobre el mismo LED quedaban `listo`; también "suelto→LED 2" + "DHT22>30→LED 2". Con reposo complementario (Vertical #3), dos reglas completas sobre un actuador binario son redundantes o contradictorias en algún estado |
+
+Declaración normativa: **"En el modelo LEVEL, cada actuador tiene como máximo un propietario semántico
+de su estado sostenido. La composición futura de condiciones/casos ocurre dentro de ese propietario, no
+mediante reglas independientes que compiten por el mismo actuador."** No autoriza todavía OR, AND, AST de
+condiciones, casos, prioridades ni eventos.
+
+Decisiones congeladas:
+
+- **OPEN-1:** propiedad **por referencia** — una regla reclama un actuador desde que existe
+  `entonces.actuador = X`, aunque esté incompleta (un borrador puede producir conflicto: representable,
+  visible y corregible).
+- **OPEN-2:** reglas **equivalentes** sobre el mismo actuador también son autoridad múltiple (blocking).
+  No se razona equivalencia de condiciones.
+- **OPEN-3:** código `MULTIPLES_AUTORIDADES_ACTUADOR`, **un motivo por regla involucrada**, `datos
+  { actuador, comportamiento, otras }`; severidad blocking, clasificación representable. Ni el motivo ni
+  la propiedad se persisten: se derivan del IR.
+- **OPEN-4:** la frase de una regla en conflicto sigue visible; la traza **no** afirma el reposo derivado
+  ni elige ganador: explica que la regla sola no puede determinar cómo queda el actuador.
+- **OPEN-5:** representable + blocking; la operación no se rechaza ni se hace rollback por este motivo.
+  Documentos históricos con varios dueños siguen recargables y editables, sin migración ni reescritura.
+- **OPEN-6:** el agente distingue intención: REEMPLAZAR/MODIFICAR → editar la regla dueña por su `id`;
+  AGREGAR/COMBINAR → no crear en silencio un segundo dueño, explicar el límite y preguntar si reemplaza.
+- **OPEN-7:** se retira el aviso genérico; varias reglas sobre actuadores distintos son válidas sin aviso.
+- Sin prioridades, sin semántica de orden, sin "la última gana". Sin cambio de IR, `schemaVersion` ni
+  catálogo.

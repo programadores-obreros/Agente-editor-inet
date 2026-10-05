@@ -1024,6 +1024,15 @@ renombra). Una regla dice: *en todo instante en que "sensor está en el estado" 
 en `accion`*. No hay eventos, flancos, latch ni memoria. **Estado de reposo** (condición falsa) de un actuador
 digital = **apagado** (HD-P3D-1): es **derivado del contrato, nunca se guarda en el IR**.
 
+> **Multi-Rule Safety (ver `DECISIONS.md`, "Multi-Rule Safety"): en el modelo LEVEL, cada actuador tiene como
+> máximo un propietario semántico de su estado sostenido. La composición futura de condiciones/casos ocurre
+> dentro de ese propietario, no mediante reglas independientes que compiten por el mismo actuador.** La
+> propiedad se DERIVA del IR por referencia (`entonces.actuador`, aunque la regla esté incompleta); no se
+> persiste. Dos o más reglas sobre el mismo actuador → `MULTIPLES_AUTORIDADES_ACTUADOR` en cada una (blocking,
+> representable): la operación no se rechaza, el documento se persiste y recarga, y el proyecto queda no-listo.
+> Sin prioridades, sin semántica de orden, sin "la última gana", sin razonar equivalencia de condiciones. Esto
+> no autoriza todavía OR/AND, AST de condiciones, casos, prioridades ni eventos: sólo fija la dirección.
+
 > **Superseded por Semantic Vertical #3 (ver `DECISIONS.md`, "Semantic Vertical #3").** `entonces.accion`
 > conserva su nombre, pero en una regla de nivel es el **estado objetivo sostenido** del actuador, no una acción
 > puntual. El **reposo** de un actuador **binario** es el **complemento declarado** del estado objetivo
