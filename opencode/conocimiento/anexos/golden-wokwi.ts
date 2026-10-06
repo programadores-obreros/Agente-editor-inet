@@ -17,12 +17,15 @@
 // - `wokwi-arduino-uno`: docs/wokwi-pinout-dump.md (:17-63).
 // - `wokwi-slide-switch`: `el.pinInfo` en Chromium headless contra el bundle del repo
 //   (Component Knowledge D0, 2026-10-05) + docs.wokwi.com/parts/wokwi-slide-switch.
+// - `wokwi-dht22`: el `pinInfo` de la clase en el bundle vendorizado (sha256 4f860e90…a06d,
+//   CK-CG1, 2026-10-06) = docs/wokwi-pinout-dump.md:84.
 
 export const PINES_VERIFICADOS_WOKWI: Readonly<Record<string, readonly string[]>> = {
   "wokwi-led": ["A", "C"],
   "wokwi-pushbutton": ["1.l", "2.l", "1.r", "2.r"],
   "wokwi-resistor": ["1", "2"],
   "wokwi-slide-switch": ["1", "2", "3"],
+  "wokwi-dht22": ["VCC", "SDA", "NC", "GND"],
   "wokwi-esp32-devkit-v1": [
     "3V3", "D12", "D13", "D14", "D15", "D18", "D19", "D2", "D21", "D22", "D23", "D25", "D26", "D27", "D32", "D33",
     "D34", "D35", "D4", "D5", "EN", "GND.1", "GND.2", "RX0", "RX2", "TX0", "TX2", "VIN", "VN", "VP",

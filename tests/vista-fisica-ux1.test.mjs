@@ -267,10 +267,11 @@ test("G: las piezas pintadas llevan el id de la IR; numerar 'LED 2' no cambia ni
 // H — nada se omite en silencio
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("H: un DHT22 (sin dibujo) y una resistencia suelta quedan VISIBLES; toda pieza del proyecto aparece", () => {
+// CK-CG1: el DHT22 ahora tiene dibujo; la pieza sin representación del catálogo real es el NTC.
+test("H: un NTC (sin dibujo) y una resistencia suelta quedan VISIBLES; toda pieza del proyecto aparece", () => {
   const p = proyectoDirecto([
     ["AgregarComponente", { tipo: "pulsador" }], // cmp-0
-    ["AgregarComponente", { tipo: "dht22" }], // cmp-1
+    ["AgregarComponente", { tipo: "ntc" }], // cmp-1
     ["AgregarComponente", { tipo: "resistencia" }], // cmp-2 (sin conectar)
   ])
   const vista = proyectarVista(p, catalogo)
@@ -278,8 +279,8 @@ test("H: un DHT22 (sin dibujo) y una resistencia suelta quedan VISIBLES; toda pi
   const raiz = pintar(documentoFake(), planDePintado(vista))
   const zona = (rol) => raiz.circuito.hijos.find((z) => z.atributos["data-zona"] === rol)
   const marca = todos(zona("entrada")).find((x) => x.atributos["data-sin-representacion"] === "true")
-  assert.ok(marca, "el DHT22 se marca en Entrada")
-  assert.match(marca.textContent, /DHT22.*no tiene dibujo/)
+  assert.ok(marca, "el NTC se marca en Entrada")
+  assert.match(marca.textContent, /NTC.*no tiene dibujo/)
   assert.ok(todos(zona("otras")).some((x) => x.tagName === "wokwi-resistor"), "la resistencia suelta va a 'Otras piezas'")
   for (const componente of p.componentes) {
     assert.ok(todos(raiz.circuito).some((x) => x.atributos?.["data-entidad-id"] === componente.id), `${componente.id} (${componente.tipo}) no aparece`)

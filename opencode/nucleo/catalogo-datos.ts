@@ -5,7 +5,7 @@
 // código real de hoy no se inventa acá. `REGISTRO_PLACAS` se REFERENCIA desde
 // `placas.ts` (Gate 1), nunca se redefine.
 
-import type { ComponenteDatos, ConversionUnidad } from "./catalogo.ts"
+import type { ComponenteDatos, ConversionUnidad, LecturaDeCapacidad } from "./catalogo.ts"
 import { REGISTRO_PLACAS } from "./placas.ts"
 
 export const PLACAS_CATALOGO_MINIMO = Object.values(REGISTRO_PLACAS)
@@ -75,12 +75,31 @@ export const PULSADOR: ComponenteDatos = {
 // Rango de humedad: el hardware real del DHT22 mide 0-100% RH (INFERRED — circuito.ts
 // no simula humedad hoy, `SENSOR_SIM` sólo tiene la rama de temperatura; se documenta
 // como inferencia razonable, no como dato leído del código).
+//
+// CK-CG1 (revisión eléctrica humana de Alejandro Palestrini, 2026-10-06; fuente primaria: Aosong,
+// Manual AM2302 v1.1). Modelo pedagógico: DHT22/AM2302 representado por VCC, DATA y GND.
+// - DATA es BIDIRECCIONAL: el microcontrolador lleva el bus a bajo ≥ 800 µs para iniciar cada
+//   lectura (§7.4 paso 2), así que pide un pin con entrada Y salida digital.
+// - El bus requiere un pull-up a VCC (§7.2): `pullUpExterno`. Tecnia Bot NO verifica que esté
+//   montado ni su valor (deuda DHT-PULLUP-01).
+// - Temperatura y humedad llegan por el mismo protocolo (`LECTURA_DHT22`): intervalo mínimo
+//   2 s (§7.1 nota 3) y espera de 2 s tras el encendido (§7.4 paso 1).
+// - Deuda H-01: el rango 0-60 °C de abajo (heredado de `SENSOR_SIM`) difiere del fabricante
+//   (−40-80 °C); no se corrige acá.
+const LECTURA_DHT22: LecturaDeCapacidad = {
+  terminal: "senal",
+  mecanismo: "protocolo",
+  protocolo: "bus-unico-am2302",
+  periodoMinimo: { valor: 2, unidad: "segundo", magnitud: "tiempo" },
+  esperaTrasEncendido: { valor: 2, unidad: "segundo", magnitud: "tiempo" },
+}
+
 export const DHT22: ComponenteDatos = {
   id: "dht22",
   clase: "sensor",
   terminales: [
     { id: "vcc", rol: "alimentacion", electrica: "riel-fijo", destinoFijo: "VLOGICA" },
-    { id: "senal", rol: "senal", electrica: "digital", direccion: "entrada" },
+    { id: "senal", rol: "senal", electrica: "digital", direccion: "bidireccional", pullUpExterno: true },
     { id: "gnd", rol: "tierra", electrica: "riel-fijo", destinoFijo: "GND" },
   ],
   capacidades: [
@@ -89,12 +108,14 @@ export const DHT22: ComponenteDatos = {
       magnitud: "temperatura",
       unidad: "celsius",
       rango: { min: { valor: 0, unidad: "celsius", magnitud: "temperatura" }, max: { valor: 60, unidad: "celsius", magnitud: "temperatura" } },
+      lectura: LECTURA_DHT22,
     },
     {
       id: "humedad",
       magnitud: "humedad",
       unidad: "porcentaje",
       rango: { min: { valor: 0, unidad: "porcentaje", magnitud: "humedad" }, max: { valor: 100, unidad: "porcentaje", magnitud: "humedad" } },
+      lectura: LECTURA_DHT22,
     },
   ],
   requisitos: [],
@@ -181,4 +202,9 @@ export const CONVERSIONES_UNIDAD_MINIMAS: readonly ConversionUnidad[] = [
 // 2.2.0 — Component Knowledge D0: se agrega `interruptor` (cambio MENOR: se suma un tipo sin
 // cambiar el significado de los existentes). Los proyectos creados con 2.1.0 lo ven con
 // `CATALOGO_CAMBIO_DETECTADO` (informativo; `createdWith` no se reescribe ni se migra).
-export const VERSION_CATALOGO_MINIMO = "2.2.0"
+// 2.3.0 — CK-CG1: `Capacidad.lectura` (cómo se obtiene la capacidad: protocolo, intervalo mínimo,
+// espera tras el encendido), registro de protocolos en el hash, `pullUpExterno`, DATA del DHT22
+// bidireccional y GPIO12 con `strappingVddSdio`. Cambio MENOR, mismo criterio que 2.1.0: cambia
+// el significado de piezas existentes (el DHT22 en GPIO34-39 o GPIO12 deja de estar listo); los
+// proyectos 2.2.0 lo ven con `CATALOGO_CAMBIO_DETECTADO` (informativo; `createdWith` no se reescribe).
+export const VERSION_CATALOGO_MINIMO = "2.3.0"

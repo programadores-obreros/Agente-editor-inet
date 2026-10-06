@@ -110,11 +110,12 @@ test("B: sólo se ofrece una unidad alternativa si la conversión está declarad
 
 test("C: disponibilidad semántica explícita e independiente de officiallySupported", () => {
   const oficiales = new Set(oficialmenteSoportados(k))
-  for (const tipo of ["dht22", "ntc"]) {
-    assert.equal(admitirComponente(k, tipo).officiallySupported, false, `${tipo} no es oficial`)
+  // CK-CG1: el DHT22 es oficial y el NTC no; los dos tienen la MISMA disponibilidad semántica.
+  for (const [tipo, oficial] of [["dht22", true], ["ntc", false]]) {
+    assert.equal(admitirComponente(k, tipo).officiallySupported, oficial, `${tipo}: oficial = ${oficial}`)
     for (const q of valorDe(k.capacidadesCuantitativas(tipo))) assert.deepEqual(q.disponibilidadSemantica, { disponible: true, motivos: [] }, `${tipo}.${q.capacidad}`)
   }
-  assert.ok(!oficiales.has("dht22") && !oficiales.has("ntc"))
+  assert.ok(oficiales.has("dht22") && !oficiales.has("ntc"))
   // y al revés: oficial no implica tener capacidades cuantitativas disponibles
   assert.ok(oficiales.has("interruptor"))
   assert.deepEqual(valorDe(k.capacidadesCuantitativas("interruptor")), [])

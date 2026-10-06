@@ -21,7 +21,7 @@
 import type { ComponenteCatalogo, Requisito } from "../nucleo/catalogo.ts"
 import { DEFINICIONES_ACCION, TIPOS_DE_REQUISITO_CON_EVALUADOR } from "../nucleo/catalogo.ts"
 import type { Placa } from "../nucleo/placas.ts"
-import { CLASES, ELECTRICAS, ROLES_DE_TERMINAL, unidadesDeMagnitud } from "../nucleo/registros/vocabulario.ts"
+import { CLASES, ELECTRICAS, MECANISMOS_DE_LECTURA, PROTOCOLOS_DE_LECTURA, ROLES_DE_TERMINAL, unidadesDeMagnitud } from "../nucleo/registros/vocabulario.ts"
 import { nombreWokwiDePin } from "./anexos/representacion.ts"
 import { PINES_VERIFICADOS_WOKWI } from "./anexos/golden-wokwi.ts"
 import { REVISIONES_DE_COMPONENTE, REVISIONES_DE_PLACA, type RevisionDeComponente, type RevisionDePlaca } from "./anexos/revision-electrica.ts"
@@ -211,6 +211,17 @@ export function admitirComponente(conocimiento: ComponentKnowledge, tipo: string
   for (const c of componente.capacidades) {
     if (c.magnitud !== undefined && !unidadesDeMagnitud(c.magnitud).includes(c.unidad as string)) fallaSemantica(`capacidad "${c.id}" con unidad incoherente`)
     if (c.rango && (!esCantidadValida(c.rango.min) || !esCantidadValida(c.rango.max) || c.rango.min.valor > c.rango.max.valor)) fallaSemantica(`capacidad "${c.id}" con rango inválido`)
+    // CK-CG1: el mecanismo de lectura tiene que ser coherente con la pieza y con los vocabularios.
+    const lectura = c.lectura
+    if (lectura !== undefined) {
+      const terminal = componente.terminales.find((t) => t.id === lectura.terminal)
+      if (!terminal || !terminal.asignable) fallaSemantica(`capacidad "${c.id}": la lectura apunta a un terminal inexistente o no asignable "${lectura.terminal}"`)
+      if (!(MECANISMOS_DE_LECTURA as readonly string[]).includes(lectura.mecanismo)) fallaSemantica(`capacidad "${c.id}": mecanismo de lectura desconocido "${lectura.mecanismo}"`)
+      if (!Object.hasOwn(PROTOCOLOS_DE_LECTURA, lectura.protocolo)) fallaSemantica(`capacidad "${c.id}": protocolo de lectura desconocido "${lectura.protocolo}"`)
+      for (const [campo, cantidad] of [["periodoMinimo", lectura.periodoMinimo], ["esperaTrasEncendido", lectura.esperaTrasEncendido]] as const) {
+        if (cantidad !== undefined && (!esCantidadValida(cantidad) || cantidad.magnitud !== "tiempo" || cantidad.valor < 0)) fallaSemantica(`capacidad "${c.id}": ${campo} no es un tiempo válido`)
+      }
+    }
   }
   const placasCompatibles = componente.compatibilidades?.placas ?? []
   for (const p of placasCompatibles) if (!conocimiento.placa(p)) fallaSemantica(`compatibilidad con placa inexistente "${p}"`)

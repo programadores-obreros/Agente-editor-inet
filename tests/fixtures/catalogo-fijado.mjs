@@ -17,11 +17,17 @@
 // Post-D0 Electrical Review Hardening #1: con la revisión eléctrica HUMANA del par
 // (interruptor, esp32-devkit-v1), `interruptor` entra a `oficiales` como resultado DERIVADO de
 // la admisión. La revisión no es identidad semántica: versión y hash no cambian.
+//
+// 2.3.0 — CK-CG1: `Capacidad.lectura` + registro de protocolos en el hash, `pullUpExterno`, DATA
+// del DHT22 bidireccional y GPIO12 con `strappingVddSdio` (cambio menor que cambia el significado
+// de piezas existentes). Con la revisión eléctrica HUMANA del par (dht22, esp32-devkit-v1) de
+// Alejandro Palestrini (2026-10-06), `dht22` entra a `oficiales` como resultado DERIVADO de la
+// admisión. `anterior` pasa a ser 2.2.0.
 
 export const CATALOGO_FIJADO = Object.freeze({
-  version: "2.2.0",
-  hash: "150f74bd74b272a8334ec8bba53a1221c6e711dae42f87bf6fa2b466063b95db",
+  version: "2.3.0",
+  hash: "b20d038cc39779213f902ca313d7e4e35a40fae8a66d9f21dadeb7285b19c901",
   componentesShippeados: Object.freeze(["dht22", "interruptor", "led", "ntc", "pulsador", "resistencia"]),
-  oficiales: Object.freeze(["esp32-devkit-v1", "interruptor", "led", "pulsador", "resistencia"]),
-  anterior: Object.freeze({ version: "2.1.0", hash: "8bc928045bdf5915756103ef67bdad7a5ef0acfeb15cf4f069a86ee7dd43ff9a" }),
+  oficiales: Object.freeze(["dht22", "esp32-devkit-v1", "interruptor", "led", "pulsador", "resistencia"]),
+  anterior: Object.freeze({ version: "2.2.0", hash: "150f74bd74b272a8334ec8bba53a1221c6e711dae42f87bf6fa2b466063b95db" }),
 })

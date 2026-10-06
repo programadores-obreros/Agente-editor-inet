@@ -44,6 +44,7 @@ export const ETIQUETA_POR_TIPO_Y_TERMINAL: Readonly<Record<string, Readonly<Reco
   resistencia: { a: "pata A", b: "pata B" },
   pulsador: { senal: "señal", gnd: "GND" },
   interruptor: { senal: "señal", gnd: "GND" },
+  dht22: { vcc: "VCC (+)", senal: "señal (DATA)", gnd: "GND" },
 }
 
 /** Tabla genérica de Wave 0 (F-09), por id de terminal: se conserva tal cual como

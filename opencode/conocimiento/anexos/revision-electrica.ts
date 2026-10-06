@@ -54,4 +54,28 @@ export const REVISIONES_DE_COMPONENTE: readonly RevisionDeComponente[] = Object.
       "un GPIO sin pull-up interno (GPIO34-39) sigue bloqueado por PIN_SIN_PULLUP_INTERNO. Corriente de contacto ≈73 µA (inferida). " +
       "Respaldo, NO especificación normativa: un interruptor deslizante representativo (C&K OS102011MS2QN1) declara 100 mA @ 12 V DC (ficha DigiKey).",
   }),
+  // CK-CG1: aprobada por Alejandro Palestrini (humano) el 2026-10-06, con el texto literal de abajo
+  // (R8 con sus dos correcciones finales). Vale para ESTE par y ESTE modelo, nada más: no cubre el
+  // UNO ni el DHT11. Deudas abiertas que la revisión registra: DHT-PULLUP-01 (el pull-up requerido
+  // no se verifica), H-01 (rango 0-60 °C contra −40-80 °C) y ESP-STRAP-05 (GPIO5 fuera del registro
+  // de strapping, ver `nucleo/placas.ts`).
+  Object.freeze({
+    tipo: "dht22",
+    placa: "esp32-devkit-v1",
+    revisadoPor: "revisión humana de Alejandro Palestrini (CK-CG1, DHT22 en ESP32 DevKit V1, 2026-10-06)",
+    evidencia:
+      "nucleo/catalogo-datos.ts::DHT22 (CK-CG1). Modelo pedagógico aprobado en Tecnia Bot: DHT22/AM2302 representado mediante VCC, DATA y GND en ESP32 DevKit V1. " +
+      "VCC al 3V3 del ESP32 (fabricante: 3,3–5,5 V; alimentado con 3,3 V, cable de no más de 100 cm — Aosong, Manual AM2302 v1.1, §4.2 y §7.1 nota 2). " +
+      "DATA bidireccional: el microcontrolador lleva SDA a bajo al menos 800 µs (típico 1 ms) para iniciar cada lectura (§7.4 paso 2), " +
+      "así que requiere un GPIO con entrada y salida digital; GPIO34–39 no son válidos. " +
+      "El bus requiere un pull-up a VCC (el fabricante indica uno externo de aprox. 5,1 kΩ para cables de menos de 30 m, §7.1 nota 1 y §7.2); " +
+      "esta revisión NO afirma la existencia de un pull-up incorporado; Tecnia Bot todavía no verifica la presencia ni el valor del pull-up requerido (deuda DHT-PULLUP-01). " +
+      "GPIO12 (MTDI) no es válido para DATA: con el bus elevado durante el reset selecciona VDD_SDIO de 1,8 V " +
+      "(Espressif, ESP32 Series Datasheet v5.3, §3.2); los demás pines de strapping mantienen la política vigente. " +
+      "Intervalo mínimo entre lecturas: 2 s (§7.1 nota 3); después del encendido, esperar al menos 2 s antes de la primera instrucción (§7.4 paso 1). " +
+      "El rango del catálogo (0–60 °C) difiere del indicado por el fabricante (−40–80 °C): deuda H-01, no se corrige en esta revisión. " +
+      "Fuentes: Manual AM2302 v1.1 (sha256 615c668659e42c797e87226d7510f50c88e5b58998d2b6dc57fb747f611069bd), " +
+      "Aosong DHT22 datasheet (sha256 c91441a385cdf58f5f0ae50b194f294d5d1f0faeaac9a010efacb7ecf21be448), " +
+      "Espressif ESP32 Series Datasheet v5.3 (sha256 a7917e6b47528c9dcab06837a49d452e582751335797db879f1cf2d17cd29adf).",
+  }),
 ])

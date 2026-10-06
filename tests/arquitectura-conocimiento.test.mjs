@@ -346,34 +346,35 @@ function elementoFake(tag) {
   }
 }
 
-test("J: un dht22 en el proyecto produce una instrucción visible y un aviso pintado con su nombre", () => {
+// CK-CG1: el DHT22 ahora tiene dibujo (`wokwi-dht22`); la pieza sin representación del catálogo real es el NTC.
+test("J: un ntc en el proyecto produce una instrucción visible y un aviso pintado con su nombre", () => {
   const catalogo = conocimiento.catalogo
   let p = { ...crearProyecto({ generadorId: () => "guardia-j", ahora: () => "2026-01-01T00:00:00.000Z", catalogoVersion: catalogo.version, catalogoHash: catalogo.hash }), placa: "esp32-devkit-v1" }
-  for (const tipo of ["led", "dht22"]) {
+  for (const tipo of ["led", "ntc"]) {
     const r = ejecutarOperacion(p, { idOperacion: `j-${tipo}`, actor: "agente", baseRevision: p.revision, tipo: "AgregarComponente", payload: { tipo } }, catalogo)
     assert.equal(r.ok, true, JSON.stringify(r.motivos))
     p = r.proyecto
   }
   const vista = vistaDeProyectoConCatalogoReal(p)
-  const dht = vista.componentes.find((c) => c.tipo === "dht22")
-  assert.ok(dht, "el dht22 sigue en la vista")
+  const dht = vista.componentes.find((c) => c.tipo === "ntc")
+  assert.ok(dht, "el ntc sigue en la vista")
   const instrucciones = planDePintado(vista)
   const marca = instrucciones.find((i) => i.tipo === "piezaSinRepresentacion")
   assert.ok(marca, `falta la marca visible: ${JSON.stringify(instrucciones.map((i) => i.tipo))}`)
   assert.deepEqual(marca.entidad, { tipo: "componente", id: dht.id })
-  assert.match(marca.texto, /DHT22/)
+  assert.match(marca.texto, /NTC/)
   assert.match(marca.texto, /no tiene dibujo/)
   assert.ok(!instrucciones.some((i) => i.tipo === "crearElemento" && i.entidad.id === dht.id), "nunca se dibuja con un tag inventado")
 
   const raiz = pintar({ createElement: elementoFake }, instrucciones)
-  // Physical View UX #1: el aviso vive DENTRO de la zona de su pieza (el dht22 es un sensor: Entrada).
+  // Physical View UX #1: el aviso vive DENTRO de la zona de su pieza (el ntc es un sensor: Entrada).
   const todos = (n) => [n, ...(n.hijos ?? []).flatMap(todos)]
   const aviso = todos(raiz.circuito).find((h) => h.atributos?.["data-sin-representacion"] === "true")
   assert.ok(aviso, "el aviso tiene que quedar en el circuito")
   const zonaEntrada = todos(raiz.circuito).find((h) => h.atributos?.["data-zona-piezas"] === "entrada")
   assert.ok(zonaEntrada?.hijos.includes(aviso), "el aviso queda en la zona Entrada, junto a donde estaría la pieza")
   assert.equal(aviso.atributos["data-entidad-id"], dht.id)
-  assert.match(aviso.textContent, /DHT22/)
+  assert.match(aviso.textContent, /NTC/)
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════

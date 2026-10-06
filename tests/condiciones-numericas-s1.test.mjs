@@ -418,12 +418,14 @@ test("17 (N-4): capacidad guardada que hoy NO está disponible → sigue numéri
 test("28 (N-4): la disponibilidad semántica NO sale de officiallySupported", () => {
   const ctx = proyecto()
   try {
-    assert.ok(!oficialmenteSoportados(K).includes("dht22"), "precondición real: el DHT22 NO es oficialmente soportado…")
-    assert.equal(K.capacidadCuantitativa("dht22", "temperatura").valor.disponibilidadSemantica.disponible, true)
-    assert.deepEqual(vista(ctx.servicio).opcionesRegla.sensores.map((s) => s.etiqueta), ["Pulsador", "DHT22", "DHT22 2", "Interruptor"], "…y se ofrece porque está semánticamente disponible")
-    // Y al revés: sin disponibilidad, aunque el tipo exista y tenga la capacidad, no se ofrece.
+    // CK-CG1: el DHT22 pasó a ser oficial (revisión eléctrica humana); el ejemplo NO oficial es el NTC.
+    assert.ok(oficialmenteSoportados(K).includes("dht22") && !oficialmenteSoportados(K).includes("ntc"), "precondición real: DHT22 oficial, NTC no")
+    ok(ctx.servicio, "AgregarComponente", { tipo: "ntc" })
+    assert.equal(K.capacidadCuantitativa("ntc", "temperatura").valor.disponibilidadSemantica.disponible, true)
+    assert.deepEqual(vista(ctx.servicio).opcionesRegla.sensores.map((s) => s.etiqueta), ["Pulsador", "DHT22", "DHT22 2", "Interruptor", "Sensor de temperatura NTC"], "el NTC se ofrece aunque NO sea oficial: está semánticamente disponible")
+    // Y al revés: sin disponibilidad, aunque el tipo sea OFICIAL y tenga la capacidad, no se ofrece.
     const { cat, conocimiento } = catalogoCon(dht22Con((caps) => caps.map((k) => ({ ...k, rango: { min: k.rango.max, max: k.rango.min } }))))
-    assert.deepEqual(proyectarVista(ctx.servicio.snapshot().proyecto, cat, conocimiento).opcionesRegla.sensores.map((s) => s.etiqueta), ["Pulsador", "Interruptor"])
+    assert.deepEqual(proyectarVista(ctx.servicio.snapshot().proyecto, cat, conocimiento).opcionesRegla.sensores.map((s) => s.etiqueta), ["Pulsador", "Interruptor", "Sensor de temperatura NTC"])
   } finally {
     ctx.servicio.cerrar()
   }

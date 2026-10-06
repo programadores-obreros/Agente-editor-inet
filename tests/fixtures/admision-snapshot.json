@@ -92,20 +92,16 @@
     "categoria": "sensor",
     "flags": {
       "semantico": true,
-      "electrico": false,
+      "electrico": true,
       "representacion": {
-        "wokwi": false
+        "wokwi": true
       },
       "acciones": null,
-      "pedagogia": false,
-      "procedencia": false
+      "pedagogia": true,
+      "procedencia": true
     },
-    "officiallySupported": false,
-    "problemas": [
-      "electrico: sin revisión eléctrica humana",
-      "representacion.wokwi: sin entrada en el anexo",
-      "pedagogia: terminal \"vcc\" caería al id crudo"
-    ]
+    "officiallySupported": true,
+    "problemas": []
   },
   {
     "kind": "componente",

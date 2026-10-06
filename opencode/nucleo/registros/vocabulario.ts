@@ -30,6 +30,9 @@ export const UNIDADES = congelarProfundo({
   ninguna: { ucum: "1", simbolo: "" },
   ohm: { ucum: "Ohm", simbolo: "Ω" },
   volt: { ucum: "V", simbolo: "V" },
+  // CK-CG1: para restricciones de uso con tiempo (período mínimo entre lecturas, espera tras el
+  // encendido). UCUM `s`.
+  segundo: { ucum: "s", simbolo: "s" },
 } as const)
 
 export type IdUnidad = keyof typeof UNIDADES
@@ -47,6 +50,7 @@ export const MAGNITUDES = congelarProfundo({
   porcentaje: { unidades: ["porcentaje"] },
   resistencia: { unidades: ["ohm"] },
   tension: { unidades: ["volt"] },
+  tiempo: { unidades: ["segundo"] },
 } as const satisfies Record<string, { readonly unidades: readonly IdUnidad[] }>)
 
 export type IdMagnitud = keyof typeof MAGNITUDES
@@ -59,6 +63,27 @@ export const ELECTRICAS = congelarProfundo(["digital", "analogica", "riel-fijo"]
 
 /** Sentido eléctrico real de un terminal asignable. */
 export const DIRECCIONES = congelarProfundo(["entrada", "salida", "bidireccional"] as const)
+
+/**
+ * CK-CG1: CÓMO obtiene físicamente una pieza una capacidad (`catalogo.ts::LecturaDeCapacidad`).
+ * Sólo lo necesario hoy: una capacidad sin `lectura` se lee por el nivel de su terminal (la
+ * derivación por topología de Codegen S1); `protocolo` = la pieza habla un protocolo de
+ * PROTOCOLOS_DE_LECTURA. Familias futuras (I2C, SPI, UART…) se agregan acá con evidencia.
+ */
+export const MECANISMOS_DE_LECTURA = congelarProfundo(["protocolo"] as const)
+
+/**
+ * CK-CG1: protocolos por los que una pieza ENTREGA una capacidad. Es un hecho de la pieza (qué
+ * habla), nunca una implementación: sin librerías, clases, llamadas ni código. Un backend
+ * elige su driver por este id, nunca por el id del componente.
+ *
+ * - `bus-unico-am2302`: formato de datos AM2302/DHT22 sobre un bus de un solo cable; el
+ *   microcontrolador inicia cada lectura llevando el bus a bajo (Aosong, Manual AM2302 v1.1,
+ *   §7.2 y §7.4). Otro formato (p. ej. el del DHT11) sería OTRO protocolo, no una variante.
+ */
+export const PROTOCOLOS_DE_LECTURA = congelarProfundo({
+  "bus-unico-am2302": { familia: "bus-unico" },
+} as const satisfies Record<string, { readonly familia: string }>)
 
 /** Clase funcional de un componente. */
 export const CLASES = congelarProfundo(["sensor", "actuador", "pasivo", "entrada"] as const)

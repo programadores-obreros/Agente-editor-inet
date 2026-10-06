@@ -65,7 +65,9 @@ test("F7: el LED es actuador y su flag de acciones es true (no 'no aplica')", ()
   assert.equal(admitirComponente(conocimiento, "pulsador").flags.acciones, null)
 })
 
-for (const id of ["dht22", "ntc"]) {
+// CK-CG1: el DHT22 pasó a ser oficial (revisión eléctrica humana del par con el ESP32, 2026-10-06);
+// el NTC sigue fuera.
+for (const id of ["ntc"]) {
   test(`F7: ${id} sigue en el catálogo pero NO está oficialmente soportado, con la razón a la vista`, () => {
     assert.ok(catalogo.obtenerComponente(id), "no se borra del catálogo (proyectos y tests lo usan)")
     const informe = admitirComponente(conocimiento, id)
@@ -293,7 +295,10 @@ test("F2a/S2: cobertura cruzada de los anexos de admisión (revisión eléctrica
 test("F2a/CK-04: la revisión eléctrica es por par (componente, placa)", () => {
   assert.equal(compatibilidadRevisada("led", "esp32-devkit-v1"), true)
   assert.equal(compatibilidadRevisada("led", "arduino-uno"), false, "el UNO no tiene revisión eléctrica todavía")
-  assert.equal(compatibilidadRevisada("dht22", "esp32-devkit-v1"), false)
+  // CK-CG1: revisado por un humano para el ESP32, y para NINGUNA otra placa.
+  assert.equal(compatibilidadRevisada("dht22", "esp32-devkit-v1"), true)
+  assert.equal(compatibilidadRevisada("dht22", "arduino-uno"), false)
+  assert.equal(compatibilidadRevisada("ntc", "esp32-devkit-v1"), false)
 })
 
 test("F2a/S9: admitirCatalogo es IDÉNTICO al snapshot fijado antes de F2a", () => {

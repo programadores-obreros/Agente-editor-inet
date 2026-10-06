@@ -130,6 +130,9 @@ export const ELEMENTO_WOKWI_POR_TIPO: Readonly<Record<string, string>> = {
   // 4f860e90…a06d): `["1","2","3"]`; docs.wokwi.com/parts/wokwi-slide-switch: 1 = terminal
   // izquierdo, 2 = COMÚN, 3 = terminal derecho; a la izquierda une 1-2, a la derecha 3-2.
   interruptor: "wokwi-slide-switch",
+  // CK-CG1: `wokwi-dht22`, ya definido en el mismo bundle (sin asset nuevo). `pinInfo` leído del
+  // bundle vendorizado (sha256 4f860e90…a06d): VCC, SDA, NC, GND (= docs/wokwi-pinout-dump.md:84).
+  dht22: "wokwi-dht22",
 }
 
 // docs/wokwi-pinout-dump.md:79 (`wokwi-led | A C`, confirmado contra el bundle real)
@@ -161,6 +164,8 @@ export const TERMINAL_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<st
   // (1) hacia GND: es el cableado real de un interruptor deslizante de 3 patas usado como
   // simple contacto. La pata 3 queda sin conectar (elección de presentación, no eléctrica).
   interruptor: { senal: "2", gnd: "1" },
+  // CK-CG1: los tres terminales del modelo van a VCC/SDA/GND de la pieza; `NC` queda sin conectar.
+  dht22: { vcc: "VCC", senal: "SDA", gnd: "GND" },
 }
 
 // circuito.ts:949-975 (`COMPONENTES.led`, color por índice `[red,yellow,green][i%3]`

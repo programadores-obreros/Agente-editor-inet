@@ -17,7 +17,8 @@ import type { Placa, RegistroPin, Restriccion } from "./placas.ts"
 import type { ComportamientoRegla } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
 import { canonicalizar, clonarProfundo, congelarProfundo } from "./canonico.ts"
-import type { CLASES, DIRECCIONES, ELECTRICAS, MAGNITUDES, ROLES_DE_TERMINAL, UNIDADES } from "./registros/vocabulario.ts"
+import type { CLASES, DIRECCIONES, ELECTRICAS, MAGNITUDES, MECANISMOS_DE_LECTURA, ROLES_DE_TERMINAL, UNIDADES } from "./registros/vocabulario.ts"
+import { PROTOCOLOS_DE_LECTURA } from "./registros/vocabulario.ts"
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Tipos (T_diseno_consolidado.md §4.1)
@@ -67,6 +68,14 @@ export interface TerminalDatos {
    */
   readonly requierePullUpInterno?: boolean
   /**
+   * CK-CG1: el terminal queda en ALTO en reposo por un pull-up EXTERNO a la pieza (un bus de un
+   * solo cable lo requiere: Aosong, Manual AM2302 v1.1, §7.2). Es un hecho del terminal, no una
+   * verificación: el Engine NO comprueba que el pull-up esté montado ni su valor (deuda
+   * DHT-PULLUP-01). Lo consume `evaluarRestriccionesPin`: un pin cuya configuración de arranque
+   * depende de su nivel al reset (`strappingVddSdio`) no sirve para un terminal así.
+   */
+  readonly pullUpExterno?: boolean
+  /**
    * Sentido eléctrico real del terminal — NO se infiere del `rol` (un rol es un
    * nombre de dominio, no una propiedad eléctrica): un ánodo de LED necesariamente
    * empuja corriente ("salida"), pero un terminal "senal" puede ser cualquiera de
@@ -99,12 +108,36 @@ function derivarAsignable(terminal: TerminalDatos): boolean {
   return terminal.electrica !== "riel-fijo"
 }
 
+/**
+ * CK-CG1: CÓMO obtiene físicamente la pieza una capacidad. Dato declarativo de Component
+ * Knowledge: dice QUÉ mecanismo/protocolo habla la pieza y sus restricciones objetivas de uso,
+ * nunca cómo se implementa (sin librerías, clases, llamadas ni código). El mecanismo entrega la
+ * capacidad en su `unidad` declarada (la canónica de la fachada). Ausente = la capacidad se lee
+ * por el nivel de su terminal (derivación por topología, Codegen S1).
+ *
+ * Contrato semántico para un consumidor (Codegen S2, D3 = A): una lectura puede ser VÁLIDA (y
+ * la condición se evalúa verdadera o falsa) o INVÁLIDA, que no es «falso»: no satisface la
+ * condición, invalida la lectura anterior y lleva al actuador de esa regla a su reposo.
+ */
+export interface LecturaDeCapacidad {
+  /** Terminal asignable por el que llega la capacidad. */
+  readonly terminal: string
+  readonly mecanismo: (typeof MECANISMOS_DE_LECTURA)[number]
+  readonly protocolo: keyof typeof PROTOCOLOS_DE_LECTURA
+  /** Intervalo mínimo entre lecturas (magnitud `tiempo`). */
+  readonly periodoMinimo?: Cantidad
+  /** Espera mínima después del encendido antes de la primera instrucción (magnitud `tiempo`). */
+  readonly esperaTrasEncendido?: Cantidad
+}
+
 export interface Capacidad {
   readonly id: string
   readonly magnitud?: Magnitud
   readonly unidad?: Unidad
   readonly rango?: Rango
   readonly resolucion?: Cantidad
+  /** CK-CG1: ver `LecturaDeCapacidad`. Entra al hash con la capacidad. */
+  readonly lectura?: LecturaDeCapacidad
 }
 
 /**
@@ -245,6 +278,7 @@ function proyeccionSemanticaTerminal(terminal: TerminalDatos): unknown {
     direccion: terminal.direccion,
     requierePwm: terminal.requierePwm,
     requierePullUpInterno: terminal.requierePullUpInterno,
+    pullUpExterno: terminal.pullUpExterno,
     destinoFijo: terminal.destinoFijo,
     asignable: derivarAsignable(terminal),
   })
@@ -281,6 +315,8 @@ export function proyeccionSemanticaCatalogo(datos: DatosCatalogo): unknown {
     placas: datos.placas.map(proyeccionSemanticaPlaca),
     unidades: datos.unidades,
     acciones: DEFINICIONES_ACCION,
+    // CK-CG1: lo que significa cada protocolo de `Capacidad.lectura` es semántica del catálogo.
+    protocolosDeLectura: PROTOCOLOS_DE_LECTURA,
   }
 }
 
@@ -397,7 +433,8 @@ export function asignarPin(terminal: Terminal, pin: RegistroPin): Motivo | null 
         ? pin.capacidades.salidaDigital
         : terminal.direccion === "entrada"
           ? pin.capacidades.entradaDigital
-          : pin.capacidades.entradaDigital || pin.capacidades.salidaDigital
+          : // `bidireccional` (CK-CG1, R3): el pin tiene que poder hacer LAS DOS cosas.
+            pin.capacidades.entradaDigital && pin.capacidades.salidaDigital
     if (!puedeDigital || (terminal.requierePwm && !pin.capacidades.pwm)) {
       return {
         codigo: "CAPACIDAD_PIN_INCOMPATIBLE",
@@ -511,6 +548,19 @@ export function evaluarRestriccionesPin(terminal: Terminal, pin: RegistroPin): r
       // `datos` se limita a la evidencia de `circuito.ts:348-351`: la carga del
       // programa y el Monitor Serie, nunca más de lo que el repo respalda.
       datos: { pin: pin.id, terminal: terminal.id, restriccion: "uartUsb" satisfies Restriccion, impacto: "carga del programa y Monitor Serie" },
+    })
+  }
+
+  // CK-CG1 (R4): un terminal que queda en alto por un pull-up externo mantiene ese nivel durante
+  // el reset; en un pin cuyo nivel al reset elige la tensión de la flash (`strappingVddSdio`)
+  // eso puede impedir el arranque. Genérico: dato del terminal × dato del pin, sin nombres.
+  if (terminal.pullUpExterno && pin.restricciones.includes("strappingVddSdio")) {
+    motivos.push({
+      codigo: "PIN_STRAPPING_PULLUP_EXTERNO",
+      categoria: "tecnica",
+      severidad: "blocking",
+      clasificacion: "representable",
+      datos: { pin: pin.id, terminal: terminal.id, restriccion: "strappingVddSdio" satisfies Restriccion },
     })
   }
 

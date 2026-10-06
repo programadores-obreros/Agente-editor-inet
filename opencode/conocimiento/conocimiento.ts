@@ -11,7 +11,7 @@
 // sale de `catalogo` (núcleo). Vive fuera de `nucleo/` y de `vista-fisica/`; `nucleo/`
 // nunca importa este directorio.
 
-import type { Cantidad, Catalogo, ComponenteCatalogo, DefinicionAccion, Terminal } from "../nucleo/catalogo.ts"
+import type { Cantidad, Catalogo, ComponenteCatalogo, DefinicionAccion, LecturaDeCapacidad, Terminal } from "../nucleo/catalogo.ts"
 import type { Placa, RegistroPin, TerminalPotencia } from "../nucleo/placas.ts"
 import { asignarPin, evaluarRestriccionesPin, complementoDeAccion, DEFINICIONES_ACCION } from "../nucleo/catalogo.ts"
 import { condicionBooleanaCanonica, MAGNITUD_BOOLEANA, VALORES_BOOLEANOS, type CondicionBooleana, type ValorBooleano } from "../nucleo/estado-booleano.ts"
@@ -112,6 +112,11 @@ export interface ComponentKnowledge {
   convertirCantidad(cantidad: Cuantitativo.CantidadFisica, unidadDestino: string): Cuantitativo.ResultadoCuantitativo<Cantidad>
   /** Igual, validando además la capacidad (existe, cuantitativa, disponible, unidades ofrecidas). */
   convertirParaCapacidad(tipo: string, capacidad: string, cantidad: Cuantitativo.CantidadFisica, unidadDestino: string): Cuantitativo.ResultadoCuantitativo<Cantidad>
+  // ── CK-CG1: cómo se obtiene físicamente una capacidad ──
+  /** La `lectura` declarada para esa capacidad del tipo (protocolo, intervalo mínimo, espera tras
+   * el encendido), o `undefined` si el tipo o la capacidad no existen o no declaran mecanismo (se
+   * lee por el nivel del terminal). Es el dato tal cual: sin implementación de ningún backend. */
+  lecturaDeCapacidad(tipo: string, capacidad: string): LecturaDeCapacidad | undefined
 }
 
 function ordenarPines(a: { readonly recomendado: boolean; readonly numero: number }, b: { readonly recomendado: boolean; readonly numero: number }): number {
@@ -222,6 +227,7 @@ export function crearConocimiento(catalogo: Catalogo): ComponentKnowledge {
     unidad: (id) => Cuantitativo.unidad(id),
     convertirCantidad: (cantidad, unidadDestino) => Cuantitativo.convertirCantidad(catalogo, cantidad, unidadDestino),
     convertirParaCapacidad: (tipo, capacidad, cantidad, unidadDestino) => Cuantitativo.convertirParaCapacidad(catalogo, tipo, capacidad, cantidad, unidadDestino, etiquetaDeCapacidad),
+    lecturaDeCapacidad: (tipo, capacidad) => catalogo.obtenerComponente(tipo)?.capacidades.find((c) => c.id === capacidad)?.lectura,
   }
   return Object.freeze(conocimiento)
 }

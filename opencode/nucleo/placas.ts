@@ -32,8 +32,12 @@ export type Banco = "GPIO" | "D" | "A"
  * Las únicas cuatro restricciones con evidencia real hoy (`circuito.ts:336-348`): enum
  * CERRADO para Fase 1 (decisión R5/orquestador — si Fase 2+ agrega ESP8266/Bhoot y
  * aparece una restricción nueva, se reabre esta decisión con evidencia, no antes).
+ *
+ * CK-CG1 reabrió el enum con evidencia: `strappingVddSdio` = el nivel del pin al reset elige
+ * la tensión de la flash (Espressif, ESP32 Series Datasheet v5.3, §3.2). Revisión humana del
+ * 2026-10-06 (R4).
  */
-export type Restriccion = "soloEntrada" | "strapping" | "flashReservado" | "uartUsb"
+export type Restriccion = "soloEntrada" | "strapping" | "flashReservado" | "uartUsb" | "strappingVddSdio"
 
 /** Capacidades eléctricas del pin. `touch` se DIFIERE (ningún proyecto lo usa hoy). */
 export interface Capacidades {
@@ -158,7 +162,16 @@ const ESP32_GPIO_VALIDOS: readonly number[] = [
 // como un caso más específico que "no existe", nunca como "no existen").
 const ESP32_GPIO_FLASH: readonly number[] = [6, 7, 8, 9, 10, 11]
 // circuito.ts:338
+//
+// Deuda ESP-STRAP-05 (CK-CG1): Espressif también lista GPIO5 como strapping pin (ESP32 Series
+// Datasheet v5.3, Tabla 3-1); este registro no lo marca. No se cambia acá: necesita su propia
+// revisión.
 const ESP32_GPIO_STRAPPING: readonly number[] = [0, 2, 12, 15]
+// CK-CG1 (R4, revisión humana 2026-10-06): MTDI (GPIO12) elige la tensión de VDD_SDIO al reset;
+// en alto, el LDO de 1,8 V (Espressif, ESP32 Series Datasheet v5.3, §3.2), y VDD_SDIO alimenta
+// la flash. Un terminal elevado por un pull-up externo no puede ir acá
+// (`catalogo.ts::evaluarRestriccionesPin`). Los demás strapping conservan su política.
+const ESP32_GPIO_STRAPPING_VDD_SDIO: readonly number[] = [12]
 // circuito.ts:344
 const ESP32_GPIO_SOLO_ENTRADA: readonly number[] = [34, 35, 36, 39]
 // circuito.ts:348
@@ -177,6 +190,7 @@ function crearPinEsp32(n: number): RegistroPin {
   if (soloEntrada) restricciones.push("soloEntrada")
   if (strapping) restricciones.push("strapping")
   if (uartUsb) restricciones.push("uartUsb")
+  if (ESP32_GPIO_STRAPPING_VDD_SDIO.includes(n)) restricciones.push("strappingVddSdio")
 
   const salidaDigital = !soloEntrada
   const etiquetaAlternativa = ESP32_ETIQUETAS_ALTERNATIVAS[n]

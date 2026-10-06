@@ -101,6 +101,9 @@ const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
   REQUISITO_INSATISFECHO: (datos, nombres) =>
     `Al ${nombreDe(datos, "componente", nombres)} le falta algo que necesita para funcionar sin riesgo (${campo(datos, "requisito")} en ${campo(datos, "terminal")}).`,
   PIN_STRAPPING: (datos) => `${campo(datos, "pin")} participa del arranque de la placa: puede molestar al encenderla.`,
+  // CK-CG1 (R4): texto PROPUESTO para revisión de producto; el código estructurado es la verdad.
+  PIN_STRAPPING_PULLUP_EXTERNO: (datos, nombres) =>
+    `${campo(datos, "pin")} decide cómo arranca la placa, y la señal del ${nombreDe(datos, "componente", nombres)} queda en alto por su resistencia de pull-up: así la placa puede no arrancar. Elegí otro pin.`,
   PIN_UART_USB: (datos) => `${campo(datos, "pin")} lo usa el USB: puede interferir con la carga del programa y con el Monitor Serie.`,
   PIN_FLASH_RESERVADO: (datos) => `${campo(datos, "pin")} está conectado a la memoria interna de la placa: no se puede usar.`,
   CAPACIDAD_PIN_INCOMPATIBLE: (datos, nombres) =>
