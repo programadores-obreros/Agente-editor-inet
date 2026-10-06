@@ -127,7 +127,8 @@ test("4 genérico: un sensor sintético con el mismo protocolo se resuelve igual
   const reglas = sinComentarios(leer("opencode/nucleo/catalogo.ts"))
   assert.match(reglas, /terminal\.pullUpExterno && pin\.restricciones\.includes\("strappingVddSdio"\)/)
   assert.match(reglas, /pin\.capacidades\.entradaDigital && pin\.capacidades\.salidaDigital/)
-  for (const archivo of readdirSync(join(REPO, "opencode/codegen"))) assert.doesNotMatch(leer(`opencode/codegen/${archivo}`), /dht22|lecturaDeCapacidad/, `codegen/ no se tocó en CK-CG1 (${archivo})`)
+  // Codegen S2 consume `lecturaDeCapacidad`, pero nunca nombra la pieza.
+  for (const archivo of readdirSync(join(REPO, "opencode/codegen"))) assert.doesNotMatch(leer(`opencode/codegen/${archivo}`), /dht22/i, `codegen/ no nombra la pieza (${archivo})`)
 })
 
 test("5/6 el contrato no contiene C++, Arduino, librerías ni lib_deps", () => {
@@ -236,15 +237,13 @@ test("10 sin la revisión humana del par, el DHT22 vuelve a CODEGEN_NO_ADMITIDO 
   assert.ok(r.error.datos.noAdmitidos.some((x) => x.id === "dht22" && x.problemas.some((p) => p.startsWith("electrico"))))
 })
 
-test("11 con la revisión humana del anexo, la admisión se resuelve por la autoridad existente; el codegen todavía no tiene driver (CODEGEN_SIN_LECTURA, S2)", () => {
+test("11 con la revisión humana del anexo, la admisión se resuelve por la autoridad existente y el codegen genera (driver por protocolo, Codegen S2)", () => {
   assert.equal(compatibilidadRevisada("dht22", "esp32-devkit-v1"), true)
   assert.equal(compatibilidadRevisada("dht22", "arduino-uno"), false, "la revisión es por PAR")
   assert.equal(admitirComponente(K, "dht22").officiallySupported, true)
   assert.ok(oficialmenteSoportados(K).includes("dht22"))
   const r = generarPrograma(proyecto(OPS_DHT_LED), K)
-  assert.equal(r.ok, false)
-  assert.equal(r.error.codigo, "CODEGEN_SIN_LECTURA")
-  assert.deepEqual(r.error.datos, { comportamiento: "beh-4", componente: "cmp-0", tipo: "dht22", capacidad: "temperatura" })
+  assert.equal(r.ok, true, JSON.stringify(r.error ?? null))
 })
 
 test("11 el registro persistido es el texto aprobado por el humano, sin afirmaciones no demostradas", () => {

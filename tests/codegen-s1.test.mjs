@@ -89,9 +89,11 @@ const PULSADOR = COMPONENTES_CATALOGO_MINIMO.find((c) => c.id === "pulsador")
 const LED = COMPONENTES_CATALOGO_MINIMO.find((c) => c.id === "led")
 const DHT22 = COMPONENTES_CATALOGO_MINIMO.find((c) => c.id === "dht22")
 /** Fixture: una entrada ya admitida (`pulsador`) que además declara la capacidad numérica de
- * temperatura del DHT22. Ningún tipo del catálogo real numérico está admitido, y el gate de
- * admisión va antes que el de soporte: es la única forma de llegar al paso 3 con un número. */
-const PULSADOR_CON_TEMPERATURA = { capacidades: [...PULSADOR.capacidades, DHT22.capacidades.find((c) => c.id === "temperatura")] }
+ * temperatura del DHT22, SIN su `lectura` (CK-CG1): una capacidad numérica sin mecanismo de
+ * lectura declarado, que la topología tampoco permite derivar. Las lecturas por protocolo
+ * (Slice 2) se prueban en `codegen-s2.test.mjs`. */
+const { lectura: _lecturaDht22, ...TEMPERATURA_SIN_LECTURA } = DHT22.capacidades.find((c) => c.id === "temperatura")
+const PULSADOR_CON_TEMPERATURA = { capacidades: [...PULSADOR.capacidades, TEMPERATURA_SIN_LECTURA] }
 
 /** Revisiones del anexo más revisiones de PRUEBA (no son datos del producto). */
 const revisionesCon = ({ placas = [], componentes = [] }) => ({

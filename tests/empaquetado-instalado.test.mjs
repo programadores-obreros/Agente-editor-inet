@@ -204,7 +204,8 @@ if (process.platform === "win32") {
       assert.ok(!existsSync(join(configDir, "tool", "conocimiento")), "conocimiento/ terminó DENTRO de tool/")
       // Codegen MVP Slice 1b: el backend IR → C++ viaja con la instalación, hermano de nucleo/,
       // porque ahora lo consume en runtime la tool programa.
-      for (const modulo of ["programa.ts", "derivaciones.ts", "platformio-ini.ts"]) {
+      // Slice 2: los backends de lectura por protocolo (`protocolos.ts`) los importa programa.ts.
+      for (const modulo of ["programa.ts", "derivaciones.ts", "platformio-ini.ts", "protocolos.ts"]) {
         assert.ok(existsSync(join(configDir, "codegen", modulo)), `falta codegen/${modulo} instalado`)
       }
       assert.ok(existsSync(join(configDir, "tool", "programa.ts")), "falta la tool programa instalada")
