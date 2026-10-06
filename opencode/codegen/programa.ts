@@ -29,7 +29,7 @@
 
 import type { Comparador, Componente, Proyecto } from "../nucleo/ir.ts"
 import type { Motivo } from "../nucleo/motivos.ts"
-import type { Cantidad, Capacidad } from "../nucleo/catalogo.ts"
+import type { Cantidad, Capacidad, ComponenteCatalogo } from "../nucleo/catalogo.ts"
 import type { Placa } from "../nucleo/placas.ts"
 import { complementoDeAccion } from "../nucleo/catalogo.ts"
 import { derivarReadiness, validarProyecto } from "../nucleo/validar.ts"
@@ -190,6 +190,104 @@ function pinDe(componente: Componente, terminal: string, placa: Placa): PinPlan 
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// El gate de soporte, sin proyecto (pasos 2 y 3)
+//
+// Son los pasos 2 y 3 del gate de `generarPrograma` como funciones puras que no necesitan un
+// proyecto. `generarPrograma` las usa tal cual, y `generabilidad.ts` las compone para que el
+// agente planifique con EL MISMO criterio: hay una sola fuente de verdad y ninguna tabla aparte.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** Por qué el backend no soporta algo. Los `datos` no traen contexto de proyecto: lo agrega quien llama. */
+export interface FallaDeSoporte {
+  readonly codigo: CodigoErrorCodegen
+  readonly datos: Readonly<Record<string, unknown>>
+}
+
+/** Paso 2, por tipo: el tipo tiene admisión oficial Y revisión eléctrica humana PARA ESA placa. */
+export function admisionDeTipoEnPlaca(
+  conocimiento: ComponentKnowledge,
+  tipo: string,
+  placa: string,
+  revisiones: RevisionesElectricas = REVISIONES_DEL_ANEXO,
+): { readonly admitido: boolean; readonly problemas: readonly string[] } {
+  const informe = admitirComponente(conocimiento, tipo, revisiones)
+  const revisadoParaLaPlaca = compatibilidadRevisada(tipo, placa, revisiones)
+  const problemas = [...informe.problemas, ...(revisadoParaLaPlaca ? [] : [`electrico: sin revisión eléctrica humana para la placa "${placa}"`])]
+  return { admitido: informe.officiallySupported && revisadoParaLaPlaca, problemas }
+}
+
+/** Cómo lee el backend una capacidad, sin pines todavía: por nivel (topología) o por un bus de protocolo. */
+export type LecturaResuelta =
+  | { readonly kind: "nivel"; readonly terminal: string; readonly lectura: Lectura }
+  | {
+      readonly kind: "protocolo"
+      readonly terminal: string
+      readonly protocolo: string
+      readonly backend: BackendDeProtocolo
+      readonly campo: CampoDeProtocolo
+      readonly esperaMs: number
+      readonly periodoMs: number
+      readonly declarado: { readonly espera: string; readonly periodo: string }
+      /** Los tiempos tal como los declara Component Knowledge (para los datos de un error). */
+      readonly tiempos: { readonly esperaTrasEncendido: Cantidad; readonly periodoMinimo: Cantidad }
+    }
+
+/**
+ * Paso 3, lectura: si Component Knowledge declara cómo se obtiene la capacidad, el backend se
+ * elige por ese PROTOCOLO. Si no declara nada, se deriva de la topología (Slice 1).
+ */
+export function resolverLectura(
+  conocimiento: ComponentKnowledge,
+  sensor: ComponenteCatalogo,
+  capacidad: Capacidad,
+  backends: Readonly<Record<string, BackendDeProtocolo>> = BACKENDS_DE_PROTOCOLO,
+): { readonly ok: true; readonly valor: LecturaResuelta } | { readonly ok: false; readonly falla: FallaDeSoporte } {
+  const fallo = (codigo: CodigoErrorCodegen, datos: Readonly<Record<string, unknown>>) => ({ ok: false as const, falla: { codigo, datos } })
+  const contexto = { tipo: sensor.id, capacidad: capacidad.id }
+  const declarada = conocimiento.lecturaDeCapacidad(sensor.id, capacidad.id)
+  if (declarada === undefined) {
+    // Sin mecanismo declarado: por el nivel del pin, si la topología lo permite (Slice 1).
+    const derivada = derivarLectura(sensor, capacidad)
+    if (!derivada) return fallo("CODEGEN_SIN_LECTURA", contexto)
+    return { ok: true, valor: { kind: "nivel", terminal: derivada.terminal, lectura: derivada } }
+  }
+  // Mecanismo declarado: el backend lo elige el PROTOCOLO, no el tipo de componente.
+  if (declarada.mecanismo !== "protocolo") return fallo("CODEGEN_SIN_LECTURA", { ...contexto, mecanismo: declarada.mecanismo })
+  const datosLectura = { ...contexto, protocolo: declarada.protocolo }
+  const backend = backendDeProtocolo(backends, declarada.protocolo)
+  if (!backend) return fallo("CODEGEN_PROTOCOLO_SIN_BACKEND", datosLectura)
+  const terminal = sensor.terminales.find((t) => t.id === declarada.terminal)
+  if (!terminal || !terminal.asignable || terminal.electrica !== backend.terminal.electrica || terminal.direccion !== backend.terminal.direccion)
+    return fallo("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "terminal", terminal: declarada.terminal })
+  const ucum = capacidad.unidad === undefined ? undefined : conocimiento.unidad(capacidad.unidad)
+  const campo = ucum?.ok ? backend.campos.find((c) => c.magnitud === capacidad.magnitud && c.ucum === ucum.valor.ucum) : undefined
+  if (!campo) return fallo("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "campo", magnitud: capacidad.magnitud ?? null, unidad: capacidad.unidad ?? null })
+  const esperaMs = milisegundos(conocimiento, declarada.esperaTrasEncendido)
+  const periodoMs = milisegundos(conocimiento, declarada.periodoMinimo)
+  if (esperaMs === undefined || periodoMs === undefined || !declarada.esperaTrasEncendido || !declarada.periodoMinimo)
+    return fallo("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "tiempos", esperaTrasEncendido: declarada.esperaTrasEncendido ?? null, periodoMinimo: declarada.periodoMinimo ?? null })
+  const declarado = { espera: `${declarada.esperaTrasEncendido.valor} s`, periodo: `${declarada.periodoMinimo.valor} s` }
+  const tiempos = { esperaTrasEncendido: declarada.esperaTrasEncendido, periodoMinimo: declarada.periodoMinimo }
+  return { ok: true, valor: { kind: "protocolo", terminal: terminal.id, protocolo: declarada.protocolo, backend, campo, esperaMs, periodoMs, declarado, tiempos } }
+}
+
+/** Paso 3, escritura: la acción tiene complemento declarado (su reposo) y la topología da un nivel para las dos. */
+export function resolverEscritura(
+  actuador: ComponenteCatalogo,
+  accion: string,
+):
+  | { readonly ok: true; readonly terminal: string; readonly reposo: string; readonly nivelObjetivo: NivelDigital; readonly nivelReposo: NivelDigital }
+  | { readonly ok: false; readonly falla: FallaDeSoporte } {
+  const reposo = complementoDeAccion(actuador, accion)
+  if (reposo === undefined) return { ok: false, falla: { codigo: "CODEGEN_REPOSO_NO_DECLARADO", datos: { tipo: actuador.id, accion } } }
+  const escritura = derivarEscritura(actuador)
+  const nivelObjetivo = escritura?.nivelDe[accion]
+  const nivelReposo = escritura?.nivelDe[reposo]
+  if (!escritura || !nivelObjetivo || !nivelReposo) return { ok: false, falla: { codigo: "CODEGEN_SIN_ESCRITURA", datos: { tipo: actuador.id, acciones: [accion, reposo] } } }
+  return { ok: true, terminal: escritura.terminal, reposo, nivelObjetivo, nivelReposo }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // Generación
 // ════════════════════════════════════════════════════════════════════════════════════
 
@@ -211,10 +309,8 @@ export function generarPrograma(proyecto: Proyecto, conocimiento: ComponentKnowl
   const informePlaca = admitirPlaca(conocimiento, placa.id, revisiones)
   if (!informePlaca.officiallySupported) noAdmitidos.push({ kind: "placa", id: placa.id, problemas: [...informePlaca.problemas] })
   for (const tipo of [...new Set(proyecto.componentes.map((c) => c.tipo))].sort()) {
-    const informe = admitirComponente(conocimiento, tipo, revisiones)
-    const revisadoParaLaPlaca = compatibilidadRevisada(tipo, placa.id, revisiones)
-    const problemas = [...informe.problemas, ...(revisadoParaLaPlaca ? [] : [`electrico: sin revisión eléctrica humana para la placa "${placa.id}"`])]
-    if (!informe.officiallySupported || !revisadoParaLaPlaca) noAdmitidos.push({ kind: "componente", id: tipo, problemas })
+    const admision = admisionDeTipoEnPlaca(conocimiento, tipo, placa.id, revisiones)
+    if (!admision.admitido) noAdmitidos.push({ kind: "componente", id: tipo, problemas: [...admision.problemas] })
   }
   if (noAdmitidos.length > 0) return falla("CODEGEN_NO_ADMITIDO", { placa: placa.id, noAdmitidos })
 
@@ -239,55 +335,31 @@ export function generarPrograma(proyecto: Proyecto, conocimiento: ComponentKnowl
 
     let lectura = lecturas.get(claveLectura(sensor.id, capacidad.id))
     if (!lectura) {
-      const contexto = { comportamiento: regla.id, componente: sensor.id, tipo: sensor.tipo, capacidad: capacidad.id }
-      const declarada = conocimiento.lecturaDeCapacidad(sensor.tipo, capacidad.id)
-      if (declarada === undefined) {
-        // Sin mecanismo declarado: por el nivel del pin, si la topología lo permite (Slice 1).
-        const derivada = derivarLectura(catSensor, capacidad)
-        if (!derivada) return falla("CODEGEN_SIN_LECTURA", contexto)
-        const pin = pinDe(sensor, derivada.terminal, placa)
-        if (!pin) return falla("CODEGEN_PIN_NO_DERIVABLE", { componente: sensor.id, terminal: derivada.terminal, pin: sensor.pines[derivada.terminal] ?? null, placa: placa.id })
-        lectura = { kind: "nivel", sensor: sensor.id, capacidad: capacidad.id, pin, lectura: derivada }
+      const resuelta = resolverLectura(conocimiento, catSensor, capacidad, backends)
+      if (!resuelta.ok) return falla(resuelta.falla.codigo, { comportamiento: regla.id, componente: sensor.id, ...resuelta.falla.datos })
+      const r = resuelta.valor
+      const pin = pinDe(sensor, r.terminal, placa)
+      if (!pin) return falla("CODEGEN_PIN_NO_DERIVABLE", { componente: sensor.id, terminal: r.terminal, pin: sensor.pines[r.terminal] ?? null, placa: placa.id })
+      if (r.kind === "nivel") {
+        lectura = { kind: "nivel", sensor: sensor.id, capacidad: capacidad.id, pin, lectura: r.lectura }
       } else {
-        // Mecanismo declarado: el backend lo elige el PROTOCOLO, no el tipo de componente.
-        if (declarada.mecanismo !== "protocolo") return falla("CODEGEN_SIN_LECTURA", { ...contexto, mecanismo: declarada.mecanismo })
-        const datosLectura = { ...contexto, protocolo: declarada.protocolo }
-        const backend = backendDeProtocolo(backends, declarada.protocolo)
-        if (!backend) return falla("CODEGEN_PROTOCOLO_SIN_BACKEND", datosLectura)
-        const terminal = catSensor.terminales.find((t) => t.id === declarada.terminal)
-        if (!terminal || !terminal.asignable || terminal.electrica !== backend.terminal.electrica || terminal.direccion !== backend.terminal.direccion)
-          return falla("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "terminal", terminal: declarada.terminal })
-        const ucum = capacidad.unidad === undefined ? undefined : conocimiento.unidad(capacidad.unidad)
-        const campo = ucum?.ok ? backend.campos.find((c) => c.magnitud === capacidad.magnitud && c.ucum === ucum.valor.ucum) : undefined
-        if (!campo) return falla("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "campo", magnitud: capacidad.magnitud ?? null, unidad: capacidad.unidad ?? null })
-        const esperaMs = milisegundos(conocimiento, declarada.esperaTrasEncendido)
-        const periodoMs = milisegundos(conocimiento, declarada.periodoMinimo)
-        if (esperaMs === undefined || periodoMs === undefined || !declarada.esperaTrasEncendido || !declarada.periodoMinimo)
-          return falla("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "tiempos", esperaTrasEncendido: declarada.esperaTrasEncendido ?? null, periodoMinimo: declarada.periodoMinimo ?? null })
-        const pin = pinDe(sensor, terminal.id, placa)
-        if (!pin) return falla("CODEGEN_PIN_NO_DERIVABLE", { componente: sensor.id, terminal: terminal.id, pin: sensor.pines[terminal.id] ?? null, placa: placa.id })
-        const clave = claveBus(sensor.id, terminal.id, declarada.protocolo)
+        const clave = claveBus(sensor.id, r.terminal, r.protocolo)
         let bus = buses.get(clave)
         if (!bus) {
-          const declarado = { espera: `${declarada.esperaTrasEncendido.valor} s`, periodo: `${declarada.periodoMinimo.valor} s` }
-          bus = { componente: sensor.id, terminal: terminal.id, protocolo: declarada.protocolo, backend, pin, esperaMs, periodoMs, declarado }
+          bus = { componente: sensor.id, terminal: r.terminal, protocolo: r.protocolo, backend: r.backend, pin, esperaMs: r.esperaMs, periodoMs: r.periodoMs, declarado: r.declarado }
           buses.set(clave, bus)
-        } else if (bus.esperaMs !== esperaMs || bus.periodoMs !== periodoMs) {
+        } else if (bus.esperaMs !== r.esperaMs || bus.periodoMs !== r.periodoMs) {
           // Dos capacidades del mismo bus con tiempos distintos: no hay un único horario que cumpla ambas.
-          return falla("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "tiempos", esperaTrasEncendido: declarada.esperaTrasEncendido, periodoMinimo: declarada.periodoMinimo })
+          return falla("CODEGEN_LECTURA_INCOHERENTE", { comportamiento: regla.id, componente: sensor.id, tipo: sensor.tipo, capacidad: capacidad.id, protocolo: r.protocolo, causa: "tiempos", ...r.tiempos })
         }
-        lectura = { kind: "protocolo", sensor: sensor.id, capacidad: capacidad.id, pin, bus, campo }
+        lectura = { kind: "protocolo", sensor: sensor.id, capacidad: capacidad.id, pin, bus, campo: r.campo }
       }
       lecturas.set(claveLectura(sensor.id, capacidad.id), lectura)
     }
 
-    const reposo = complementoDeAccion(catActuador, entonces.accion)
-    if (reposo === undefined) return falla("CODEGEN_REPOSO_NO_DECLARADO", { comportamiento: regla.id, componente: actuador.id, tipo: actuador.tipo, accion: entonces.accion })
-
-    const escritura = derivarEscritura(catActuador)
-    const nivelObjetivo = escritura?.nivelDe[entonces.accion]
-    const nivelReposo = escritura?.nivelDe[reposo]
-    if (!escritura || !nivelObjetivo || !nivelReposo) return falla("CODEGEN_SIN_ESCRITURA", { comportamiento: regla.id, componente: actuador.id, tipo: actuador.tipo, acciones: [entonces.accion, reposo] })
+    const escritura = resolverEscritura(catActuador, entonces.accion)
+    if (!escritura.ok) return falla(escritura.falla.codigo, { comportamiento: regla.id, componente: actuador.id, ...escritura.falla.datos })
+    const { reposo, nivelObjetivo, nivelReposo } = escritura
     const pin = pinDe(actuador, escritura.terminal, placa)
     if (!pin) return falla("CODEGEN_PIN_NO_DERIVABLE", { componente: actuador.id, terminal: escritura.terminal, pin: actuador.pines[escritura.terminal] ?? null, placa: placa.id })
 

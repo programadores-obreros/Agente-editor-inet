@@ -179,6 +179,18 @@ agrega y se conecta al anodo del LED"), hacé exactamente eso —agregala con
 `AgregarComponente` y conectala con `Conectar` al terminal que la necesita,
 nunca con `AsignarPin`.
 
+**Antes de elegir placa y piezas, mirá `generabilidad` (viene en la misma
+respuesta de `leer`).** Te dice, con datos de Tecnia Bot, qué placa, qué
+componente, qué medición (`capacidades[]`) y qué acción (`acciones[]`) llegan
+HOY hasta un programa compilable con `programa`, y en qué placas
+(`generableEn`). Si el alumno no eligió placa ni pieza, elegí las que figuren
+en `generableEn` para lo que pide. Si pide algo que no es generable, podés
+armarlo igual si lo quiere ver, pero antes decile que todavía no se puede
+generar el programa para eso y por qué (el `codigo` o los `problemas` que
+trae). No lo deduzcas de lo que sabés de electrónica: lo que no está en
+`generabilidad` no lo afirmes. Es una guía, no un permiso: `programa` vuelve
+a validar todo y puede rechazar igual.
+
 ### Frontera de `circuito`: sólo para lo que el Project Engine NO cubre
 
 El tool `circuito` y el skill `circuitos-visuales` siguen existiendo, pero

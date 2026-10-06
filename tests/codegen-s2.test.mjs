@@ -425,7 +425,8 @@ test("C2 codegen/ no tiene fórmulas de conversión física ni ids de unidades d
 
 test("A1 el codegen consume lecturaDeCapacidad y elige el backend por el protocolo, desde el registro", () => {
   const programa = sinComentarios(fuentesCodegen.find(([f]) => f === "programa.ts")[1])
-  assert.match(programa, /conocimiento\.lecturaDeCapacidad\(sensor\.tipo, capacidad\.id\)/)
+  // El gate compartido (`resolverLectura`, que también usa la proyección de generabilidad).
+  assert.match(programa, /conocimiento\.lecturaDeCapacidad\(sensor\.id, capacidad\.id\)/)
   assert.match(programa, /backendDeProtocolo\(backends, declarada\.protocolo\)/)
   assert.deepEqual(Object.keys(BACKENDS_DE_PROTOCOLO), ["bus-unico-am2302"])
   // Un backend espía registrado para el MISMO protocolo es el que se usa: no hay otra ruta.

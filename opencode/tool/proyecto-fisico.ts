@@ -297,6 +297,37 @@ function condicionesNumericasParaAgente(proyecto: Proyecto, deps: DependenciasPr
   return { comparadores, sensores, catalogo, ejemplo: { SetComportamiento: EJEMPLO_CONDICION_NUMERICA } }
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// Generabilidad (guía para planificar): qué placas, componentes, capacidades y acciones
+// llegan HOY a un programa compilable. Sale tal cual de `codegen/generabilidad.ts`, que compone
+// el MISMO gate de `generarPrograma` (admisión eléctrica + soporte del backend). Acá no hay
+// ninguna placa, tipo ni protocolo escrito: sólo se agregan los nombres para mostrar.
+// Import perezoso y protegido (mismo criterio D13): si falta `codegen/`, `leer` sigue andando.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+type ModuloGenerabilidad = typeof import("../codegen/generabilidad.ts")
+
+const NOTA_GENERABILIDAD =
+  "Guía para PLANIFICAR, no autorización: dice qué placa, componente, capacidad y acción llegan hoy a un programa compilable con la tool `programa` " +
+  "(`generableEn` = placas donde sí). `disponible` de condicionesNumericas es otra cosa (que se pueda armar la regla). " +
+  "El Project Engine y `programa` vuelven a validar todo igual."
+
+async function generabilidadParaAgente(deps: DependenciasProyectoFisico) {
+  let modulo: ModuloGenerabilidad
+  try {
+    modulo = await import("../codegen/generabilidad.ts")
+  } catch {
+    return { nota: "No se pudo consultar la generabilidad: falta la carpeta codegen de Tecnia Bot (instalación incompleta).", placas: null, componentes: null }
+  }
+  const g = modulo.generabilidad(deps.conocimiento)
+  const nombreDe = (kind: "componente" | "placa", id: string) => deps.conocimiento.nombre(kind, id) ?? id
+  return {
+    nota: NOTA_GENERABILIDAD,
+    placas: g.placas.map((p) => ({ ...p, nombre: nombreDe("placa", p.placa) })),
+    componentes: g.componentes.map((c) => ({ ...c, nombre: nombreDe("componente", c.tipo) })),
+  }
+}
+
 function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, deps: DependenciasProyectoFisico) {
   const vista = snapshot.vista
   const rolPorId = new Map((vista?.componentes ?? []).map((c) => [c.id, c.rol] as const))
@@ -345,7 +376,7 @@ export default tool({
 Para no adivinar ids: llamá \`leer\` primero: trae el vocabulario válido (placas, componentes, terminales, ejemplos).
 
 Tres \`accion\`:
-- \`leer\`: snapshot resumido — revisión, componentes (id/tipo/nombre/rol/pines/descripcionPines) y los motivos vigentes con su explicación en texto llano, MÁS \`vocabulario\` (placas/componentes/terminales/operaciones de ejemplo, derivados del catálogo real) y \`condicionesNumericas\` (los comparadores, y para cada sensor del proyecto y cada tipo del catálogo sus capacidades medibles con etiqueta, magnitud, unidades, unidad canónica, rango y si se pueden usar: los datos para armar una regla con un número, nunca escritos a mano).
+- \`leer\`: snapshot resumido — revisión, componentes (id/tipo/nombre/rol/pines/descripcionPines) y los motivos vigentes con su explicación en texto llano, MÁS \`vocabulario\` (placas/componentes/terminales/operaciones de ejemplo, derivados del catálogo real) y \`condicionesNumericas\` (los comparadores, y para cada sensor del proyecto y cada tipo del catálogo sus capacidades medibles con etiqueta, magnitud, unidades, unidad canónica, rango y si se pueden usar: los datos para armar una regla con un número, nunca escritos a mano), y \`generabilidad\` (por placa, componente, capacidad y acción: si llega hoy a un programa compilable con \`programa\`, en qué placas —\`generableEn\`— y, si no, el \`CODEGEN_*\` o el problema de admisión que lo impide).
 - \`simular\`: dry-run — nunca persiste, nunca sube la revisión, sólo anticipa qué pasaría.
 - \`aplicar\`: commitea de verdad, todo o nada (una transacción atómica: o entran TODAS las operaciones del lote, o ninguna).
 
@@ -450,7 +481,8 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
         const snapshot = servicio.snapshot() as SnapshotConVista
         const vocabulario = deps.vocabularioDesdeCatalogo(catalogo, OPERACIONES_PERMITIDAS, deps.conocimiento)
         const condicionesNumericas = condicionesNumericasParaAgente(snapshot.proyecto, deps)
-        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, deps), vocabulario, condicionesNumericas }, null, 2)
+        const generabilidad = await generabilidadParaAgente(deps)
+        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, deps), vocabulario, condicionesNumericas, generabilidad }, null, 2)
       }
 
       // ── 'simular' / 'aplicar': baseRevision y operaciones son obligatorios. ────────

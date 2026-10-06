@@ -205,7 +205,8 @@ if (process.platform === "win32") {
       // Codegen MVP Slice 1b: el backend IR → C++ viaja con la instalación, hermano de nucleo/,
       // porque ahora lo consume en runtime la tool programa.
       // Slice 2: los backends de lectura por protocolo (`protocolos.ts`) los importa programa.ts.
-      for (const modulo of ["programa.ts", "derivaciones.ts", "platformio-ini.ts", "protocolos.ts"]) {
+      // Generabilidad: la consulta que usa `proyecto-fisico leer` (`generabilidad.ts`).
+      for (const modulo of ["programa.ts", "derivaciones.ts", "platformio-ini.ts", "protocolos.ts", "generabilidad.ts"]) {
         assert.ok(existsSync(join(configDir, "codegen", modulo)), `falta codegen/${modulo} instalado`)
       }
       assert.ok(existsSync(join(configDir, "tool", "programa.ts")), "falta la tool programa instalada")
