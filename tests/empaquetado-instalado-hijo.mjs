@@ -32,6 +32,13 @@
 //   candado-hijo <configDir> <projectDir> <idProyecto> <etiqueta>
 //     — mismo protocolo LISTO/ABRIR/CERRAR que tests/phase2-candado-proceso-hijo.mjs,
 //       pero contra servidor-con-vista.ts de la instalación (no del repo).
+//   programa-instalado <configDir> <projectDir>
+//     — Codegen MVP Slice 1b: arma un proyecto con la tool proyecto-fisico INSTALADA y
+//       pide el programa a la tool programa INSTALADA (que importa ../codegen/ de la
+//       instalación). Imprime UNA línea JSON con la salida de `generar`.
+//   programa-sin-codegen <configDir> <projectDir>
+//     — con codegen/ fuera de la instalación (lo mueve el test): todas las tools siguen
+//       importando y `programa` contesta con un error explícito (nunca un C++ de otro lado).
 
 import { readdirSync } from "node:fs"
 import { join } from "node:path"
@@ -194,7 +201,40 @@ async function modoCandadoHijo() {
   process.exit(0)
 }
 
+async function modoProgramaInstalado() {
+  const [projectDir] = resto
+  const fisico = (await import(urlDe(join(configDir, "tool", "proyecto-fisico.ts")))).default
+  const programa = (await import(urlDe(join(configDir, "tool", "programa.ts")))).default
+  const ctx = { directory: projectDir }
+  const operaciones = [
+    { tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } },
+    { tipo: "AgregarComponente", payload: { tipo: "pulsador" } },
+    { tipo: "AgregarComponente", payload: { tipo: "led" } },
+    { tipo: "AgregarComponente", payload: { tipo: "resistencia" } },
+    { tipo: "AsignarPin", payload: { componente: "cmp-0", terminal: "senal", pin: "GPIO4" } },
+    { tipo: "AsignarPin", payload: { componente: "cmp-1", terminal: "anodo", pin: "GPIO18" } },
+    { tipo: "Conectar", payload: { desde: { componente: "cmp-2", terminal: "a" }, hasta: { componente: "cmp-1", terminal: "anodo" } } },
+    {
+      tipo: "SetComportamiento",
+      payload: { comportamiento: { cuando: { sensor: "cmp-0", capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: "cmp-1", accion: "encender" } } },
+    },
+  ]
+  const aplicado = JSON.parse(await fisico.execute({ accion: "aplicar", baseRevision: 0, operaciones }, ctx))
+  const generado = JSON.parse(await programa.execute({ accion: "generar" }, ctx))
+  console.log(JSON.stringify({ aplicado: aplicado.ok, generado }))
+}
+
+async function modoProgramaSinCodegen() {
+  const [projectDir] = resto
+  const importadas = await importarTodasLasTools(join(configDir, "tool"))
+  const programa = (await import(urlDe(join(configDir, "tool", "programa.ts")))).default
+  const salida = JSON.parse(await programa.execute({ accion: "generar" }, { directory: projectDir }))
+  console.log(JSON.stringify({ fallosImport: importadas.fallos, salida }))
+}
+
 async function main() {
+  if (modo === "programa-instalado") return modoProgramaInstalado()
+  if (modo === "programa-sin-codegen") return modoProgramaSinCodegen()
   if (modo === "importar-tools") return modoImportarTools()
   if (modo === "servidor-happy") return modoServidorHappy()
   if (modo === "servidor-ausente") return modoServidorAusente()

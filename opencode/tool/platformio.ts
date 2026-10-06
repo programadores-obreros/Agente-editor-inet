@@ -864,6 +864,16 @@ Acciones:
           ? `Se cancelo la accion antes de terminar de ${que}.`
           : null
 
+    // Codegen MVP, Slice 1b: la carpeta del programa de un proyecto físico es DERIVADA de su IR
+    // (la escribe la tool `programa`). Compilar o cargar esa carpeta desde acá saltearía la
+    // regeneración y podría compilar archivos editados a mano: el camino es `programa`.
+    if ((args.action === "compile" || args.action === "flash" || args.action === "both") && cwd.split(/[\\/]/).includes(".tecnia-vista-fisica")) {
+      return (
+        "Esa carpeta es el programa DERIVADO de un proyecto físico: no se compila ni se carga desde acá.\n" +
+        'Usá la tool `programa` (accion "compilar"), que lo regenera desde el proyecto y compila exactamente eso.'
+      )
+    }
+
     // `diagnostico` informa que falta, y `reparar` existe PARA cuando falta: si
     // el pre-chequeo corriera tambien para `reparar`, devolveria "anda al menu
     // inicio" y la rama de reparacion seria inalcanzable justo en el unico caso

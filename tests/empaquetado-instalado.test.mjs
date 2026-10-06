@@ -30,7 +30,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, chmodSync, symlinkSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, chmodSync, symlinkSync } from "node:fs"
 import { dirname, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { tmpdir } from "node:os"
@@ -64,7 +64,7 @@ function listarArchivos(dir) {
  * scratchpad, docs ni tests". Devuelve la lista de infracciones (vacía si todo OK). */
 function verificarAllowlist(configDir) {
   const infracciones = []
-  for (const carpeta of ["nucleo", "servidor", "conocimiento"]) {
+  for (const carpeta of ["nucleo", "servidor", "conocimiento", "codegen"]) {
     const base = join(configDir, carpeta)
     for (const archivo of listarArchivos(base)) {
       const rel = relative(base, archivo)
@@ -202,9 +202,17 @@ if (process.platform === "win32") {
       assert.ok(!existsSync(join(configDir, "tool", "servidor")), "servidor/ terminó DENTRO de tool/")
       assert.ok(!existsSync(join(configDir, "tool", "vista-fisica")), "vista-fisica/ (carpeta) terminó DENTRO de tool/")
       assert.ok(!existsSync(join(configDir, "tool", "conocimiento")), "conocimiento/ terminó DENTRO de tool/")
+      // Codegen MVP Slice 1b: el backend IR → C++ viaja con la instalación, hermano de nucleo/,
+      // porque ahora lo consume en runtime la tool programa.
+      for (const modulo of ["programa.ts", "derivaciones.ts", "platformio-ini.ts"]) {
+        assert.ok(existsSync(join(configDir, "codegen", modulo)), `falta codegen/${modulo} instalado`)
+      }
+      assert.ok(existsSync(join(configDir, "tool", "programa.ts")), "falta la tool programa instalada")
+      assert.ok(!existsSync(join(configDir, "tool", "codegen")), "codegen/ terminó DENTRO de tool/")
 
       const agenteMd = readFileSync(join(configDir, "agent", "tecnia-bot.md"), "utf8")
       assert.match(agenteMd, /vista-fisica:\s*"allow"/, 'falta el permiso vista-fisica: "allow" en el agente instalado')
+      assert.match(agenteMd, /programa:\s*"allow"/, 'falta el permiso programa: "allow" en el agente instalado')
 
       // ── Nada de scratchpad/docs/tests en la instalación. ──────────────────────
       const infraccionesAllowlist = verificarAllowlist(configDir)
@@ -294,6 +302,36 @@ if (process.platform === "win32") {
         assert.deepEqual(hallazgos, [], `${archivoOffline} pide algo por red: ${JSON.stringify(hallazgos)}`)
       }
 
+      // ── Codegen MVP Slice 1b: la tool programa INSTALADA genera desde un proyecto armado
+      // con la tool proyecto-fisico INSTALADA, importando el codegen de la instalación (la
+      // copia fuente sigue inaccesible y todo corre desde otro cwd). ───────────────────
+      const proyectoPrograma = join(raiz, "proyecto-programa")
+      mkdirSync(proyectoPrograma, { recursive: true })
+      const { json: rp, run: runPrograma } = correrHijo("programa-instalado", [configDir, proyectoPrograma], otroCwd)
+      assert.equal(runPrograma.status, 0, `el hijo de programa falló:\n${runPrograma.stdout}\n${runPrograma.stderr}`)
+      assert.equal(rp.aplicado, true, `proyecto-fisico instalado no aplicó: ${JSON.stringify(rp)}`)
+      assert.equal(rp.generado.ok, true, `programa instalado no generó: ${JSON.stringify(rp.generado)}`)
+      assert.equal(rp.generado.etapa, "generacion")
+      assert.equal(rp.generado.environment, "esp32-devkit-v1")
+      assert.equal(rp.generado.carpeta, ".tecnia-vista-fisica/programa/activo")
+      assert.match(rp.generado.archivos["src/main.cpp"].contenido, /pinMode\(PIN_CMP_0_SENAL, INPUT_PULLUP\);/)
+      assert.match(rp.generado.archivos["platformio.ini"].contenido, /^\[env:esp32-devkit-v1\]$/m)
+
+      // Sin codegen/ en la instalación: ninguna tool deja de importar (import perezoso) y
+      // programa contesta con un error explícito — nunca un C++ de otro lado.
+      renameSync(join(configDir, "codegen"), join(raiz, "codegen-fuera"))
+      const proyectoSinCodegen = join(raiz, "proyecto-sin-codegen")
+      mkdirSync(proyectoSinCodegen, { recursive: true })
+      const { json: rs, run: runSinCodegen } = correrHijo("programa-sin-codegen", [configDir, proyectoSinCodegen], otroCwd)
+      renameSync(join(raiz, "codegen-fuera"), join(configDir, "codegen"))
+      assert.equal(runSinCodegen.status, 0, `el hijo sin codegen falló: ${runSinCodegen.stderr}`)
+      assert.deepEqual(rs.fallosImport, [], `sin codegen/ dejaron de importar: ${JSON.stringify(rs.fallosImport)}`)
+      assert.equal(rs.salida.ok, false)
+      assert.equal(rs.salida.codigo, "DEPENDENCIAS_NO_DISPONIBLES")
+      assert.match(rs.salida.mensaje, /codegen/)
+      assert.match(rs.salida.mensaje, /reinstal/i)
+      assert.ok(!("archivos" in rs.salida), "sin codegen no puede haber archivos generados")
+
       // ── D13: con servidor/ borrado de la instalación, el RESTO de las tools
       // (incluida vista-fisica.ts, que ya no importa ../servidor/* en el
       // top-level) siguen importando, y recién al intentar levantar el servidor
@@ -325,6 +363,7 @@ if (process.platform === "win32") {
       assert.ok(!existsSync(join(configDir, "servidor")), "uninstall.sh dejó servidor/ instalado")
       assert.ok(!existsSync(join(configDir, "vista-fisica")), "uninstall.sh dejó vista-fisica/ instalado")
       assert.ok(!existsSync(join(configDir, "conocimiento")), "uninstall.sh dejó conocimiento/ instalado")
+      assert.ok(!existsSync(join(configDir, "codegen")), "uninstall.sh dejó codegen/ instalado")
     } finally {
       // Nunca deja el chmod 000 pisado: sin esto, rmSync de abajo no podría ni
       // listar fuenteDir/ para borrarlo.
