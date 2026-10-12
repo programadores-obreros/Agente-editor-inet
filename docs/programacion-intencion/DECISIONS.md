@@ -1559,3 +1559,33 @@ Decisiones congeladas:
 - **OPEN-7:** se retira el aviso genérico; varias reglas sobre actuadores distintos son válidas sin aviso.
 - Sin prioridades, sin semántica de orden, sin "la última gana". Sin cambio de IR, `schemaVersion` ni
   catálogo.
+
+## CK-PLACA-01 — la ESP32 DevKit V1 completa en Component Knowledge (2026-10-12)
+
+Placa física de referencia: DOIT ESP32 DEVKIT V1, 30 pines, módulo ESP-WROOM-32 (fotos del
+2026-10-12), la misma `esp32-devkit-v1` del registro. Diseño, fuentes hasheadas y decisiones en
+`tecnia-bot-docs/esp32-completo/` (`CK-PLACA-01-DESIGN.md`, `DECISIONES-HUMANAS-2026-10-12.md`).
+Decisiones de Alejandro Palestrini por chat, adoptando la recomendación escrita:
+
+- **H-A1 — GPIO5 es strapping.** Reabre D4 (H-3=A, hardening de Phase 2, "sin fuente interna") con
+  fuente externa de tier 1: ESP32 Series Datasheet v5.3, §3 y Tabla 3-1 (pull-up por defecto; con MTDO
+  fija el timing del SDIO slave). Severidad `info` como GPIO0/2/15; sigue en el pool automático (igual
+  que GPIO2, D3). Cierra la deuda ESP-STRAP-05. Diverge a propósito de `circuito.ts:338` (congelado).
+  El "orden de riesgo" del pool existe sólo en el legado: en el núcleo el pool es booleano y los pines
+  se ofrecen por número.
+- **H-A2 — `capacidades.adc` sólo en ADC1** (32, 33, 34, 35, 36, 39). ADC2 (0, 2, 4, 12, 13, 14, 15,
+  25, 26, 27) queda como dato `adcBanco`, fuera del hash, sin ofrecerse: lo comparte el WiFi (ESP-IDF
+  v4.4: con `esp_wifi_start` la lectura falla con `ESP_ERR_TIMEOUT`). Simplificación pedagógica.
+- **H-A3 — DAC (25, 26) y touch (0, 2, 4, 12, 13, 14, 15, 27, 32, 33)** declarados (Tabla 2-1,
+  `pins_arduino.h` de la variante `doitESP32devkitV1`), sin consumidor todavía.
+- **H-A4 — LED de placa** como dato `ledDePlaca` (GPIO2, azul; `LED_BUILTIN = 2` en arduino-esp32;
+  Zephyr board doc), fuera del hash. `activoEn` sin declarar hasta la verificación física. GPIO2 sigue
+  en el pool.
+- **H-A5 — `tolerancia5V: false`** en la ESP32 (Tabla 5-3: VIH máx VDD + 0,3 V) y `true` en el UNO.
+  Entra al hash a propósito: va a decidir la validez eléctrica del eco del HC-SR04 y del pHmetro V1.
+- **H-A6 — `schemaVersion` 1.1.0** (aditivo) en las dos placas. Las placas entran al hash semántico
+  (`catalogo.ts::proyeccionSemanticaPlaca`): catálogo 2.4.0 → 2.5.0 con hash nuevo fijado. Los
+  proyectos 2.4.0 lo ven con `CATALOGO_CAMBIO_DETECTADO` (informativo). Un proyecto con GPIO5 gana un
+  aviso `info`, nunca bloqueante: `PERSISTIBLE ⇒ RECARGABLE` se conserva.
+
+No se tocaron: `circuito.ts`, `representacion.ts`, `admision.ts`, codegen, IR, skills (slice B).

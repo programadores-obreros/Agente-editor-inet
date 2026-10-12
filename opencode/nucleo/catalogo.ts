@@ -256,13 +256,15 @@ export interface DatosCatalogo {
 // destinoFijo) con su `asignable` derivado, capacidades con magnitud/unidad/rango,
 // requisitos con su `Cantidad`, acciones declaradas, compatibilidades, placas (pines
 // con capacidades/restricciones/pool, terminales de potencia, destinos de riel, i2c,
-// tensión lógica, tope ADC, schemaVersion), conversiones de unidad y definiciones de
-// acción.
+// tensión lógica, tolerancia a 5 V, tope ADC, schemaVersion), conversiones de unidad y
+// definiciones de acción.
 //
 // NO ENTRA: nombres visibles y textos (anexo de pedagogía), alias de entrada,
 // etiquetas serigrafiadas de pin, datos de renderer (anexo de representación),
 // backend de compilación (PlatformIO: toolchain, no significado), procedencia,
-// madurez, y la etiqueta `version` (legible; la identidad es el hash).
+// madurez, la etiqueta `version` (legible; la identidad es el hash), el banco ADC de un
+// pin (`adcBanco`, informativo: la validez la decide `capacidades.adc`) ni el LED de placa
+// (`ledDePlaca`, presentación y pedagogía) — CK-PLACA-01.
 
 function sinIndefinidos<T extends Record<string, unknown>>(objeto: T): Partial<T> {
   const salida: Record<string, unknown> = {}
@@ -289,6 +291,9 @@ function proyeccionSemanticaPlaca(placa: Placa): unknown {
     id: placa.id,
     schemaVersion: placa.schemaVersion,
     voltaje: placa.voltaje,
+    // CK-PLACA-01. Un fixture sintético viejo sin el campo proyecta `undefined`, que la
+    // canonicalización omite: su hash no cambia por esta línea.
+    tolerancia5V: placa.tolerancia5V,
     adcMax: placa.adcMax,
     i2c: placa.i2c,
     pines: placa.pines.map((pin) => ({ id: pin.id, banco: pin.banco, numero: pin.numero, capacidades: pin.capacidades, restricciones: pin.restricciones, enPoolAutomatico: pin.enPoolAutomatico })),

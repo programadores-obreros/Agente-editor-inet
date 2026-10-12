@@ -34,6 +34,18 @@ export const REVISIONES_DE_PLACA: readonly RevisionDePlaca[] = Object.freeze([
     revisadoPor: FREEZE,
     evidencia: "nucleo/placas.ts (pines, restricciones y terminales de potencia contra circuito.ts:624-667 y docs/wokwi-pinout-dump.md)",
   }),
+  // CK-PLACA-01: la placa completa con fuente primaria. Decisiones H-A1..H-A6 de Alejandro
+  // Palestrini (2026-10-12, por chat; registradas en tecnia-bot-docs/esp32-completo/
+  // DECISIONES-HUMANAS-2026-10-12.md). Cierra la deuda ESP-STRAP-05 (GPIO5 strapping).
+  Object.freeze({
+    placa: "esp32-devkit-v1",
+    revisadoPor: "revisión humana de Alejandro Palestrini (2026-10-12, CK-PLACA-01, H-A1..H-A6)",
+    evidencia:
+      "nucleo/placas.ts (schemaVersion 1.1.0): strapping 0/2/5/12/15 y bancos ADC1/ADC2 (ESP32 Series Datasheet v5.3, Tabla 3-1 y Tabla 2-1); " +
+      "ADC2 compartido con WiFi (ESP-IDF v4.4 adc.html y adc_oneshot.html actual); DAC 25/26, touch 0/2/4/12/13/14/15/27/32/33 y LED de placa en GPIO2 " +
+      "(arduino-esp32 variants/doitESP32devkitV1/pins_arduino.h, Zephyr board doc); VIH máx VDD+0,3 V → tolerancia5V false (Datasheet Tabla 5-3). " +
+      "Fuentes hasheadas en tecnia-bot-docs/esp32-completo/evidencia/fuentes/SHA256SUMS.txt. Polaridad del LED: pendiente de verificación física.",
+  }),
 ])
 
 export const REVISIONES_DE_COMPONENTE: readonly RevisionDeComponente[] = Object.freeze([
