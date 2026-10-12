@@ -26,6 +26,10 @@ export const PINES_VERIFICADOS_WOKWI: Readonly<Record<string, readonly string[]>
   "wokwi-resistor": ["1", "2"],
   "wokwi-slide-switch": ["1", "2", "3"],
   "wokwi-dht22": ["VCC", "SDA", "NC", "GND"],
+  // CK-CG2: pieza PROPIA (`tecniabot-web/piezas-tecnia.js`, asset `tecnia-piezas-propias`), no
+  // del bundle. `el.pinInfo` leído en Chromium headless contra el archivo del repo el
+  // 2026-10-12 (evidencia: ~/tecnia-bot-docs/component-knowledge-ck-cg2-dht11/renderer/).
+  "pb-dht11": ["DATA", "VCC", "GND"],
   "wokwi-esp32-devkit-v1": [
     "3V3", "D12", "D13", "D14", "D15", "D18", "D19", "D2", "D21", "D22", "D23", "D25", "D26", "D27", "D32", "D33",
     "D34", "D35", "D4", "D5", "EN", "GND.1", "GND.2", "RX0", "RX2", "TX0", "TX2", "VIN", "VN", "VP",

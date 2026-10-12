@@ -78,4 +78,37 @@ export const REVISIONES_DE_COMPONENTE: readonly RevisionDeComponente[] = Object.
       "Aosong DHT22 datasheet (sha256 c91441a385cdf58f5f0ae50b194f294d5d1f0faeaac9a010efacb7ecf21be448), " +
       "Espressif ESP32 Series Datasheet v5.3 (sha256 a7917e6b47528c9dcab06837a49d452e582751335797db879f1cf2d17cd29adf).",
   }),
+  // CK-CG2: aprobada por Alejandro Palestrini (humano) el 2026-10-12, con el texto literal de abajo
+  // (§9 de DHT11-ELECTRICAL-REVIEW.md, Design Gate DHT11; veredicto externo APPROVE_WITH_LIMITATIONS).
+  // Vale para ESTE par y ESTE modelo, nada más: el módulo DFRobot Gravity DHT11 (DFR0067, placa V2)
+  // sobre ESP32 DevKit V1. No cubre el UNO, el DHT11 pelado de 4 patas ni el DHT22. Deudas:
+  // DHT-PULLUP-02 (el pull-up del módulo no se verifica físicamente) y DHT11-RANGO-01 (se declara
+  // 0-50 °C / 20-90 %RH, el mínimo común de las revisiones del chip; la V1.3 indica -20-60 °C / 5-95 %RH).
+  // El último párrafo («Addendum CK-CG2 …») NO es parte del texto aprobado: resuelve la observación del
+  // revisor externo (el manual dice «> 2 s») de forma explícita, sin alterar el texto aprobado.
+  Object.freeze({
+    tipo: "dht11",
+    placa: "esp32-devkit-v1",
+    revisadoPor: "revisión humana de Alejandro Palestrini (CK-CG2, DHT11 DFRobot Gravity DFR0067 en ESP32 DevKit V1, 2026-10-12)",
+    evidencia:
+      "nucleo/catalogo-datos.ts::DHT11 (CK-CG2). Modelo pedagógico aprobado en Tecnia Bot: módulo DFRobot Gravity DHT11 (SKU DFR0067, placa V2) " +
+      "representado mediante VCC, DATA y GND en ESP32 DevKit V1. " +
+      "VCC al 3V3 del ESP32, nunca a VIN/5 V: el chip admite 3,3–5,5 V (Aosong, DHT11 Product Manual V1.3, 2017-03-31) y la tienda de DFRobot indica 3,3–5 V; " +
+      "la wiki de DFRobot indica +5 V, contradicción documental resuelta a favor de 3,3 V porque el GPIO del ESP32 tolera 3,6 V como máximo " +
+      "(Espressif, ESP32 Series Datasheet v5.3, Tabla 5-3; ESP-FAQ hardware design). A 3,3 V el cable del módulo debe ser corto (V1.3). " +
+      "Conector Gravity J1 (PH2.0): pin 1 DATA, pin 2 VCC, pin 3 GND (DFRobot, esquemático DHT11 Temperature & Humidity Sensor Revision V2, 2013-05-20); " +
+      "la asignación se verifica por la serigrafía del módulo, nunca por el color del cable. " +
+      "El módulo trae un pull-up R1 entre DATA y VCC (5,1 kΩ en el esquemático V2; 4,7 kΩ visible en fotos de producto de 2025) y un condensador de 100 nF; no tiene LED ni regulador. " +
+      "DATA bidireccional: el microcontrolador lleva el bus a bajo al menos 18 ms (máximo 30 ms) para iniciar cada lectura (V1.3), así que requiere un GPIO con entrada y salida digital; " +
+      "GPIO34–39 no son válidos; GPIO12 (MTDI) no es válido para DATA (strapping VDD_SDIO); GPIO4 es I/O y no es pin de strapping (datasheet v5.3, Tabla 3-1). " +
+      "Espera tras el encendido: 1 s; intervalo mínimo entre lecturas: 2 s; la lectura entrega la medición anterior (V1.3). " +
+      "Rango declarado: 0–50 °C ±2 °C y 20–90 %RH ±5 %RH, resolución 1 °C / 1 %RH (DFRobot DFR0067; Aosong revisiones ≤ 2015). " +
+      "Fuentes: Aosong DHT11 Product Manual V1.3 (sha256 1b7391fafd7fee7170be4c574dc609d7353f064043f2ea27cdbdf41d172f56fe), " +
+      "DFRobot esquemático DFR0067 V2 (sha256 43010677fa259acd63b82464f6552db8616bb04ce19a186f321863451925afa7), " +
+      "DFRobot wiki DFR0067 (sha256 41adc3959d85fb3c7295689928057cc2f60a6307394092d175f22653c1685239), " +
+      "DFRobot tienda product-174 (sha256 a9c9803380d12f91e7080b04fe0a5b97e75db599456f485c411cdd417943ed64), " +
+      "Espressif ESP32 Series Datasheet v5.3 (sha256 a7917e6b47528c9dcab06837a49d452e582751335797db879f1cf2d17cd29adf). " +
+      "Addendum CK-CG2 (2026-10-12, observación del revisor externo, no forma parte del texto aprobado): el manual V1.3 indica un intervalo de lectura " +
+      "estrictamente mayor que 2 s («> 2 s»); Component Knowledge declara periodoMinimo = 3 s para cumplirlo con margen (nucleo/catalogo-datos.ts::LECTURA_DHT11).",
+  }),
 ])

@@ -144,11 +144,13 @@ test("5/6 el contrato no contiene C++, Arduino, librerías ni lib_deps", () => {
 // 7–9: hash, persistencia y compatibilidad
 // ════════════════════════════════════════════════════════════════════════════════════
 
-test("7 el hash refleja el conocimiento nuevo: 2.3.0, fijado, y la lectura y el registro de protocolos son semántica", () => {
-  assert.equal(K.catalogo.version, "2.3.0")
+test("7 el hash refleja el conocimiento nuevo: fijado, y la lectura y el registro de protocolos son semántica", () => {
+  // CK-CG2: la versión literal ("2.3.0") pasó a la fixture; este test protege que el hash ACTIVO sea
+  // el fijado y que la identidad anterior (CK-CG1, 2.3.0) siga registrada como `anterior`.
+  assert.equal(K.catalogo.version, CATALOGO_FIJADO.version)
   assert.equal(K.catalogo.hash, CATALOGO_FIJADO.hash)
   assert.notEqual(K.catalogo.hash, CATALOGO_FIJADO.anterior.hash)
-  assert.deepEqual(CATALOGO_FIJADO.anterior, { version: "2.2.0", hash: "150f74bd74b272a8334ec8bba53a1221c6e711dae42f87bf6fa2b466063b95db" })
+  assert.deepEqual(CATALOGO_FIJADO.anterior, { version: "2.3.0", hash: "b20d038cc39779213f902ca313d7e4e35a40fae8a66d9f21dadeb7285b19c901" })
   const datos = { version: VERSION_CATALOGO_MINIMO, componentes: COMPONENTES_CATALOGO_MINIMO, placas: PLACAS_CATALOGO_MINIMO, unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS } }
   const proyeccion = proyeccionSemanticaCatalogo(datos)
   assert.deepEqual(proyeccion.protocolosDeLectura, PROTOCOLOS_DE_LECTURA)

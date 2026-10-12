@@ -224,8 +224,18 @@ test("E: el rango expuesto es EXACTAMENTE el declarado en el catálogo; sin rang
   assert.equal(valorDe(sinRango.capacidadCuantitativa("sensor-sin-rango-fixture", "temperatura")).rango, null)
 })
 
-test("F: la resolución sólo aparece si está declarada (hoy ninguna capacidad real la declara)", () => {
-  for (const c of catalogo.componentes) for (const q of valorDe(k.capacidadesCuantitativas(c.id))) assert.equal(q.resolucion, null, `${c.id}.${q.capacidad}`)
+test("F: la resolución sólo aparece si está declarada (es el dato del catálogo tal cual, o null)", () => {
+  // Hasta CK-CG2 ninguna capacidad real la declaraba y el test exigía null para todas. El DHT11
+  // (CK-CG2) declara 1 °C / 1 %RH, así que lo que se protege ahora es la regla, no el conteo:
+  // la fachada devuelve exactamente la resolución declarada por el catálogo, y null si no hay.
+  for (const c of catalogo.componentes) {
+    for (const q of valorDe(k.capacidadesCuantitativas(c.id))) {
+      const declarada = c.capacidades.find((x) => x.id === q.capacidad).resolucion ?? null
+      assert.deepEqual(q.resolucion, declarada, `${c.id}.${q.capacidad}`)
+    }
+  }
+  assert.ok(catalogo.componentes.some((c) => c.capacidades.some((x) => x.resolucion !== undefined)), "al menos una capacidad real la declara (dht11)")
+  assert.ok(catalogo.componentes.some((c) => c.capacidades.some((x) => x.resolucion === undefined && x.magnitud !== undefined)), "y al menos una real no la declara")
   const res = { valor: 0.1, unidad: "celsius", magnitud: "temperatura" }
   const conRes = conocimientoCon([sensorSintetico("sensor-con-resolucion-fixture", [{ id: "temperatura", magnitud: "temperatura", unidad: "celsius", resolucion: res }])])
   assert.deepEqual(valorDe(conRes.capacidadCuantitativa("sensor-con-resolucion-fixture", "temperatura")).resolucion, res)

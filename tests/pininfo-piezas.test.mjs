@@ -22,24 +22,33 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const ARCHIVO = join(REPO, "opencode/tecniabot-web/componentes-extra.js")
+// Dos archivos con el mismo contrato: el del circuito legado y, desde CK-CG2, el de las
+// piezas propias que la vista física carga para lo que el bundle Wokwi no trae (pb-dht11).
+const ARCHIVOS = [join(REPO, "opencode/tecniabot-web/componentes-extra.js"), join(REPO, "opencode/tecniabot-web/piezas-tecnia.js")]
 
 /**
- * Corre componentes-extra.js con un customElements postizo y devuelve lo que el
- * archivo registró. El navegador no hace falta: `pinInfo` son datos, no medición.
+ * Corre cada archivo con un customElements postizo y devuelve lo que registró. El
+ * navegador no hace falta: `pinInfo` son datos, no medición. Un mismo tag definido en
+ * los dos archivos sería dos dibujos para una pieza: se rechaza.
  */
 function cargarPiezas() {
   const registro = new Map()
-  const contexto = {
-    customElements: {
-      get: (nombre) => registro.get(nombre),
-      define: (nombre, clase) => registro.set(nombre, clase),
-    },
-    HTMLElement: class {},
+  for (const archivo of ARCHIVOS) {
+    const contexto = {
+      customElements: {
+        get: (nombre) => registro.get(nombre),
+        define: (nombre, clase) => {
+          assert.ok(!registro.has(nombre), `${nombre} está definido en más de un archivo`)
+          registro.set(nombre, clase)
+        },
+      },
+      HTMLElement: class {},
+    }
+    vm.createContext(contexto)
+    const antes = registro.size
+    vm.runInContext(readFileSync(archivo, "utf8"), contexto, { filename: archivo })
+    assert.ok(registro.size > antes, `${archivo} no registró ninguna pieza`)
   }
-  vm.createContext(contexto)
-  vm.runInContext(readFileSync(ARCHIVO, "utf8"), contexto, { filename: ARCHIVO })
-  assert.ok(registro.size > 0, "el archivo no registró ninguna pieza")
   return registro
 }
 

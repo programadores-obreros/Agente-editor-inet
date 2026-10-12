@@ -122,6 +122,63 @@ export const DHT22: ComponenteDatos = {
   compatibilidades: { placas: ["esp32-devkit-v1", "arduino-uno"] },
 }
 
+// ── dht11 ───────────────────────────────────────────────────────────────────────────
+// CK-CG2 (revisión eléctrica humana de Alejandro Palestrini, 2026-10-12; fuentes primarias: Aosong,
+// DHT11 Product Manual V1.3 (2017-03-31) y DFRobot, esquemático DFR0067 Revision V2). Modelo
+// pedagógico: el MÓDULO DFRobot Gravity DHT11 de tres cables (SKU DFR0067), representado por VCC,
+// DATA y GND. Mismo molde que el DHT22; lo que lo distingue es el protocolo y los números:
+// - DATA es BIDIRECCIONAL: el microcontrolador lleva el bus a bajo al menos 18 ms para iniciar
+//   cada lectura, así que pide un pin con entrada Y salida digital (GPIO34-39 no sirven).
+// - El bus requiere un pull-up a VCC: `pullUpExterno` (el módulo trae R1 según el esquemático; el
+//   Engine NO lo verifica: deuda DHT-PULLUP-02, hermana de DHT-PULLUP-01).
+// - Protocolo `bus-unico-dht11` (`registros/vocabulario.ts`): no es una variante del AM2302, y
+//   hasta Codegen S2b no tiene backend: el DHT11 queda NO GENERABLE (CODEGEN_PROTOCOLO_SIN_BACKEND).
+// - Intervalo mínimo entre lecturas: el manual V1.3 dice «> 2 s» (estrictamente mayor). Se
+//   declara 3 s, el entero más chico que lo cumple con margen; la revisión eléctrica aprobada
+//   dice «2 s» y lleva un addendum explícito con esta resolución (no se corrigió en silencio).
+//   Espera tras el encendido: 1 s (V1.3).
+// - Rango declarado 0-50 °C / 20-90 %RH: lo que DFRobot garantiza para el módulo y el mínimo
+//   común de las revisiones del chip (la V1.3 indica −20-60 °C / 5-95 %RH): deuda DHT11-RANGO-01.
+//   Resolución 1 °C / 1 %RH (bytes enteros; informativa, no bloquea umbrales).
+const LECTURA_DHT11: LecturaDeCapacidad = {
+  terminal: "senal",
+  mecanismo: "protocolo",
+  protocolo: "bus-unico-dht11",
+  periodoMinimo: { valor: 3, unidad: "segundo", magnitud: "tiempo" },
+  esperaTrasEncendido: { valor: 1, unidad: "segundo", magnitud: "tiempo" },
+}
+
+export const DHT11: ComponenteDatos = {
+  id: "dht11",
+  clase: "sensor",
+  terminales: [
+    { id: "vcc", rol: "alimentacion", electrica: "riel-fijo", destinoFijo: "VLOGICA" },
+    { id: "senal", rol: "senal", electrica: "digital", direccion: "bidireccional", pullUpExterno: true },
+    { id: "gnd", rol: "tierra", electrica: "riel-fijo", destinoFijo: "GND" },
+  ],
+  capacidades: [
+    {
+      id: "temperatura",
+      magnitud: "temperatura",
+      unidad: "celsius",
+      rango: { min: { valor: 0, unidad: "celsius", magnitud: "temperatura" }, max: { valor: 50, unidad: "celsius", magnitud: "temperatura" } },
+      resolucion: { valor: 1, unidad: "celsius", magnitud: "temperatura" },
+      lectura: LECTURA_DHT11,
+    },
+    {
+      id: "humedad",
+      magnitud: "humedad",
+      unidad: "porcentaje",
+      rango: { min: { valor: 20, unidad: "porcentaje", magnitud: "humedad" }, max: { valor: 90, unidad: "porcentaje", magnitud: "humedad" } },
+      resolucion: { valor: 1, unidad: "porcentaje", magnitud: "humedad" },
+      lectura: LECTURA_DHT11,
+    },
+  ],
+  requisitos: [],
+  // La validez eléctrica por placa sale de la revisión por par, no de esta lista (ver `INTERRUPTOR`).
+  compatibilidades: { placas: ["esp32-devkit-v1", "arduino-uno"] },
+}
+
 // ── ntc ─────────────────────────────────────────────────────────────────────────────
 // circuito.ts:1312-1320 (`COMPONENTES.ntc`): VCC a VLOGICA, salida ANALÓGICA, GND
 // fijo. Rango OBSERVED en `SENSOR_SIM.ntc` (circuito.ts:1852): 0-60°C, mismo valor que
@@ -180,7 +237,7 @@ export const INTERRUPTOR: ComponenteDatos = {
   compatibilidades: { placas: ["esp32-devkit-v1", "arduino-uno"] },
 }
 
-export const COMPONENTES_CATALOGO_MINIMO: readonly ComponenteDatos[] = [LED, RESISTENCIA, PULSADOR, DHT22, NTC, INTERRUPTOR]
+export const COMPONENTES_CATALOGO_MINIMO: readonly ComponenteDatos[] = [LED, RESISTENCIA, PULSADOR, DHT22, NTC, INTERRUPTOR, DHT11]
 
 // Sólo °C↔°F (T_diseno_consolidado.md §4.1: "unidades? ... sólo °C↔°F"). Ningún
 // componente shippeado usa Fahrenheit hoy — esta conversión existe para que la rama B
@@ -207,4 +264,8 @@ export const CONVERSIONES_UNIDAD_MINIMAS: readonly ConversionUnidad[] = [
 // bidireccional y GPIO12 con `strappingVddSdio`. Cambio MENOR, mismo criterio que 2.1.0: cambia
 // el significado de piezas existentes (el DHT22 en GPIO34-39 o GPIO12 deja de estar listo); los
 // proyectos 2.2.0 lo ven con `CATALOGO_CAMBIO_DETECTADO` (informativo; `createdWith` no se reescribe).
-export const VERSION_CATALOGO_MINIMO = "2.3.0"
+// 2.4.0 — CK-CG2: se agrega `dht11` (módulo DFRobot Gravity) con el protocolo `bus-unico-dht11` en el
+// registro. Cambio MENOR, mismo criterio que 2.2.0: se suma un tipo sin cambiar el significado de los
+// existentes; el hash cambia porque el registro de protocolos entra al hash. Los proyectos 2.3.0 lo
+// ven con `CATALOGO_CAMBIO_DETECTADO` (informativo; `createdWith` no se reescribe ni se migra).
+export const VERSION_CATALOGO_MINIMO = "2.4.0"

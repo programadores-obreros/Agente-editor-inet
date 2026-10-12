@@ -140,5 +140,22 @@
     },
     "officiallySupported": true,
     "problemas": []
+  },
+  {
+    "kind": "componente",
+    "id": "dht11",
+    "categoria": "sensor",
+    "flags": {
+      "semantico": true,
+      "electrico": true,
+      "representacion": {
+        "wokwi": true
+      },
+      "acciones": null,
+      "pedagogia": true,
+      "procedencia": true
+    },
+    "officiallySupported": true,
+    "problemas": []
   }
 ]

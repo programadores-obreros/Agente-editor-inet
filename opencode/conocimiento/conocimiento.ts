@@ -210,7 +210,8 @@ export function crearConocimiento(catalogo: Catalogo): ComponentKnowledge {
       if (kind === "componente") {
         const elemento = ELEMENTO_WOKWI_POR_TIPO[id]
         if (!elemento) return undefined
-        return congelarProfundo({ elemento, terminales: TERMINAL_WOKWI_POR_TIPO[id] ?? {}, atributos: ATRIBUTOS_POR_TIPO[id] ?? {}, assetId: assetDeRepresentacionWokwi() })
+        // CK-CG2: el asset se elige por ELEMENTO (una pieza propia tiene su propia procedencia).
+        return congelarProfundo({ elemento, terminales: TERMINAL_WOKWI_POR_TIPO[id] ?? {}, atributos: ATRIBUTOS_POR_TIPO[id] ?? {}, assetId: assetDeRepresentacionWokwi(elemento) })
       }
       const elemento = ELEMENTO_WOKWI_POR_PLACA[id]
       if (!elemento) return undefined

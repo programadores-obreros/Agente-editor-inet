@@ -133,6 +133,20 @@ export const ELEMENTO_WOKWI_POR_TIPO: Readonly<Record<string, string>> = {
   // CK-CG1: `wokwi-dht22`, ya definido en el mismo bundle (sin asset nuevo). `pinInfo` leído del
   // bundle vendorizado (sha256 4f860e90…a06d): VCC, SDA, NC, GND (= docs/wokwi-pinout-dump.md:84).
   dht22: "wokwi-dht22",
+  // CK-CG2: el bundle Wokwi no trae un DHT11 y la decisión de producto (2026-10-12) fue NO
+  // dibujar un DHT22 rotulado DHT11: `pb-dht11` es una pieza propia
+  // (`tecniabot-web/piezas-tecnia.js`, asset `tecnia-piezas-propias` en `procedencia.ts`) que
+  // dibuja el módulo DFRobot Gravity de 3 pines. `pinInfo` leído en Chromium real: DATA, VCC, GND.
+  dht11: "pb-dht11",
+}
+
+/**
+ * CK-CG2: asset que respalda cada ELEMENTO. Los `wokwi-*` salen del bundle vendorizado; una
+ * pieza propia tiene su propio registro de procedencia. La fachada lo consulta por elemento:
+ * sin esto, el check 11 de admisión miraría el hash del bundle para un archivo que no es.
+ */
+export const ASSET_POR_ELEMENTO: Readonly<Record<string, string>> = {
+  "pb-dht11": "tecnia-piezas-propias",
 }
 
 // docs/wokwi-pinout-dump.md:79 (`wokwi-led | A C`, confirmado contra el bundle real)
@@ -166,6 +180,8 @@ export const TERMINAL_WOKWI_POR_TIPO: Readonly<Record<string, Readonly<Record<st
   interruptor: { senal: "2", gnd: "1" },
   // CK-CG1: los tres terminales del modelo van a VCC/SDA/GND de la pieza; `NC` queda sin conectar.
   dht22: { vcc: "VCC", senal: "SDA", gnd: "GND" },
+  // CK-CG2: los tres terminales del modelo van a los tres pines del conector Gravity.
+  dht11: { vcc: "VCC", senal: "DATA", gnd: "GND" },
 }
 
 // circuito.ts:949-975 (`COMPONENTES.led`, color por índice `[red,yellow,green][i%3]`

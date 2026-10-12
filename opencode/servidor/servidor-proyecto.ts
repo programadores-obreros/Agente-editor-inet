@@ -60,6 +60,9 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
   return new Map([
     ["wokwi-bundle.js", join(DIR_TECNIABOT_WEB, "wokwi-bundle.js")],
     ["componentes-extra.js", join(DIR_TECNIABOT_WEB, "componentes-extra.js")],
+    // CK-CG2: piezas propias con procedencia (`anexos/procedencia.ts`) para lo que el bundle
+    // Wokwi no trae; hoy, <pb-dht11>. index.html lo carga como script clásico, igual que el bundle.
+    ["piezas-tecnia.js", join(DIR_TECNIABOT_WEB, "piezas-tecnia.js")],
     // Phase 3 (vertical #2, contrato §11): Blockly 13.3.0 vendorizado (núcleo + mensajes es), sin medios.
     ["blockly_compressed.js", join(DIR_TECNIABOT_WEB, "blockly_compressed.js")],
     ["blockly-es.js", join(DIR_TECNIABOT_WEB, "blockly-es.js")],

@@ -18,6 +18,8 @@ export const NOMBRE_DE_COMPONENTE: Readonly<Record<string, string>> = {
   dht22: "DHT22",
   ntc: "Sensor de temperatura NTC",
   interruptor: "Interruptor",
+  // CK-CG2: el módulo DFRobot Gravity de 3 cables, no el chip pelado de 4 patas.
+  dht11: "DHT11 (módulo Gravity)",
 }
 
 export const NOMBRE_DE_PLACA: Readonly<Record<string, string>> = {
@@ -32,6 +34,9 @@ export const CONCEPTOS_DE_COMPONENTE: Readonly<Record<string, readonly string[]>
   ntc: ["sensor analógico", "temperatura", "termistor"],
   // D0: lo que lo distingue del pulsador es pedagógico: queda en la posición en que lo dejan.
   interruptor: ["entrada digital", "INPUT_PULLUP", "estado mantenido"],
+  // CK-CG2: mide lo mismo que el DHT22, con menos precisión (±2 °C) y sin decimales; lee cada
+  // 3 s y entrega la medición anterior, así que el LED tarda unos segundos en reaccionar.
+  dht11: ["sensor digital", "temperatura", "humedad", "lectura lenta"],
 }
 
 /**
@@ -45,6 +50,8 @@ export const ETIQUETA_POR_TIPO_Y_TERMINAL: Readonly<Record<string, Readonly<Reco
   pulsador: { senal: "señal", gnd: "GND" },
   interruptor: { senal: "señal", gnd: "GND" },
   dht22: { vcc: "VCC (+)", senal: "señal (DATA)", gnd: "GND" },
+  // CK-CG2: en la serigrafía del módulo Gravity la señal es «D»; el nombre completo es DATA.
+  dht11: { vcc: "VCC (+)", senal: "señal (D / DATA)", gnd: "GND" },
 }
 
 /** Tabla genérica de Wave 0 (F-09), por id de terminal: se conserva tal cual como

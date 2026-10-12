@@ -80,9 +80,16 @@ export const MECANISMOS_DE_LECTURA = congelarProfundo(["protocolo"] as const)
  * - `bus-unico-am2302`: formato de datos AM2302/DHT22 sobre un bus de un solo cable; el
  *   microcontrolador inicia cada lectura llevando el bus a bajo (Aosong, Manual AM2302 v1.1,
  *   §7.2 y §7.4). Otro formato (p. ej. el del DHT11) sería OTRO protocolo, no una variante.
+ * - `bus-unico-dht11` (CK-CG2): formato de trama del chip DHT11 (ASAIR/Aosong) sobre el mismo
+ *   bus de un cable. Difiere del AM2302 en lo que define al protocolo: el host inicia con el bus
+ *   al menos 18 ms en bajo (no 0,8 ms) y los 40 bits son cuatro bytes entero/decimal más la
+ *   suma de control, no dos enteros de 16 bits ×0,1 (Aosong, DHT11 Product Manual V1.3,
+ *   2017-03-31, comunicación serie y tabla 10). Nombra el formato del chip, no la pieza del
+ *   catálogo: cualquier pieza que hable este formato declara este id.
  */
 export const PROTOCOLOS_DE_LECTURA = congelarProfundo({
   "bus-unico-am2302": { familia: "bus-unico" },
+  "bus-unico-dht11": { familia: "bus-unico" },
 } as const satisfies Record<string, { readonly familia: string }>)
 
 /** Clase funcional de un componente. */
