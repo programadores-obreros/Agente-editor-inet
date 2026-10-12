@@ -227,21 +227,28 @@ test("GEN-1 admisión por placa: esp32-devkit-v1 sí; arduino-uno no (sin revisi
   assert.ok(uno.problemas.some((p) => p.includes("sin revisión eléctrica humana para la placa")))
 })
 
-test("GEN-2 sin backend: cada capacidad informa CODEGEN_PROTOCOLO_SIN_BACKEND con datos estructurados y generableEn vacío (ninguna falsa promesa)", () => {
-  assert.ok(!Object.hasOwn(BACKENDS_DE_PROTOCOLO, "bus-unico-dht11"), "CK-CG2 no registra ningún backend: eso es S2b")
-  const g = generabilidad(K).componentes.find((c) => c.tipo === "dht11")
+// Historia: en CK-CG2 (4f53b65) estos dos tests exigían CODEGEN_PROTOCOLO_SIN_BACKEND, porque el
+// backend todavía no existía (L4). Codegen S2b lo registró. Lo que se conserva acá es la REGLA, con
+// el registro de backends sin su entrada: sin backend, el dht11 informa el motivo estructurado y
+// nunca una falsa promesa. El estado GENERABLE lo prueba `codegen-s2b-dht11.test.mjs`.
+const SIN_BACKEND_DHT11 = Object.fromEntries(Object.entries(BACKENDS_DE_PROTOCOLO).filter(([p]) => p !== "bus-unico-dht11"))
+
+test("GEN-2 sin backend para su protocolo: cada capacidad informa CODEGEN_PROTOCOLO_SIN_BACKEND con datos estructurados y generableEn vacío (ninguna falsa promesa)", () => {
+  assert.ok(!Object.hasOwn(SIN_BACKEND_DHT11, "bus-unico-dht11"))
+  const g = generabilidad(K, { protocolos: SIN_BACKEND_DHT11 }).componentes.find((c) => c.tipo === "dht11")
   assert.deepEqual(g.generableEn, [])
   for (const capacidad of ["temperatura", "humedad"]) {
     const c = g.capacidades.find((x) => x.capacidad === capacidad)
     assert.deepEqual(c.lectura, { soportada: false, codigo: "CODEGEN_PROTOCOLO_SIN_BACKEND", datos: { tipo: "dht11", capacidad, protocolo: "bus-unico-dht11" }, mecanismo: null, protocolo: null })
     assert.deepEqual(c.generableEn, [])
   }
+  assert.ok(g.porPlaca.find((p) => p.placa === "esp32-devkit-v1").admitido, "la admisión eléctrica no depende de la generabilidad")
 })
 
-test("GEN-3 generarPrograma de un proyecto dht11 LISTO falla cerrado con CODEGEN_PROTOCOLO_SIN_BACKEND y sin archivos", () => {
+test("GEN-3 generarPrograma de un proyecto dht11 LISTO, sin backend para su protocolo, falla cerrado con CODEGEN_PROTOCOLO_SIN_BACKEND y sin archivos", () => {
   const p = proyecto(opsDht11("GPIO4", MAYOR_30))
   assert.equal(readinessDe(p).listo, true)
-  const r = generarPrograma(p, K)
+  const r = generarPrograma(p, K, { protocolos: SIN_BACKEND_DHT11 })
   assert.equal(r.ok, false)
   assert.equal(r.error.codigo, "CODEGEN_PROTOCOLO_SIN_BACKEND")
   assert.deepEqual(r.error.datos, { comportamiento: "beh-4", componente: "cmp-0", tipo: "dht11", capacidad: "temperatura", protocolo: "bus-unico-dht11" })
@@ -265,9 +272,10 @@ test("GEN-6 la proyección para el agente (proyecto-fisico leer) lista el dht11 
   assert.ok(entrada, JSON.stringify(r.condicionesNumericas.catalogo.map((t) => t.tipo)))
   assert.equal(entrada.nombre, "DHT11 (módulo Gravity)")
   assert.deepEqual(entrada.capacidades.map((c) => [c.capacidad, c.etiqueta, c.disponible]), [["temperatura", "temperatura", true], ["humedad", "humedad relativa", true]])
-  const g = r.generabilidad.componentes.find((c) => c.tipo === "dht11")
-  assert.deepEqual(g.generableEn, [])
-  assert.equal(g.capacidades[0].lectura.codigo, "CODEGEN_PROTOCOLO_SIN_BACKEND")
+  // La proyección para el agente sale del MISMO resolver que `generabilidad(K)` (sin tabla aparte).
+  const { nombre, ...g } = r.generabilidad.componentes.find((c) => c.tipo === "dht11")
+  assert.equal(nombre, "DHT11 (módulo Gravity)")
+  assert.deepEqual(g, JSON.parse(JSON.stringify(generabilidad(K).componentes.find((c) => c.tipo === "dht11"))))
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -310,13 +318,16 @@ test("REV-2 observación del revisor («> 2 s»): el texto aprobado dice 2 s y N
   assert.equal(K.lecturaDeCapacidad("dht22", "temperatura").periodoMinimo.valor, 2, "el DHT22 no cambia")
 })
 
-test("REV-3 deudas registradas en el código: DHT-PULLUP-02 y DHT11-RANGO-01; CK-CG2 no toca admision.ts, codegen/ ni la IR", () => {
+test("REV-3 deudas registradas en el código: DHT-PULLUP-02 y DHT11-RANGO-01; ni la admisión, ni la IR, ni el Engine ni el gate del codegen nombran al DHT11", () => {
   const datos = leer("opencode/nucleo/catalogo-datos.ts")
   assert.match(datos, /DHT-PULLUP-02/)
   assert.match(datos, /DHT11-RANGO-01/)
   const anexo = leer("opencode/conocimiento/anexos/revision-electrica.ts")
   for (const deuda of ["DHT-PULLUP-02", "DHT11-RANGO-01"]) assert.match(anexo, new RegExp(deuda))
-  for (const archivo of ["opencode/codegen/protocolos.ts", "opencode/codegen/programa.ts", "opencode/codegen/generabilidad.ts", "opencode/conocimiento/admision.ts", "opencode/nucleo/ir.ts", "opencode/nucleo/operaciones.ts", "opencode/nucleo/validar-tecnico.ts"]) {
+  // S2b agregó el backend del protocolo `bus-unico-dht11` en codegen/protocolos.ts (es su lugar); el gate
+  // y la generabilidad siguen sin nombrar la pieza, y A3 de codegen-s2b garantiza que ningún archivo de
+  // codegen/ usa el id del componente entre comillas.
+  for (const archivo of ["opencode/codegen/programa.ts", "opencode/codegen/generabilidad.ts", "opencode/conocimiento/admision.ts", "opencode/nucleo/ir.ts", "opencode/nucleo/operaciones.ts", "opencode/nucleo/validar-tecnico.ts"]) {
     assert.doesNotMatch(leer(archivo), /dht11|DHT11/, `${archivo} nombra al DHT11`)
   }
 })

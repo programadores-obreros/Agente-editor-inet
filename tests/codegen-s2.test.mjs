@@ -428,7 +428,8 @@ test("A1 el codegen consume lecturaDeCapacidad y elige el backend por el protoco
   // El gate compartido (`resolverLectura`, que también usa la proyección de generabilidad).
   assert.match(programa, /conocimiento\.lecturaDeCapacidad\(sensor\.id, capacidad\.id\)/)
   assert.match(programa, /backendDeProtocolo\(backends, declarada\.protocolo\)/)
-  assert.deepEqual(Object.keys(BACKENDS_DE_PROTOCOLO), ["bus-unico-am2302"])
+  // S2b sumó `bus-unico-dht11` al mismo registro (no hay un segundo registro paralelo).
+  assert.deepEqual(Object.keys(BACKENDS_DE_PROTOCOLO), ["bus-unico-am2302", "bus-unico-dht11"])
   // Un backend espía registrado para el MISMO protocolo es el que se usa: no hay otra ruta.
   const espia = { ...BACKENDS_DE_PROTOCOLO["bus-unico-am2302"], funcion: "espia_leer", driver: ["static bool espia_leer(uint8_t pin, uint8_t datos[]) {", "  return false;", "}"] }
   const cpp = mainDe(opsDht(MAYOR_30), K, { protocolos: { "bus-unico-am2302": espia } })
