@@ -29,6 +29,15 @@ export const NIVELES = Object.freeze(["alto", "bajo"] as const)
 export const CAUSAS_DE_REINICIO = Object.freeze(["encendido", "software", "brownout", "watchdog", "otro"] as const)
 
 /**
+ * Los mismos valores, como objetos nombrados (auditoría A6, T-04): quien necesita UN modo, nivel o
+ * causa lo toma por nombre (`MODO.salida`) y no por índice en la lista (`MODOS_DE_PIN[2]`). Las
+ * listas siguen siendo la fuente del orden y de la validación.
+ */
+export const MODO = Object.freeze({ entrada: "entrada", entradaPullUp: "entradaPullUp", salida: "salida" } as const)
+export const NIVEL = Object.freeze({ alto: "alto", bajo: "bajo" } as const)
+export const CAUSA = Object.freeze({ encendido: "encendido", software: "software", brownout: "brownout", watchdog: "watchdog", otro: "otro" } as const)
+
+/**
  * Nombres de los campos del formato plano, como vocabulario exportado: el generador del runtime
  * (`codegen/runtime-cpp.ts`) los toma de acá y no los escribe como literales. Importa, porque
  * `porcentaje` también es un id de unidad del catálogo y la guardia C2 de `codegen-s2.test.mjs`

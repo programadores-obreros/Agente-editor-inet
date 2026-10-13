@@ -58,6 +58,10 @@ export function crearRuntimeSimulado({ placa = REGISTRO_PLACAS["esp32-devkit-v1"
       case "pin.modo": {
         const e = validarPin(c.comando, c.pin, c.modo === "salida" ? "salida" : "entrada")
         if (e) return respuestaDeError(e)
+        // V4-6 (auditoría H4): los pines de sólo entrada (34–39) no tienen pull-up interno
+        // (ESP-IDF driver/gpio.h: "Input-only GPIOs 34-39 do not have pull-up/down"); pedirlo
+        // respondía `ok` con el pin flotando. Un OK falso es peor que un error.
+        if (c.modo === "entradaPullUp" && porNumero.get(c.pin).restricciones.includes("soloEntrada")) return respuestaDeError({ codigo: "PIN_SIN_CAPACIDAD", comando: c.comando, pin: c.pin })
         modos.set(c.pin, c.modo)
         if (c.modo !== "salida") salidas.delete(c.pin)
         return { tipo: "ok", comando: c.comando, pin: c.pin }
@@ -91,6 +95,11 @@ export function crearRuntimeSimulado({ placa = REGISTRO_PLACAS["esp32-devkit-v1"
       case "analogico.leer": {
         const e = validarPin(c.comando, c.pin, "adc")
         if (e) return respuestaDeError(e)
+        // V4-6 (auditoría A1 de tests): en el core, `analogRead` deja el pin en modo ANALOG (driver
+        // digital deshabilitado: esp32-hal-adc.c → pinMode(pin, ANALOG)). El pin queda SIN configurar:
+        // la próxima escritura o lectura digital lo tiene que reconfigurar, nunca asumir el modo anterior.
+        modos.delete(c.pin)
+        salidas.delete(c.pin)
         return { tipo: "lectura", pin: c.pin, crudo: analogicos.get(c.pin) ?? 0 }
       }
     }
@@ -147,4 +156,13 @@ export const CASOS_DORADOS = Object.freeze([
   { entrada: "Hola", salida: ['{"codigo":"LINEA_INVALIDA","tipo":"error"}'] },
   { entrada: "", salida: [] },
   { entrada: `ping ${"x".repeat(200)}`, salida: ['{"codigo":"LINEA_DEMASIADO_LARGA","tipo":"error"}'] },
+  // V4-6: pull-up pedido en un pin de sólo entrada → rechazo (antes: ok con el pin flotando).
+  { entrada: "pin.modo pin=34 modo=entradaPullUp", salida: ['{"codigo":"PIN_SIN_CAPACIDAD","comando":"pin.modo","pin":34,"tipo":"error"}'] },
+  { entrada: "pin.modo pin=34 modo=entrada", salida: ['{"comando":"pin.modo","pin":34,"tipo":"ok"}'] },
+  // V4-6: una lectura analógica deja el pin sin configurar; la escritura siguiente lo reconfigura de verdad.
+  { entrada: "digital.escribir pin=32 nivel=alto", salida: ['{"comando":"digital.escribir","pin":32,"tipo":"ok"}'] },
+  { entrada: "analogico.leer pin=32", salida: ['{"crudo":0,"pin":32,"tipo":"lectura"}'] },
+  { entrada: "digital.leer pin=32", salida: ['{"nivel":"bajo","pin":32,"tipo":"lectura"}'] },
+  { entrada: "digital.escribir pin=32 nivel=alto", salida: ['{"comando":"digital.escribir","pin":32,"tipo":"ok"}'] },
+  { entrada: "digital.leer pin=32", salida: ['{"nivel":"alto","pin":32,"tipo":"lectura"}'] },
 ])
