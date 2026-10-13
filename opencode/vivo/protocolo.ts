@@ -79,6 +79,18 @@ export interface RedWifi {
   readonly ip: string
 }
 
+/** Largo máximo de un SSID en bytes (802.11; `wifi_config_t.ap.ssid` en la ESP32 mide exactamente eso). */
+export const LARGO_MAXIMO_SSID = 32
+
+/**
+ * Un SSID válido para el runtime: 1..`LARGO_MAXIMO_SSID` bytes ASCII imprimibles, sin `"` ni `\`
+ * (sale en el `hola` sin escapar, sec. 1: strings ASCII).
+ */
+export function esSsidValido(nombre: string): boolean {
+  if (typeof nombre !== "string" || nombre.length < 1 || nombre.length > LARGO_MAXIMO_SSID) return false
+  return /^[\x20-\x7e]*$/.test(nombre) && !nombre.includes('"') && !nombre.includes("\\")
+}
+
 export type Respuesta =
   | {
       readonly tipo: "hola"

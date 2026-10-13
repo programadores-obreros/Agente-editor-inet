@@ -33,7 +33,8 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const { generarRuntime, CAMPOS_POR_COMANDO, VERSION_RUNTIME, pinesProhibidosDe, PAGINA_V4A, IP_PORTAL, RUTA_COMANDO } = await import(join(REPO, "opencode/codegen/runtime.ts"))
+const { generarRuntime, CAMPOS_POR_COMANDO, VERSION_RUNTIME, pinesProhibidosDe, IP_PORTAL } = await import(join(REPO, "opencode/codegen/runtime.ts"))
+const { RUTA_COMANDO, renderizarPaginaPortal } = await import(join(REPO, "opencode/vivo/pagina-portal.ts"))
 const { REGISTRO_PLACAS } = await import(join(REPO, "opencode/nucleo/placas.ts"))
 const P = await import(join(REPO, "opencode/vivo/protocolo.ts"))
 const { crearRuntimeSimulado, CASOS_DORADOS, pinesProhibidos, RUNTIME_VERSION } = await import(join(REPO, "tests/vivo-simulador.mjs"))
@@ -48,13 +49,17 @@ const INI = generado.archivos["platformio.ini"]
 // 2026-10-13); la variante con clave usa la misma clave fija que `tests/vivo-protocolo.test.mjs`.
 const CLAVE_WIFI = "48213907"
 const IP_TEXTO = IP_PORTAL.join(".")
-const generadoWifi = generarRuntime(esp32, { wifi: { clave: "" } })
+// Los pines de la página son una OPCION del generador (nunca literales en codegen/): acá sí van números.
+// Página fija de prueba (para los hashes) y la página del E2E (sec. 8.3: GPIO2 y GPIO18, GPIO4, GPIO34).
+const PAGINA_DE_PRUEBA = Object.freeze({ salidas: [18], salidasExtra: [], entradasDigitales: [4], entradasAnalogicas: [34] })
+const PAGINA_E2E = Object.freeze({ salidas: [2, 18], salidasExtra: [], entradasDigitales: [4], entradasAnalogicas: [34] })
+const generadoWifi = generarRuntime(esp32, { wifi: { clave: "" }, pagina: PAGINA_DE_PRUEBA })
 const MAIN_WIFI = generadoWifi.archivos["src/main.cpp"]
 const INI_WIFI = generadoWifi.archivos["platformio.ini"]
-const MAIN_WIFI_CON_CLAVE = generarRuntime(esp32, { wifi: { clave: CLAVE_WIFI } }).archivos["src/main.cpp"]
-// SSID fijado al generar (decisión de Alejandro, 2026-10-13): el E2E de esta noche usa `MI_ESP` y red abierta.
+const MAIN_WIFI_CON_CLAVE = generarRuntime(esp32, { wifi: { clave: CLAVE_WIFI }, pagina: PAGINA_DE_PRUEBA }).archivos["src/main.cpp"]
+// SSID fijado al generar (decisión de Alejandro, 2026-10-13): el E2E usa `MI_ESP` y red abierta.
 const SSID_FIJO = "MI_ESP"
-const generadoWifiSsidFijo = generarRuntime(esp32, { wifi: { clave: "", ssid: SSID_FIJO } })
+const generadoWifiSsidFijo = generarRuntime(esp32, { wifi: { clave: "", ssid: SSID_FIJO }, pagina: PAGINA_DE_PRUEBA })
 const MAIN_WIFI_SSID_FIJO = generadoWifiSsidFijo.archivos["src/main.cpp"]
 
 const CABECERA_NUCLEO = "// CAPA 1: NUCLEO PURO"
@@ -885,15 +890,17 @@ test("F1 forma: el runtime de sólo serie no cambia ni un byte; con wifi el hash
   assert.equal(sha(MAIN), "c7b8a9b625214f1eecd0c79e69149354c8bae0f40782b38ceeb30b04dbc2f160", "el hash de V1 (el del E2E físico) no se mueve")
   assert.doesNotMatch(MAIN, /WiFi|WebServer|DNSServer|CAPA 3|String|wifi|ssid/i, "sin la opción no hay rastro de la red")
   assert.equal(INI_WIFI, INI, "el platformio.ini es el mismo: las librerías son del core, sin lib_deps")
-  assert.deepEqual(generarRuntime(esp32, { wifi: { clave: "" } }), generadoWifi, "determinista")
+  assert.deepEqual(generarRuntime(esp32, { wifi: { clave: "" }, pagina: PAGINA_DE_PRUEBA }), generadoWifi, "determinista")
+  assert.throws(() => generarRuntime(esp32, { wifi: { clave: "" } }), /pagina .*obligatoria/, "con wifi, la página es obligatoria")
+  assert.deepEqual(generarRuntime(esp32, { pagina: PAGINA_DE_PRUEBA }), generado, "sin wifi, la página no cambia nada: el runtime es el de V1")
   assert.ok(MAIN_WIFI.indexOf(CABECERA_NUCLEO) < MAIN_WIFI.indexOf(CABECERA_TRANSPORTE) && MAIN_WIFI.indexOf(CABECERA_TRANSPORTE) < MAIN_WIFI.indexOf(CABECERA_PORTAL), "capa 1 < capa 2 < capa 3")
   for (const inc of ["#include <Arduino.h>", "#include <WiFi.h>", "#include <DNSServer.h>", "#include <WebServer.h>"]) assert.ok(MAIN_WIFI.includes(inc), inc)
   assert.ok(/^[\x09\x0a\x20-\x7e]*$/.test(MAIN_WIFI), "ASCII")
   assert.doesNotMatch(MAIN_WIFI, /\d{4}-\d{2}-\d{2}T/, "sin marcas temporales")
   // Hashes fijados: red abierta (el default) y con clave. Cambiarlos es a propósito y el commit lo dice.
-  assert.equal(sha(MAIN_WIFI), "471b473215ce646da52fb1c147a899db13d2e5f9502b8707f1dc5edfaccdf6e3")
-  assert.equal(sha(MAIN_WIFI_CON_CLAVE), "893ccb590148d4972b41011e7cf4f5ccbbbd94d90afa7ea73bcea99f2a07fbc9")
-  assert.equal(sha(MAIN_WIFI_SSID_FIJO), "91c8ff3a712596f3716c26197bb4c2a7b27683ae15586d2e04a9ad188913eb64")
+  assert.equal(sha(MAIN_WIFI), "2fd2cced1ef8e6ec3089a5c47da39f664bed5f73b9297b1bb1c4570fdb76fa58")
+  assert.equal(sha(MAIN_WIFI_CON_CLAVE), "dd1893c70c1ae5e9a21269e54cd08ba5c1be1bb947f30dc0d339fb5b5e1ca799")
+  assert.equal(sha(MAIN_WIFI_SSID_FIJO), "f5ecf35d21cac35f9ca8ca351bd26c33179958a5d5abac8b3b5f574a7788aa96")
   assert.ok(MAIN_WIFI.includes('static const char TEXTO_WIFI_CLAVE[] = "";') && MAIN_WIFI.includes("WiFi.softAP(ssid))"), "abierta: clave vacía en el hola y softAP(ssid) solo (passphrase NULL por defecto, WiFiAP.h:40)")
   assert.ok(MAIN_WIFI_CON_CLAVE.includes(`static const char TEXTO_WIFI_CLAVE[] = "${CLAVE_WIFI}";`) && MAIN_WIFI_CON_CLAVE.includes("WiFi.softAP(ssid, TEXTO_WIFI_CLAVE))"), "con clave: la clave va al softAP, sin canal")
   // V4-3: nunca se pasa un canal a softAP ni se elige por MAC (E2E 2026-10-13: con canal 6/11 la red no se veía).
@@ -904,16 +911,36 @@ test("F1 forma: el runtime de sólo serie no cambia ni un byte; con wifi el hash
     assert.ok(main.includes("Decision V4-3"), "la decisión está anotada en el C++ (en un comentario)")
   }
   for (const clave of ["1234567", "123456789", "abcdefgh", "4821390 ", " 48213907", "4821-907", 48213907, undefined, null]) {
-    assert.throws(() => generarRuntime(esp32, { wifi: { clave } }), /8 digitos/, JSON.stringify(clave))
+    assert.throws(() => generarRuntime(esp32, { wifi: { clave }, pagina: PAGINA_DE_PRUEBA }), /8 digitos/, JSON.stringify(clave))
   }
+  // La página se valida contra la política de la placa, lista por lista: existe, no prohibido, y la capacidad del rol.
+  const con = (cambios) => ({ ...PAGINA_DE_PRUEBA, ...cambios })
+  const paginasMalas = [
+    [con({ salidas: [6] }), /prohibido/, "GPIO6 (flash) como salida"],
+    [con({ entradasDigitales: [1] }), /prohibido/, "GPIO1 (UART0) como entrada"],
+    [con({ salidasExtra: [34] }), /no puede ser salida/, "GPIO34 (sólo entrada) como salida"],
+    [con({ entradasAnalogicas: [2] }), /no puede ser entrada analogica/, "GPIO2 (sin ADC) como analógica"],
+    [con({ salidas: [40] }), /no existe/, "GPIO40 no existe"],
+    [con({ entradasDigitales: [4, 4] }), /repite/, "repetido en su rol"],
+    [con({ salidas: [18], salidasExtra: [18] }), /salidas y en salidasExtra/, "el mismo en las dos listas de salidas"],
+    [con({ salidas: "18" }), /lista de numeros/, "no es una lista"],
+    [con({ salidas: [2.5] }), /no existe/, "no entero"],
+    [{ salidas: [18] }, /lista de numeros/, "faltan listas"],
+    [null, /obligatoria/, "null"],
+  ]
+  for (const [pagina, forma, que] of paginasMalas) assert.throws(() => generarRuntime(esp32, { wifi: { clave: "" }, pagina }), forma, que)
+  assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "" }, pagina: { salidas: [], salidasExtra: [], entradasDigitales: [], entradasAnalogicas: [] } }), "listas vacías: válidas")
+  assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "" }, pagina: PAGINA_E2E }))
   // SSID fijo: va tal cual a softAP y a nucleo_fijarSsid; la MAC no se lee (ya no arma el nombre ni elige canal).
   assert.ok(MAIN_WIFI_SSID_FIJO.includes(`static const char SSID_FIJO[] = "${SSID_FIJO}";`) && MAIN_WIFI_SSID_FIJO.includes("WiFi.softAP(SSID_FIJO))") && MAIN_WIFI_SSID_FIJO.includes("nucleo_fijarSsid(SSID_FIJO);"))
   assert.ok(!MAIN_WIFI_SSID_FIJO.includes("DIGITOS_HEX") && !MAIN_WIFI_SSID_FIJO.includes("PREFIJO_SSID") && !sinComentarios(MAIN_WIFI_SSID_FIJO).includes("softAPmacAddress("))
-  assert.deepEqual(generarRuntime(esp32, { wifi: { clave: "", ssid: undefined } }), generadoWifi, "ssid ausente = el de la MAC")
-  for (const ssid of ["", "x".repeat(33), 'MI"ESP', "MI\\ESP", "MI\tESP", "MI\nESP", "ESPAÑA", 42, null]) {
-    assert.throws(() => generarRuntime(esp32, { wifi: { clave: "", ssid } }), /SSID fijo/, JSON.stringify(ssid))
+  assert.deepEqual(generarRuntime(esp32, { wifi: { clave: "", ssid: undefined }, pagina: PAGINA_DE_PRUEBA }), generadoWifi, "ssid ausente = el de la MAC")
+  for (const ssid of ["", "x".repeat(P.LARGO_MAXIMO_SSID + 1), 'MI"ESP', "MI\\ESP", "MI\tESP", "MI\nESP", "ESPAÑA", 42, null]) {
+    assert.throws(() => generarRuntime(esp32, { wifi: { clave: "", ssid }, pagina: PAGINA_DE_PRUEBA }), /SSID fijo/, JSON.stringify(ssid))
   }
-  for (const ssid of ["x", "x".repeat(32), "Mi Red 3B", "Taller-TE_1.2", "~!#$%&()*+,-./:;<=>?@[]^_`{|}"]) assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "", ssid } }), JSON.stringify(ssid))
+  for (const ssid of ["x", "x".repeat(P.LARGO_MAXIMO_SSID), "Mi Red 3B", "Taller-TE_1.2", "~!#$%&()*+,-./:;<=>?@[]^_`{|}"]) assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "", ssid }, pagina: PAGINA_DE_PRUEBA }), JSON.stringify(ssid))
+  assert.equal(P.LARGO_MAXIMO_SSID, 32, "el largo máximo del SSID vive en el contrato (wifi_config_t.ap.ssid)")
+  assert.match(MAIN_WIFI, new RegExp(`TAMANO_BUFFER_SSID = ${P.LARGO_MAXIMO_SSID + 1};`), "el buffer del C++ sale de la constante del contrato")
 })
 
 test("F2 el núcleo traducido: sin SSID fijado el hola es el de V1; con el SSID que arma la capa 3, el hola con wifi es byte a byte el del simulador; un SSID inválido no se anuncia", () => {
@@ -934,11 +961,13 @@ test("F2 el núcleo traducido: sin SSID fijado el hola es el de V1; con el SSID 
     assert.deepEqual(nucleo.procesar(caso.entrada), esperado, JSON.stringify(caso.entrada))
   }
   // SSID con comillas, barra invertida, control, no ASCII, o que no cabe: la red no se anuncia (mejor que un JSON roto).
-  for (const malo of ['tecnia-"3f', "tecnia\\3f", "tecnia\t3f", "tecniañ3f", "x".repeat(33), ""]) {
+  for (const malo of ['tecnia-"3f', "tecnia\\3f", "tecnia\t3f", "tecniañ3f", "x".repeat(P.LARGO_MAXIMO_SSID + 1), ""]) {
     nucleo.fijarSsid(malo)
     assert.deepEqual(nucleo.procesar("hola"), [holaV1], JSON.stringify(malo))
+    assert.equal(P.esSsidValido(malo), false, "el contrato dice lo mismo")
   }
-  for (const bueno of ["x".repeat(32), "Mi Red 3B", SSID_FIJO, "~!#$%&()*+,-./:;<=>?@[]^_`{|}"]) {
+  for (const bueno of ["x".repeat(P.LARGO_MAXIMO_SSID), "Mi Red 3B", SSID_FIJO, "~!#$%&()*+,-./:;<=>?@[]^_`{|}"]) {
+    assert.equal(P.esSsidValido(bueno), true)
     nucleo.fijarSsid(bueno)
     assert.deepEqual(nucleo.procesar("hola"), [holaConWifi({ ...WIFI_DE_PRUEBA, ssid: bueno })], JSON.stringify(bueno))
     assert.equal(P.parsearRespuesta(nucleo.procesar("hola")[0]).valor.wifi.ssid, bueno, "el host lo lee de vuelta")
@@ -947,9 +976,9 @@ test("F2 el núcleo traducido: sin SSID fijado el hola es el de V1; con el SSID 
   // TAMANO_SALIDA, así que un desborde es imposible, pero un hola recortado sería un JSON roto y tampoco se quiere.
   const tamanoSalida = Number(MAIN_WIFI_CON_CLAVE.match(/TAMANO_SALIDA = (\d+);/)[1])
   const masLargo = ejecutarNucleo(MAIN_WIFI_CON_CLAVE)
-  masLargo.fijarSsid("x".repeat(32))
+  masLargo.fijarSsid("x".repeat(P.LARGO_MAXIMO_SSID))
   const lineaMasLarga = masLargo.procesar("hola")[0]
-  assert.equal(lineaMasLarga, holaConWifi({ ssid: "x".repeat(32), clave: CLAVE_WIFI, ip: IP_TEXTO }))
+  assert.equal(lineaMasLarga, holaConWifi({ ssid: "x".repeat(P.LARGO_MAXIMO_SSID), clave: CLAVE_WIFI, ip: IP_TEXTO }))
   assert.ok(lineaMasLarga.length + 1 < tamanoSalida, `hola de ${lineaMasLarga.length} bytes contra TAMANO_SALIDA = ${tamanoSalida}`)
 })
 
@@ -1125,61 +1154,26 @@ test("F4 HTTP: 302 al portal para rutas y hosts ajenos; GET / sirve la página; 
   assert.deepEqual(prog.leerSalida(), [P.serializarRespuesta({ tipo: "error", codigo: "LINEA_INVALIDA" })], "la línea serie completa (ping con basura) sigue siendo la que era")
 })
 
-test("F5 la página (sec. 8.3): ASCII, sin internet, sin frameworks, nombra /comando, pide hola al cargar, GPIO2/GPIO18 a la vista y el resto detrás de 'más pines', GPIO4 con entradaPullUp y GPIO34, cada 1 s, registro de 10", () => {
+test("F5 la página embebida es exactamente la de vivo/pagina-portal.ts para la página pedida: ASCII, sin internet, nombra /comando, sólo los pines que le dieron; la misma con o sin clave y con SSID fijo", () => {
   const pagina = paginaDe(MAIN_WIFI)
+  // El literal lleva un '\n' por línea (la última también): lo que se sirve es la página más un salto final.
+  assert.equal(pagina, `${renderizarPaginaPortal(PAGINA_DE_PRUEBA)}\n`, "el literal PAGINA del C++ es byte a byte lo que renderiza vivo/pagina-portal.ts")
   assert.ok(/^[\x0a\x20-\x7e]*$/.test(pagina), "ASCII")
   assert.ok(pagina.length > 3000 && pagina.length < 16000, `tamaño razonable para servir por el AP: ${pagina.length} bytes`)
   assert.doesNotMatch(pagina, /https?:\/\//, "sin http:// ni https://")
-  assert.doesNotMatch(pagina, /<script[^>]*src=|<link|@import|cdn|unpkg|jsdelivr/i, "sin scripts externos ni CDN")
   assert.doesNotMatch(pagina, /'|\/\/|\\/, "sin comillas simples, // ni barras invertidas: el traductor del test la pasa intacta")
   assert.equal(paginaDe(MAIN_WIFI_CON_CLAVE), pagina, "la página no cambia con la clave")
-  for (const esperado of [
-    `fetch(RUTA, { method: "POST", body: linea })`,
-    `var RUTA = "${RUTA_COMANDO}";`,
-    `var SALIDAS = [${PAGINA_V4A.salidasVisibles.join(", ")}];`,
-    `var PIN_DIGITAL = ${PAGINA_V4A.entradaDigital};`,
-    `var PIN_ANALOGICO = ${PAGINA_V4A.entradaAnalogica};`,
-    '<meta charset="utf-8">',
-    '<meta name="viewport"',
-    "<html lang=\"es\">",
-    "m&aacute;s pines",
-    "leer cada 1 s",
-    "&uacute;ltimas 10 l&iacute;neas",
-    "registro.length > 10",
-    "modo=entradaPullUp",
-    "digital.leer pin=",
-    "analogico.leer pin=",
-    "digital.escribir pin=",
-    "pwm.escribir pin=",
-    "porcentaje=",
-    'enviar("hola")',
-    "o.wifi.ssid",
-    'id="placa"',
-    'id="runtime"',
-    'id="ssid"',
-    `GPIO${PAGINA_V4A.entradaDigital}</strong> digital (pull-up interno)`,
-    `GPIO${PAGINA_V4A.entradaAnalogica}</strong> anal&oacute;gica (0 a 4095)`,
-    '"Alto"',
-    '"Bajo"',
-    'type = "range"',
-    'rango.max = "100"',
-    "setInterval(",
-    "clearInterval(",
-    "Tecnia Bot",
-  ]) {
+  assert.equal(paginaDe(MAIN_WIFI_SSID_FIJO), pagina, "ni con el SSID fijo")
+  for (const esperado of [`var RUTA = "${RUTA_COMANDO}";`, "var SALIDAS = [18];", "var OTRAS = [];", "var ENTRADAS_DIGITALES = [4];", "var ENTRADAS_ANALOGICAS = [34];", "modo=entradaPullUp", 'enviar("hola")']) {
     assert.ok(pagina.includes(esperado), `la página tiene ${JSON.stringify(esperado)}`)
   }
-  // Las listas de pines salen de la política de placas.ts, no de una lista a mano: salidas permitidas =
-  // existentes - prohibidos - sólo entrada; a la vista 2 y 18; el resto escondido, menos los pines que la página lee.
-  const permitidas = esp32.pines.filter((p) => p.capacidades.salidaDigital && !pinesProhibidos(esp32).includes(p.numero)).map((p) => p.numero)
-  const ocultas = permitidas.filter((n) => ![...PAGINA_V4A.salidasVisibles, PAGINA_V4A.entradaDigital, PAGINA_V4A.entradaAnalogica].includes(n))
-  assert.ok(pagina.includes(`var OTRAS = [${ocultas.join(", ")}];`), "las otras salidas, desde la política")
-  assert.ok(pagina.includes(`var PWM = [${permitidas.filter((n) => esp32.pines.find((p) => p.numero === n).capacidades.pwm).join(", ")}];`))
-  for (const prohibido of pinesProhibidos(esp32)) assert.ok(!new RegExp(`[\\[ ]${prohibido}[,\\]]`).test(pagina.match(/var OTRAS = (\[[^\]]*\]);/)[1]), `GPIO${prohibido} no se ofrece`)
-  assert.ok(!ocultas.includes(4) && !ocultas.includes(34) && !ocultas.includes(2) && !ocultas.includes(18))
-  // La página nunca inventa estado: lo que muestra por pin es la respuesta de la placa y la hora.
-  assert.ok(pagina.includes('"respuesta: " + r.texto') && pagina.includes('"sin respuesta"') && pagina.includes("r.hora"))
-  assert.ok(pagina.includes("sin lectura todav&iacute;a") && pagina.includes('"sin respuesta todavia"'))
+  assert.ok(!pagina.includes('id="mas"'), "sin salidasExtra no hay botón de más pines")
+  // Con la página del E2E (GPIO2 y GPIO18 a la vista) cambia sólo la página, no el resto del runtime.
+  const e2e = generarRuntime(esp32, { wifi: { clave: "" }, pagina: PAGINA_E2E }).archivos["src/main.cpp"]
+  assert.equal(paginaDe(e2e), `${renderizarPaginaPortal(PAGINA_E2E)}\n`)
+  assert.ok(paginaDe(e2e).includes("var SALIDAS = [2, 18];"))
+  const sinPagina = (cpp) => cpp.replace(/^static const char PAGINA\[\] PROGMEM =\n(?:  ".*"\n)*  ".*";/m, "")
+  assert.equal(sinPagina(e2e), sinPagina(MAIN_WIFI), "fuera del literal PAGINA, el C++ es idéntico")
 })
 
 const TEXTOS_CON_STRING_EN_CAPA_3 = 2 // `String host` (hostHeader) y `String cuerpo` (arg): lo que devuelve el WebServer
@@ -1286,19 +1280,21 @@ test("E1 compilación real: generarRuntime → platformio.ini + src/main.cpp →
   await compilarConEvidencia(generado, "runtime")
 })
 
-test("E2 compilación real con wifi (V4): las tres capas con WiFi, DNSServer y WebServer del core, sin lib_deps → firmware; evidencia en runtime-v4/ (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
-  const pagina = paginaDe(MAIN_WIFI)
-  const resumen = await compilarConEvidencia(generadoWifi, "runtime-v4", {
+test("E2 compilación real con wifi (V4, página del E2E): las tres capas con WiFi, DNSServer y WebServer del core, sin lib_deps → firmware; evidencia en runtime-v4/ (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
+  const runtime = generarRuntime(esp32, { wifi: { clave: "" }, pagina: PAGINA_E2E })
+  const pagina = paginaDe(runtime.archivos["src/main.cpp"])
+  const resumen = await compilarConEvidencia(runtime, "runtime-v4", {
     archivos: { "pagina.html": pagina },
-    resumen: { wifi: { clave: "", ssid: "tecnia- + 4 hex de la MAC del AP (en la placa)", ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { bytes: pagina.length, sha256: sha(pagina) } },
+    resumen: { wifi: { clave: "", ssid: "tecnia- + 4 hex de la MAC del AP (en la placa)", ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { ...PAGINA_E2E, bytes: pagina.length, sha256: sha(pagina) } },
   })
   assert.ok(resumen.firmware.bytes > 285840, "con WiFi + HTTP el firmware es más grande que el de V1 (285840 bytes)")
 })
 
-test("E3 compilación real con wifi y SSID fijo (la variante del E2E: MI_ESP, red abierta); evidencia en runtime-v4-ssid-fijo/ (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
-  const pagina = paginaDe(MAIN_WIFI_SSID_FIJO)
-  await compilarConEvidencia(generadoWifiSsidFijo, "runtime-v4-ssid-fijo", {
+test("E3 compilación real con wifi, SSID fijo y la página del E2E (la variante que se flashea: MI_ESP, red abierta, GPIO2/18/4/34); evidencia en runtime-v4-ssid-fijo/ (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
+  const runtime = generarRuntime(esp32, { wifi: { clave: "", ssid: SSID_FIJO }, pagina: PAGINA_E2E })
+  const pagina = paginaDe(runtime.archivos["src/main.cpp"])
+  await compilarConEvidencia(runtime, "runtime-v4-ssid-fijo", {
     archivos: { "pagina.html": pagina },
-    resumen: { wifi: { clave: "", ssid: SSID_FIJO, ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { bytes: pagina.length, sha256: sha(pagina) } },
+    resumen: { wifi: { clave: "", ssid: SSID_FIJO, ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { ...PAGINA_E2E, bytes: pagina.length, sha256: sha(pagina) } },
   })
 })
