@@ -17,6 +17,8 @@
 // Los comentarios del C++ generado van sin acentos: el programa generado es ASCII.
 
 /** Todo lo que el C++ necesita saber, ya derivado del contrato (`vivo/protocolo.ts`) y de la placa. */
+import { CAMPOS, CAUSAS_DE_REINICIO, MODOS_DE_PIN, NIVELES } from "../vivo/protocolo.ts"
+
 export interface TablasDelRuntime {
   readonly placaId: string
   readonly versionRuntime: string
@@ -47,20 +49,20 @@ export interface OpcionesDeTransporte {
 }
 
 // Los nombres semánticos que el despacho necesita distinguir (son valores del contrato, sec. 2).
-export const MODO_SALIDA = "salida"
-export const MODO_ENTRADA = "entrada"
-export const MODO_ENTRADA_PULL_UP = "entradaPullUp"
-export const NIVEL_ALTO = "alto"
-export const NIVEL_BAJO = "bajo"
-export const CAMPO_PIN = "pin"
-export const CAMPO_MODO = "modo"
-export const CAMPO_NIVEL = "nivel"
-export const CAMPO_PORCENTAJE = "porcentaje"
-export const CAUSA_ENCENDIDO = "encendido"
-export const CAUSA_SOFTWARE = "software"
-export const CAUSA_BROWNOUT = "brownout"
-export const CAUSA_WATCHDOG = "watchdog"
-export const CAUSA_OTRO = "otro"
+export const MODO_SALIDA: string = MODOS_DE_PIN[2]
+export const MODO_ENTRADA: string = MODOS_DE_PIN[0]
+export const MODO_ENTRADA_PULL_UP: string = MODOS_DE_PIN[1]
+export const NIVEL_ALTO: string = NIVELES[0]
+export const NIVEL_BAJO: string = NIVELES[1]
+export const CAMPO_PIN: string = CAMPOS.pin
+export const CAMPO_MODO: string = CAMPOS.modo
+export const CAMPO_NIVEL: string = CAMPOS.nivel
+export const CAMPO_PORCENTAJE: string = CAMPOS.porcentaje
+export const CAUSA_ENCENDIDO: string = CAUSAS_DE_REINICIO[0]
+export const CAUSA_SOFTWARE: string = CAUSAS_DE_REINICIO[1]
+export const CAUSA_BROWNOUT: string = CAUSAS_DE_REINICIO[2]
+export const CAUSA_WATCHDOG: string = CAUSAS_DE_REINICIO[3]
+export const CAUSA_OTRO: string = CAUSAS_DE_REINICIO[4]
 
 /**
  * Códigos ASCII de los caracteres de la gramática (sec. 1). Van como números con la letra en el

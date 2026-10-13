@@ -20,7 +20,7 @@ $Src = Join-Path $RepoDir "opencode"
 
 Write-Host "==> Instalando Tecnia Bot en: $ConfigDir"
 
-foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento", "codegen")) {
+foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "vivo", "conocimiento", "codegen")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir $sub) | Out-Null
 }
 
@@ -50,6 +50,9 @@ Copy-Item (Join-Path $Src "conocimiento\*") (Join-Path $ConfigDir "conocimiento\
 # Codegen MVP: backend determinista IR -> C++ (proyeccion pura), hermano de nucleo\
 # (lo importa tool\programa.ts con rutas ..\codegen\...).
 Copy-Item (Join-Path $Src "codegen\*") (Join-Path $ConfigDir "codegen\") -Recurse -Force
+# Modo Vivo V1: protocolo, sesion viva y puente serie (Python, lo corre el Python de
+# PlatformIO), hermano de nucleo\ (lo importan tool\vivo.ts y tool\platformio.ts con ..\vivo\...).
+Copy-Item (Join-Path $Src "vivo\*") (Join-Path $ConfigDir "vivo\") -Recurse -Force
 
 # Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
 Copy-Item (Join-Path $Src "plugins\*") (Join-Path $ConfigDir "plugins\") -Recurse -Force
@@ -69,7 +72,7 @@ $Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else {
 
 # Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
 # coincidan con las que escribe el instalador de Linux).
-$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento", "codegen")) {
+$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "vivo", "conocimiento", "codegen")) {
     Get-ChildItem -Path (Join-Path $Src $sub) -Recurse -File | ForEach-Object {
         $rel = $_.FullName.Substring($Src.Length + 1) -replace '\\', '/'
         $rel

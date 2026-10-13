@@ -14,7 +14,7 @@ SRC="$REPO_DIR/opencode"
 
 echo "==> Instalando Tecnia Bot en: $CONFIG_DIR"
 
-mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,nucleo,servidor,vista-fisica,conocimiento,codegen}
+mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,nucleo,servidor,vista-fisica,conocimiento,vivo,codegen}
 
 # Copiamos todo el contenido de cada carpeta (asi los archivos nuevos
 # se instalan solos, sin tener que actualizar este script cada vez).
@@ -39,6 +39,9 @@ cp -r "$SRC/conocimiento/." "$CONFIG_DIR/conocimiento/"
 # Codegen MVP: backend determinista IR -> C++ (proyección pura), hermano de nucleo/
 # (lo importa tool/programa.ts con `../codegen/...`).
 cp -r "$SRC/codegen/." "$CONFIG_DIR/codegen/"
+# Modo Vivo V1: protocolo, sesión viva, puente serie (Python, lo corre el Python de PlatformIO),
+# hermano de nucleo/ (lo importan tool/vivo.ts y tool/platformio.ts con `../vivo/...`).
+cp -r "$SRC/vivo/." "$CONFIG_DIR/vivo/"
 
 # Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
 cp -r "$SRC/plugins/." "$CONFIG_DIR/plugins/"
@@ -52,7 +55,7 @@ cp -r "$SRC/tecniabot-web/." "$CONFIG_DIR/tecniabot-web/"
 # Habilita actualizar limpio (borra huérfanos) y desinstalar sin tocar lo del usuario.
 MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
 VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || echo "0.0.0")"
-NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes nucleo servidor vista-fisica conocimiento codegen -type f | LC_ALL=C sort)"
+NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes nucleo servidor vista-fisica vivo conocimiento codegen -type f | LC_ALL=C sort)"
 
 # Borrar huérfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
 if [ -f "$MANIFEST" ]; then

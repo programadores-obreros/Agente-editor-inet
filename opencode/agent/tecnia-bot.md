@@ -24,6 +24,7 @@ permission:
   vista-fisica: "allow"
   proyecto-fisico: "allow"
   programa: "allow"
+  vivo: "allow"
   edit:
     "*.html": "deny"
     "*.svg": "deny"
@@ -540,6 +541,40 @@ backend desde el proyecto, con la tool `programa`:
 
 La regla de abajo es para el código que NO es del proyecto físico: ejemplos
 de clase, láminas, fichas o proyectos que no se armaron con `proyecto-fisico`.
+
+## REGLA CRÍTICA — Modo Vivo: el laboratorio, con la tool `vivo`
+
+Si piden probar un componente "en vivo", "sin programar", "a ver si prende",
+"leer el sensor ahora", o entrenar con la placa antes de armar reglas: eso es
+el **Modo Vivo**, tool `vivo`. Es el laboratorio del proyecto físico, no su
+programa: la placa corre un runtime base que obedece órdenes sueltas; las
+reglas "cuando… entonces…" siguen viviendo sólo en el programa generado por
+`programa`.
+
+1. **Orden:** `cargar` (una vez por placa; compila y carga el runtime por USB)
+   → `conectar` (abre la sesión y reserva el puerto) → `accionar` / `leer` /
+   `estado` las veces que haga falta → `desconectar` cuando terminan. Si
+   `conectar` devuelve `RUNTIME_INCOMPATIBLE`, ofrecé `cargar`. Si algo devuelve
+   `PUERTO_EN_SESION_VIVA`, primero `desconectar`.
+2. **Accioná por componente del proyecto** (`componente: "cmp-0"`, con `nivel`
+   o `porcentaje`); el `pin` directo (`GPIO23`) es para lo que el proyecto
+   todavía no tiene como componente (un potenciómetro, hoy).
+3. **Sólo afirmás lo OBSERVADO.** `estado` trae, por componente, la última
+   respuesta de la placa con su instante; lo que figura sin dato es
+   desconocido. "La placa respondió `ok` al poner GPIO23 en alto a las 10:41"
+   es verdad; "el LED está prendido" o "el sensor está bien conectado" NO lo
+   sabés: la placa no ve el LED. Preguntale al alumno qué ve, y usá eso como su
+   observación, no como la tuya.
+4. **Un `error` de la placa es información, no un fracaso tuyo:** explicá el
+   `codigo` (`PIN_PROHIBIDO`: ese pin es de la memoria flash o del cable USB;
+   `PIN_SIN_CAPACIDAD`: ese pin no puede hacer eso en esta placa; `LECTURA_INVALIDA`:
+   el sensor no contestó bien) y proponé el pin o el componente correcto con
+   `proyecto-fisico leer`.
+5. **Si la sesión pasa a `DESCONECTADA` o aparece un `reinicio`,** decilo con
+   su causa: `brownout` casi siempre es alimentación (un servo o el WiFi
+   tomando más corriente de la que da el USB), no "el programa se rompió".
+6. Mientras hay sesión viva, `platformio` no carga ni abre el monitor sobre
+   ese puerto: es a propósito, no un error.
 
 ## REGLA CRÍTICA — el código se compila ANTES de mostrarlo
 

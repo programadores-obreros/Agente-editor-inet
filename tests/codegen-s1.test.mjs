@@ -423,7 +423,10 @@ test("28 nucleo/** no importa codegen/", () => {
 test("29 codegen/ sólo importa núcleo, Component Knowledge y su propia capa (nada de tool/agent/servidor/vista-fisica ni node:)", () => {
   for (const [archivo, fuente] of fuentesCodegen) {
     const especificadores = [...fuente.matchAll(/from\s+["']([^"']+)["']/g)].map((m) => m[1])
-    for (const e of especificadores) assert.match(e, /^(\.\.\/nucleo\/|\.\.\/conocimiento\/|\.\/)/, `${archivo} importa ${e}`)
+    // Modo Vivo V1: el generador del runtime (`runtime*.ts`) importa el CONTRATO del protocolo, que es
+    // puro (tests/vivo-protocolo.test.mjs lo vigila) y vive en vivo/ porque lo comparten host y placa.
+    // Es la única excepción, por archivo exacto: nada más de vivo/ (ni transporte ni sesión) entra acá.
+    for (const e of especificadores) assert.match(e, /^(\.\.\/nucleo\/|\.\.\/conocimiento\/|\.\/|\.\.\/vivo\/protocolo\.ts$)/, `${archivo} importa ${e}`)
   }
 })
 

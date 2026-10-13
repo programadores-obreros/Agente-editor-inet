@@ -64,11 +64,14 @@ function listarArchivos(dir) {
  * scratchpad, docs ni tests". Devuelve la lista de infracciones (vacía si todo OK). */
 function verificarAllowlist(configDir) {
   const infracciones = []
-  for (const carpeta of ["nucleo", "servidor", "conocimiento", "codegen"]) {
+  for (const carpeta of ["nucleo", "servidor", "conocimiento", "codegen", "vivo"]) {
     const base = join(configDir, carpeta)
     for (const archivo of listarArchivos(base)) {
       const rel = relative(base, archivo)
-      if (!/\.ts$/.test(rel)) infracciones.push(join(carpeta, rel))
+      // Modo Vivo V1: el puente serie es el ÚNICO archivo que no es .ts (Python, lo corre el
+      // Python de PlatformIO, que ya trae pyserial). Nada más entra por esta excepción.
+      const esPuenteSerie = carpeta === "vivo" && rel === "puente-serie.py"
+      if (!/\.ts$/.test(rel) && !esPuenteSerie) infracciones.push(join(carpeta, rel))
     }
   }
   const baseVista = join(configDir, "vista-fisica")
@@ -211,10 +214,19 @@ if (process.platform === "win32") {
       }
       assert.ok(existsSync(join(configDir, "tool", "programa.ts")), "falta la tool programa instalada")
       assert.ok(!existsSync(join(configDir, "tool", "codegen")), "codegen/ terminó DENTRO de tool/")
+      // Modo Vivo V1: el generador del runtime viaja en codegen/, y vivo/ (protocolo, sesión,
+      // puente serie en Python) hermano de nucleo/, nunca dentro de tool/.
+      assert.ok(existsSync(join(configDir, "codegen", "runtime.ts")), "falta codegen/runtime.ts instalado")
+      for (const modulo of ["protocolo.ts", "estado-observado.ts", "sesion-viva.ts", "transporte-serie.ts", "puente-serie.py"]) {
+        assert.ok(existsSync(join(configDir, "vivo", modulo)), `falta vivo/${modulo} instalado`)
+      }
+      assert.ok(existsSync(join(configDir, "tool", "vivo.ts")), "falta la tool vivo instalada")
+      assert.ok(!existsSync(join(configDir, "tool", "vivo")), "vivo/ terminó DENTRO de tool/")
 
       const agenteMd = readFileSync(join(configDir, "agent", "tecnia-bot.md"), "utf8")
       assert.match(agenteMd, /vista-fisica:\s*"allow"/, 'falta el permiso vista-fisica: "allow" en el agente instalado')
       assert.match(agenteMd, /programa:\s*"allow"/, 'falta el permiso programa: "allow" en el agente instalado')
+      assert.match(agenteMd, /vivo:\s*"allow"/, 'falta el permiso vivo: "allow" en el agente instalado')
 
       // ── Nada de scratchpad/docs/tests en la instalación. ──────────────────────
       const infraccionesAllowlist = verificarAllowlist(configDir)

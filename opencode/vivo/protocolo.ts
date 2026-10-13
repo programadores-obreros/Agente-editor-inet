@@ -28,6 +28,15 @@ export const MODOS_DE_PIN = Object.freeze(["entrada", "entradaPullUp", "salida"]
 export const NIVELES = Object.freeze(["alto", "bajo"] as const)
 export const CAUSAS_DE_REINICIO = Object.freeze(["encendido", "software", "brownout", "watchdog", "otro"] as const)
 
+/**
+ * Nombres de los campos del formato plano, como vocabulario exportado: el generador del runtime
+ * (`codegen/runtime-cpp.ts`) los toma de acá y no los escribe como literales. Importa, porque
+ * `porcentaje` también es un id de unidad del catálogo y la guardia C2 de `codegen-s2.test.mjs`
+ * prohíbe ids de unidades escritos a mano dentro de `codegen/`: el único lugar donde la palabra
+ * existe como texto es este contrato.
+ */
+export const CAMPOS = Object.freeze({ pin: "pin", modo: "modo", nivel: "nivel", porcentaje: "porcentaje" } as const)
+
 export type NombreComandoV1 = (typeof COMANDOS_V1)[number]
 export type ModoDePin = (typeof MODOS_DE_PIN)[number]
 export type Nivel = (typeof NIVELES)[number]
@@ -85,14 +94,15 @@ export type ResultadoDeParseo<T> = { readonly ok: true; readonly valor: T } | { 
 // Host → runtime
 // ════════════════════════════════════════════════════════════════════════════════════
 
-const CAMPOS_POR_COMANDO: Readonly<Record<NombreComandoV1, readonly string[]>> = Object.freeze({
+/** Campos obligatorios de cada comando, en el orden en que se reclaman los faltantes. Exportado para el generador del runtime (una sola tabla). */
+export const CAMPOS_POR_COMANDO: Readonly<Record<NombreComandoV1, readonly string[]>> = Object.freeze({
   hola: [],
   ping: [],
-  "pin.modo": ["pin", "modo"],
-  "digital.escribir": ["pin", "nivel"],
-  "pwm.escribir": ["pin", "porcentaje"],
-  "digital.leer": ["pin"],
-  "analogico.leer": ["pin"],
+  "pin.modo": [CAMPOS.pin, CAMPOS.modo],
+  "digital.escribir": [CAMPOS.pin, CAMPOS.nivel],
+  "pwm.escribir": [CAMPOS.pin, CAMPOS.porcentaje],
+  "digital.leer": [CAMPOS.pin],
+  "analogico.leer": [CAMPOS.pin],
 })
 
 const RE_NOMBRE = /^[a-z][a-z0-9.]*$/

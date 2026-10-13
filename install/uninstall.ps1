@@ -340,7 +340,7 @@ if ($estadoAuth -eq "?") {
 
 # Borrar directorios que hayan quedado vacios (mismo criterio que install.ps1
 # para las tres carpetas de Phase 2 que sumo D12: nucleo, servidor, vista-fisica).
-foreach ($d in @("tecniabot-web", "skills", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento", "codegen")) {
+foreach ($d in @("tecniabot-web", "skills", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "vivo", "conocimiento", "codegen")) {
     $path = Join-Path $ConfigDir $d
     if (Test-Path $path) {
         Get-ChildItem $path -Recurse -Directory | Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue

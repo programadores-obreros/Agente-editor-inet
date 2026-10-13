@@ -3,6 +3,45 @@ import { tool } from "@opencode-ai/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, win32 } from "node:path"
+// ════════════════════════════════════════════════════════════════════════════════════
+// Reserva de puertos serie — Modo Vivo V1 (HD-08-c)
+//
+// Mientras una sesión viva (tool `vivo`) tiene un puerto abierto, acá no se carga ni se abre el
+// monitor sobre ese puerto: esptool no podría abrirlo y el monitor se comería las líneas del
+// protocolo. Un puerto es de UN dueño a la vez. El registro vive en este módulo (y no en `vivo/`)
+// a propósito: varios tests copian `platformio.ts` a una carpeta temporal para importarlo con el
+// plugin falso, y un import relativo a `../vivo/` se rompería ahí. Es estado del proceso de
+// OpenCode: se pierde al cerrarlo, igual que la sesión; no se persiste.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const reservasDePuerto = new Map<string, string>()
+
+/** Reserva `puerto` para `dueno`. `false` si ya lo tiene otro (la reserva no se pisa). */
+export function reservarPuerto(puerto: string, dueno: string): boolean {
+  const actual = reservasDePuerto.get(puerto)
+  if (actual !== undefined && actual !== dueno) return false
+  reservasDePuerto.set(puerto, dueno)
+  return true
+}
+
+export function liberarPuerto(puerto: string): void {
+  reservasDePuerto.delete(puerto)
+}
+
+/** Quién tiene el puerto, o `undefined` si está libre. */
+export function duenoDelPuerto(puerto: string): string | undefined {
+  return reservasDePuerto.get(puerto)
+}
+
+/** Sólo para tests: deja el registro vacío. */
+export function liberarTodosLosPuertos(): void {
+  reservasDePuerto.clear()
+}
+
+function puertoEnSesionViva(puerto: string): string | null {
+  if (duenoDelPuerto(puerto) === undefined) return null
+  return `PUERTO_EN_SESION_VIVA: ${puerto} está abierto por una sesión del Modo Vivo. Cerrala primero con la tool \`vivo\` (accion "desconectar") y volvé a intentar.`
+}
 
 interface RunResult {
   code: number
@@ -653,7 +692,7 @@ async function placasSinDriver(cwd: string, signal?: AbortSignal) {
   return r.code === 0 ? leerDispositivosConProblema(r.stdout) : []
 }
 
-async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string } | { error: string }> {
+export async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string } | { error: string }> {
   const result = await run(["pio", "device", "list", "--json-output"], cwd, signal)
 
   let devices: Device[] = []
@@ -1008,6 +1047,8 @@ Acciones:
           if ("error" in detected) return detected.error
           puerto = detected.port
         }
+        const ocupado = puertoEnSesionViva(puerto)
+        if (ocupado) return ocupado
         const result = await cargar(puerto)
         if (result.code === 0) return `Codigo cargado exitosamente en ${puerto}.`
         return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
@@ -1024,6 +1065,8 @@ Acciones:
           if ("error" in detected) return detected.error
           puerto = detected.port
         }
+        const ocupadoParaCargar = puertoEnSesionViva(puerto)
+        if (ocupadoParaCargar) return ocupadoParaCargar
         const flash = await cargar(puerto)
         if (flash.code === 0) return `Compilacion y carga exitosa en ${puerto}.`
         return (
@@ -1052,6 +1095,8 @@ Acciones:
           }
           puerto = detected.port
         }
+        const ocupadoParaMonitor = puertoEnSesionViva(puerto)
+        if (ocupadoParaMonitor) return ocupadoParaMonitor
 
         const pioPath = pioBin()
         // Comando "pelado" listo para copiar y pegar en una terminal (fallback / instrucciones).
