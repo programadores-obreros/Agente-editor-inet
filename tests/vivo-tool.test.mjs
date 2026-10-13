@@ -237,6 +237,8 @@ test("accionar y leer por componente van a la sesión con la petición traducida
   assert.deepEqual(sesion.llamadas.at(-1), ["leer", "cmp-0"])
   assert.deepEqual(lectura.respuesta, { tipo: "lectura", pin: 4, nivel: "alto" })
   assert.ok(lectura.estado, "toda respuesta trae el estado observado para que el agente hable sólo de lo observado")
+  assert.equal(lectura.estado.placa, "esp32-devkit-v1", "la placa va como id: el objeto entero era ruido (E2E 2026-10-12, hallazgo 3)")
+  assert.equal(alto.estado.placa, "esp32-devkit-v1")
   await vivo(dir, { accion: "desconectar" }, depsDe({ sesion }))
 })
 

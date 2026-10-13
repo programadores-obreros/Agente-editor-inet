@@ -102,6 +102,16 @@ function materializar(carpeta: string, archivos: Readonly<Record<string, string>
   }
 }
 
+/**
+ * El estado observado tal como lo ve el agente: igual al de la sesión, pero con `placa` reducida
+ * a su id. El objeto `Placa` entero (todos los pines con capacidades y restricciones) es ruido en
+ * cada respuesta: lo vimos en el E2E del 2026-10-12 (evidencia-v1/e2e/E2E-V1-REPORTE.md, hallazgo 3).
+ */
+function estadoParaElAgente(sesion: SesionViva): Record<string, unknown> {
+  const estado = sesion.estado()
+  return { ...estado, placa: estado.placa.id }
+}
+
 /** Sesiones abiertas en ESTE proceso, por proyecto. Se pierden al cerrar OpenCode, a propósito. */
 interface SesionAbierta {
   readonly sesion: SesionViva
@@ -139,7 +149,7 @@ export async function ejecutarVivo(args: ArgsVivo, ctx: { readonly directory: st
     // ── Las acciones sobre una sesión ya abierta no necesitan cargar nada. ──
     if (accion === "estado") {
       if (!abierta) return json({ resultado: "SIN SESIÓN — no hay una sesión viva abierta para este proyecto (usá 'conectar')", ok: true, accion, idProyecto, sesion: "SIN_SESION" })
-      return json({ resultado: `ESTADO OBSERVADO — sesión ${abierta.sesion.estado().sesion} en ${abierta.puerto}`, ok: true, accion, idProyecto, puerto: abierta.puerto, estado: abierta.sesion.estado() })
+      return json({ resultado: `ESTADO OBSERVADO — sesión ${abierta.sesion.estado().sesion} en ${abierta.puerto}`, ok: true, accion, idProyecto, puerto: abierta.puerto, estado: estadoParaElAgente(abierta.sesion) })
     }
     if (accion === "desconectar") {
       if (!abierta) return json({ resultado: "SIN SESIÓN — no había nada que cerrar", ok: true, accion, idProyecto, sesion: "SIN_SESION" })
@@ -208,7 +218,7 @@ export async function ejecutarVivo(args: ArgsVivo, ctx: { readonly directory: st
     }
 
     // accion === "conectar"
-    if (abierta) return json({ resultado: `YA CONECTADO — sesión ${abierta.sesion.estado().sesion} en ${abierta.puerto}`, ok: true, accion, idProyecto, puerto: abierta.puerto, estado: abierta.sesion.estado() })
+    if (abierta) return json({ resultado: `YA CONECTADO — sesión ${abierta.sesion.estado().sesion} en ${abierta.puerto}`, ok: true, accion, idProyecto, puerto: abierta.puerto, estado: estadoParaElAgente(abierta.sesion) })
     if (!reservarPuerto(puerto, clave)) return json({ resultado: `NO SE HIZO NADA — ${puerto} está en uso`, ok: false, accion, idProyecto, puerto, codigo: "PUERTO_EN_SESION_VIVA" })
     let puente: Puente
     try {
@@ -234,10 +244,10 @@ export async function ejecutarVivo(args: ArgsVivo, ctx: { readonly directory: st
       sesiones.delete(clave)
       liberarPuerto(puerto)
       await sesion.cerrar().catch(() => undefined)
-      return json({ resultado: `NO SE CONECTÓ — ${estado.sesion}`, ok: false, accion, idProyecto, puerto, codigo: estado.sesion, estado })
+      return json({ resultado: `NO SE CONECTÓ — ${estado.sesion}`, ok: false, accion, idProyecto, puerto, codigo: estado.sesion, estado: estadoParaElAgente(sesion) })
     }
     sesiones.set(clave, { sesion, puerto, placa: placa.id })
-    return json({ resultado: `CONECTADO — runtime ${estado.runtime?.version ?? "?"} en ${puerto}. El puerto queda reservado hasta 'desconectar'.`, ok: true, accion, idProyecto, puerto, estado })
+    return json({ resultado: `CONECTADO — runtime ${estado.runtime?.version ?? "?"} en ${puerto}. El puerto queda reservado hasta 'desconectar'.`, ok: true, accion, idProyecto, puerto, estado: estadoParaElAgente(sesion) })
   } catch (error) {
     const mensaje = error instanceof Error ? error.message : String(error)
     return json({ resultado: `NO SE HIZO NADA — error inesperado (${mensaje})`, ok: false, codigo: "ERROR_INESPERADO", mensaje })
@@ -260,14 +270,14 @@ async function ejecutarSobreSesion(abierta: SesionAbierta, accion: "accionar" | 
     const peticion = esPwm ? ({ tipo: "pwm", porcentaje: args.porcentaje as number } as const) : ({ tipo: "nivel", nivel: args.nivel as "alto" | "bajo" } as const)
     const r = porComponente ? await sesion.accionar(porComponente, peticion) : await sesion.comando(comandoDePin(abierta, porPin as string, peticion))
     return r.ok
-      ? { resultado: `ACCIONADO — ${porComponente ?? porPin}: ${esPwm ? `PWM ${args.porcentaje} %` : args.nivel}`, ok: true, ...comun, destino: porComponente ?? porPin, respuesta: r.valor, estado: sesion.estado() }
-      : { resultado: `NO SE ACCIONÓ — ${r.codigo}`, ok: false, ...comun, destino: porComponente ?? porPin, codigo: r.codigo, datos: r.datos ?? null, estado: sesion.estado() }
+      ? { resultado: `ACCIONADO — ${porComponente ?? porPin}: ${esPwm ? `PWM ${args.porcentaje} %` : args.nivel}`, ok: true, ...comun, destino: porComponente ?? porPin, respuesta: r.valor, estado: estadoParaElAgente(sesion) }
+      : { resultado: `NO SE ACCIONÓ — ${r.codigo}`, ok: false, ...comun, destino: porComponente ?? porPin, codigo: r.codigo, datos: r.datos ?? null, estado: estadoParaElAgente(sesion) }
   }
 
   const r = porComponente ? await sesion.leer(porComponente) : await sesion.comando(comandoDeLectura(abierta, porPin as string))
   return r.ok
-    ? { resultado: `LEÍDO — ${porComponente ?? porPin}`, ok: true, ...comun, destino: porComponente ?? porPin, respuesta: r.valor, estado: sesion.estado() }
-    : { resultado: `NO SE LEYÓ — ${r.codigo}`, ok: false, ...comun, destino: porComponente ?? porPin, codigo: r.codigo, datos: r.datos ?? null, estado: sesion.estado() }
+    ? { resultado: `LEÍDO — ${porComponente ?? porPin}`, ok: true, ...comun, destino: porComponente ?? porPin, respuesta: r.valor, estado: estadoParaElAgente(sesion) }
+    : { resultado: `NO SE LEYÓ — ${r.codigo}`, ok: false, ...comun, destino: porComponente ?? porPin, codigo: r.codigo, datos: r.datos ?? null, estado: estadoParaElAgente(sesion) }
 }
 
 /** Comando crudo por pin (`GPIO<n>`): un pin que la placa no tiene va igual a la sesión, que lo rechaza con su código (A). */
