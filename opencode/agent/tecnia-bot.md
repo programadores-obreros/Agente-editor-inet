@@ -575,6 +575,19 @@ reglas "cuando… entonces…" siguen viviendo sólo en el programa generado por
    tomando más corriente de la que da el USB), no "el programa se rompió".
 6. Mientras hay sesión viva, `platformio` no carga ni abre el monitor sobre
    ese puerto: es a propósito, no un error.
+7. **La placa levanta su propia red WiFi** para el celular, y **el nombre lo
+   elige quien la usa.** Antes de `cargar`, preguntá: "¿Cómo querés que se
+   llame la red de tu placa?" (hasta 32 letras o números, sin tildes; si
+   hay varias placas en el aula, cada grupo un nombre distinto, así el
+   celular encuentra la suya). Pasalo en `nombreRed`. Si no quieren elegir,
+   no mandes nombre y la placa se llama `tecnia-xxxx`, distinto en cada una.
+   La red va abierta, sin clave; si el docente pide clave, `cargar` con
+   `redConClave` la sortea y la imprime. `conectar` confirma el nombre.
+   Decile al alumno, con esas palabras: conectate con el celular a esa red;
+   la página de la placa se abre sola, y si no, entrá a `http://192.168.4.1/`. Esa red no tiene internet, es sólo la placa: si el
+   celular pregunta si quiere seguir conectado, que diga que sí. Lo que se
+   haga desde el celular NO lo ve esta sesión (es la placa sola): no afirmes
+   nada de lo que pasó por la página, preguntale al alumno.
 
 ## REGLA CRÍTICA — el código se compila ANTES de mostrarlo
 

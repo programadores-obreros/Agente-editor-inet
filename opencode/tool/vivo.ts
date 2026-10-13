@@ -20,12 +20,14 @@
 // `platformio.ts`, que es quien carga y abre el monitor).
 
 import { tool } from "@opencode-ai/plugin"
-import { createHash } from "node:crypto"
+import { createHash, randomInt } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
 import type { Placa } from "../nucleo/placas.ts"
 import type { ServicioDeProyecto } from "../nucleo/composicion-raiz.ts"
-import type { Comando } from "../vivo/protocolo.ts"
+import type { Proyecto } from "../nucleo/ir.ts"
+import { esSsidValido, type Comando } from "../vivo/protocolo.ts"
+import type { PaginaPortal } from "../vivo/pagina-portal.ts"
 import type { Puente, SesionViva } from "../vivo/sesion-viva.ts"
 import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
 import { CODIGO_CANCELADO, CODIGO_TIMEOUT, detectPort, duenoDelPuerto, liberarPuerto, puertoValido, recortarSalida, reservarPuerto, run, timeoutLargoMs, traducirError } from "./platformio.ts"
@@ -46,6 +48,8 @@ export interface DependenciasVivo {
   readonly detectarPuerto: (cwd: string, signal?: AbortSignal) => Promise<{ port: string } | { error: string }>
   /** Compila y carga la carpeta del runtime en `puerto` — PlatformIO, inyectable en tests. */
   readonly cargarRuntime: (carpeta: string, environment: string, puerto: string, cwd: string, signal?: AbortSignal) => Promise<{ code: number; stdout: string; stderr: string }>
+  /** V4: la clave WPA2 de la red de la placa, 8 dígitos; se sortea en cada carga (fija en tests). */
+  readonly sortearClave: () => string
 }
 
 async function cargarDependencias(): Promise<DependenciasVivo> {
@@ -65,6 +69,8 @@ async function cargarDependencias(): Promise<DependenciasVivo> {
       abrirPuenteSerie: transporte.abrirPuenteSerie,
       detectarPuerto: detectPort,
       cargarRuntime: (carpeta, environment, puerto, cwd, signal) => run(["pio", "run", "-d", carpeta, "-e", environment, "-t", "upload", "--upload-port", puerto], cwd, signal, timeoutLargoMs()),
+      // 8 dígitos decimales con `crypto.randomInt` (uniforme), con ceros a la izquierda si hace falta.
+      sortearClave: () => String(randomInt(0, 100_000_000)).padStart(8, "0"),
     }
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
@@ -83,6 +89,44 @@ export interface ArgsVivo {
   readonly pin?: string
   readonly nivel?: string
   readonly porcentaje?: number
+  /** V4, sólo para `cargar`: red con clave WPA2 de 8 dígitos sorteada. Por defecto la red va abierta. */
+  readonly redConClave?: boolean
+  /** V4, sólo para `cargar`: nombre fijo de la red. Por defecto la placa se llama `tecnia-xxxx` (único por placa). */
+  readonly nombreRed?: string
+}
+
+/** Un SSID válido para `WiFi.softAP`: la regla del contrato (`vivo/protocolo.ts`). */
+export function nombreDeRedValido(nombre: string): boolean {
+  return esSsidValido(nombre)
+}
+
+/**
+ * V4: qué pines muestra la página del portal. Salen del PROYECTO del alumno (los pines asignados a
+ * terminales de salida y de entrada) y de la placa (el resto de las salidas posibles, detrás de
+ * "más pines", y las entradas analógicas); nunca de una lista escrita a mano. Un pin que la placa
+ * prohíbe (flash, UART0) no se ofrece ni en "más pines".
+ */
+export function paginaDelProyecto(placa: Placa, proyecto: Proyecto, conocimiento: DependenciasVivo["conocimiento"]): PaginaPortal {
+  const numeroDe = (id: string) => placa.pines.find((p) => p.id === id)?.numero
+  const salidas: number[] = []
+  const entradasDigitales: number[] = []
+  const entradasAnalogicas: number[] = []
+  for (const componente of proyecto.componentes) {
+    for (const terminal of conocimiento.terminales(componente.tipo)) {
+      const pinId = componente.pines[terminal.id]
+      const numero = pinId ? numeroDe(pinId) : undefined
+      if (numero === undefined) continue
+      if (terminal.electrica === "analogica") entradasAnalogicas.push(numero)
+      else if (terminal.electrica === "digital" && terminal.direccion === "salida") salidas.push(numero)
+      else if (terminal.electrica === "digital" && terminal.direccion === "entrada") entradasDigitales.push(numero)
+    }
+  }
+  const prohibido = (p: Placa["pines"][number]) => p.restricciones.includes("flashReservado") || p.restricciones.includes("uartUsb")
+  const usados = new Set([...salidas, ...entradasDigitales, ...entradasAnalogicas])
+  const salidasExtra = placa.pines.filter((p) => p.capacidades.salidaDigital && !prohibido(p) && !usados.has(p.numero)).map((p) => p.numero)
+  const analogicasExtra = placa.pines.filter((p) => p.capacidades.adc && !prohibido(p) && !usados.has(p.numero)).map((p) => p.numero)
+  const unicos = (lista: number[]) => [...new Set(lista)].sort((a, b) => a - b)
+  return { salidas: unicos(salidas), salidasExtra: unicos(salidasExtra), entradasDigitales: unicos(entradasDigitales), entradasAnalogicas: unicos([...entradasAnalogicas, ...analogicasExtra]) }
 }
 
 /** Carpeta derivada del runtime de una placa: junto a los datos, descartable, una por placa. */
@@ -196,15 +240,29 @@ export async function ejecutarVivo(args: ArgsVivo, ctx: { readonly directory: st
 
     if (accion === "cargar") {
       if (abierta) return json({ resultado: `NO SE HIZO NADA — hay una sesión viva abierta en ${abierta.puerto}: cerrala con 'desconectar' antes de cargar`, ok: false, accion, idProyecto, puerto: abierta.puerto, codigo: "PUERTO_EN_SESION_VIVA" })
-      const generado = deps.generarRuntime(placa)
+      // V4: el runtime levanta su propia red. Por decisión de Alejandro Palestrini (2026-10-13) la red
+      // va ABIERTA por defecto (sin clave: en el aula es lo que menos traba); con `redConClave` se sortea
+      // una de 8 dígitos (WPA2) en cada carga, queda en el firmware y se imprime acá. El SSID lo arma la
+      // placa desde su MAC (`tecnia-xxxx`) y lo anuncia en el `hola`, así que se ve en 'conectar'.
+      const clave = args.redConClave ? deps.sortearClave() : ""
+      const nombreRed = args.nombreRed?.trim()
+      if (nombreRed !== undefined && nombreRed !== "" && !nombreDeRedValido(nombreRed)) return json({ resultado: "NO SE HIZO NADA — `nombreRed` inválido (1 a 32 caracteres ASCII, sin comillas)", ok: false, accion, idProyecto, codigo: "NOMBRE_RED_INVALIDO" })
+      // Un nombre fijo repetido en veinte placas confunde a los celulares: por eso el default es por placa.
+      const pagina = paginaDelProyecto(placa, snapshot.proyecto, deps.conocimiento)
+      const generado = deps.generarRuntime(placa, { wifi: nombreRed ? { clave, ssid: nombreRed } : { clave }, pagina })
       const carpetaAbsoluta = carpetaDelRuntime(ctx.directory, placa.id)
       const archivosGenerados: Readonly<Record<string, string>> = { ...generado.archivos }
       materializar(carpetaAbsoluta, archivosGenerados)
       const carpeta = relative(ctx.directory, carpetaAbsoluta).split("\\").join("/")
       const archivos = Object.fromEntries(Object.entries(archivosGenerados).map(([ruta, contenido]) => [ruta, { sha256: sha256(contenido), bytes: Buffer.byteLength(contenido) }]))
-      const base = { accion, idProyecto, placa: placa.id, runtime: generado.runtime, protocolo: generado.protocolo, puerto, carpeta, archivos }
+      const base = { accion, idProyecto, placa: placa.id, runtime: generado.runtime, protocolo: generado.protocolo, puerto, carpeta, archivos, wifi: { abierta: clave === "", clave, ssid: nombreRed || null, pagina: "http://192.168.4.1/" } }
       const corrida = await deps.cargarRuntime(carpetaAbsoluta, generado.environment, puerto, ctx.directory, ctx.abort)
-      if (corrida.code === 0) return json({ resultado: `RUNTIME CARGADO — ${placa.id}, runtime ${generado.runtime}, en ${puerto}. Ahora 'conectar'.`, ok: true, ...base })
+      if (corrida.code === 0)
+        return json({
+          resultado: `RUNTIME CARGADO — ${placa.id}, runtime ${generado.runtime}, en ${puerto}. La placa levanta su red WiFi ${nombreRed ? `"${nombreRed}"` : `"tecnia-xxxx" (el nombre exacto lo dice 'conectar')`}, ${clave === "" ? "abierta, sin clave" : `con clave ${clave}`}. Ahora 'conectar'.`,
+          ok: true,
+          ...base,
+        })
       const codigo = corrida.code === CODIGO_TIMEOUT ? "CARGA_TIEMPO_AGOTADO" : corrida.code === CODIGO_CANCELADO ? "CARGA_CANCELADA" : corrida.code === 127 ? "PLATFORMIO_NO_ENCONTRADO" : "CARGA_FALLIDA"
       return json({
         resultado: `NO SE CARGÓ — ${codigo}`,
@@ -247,7 +305,9 @@ export async function ejecutarVivo(args: ArgsVivo, ctx: { readonly directory: st
       return json({ resultado: `NO SE CONECTÓ — ${estado.sesion}`, ok: false, accion, idProyecto, puerto, codigo: estado.sesion, estado: estadoParaElAgente(sesion) })
     }
     sesiones.set(clave, { sesion, puerto, placa: placa.id })
-    return json({ resultado: `CONECTADO — runtime ${estado.runtime?.version ?? "?"} en ${puerto}. El puerto queda reservado hasta 'desconectar'.`, ok: true, accion, idProyecto, puerto, estado: estadoParaElAgente(sesion) })
+    const red = estado.runtime?.wifi
+    const textoRed = red ? ` Red WiFi de la placa: "${red.ssid}", ${red.clave === "" ? "abierta (sin clave)" : `clave ${red.clave}`}; la página se abre sola al conectarse (si no, http://${red.ip}/).` : ""
+    return json({ resultado: `CONECTADO — runtime ${estado.runtime?.version ?? "?"} en ${puerto}.${textoRed} El puerto queda reservado hasta 'desconectar'.`, ok: true, accion, idProyecto, puerto, estado: estadoParaElAgente(sesion) })
   } catch (error) {
     const mensaje = error instanceof Error ? error.message : String(error)
     return json({ resultado: `NO SE HIZO NADA — error inesperado (${mensaje})`, ok: false, codigo: "ERROR_INESPERADO", mensaje })
@@ -298,8 +358,8 @@ export default tool({
   description: `Modo Vivo: el LABORATORIO del proyecto físico actual. Un runtime base por placa, cargado una sola vez, con el que se prende, se mueve y se mide en vivo sin compilar ni cargar por cada acción. No corre las reglas del proyecto (eso es el programa generado por \`programa\`): sirve para probar los componentes antes de programar.
 
 Seis \`accion\`:
-- \`cargar\`: genera el runtime de la placa del proyecto y lo compila y carga por USB (una vez por placa; después no hace falta repetirlo).
-- \`conectar\`: abre el puerto serie, hace el handshake con el runtime y deja la sesión abierta. El puerto queda reservado: \`platformio\` no carga ni abre el monitor hasta \`desconectar\`.
+- \`cargar\`: genera el runtime de la placa del proyecto y lo compila y carga por USB (una vez por placa; después no hace falta repetirlo). La red WiFi de la placa va abierta (sin clave) salvo que pidan \`redConClave\`; en ese caso imprime la clave de 8 dígitos.
+- \`conectar\`: abre el puerto serie, hace el handshake con el runtime y deja la sesión abierta; dice el nombre de la red WiFi de la placa (\`tecnia-xxxx\`) y su clave. El puerto queda reservado: \`platformio\` no carga ni abre el monitor hasta \`desconectar\`.
 - \`estado\`: lo que la sesión OBSERVÓ (runtime, lecturas, último reinicio), con procedencia. Lo que no se observó figura sin dato: NO lo inventes.
 - \`accionar\`: \`componente\` (id del proyecto) o \`pin\` (GPIO<n>) con \`nivel\` ('alto'/'bajo') o \`porcentaje\` (PWM 0–100).
 - \`leer\`: \`componente\` o \`pin\`; digital o analógica según la capacidad del pin.
@@ -314,6 +374,8 @@ Toda salida empieza con \`resultado\` y trae \`ok\` y, si falla, un \`codigo\` e
     pin: tool.schema.string().optional().describe("Pin de la placa (GPIO23) para accionar o leer sin pasar por un componente del proyecto."),
     nivel: tool.schema.enum(["alto", "bajo"]).optional().describe("Para accionar: 'alto' prende, 'bajo' apaga."),
     porcentaje: tool.schema.number().optional().describe("Para accionar con PWM: 0 a 100."),
+    redConClave: tool.schema.boolean().optional().describe("Para cargar: true pone una clave WPA2 de 8 dígitos (sorteada e impresa) a la red de la placa. Por defecto la red va abierta, sin clave."),
+    nombreRed: tool.schema.string().optional().describe("Para cargar: el nombre que el docente o el grupo eligió para la red WiFi de su placa (hasta 32 caracteres ASCII). Preguntalo antes de cargar. Si no eligen, omitilo y la placa se llama tecnia-xxxx, distinto en cada una."),
   },
   async execute(args, ctx) {
     return ejecutarVivo(args, ctx)

@@ -15,7 +15,7 @@ import type { Proyecto } from "../nucleo/ir.ts"
 import type { Placa } from "../nucleo/placas.ts"
 import type { ComponentKnowledge } from "../conocimiento/conocimiento.ts"
 import { clonarProfundo, congelarProfundo } from "../nucleo/canonico.ts"
-import { COMANDOS_V1, VERSION_PROTOCOLO, type CausaDeReinicio, type Comando, type Nivel, type Respuesta } from "./protocolo.ts"
+import { COMANDOS_V1, VERSION_PROTOCOLO, type CausaDeReinicio, type Comando, type Nivel, type RedWifi, type Respuesta } from "./protocolo.ts"
 
 /** Estados de la sesión (plan §4). `SIN_RUNTIME` también cubre "abrí el puerto y nadie dijo `hola`". */
 export type EstadoDeSesion = "SIN_RUNTIME" | "CONECTANDO" | "CONECTADA" | "DESCONECTADA" | "RUNTIME_INCOMPATIBLE"
@@ -58,6 +58,8 @@ export interface InfoRuntime {
   readonly placa: string
   readonly comandos: readonly string[]
   readonly protocolos: readonly string[]
+  /** V4: la red propia que el runtime anunció (ssid, clave, ip). Ausente en un runtime de sólo serie. */
+  readonly wifi?: RedWifi
 }
 
 export interface Reinicio {
@@ -157,7 +159,14 @@ export function marcarSinRuntime(estado: EstadoObservado, motivo: string): Estad
  * runtime anunció y se decide la compatibilidad. Un `hola` nuevo reemplaza al anterior.
  */
 export function aplicarHola(estado: EstadoObservado, hola: Extract<Respuesta, { tipo: "hola" }>): EstadoObservado {
-  const runtime: InfoRuntime = { version: hola.runtime, protocolo: hola.protocolo, placa: hola.placa, comandos: [...hola.comandos], protocolos: [...hola.protocolos] }
+  const runtime: InfoRuntime = {
+    version: hola.runtime,
+    protocolo: hola.protocolo,
+    placa: hola.placa,
+    comandos: [...hola.comandos],
+    protocolos: [...hola.protocolos],
+    ...(hola.wifi === undefined ? {} : { wifi: { ssid: hola.wifi.ssid, clave: hola.wifi.clave, ip: hola.wifi.ip } }),
+  }
   const compatibilidad = evaluarCompatibilidad(hola)
   if (compatibilidad.ok) return siguiente(estado, { sesion: "CONECTADA", runtime }, ["motivo", "incompatibilidad"])
   const { ok: _ok, ...incompatibilidad } = compatibilidad

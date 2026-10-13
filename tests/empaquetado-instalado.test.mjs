@@ -217,7 +217,7 @@ if (process.platform === "win32") {
       // Modo Vivo V1: el generador del runtime viaja en codegen/, y vivo/ (protocolo, sesión,
       // puente serie en Python) hermano de nucleo/, nunca dentro de tool/.
       assert.ok(existsSync(join(configDir, "codegen", "runtime.ts")), "falta codegen/runtime.ts instalado")
-      for (const modulo of ["protocolo.ts", "estado-observado.ts", "sesion-viva.ts", "transporte-serie.ts", "puente-serie.py"]) {
+      for (const modulo of ["protocolo.ts", "estado-observado.ts", "sesion-viva.ts", "transporte-serie.ts", "pagina-portal.ts", "puente-serie.py"]) {
         assert.ok(existsSync(join(configDir, "vivo", modulo)), `falta vivo/${modulo} instalado`)
       }
       assert.ok(existsSync(join(configDir, "tool", "vivo.ts")), "falta la tool vivo instalada")
