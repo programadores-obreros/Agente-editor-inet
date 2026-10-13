@@ -12,10 +12,10 @@
 // sale de `vivo/protocolo.ts`; las líneas C++ de `runtime-cpp.ts`.
 
 import type { Placa } from "../nucleo/placas.ts"
-import { CAUSAS_DE_REINICIO, CODIGOS_DE_ERROR, COMANDOS_V1, LIMITE_LINEA_BYTES, MODOS_DE_PIN, NIVELES, VERSION_PROTOCOLO, type NombreComandoV1 } from "../vivo/protocolo.ts"
+import { CAUSAS_DE_REINICIO, CODIGOS_DE_ERROR, COMANDOS_V1, LIMITE_LINEA_BYTES, MODOS_DE_PIN, NIVELES, VERSION_PROTOCOLO, esSsidValido, type NombreComandoV1 } from "../vivo/protocolo.ts"
+import { RUTA_COMANDO, renderizarPaginaPortal, type PaginaPortal } from "../vivo/pagina-portal.ts"
 import { renderizarPlatformioIni } from "./platformio-ini.ts"
 import { CAMPO_MODO, CAMPO_NIVEL, CAMPO_PIN, CAMPO_PORCENTAJE, renderizarNucleo, renderizarPortal, renderizarTransporte, type Octetos, type RedDelRuntime, type TablasDelRuntime } from "./runtime-cpp.ts"
-import { renderizarPagina } from "./runtime-pagina.ts"
 
 /** Versión del runtime, la que anuncia `hola` (contrato sec. 3). Semver; cambia cuando cambia el firmware. */
 export const VERSION_RUNTIME = "0.1.0" as const
@@ -33,18 +33,11 @@ export const PREFIJO_SSID = "tecnia-"
 export const PUERTO_HTTP = 80
 export const PUERTO_DNS = 53
 export const RUTA_PAGINA = "/"
-export const RUTA_COMANDO = "/comando"
 /**
  * La clave: `""` = red ABIERTA (el default decidido por Alejandro el 2026-10-13, por chat) u 8 dígitos
- * decimales = WPA2 (sec. 8.1). Nada más.
+ * decimales = WPA2 (sec. 8.1). Nada más. El SSID fijo lo valida `esSsidValido` (`vivo/protocolo.ts`).
  */
 export const FORMA_DE_CLAVE_WIFI = /^(?:[0-9]{8})?$/
-/** Un SSID fijo: 1..32 bytes ASCII imprimibles (`wifi_config_t.ap.ssid` mide 32), sin `"` ni `\` (sale en el JSON sin escapar). */
-export const FORMA_DE_SSID = /^[\x20-\x21\x23-\x5b\x5d-\x7e]{1,32}$/
-/** Lo que muestra la página V4a (sec. 8.3): salidas a la vista, lectura digital con pull-up y lectura analógica. */
-export const PAGINA_V4A = Object.freeze({ salidasVisibles: [2, 18] as readonly number[], entradaDigital: 4, entradaAnalogica: 34 })
-/** `crudo` 0..4095 (contrato sec. 2): sólo para decirle el rango al alumno en la página. */
-export const MAXIMO_ANALOGICO = 4095
 
 /**
  * Campos obligatorios de cada comando (contrato sec. 2), en el orden en que se reclaman como faltantes.
@@ -80,10 +73,15 @@ export interface OpcionesDelRuntime {
   /**
    * V4: compilar la red propia (punto de acceso + DNS cautivo + HTTP con la página). Sin esta opción el
    * runtime es EXACTAMENTE el de V1 (sólo serie). `clave`: `""` (red abierta, el default) u 8 dígitos
-   * decimales (WPA2). `ssid`: nombre fijo (1..32 bytes ASCII imprimibles, sin `"` ni `\`); sin él, la placa
-   * arma `tecnia-xxxx` desde su MAC.
+   * decimales (WPA2). `ssid`: nombre fijo (`esSsidValido`); sin él, la placa arma `tecnia-xxxx` desde su MAC.
    */
   readonly wifi?: { readonly clave: string; readonly ssid?: string }
+  /**
+   * V4: qué pines muestra la página (`vivo/pagina-portal.ts`). Obligatoria con `wifi`; cada número se valida
+   * contra la política de la placa (existe, no prohibido, y salida o ADC según la lista). Este módulo no
+   * conoce ningún número de GPIO: los decide quien llama (la tool, con el proyecto o el contrato sec. 8.3).
+   */
+  readonly pagina?: PaginaPortal
 }
 
 /** Pines que el runtime rechaza SIEMPRE: flash y UART0 (contrato sec. 5), el mismo criterio que el simulador de referencia. */
@@ -130,26 +128,43 @@ export function tablasDelRuntime(placa: Placa): TablasDelRuntime {
   }
 }
 
-const sin = (numeros: readonly number[], quitar: readonly number[]): number[] => numeros.filter((n) => !quitar.includes(n))
+/** Qué le pide la página a cada lista de pines, en términos de la política (sec. 5): la capacidad que la placa tiene que tener. */
+const ROLES_DE_LA_PAGINA: readonly { readonly lista: keyof PaginaPortal; readonly que: string; readonly permitido: (pines: TablasDelRuntime["pines"], pin: number) => boolean }[] = [
+  { lista: "salidas", que: "salida", permitido: (p, pin) => !p.sinSalida.includes(pin) },
+  { lista: "salidasExtra", que: "salida", permitido: (p, pin) => !p.sinSalida.includes(pin) },
+  { lista: "entradasDigitales", que: "entrada digital", permitido: (p, pin) => !p.sinEntrada.includes(pin) },
+  { lista: "entradasAnalogicas", que: "entrada analogica (ADC)", permitido: (p, pin) => p.conAdc.includes(pin) },
+]
 
 /**
- * La red propia y la página (contrato sec. 8) para una placa, desde su política de pines. Lanza si la clave
- * no tiene la forma del contrato o si los pines que la página muestra (sec. 8.3) no existen en la placa con
- * la capacidad que la página les pide: nunca una página que ofrezca lo que la placa va a rechazar.
+ * Valida la página contra la política de la placa, de forma GENERICA (sin ningún número escrito): cada pin
+ * de cada lista tiene que existir, no estar prohibido y tener la capacidad que su lista le pide; un pin no
+ * se repite dentro de su rol. Nunca una página que ofrezca lo que la placa va a rechazar.
  */
-export function redDelRuntime(placa: Placa, pines: TablasDelRuntime["pines"], clave: string, ssid?: string): RedDelRuntime {
+export function validarPaginaPortal(placa: Placa, pines: TablasDelRuntime["pines"], pagina: PaginaPortal): void {
+  if (typeof pagina !== "object" || pagina === null) throw new Error("con wifi, la pagina (PaginaPortal) es obligatoria")
+  for (const rol of ROLES_DE_LA_PAGINA) {
+    const numeros = pagina[rol.lista]
+    if (!Array.isArray(numeros)) throw new Error(`pagina.${rol.lista}: tiene que ser una lista de numeros de GPIO`)
+    if (new Set(numeros).size !== numeros.length) throw new Error(`pagina.${rol.lista}: repite un pin`)
+    for (const pin of numeros) {
+      if (!Number.isInteger(pin) || !pines.existentes.includes(pin)) throw new Error(`pagina.${rol.lista}: GPIO${pin} no existe en «${placa.id}»`)
+      if (pines.prohibidos.includes(pin)) throw new Error(`pagina.${rol.lista}: GPIO${pin} esta prohibido en «${placa.id}» (flash o UART0)`)
+      if (!rol.permitido(pines, pin)) throw new Error(`pagina.${rol.lista}: GPIO${pin} no puede ser ${rol.que} en «${placa.id}»`)
+    }
+  }
+  const salidas = [...pagina.salidas, ...pagina.salidasExtra]
+  if (new Set(salidas).size !== salidas.length) throw new Error("pagina: un pin no puede estar en salidas y en salidasExtra a la vez")
+}
+
+/**
+ * La red propia y la página (contrato sec. 8) para una placa. Lanza si la clave o el SSID no tienen la forma
+ * del contrato, o si la página pide un pin que la política de la placa no permite.
+ */
+export function redDelRuntime(placa: Placa, pines: TablasDelRuntime["pines"], clave: string, ssid: string | undefined, pagina: PaginaPortal): RedDelRuntime {
   if (typeof clave !== "string" || !FORMA_DE_CLAVE_WIFI.test(clave)) throw new Error('la clave WiFi es "" (red abierta) u 8 digitos decimales (contrato sec. 8.1)')
-  if (ssid !== undefined && (typeof ssid !== "string" || !FORMA_DE_SSID.test(ssid))) throw new Error("el SSID fijo son 1 a 32 bytes ASCII imprimibles, sin comillas ni barra invertida")
-  const salidasPermitidas = sin(sin(pines.existentes, pines.prohibidos), pines.sinSalida)
-  const { salidasVisibles, entradaDigital, entradaAnalogica } = PAGINA_V4A
-  for (const pin of salidasVisibles) if (!salidasPermitidas.includes(pin)) throw new Error(`la pagina muestra GPIO${pin} como salida, pero «${placa.id}» no lo permite`)
-  if (!pines.existentes.includes(entradaDigital) || pines.prohibidos.includes(entradaDigital) || pines.sinEntrada.includes(entradaDigital)) throw new Error(`la pagina lee GPIO${entradaDigital} en digital, pero «${placa.id}» no lo permite`)
-  if (!pines.conAdc.includes(entradaAnalogica) || pines.prohibidos.includes(entradaAnalogica)) throw new Error(`la pagina lee GPIO${entradaAnalogica} en analogico, pero «${placa.id}» no tiene ADC ahi`)
-  // Decisión V4-A (agente A, sin fuente en el contrato): un pin que la página LEE no se ofrece también como
-  // salida. Con un pulsador a GND en GPIO4 (el montaje del E2E de V1), un "Alto" escondido en "más pines"
-  // pondría la salida en corto contra el pulsador. El contrato dice "cada salida que la política permite";
-  // esta resta queda anotada en el reporte como desvío deliberado.
-  const salidasOcultas = sin(salidasPermitidas, [...salidasVisibles, entradaDigital, entradaAnalogica])
+  if (ssid !== undefined && !esSsidValido(ssid)) throw new Error("el SSID fijo no es valido: ASCII imprimible, sin comillas ni barra invertida, hasta el largo maximo (esSsidValido)")
+  validarPaginaPortal(placa, pines, pagina)
   return {
     clave,
     ip: IP_PORTAL,
@@ -160,15 +175,7 @@ export function redDelRuntime(placa: Placa, pines: TablasDelRuntime["pines"], cl
     puertoDns: PUERTO_DNS,
     rutaPagina: RUTA_PAGINA,
     rutaComando: RUTA_COMANDO,
-    pagina: renderizarPagina({
-      rutaComando: RUTA_COMANDO,
-      salidasVisibles,
-      salidasOcultas,
-      pinesConPwm: sin(salidasPermitidas, pines.sinPwm),
-      entradaDigital,
-      entradaAnalogica,
-      maximoAnalogico: MAXIMO_ANALOGICO,
-    }),
+    pagina: renderizarPaginaPortal(pagina),
   }
 }
 
@@ -180,7 +187,9 @@ export function redDelRuntime(placa: Placa, pines: TablasDelRuntime["pines"], cl
 export function generarRuntime(placa: Placa, opciones: OpcionesDelRuntime = {}): RuntimeGenerado {
   if (placa.backends.platformio.framework !== "arduino") throw new Error(`el runtime V1 esta escrito sobre Arduino; «${placa.id}» compila con ${placa.backends.platformio.framework}`)
   const base = tablasDelRuntime(placa)
-  const tablas: TablasDelRuntime = opciones.wifi ? { ...base, wifi: redDelRuntime(placa, base.pines, opciones.wifi.clave, opciones.wifi.ssid) } : base
+  const pagina = opciones.pagina
+  if (opciones.wifi && pagina == null) throw new Error("con wifi, la pagina (PaginaPortal) es obligatoria")
+  const tablas: TablasDelRuntime = opciones.wifi && pagina != null ? { ...base, wifi: redDelRuntime(placa, base.pines, opciones.wifi.clave, opciones.wifi.ssid, pagina) } : base
   const ini = renderizarPlatformioIni(placa)
   const velocidadSerie = opciones.velocidadSerie ?? VELOCIDAD_SERIE
   if (!Number.isInteger(velocidadSerie) || velocidadSerie <= 0) throw new Error(`velocidad de serie invalida: ${velocidadSerie}`)

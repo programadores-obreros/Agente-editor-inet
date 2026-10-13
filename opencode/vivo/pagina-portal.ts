@@ -1,38 +1,46 @@
 // Modo Vivo V4 — la página que sirve el runtime en `GET /` (PROTOCOLO-VIVO-V1.md sec. 8.3, "por pines").
 //
-// Es una función PURA de las tablas de pines a un string ASCII: HTML + CSS + JS propios, sin frameworks,
-// sin CDN, sin internet (la red del runtime no tiene salida). La página NUNCA inventa estado: cada
-// texto que muestra sale de una respuesta de la placa, con la hora del celular en que llegó.
+// Vive en `vivo/` porque es INTERFAZ (lo que ve el alumno en el celular), no generación de firmware:
+// `codegen/runtime*.ts` la importa como texto y la embebe en el C++. Es una función PURA de la lista de
+// pines a un string ASCII: HTML + CSS + JS propios, sin frameworks, sin CDN, sin internet (la red del
+// runtime no tiene salida). La página NUNCA inventa estado: cada texto que muestra sale de una respuesta
+// de la placa, con la hora del celular en que llegó. Sin `node:`: también corre en el navegador.
+//
+// Qué pines mostrar lo decide quien llama (`PaginaPortal`): esta función no conoce ninguna placa ni ningún
+// número de GPIO; el generador valida las listas contra la política de `placas.ts`.
 //
 // Restricciones de forma, todas con motivo:
-// - Sólo ASCII (tildes y eñes con entidades HTML): `main.cpp` es ASCII y `literalTexto` lo exige.
+// - Sólo ASCII (tildes y eñes con entidades HTML): `main.cpp` es ASCII.
 // - Sin comillas simples, sin `//` y sin barras invertidas: el traductor C++ → JS de
 //   `tests/vivo-runtime-cpp.test.mjs` convierte `'x'` en números y recorta `//` como comentario; la
 //   página va embebida como literal de C++ y tiene que pasar por ahí intacta.
 // - Sin `http://` ni `https://`: no hay nada afuera de la placa a lo que apuntar.
-// - El JS es ES5 (var/function): el celular del aula puede ser viejo; y `fetch` es lo único moderno.
+// - El JS es ES5 (var/function): el celular del aula puede ser viejo; `fetch` es lo único moderno.
 
-export interface OpcionesDePagina {
-  /** Ruta del POST (contrato sec. 8.2: `/comando`). */
-  readonly rutaComando: string
-  /** Salidas con botones a la vista (sec. 8.3: GPIO2, el LED de placa, y GPIO18). */
-  readonly salidasVisibles: readonly number[]
-  /** El resto de las salidas que la política permite, detrás de "más pines". */
-  readonly salidasOcultas: readonly number[]
-  /** Pines con PWM: sólo estos llevan deslizador. */
-  readonly pinesConPwm: readonly number[]
-  /** Lectura digital (sec. 8.3: GPIO4, con `entradaPullUp` la primera vez). */
-  readonly entradaDigital: number
-  /** Lectura analógica (sec. 8.3: GPIO34). */
-  readonly entradaAnalogica: number
-  /** Valor máximo del ADC, para decirle al alumno el rango (contrato sec. 2: 0..4095). */
-  readonly maximoAnalogico: number
+/** Ruta del `POST` con una línea del formato plano (contrato sec. 8.2). */
+export const RUTA_COMANDO = "/comando"
+
+/** Los pines que la página ofrece. Listas vacías son válidas: la sección no se muestra. */
+export interface PaginaPortal {
+  /** Salidas a la vista: botones Alto/Bajo y deslizador PWM. */
+  readonly salidas: readonly number[]
+  /** Más salidas, escondidas detrás de "más pines". */
+  readonly salidasExtra: readonly number[]
+  /** Lecturas digitales: `pin.modo entradaPullUp` la primera vez, después `digital.leer`. */
+  readonly entradasDigitales: readonly number[]
+  /** Lecturas analógicas: `analogico.leer` (crudo, tal cual lo da la placa). */
+  readonly entradasAnalogicas: readonly number[]
 }
 
 const lista = (numeros: readonly number[]): string => `[${numeros.join(", ")}]`
 
 /** La página entera como texto ASCII con saltos de línea `\n`. Lanza si algo no es ASCII o rompe el traductor. */
-export function renderizarPagina(o: OpcionesDePagina): string {
+export function renderizarPaginaPortal(pagina: PaginaPortal): string {
+  for (const [nombre, numeros] of Object.entries(pagina)) {
+    if (!Array.isArray(numeros) || numeros.some((n) => !Number.isInteger(n) || n < 0)) throw new Error(`pagina.${nombre}: tiene que ser una lista de numeros de GPIO`)
+  }
+  const haySalidas = pagina.salidas.length + pagina.salidasExtra.length > 0
+  const hayEntradas = pagina.entradasDigitales.length + pagina.entradasAnalogicas.length > 0
   const l: string[] = []
   l.push("<!doctype html>")
   l.push('<html lang="es">')
@@ -57,27 +65,36 @@ export function renderizarPagina(o: OpcionesDePagina): string {
   l.push("<body>")
   l.push("<h1>Tecnia Bot &middot; Modo Vivo</h1>")
   l.push('<div class="cab">placa <span id="placa">?</span> &middot; runtime <span id="runtime">?</span> &middot; red <span id="ssid">?</span></div>')
-  l.push("<h2>Salidas</h2>")
-  l.push('<div id="salidas"></div>')
-  l.push('<button type="button" id="mas">m&aacute;s pines</button>')
-  l.push('<div id="otras" class="oculto"></div>')
-  l.push("<h2>Entradas</h2>")
-  l.push(`<div class="pin"><strong>GPIO${o.entradaDigital}</strong> digital (pull-up interno) <button type="button" id="leer-${o.entradaDigital}">leer</button><div class="est" id="est-${o.entradaDigital}">sin lectura todav&iacute;a</div></div>`)
-  l.push(`<div class="pin"><strong>GPIO${o.entradaAnalogica}</strong> anal&oacute;gica (0 a ${o.maximoAnalogico}) <button type="button" id="leer-${o.entradaAnalogica}">leer</button><div class="est" id="est-${o.entradaAnalogica}">sin lectura todav&iacute;a</div></div>`)
-  l.push('<label><input type="checkbox" id="cada1s"> leer cada 1 s</label>')
+  if (haySalidas) {
+    l.push("<h2>Salidas</h2>")
+    l.push('<div id="salidas"></div>')
+    if (pagina.salidasExtra.length > 0) {
+      l.push('<button type="button" id="mas">m&aacute;s pines</button>')
+      l.push('<div id="otras" class="oculto"></div>')
+    }
+  }
+  if (hayEntradas) {
+    l.push("<h2>Entradas</h2>")
+    for (const pin of pagina.entradasDigitales) {
+      l.push(`<div class="pin"><strong>GPIO${pin}</strong> digital (pull-up interno) <button type="button" id="leer-${pin}">leer</button><div class="est" id="est-${pin}">sin lectura todav&iacute;a</div></div>`)
+    }
+    for (const pin of pagina.entradasAnalogicas) {
+      l.push(`<div class="pin"><strong>GPIO${pin}</strong> anal&oacute;gica (valor crudo del conversor) <button type="button" id="leer-${pin}">leer</button><div class="est" id="est-${pin}">sin lectura todav&iacute;a</div></div>`)
+    }
+    l.push('<label><input type="checkbox" id="cada1s"> leer cada 1 s</label>')
+  }
   l.push("<h2>Registro: las &uacute;ltimas 10 l&iacute;neas, tal cual van por el cable</h2>")
   l.push('<div id="registro"></div>')
   l.push("<script>")
-  l.push(`var RUTA = "${o.rutaComando}";`)
-  l.push(`var SALIDAS = ${lista(o.salidasVisibles)};`)
-  l.push(`var OTRAS = ${lista(o.salidasOcultas)};`)
-  l.push(`var PWM = ${lista(o.pinesConPwm)};`)
-  l.push(`var PIN_DIGITAL = ${o.entradaDigital};`)
-  l.push(`var PIN_ANALOGICO = ${o.entradaAnalogica};`)
+  l.push(`var RUTA = "${RUTA_COMANDO}";`)
+  l.push(`var SALIDAS = ${lista(pagina.salidas)};`)
+  l.push(`var OTRAS = ${lista(pagina.salidasExtra)};`)
+  l.push(`var ENTRADAS_DIGITALES = ${lista(pagina.entradasDigitales)};`)
+  l.push(`var ENTRADAS_ANALOGICAS = ${lista(pagina.entradasAnalogicas)};`)
   l.push("var cola = Promise.resolve();")
   l.push("var registro = [];")
   l.push("var enVuelo = 0;")
-  l.push("var pullUpListo = false;")
+  l.push("var pullUpListo = {};")
   l.push("var temporizador = null;")
   l.push('function dos(n) { return (n < 10 ? "0" : "") + n; }')
   l.push('function hora() { var d = new Date(); return dos(d.getHours()) + ":" + dos(d.getMinutes()) + ":" + dos(d.getSeconds()); }')
@@ -132,16 +149,14 @@ export function renderizarPagina(o: OpcionesDePagina): string {
   l.push("      fila.appendChild(boton);")
   l.push("    })(niveles[i]);")
   l.push("  }")
-  l.push("  if (PWM.indexOf(pin) >= 0) {")
-  l.push('    var rango = document.createElement("input");')
-  l.push('    rango.type = "range";')
-  l.push('    rango.min = "0";')
-  l.push('    rango.max = "100";')
-  l.push('    rango.value = "0";')
-  l.push('    rango.title = "PWM 0 a 100";')
-  l.push('    rango.addEventListener("change", function () { mandarYMostrar("pwm.escribir pin=" + pin + " porcentaje=" + rango.value, pin); });')
-  l.push("    fila.appendChild(rango);")
-  l.push("  }")
+  l.push('  var rango = document.createElement("input");')
+  l.push('  rango.type = "range";')
+  l.push('  rango.min = "0";')
+  l.push('  rango.max = "100";')
+  l.push('  rango.value = "0";')
+  l.push('  rango.title = "PWM 0 a 100";')
+  l.push('  rango.addEventListener("change", function () { mandarYMostrar("pwm.escribir pin=" + pin + " porcentaje=" + rango.value, pin); });')
+  l.push("  fila.appendChild(rango);")
   l.push('  var est = document.createElement("div");')
   l.push('  est.className = "est";')
   l.push('  est.id = "est-" + pin;')
@@ -149,30 +164,39 @@ export function renderizarPagina(o: OpcionesDePagina): string {
   l.push("  fila.appendChild(est);")
   l.push("  return fila;")
   l.push("}")
-  l.push("function leerDigital() {")
-  l.push('  var lectura = "digital.leer pin=" + PIN_DIGITAL;')
-  l.push("  if (pullUpListo) return mandarYMostrar(lectura, PIN_DIGITAL);")
-  l.push('  return enviar("pin.modo pin=" + PIN_DIGITAL + " modo=entradaPullUp").then(function (r) {')
-  l.push('    if (!(r.objeto && r.objeto.tipo === "ok")) { mostrar(PIN_DIGITAL, r); return r; }')
-  l.push("    pullUpListo = true;")
-  l.push("    return mandarYMostrar(lectura, PIN_DIGITAL);")
+  l.push("function leerDigital(pin) {")
+  l.push('  var lectura = "digital.leer pin=" + pin;')
+  l.push("  if (pullUpListo[pin]) return mandarYMostrar(lectura, pin);")
+  l.push('  return enviar("pin.modo pin=" + pin + " modo=entradaPullUp").then(function (r) {')
+  l.push('    if (!(r.objeto && r.objeto.tipo === "ok")) { mostrar(pin, r); return r; }')
+  l.push("    pullUpListo[pin] = true;")
+  l.push("    return mandarYMostrar(lectura, pin);")
   l.push("  });")
   l.push("}")
-  l.push('function leerAnalogico() { return mandarYMostrar("analogico.leer pin=" + PIN_ANALOGICO, PIN_ANALOGICO); }')
+  l.push('function leerAnalogico(pin) { return mandarYMostrar("analogico.leer pin=" + pin, pin); }')
+  l.push("function leerTodo() {")
+  l.push("  var i;")
+  l.push("  for (i = 0; i < ENTRADAS_DIGITALES.length; i++) leerDigital(ENTRADAS_DIGITALES[i]);")
+  l.push("  for (i = 0; i < ENTRADAS_ANALOGICAS.length; i++) leerAnalogico(ENTRADAS_ANALOGICAS[i]);")
+  l.push("}")
   l.push("function armar() {")
   l.push("  var i;")
   l.push('  for (i = 0; i < SALIDAS.length; i++) porId("salidas").appendChild(filaDeSalida(SALIDAS[i]));')
   l.push('  for (i = 0; i < OTRAS.length; i++) porId("otras").appendChild(filaDeSalida(OTRAS[i]));')
-  l.push('  porId("mas").addEventListener("click", function () {')
+  l.push('  if (porId("mas")) porId("mas").addEventListener("click", function () {')
   l.push('    var otras = porId("otras");')
   l.push('    otras.classList.toggle("oculto");')
   l.push('    porId("mas").innerHTML = otras.classList.contains("oculto") ? "m&aacute;s pines" : "menos pines";')
   l.push("  });")
-  l.push('  porId("leer-" + PIN_DIGITAL).addEventListener("click", leerDigital);')
-  l.push('  porId("leer-" + PIN_ANALOGICO).addEventListener("click", leerAnalogico);')
-  l.push('  porId("cada1s").addEventListener("change", function () {')
+  l.push("  for (i = 0; i < ENTRADAS_DIGITALES.length; i++) {")
+  l.push('    (function (pin) { porId("leer-" + pin).addEventListener("click", function () { leerDigital(pin); }); })(ENTRADAS_DIGITALES[i]);')
+  l.push("  }")
+  l.push("  for (i = 0; i < ENTRADAS_ANALOGICAS.length; i++) {")
+  l.push('    (function (pin) { porId("leer-" + pin).addEventListener("click", function () { leerAnalogico(pin); }); })(ENTRADAS_ANALOGICAS[i]);')
+  l.push("  }")
+  l.push('  if (porId("cada1s")) porId("cada1s").addEventListener("change", function () {')
   l.push("    if (this.checked) {")
-  l.push("      temporizador = setInterval(function () { if (enVuelo === 0) { leerDigital(); leerAnalogico(); } }, 1000);")
+  l.push("      temporizador = setInterval(function () { if (enVuelo === 0) leerTodo(); }, 1000);")
   l.push("    } else {")
   l.push("      clearInterval(temporizador);")
   l.push("      temporizador = null;")
@@ -190,8 +214,8 @@ export function renderizarPagina(o: OpcionesDePagina): string {
   l.push("</script>")
   l.push("</body>")
   l.push("</html>")
-  const pagina = l.join("\n")
-  if (!/^[\x0a\x20-\x7e]*$/.test(pagina)) throw new Error("la pagina embebida tiene que ser ASCII (tildes con entidades HTML)")
-  if (pagina.includes("'") || pagina.includes("//") || pagina.includes("\\")) throw new Error("la pagina embebida no puede llevar comillas simples, // ni barras invertidas (ver el traductor del test)")
-  return pagina
+  const html = l.join("\n")
+  if (!/^[\x0a\x20-\x7e]*$/.test(html)) throw new Error("la pagina embebida tiene que ser ASCII (tildes con entidades HTML)")
+  if (html.includes("'") || html.includes("//") || html.includes("\\")) throw new Error("la pagina embebida no puede llevar comillas simples, // ni barras invertidas (ver el traductor del test)")
+  return html
 }

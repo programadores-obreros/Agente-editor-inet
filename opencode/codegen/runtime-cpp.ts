@@ -22,7 +22,7 @@
 // Los comentarios del C++ generado van sin acentos: el programa generado es ASCII.
 
 /** Todo lo que el C++ necesita saber, ya derivado del contrato (`vivo/protocolo.ts`) y de la placa. */
-import { CAMPOS, CAUSAS_DE_REINICIO, MODOS_DE_PIN, NIVELES } from "../vivo/protocolo.ts"
+import { CAMPOS, CAUSAS_DE_REINICIO, LARGO_MAXIMO_SSID, MODOS_DE_PIN, NIVELES, esSsidValido } from "../vivo/protocolo.ts"
 
 export type Octetos = readonly [number, number, number, number]
 
@@ -35,13 +35,13 @@ export interface RedDelRuntime {
   readonly mascara: Octetos
   /** `tecnia-`: el SSID es el prefijo + los 4 últimos hex de la MAC del AP en minúscula (sec. 8.1), salvo `ssid` fijo. */
   readonly prefijoSsid: string
-  /** SSID fijado al generar (decisión de Alejandro, 2026-10-13): 1..32 bytes ASCII imprimibles sin `"` ni `\`. Sin él, el de la MAC. */
+  /** SSID fijado al generar (decisión de Alejandro, 2026-10-13), validado con `esSsidValido`. Sin él, el de la MAC. */
   readonly ssid?: string
   readonly puertoHttp: number
   readonly puertoDns: number
   readonly rutaPagina: string
   readonly rutaComando: string
-  /** La página de sec. 8.3, ASCII, ya renderizada (`runtime-pagina.ts`). */
+  /** La página de sec. 8.3, ASCII, ya renderizada (`vivo/pagina-portal.ts`). */
   readonly pagina: string
 }
 
@@ -122,8 +122,8 @@ const indiceDe = (lista: readonly string[], valor: string, que: string): number 
 
 const SIN_INDICE = "SIN_INDICE"
 
-/** Tamaño del buffer del SSID: `wifi_config_t.ap.ssid` es `uint8_t[32]` (esp_wifi_types.h:260) más el 0 final. */
-const TAMANO_BUFFER_SSID = 33
+/** Tamaño del buffer del SSID: el largo máximo del contrato (= `wifi_config_t.ap.ssid`, esp_wifi_types.h:260) más el 0 final. */
+const TAMANO_BUFFER_SSID = LARGO_MAXIMO_SSID + 1
 
 /**
  * La página como literal de C++ en `.rodata`: una línea del HTML por literal adyacente, cada una con su
@@ -256,7 +256,7 @@ export function renderizarNucleo(t: TablasDelRuntime): string[] {
     l.push("// arma la capa 3 desde la MAC del punto de acceso y lo deja aca con nucleo_fijarSsid.")
     l.push(`static const char TEXTO_WIFI_CLAVE[] = ${literalTexto(wifi.clave)};  // ${wifi.clave === "" ? '"" = red abierta' : "8 digitos decimales, WPA2"}; el hola la anuncia tal cual`)
     l.push(`static const char TEXTO_WIFI_IP[] = ${literalTexto(wifi.ip.join("."))};  // la IP del punto de acceso, fija`)
-    l.push(`static const uint8_t TAMANO_BUFFER_SSID = ${TAMANO_BUFFER_SSID};  // wifi_config_t.ap.ssid es uint8_t[32] (esp_wifi_types.h:260) + el 0 final`)
+    l.push(`static const uint8_t TAMANO_BUFFER_SSID = ${TAMANO_BUFFER_SSID};  // wifi_config_t.ap.ssid es uint8_t[${LARGO_MAXIMO_SSID}] (esp_wifi_types.h:260) + el 0 final`)
   }
   l.push("")
   l.push("// Comandos de V1, en el orden en que los anuncia `hola` (sec. 2).")
@@ -915,8 +915,8 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
   for (const octetos of [w.ip, w.mascara]) if (octetos.length !== 4 || octetos.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) throw new Error("una IP son 4 octetos 0..255")
   // "tecnia-" + 4 hex + el 0 final.
   const tamanoSsid = w.prefijoSsid.length + 4 + 1
-  if (tamanoSsid > TAMANO_BUFFER_SSID) throw new Error("el SSID no entra en los 32 bytes de wifi_config_t.ap.ssid")
-  if (w.ssid !== undefined && (!/^[\x20-\x7e]{1,32}$/.test(w.ssid) || w.ssid.includes('"') || w.ssid.includes("\\"))) throw new Error("el SSID fijo son 1 a 32 bytes ASCII imprimibles, sin comillas ni barra invertida")
+  if (tamanoSsid > TAMANO_BUFFER_SSID) throw new Error(`el SSID derivado de la MAC no entra en los ${LARGO_MAXIMO_SSID} bytes de wifi_config_t.ap.ssid`)
+  if (w.ssid !== undefined && !esSsidValido(w.ssid)) throw new Error("el SSID fijo no es valido (esSsidValido): ASCII imprimible, sin comillas ni barra invertida, hasta el largo maximo")
   const ipTexto = w.ip.join(".")
   const l: string[] = []
   l.push("// ============================================================================")
@@ -932,7 +932,7 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
   l.push("")
   l.push("// --- Constantes de la red (sec. 8.1 y 8.2) ---")
   if (w.ssid !== undefined) {
-    l.push(`static const char SSID_FIJO[] = ${literalTexto(w.ssid)};  // nombre de red fijado al generar (opcion wifi.ssid); cabe en wifi_config_t.ap.ssid (32)`)
+    l.push(`static const char SSID_FIJO[] = ${literalTexto(w.ssid)};  // nombre de red fijado al generar (opcion wifi.ssid); cabe en wifi_config_t.ap.ssid (${LARGO_MAXIMO_SSID})`)
   } else {
     l.push(`static const char PREFIJO_SSID[] = ${literalTexto(w.prefijoSsid)};  // + los 4 ultimos hex de la MAC del AP, en minuscula`)
     l.push(`static const uint8_t TAMANO_SSID = ${tamanoSsid};  // prefijo + 4 hex + el 0 final`)
