@@ -30,8 +30,6 @@ export const IP_PORTAL: Octetos = [192, 168, 4, 1]
 export const MASCARA_PORTAL: Octetos = [255, 255, 255, 0]
 /** SSID = prefijo + los 4 últimos hex de la MAC del AP, en minúscula (sec. 8.1, decisión V4-1). */
 export const PREFIJO_SSID = "tecnia-"
-/** Canales 2,4 GHz que la MAC reparte entre las placas del aula (sec. 8.1). */
-export const CANALES_WIFI: readonly number[] = [1, 6, 11]
 export const PUERTO_HTTP = 80
 export const PUERTO_DNS = 53
 export const RUTA_PAGINA = "/"
@@ -158,7 +156,6 @@ export function redDelRuntime(placa: Placa, pines: TablasDelRuntime["pines"], cl
     mascara: MASCARA_PORTAL,
     prefijoSsid: PREFIJO_SSID,
     ...(ssid !== undefined ? { ssid } : {}),
-    canales: CANALES_WIFI,
     puertoHttp: PUERTO_HTTP,
     puertoDns: PUERTO_DNS,
     rutaPagina: RUTA_PAGINA,

@@ -13,7 +13,7 @@
 // - compilación real con PlatformIO (`TECNIA_CODEGEN_PIO=1`), con evidencia.
 // - V4 (sección F): con `wifi: { clave }` el runtime gana la CAPA 3 (red propia, DNS cautivo, HTTP) y
 //   el `hola` anuncia la red; sin la opción, el hash de V1 no se mueve. El `hola` con wifi del núcleo
-//   traducido es byte a byte el del simulador; con el Arduino falso: SSID desde la MAC, canal por MAC,
+//   traducido es byte a byte el del simulador; con el Arduino falso: SSID desde la MAC o fijo, canal por defecto (V4-3),
 //   302 para rutas y hosts ajenos, `POST /comando` = la misma línea que el serie, 400 sólo con cuerpo
 //   vacío o largo, la página ASCII sin internet; `String` sólo en la capa 3.
 //
@@ -33,7 +33,7 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const { generarRuntime, CAMPOS_POR_COMANDO, VERSION_RUNTIME, pinesProhibidosDe, PAGINA_V4A, IP_PORTAL, CANALES_WIFI, RUTA_COMANDO } = await import(join(REPO, "opencode/codegen/runtime.ts"))
+const { generarRuntime, CAMPOS_POR_COMANDO, VERSION_RUNTIME, pinesProhibidosDe, PAGINA_V4A, IP_PORTAL, RUTA_COMANDO } = await import(join(REPO, "opencode/codegen/runtime.ts"))
 const { REGISTRO_PLACAS } = await import(join(REPO, "opencode/nucleo/placas.ts"))
 const P = await import(join(REPO, "opencode/vivo/protocolo.ts"))
 const { crearRuntimeSimulado, CASOS_DORADOS, pinesProhibidos, RUNTIME_VERSION } = await import(join(REPO, "tests/vivo-simulador.mjs"))
@@ -93,6 +93,13 @@ const texto = (x) => (typeof x === "string" ? x : textoDe(x, x.indexOf(0) < 0 ? 
  * URL `http://192.168.4.1/`) ni de un literal de carácter (`'"'` desbalancearía las comillas dobles).
  */
 const sinComentarioDeLinea = (linea) => linea.replace(/^((?:[^"'/]|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)'|\/(?!\/))*?)\s*\/\/.*$/, "$1")
+/** El C++ sin comentarios: para las guardias que miden código y no citas. */
+const sinComentarios = (cpp) =>
+  cpp
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith("//"))
+    .map(sinComentarioDeLinea)
+    .join("\n")
 
 /** Traduce el subconjunto de C++ del runtime a JS. Lo que no reconoce, lo deja: si no es JS válido, `new Function` lo dice. */
 function traducir(cpp) {
@@ -198,7 +205,7 @@ const ESP_RST = { UNKNOWN: 0, POWERON: 1, EXT: 2, SW: 3, PANIC: 4, INT_WDT: 5, T
 // V4: lo que el Arduino falso sabe del core para la capa 3.
 const WIFI_MODE = { NULL: 0, STA: 1, AP: 2, APSTA: 3 } // esp_wifi_types.h: wifi_mode_t
 const HTTP = { GET: 1, POST: 3, HEAD: 2, PUT: 4 } // http_parser.h:96-99
-const MAC_DE_PRUEBA = [0x24, 0x0a, 0xc4, 0x12, 0x3f, 0x2a] // → ssid "tecnia-3f2a"; 0x2a = 42, 42 % 3 = 0 → canal 1
+const MAC_DE_PRUEBA = [0x24, 0x0a, 0xc4, 0x12, 0x3f, 0x2a] // → ssid "tecnia-3f2a"
 const SSID_DE_PRUEBA = "tecnia-3f2a"
 const WIFI_DE_PRUEBA = { ssid: SSID_DE_PRUEBA, clave: "", ip: IP_TEXTO }
 
@@ -340,9 +347,10 @@ function ejecutarPrograma(cpp = MAIN, { causa = ESP_RST.POWERON, reloj = () => 0
         if (placa.modoWifi !== WIFI_MODE.NULL) for (let i = 0; i < 6; i++) destino[i] = mac[i]
         return destino
       },
-      // WiFiAP.cpp:136-175: SSID vacio o clave de 1..7 bytes → false. Clave NULL = red abierta (WiFiAP.cpp:107,115-119).
+      // WiFiAP.cpp:136-175: SSID vacio o clave de 1..7 bytes → false. Clave NULL u omitida = red abierta (WiFiAP.h:40,
+      // WiFiAP.cpp:107,115-119). Se registra el canal TAL CUAL se paso (undefined = no se paso: el por defecto, V4-3).
       softAP: (ssid, clave, canal) => {
-        const claveTexto = clave === null ? null : texto(clave)
+        const claveTexto = clave === null || clave === undefined ? null : texto(clave)
         placa.llamadas.push(["WiFi.softAP", texto(ssid), claveTexto, canal])
         if (texto(ssid).length === 0 || (claveTexto !== null && claveTexto.length > 0 && claveTexto.length < 8)) return false
         return apLevanta
@@ -883,17 +891,24 @@ test("F1 forma: el runtime de sólo serie no cambia ni un byte; con wifi el hash
   assert.ok(/^[\x09\x0a\x20-\x7e]*$/.test(MAIN_WIFI), "ASCII")
   assert.doesNotMatch(MAIN_WIFI, /\d{4}-\d{2}-\d{2}T/, "sin marcas temporales")
   // Hashes fijados: red abierta (el default) y con clave. Cambiarlos es a propósito y el commit lo dice.
-  assert.equal(sha(MAIN_WIFI), "190a1958fe19f5b260b6ddbaf1894fbac36a46b15cd976b211beda86efc7c530")
-  assert.equal(sha(MAIN_WIFI_CON_CLAVE), "6ad8e15a47b90c5dbd8ffbe06334dac28602e70cdd89ced0733df813e5488a64")
-  assert.equal(sha(MAIN_WIFI_SSID_FIJO), "8626b8ac6db04a370a1c1c2ab40ab4fb08c74bb7aae8316fd91bbb95404a07d7")
-  assert.ok(MAIN_WIFI.includes('static const char TEXTO_WIFI_CLAVE[] = "";') && MAIN_WIFI.includes("WiFi.softAP(ssid, NULL, g_canalWifi)"), "abierta: clave vacía en el hola y NULL en softAP (WiFiAP.cpp:107,115-119)")
-  assert.ok(MAIN_WIFI_CON_CLAVE.includes(`static const char TEXTO_WIFI_CLAVE[] = "${CLAVE_WIFI}";`) && MAIN_WIFI_CON_CLAVE.includes("WiFi.softAP(ssid, TEXTO_WIFI_CLAVE, g_canalWifi)"), "con clave: la clave va al softAP")
+  assert.equal(sha(MAIN_WIFI), "471b473215ce646da52fb1c147a899db13d2e5f9502b8707f1dc5edfaccdf6e3")
+  assert.equal(sha(MAIN_WIFI_CON_CLAVE), "893ccb590148d4972b41011e7cf4f5ccbbbd94d90afa7ea73bcea99f2a07fbc9")
+  assert.equal(sha(MAIN_WIFI_SSID_FIJO), "91c8ff3a712596f3716c26197bb4c2a7b27683ae15586d2e04a9ad188913eb64")
+  assert.ok(MAIN_WIFI.includes('static const char TEXTO_WIFI_CLAVE[] = "";') && MAIN_WIFI.includes("WiFi.softAP(ssid))"), "abierta: clave vacía en el hola y softAP(ssid) solo (passphrase NULL por defecto, WiFiAP.h:40)")
+  assert.ok(MAIN_WIFI_CON_CLAVE.includes(`static const char TEXTO_WIFI_CLAVE[] = "${CLAVE_WIFI}";`) && MAIN_WIFI_CON_CLAVE.includes("WiFi.softAP(ssid, TEXTO_WIFI_CLAVE))"), "con clave: la clave va al softAP, sin canal")
+  // V4-3: nunca se pasa un canal a softAP ni se elige por MAC (E2E 2026-10-13: con canal 6/11 la red no se veía).
+  for (const main of [MAIN_WIFI, MAIN_WIFI_CON_CLAVE, MAIN_WIFI_SSID_FIJO]) {
+    const codigo = sinComentarios(main)
+    assert.doesNotMatch(codigo, /WiFi\.softAP\([^)]*,[^)]*,/, "softAP con tres argumentos (canal explícito)")
+    assert.doesNotMatch(codigo, /CANALES_WIFI|g_canalWifi|% 3/, "sin elección de canal por MAC")
+    assert.ok(main.includes("Decision V4-3"), "la decisión está anotada en el C++ (en un comentario)")
+  }
   for (const clave of ["1234567", "123456789", "abcdefgh", "4821390 ", " 48213907", "4821-907", 48213907, undefined, null]) {
     assert.throws(() => generarRuntime(esp32, { wifi: { clave } }), /8 digitos/, JSON.stringify(clave))
   }
-  // SSID fijo: va tal cual a softAP y a nucleo_fijarSsid; la MAC ya no arma el nombre (pero sigue eligiendo el canal).
-  assert.ok(MAIN_WIFI_SSID_FIJO.includes(`static const char SSID_FIJO[] = "${SSID_FIJO}";`) && MAIN_WIFI_SSID_FIJO.includes("WiFi.softAP(SSID_FIJO, NULL, g_canalWifi)") && MAIN_WIFI_SSID_FIJO.includes("nucleo_fijarSsid(SSID_FIJO);"))
-  assert.ok(!MAIN_WIFI_SSID_FIJO.includes("DIGITOS_HEX") && !MAIN_WIFI_SSID_FIJO.includes("PREFIJO_SSID") && MAIN_WIFI_SSID_FIJO.includes("g_canalWifi = CANALES_WIFI[mac[5] % CANTIDAD_CANALES_WIFI];"))
+  // SSID fijo: va tal cual a softAP y a nucleo_fijarSsid; la MAC no se lee (ya no arma el nombre ni elige canal).
+  assert.ok(MAIN_WIFI_SSID_FIJO.includes(`static const char SSID_FIJO[] = "${SSID_FIJO}";`) && MAIN_WIFI_SSID_FIJO.includes("WiFi.softAP(SSID_FIJO))") && MAIN_WIFI_SSID_FIJO.includes("nucleo_fijarSsid(SSID_FIJO);"))
+  assert.ok(!MAIN_WIFI_SSID_FIJO.includes("DIGITOS_HEX") && !MAIN_WIFI_SSID_FIJO.includes("PREFIJO_SSID") && !sinComentarios(MAIN_WIFI_SSID_FIJO).includes("softAPmacAddress("))
   assert.deepEqual(generarRuntime(esp32, { wifi: { clave: "", ssid: undefined } }), generadoWifi, "ssid ausente = el de la MAC")
   for (const ssid of ["", "x".repeat(33), 'MI"ESP', "MI\\ESP", "MI\tESP", "MI\nESP", "ESPAÑA", 42, null]) {
     assert.throws(() => generarRuntime(esp32, { wifi: { clave: "", ssid } }), /SSID fijo/, JSON.stringify(ssid))
@@ -928,9 +943,17 @@ test("F2 el núcleo traducido: sin SSID fijado el hola es el de V1; con el SSID 
     assert.deepEqual(nucleo.procesar("hola"), [holaConWifi({ ...WIFI_DE_PRUEBA, ssid: bueno })], JSON.stringify(bueno))
     assert.equal(P.parsearRespuesta(nucleo.procesar("hola")[0]).valor.wifi.ssid, bueno, "el host lo lee de vuelta")
   }
+  // El hola más largo posible (SSID de 32 y clave de 8) entra en g_salida con margen: nucleo_emitirByte recorta en
+  // TAMANO_SALIDA, así que un desborde es imposible, pero un hola recortado sería un JSON roto y tampoco se quiere.
+  const tamanoSalida = Number(MAIN_WIFI_CON_CLAVE.match(/TAMANO_SALIDA = (\d+);/)[1])
+  const masLargo = ejecutarNucleo(MAIN_WIFI_CON_CLAVE)
+  masLargo.fijarSsid("x".repeat(32))
+  const lineaMasLarga = masLargo.procesar("hola")[0]
+  assert.equal(lineaMasLarga, holaConWifi({ ssid: "x".repeat(32), clave: CLAVE_WIFI, ip: IP_TEXTO }))
+  assert.ok(lineaMasLarga.length + 1 < tamanoSalida, `hola de ${lineaMasLarga.length} bytes contra TAMANO_SALIDA = ${tamanoSalida}`)
 })
 
-test("F3 al arrancar con wifi: modo AP, SSID = tecnia- + 4 hex de la MAC del AP en minúscula, canal 1/6/11 por MAC, softAP y softAPConfig, DNS cautivo, rutas, y el hola por serie anuncia la red", () => {
+test("F3 al arrancar con wifi: modo AP, SSID = tecnia- + 4 hex de la MAC del AP en minúscula, softAP SIN canal (V4-3) y softAPConfig, DNS cautivo, rutas, y el hola por serie anuncia la red", () => {
   const prog = ejecutarPrograma(MAIN_WIFI)
   prog.setup()
   const ll = prog.placa.llamadas
@@ -938,7 +961,7 @@ test("F3 al arrancar con wifi: modo AP, SSID = tecnia- + 4 hex de la MAC del AP 
   assert.deepEqual(ll.slice(desde, desde + 5), [
     ["WiFi.mode", WIFI_MODE.AP],
     ["WiFi.softAPmacAddress"],
-    ["WiFi.softAP", SSID_DE_PRUEBA, null, 1],
+    ["WiFi.softAP", SSID_DE_PRUEBA, null, undefined],
     ["WiFi.softAPConfig", IP_TEXTO, IP_TEXTO, "255.255.255.0"],
     ["dns.start", 53, "*", IP_TEXTO],
   ])
@@ -948,28 +971,28 @@ test("F3 al arrancar con wifi: modo AP, SSID = tecnia- + 4 hex de la MAC del AP 
   // Con clave: softAP la recibe.
   const conClave = ejecutarPrograma(MAIN_WIFI_CON_CLAVE)
   conClave.setup()
-  assert.deepEqual(conClave.placa.llamadas.find((x) => x[0] === "WiFi.softAP"), ["WiFi.softAP", SSID_DE_PRUEBA, CLAVE_WIFI, 1])
+  assert.deepEqual(conClave.placa.llamadas.find((x) => x[0] === "WiFi.softAP"), ["WiFi.softAP", SSID_DE_PRUEBA, CLAVE_WIFI, undefined], "con clave, sin canal")
   assert.equal(conClave.leerSalida()[1], holaConWifi({ ...WIFI_DE_PRUEBA, clave: CLAVE_WIFI }))
-  // La MAC decide el SSID (4 últimos hex, minúscula, ceros incluidos) y el canal (mac[5] % 3 → 1, 6, 11).
+  // La MAC decide SOLO el SSID (4 últimos hex, minúscula, ceros incluidos); el canal nunca se pasa (V4-3), sea cual sea la MAC.
   const casos = [
-    [[0, 0, 0, 0, 0x00, 0x0a], "tecnia-000a", CANALES_WIFI[10 % 3]],
-    [[0xff, 0xff, 0xff, 0xff, 0xab, 0xcd], "tecnia-abcd", CANALES_WIFI[0xcd % 3]],
-    [[1, 2, 3, 4, 0x3f, 0x2b], "tecnia-3f2b", 6],
-    [[1, 2, 3, 4, 0x3f, 0x2c], "tecnia-3f2c", 11],
-    [[1, 2, 3, 4, 0xf0, 0x00], "tecnia-f000", 1],
+    [[0, 0, 0, 0, 0x00, 0x0a], "tecnia-000a"],
+    [[0xff, 0xff, 0xff, 0xff, 0xab, 0xcd], "tecnia-abcd"],
+    [[1, 2, 3, 4, 0x3f, 0x2b], "tecnia-3f2b"],
+    [[1, 2, 3, 4, 0x3f, 0x2c], "tecnia-3f2c"],
+    [[1, 2, 3, 4, 0xf0, 0x00], "tecnia-f000"],
   ]
-  for (const [mac, ssid, canal] of casos) {
+  for (const [mac, ssid] of casos) {
     const p = ejecutarPrograma(MAIN_WIFI, { mac })
     p.setup()
-    assert.deepEqual(p.placa.llamadas.find((x) => x[0] === "WiFi.softAP"), ["WiFi.softAP", ssid, null, canal], ssid)
+    assert.deepEqual(p.placa.llamadas.find((x) => x[0] === "WiFi.softAP"), ["WiFi.softAP", ssid, null, undefined], ssid)
     assert.equal(p.leerSalida()[1], holaConWifi({ ...WIFI_DE_PRUEBA, ssid }))
   }
-  assert.deepEqual([...new Set(casos.map((c) => c[2]))].sort((a, b) => a - b), [1, 6, 11], "los tres canales aparecen")
-  // SSID fijo: el nombre es el fijado, la MAC sigue decidiendo el canal, y el hola anuncia el nombre en uso.
-  for (const [mac, canal] of [[MAC_DE_PRUEBA, 1], [[1, 2, 3, 4, 0x3f, 0x2b], 6], [[1, 2, 3, 4, 0x3f, 0x2c], 11]]) {
+  // SSID fijo: el nombre es el fijado, la MAC no se lee, el canal no se pasa, y el hola anuncia el nombre en uso.
+  for (const mac of [MAC_DE_PRUEBA, [1, 2, 3, 4, 0x3f, 0x2b], [1, 2, 3, 4, 0x3f, 0x2c]]) {
     const p = ejecutarPrograma(MAIN_WIFI_SSID_FIJO, { mac })
     p.setup()
-    assert.deepEqual(p.placa.llamadas.find((x) => x[0] === "WiFi.softAP"), ["WiFi.softAP", SSID_FIJO, null, canal])
+    assert.ok(!p.placa.llamadas.some((x) => x[0] === "WiFi.softAPmacAddress"), "con SSID fijo no se lee la MAC")
+    assert.deepEqual(p.placa.llamadas.find((x) => x[0] === "WiFi.softAP"), ["WiFi.softAP", SSID_FIJO, null, undefined])
     assert.equal(p.leerSalida()[1], holaConWifi({ ...WIFI_DE_PRUEBA, ssid: SSID_FIJO }))
     assert.equal(p.pedir({ metodo: "POST", ruta: "/comando", cuerpo: "hola" }).cuerpo, holaConWifi({ ...WIFI_DE_PRUEBA, ssid: SSID_FIJO }), "y por HTTP también")
   }
@@ -1083,6 +1106,23 @@ test("F4 HTTP: 302 al portal para rutas y hosts ajenos; GET / sirve la página; 
   assert.equal(porHttp(`${"p".repeat(200)}\n`).cuerpo, P.serializarRespuesta({ tipo: "error", codigo: "LINEA_DEMASIADO_LARGA" }))
   assert.equal(porHttp(`${"p".repeat(199)}\n`).cuerpo, P.serializarRespuesta({ tipo: "error", codigo: "COMANDO_DESCONOCIDO", comando: "p".repeat(199) }))
   assert.equal(prog.pendiente(), "", "nada a medio emitir por el serie")
+  // Bug encontrado en la revisión tras el E2E: la capa 2 acumula la línea serie en g_linea, el mismo buffer que lee
+  // el núcleo; un POST que llega con una línea serie a medio recibir la pisaba. Ahora se aparta y se devuelve.
+  prog.enviar("digital.escribir pin=23 niv")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), [], "línea serie incompleta: espera")
+  assert.equal(porHttp("hola").cuerpo, holaConWifi(), "en el medio, un pedido HTTP con otra línea")
+  assert.equal(porHttp("p".repeat(199)).codigo, 200, "y otro que ocupa casi todo el buffer")
+  prog.enviar("el=alto\n")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), ['{"comando":"digital.escribir","pin":23,"tipo":"ok"}'], "la línea serie llegó entera")
+  // También al revés de tamaños: una línea serie larga a medio recibir y un POST corto.
+  prog.enviar(`ping ${"x".repeat(150)}`)
+  prog.loop()
+  assert.equal(porHttp("ping").cuerpo, '{"tipo":"pong","uptimeMs":1234}')
+  prog.enviar("\n")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), [P.serializarRespuesta({ tipo: "error", codigo: "LINEA_INVALIDA" })], "la línea serie completa (ping con basura) sigue siendo la que era")
 })
 
 test("F5 la página (sec. 8.3): ASCII, sin internet, sin frameworks, nombra /comando, pide hola al cargar, GPIO2/GPIO18 a la vista y el resto detrás de 'más pines', GPIO4 con entradaPullUp y GPIO34, cada 1 s, registro de 10", () => {
@@ -1176,7 +1216,7 @@ test("F6 guardias con wifi: capa 1 y capa 2 sin String; String sólo en la capa 
     assert.ok(portal.includes(api), `la capa 3 usa ${api}`)
   }
   assert.ok(seccionTransporte(MAIN_WIFI).includes("  portal_iniciar();") && seccionTransporte(MAIN_WIFI).includes("  portal_atender();"), "setup() y loop() llaman a la capa 3")
-  assert.match(portal, /static const uint8_t CANALES_WIFI\[\] = \{1, 6, 11\};/)
+  assert.doesNotMatch(portal, /CANALES_WIFI/, "V4-3: sin tabla de canales")
   assert.match(portal, /static const uint16_t PUERTO_HTTP = 80;/)
   assert.match(portal, /static const uint16_t PUERTO_DNS = 53;/)
   assert.match(portal, /static const char TEXTO_TIPO_HTML\[\] = "text\/html; charset=utf-8";/)
@@ -1250,7 +1290,7 @@ test("E2 compilación real con wifi (V4): las tres capas con WiFi, DNSServer y W
   const pagina = paginaDe(MAIN_WIFI)
   const resumen = await compilarConEvidencia(generadoWifi, "runtime-v4", {
     archivos: { "pagina.html": pagina },
-    resumen: { wifi: { clave: "", ssid: "tecnia- + 4 hex de la MAC del AP (en la placa)", ip: IP_TEXTO, canales: [...CANALES_WIFI] }, pagina: { bytes: pagina.length, sha256: sha(pagina) } },
+    resumen: { wifi: { clave: "", ssid: "tecnia- + 4 hex de la MAC del AP (en la placa)", ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { bytes: pagina.length, sha256: sha(pagina) } },
   })
   assert.ok(resumen.firmware.bytes > 285840, "con WiFi + HTTP el firmware es más grande que el de V1 (285840 bytes)")
 })
@@ -1259,6 +1299,6 @@ test("E3 compilación real con wifi y SSID fijo (la variante del E2E: MI_ESP, re
   const pagina = paginaDe(MAIN_WIFI_SSID_FIJO)
   await compilarConEvidencia(generadoWifiSsidFijo, "runtime-v4-ssid-fijo", {
     archivos: { "pagina.html": pagina },
-    resumen: { wifi: { clave: "", ssid: SSID_FIJO, ip: IP_TEXTO, canales: [...CANALES_WIFI] }, pagina: { bytes: pagina.length, sha256: sha(pagina) } },
+    resumen: { wifi: { clave: "", ssid: SSID_FIJO, ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { bytes: pagina.length, sha256: sha(pagina) } },
   })
 })

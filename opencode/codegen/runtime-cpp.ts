@@ -37,8 +37,6 @@ export interface RedDelRuntime {
   readonly prefijoSsid: string
   /** SSID fijado al generar (decisión de Alejandro, 2026-10-13): 1..32 bytes ASCII imprimibles sin `"` ni `\`. Sin él, el de la MAC. */
   readonly ssid?: string
-  /** Canales 2,4 GHz entre los que reparte la MAC (sec. 8.1: 1, 6 u 11). */
-  readonly canales: readonly number[]
   readonly puertoHttp: number
   readonly puertoDns: number
   readonly rutaPagina: string
@@ -914,7 +912,6 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
   const w = t.wifi
   if (!w) throw new Error("renderizarPortal necesita tablas.wifi")
   if (!/^[a-z][a-z0-9-]*$/.test(w.prefijoSsid)) throw new Error(`prefijo de SSID invalido: ${w.prefijoSsid}`)
-  if (w.canales.length === 0 || w.canales.some((c) => !Number.isInteger(c) || c < 1 || c > 13)) throw new Error("los canales WiFi van de 1 a 13 (WiFiAP.cpp:132)")
   for (const octetos of [w.ip, w.mascara]) if (octetos.length !== 4 || octetos.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) throw new Error("una IP son 4 octetos 0..255")
   // "tecnia-" + 4 hex + el 0 final.
   const tamanoSsid = w.prefijoSsid.length + 4 + 1
@@ -941,8 +938,12 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
     l.push(`static const uint8_t TAMANO_SSID = ${tamanoSsid};  // prefijo + 4 hex + el 0 final`)
     l.push('static const char DIGITOS_HEX[] = "0123456789abcdef";')
   }
-  l.push(`static const uint8_t CANALES_WIFI[] = {${w.canales.join(", ")}};  // la MAC reparte las placas del aula entre estos canales (MODO-VIVO-PLAN.md sec. 10.8)`)
-  l.push(`static const uint8_t CANTIDAD_CANALES_WIFI = ${w.canales.length};`)
+  l.push("// Decision V4-3 (E2E fisico del 2026-10-13, DOIT DevKit V1): con un canal explicito 6 u 11 en softAP(ssid, clave, canal)")
+  l.push("// la placa decia que levanto (softAP y softAPConfig true, hola con wifi) pero la red NO se veia desde el celular ni")
+  l.push("// desde la PC; con el canal por defecto (sin pasarlo: channel = 1, WiFiAP.h:40, como el ejemplo del core,")
+  l.push("// DNSServer/examples/CaptivePortal:16) aparecio al instante. En los fuentes del core no hay nada que lo explique")
+  l.push("// (esp_wifi.h:812-813 solo habla del ajuste de canal en AP+STA). Queda el canal por defecto y se saca la eleccion")
+  l.push("// por MAC; el reparto de veinte placas en tres canales (MODO-VIVO-PLAN.md sec. 10.8) queda pendiente.")
   l.push(`static const uint16_t PUERTO_HTTP = ${w.puertoHttp};`)
   l.push(`static const uint16_t PUERTO_DNS = ${w.puertoDns};  // el puerto del DNS, como en el ejemplo del core (DNSServer/examples/CaptivePortal:4,21)`)
   l.push(`static const char TEXTO_DOMINIO_TODOS[] = "*";  // DNSServer.cpp:116: con "*" contesta TODA consulta con la IP dada`)
@@ -966,7 +967,9 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
   l.push(`static IPAddress MASCARA_PORTAL(${w.mascara.join(", ")});`)
   l.push("static DNSServer dnsServer;  // DNSServer.h:75-89: start(puerto, dominio, ip), processNextRequest()")
   l.push("static WebServer server(PUERTO_HTTP);  // WebServer.h:88: WebServer(int port)")
-  l.push("static uint8_t g_canalWifi = 0;")
+  l.push("// La capa 2 acumula la linea serie a medio recibir en g_linea (el buffer que lee el nucleo). Un pedido HTTP que")
+  l.push("// llega en el medio la pisaria: se aparta aca mientras el nucleo procesa la linea del HTTP y despues se devuelve.")
+  l.push("static char g_lineaSerieApartada[LIMITE_LINEA_BYTES + 1];")
   l.push("")
   l.push("// 302 al portal para cualquier ruta u host que no sea el nuestro (sec. 8.2): cubre /generate_204 (Android),")
   l.push("// /hotspot-detect.html (iOS/macOS), /connecttest.txt y /ncsi.txt (Windows) y cualquier dominio, porque el DNS")
@@ -1016,11 +1019,19 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
   l.push("    server.send(400, TEXTO_TIPO_TEXTO_PLANO, TEXTO_CUERPO_INVALIDO);")
   l.push("    return;")
   l.push("  }")
+  l.push("  // Se aparta lo que el serie tenga a medio recibir (g_largoRecibido bytes de g_linea; el nucleo solo lee g_linea).")
+  l.push("  uint16_t largoSerie = g_largoRecibido;")
+  l.push("  for (uint16_t i = 0; i < largoSerie; i++) {")
+  l.push("    g_lineaSerieApartada[i] = g_linea[i];")
+  l.push("  }")
   l.push("  // Entra entero en g_linea (LIMITE_LINEA_BYTES + 1 bytes): a lo sumo LIMITE_LINEA_BYTES de carga util mas el '\\r'.")
   l.push("  for (uint32_t i = 0; i < largo; i++) {")
   l.push("    g_linea[i] = cuerpo.charAt(i);")
   l.push("  }")
   l.push("  uint16_t largoSalida = nucleo_procesar((uint16_t)largo);")
+  l.push("  for (uint16_t i = 0; i < largoSerie; i++) {")
+  l.push("    g_linea[i] = g_lineaSerieApartada[i];")
+  l.push("  }")
   l.push("  if (largoSalida == 0) {")
   l.push("    // El nucleo no responde a una linea vacia (sec. 1); por HTTP eso es un cuerpo vacio (solo un '\\r').")
   l.push("    server.send(400, TEXTO_TIPO_TEXTO_PLANO, TEXTO_CUERPO_INVALIDO);")
@@ -1033,16 +1044,17 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
   l.push("// leer la MAC: softAPmacAddress(mac) (WiFiAP.cpp:337-343) llama a esp_wifi_get_mac(WIFI_IF_AP, mac) (esp_wifi.h:709)")
   l.push("// solo si el modo no es NULL. softAP(ssid, clave, canal): WiFiAP.h:40 (passphrase = NULL por defecto), WiFiAP.cpp:136-175")
   l.push("// (rechaza claves de 1 a 7 bytes, :145); con clave NULL la red queda ABIERTA (wifi_softap_config, WiFiAP.cpp:107 y")
-  l.push("// :115-119: WIFI_AUTH_OPEN salvo que haya clave; con clave, WPA2 + CCMP). softAPConfig(ip, gateway, mascara):")
+  l.push("// :115-119: WIFI_AUTH_OPEN salvo que haya clave; con clave, WPA2 + CCMP). El canal no se pasa: queda el por defecto")
+  l.push("// de la firma (decision V4-3, arriba). softAPConfig(ip, gateway, mascara):")
   l.push("// WiFiAP.cpp:199-210, despues de softAP como en el")
   l.push("// ejemplo del core (DNSServer/examples/CaptivePortal:15-17). Si algo falla, no se fija el SSID: `hola` no anuncia")
   l.push("// red y no se levantan DNS ni HTTP; el serie sigue. Un OK falso es peor que un error.")
   const ssid = w.ssid !== undefined ? "SSID_FIJO" : "ssid"
   l.push("static void portal_iniciar() {")
   l.push("  WiFi.mode(WIFI_AP);")
-  l.push("  uint8_t mac[6];")
-  l.push("  WiFi.softAPmacAddress(mac);")
   if (w.ssid === undefined) {
+    l.push("  uint8_t mac[6];")
+    l.push("  WiFi.softAPmacAddress(mac);")
     l.push("  char ssid[TAMANO_SSID];")
     l.push("  uint8_t largo = 0;")
     l.push("  for (uint8_t i = 0; PREFIJO_SSID[i] != '\\0'; i++) {")
@@ -1060,11 +1072,10 @@ export function renderizarPortal(t: TablasDelRuntime): string[] {
     l.push("  largo++;")
     l.push("  ssid[largo] = '\\0';")
   } else {
-    l.push("  // El nombre viene fijado al generar (SSID_FIJO); la MAC solo decide el canal.")
+    l.push("  // El nombre viene fijado al generar (SSID_FIJO): no hace falta leer la MAC.")
   }
-  l.push("  g_canalWifi = CANALES_WIFI[mac[5] % CANTIDAD_CANALES_WIFI];")
-  if (w.clave === "") l.push(`  if (!WiFi.softAP(${ssid}, NULL, g_canalWifi)) return;  // red abierta: sin clave (decision de Alejandro, 2026-10-13)`)
-  else l.push(`  if (!WiFi.softAP(${ssid}, TEXTO_WIFI_CLAVE, g_canalWifi)) return;`)
+  if (w.clave === "") l.push(`  if (!WiFi.softAP(${ssid})) return;  // red abierta: sin clave (passphrase = NULL por defecto, WiFiAP.h:40; decision de Alejandro, 2026-10-13)`)
+  else l.push(`  if (!WiFi.softAP(${ssid}, TEXTO_WIFI_CLAVE)) return;`)
   l.push("  if (!WiFi.softAPConfig(IP_PORTAL, IP_PORTAL, MASCARA_PORTAL)) return;")
   l.push(`  nucleo_fijarSsid(${ssid});`)
   l.push("  dnsServer.start(PUERTO_DNS, TEXTO_DOMINIO_TODOS, IP_PORTAL);  // DNSServer.cpp:39-51")
