@@ -12,12 +12,40 @@
 // core que trae `espressif32@6.12.0` (~/.platformio/packages/framework-arduinoespressif32,
 // `cores/esp32/esp_arduino_version.h:22-26`).
 //
+// Capa 3, TRANSPORTE WIFI (V4, contrato sec. 8; sólo si `tablas.wifi` existe): el runtime levanta su
+// propia red (punto de acceso), un DNS cautivo y un servidor HTTP con la página de sec. 8.3 y
+// `POST /comando`. Las líneas que llegan por HTTP pasan por EL MISMO núcleo que las del serie. Sin
+// `tablas.wifi`, ni una línea del runtime cambia: el runtime de sólo serie de V1 sigue byte a byte.
+//
 // Este módulo es PURO: recibe tablas ya derivadas (`runtime.ts`) y devuelve líneas. No decide
 // política: la política está en las tablas, y las tablas salen del contrato y de `placas.ts`.
 // Los comentarios del C++ generado van sin acentos: el programa generado es ASCII.
 
 /** Todo lo que el C++ necesita saber, ya derivado del contrato (`vivo/protocolo.ts`) y de la placa. */
 import { CAMPOS, CAUSAS_DE_REINICIO, MODOS_DE_PIN, NIVELES } from "../vivo/protocolo.ts"
+
+export type Octetos = readonly [number, number, number, number]
+
+/** La red propia del runtime (V4, contrato sec. 8.1 y 8.2), ya decidida por `runtime.ts`. */
+export interface RedDelRuntime {
+  /** `""` = red abierta (el default) u 8 dígitos decimales = WPA2 (sec. 8.1). Queda en el firmware y se anuncia en el `hola`. */
+  readonly clave: string
+  /** IP del punto de acceso (sec. 8.1: 192.168.4.1). El runtime la FIJA con `softAPConfig`, no la supone. */
+  readonly ip: Octetos
+  readonly mascara: Octetos
+  /** `tecnia-`: el SSID es el prefijo + los 4 últimos hex de la MAC del AP en minúscula (sec. 8.1), salvo `ssid` fijo. */
+  readonly prefijoSsid: string
+  /** SSID fijado al generar (decisión de Alejandro, 2026-10-13): 1..32 bytes ASCII imprimibles sin `"` ni `\`. Sin él, el de la MAC. */
+  readonly ssid?: string
+  /** Canales 2,4 GHz entre los que reparte la MAC (sec. 8.1: 1, 6 u 11). */
+  readonly canales: readonly number[]
+  readonly puertoHttp: number
+  readonly puertoDns: number
+  readonly rutaPagina: string
+  readonly rutaComando: string
+  /** La página de sec. 8.3, ASCII, ya renderizada (`runtime-pagina.ts`). */
+  readonly pagina: string
+}
 
 export interface TablasDelRuntime {
   readonly placaId: string
@@ -42,6 +70,8 @@ export interface TablasDelRuntime {
     readonly sinPwm: readonly number[]
     readonly conAdc: readonly number[]
   }
+  /** V4: presente sólo cuando el runtime se compila con red propia. */
+  readonly wifi?: RedDelRuntime
 }
 
 export interface OpcionesDeTransporte {
@@ -93,6 +123,20 @@ const indiceDe = (lista: readonly string[], valor: string, que: string): number 
 }
 
 const SIN_INDICE = "SIN_INDICE"
+
+/** Tamaño del buffer del SSID: `wifi_config_t.ap.ssid` es `uint8_t[32]` (esp_wifi_types.h:260) más el 0 final. */
+const TAMANO_BUFFER_SSID = 33
+
+/**
+ * La página como literal de C++ en `.rodata`: una línea del HTML por literal adyacente, cada una con su
+ * `\n`. En la ESP32 `PROGMEM` no hace nada (pgmspace.h:32: `#define PROGMEM`) y `strlen_P` es `strlen`
+ * (:81): `send_P` sirve el arreglo tal cual. Sólo se escapan `"` y `\`; la página ya es ASCII.
+ */
+function literalDePagina(nombre: string, pagina: string): string[] {
+  if (!/^[\x0a\x20-\x7e]*$/.test(pagina)) throw new Error("la pagina tiene que ser ASCII")
+  const lineas = pagina.split("\n")
+  return [`static const char ${nombre}[] PROGMEM =`, ...lineas.map((linea, i) => `  "${linea.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}\\n"${i === lineas.length - 1 ? ";" : ""}`)]
+}
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Capa 1 — núcleo puro
@@ -154,10 +198,27 @@ function emisorDeRespuesta(firma: string, claves: readonly ClaveDeRespuesta[]): 
   return l
 }
 
+/**
+ * Las líneas que emiten un objeto anidado `{...}` con sus claves en ORDEN ALFABETICO (sec. 1), sin pasar
+ * por `nucleo_abrirObjeto` (que reinicia la salida): para el `wifi` del `hola` (sec. 8.1).
+ */
+function objetoAnidado(claves: readonly { readonly clave: string; readonly valor: string }[]): string[] {
+  const ordenadas = [...claves].sort((a, b) => (a.clave < b.clave ? -1 : a.clave > b.clave ? 1 : 0))
+  const l: string[] = ["nucleo_emitirByte('{');"]
+  ordenadas.forEach((c, i) => {
+    if (i > 0) l.push("nucleo_emitirByte(',');")
+    l.push(`nucleo_emitirTextoEntreComillas(TEXTO_CLAVE_${identificador(c.clave)});`, "nucleo_emitirByte(':');", c.valor)
+  })
+  l.push("nucleo_emitirByte('}');")
+  return l
+}
+
 export function renderizarNucleo(t: TablasDelRuntime): string[] {
   const campos = [...new Set(Object.values(t.camposPorComando).flat())].sort()
   const tipos = ["hola", "pong", "ok", "lectura", "error", "reinicio"]
-  const claves = ["campo", "causa", "codigo", "comando", "comandos", "crudo", "nivel", "pin", "placa", "protocolo", "protocolos", "runtime", "tipo", "uptimeMs"]
+  const claves = ["campo", "causa", "codigo", "comando", "comandos", "crudo", "nivel", "pin", "placa", "protocolo", "protocolos", "runtime", "tipo", "uptimeMs", ...(t.wifi ? ["clave", "ip", "ssid", "wifi"] : [])]
+  const wifi = t.wifi
+  if (wifi && !/^(?:[0-9]{8})?$/.test(wifi.clave)) throw new Error('la clave WiFi es "" (red abierta) u 8 digitos decimales (contrato sec. 8.1)')
   const C = (nombre: string) => `COMANDO_${identificador(nombre)}`
   const F = (nombre: string) => `CAMPO_${identificador(nombre)}`
   const E = (nombre: string) => `ERROR_${identificador(nombre)}`
@@ -191,6 +252,14 @@ export function renderizarNucleo(t: TablasDelRuntime): string[] {
   l.push(`static const char TEXTO_PLACA[] = ${literalTexto(t.placaId)};`)
   l.push(`static const char TEXTO_RUNTIME[] = ${literalTexto(t.versionRuntime)};`)
   l.push(`static const uint32_t VERSION_PROTOCOLO = ${t.versionProtocolo};`)
+  if (wifi) {
+    l.push("")
+    l.push("// V4 (sec. 8.1): la red propia que anuncia `hola`. La clave y la IP se deciden al generar; el SSID lo")
+    l.push("// arma la capa 3 desde la MAC del punto de acceso y lo deja aca con nucleo_fijarSsid.")
+    l.push(`static const char TEXTO_WIFI_CLAVE[] = ${literalTexto(wifi.clave)};  // ${wifi.clave === "" ? '"" = red abierta' : "8 digitos decimales, WPA2"}; el hola la anuncia tal cual`)
+    l.push(`static const char TEXTO_WIFI_IP[] = ${literalTexto(wifi.ip.join("."))};  // la IP del punto de acceso, fija`)
+    l.push(`static const uint8_t TAMANO_BUFFER_SSID = ${TAMANO_BUFFER_SSID};  // wifi_config_t.ap.ssid es uint8_t[32] (esp_wifi_types.h:260) + el 0 final`)
+  }
   l.push("")
   l.push("// Comandos de V1, en el orden en que los anuncia `hola` (sec. 2).")
   t.comandos.forEach((c, i) => l.push(`static const uint8_t ${C(c)} = ${i};`))
@@ -283,6 +352,10 @@ export function renderizarNucleo(t: TablasDelRuntime): string[] {
   l.push("static uint8_t g_cantidadCampos = 0;")
   l.push("static uint8_t g_largoComando = 0;")
   l.push("static uint32_t g_enteroLeido = 0;")
+  if (wifi) {
+    l.push("static char g_ssid[TAMANO_BUFFER_SSID];  // el SSID que levanto la capa 3; vacio = la red no esta levantada")
+    l.push("static uint8_t g_largoSsid = 0;  // 0 hasta que la capa 3 fija el SSID: `hola` solo anuncia la red si existe")
+  }
   l.push("")
   l.push("// --- Salida JSON canonica (sec. 3): sin espacios, claves en orden alfabetico, solo ASCII ---")
   l.push("// Los textos que salen (nombres de comando y de campo tomados de la linea) vienen de la gramatica")
@@ -362,6 +435,20 @@ export function renderizarNucleo(t: TablasDelRuntime): string[] {
         valor: ["nucleo_emitirByte('[');", ...t.comandos.flatMap((c, i) => [...(i > 0 ? ["nucleo_emitirByte(',');"] : []), `nucleo_emitirTextoEntreComillas(TEXTO_${C(c)});`]), "nucleo_emitirByte(']');"],
       },
       { clave: "protocolos", valor: ["nucleo_emitirByte('[');  // V1 no implementa protocolos de sensor (sec. 3)", "nucleo_emitirByte(']');"] },
+      ...(wifi
+        ? [
+            {
+              clave: "wifi",
+              // Un OK falso es peor que un error: si el punto de acceso no levanto, `hola` no anuncia ninguna red.
+              condicion: "g_largoSsid > 0",
+              valor: objetoAnidado([
+                { clave: "ssid", valor: "nucleo_emitirTextoEntreComillas(g_ssid);" },
+                { clave: "clave", valor: "nucleo_emitirTextoEntreComillas(TEXTO_WIFI_CLAVE);" },
+                { clave: "ip", valor: "nucleo_emitirTextoEntreComillas(TEXTO_WIFI_IP);" },
+              ]),
+            },
+          ]
+        : []),
     ]),
   )
   l.push(
@@ -485,6 +572,24 @@ export function renderizarNucleo(t: TablasDelRuntime): string[] {
   l.push("  }")
   l.push("  return true;")
   l.push("}")
+  if (wifi) {
+    l.push("// V4: el SSID que la capa 3 dejo (armado desde la MAC o fijado al generar). Se acepta solo si cabe y es ASCII")
+    l.push("// imprimible sin comillas ni barra invertida, porque sale en el JSON sin escapar; si no, la red no se anuncia.")
+    l.push("static bool nucleo_esCaracterDeSsid(char c) {")
+    l.push("  return c >= ' ' && c <= '~' && c != '\"' && c != '\\\\';")
+    l.push("}")
+    l.push("static void nucleo_fijarSsid(const char texto[]) {")
+    l.push("  uint8_t largo = 0;")
+    l.push("  g_largoSsid = 0;")
+    l.push("  while (texto[largo] != '\\0') {")
+    l.push("    if (largo + 1 >= TAMANO_BUFFER_SSID || !nucleo_esCaracterDeSsid(texto[largo])) return;")
+    l.push("    g_ssid[largo] = texto[largo];")
+    l.push("    largo++;")
+    l.push("  }")
+    l.push("  g_ssid[largo] = '\\0';")
+    l.push("  g_largoSsid = largo;")
+    l.push("}")
+  }
   l.push(...buscadorPorTexto("nucleo_indiceDeComando", "COMANDO", t.comandos))
   l.push(...buscadorPorTexto("nucleo_indiceDeCampo", "CAMPO", campos))
   l.push(...buscadorPorTexto("nucleo_indiceDeModo", "MODO", t.modos))
@@ -754,11 +859,18 @@ export function renderizarTransporte(t: TablasDelRuntime, opciones: OpcionesDeTr
   l.push("  Serial.print('\\n');")
   l.push("}")
   l.push("")
+  if (t.wifi) {
+    l.push("// La capa 3 (mas abajo) levanta la red en setup() y atiende DNS y HTTP en cada loop().")
+    l.push("static void portal_iniciar();")
+    l.push("static void portal_atender();")
+    l.push("")
+  }
   l.push("void setup() {")
   l.push("  for (uint8_t pin = 0; pin < CANTIDAD_DE_PINES; pin++) {")
   l.push("    g_canalDePin[pin] = SIN_CANAL;")
   l.push("  }")
   l.push("  Serial.begin(VELOCIDAD_SERIE);  // HardwareSerial.h:230; buffer de recepcion de 256 bytes por defecto (HardwareSerial.cpp:72)")
+  if (t.wifi) l.push("  portal_iniciar();  // antes del `hola` inicial: el hola anuncia la red solo si levanto")
   l.push("  transporte_emitir(nucleo_responderReinicio(hw_causaDeReinicio()));  // sec. 3: `reinicio` una vez, ANTES del `hola` inicial")
   l.push("  transporte_emitir(nucleo_responderHola());")
   l.push("}")
@@ -784,6 +896,190 @@ export function renderizarTransporte(t: TablasDelRuntime, opciones: OpcionesDeTr
   l.push("      g_largoRecibido++;")
   l.push("    }")
   l.push("  }")
+  if (t.wifi) l.push("  portal_atender();")
+  l.push("}")
+  return l
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// Capa 3 — red propia, DNS cautivo y HTTP (V4, contrato sec. 8) sobre arduino-esp32 2.0.17
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * La capa 3 sólo mueve líneas: entre el `WebServer` y el núcleo. Librerías del core, sin `lib_deps`:
+ * `WiFi`, `DNSServer`, `WebServer` (MODO-VIVO-PLAN.md sec. 10.3). `String` aparece SOLO acá, porque es lo
+ * que devuelven `WebServer::arg` y `WebServer::hostHeader` (WebServer.h:117, :131); el núcleo sigue sin.
+ */
+export function renderizarPortal(t: TablasDelRuntime): string[] {
+  const w = t.wifi
+  if (!w) throw new Error("renderizarPortal necesita tablas.wifi")
+  if (!/^[a-z][a-z0-9-]*$/.test(w.prefijoSsid)) throw new Error(`prefijo de SSID invalido: ${w.prefijoSsid}`)
+  if (w.canales.length === 0 || w.canales.some((c) => !Number.isInteger(c) || c < 1 || c > 13)) throw new Error("los canales WiFi van de 1 a 13 (WiFiAP.cpp:132)")
+  for (const octetos of [w.ip, w.mascara]) if (octetos.length !== 4 || octetos.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) throw new Error("una IP son 4 octetos 0..255")
+  // "tecnia-" + 4 hex + el 0 final.
+  const tamanoSsid = w.prefijoSsid.length + 4 + 1
+  if (tamanoSsid > TAMANO_BUFFER_SSID) throw new Error("el SSID no entra en los 32 bytes de wifi_config_t.ap.ssid")
+  if (w.ssid !== undefined && (!/^[\x20-\x7e]{1,32}$/.test(w.ssid) || w.ssid.includes('"') || w.ssid.includes("\\"))) throw new Error("el SSID fijo son 1 a 32 bytes ASCII imprimibles, sin comillas ni barra invertida")
+  const ipTexto = w.ip.join(".")
+  const l: string[] = []
+  l.push("// ============================================================================")
+  l.push("// CAPA 3: TRANSPORTE WIFI. Punto de acceso propio, DNS cautivo y HTTP (contrato sec. 8).")
+  l.push("// Librerias del core (sin lib_deps): WiFi, DNSServer y WebServer. Citas: fuentes instaladas de")
+  l.push("// arduino-esp32 2.0.17 (libraries/WiFi/src, libraries/DNSServer/src, libraries/WebServer/src).")
+  l.push("// `String` aparece SOLO en esta capa: es lo que devuelven WebServer::arg (WebServer.h:117) y")
+  l.push("// WebServer::hostHeader (:131). El nucleo (capa 1) y el serie (capa 2) siguen sin String.")
+  l.push("// Las lineas que llegan por HTTP pasan por EL MISMO nucleo_procesar que las del serie (sec. 8.2):")
+  l.push("// no hay un segundo camino. Un cliente a la vez: el WebServer del core es sincrono (sec. 8.2).")
+  l.push("// V4-2: lo que se hace desde el celular no se refleja en la sesion serie.")
+  l.push("// ============================================================================")
+  l.push("")
+  l.push("// --- Constantes de la red (sec. 8.1 y 8.2) ---")
+  if (w.ssid !== undefined) {
+    l.push(`static const char SSID_FIJO[] = ${literalTexto(w.ssid)};  // nombre de red fijado al generar (opcion wifi.ssid); cabe en wifi_config_t.ap.ssid (32)`)
+  } else {
+    l.push(`static const char PREFIJO_SSID[] = ${literalTexto(w.prefijoSsid)};  // + los 4 ultimos hex de la MAC del AP, en minuscula`)
+    l.push(`static const uint8_t TAMANO_SSID = ${tamanoSsid};  // prefijo + 4 hex + el 0 final`)
+    l.push('static const char DIGITOS_HEX[] = "0123456789abcdef";')
+  }
+  l.push(`static const uint8_t CANALES_WIFI[] = {${w.canales.join(", ")}};  // la MAC reparte las placas del aula entre estos canales (MODO-VIVO-PLAN.md sec. 10.8)`)
+  l.push(`static const uint8_t CANTIDAD_CANALES_WIFI = ${w.canales.length};`)
+  l.push(`static const uint16_t PUERTO_HTTP = ${w.puertoHttp};`)
+  l.push(`static const uint16_t PUERTO_DNS = ${w.puertoDns};  // el puerto del DNS, como en el ejemplo del core (DNSServer/examples/CaptivePortal:4,21)`)
+  l.push(`static const char TEXTO_DOMINIO_TODOS[] = "*";  // DNSServer.cpp:116: con "*" contesta TODA consulta con la IP dada`)
+  l.push(`static const char TEXTO_RUTA_PAGINA[] = ${literalTexto(w.rutaPagina)};`)
+  l.push(`static const char TEXTO_RUTA_COMANDO[] = ${literalTexto(w.rutaComando)};`)
+  l.push(`static const char TEXTO_HOST_CON_PUERTO[] = ${literalTexto(`${ipTexto}:${w.puertoHttp}`)};  // el Host puede venir con el puerto explicito`)
+  l.push(`static const char TEXTO_URL_PORTAL[] = ${literalTexto(`http://${ipTexto}/`)};  // adonde manda el 302 (sec. 8.2)`)
+  l.push('static const char TEXTO_ENCABEZADO_LOCATION[] = "Location";')
+  l.push('static const char TEXTO_ARGUMENTO_CUERPO[] = "plain";  // Parsing.cpp:213-217: un POST que no es formulario queda entero en el argumento "plain"')
+  l.push('static const char TEXTO_TIPO_HTML[] = "text/html; charset=utf-8";')
+  l.push('static const char TEXTO_TIPO_JSON[] = "application/json";')
+  l.push('static const char TEXTO_TIPO_TEXTO_PLANO[] = "text/plain";')
+  l.push('static const char TEXTO_REDIRIGIENDO[] = "redirigiendo al portal";')
+  l.push(`static const char TEXTO_CUERPO_INVALIDO[] = ${literalTexto(`cuerpo vacio o de mas de ${t.limiteLineaBytes} bytes`)};`)
+  l.push("")
+  l.push("// La pagina (sec. 8.3), en .rodata. PROGMEM no hace nada en la ESP32 (pgmspace.h:32) y strlen_P es strlen (:81).")
+  l.push(...literalDePagina("PAGINA", w.pagina))
+  l.push("")
+  l.push("// IPAddress(a, b, c, d): IPAddress.h:49. La IP del AP se FIJA con softAPConfig (abajo), no se supone la de ESP-IDF.")
+  l.push(`static IPAddress IP_PORTAL(${w.ip.join(", ")});`)
+  l.push(`static IPAddress MASCARA_PORTAL(${w.mascara.join(", ")});`)
+  l.push("static DNSServer dnsServer;  // DNSServer.h:75-89: start(puerto, dominio, ip), processNextRequest()")
+  l.push("static WebServer server(PUERTO_HTTP);  // WebServer.h:88: WebServer(int port)")
+  l.push("static uint8_t g_canalWifi = 0;")
+  l.push("")
+  l.push("// 302 al portal para cualquier ruta u host que no sea el nuestro (sec. 8.2): cubre /generate_204 (Android),")
+  l.push("// /hotspot-detect.html (iOS/macOS), /connecttest.txt y /ncsi.txt (Windows) y cualquier dominio, porque el DNS")
+  l.push("// cautivo los trae a todos aca. sendHeader(nombre, valor, primero): WebServer.cpp:355-367; send(codigo, tipo,")
+  l.push("// contenido): WebServer.h:140; _prepareHeader agrega Content-Length y Connection: close (WebServer.cpp:385-417).")
+  l.push("static void portal_redirigir() {")
+  l.push("  server.sendHeader(TEXTO_ENCABEZADO_LOCATION, TEXTO_URL_PORTAL, true);")
+  l.push("  server.send(302, TEXTO_TIPO_TEXTO_PLANO, TEXTO_REDIRIGIENDO);")
+  l.push("}")
+  l.push("")
+  l.push("// El Host del pedido (Parsing.cpp:171-172 lo guarda; WebServer.cpp:623-625 lo devuelve). Un pedido a otro host")
+  l.push("// (el chequeo de conectividad del celular, por ejemplo) no es para la pagina: va al 302, aunque la ruta sea /.")
+  l.push("static bool portal_hostEsElPortal() {")
+  l.push("  String host = server.hostHeader();")
+  l.push("  return host.equals(TEXTO_WIFI_IP) || host.equals(TEXTO_HOST_CON_PUERTO);  // String::equals(const char*): WString.h:204")
+  l.push("}")
+  l.push("")
+  l.push("// GET /: la pagina, con Content-Type text/html; charset=utf-8. send_P(codigo, tipo, contenido): WebServer.h:142,")
+  l.push("// WebServer.cpp:450-463 (strlen_P para el Content-Length; copia el tipo a un char[64], el nuestro mide 24).")
+  l.push("static void portal_pagina() {")
+  l.push("  if (!portal_hostEsElPortal()) {")
+  l.push("    portal_redirigir();")
+  l.push("    return;")
+  l.push("  }")
+  l.push("  server.send_P(200, TEXTO_TIPO_HTML, PAGINA);")
+  l.push("}")
+  l.push("")
+  l.push("// POST /comando (sec. 8.2): el cuerpo es UNA linea del formato plano; se recorta un '\\n' final si vino. Pasa por")
+  l.push("// nucleo_procesar igual que una linea del serie (el nucleo descuenta un '\\r' final, sec. 1) y vuelve la linea JSON")
+  l.push("// con 200, tambien cuando es un `error` del protocolo. 400 SOLO con cuerpo vacio o de mas de LIMITE_LINEA_BYTES.")
+  l.push("// El cuerpo llega como argumento \"plain\" cuando el Content-Type no es de formulario (Parsing.cpp:199-221): fetch()")
+  l.push("// con un string manda text/plain. Con application/x-www-form-urlencoded (curl -d sin -H) el core lo parte en")
+  l.push("// pares clave=valor y no hay \"plain\": se responde 400, no se adivina. arg(nombre): WebServer.cpp:539-549.")
+  l.push("static void portal_comando() {")
+  l.push("  if (!portal_hostEsElPortal()) {")
+  l.push("    portal_redirigir();")
+  l.push("    return;")
+  l.push("  }")
+  l.push("  String cuerpo = server.arg(TEXTO_ARGUMENTO_CUERPO);")
+  l.push("  uint32_t largo = cuerpo.length();  // WString.h:87")
+  l.push("  if (largo > 0 && cuerpo.charAt(largo - 1) == '\\n') largo--;  // WString.h:240")
+  l.push("  // Se mide como el nucleo (sec. 1): un '\\r' final no cuenta. Asi, 200 bytes + \"\\r\\n\" es por HTTP lo mismo que")
+  l.push("  // por el serie (LINEA_DEMASIADO_LARGA con 200); 400 recien con mas de LIMITE_LINEA_BYTES de carga util.")
+  l.push("  uint32_t largoUtil = largo;")
+  l.push("  if (largoUtil > 0 && cuerpo.charAt(largoUtil - 1) == '\\r') largoUtil--;")
+  l.push("  if (largo == 0 || largoUtil > LIMITE_LINEA_BYTES) {")
+  l.push("    server.send(400, TEXTO_TIPO_TEXTO_PLANO, TEXTO_CUERPO_INVALIDO);")
+  l.push("    return;")
+  l.push("  }")
+  l.push("  // Entra entero en g_linea (LIMITE_LINEA_BYTES + 1 bytes): a lo sumo LIMITE_LINEA_BYTES de carga util mas el '\\r'.")
+  l.push("  for (uint32_t i = 0; i < largo; i++) {")
+  l.push("    g_linea[i] = cuerpo.charAt(i);")
+  l.push("  }")
+  l.push("  uint16_t largoSalida = nucleo_procesar((uint16_t)largo);")
+  l.push("  if (largoSalida == 0) {")
+  l.push("    // El nucleo no responde a una linea vacia (sec. 1); por HTTP eso es un cuerpo vacio (solo un '\\r').")
+  l.push("    server.send(400, TEXTO_TIPO_TEXTO_PLANO, TEXTO_CUERPO_INVALIDO);")
+  l.push("    return;")
+  l.push("  }")
+  l.push("  server.send(200, TEXTO_TIPO_JSON, g_salida);")
+  l.push("}")
+  l.push("")
+  l.push("// Levanta la red. WiFi.mode(WIFI_AP): WiFiGeneric.h:176, WIFI_AP = WIFI_MODE_AP (WiFiType.h:34); hace falta antes de")
+  l.push("// leer la MAC: softAPmacAddress(mac) (WiFiAP.cpp:337-343) llama a esp_wifi_get_mac(WIFI_IF_AP, mac) (esp_wifi.h:709)")
+  l.push("// solo si el modo no es NULL. softAP(ssid, clave, canal): WiFiAP.h:40 (passphrase = NULL por defecto), WiFiAP.cpp:136-175")
+  l.push("// (rechaza claves de 1 a 7 bytes, :145); con clave NULL la red queda ABIERTA (wifi_softap_config, WiFiAP.cpp:107 y")
+  l.push("// :115-119: WIFI_AUTH_OPEN salvo que haya clave; con clave, WPA2 + CCMP). softAPConfig(ip, gateway, mascara):")
+  l.push("// WiFiAP.cpp:199-210, despues de softAP como en el")
+  l.push("// ejemplo del core (DNSServer/examples/CaptivePortal:15-17). Si algo falla, no se fija el SSID: `hola` no anuncia")
+  l.push("// red y no se levantan DNS ni HTTP; el serie sigue. Un OK falso es peor que un error.")
+  const ssid = w.ssid !== undefined ? "SSID_FIJO" : "ssid"
+  l.push("static void portal_iniciar() {")
+  l.push("  WiFi.mode(WIFI_AP);")
+  l.push("  uint8_t mac[6];")
+  l.push("  WiFi.softAPmacAddress(mac);")
+  if (w.ssid === undefined) {
+    l.push("  char ssid[TAMANO_SSID];")
+    l.push("  uint8_t largo = 0;")
+    l.push("  for (uint8_t i = 0; PREFIJO_SSID[i] != '\\0'; i++) {")
+    l.push("    ssid[largo] = PREFIJO_SSID[i];")
+    l.push("    largo++;")
+    l.push("  }")
+    l.push("  // Los 4 ultimos hex de la MAC (sec. 8.1): los dos ultimos bytes, nibble alto primero, en minuscula.")
+    l.push("  ssid[largo] = DIGITOS_HEX[mac[4] >> 4];")
+    l.push("  largo++;")
+    l.push("  ssid[largo] = DIGITOS_HEX[mac[4] & 15];")
+    l.push("  largo++;")
+    l.push("  ssid[largo] = DIGITOS_HEX[mac[5] >> 4];")
+    l.push("  largo++;")
+    l.push("  ssid[largo] = DIGITOS_HEX[mac[5] & 15];")
+    l.push("  largo++;")
+    l.push("  ssid[largo] = '\\0';")
+  } else {
+    l.push("  // El nombre viene fijado al generar (SSID_FIJO); la MAC solo decide el canal.")
+  }
+  l.push("  g_canalWifi = CANALES_WIFI[mac[5] % CANTIDAD_CANALES_WIFI];")
+  if (w.clave === "") l.push(`  if (!WiFi.softAP(${ssid}, NULL, g_canalWifi)) return;  // red abierta: sin clave (decision de Alejandro, 2026-10-13)`)
+  else l.push(`  if (!WiFi.softAP(${ssid}, TEXTO_WIFI_CLAVE, g_canalWifi)) return;`)
+  l.push("  if (!WiFi.softAPConfig(IP_PORTAL, IP_PORTAL, MASCARA_PORTAL)) return;")
+  l.push(`  nucleo_fijarSsid(${ssid});`)
+  l.push("  dnsServer.start(PUERTO_DNS, TEXTO_DOMINIO_TODOS, IP_PORTAL);  // DNSServer.cpp:39-51")
+  l.push("  server.on(TEXTO_RUTA_PAGINA, HTTP_GET, portal_pagina);  // WebServer.h:103; HTTP_GET/HTTP_POST: http_parser.h:96,98")
+  l.push("  server.on(TEXTO_RUTA_COMANDO, HTTP_POST, portal_comando);")
+  l.push("  server.onNotFound(portal_redirigir);  // WebServer.h:107; tambien GET /comando y cualquier otro metodo")
+  l.push("  server.begin();  // WebServer.h:91")
+  l.push("}")
+  l.push("")
+  l.push("// En cada loop(): una consulta DNS (DNSServer.cpp:76) y un cliente HTTP (WebServer.cpp:275-342). Sin clientes,")
+  l.push("// handleClient espera 1 ms (un delay de 1, WebServer.cpp:279-281, enableDelay por defecto): 1 ms de latencia para el serie,")
+  l.push("// que ya vacio su buffer antes de llegar aca. Se deja el comportamiento por defecto del core.")
+  l.push("static void portal_atender() {")
+  l.push("  dnsServer.processNextRequest();")
+  l.push("  server.handleClient();")
   l.push("}")
   return l
 }
