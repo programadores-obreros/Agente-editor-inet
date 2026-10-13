@@ -44,7 +44,7 @@ export const REVISIONES_DE_PLACA: readonly RevisionDePlaca[] = Object.freeze([
       "nucleo/placas.ts (schemaVersion 1.1.0): strapping 0/2/5/12/15 y bancos ADC1/ADC2 (ESP32 Series Datasheet v5.3, Tabla 3-1 y Tabla 2-1); " +
       "ADC2 compartido con WiFi (ESP-IDF v4.4 adc.html y adc_oneshot.html actual); DAC 25/26, touch 0/2/4/12/13/14/15/27/32/33 y LED de placa en GPIO2 " +
       "(arduino-esp32 variants/doitESP32devkitV1/pins_arduino.h, Zephyr board doc); VIH máx VDD+0,3 V → tolerancia5V false (Datasheet Tabla 5-3). " +
-      "Fuentes hasheadas en tecnia-bot-docs/esp32-completo/evidencia/fuentes/SHA256SUMS.txt. Polaridad del LED: pendiente de verificación física.",
+      "Fuentes hasheadas en tecnia-bot-docs/esp32-completo/evidencia/fuentes/SHA256SUMS.txt. Polaridad del LED de placa verificada en la placa el 2026-10-13 (prende en alto; evidencia-v1/e2e/).",
   }),
 ])
 

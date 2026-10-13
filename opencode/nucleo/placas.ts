@@ -305,9 +305,10 @@ const PLACA_ESP32_DEVKIT_V1: Placa = {
   // LED azul de la DOIT DevKit V1 en GPIO2: arduino-esp32 `variants/doitESP32devkitV1/
   // pins_arduino.h` (`LED_BUILTIN = 2`) y la documentación de placa de Zephyr ("A blue LED is
   // connected to GPIO2"). GPIO2 es además strapping (debe quedar bajo o libre al arrancar): el
-  // LED a masa no lo levanta. `activoEn` queda SIN declarar hasta la verificación física
-  // (blink de `ejemplos/blink-esp32`), pendiente al 2026-10-12.
-  ledDePlaca: { pin: "GPIO2", color: "azul" },
+  // LED a masa no lo levanta. `activoEn: "alto"` VERIFICADO físicamente el 2026-10-13 (E2E del
+  // Modo Vivo V1: `digital.escribir pin=2 nivel=alto` desde el runtime real y Alejandro Palestrini
+  // vio prender el LED azul; tecnia-bot-docs/esp32-completo/evidencia-v1/e2e/).
+  ledDePlaca: { pin: "GPIO2", color: "azul", activoEn: "alto" },
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════

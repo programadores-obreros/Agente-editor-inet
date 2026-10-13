@@ -90,10 +90,9 @@ test("P4 (H-A3): DAC_1/DAC_2 en GPIO25/26; TOUCH0..TOUCH9 en 4, 0, 2, 15, 13, 12
 
 // ───────────────────────────── P5: datos de placa ─────────────────────────────────────
 
-test("P5 (H-A4): el LED de placa está en GPIO2 (pin existente, azul) y su polaridad NO se inventa", () => {
-  assert.deepEqual(esp32.ledDePlaca, { pin: "GPIO2", color: "azul" })
+test("P5 (H-A4): el LED de placa está en GPIO2 (pin existente, azul) y prende en alto (verificado en la placa el 2026-10-13)", () => {
+  assert.deepEqual(esp32.ledDePlaca, { pin: "GPIO2", color: "azul", activoEn: "alto" })
   assert.ok(pin(esp32, esp32.ledDePlaca.pin), "referencia un RegistroPin.id real")
-  assert.equal(esp32.ledDePlaca.activoEn, undefined, "pendiente de verificación física")
   assert.equal(uno.ledDePlaca, undefined, "el UNO no se revisó en este slice")
 })
 
@@ -125,7 +124,7 @@ test("P6: hay revisión eléctrica humana de la placa para CK-PLACA-01 y la ESP3
   assert.ok(revision, "entrada de revisión de CK-PLACA-01")
   assert.ok(esRevisorHumano(revision.revisadoPor))
   assert.match(revision.evidencia, /Tabla 3-1/)
-  assert.match(revision.evidencia, /pendiente de verificación física/)
+  assert.match(revision.evidencia, /LED[^.]*verificad/i)
   const informe = admitirPlaca(CONOCIMIENTO_ACTIVO, "esp32-devkit-v1")
   assert.equal(informe.officiallySupported, true, JSON.stringify(informe.problemas))
 })
