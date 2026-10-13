@@ -150,7 +150,10 @@ test("7 el hash refleja el conocimiento nuevo: fijado, y la lectura y el registr
   assert.equal(K.catalogo.version, CATALOGO_FIJADO.version)
   assert.equal(K.catalogo.hash, CATALOGO_FIJADO.hash)
   assert.notEqual(K.catalogo.hash, CATALOGO_FIJADO.anterior.hash)
-  assert.deepEqual(CATALOGO_FIJADO.anterior, { version: "2.3.0", hash: "b20d038cc39779213f902ca313d7e4e35a40fae8a66d9f21dadeb7285b19c901" })
+  // CK-PLACA-01 (2026-10-12): la cadena es 2.3.0 (CK-CG1) → 2.4.0 (CK-CG2) → 2.5.0; `anterior` es la
+  // inmediata (2.4.0). La identidad de CK-CG1 queda como literal histórico: ya no es la activa.
+  assert.deepEqual(CATALOGO_FIJADO.anterior, { version: "2.4.0", hash: "df364a3186afb53b64fe657b94c162ed7a346a989b175e24d86e84d9b59057c4" })
+  assert.notEqual(K.catalogo.hash, "b20d038cc39779213f902ca313d7e4e35a40fae8a66d9f21dadeb7285b19c901", "la identidad de CK-CG1 es histórica")
   const datos = { version: VERSION_CATALOGO_MINIMO, componentes: COMPONENTES_CATALOGO_MINIMO, placas: PLACAS_CATALOGO_MINIMO, unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS } }
   const proyeccion = proyeccionSemanticaCatalogo(datos)
   assert.deepEqual(proyeccion.protocolosDeLectura, PROTOCOLOS_DE_LECTURA)
@@ -277,6 +280,7 @@ test("deudas registradas en el código: DHT-PULLUP-01, H-01 y ESP-STRAP-05", () 
   assert.match(leer("opencode/nucleo/placas.ts"), /ESP-STRAP-05/)
   const anexo = leer("opencode/conocimiento/anexos/revision-electrica.ts")
   for (const deuda of ["DHT-PULLUP-01", "H-01", "ESP-STRAP-05"]) assert.match(anexo, new RegExp(deuda))
-  // ESP-STRAP-05 sigue abierta a propósito: GPIO5 NO se marcó como strapping en CK-CG1.
-  assert.ok(!K.placa("esp32-devkit-v1").pines.find((p) => p.id === "GPIO5").restricciones.includes("strapping"))
+  // ESP-STRAP-05 quedó abierta en CK-CG1 y la cerró CK-PLACA-01 (2026-10-12): GPIO5 ES strapping
+  // (Datasheet v5.3, Tabla 3-1), con la política `info` de GPIO0/2/15 (ver tests/ck-placa-01.test.mjs).
+  assert.ok(K.placa("esp32-devkit-v1").pines.find((p) => p.id === "GPIO5").restricciones.includes("strapping"))
 })

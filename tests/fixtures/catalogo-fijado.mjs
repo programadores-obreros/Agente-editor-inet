@@ -30,10 +30,17 @@
 // propia `pb-dht11`, `dht11` entra a `oficiales` como resultado DERIVADO de la admisión. Sigue NO
 // GENERABLE hasta Codegen S2b (sin backend para su protocolo). `anterior` pasa a ser 2.3.0.
 
+//
+// 2.5.0 — CK-PLACA-01: la `esp32-devkit-v1` completa con fuente primaria (schemaVersion 1.1.0): GPIO5
+// pasa a `strapping` (cierra ESP-STRAP-05, severidad info), `touch` y `dac` reales, `tolerancia5V` en
+// la proyección. Cambio menor que cambia el significado de un pin existente (un proyecto con GPIO5
+// gana un aviso informativo). Revisión humana de la placa de Alejandro Palestrini (2026-10-12,
+// H-A1..H-A6). Ningún tipo entra ni sale de `oficiales`. `anterior` pasa a ser 2.4.0.
+
 export const CATALOGO_FIJADO = Object.freeze({
-  version: "2.4.0",
-  hash: "df364a3186afb53b64fe657b94c162ed7a346a989b175e24d86e84d9b59057c4",
+  version: "2.5.0",
+  hash: "91d6539d56db1a31cb18e5cd46008e623aca44240259522bb8253c2c227a06cc",
   componentesShippeados: Object.freeze(["dht11", "dht22", "interruptor", "led", "ntc", "pulsador", "resistencia"]),
   oficiales: Object.freeze(["dht11", "dht22", "esp32-devkit-v1", "interruptor", "led", "pulsador", "resistencia"]),
-  anterior: Object.freeze({ version: "2.3.0", hash: "b20d038cc39779213f902ca313d7e4e35a40fae8a66d9f21dadeb7285b19c901" }),
+  anterior: Object.freeze({ version: "2.4.0", hash: "df364a3186afb53b64fe657b94c162ed7a346a989b175e24d86e84d9b59057c4" }),
 })

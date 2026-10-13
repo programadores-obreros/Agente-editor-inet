@@ -73,7 +73,9 @@ function prepararProyectoConComponente(directorio, idProyecto, tipo, terminalId,
 
 const MATRIZ_RESTRICCIONES = [
   { pin: "GPIO4", esperado: null }, // pin normal (D1/D11): funciona, sin motivos
-  { pin: "GPIO5", esperado: null }, // D4 (H-3=A): sin restriccion nueva, sin fuente interna
+  // D4 (H-3=A) dejaba GPIO5 sin restriccion "sin fuente interna". CK-PLACA-01 (H-A1, 2026-10-12)
+  // lo reabre con fuente externa de tier 1 (ESP32 Series Datasheet v5.3, Tabla 3-1): strapping, info.
+  { pin: "GPIO5", esperado: { codigo: "PIN_STRAPPING", severidad: "info" } },
   { pin: "GPIO6", esperado: { codigo: "PIN_FLASH_RESERVADO", severidad: "blocking" } },
   { pin: "GPIO7", esperado: { codigo: "PIN_FLASH_RESERVADO", severidad: "blocking" } },
   { pin: "GPIO8", esperado: { codigo: "PIN_FLASH_RESERVADO", severidad: "blocking" } },

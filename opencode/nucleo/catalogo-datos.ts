@@ -268,4 +268,9 @@ export const CONVERSIONES_UNIDAD_MINIMAS: readonly ConversionUnidad[] = [
 // registro. Cambio MENOR, mismo criterio que 2.2.0: se suma un tipo sin cambiar el significado de los
 // existentes; el hash cambia porque el registro de protocolos entra al hash. Los proyectos 2.3.0 lo
 // ven con `CATALOGO_CAMBIO_DETECTADO` (informativo; `createdWith` no se reescribe ni se migra).
-export const VERSION_CATALOGO_MINIMO = "2.4.0"
+// 2.5.0 — CK-PLACA-01: la ESP32 DevKit V1 completa con fuente (schemaVersion 1.1.0): GPIO5 pasa a
+// `strapping` (cierra ESP-STRAP-05; severidad info), `touch` y `dac` reales, `tolerancia5V` en la
+// proyección. Cambio MENOR, mismo criterio que 2.3.0: cambia el significado de un pin existente (un
+// proyecto con GPIO5 gana un aviso informativo, nunca bloqueante); los proyectos 2.4.0 lo ven con
+// `CATALOGO_CAMBIO_DETECTADO` (informativo; `createdWith` no se reescribe ni se migra).
+export const VERSION_CATALOGO_MINIMO = "2.5.0"

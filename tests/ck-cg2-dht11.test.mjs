@@ -122,15 +122,17 @@ test("CAT-4 el protocolo del DHT11 es OTRO registro, separado del AM2302, en la 
   assert.equal(K.lecturaDeCapacidad("dht22", "temperatura").protocolo, "bus-unico-am2302", "el DHT22 no cambió de protocolo")
 })
 
-test("CAT-5 identidad: 2.4.0 con hash nuevo fijado; la anterior (2.3.0, CK-CG1) queda registrada; quitar el dht11 o su protocolo cambia el hash", async () => {
+// CK-PLACA-01 (2026-10-12) subió la identidad a 2.5.0 (la ESP32 completa cambia el hash): la de
+// CK-CG2 (2.4.0, df364a31…) pasa a ser `anterior`. Lo que este test fija del DHT11 no cambia.
+test("CAT-5 identidad: 2.5.0 con hash nuevo fijado; la anterior (2.4.0, CK-CG2) queda registrada; quitar el dht11 o su protocolo cambia el hash", async () => {
   const { proyeccionSemanticaCatalogo, canonicalizarCatalogo } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
   const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, VERSION_CATALOGO_MINIMO } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
   const { canonicalizar } = await import(join(REPO, "opencode/nucleo/canonico.ts"))
-  assert.equal(K.catalogo.version, "2.4.0")
-  assert.equal(CATALOGO_FIJADO.version, "2.4.0")
+  assert.equal(K.catalogo.version, "2.5.0")
+  assert.equal(CATALOGO_FIJADO.version, "2.5.0")
   assert.equal(K.catalogo.hash, CATALOGO_FIJADO.hash)
-  assert.equal(CATALOGO_FIJADO.anterior.version, "2.3.0")
-  assert.equal(CATALOGO_FIJADO.anterior.hash, "b20d038cc39779213f902ca313d7e4e35a40fae8a66d9f21dadeb7285b19c901")
+  assert.equal(CATALOGO_FIJADO.anterior.version, "2.4.0")
+  assert.equal(CATALOGO_FIJADO.anterior.hash, "df364a3186afb53b64fe657b94c162ed7a346a989b175e24d86e84d9b59057c4")
   const datos = { version: VERSION_CATALOGO_MINIMO, componentes: COMPONENTES_CATALOGO_MINIMO, placas: PLACAS_CATALOGO_MINIMO, unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS } }
   assert.equal(sha256Hex(canonicalizarCatalogo(datos)), K.catalogo.hash)
   const sinDht11 = { ...datos, componentes: COMPONENTES_CATALOGO_MINIMO.filter((c) => c.id !== "dht11") }

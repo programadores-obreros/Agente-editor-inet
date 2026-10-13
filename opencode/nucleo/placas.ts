@@ -39,12 +39,20 @@ export type Banco = "GPIO" | "D" | "A"
  */
 export type Restriccion = "soloEntrada" | "strapping" | "flashReservado" | "uartUsb" | "strappingVddSdio"
 
-/** Capacidades eléctricas del pin. `touch` se DIFIERE (ningún proyecto lo usa hoy). */
+/**
+ * Capacidades eléctricas del pin. Entran al hash semántico (`catalogo.ts`).
+ *
+ * `adc` significa "sirve para un sensor analógico EN TECNIA BOT", no "el chip tiene un canal
+ * ADC ahí": en el ESP32 queda en ADC1 solamente (CK-PLACA-01, H-A2), porque ADC2 lo usa el
+ * WiFi y una lectura con WiFi iniciado falla (`RegistroPin.adcBanco` conserva el dato).
+ * `dac` y `touch` (CK-PLACA-01, H-A3): datos con fuente, todavía sin consumidor.
+ */
 export interface Capacidades {
   readonly entradaDigital: boolean
   readonly salidaDigital: boolean
   readonly pwm: boolean
   readonly adc: boolean
+  readonly dac: boolean
   readonly touch: boolean
 }
 
@@ -64,6 +72,12 @@ export interface RegistroPin {
   readonly capacidades: Capacidades
   readonly restricciones: readonly Restriccion[]
   readonly enPoolAutomatico: PoolAutomatico
+  /**
+   * Banco del convertidor analógico al que pertenece el pin, si tiene uno (CK-PLACA-01):
+   * dato informativo, FUERA del hash semántico. Qué pines se ofrecen para un terminal
+   * analógico lo decide `capacidades.adc`, no esto.
+   */
+  readonly adcBanco?: "ADC1" | "ADC2"
 }
 
 /**
@@ -114,6 +128,23 @@ export interface Placa {
   readonly i2c: { readonly sda: string; readonly scl: string }
   readonly terminalesDePotencia: readonly TerminalPotencia[]
   readonly destinosDeRiel: DestinosDeRiel
+  /**
+   * Si las ENTRADAS toleran 5 V (CK-PLACA-01, H-A5). Entra al hash semántico: va a decidir la
+   * validez eléctrica de piezas que entregan 5 V a un pin (eco del HC-SR04, pHmetro V1).
+   * Hoy ningún evaluador lo lee: es el hecho de la placa, declarado antes que sus consumidores.
+   */
+  readonly tolerancia5V: boolean
+  /**
+   * LED soldado en la placa, conectado a un GPIO (CK-PLACA-01, H-A4). Dato de placa FUERA del
+   * hash semántico (no cambia qué proyectos son válidos): un LED del alumno en ese pin también
+   * prende este, y la ficha lo explica. `activoEn` AUSENTE = no verificado todavía (no se inventa).
+   */
+  readonly ledDePlaca?: {
+    /** Referencia `RegistroPin.id`, nunca repite el número. */
+    readonly pin: string
+    readonly color: "azul" | "rojo" | "verde" | "amarillo" | "blanco"
+    readonly activoEn?: "alto" | "bajo"
+  }
 }
 
 /**
@@ -161,12 +192,17 @@ const ESP32_GPIO_VALIDOS: readonly number[] = [
 // el chequeo de "no existe" (por eso van acá, no en GPIO_VALIDOS: circuito.ts los trata
 // como un caso más específico que "no existe", nunca como "no existen").
 const ESP32_GPIO_FLASH: readonly number[] = [6, 7, 8, 9, 10, 11]
-// circuito.ts:338
+// circuito.ts:338 (0, 2, 12, 15) + GPIO5.
 //
-// Deuda ESP-STRAP-05 (CK-CG1): Espressif también lista GPIO5 como strapping pin (ESP32 Series
-// Datasheet v5.3, Tabla 3-1); este registro no lo marca. No se cambia acá: necesita su propia
-// revisión.
-const ESP32_GPIO_STRAPPING: readonly number[] = [0, 2, 12, 15]
+// Deuda ESP-STRAP-05 (abierta en CK-CG1, CERRADA en CK-PLACA-01, revisión humana del 2026-10-12,
+// H-A1): Espressif lista cinco strapping pins — GPIO0, GPIO2, MTDI (GPIO12), MTDO (GPIO15) y
+// GPIO5 (ESP32 Series Datasheet v5.3, §3 y Tabla 3-1: GPIO5 con pull-up por defecto, bit 1;
+// junto con MTDO fija el timing del SDIO slave). DIVERGE a propósito de `circuito.ts:338`, que
+// no lo marca (archivo congelado), y reabre D4 (H-3=A, hardening de Phase 2: "sin fuente
+// interna") con esa fuente externa de tier 1. Severidad `info`, como GPIO0/2/15
+// (`catalogo.ts::severidadStrapping`): el SDIO slave no se usa en el aula; sigue en el pool
+// automático, igual que GPIO2 (D3, H-2b=A).
+const ESP32_GPIO_STRAPPING: readonly number[] = [0, 2, 5, 12, 15]
 // CK-CG1 (R4, revisión humana 2026-10-06): MTDI (GPIO12) elige la tensión de VDD_SDIO al reset;
 // en alto, el LDO de 1,8 V (Espressif, ESP32 Series Datasheet v5.3, §3.2), y VDD_SDIO alimenta
 // la flash. Un terminal elevado por un pull-up externo no puede ir acá
@@ -179,12 +215,30 @@ const ESP32_GPIO_UART_USB: readonly number[] = [1, 3]
 // circuito.ts:627-630 — los únicos 4 GPIO que la placa NO serigrafía como "GPIO<n>".
 const ESP32_ETIQUETAS_ALTERNATIVAS: Readonly<Record<number, string>> = { 16: "RX2", 17: "TX2", 36: "VP", 39: "VN" }
 
+// CK-PLACA-01 (revisión humana del 2026-10-12). Fuente de las cuatro tablas: ESP32 Series
+// Datasheet v5.3, Tabla 2-1 (Pin Overview), confirmada contra arduino-esp32
+// `variants/doitESP32devkitV1/pins_arduino.h` (A0–A19, T0–T9, DAC1/DAC2). Sólo los GPIO que
+// el módulo WROOM-32 de la placa expone (37/38 son ADC1_CH1/CH2 a nivel chip y no están).
+//
+// ADC1 = canales CH0..CH7 en 36, 37, 38, 39, 32, 33, 34, 35. ADC2 = CH0..CH9 en 4, 0, 2, 15, 13,
+// 12, 14, 27, 25, 26. ADC2 lo comparte el WiFi: con el WiFi iniciado la lectura falla
+// (ESP-IDF v4.4, `adc2_get_raw`: "If Wi-Fi is started via esp_wifi_start(), this function
+// will always fail with ESP_ERR_TIMEOUT"; ESP-IDF actual: "ADC2 is also used by Wi-Fi"). Por
+// eso `capacidades.adc` sigue siendo el pool ADC1 de siempre (H-A2) y el banco es sólo dato.
+const ESP32_ADC1: readonly number[] = [32, 33, 34, 35, 36, 39]
+const ESP32_ADC2: readonly number[] = [0, 2, 4, 12, 13, 14, 15, 25, 26, 27]
+// DAC_1 = GPIO25, DAC_2 = GPIO26 (8 bits).
+const ESP32_DAC: readonly number[] = [25, 26]
+// TOUCH0..TOUCH9 = 4, 0, 2, 15, 13, 12, 14, 27, 33, 32.
+const ESP32_TOUCH: readonly number[] = [0, 2, 4, 12, 13, 14, 15, 27, 32, 33]
+
 function crearPinEsp32(n: number): RegistroPin {
   const flash = ESP32_GPIO_FLASH.includes(n)
   const soloEntrada = ESP32_GPIO_SOLO_ENTRADA.includes(n)
   const strapping = ESP32_GPIO_STRAPPING.includes(n)
   const uartUsb = ESP32_GPIO_UART_USB.includes(n)
   const adc = ESP32_POOL_ANALOGICO.includes(n)
+  const adcBanco = ESP32_ADC1.includes(n) ? "ADC1" : ESP32_ADC2.includes(n) ? "ADC2" : undefined
   const restricciones: Restriccion[] = []
   if (flash) restricciones.push("flashReservado")
   if (soloEntrada) restricciones.push("soloEntrada")
@@ -205,13 +259,15 @@ function crearPinEsp32(n: number): RegistroPin {
       // circuito.ts no tiene poolPwm para el ESP32: "cualquier salida hace PWM" (ledc).
       pwm: salidaDigital,
       adc,
-      touch: false,
+      dac: ESP32_DAC.includes(n),
+      touch: ESP32_TOUCH.includes(n),
     },
     restricciones,
     enPoolAutomatico: {
       digital: ESP32_POOL_DIGITAL.includes(n),
       analogico: ESP32_POOL_ANALOGICO.includes(n),
     },
+    ...(adcBanco === undefined ? {} : { adcBanco }),
   }
 }
 
@@ -221,7 +277,9 @@ const ESP32_PINES: readonly RegistroPin[] = [...ESP32_GPIO_VALIDOS, ...ESP32_GPI
 
 const PLACA_ESP32_DEVKIT_V1: Placa = {
   id: "esp32-devkit-v1",
-  schemaVersion: "1.0.0",
+  // 1.1.0 — CK-PLACA-01 (aditivo): GPIO5 strapping, `adcBanco`, `dac`, `touch`, `tolerancia5V`,
+  // `ledDePlaca`. Catálogo 2.4.0 → 2.5.0 (el hash cambia: pines y schemaVersion entran).
+  schemaVersion: "1.1.0",
   // B_board_design.md §3: alias humanos/LLM. Deliberadamente SIN "esp32dev" ni el
   // elemento Wokwi — ver la regla "backend id != alias implícito" (§4 punto 6) y los
   // tests platformio-id-no-es-semantico / wokwi-id-no-es-semantico.
@@ -242,6 +300,15 @@ const PLACA_ESP32_DEVKIT_V1: Placa = {
     { id: "VIN", rol: "alimentacion", tension: { valor: 5, unidad: "volt", magnitud: "tension" } },
   ],
   destinosDeRiel: { GND: "GND", V3: "3V3", V5: "VIN", VLOGICA: "3V3" },
+  // ESP32 Series Datasheet v5.3, Tabla 5-3: VIH máx = VDD + 0,3 V (3,6 V). No es tolerante a 5 V.
+  tolerancia5V: false,
+  // LED azul de la DOIT DevKit V1 en GPIO2: arduino-esp32 `variants/doitESP32devkitV1/
+  // pins_arduino.h` (`LED_BUILTIN = 2`) y la documentación de placa de Zephyr ("A blue LED is
+  // connected to GPIO2"). GPIO2 es además strapping (debe quedar bajo o libre al arrancar): el
+  // LED a masa no lo levanta. `activoEn: "alto"` VERIFICADO físicamente el 2026-10-13 (E2E del
+  // Modo Vivo V1: `digital.escribir pin=2 nivel=alto` desde el runtime real y Alejandro Palestrini
+  // vio prender el LED azul; tecnia-bot-docs/esp32-completo/evidencia-v1/e2e/).
+  ledDePlaca: { pin: "GPIO2", color: "azul", activoEn: "alto" },
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -262,7 +329,7 @@ function crearPinUnoDigital(n: number): RegistroPin {
     banco: "D",
     numero: n,
     etiquetas: [`D${n}`],
-    capacidades: { entradaDigital: true, salidaDigital: true, pwm, adc: false, touch: false },
+    capacidades: { entradaDigital: true, salidaDigital: true, pwm, adc: false, dac: false, touch: false },
     // B_board_design.md §3: el UNO no tiene NINGUNA restricción real hoy (sin flash, sin
     // strapping, sin solo-entrada — skills/placas/SKILL.md:133) — enum vacío, no
     // inventado: sirve para probar que `restricciones` es "vacío por dato", no un campo
@@ -280,7 +347,7 @@ function crearPinUnoAnalogico(n: number): RegistroPin {
     etiquetas: [`A${n}`],
     // circuito.ts nunca trata un pin de poolAnalogico como digital (Sets separados por
     // banco): A0-A5 son entradas analógicas, no digitales, en este modelo.
-    capacidades: { entradaDigital: false, salidaDigital: false, pwm: false, adc: true, touch: false },
+    capacidades: { entradaDigital: false, salidaDigital: false, pwm: false, adc: true, dac: false, touch: false },
     restricciones: [],
     enPoolAutomatico: { digital: false, analogico: UNO_POOL_ANALOGICO.includes(n) },
   }
@@ -293,7 +360,9 @@ const UNO_PINES: readonly RegistroPin[] = [
 
 const PLACA_ARDUINO_UNO: Placa = {
   id: "arduino-uno",
-  schemaVersion: "1.0.0",
+  // 1.1.0 — CK-PLACA-01: la forma de `Placa` ganó `tolerancia5V` y `Capacidades.dac` (ambos
+  // obligatorios); los datos del UNO no cambian de significado más allá de declararlos.
+  schemaVersion: "1.1.0",
   alias: ["uno", "arduino uno", "arduino", "arduino uno original", "arduino uno clon"],
   backends: {
     platformio: { board: "uno", platform: "atmelavr@5.2.0", framework: "arduino" }, // ejemplos/blink-uno/platformio.ini:4-6
@@ -312,6 +381,9 @@ const PLACA_ARDUINO_UNO: Placa = {
     { id: "VIN", rol: "alimentacion" },
   ],
   destinosDeRiel: { GND: "GND", V3: "3V3", V5: "5V", VLOGICA: "5V" },
+  // Lógica de 5 V (ATmega328P a 5 V): sus entradas son de 5 V por definición. Sin LED de
+  // placa declarado: el UNO tiene uno en D13, pero este slice no lo revisó (no se inventa).
+  tolerancia5V: true,
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
