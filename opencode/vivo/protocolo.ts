@@ -72,6 +72,13 @@ export interface ErrorDeProtocolo {
   readonly pin?: number
 }
 
+/** V4: la red propia que levanta el runtime (punto de acceso), anunciada en el `hola` cuando el runtime la compila. */
+export interface RedWifi {
+  readonly ssid: string
+  readonly clave: string
+  readonly ip: string
+}
+
 export type Respuesta =
   | {
       readonly tipo: "hola"
@@ -80,6 +87,8 @@ export type Respuesta =
       readonly placa: string
       readonly comandos: readonly string[]
       readonly protocolos: readonly string[]
+      /** Presente sólo si el runtime trae WiFi (V4). Ausente en el runtime V1 de sólo serie. */
+      readonly wifi?: RedWifi
     }
   | { readonly tipo: "pong"; readonly uptimeMs: number }
   | { readonly tipo: "ok"; readonly comando: string; readonly pin: number }
@@ -214,6 +223,14 @@ function serializarValor(valor: unknown): string {
     return `"${valor}"`
   }
   if (Array.isArray(valor)) return `[${valor.map(serializarValor).join(",")}]`
+  if (typeof valor === "object" && valor !== null) {
+    // V4: objetos anidados (`wifi`), con la misma regla: claves ordenadas, sin espacios.
+    const o = valor as Record<string, unknown>
+    return `{${Object.keys(o)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${serializarValor(o[k])}`)
+      .join(",")}}`
+  }
   throw new Error(`valor no representable en el protocolo: ${String(valor)}`)
 }
 
@@ -241,10 +258,17 @@ export function parsearRespuesta(linea: string): ResultadoDeParseo<Respuesta> {
 
   switch (objeto["tipo"]) {
     case "hola": {
-      if (!exacto("tipo", "runtime", "protocolo", "placa", "comandos", "protocolos")) return invalida
+      const conWifi = exacto("tipo", "runtime", "protocolo", "placa", "comandos", "protocolos", "wifi")
+      if (!conWifi && !exacto("tipo", "runtime", "protocolo", "placa", "comandos", "protocolos")) return invalida
       const { runtime, protocolo, placa, comandos, protocolos } = objeto
       if (!esTexto(runtime) || !esEnteroNoNegativo(protocolo) || !esTexto(placa) || !esListaDeTexto(comandos) || !esListaDeTexto(protocolos)) return invalida
-      return { ok: true, valor: { tipo: "hola", runtime, protocolo, placa, comandos, protocolos } }
+      if (!conWifi) return { ok: true, valor: { tipo: "hola", runtime, protocolo, placa, comandos, protocolos } }
+      // V4: `wifi` es un objeto cerrado {clave, ip, ssid}; cualquier otra forma invalida la línea entera.
+      const wifi = objeto["wifi"]
+      if (typeof wifi !== "object" || wifi === null || Array.isArray(wifi)) return invalida
+      const w = wifi as Record<string, unknown>
+      if (Object.keys(w).sort().join(",") !== "clave,ip,ssid" || !esTexto(w["ssid"]) || !esTexto(w["clave"]) || !esTexto(w["ip"])) return invalida
+      return { ok: true, valor: { tipo: "hola", runtime, protocolo, placa, comandos, protocolos, wifi: { ssid: w["ssid"], clave: w["clave"], ip: w["ip"] } } }
     }
     case "pong": {
       if (!exacto("tipo", "uptimeMs") || !esEnteroNoNegativo(objeto["uptimeMs"])) return invalida

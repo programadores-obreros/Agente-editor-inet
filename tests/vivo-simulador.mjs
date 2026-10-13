@@ -27,7 +27,7 @@ export function pinesProhibidos(placa) {
  * la lista de líneas de salida (JSON canónico, sin `\n`). `arrancar()` devuelve lo que el runtime
  * emite solo al encender: `reinicio` y después `hola`.
  */
-export function crearRuntimeSimulado({ placa = REGISTRO_PLACAS["esp32-devkit-v1"], causaDeReinicio = "encendido", reloj = () => 0 } = {}) {
+export function crearRuntimeSimulado({ placa = REGISTRO_PLACAS["esp32-devkit-v1"], causaDeReinicio = "encendido", reloj = () => 0, wifi = undefined } = {}) {
   const porNumero = new Map(placa.pines.map((p) => [p.numero, p]))
   const prohibidos = new Set(pinesProhibidos(placa))
   const modos = new Map() // pin → modo
@@ -35,7 +35,7 @@ export function crearRuntimeSimulado({ placa = REGISTRO_PLACAS["esp32-devkit-v1"
   const entradas = new Map() // pin → "alto" | "bajo" (lo que "hay" afuera)
   const analogicos = new Map() // pin → crudo
 
-  const hola = () => ({ tipo: "hola", runtime: RUNTIME_VERSION, protocolo: VERSION_PROTOCOLO, placa: placa.id, comandos: [...COMANDOS_V1], protocolos: [] })
+  const hola = () => ({ tipo: "hola", runtime: RUNTIME_VERSION, protocolo: VERSION_PROTOCOLO, placa: placa.id, comandos: [...COMANDOS_V1], protocolos: [], ...(wifi ? { wifi } : {}) })
   const error = (e) => serializarRespuesta(respuestaDeError(e))
 
   function validarPin(comando, pin, necesita) {

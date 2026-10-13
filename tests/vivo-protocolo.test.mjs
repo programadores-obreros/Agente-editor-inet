@@ -173,3 +173,28 @@ test("guardia: protocolo.ts es puro (sin node:, sin fetch, sin reloj, sin estado
   assert.doesNotMatch(fuente, /from\s+["']node:|require\(|Bun\.|fetch\(|Date\.now|setTimeout|process\./)
   assert.doesNotMatch(fuente, /^let |^var /m)
 })
+
+// ───────────────────────────── V4: la red propia en el hola ───────────────────────────
+
+test("V4: hola con `wifi` {clave, ip, ssid} se serializa canónico (objeto anidado con claves ordenadas) y se lee de vuelta; sin wifi sigue igual", () => {
+  const wifi = { ssid: "tecnia-3f2a", clave: "48213907", ip: "192.168.4.1" }
+  const hola = { tipo: "hola", runtime: RUNTIME_VERSION, protocolo: 1, placa: "esp32-devkit-v1", comandos: [...P.COMANDOS_V1], protocolos: [], wifi }
+  const linea = P.serializarRespuesta(hola)
+  assert.equal(linea, '{"comandos":["analogico.leer","digital.escribir","digital.leer","hola","pin.modo","ping","pwm.escribir"],"placa":"esp32-devkit-v1","protocolo":1,"protocolos":[],"runtime":"0.1.0","tipo":"hola","wifi":{"clave":"48213907","ip":"192.168.4.1","ssid":"tecnia-3f2a"}}')
+  const vuelta = P.parsearRespuesta(linea)
+  assert.ok(vuelta.ok)
+  assert.deepEqual(vuelta.valor, hola)
+  const sinWifi = crearRuntimeSimulado().procesar("hola")[0]
+  assert.equal(sinWifi, CASOS_DORADOS[0].salida[0], "el runtime de sólo serie no cambia su hola")
+  const conWifi = crearRuntimeSimulado({ wifi }).procesar("hola")[0]
+  assert.equal(conWifi, linea)
+})
+
+test("V4: un `wifi` con otra forma invalida la línea entera (claves de más o de menos, tipos, lista)", () => {
+  const base = '"comandos":[],"placa":"esp32-devkit-v1","protocolo":1,"protocolos":[],"runtime":"0.1.0","tipo":"hola"'
+  for (const wifi of ['{"ssid":"x"}', '{"clave":"1","ip":"2","ssid":"3","canal":6}', '{"clave":1,"ip":"2","ssid":"3"}', "[]", "null", '"tecnia"']) {
+    const r = P.parsearRespuesta(`{${base},"wifi":${wifi}}`)
+    assert.ok(!r.ok, wifi)
+    assert.equal(r.error.codigo, "LINEA_INVALIDA", wifi)
+  }
+})
