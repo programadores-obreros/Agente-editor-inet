@@ -810,6 +810,10 @@ if ($ocHasContent -and $null -eq $oc) {
     $agenteTecnia | Add-Member -NotePropertyName "model" -NotePropertyValue $ModeloElegido -Force
     $agentes | Add-Member -NotePropertyName $TecniaAgent -NotePropertyValue $agenteTecnia -Force
     $oc | Add-Member -NotePropertyName "agent" -NotePropertyValue $agentes -Force
+    # small_model: el modelo de las tareas chicas (el titulo de la charla). Si no se fija,
+    # OpenCode elige uno por su cuenta y con la key de Google cae en otro Gemini que puede
+    # estar saturado o sin cuota. Va el mismo que el del agente (igual que install.sh).
+    $oc | Add-Member -NotePropertyName "small_model" -NotePropertyValue $ModeloElegido -Force
 
     # instructions: array de rutas que opencode carga en el contexto de cada sesion.
     # Agregamos el perfil si no esta (idempotente, sin duplicar), preservando el resto.
