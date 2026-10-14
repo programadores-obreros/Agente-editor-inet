@@ -1,4 +1,5 @@
-// Transporte serie del Modo Vivo V1 — MODO-VIVO-PLAN.md §10.2. ÚNICO módulo de `vivo/` con I/O.
+// Transporte serie del Modo Vivo (protocolo v1, slices V1–V4) — MODO-VIVO-PLAN.md §10.2. ÚNICO
+// módulo de `vivo/` con I/O.
 //
 // Lanza `puente-serie.py` con el Python del penv de PlatformIO (que ya trae pyserial) como proceso
 // hijo y lo expone como un `Puente` de líneas: lo que se manda va a stdin, lo que llega de stdout se
@@ -7,6 +8,10 @@
 // El Python se busca en los MISMOS lugares que `platformio.ts::pioCandidatos` busca `pio`
 // (`PLATFORMIO_CORE_DIR`, `$HOME/.platformio`, y en Windows la raíz del disco del perfil y
 // `C:\.platformio` — docs/rutas-no-ascii.md), porque es el mismo penv. Inyectable para los tests.
+// La búsqueda se REPLICA en vez de importarse (auditoría A6 K-05): `platformio.ts` sólo exporta las
+// rutas de los binarios, no las carpetas, e importarlo desde acá metería `@opencode-ai/plugin` en
+// `vivo/` e invertiría la dirección `tool/ → vivo/` (varios tests copian `platformio.ts` a un
+// directorio temporal con un plugin falso justamente porque no se importa tal cual).
 //
 // `node:child_process` a propósito y no `Bun.spawn`: Bun lo implementa igual y así los tests corren
 // con `node --test` como el resto de `tests/`.
@@ -20,21 +25,35 @@ import type { Puente } from "./sesion-viva.ts"
 
 export const SCRIPT_PUENTE = join(dirname(fileURLToPath(import.meta.url)), "puente-serie.py")
 
-/** Códigos que puede traer `ErrorDePuente.codigo` o el motivo de `alCerrar`. */
+/**
+ * Códigos que puede traer `ErrorDePuente.codigo` o el motivo de `alCerrar`. Los que empiezan con
+ * `PUERTO_` los emite `puente-serie.py` (con su código de salida): `PUERTO_NO_ABIERTO` también
+ * cubre "otro proceso lo tiene abierto" (`exclusive=True`, auditoría A1 M1); `PUERTO_PERDIDO` es
+ * el puerto que desapareció en el medio (Linux: EIO al leer; en Windows pyserial lo reporta de otra
+ * forma y no está verificado); `ESCRITURA_VENCIDA` es una escritura que no entró en 1 s (la placa
+ * dejó de drenar el UART), distinta de perder el puerto.
+ */
 export const CODIGOS_DE_PUENTE = Object.freeze([
   "PYTHON_NO_ENCONTRADO",
   "PUENTE_NO_LANZADO",
   "PUERTO_NO_ABIERTO",
   "PYSERIAL_AUSENTE",
   "PUERTO_PERDIDO",
+  "ESCRITURA_VENCIDA",
   "PUENTE_TERMINADO",
   "PUENTE_SALIO",
 ] as const)
 
+export type CodigoDePuente = (typeof CODIGOS_DE_PUENTE)[number]
+
+function esCodigoDePuente(valor: string): valor is CodigoDePuente {
+  return (CODIGOS_DE_PUENTE as readonly string[]).includes(valor)
+}
+
 // Sin "parameter properties": Node en modo strip-only (`node --test` sobre `.ts`) no las acepta.
 export class ErrorDePuente extends Error {
-  readonly codigo: string
-  constructor(codigo: string, detalle: string) {
+  readonly codigo: CodigoDePuente
+  constructor(codigo: CodigoDePuente, detalle: string) {
     super(`${codigo}: ${detalle}`)
     this.name = "ErrorDePuente"
     this.codigo = codigo
@@ -76,9 +95,10 @@ export interface OpcionesPuenteSerie {
   readonly script?: string
 }
 
-/** El primer token de una línea de stderr del puente es su código; el resto es detalle. */
-function codigoDe(linea: string): string {
-  return linea.split(" ")[0] ?? "PUENTE_SALIO"
+/** El primer token de una línea de stderr del puente es su código; el resto es detalle. Un token que no es un código conocido se reporta como `PUENTE_SALIO`. */
+function codigoDe(linea: string): CodigoDePuente {
+  const token = linea.split(" ")[0] ?? ""
+  return esCodigoDePuente(token) ? token : "PUENTE_SALIO"
 }
 
 /**

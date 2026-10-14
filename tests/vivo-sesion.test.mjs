@@ -1,26 +1,35 @@
-// Modo Vivo V1 — la sesión viva (`opencode/vivo/sesion-viva.ts` + `estado-observado.ts`) contra el
-// runtime simulado de referencia (`tests/vivo-simulador.mjs`) por un puente FALSO en memoria con la
-// misma interfaz `Puente` que el serie real. Contrato: tecnia-bot-docs/esp32-completo/PROTOCOLO-VIVO-V1.md.
+// Modo Vivo (protocolo v1, slices V1–V4) — la sesión viva (`opencode/vivo/sesion-viva.ts` +
+// `estado-observado.ts`) contra el runtime simulado de referencia (`tests/vivo-simulador.mjs`) por un
+// puente FALSO en memoria con la misma interfaz `Puente` que el serie real. Contrato:
+// tecnia-bot-docs/esp32-completo/PROTOCOLO-VIVO-V1.md (§9: V4-7 ruido, V4-8 respuestas debidas,
+// V4-9 reconexión).
 //
 // Nada duerme: el reloj y el temporizador son falsos y se avanzan a mano; el puente falso entrega
 // las líneas en una microtarea y los tests esperan las promesas de la sesión. El proyecto es REAL
 // (raíz de composición + operaciones), en un directorio temporal propio de este archivo.
 //
-// Al final, si hay un Python del penv de PlatformIO (pyserial) y un pseudo-terminal, el puente
-// Python real pasa una línea ida y vuelta; si no, ese test se salta y lo dice.
+// Historia (auditoría 2026-10-13, A2): el test del timeout nunca soltaba la respuesta tardía, así que
+// el corrimiento "la lectura vencida con crudo 111 se la queda el comando siguiente" pasaba verde;
+// "comando() valida B" era un regex sobre el fuente, con el que un `if (false && …)` sobrevivía; el
+// `hola.wifi` no atravesaba ninguna cadena; y el borde de los 5 s no se probaba. Acá cada uno de esos
+// tiene su test de comportamiento. Si los "simplificás" de vuelta, volvés a ese estado.
+//
+// Al final, si hay un Python del penv de PlatformIO con pyserial y un pseudo-terminal, el puente
+// Python real pasa una línea ida y vuelta, rechaza a un segundo abridor y reporta una escritura
+// vencida; si no, esos tests se saltan y lo dicen.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { mkdirSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import os from "node:os"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const P = await import(join(REPO, "opencode/vivo/protocolo.ts"))
 const EO = await import(join(REPO, "opencode/vivo/estado-observado.ts"))
-const { abrirSesion, TIEMPOS_POR_DEFECTO } = await import(join(REPO, "opencode/vivo/sesion-viva.ts"))
+const { abrirSesion, TIEMPOS_POR_DEFECTO, REINTENTOS_DE_HOLA } = await import(join(REPO, "opencode/vivo/sesion-viva.ts"))
 const { abrirPuenteSerie, pythonCandidatos, pythonDelPenv } = await import(join(REPO, "opencode/vivo/transporte-serie.ts"))
 const { crearRuntimeSimulado } = await import(join(REPO, "tests/vivo-simulador.mjs"))
 const { REGISTRO_PLACAS } = await import(join(REPO, "opencode/nucleo/placas.ts"))
@@ -108,25 +117,38 @@ function crearTiempoFalso() {
   }
 }
 
+/** Lo que la ROM de la ESP32 y el core imprimen por UART0 al arrancar, antes de la primera línea JSON (auditoría A2 M5). */
+const RUIDO_ROM = Object.freeze(["ets Jun  8 2016 00:22:57", "rst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)", "[E][Parsing.cpp:117] parse error"])
+
 /**
  * Puente falso: lo que se `enviar` lo procesa el runtime simulado y sus líneas vuelven en una
  * microtarea (como llegarían por el serie, nunca dentro de `enviar`). `transformar` permite
- * falsificar el `hola`; `silenciar` deja al runtime mudo; `inyectar` mete líneas crudas.
+ * falsificar el `hola`; `silenciar` deja al runtime mudo; `inyectar` mete líneas crudas; `ruido`
+ * son líneas que el puente entrega ANTES del `reinicio` de `arrancar()`; `perder(n)` pierde en el
+ * cable las próximas `n` líneas del runtime (la respuesta sale de la placa pero no llega).
  */
-function crearPuenteFalso(runtime, { transformar = (linea) => linea } = {}) {
+function crearPuenteFalso(runtime, { transformar = (linea) => linea, ruido = [] } = {}) {
   const receptores = new Set()
   const cierres = new Set()
   const enviadas = []
   let silenciado = false
   let cerrado = false
+  let aPerder = 0
   const entregar = (lineas) =>
     queueMicrotask(() => {
-      for (const linea of lineas) for (const r of receptores) r(linea)
+      for (const linea of lineas) {
+        if (aPerder > 0) {
+          aPerder--
+          continue
+        }
+        for (const r of receptores) r(linea)
+      }
     })
   return {
     enviadas,
     silenciar: (valor) => void (silenciado = valor),
-    arrancar: () => entregar(runtime.arrancar().map(transformar)),
+    perder: (n) => void (aPerder += n),
+    arrancar: () => entregar([...ruido, ...runtime.arrancar().map(transformar)]),
     inyectar: (...lineas) => entregar(lineas),
     caer(motivo) {
       cerrado = true
@@ -165,9 +187,9 @@ function holaFalsificado(cambios) {
 
 const PROYECTO = prepararProyecto("principal")
 
-async function abrir({ transformar, arrancar = true, tiempos } = {}) {
-  const runtime = crearRuntimeSimulado()
-  const puente = crearPuenteFalso(runtime, transformar ? { transformar } : {})
+async function abrir({ transformar, arrancar = true, tiempos, wifi, ruido } = {}) {
+  const runtime = crearRuntimeSimulado(wifi ? { wifi } : {})
+  const puente = crearPuenteFalso(runtime, { ...(transformar ? { transformar } : {}), ...(ruido ? { ruido } : {}) })
   const tiempo = crearTiempoFalso()
   const promesa = abrirSesion({ puente, placa: ESP32, proyecto: PROYECTO.proyecto, conocimiento: CONOCIMIENTO_ACTIVO, reloj: tiempo.reloj, temporizador: tiempo.temporizador, tiempos })
   if (arrancar) puente.arrancar()
@@ -349,14 +371,28 @@ test("comando() por pin cruza A (placa): salida en GPIO34, ADC en GPIO4 y un pin
   await sesion.cerrar()
 })
 
-test("comando() valida B (hola): el chequeo existe y mira la lista del hola", () => {
-  // En V1 no se puede ejercitar por la API pública: la compatibilidad ya exige los siete comandos, así
-  // que un runtime al que le falte uno es RUNTIME_INCOMPATIBLE antes de llegar a B. El chequeo queda
-  // para cuando la compatibilidad se relaje (plan §10.4: protocolos por proyecto); acá sólo se
-  // verifica que está y que lee `runtime.comandos` del estado, no una lista propia.
-  const fuente = readFileSync(join(REPO, "opencode/vivo/sesion-viva.ts"), "utf8")
-  assert.match(fuente, /COMANDO_NO_SOPORTADO_POR_RUNTIME/)
-  assert.match(fuente, /estado\.runtime\?\.comandos/)
+test("comando() valida B (hola): un comando que el runtime no anunció (`sensor.leer`, reservado) se frena en el host y no toca el puente", async () => {
+  // Antes era un regex sobre el fuente "porque no se podía ejercitar" (auditoría A2 M1): sí se puede,
+  // con un comando reservado que ningún `hola` de V1 anuncia. A (placa) no aplica: `sensor.leer` no
+  // tiene capacidad asociada; B lo rechaza leyendo `runtime.comandos` del estado.
+  const { sesion, puente } = await abrir()
+  const r = await sesion.comando({ comando: "sensor.leer", pin: 4 })
+  assert.deepEqual(r, { ok: false, codigo: "COMANDO_NO_SOPORTADO_POR_RUNTIME", datos: { comando: "sensor.leer", comandos: [...P.COMANDOS_V1] } })
+  assert.deepEqual(puente.enviadas, [])
+  await sesion.cerrar()
+})
+
+test("A4: el `wifi` del hola atraviesa simulador → sesión → estado observado; sin wifi, `runtime.wifi` es undefined", async () => {
+  const wifi = { ssid: "tecnia-aula-3", clave: "", ip: "192.168.4.1" }
+  const con = await abrir({ wifi })
+  assert.equal(con.sesion.estado().sesion, "CONECTADA")
+  assert.deepEqual(con.sesion.estado().runtime.wifi, wifi)
+  await con.sesion.cerrar()
+
+  const sin = await abrir()
+  assert.equal(sin.sesion.estado().runtime.wifi, undefined)
+  assert.ok(!("wifi" in sin.sesion.estado().runtime), "sin wifi no hay clave `wifi`: no se inventa una red")
+  await sin.sesion.cerrar()
 })
 
 // ───────────────────────────── reinicio, latido, caídas ─────────────────────────────
@@ -399,7 +435,7 @@ test("un comando en vuelo cuando llega el reinicio falla con SESION_NO_CONECTADA
   await sesion.cerrar()
 })
 
-test("latido: ping cada 2 s; 5 s sin pong → DESCONECTADA (SIN_PONG) y los comandos se rechazan", async () => {
+test("latido: ping cada 2 s; 5 s sin pong → CONECTANDO (V4-9), lo que estaba en vuelo falla con SIN_PONG y el primer envío es un hola", async () => {
   const { sesion, puente, tiempo, ids } = await abrir()
   await tiempo.avanzar(2000)
   assert.deepEqual(puente.enviadas, ["ping"])
@@ -409,39 +445,224 @@ test("latido: ping cada 2 s; 5 s sin pong → DESCONECTADA (SIN_PONG) y los coma
 
   puente.silenciar(true)
   await tiempo.avanzar(2000) // t=6000: el pong de t=4000 fue el último
-  assert.equal(sesion.estado().sesion, "CONECTADA", "a los 2 s sin pong todavía no se desconecta")
+  assert.equal(sesion.estado().sesion, "CONECTADA", "a los 2 s sin pong todavía no pasa nada")
   await tiempo.avanzar(2000) // t=8000: 4 s sin pong
   assert.equal(sesion.estado().sesion, "CONECTADA")
+  const enVuelo = sesion.leer(ids.ntc) // t=8000: sale, nadie contesta
+  await vaciarMicrotareas()
   await tiempo.avanzar(2000) // t=10000: 6 s sin pong
+  assert.equal(sesion.estado().sesion, "CONECTANDO", "V4-9: se pierde el latido, no la sesión")
+  assert.equal(sesion.estado().motivo, undefined)
+  assert.deepEqual(await enVuelo, { ok: false, codigo: "SESION_NO_CONECTADA", datos: { sesion: "CONECTANDO", motivo: "SIN_PONG", comando: "analogico.leer" } })
+  assert.equal(puente.enviadas.at(-1), "hola", "lo primero tras perder el latido es pedir hola")
+  const r = await sesion.leer(ids.pulsador)
+  assert.deepEqual(r, { ok: false, codigo: "SESION_NO_CONECTADA", datos: { sesion: "CONECTANDO" } })
+  await sesion.cerrar()
+})
+
+test("L1: el borde de los 5 s sin pong — a los 4999 y 5000 ms todavía se manda ping; a los 5001 se pide hola", async () => {
+  // `pingCadaMs` fija el instante del único tick que importa; el puente queda mudo desde el hola de t=0.
+  for (const [pingCadaMs, esperado, sesionEsperada] of [
+    [4999, ["ping"], "CONECTADA"],
+    [5000, ["ping"], "CONECTADA"],
+    [5001, ["hola"], "CONECTANDO"],
+  ]) {
+    const { sesion, puente, tiempo } = await abrir({ tiempos: { pingCadaMs } })
+    puente.silenciar(true)
+    await tiempo.avanzar(pingCadaMs)
+    assert.deepEqual(puente.enviadas, esperado, `tick en t=${pingCadaMs}`)
+    assert.equal(sesion.estado().sesion, sesionEsperada, `t=${pingCadaMs}`)
+    await sesion.cerrar()
+  }
+})
+
+test("V4-9: perdido el latido, un hola que contesta reconecta: CONECTADA, sin observaciones viejas, el pull-up se configura de nuevo y alCierre NO se dispara", async () => {
+  const { sesion, puente, tiempo, ids } = await abrir()
+  await sesion.accionar(ids.led, { tipo: "nivel", nivel: "alto" })
+  await sesion.leer(ids.pulsador)
+  assert.ok(observacionDe(sesion, ids.led))
+  const cierres = []
+  sesion.alCierre((m) => cierres.push(m))
+
+  puente.silenciar(true)
+  await tiempo.avanzar(6000) // t=6000: 6 s sin pong (el hola de t=0 fue la última vida)
+  assert.equal(sesion.estado().sesion, "CONECTANDO")
+  assert.equal(observacionDe(sesion, ids.led), undefined, "lo observado antes del silencio ya no vale")
+  assert.equal(sesion.estado().ultimoReinicio.causa, "encendido", "no se inventa un reinicio nuevo: queda el de arranque")
+  assert.equal(puente.enviadas.filter((l) => l === "hola").length, 1, "primer hola, que se pierde en el silencio")
+
+  puente.silenciar(false) // la placa vuelve, pero el primer hola ya salió al vacío
+  await tiempo.avanzar(TIEMPOS_POR_DEFECTO.respuestaMs) // t=9000: vence el primer hola
+  assert.equal(sesion.estado().sesion, "CONECTANDO")
+  await tiempo.avanzar(TIEMPOS_POR_DEFECTO.esperaHolaMs) // t=10500: segundo hola, contestado
+  assert.equal(sesion.estado().sesion, "CONECTADA")
+  assert.equal(puente.enviadas.filter((l) => l === "hola").length, 2)
+  assert.deepEqual(cierres, [], "reconectó: no hubo cierre")
+
+  const antes = puente.enviadas.length
+  const r = await sesion.leer(ids.pulsador)
+  assert.equal(r.ok, true)
+  assert.equal(puente.enviadas[antes], "pin.modo pin=4 modo=entradaPullUp", "tras reconectar no se asume el pull-up de antes")
+  await tiempo.avanzar(2000)
+  assert.equal(puente.enviadas.at(-1), "ping", "el latido sigue")
+  await sesion.cerrar()
+  assert.deepEqual(cierres, ["CERRADA_POR_HOST"])
+})
+
+test("V4-9: si ningún hola contesta, tras 3 pedidos con esperaHolaMs entre uno y otro → DESCONECTADA (SIN_PONG), alCierre una vez, y no se manda nada más", async () => {
+  const { sesion, puente, tiempo, ids } = await abrir()
+  const cierres = []
+  sesion.alCierre((m) => cierres.push(m))
+  puente.silenciar(true)
+  await tiempo.avanzar(6000) // t=6000: se pierde el latido, hola #1
+  // #1 vence en 9000, espera hasta 10500 → #2 vence en 13500, espera hasta 15000 → #3 vence en 18000.
+  const { respuestaMs, esperaHolaMs } = TIEMPOS_POR_DEFECTO
+  const caida = 6000 + REINTENTOS_DE_HOLA * respuestaMs + (REINTENTOS_DE_HOLA - 1) * esperaHolaMs
+  assert.equal(caida, 18000)
+  await tiempo.avanzar(caida - 6000 - 1)
+  assert.equal(sesion.estado().sesion, "CONECTANDO", "a 1 ms de vencer el tercer hola, todavía se espera")
+  assert.deepEqual(cierres, [])
+  await tiempo.avanzar(1)
   assert.equal(sesion.estado().sesion, "DESCONECTADA")
   assert.equal(sesion.estado().motivo, "SIN_PONG")
+  assert.equal(puente.enviadas.filter((l) => l === "hola").length, REINTENTOS_DE_HOLA)
+  assert.deepEqual(cierres, ["SIN_PONG"])
   const r = await sesion.leer(ids.pulsador)
   assert.deepEqual(r, { ok: false, codigo: "SESION_NO_CONECTADA", datos: { sesion: "DESCONECTADA", motivo: "SIN_PONG" } })
   const enviadas = puente.enviadas.length
   await tiempo.avanzar(10000)
-  assert.equal(puente.enviadas.length, enviadas, "desconectada, no manda más pings")
+  assert.equal(puente.enviadas.length, enviadas, "desconectada, no manda más nada")
   await sesion.cerrar()
+  assert.deepEqual(cierres, ["SIN_PONG"], "DESCONECTADA es terminal: cerrar() después no vuelve a avisar")
 })
 
-test("respuesta inválida del runtime (no JSON, o del tipo equivocado) → RESPUESTA_INVALIDA, nunca una excepción", async () => {
+test("alCierre: se dispara con el motivo del puente caído o con CERRADA_POR_HOST; la baja deja de avisar", async () => {
+  const caida = await abrir()
+  const motivos = []
+  caida.sesion.alCierre((m) => motivos.push(m))
+  caida.puente.caer("PUERTO_PERDIDO")
+  assert.deepEqual(motivos, ["PUERTO_PERDIDO"])
+  await caida.sesion.cerrar()
+  assert.deepEqual(motivos, ["PUERTO_PERDIDO"], "una sola vez")
+
+  const normal = await abrir()
+  const dado = []
+  const baja = normal.sesion.alCierre((m) => dado.push(m))
+  const otro = []
+  normal.sesion.alCierre((m) => otro.push(m))
+  baja()
+  await normal.sesion.cerrar()
+  assert.deepEqual(dado, [], "dado de baja: no se entera")
+  assert.deepEqual(otro, ["CERRADA_POR_HOST"])
+})
+
+test("V4-7: el texto suelto se ignora; RESPUESTA_INVALIDA es sólo una línea del protocolo que no es la respuesta esperada (tipo equivocado, otro pin, JSON roto)", async () => {
   const { sesion, puente, ids } = await abrir()
   puente.silenciar(true)
   const ping = sesion.comando({ comando: "ping" })
   await vaciarMicrotareas()
   puente.inyectar("esto no es una linea del protocolo")
-  assert.deepEqual(await ping, { ok: false, codigo: "RESPUESTA_INVALIDA", datos: { comando: "ping", linea: "esto no es una linea del protocolo" } })
+  await vaciarMicrotareas()
+  puente.inyectar('{"tipo":"pong","uptimeMs":1}')
+  assert.deepEqual(await ping, { ok: true, valor: { tipo: "pong", uptimeMs: 1 } }, "el texto no cerró el ping: la respuesta real llegó después")
 
   const led = sesion.accionar(ids.led, { tipo: "nivel", nivel: "alto" })
   await vaciarMicrotareas()
   puente.inyectar('{"tipo":"pong","uptimeMs":1}')
   const r = await led
-  assert.equal(r.codigo, "RESPUESTA_INVALIDA", "un pong no es la respuesta a digital.escribir")
+  assert.deepEqual(r, { ok: false, codigo: "RESPUESTA_INVALIDA", datos: { comando: "digital.escribir", linea: '{"tipo":"pong","uptimeMs":1}' } }, "un pong no es la respuesta a digital.escribir")
   assert.equal(observacionDe(sesion, ids.led), undefined, "una respuesta inválida no deja observación")
 
   const otroPin = sesion.accionar(ids.led, { tipo: "nivel", nivel: "alto" })
   await vaciarMicrotareas()
   puente.inyectar('{"comando":"digital.escribir","pin":22,"tipo":"ok"}')
   assert.equal((await otroPin).codigo, "RESPUESTA_INVALIDA", "un ok para OTRO pin tampoco vale")
+
+  const roto = sesion.comando({ comando: "ping" })
+  await vaciarMicrotareas()
+  puente.inyectar('{"tipo":"pong"')
+  assert.equal((await roto).codigo, "RESPUESTA_INVALIDA", "empieza con `{` pero no es JSON: runtime roto, no ruido")
+  const malFormado = sesion.comando({ comando: "ping" })
+  await vaciarMicrotareas()
+  puente.inyectar('{"tipo":"pong"}')
+  assert.equal((await malFormado).codigo, "RESPUESTA_INVALIDA", "tipo conocido con la forma equivocada: también")
+  await sesion.cerrar()
+})
+
+test("V4-7: el ruido de la ROM antes del reinicio+hola no molesta al handshake; en medio de un comando, el ruido y una línea JSON de tipo desconocido se ignoran sin tocar el estado", async () => {
+  const { sesion, puente, ids } = await abrir({ ruido: RUIDO_ROM })
+  assert.equal(sesion.estado().sesion, "CONECTADA")
+  assert.deepEqual(sesion.estado().ultimoReinicio, { causa: "encendido", instante: 0 })
+
+  puente.silenciar(true)
+  const led = sesion.accionar(ids.led, { tipo: "nivel", nivel: "alto" })
+  await vaciarMicrotareas()
+  const antes = sesion.estado()
+  puente.inyectar(...RUIDO_ROM, '{"canal":1,"heapLibre":1,"stackLibre":1,"tipo":"diagnostico"}')
+  await vaciarMicrotareas()
+  assert.equal(sesion.estado(), antes, "misma referencia: ni el ruido ni el diagnóstico cambian nada")
+  puente.inyectar('{"comando":"digital.escribir","pin":23,"tipo":"ok"}')
+  assert.deepEqual(await led, { ok: true, valor: { tipo: "ok", comando: "digital.escribir", pin: 23 } }, "el comando siguió en vuelo hasta su respuesta")
+
+  // M5: al reiniciar, la ROM imprime su ruido ANTES del `reinicio`; el comando en vuelo tiene que
+  // cerrarse por el reinicio, no por la primera línea de ruido.
+  const otro = sesion.accionar(ids.led, { tipo: "nivel", nivel: "bajo" })
+  await vaciarMicrotareas()
+  puente.inyectar(...RUIDO_ROM, P.serializarRespuesta({ tipo: "reinicio", causa: "brownout" }))
+  assert.deepEqual(await otro, { ok: false, codigo: "SESION_NO_CONECTADA", datos: { sesion: "CONECTANDO", motivo: "REINICIO", causa: "brownout", comando: "digital.escribir" } })
+  await sesion.cerrar()
+})
+
+test("V4-8: la respuesta tardía de un comando vencido se descarta y no se la queda el comando siguiente (crudo 111 vencido → el siguiente recibe 999)", async () => {
+  // `respuestaMs` menor que el tick del latido: así el `ping` de t=2000 no se cuela en la cola y el
+  // escenario es exactamente el de la auditoría (A2): dos lecturas seguidas, la primera vencida.
+  const respuestaMs = 1000
+  const { sesion, puente, tiempo, ids } = await abrir({ tiempos: { respuestaMs } })
+  puente.silenciar(true)
+  const primero = sesion.leer(ids.ntc)
+  await tiempo.avanzar(respuestaMs)
+  assert.equal((await primero).codigo, "TIEMPO_AGOTADO")
+  const segundo = sesion.leer(ids.ntc)
+  await vaciarMicrotareas()
+  assert.deepEqual(puente.enviadas, ["analogico.leer pin=34", "analogico.leer pin=34"])
+  puente.inyectar('{"crudo":111,"pin":34,"tipo":"lectura"}') // la respuesta del primero, tarde
+  await vaciarMicrotareas()
+  assert.equal(observacionDe(sesion, ids.ntc), undefined, "la tardía no es evidencia de nada")
+  puente.inyectar('{"crudo":999,"pin":34,"tipo":"lectura"}') // la del segundo
+  assert.deepEqual(await segundo, { ok: true, valor: { tipo: "lectura", pin: 34, crudo: 999 } })
+  assert.deepEqual(observacionDe(sesion, ids.ntc).valor, { tipo: "crudo", crudo: 999 })
+  await sesion.cerrar()
+})
+
+test("V4-8: con el latido activo no hay corrimiento — un pong perdido en el cable y llegado tarde no cierra el digital.escribir siguiente", async () => {
+  const { sesion, puente, tiempo, ids } = await abrir()
+  puente.perder(1) // el pong del primer ping sale de la placa pero no llega
+  await tiempo.avanzar(2000)
+  assert.deepEqual(puente.enviadas, ["ping"])
+  await tiempo.avanzar(TIEMPOS_POR_DEFECTO.respuestaMs) // t=5000: el ping vence
+  puente.inyectar('{"tipo":"pong","uptimeMs":4999}') // y recién ahí llega el pong
+  const led = sesion.accionar(ids.led, { tipo: "nivel", nivel: "alto" }) // sale antes de que el pong tardío se entregue
+  assert.deepEqual(await led, { ok: true, valor: { tipo: "ok", comando: "digital.escribir", pin: 23 } })
+  assert.deepEqual(observacionDe(sesion, ids.led).valor, { tipo: "nivel", nivel: "alto" })
+  await sesion.cerrar()
+})
+
+test("V4-8: un hola que nadie pidió con un comando en vuelo se aplica (CONECTADA) y lo que estaba en vuelo falla con HOLA_INESPERADO; nunca se descarta un hola", async () => {
+  const { sesion, puente, runtime, tiempo, ids } = await abrir()
+  await sesion.leer(ids.pulsador) // configura el pull-up
+  puente.silenciar(true)
+  const led = sesion.accionar(ids.led, { tipo: "nivel", nivel: "alto" })
+  await tiempo.avanzar(TIEMPOS_POR_DEFECTO.respuestaMs) // vence: una respuesta debida
+  assert.equal((await led).codigo, "TIEMPO_AGOTADO")
+  const otro = sesion.accionar(ids.led, { tipo: "nivel", nivel: "alto" })
+  await vaciarMicrotareas()
+  puente.inyectar(runtime.procesar("hola")[0]) // el runtime arrancó de nuevo y el `reinicio` se perdió en el ruido
+  assert.deepEqual(await otro, { ok: false, codigo: "SESION_NO_CONECTADA", datos: { sesion: "CONECTADA", motivo: "HOLA_INESPERADO", comando: "digital.escribir" } })
+  assert.equal(sesion.estado().sesion, "CONECTADA")
+  puente.silenciar(false)
+  const lectura = await sesion.leer(ids.pulsador)
+  assert.equal(lectura.ok, true, "la deuda se canceló con el hola: la respuesta siguiente no se descarta")
+  assert.equal(puente.enviadas.filter((l) => l.startsWith("pin.modo")).length, 2, "tras el hola inesperado el pull-up se configura de nuevo")
   await sesion.cerrar()
 })
 
@@ -558,10 +779,14 @@ test("pythonCandidatos busca el penv donde platformio.ts busca pio, incluida la 
 })
 
 const PYTHON = pythonDelPenv()
-const HAY_PTY = process.platform !== "win32" && PYTHON !== undefined
+// `import serial` de verdad (auditoría A2 L2): un penv sin pyserial tiene que SALTAR estos tests y
+// decirlo, no fallar con PYSERIAL_AUSENTE. `-I` como lo lanza el transporte.
+const HAY_PYSERIAL = PYTHON !== undefined && spawnSync(PYTHON, ["-I", "-c", "import serial"], { stdio: "ignore" }).status === 0
+const HAY_PTY = process.platform !== "win32" && HAY_PYSERIAL
 // Con timeout: si el puente real deja de entregar líneas (p. ej. una mutación del framing en Python),
-// el test tiene que ponerse rojo, no colgar la suite.
-const OPCIONES_PTY = { skip: HAY_PTY ? false : "sin Python del penv de PlatformIO (pyserial) o en Windows: el puente real no se prueba acá", timeout: 15000 }
+// el test tiene que ponerse rojo, no colgar la suite. Linux-only de hecho: `PUERTO_PERDIDO` depende
+// del EIO que da un pty cuyo maestro se cerró, y `exclusive=True` del `flock` de pyserial en POSIX.
+const OPCIONES_PTY = { skip: HAY_PTY ? false : "sin Python del penv de PlatformIO con pyserial, o en Windows: el puente real no se prueba acá", timeout: 15000 }
 
 // Del otro lado del cable: un pseudo-terminal cuyo esclavo abre el puente con pyserial. El maestro
 // contesta cada línea con `eco:<línea>`. Sólo stdlib.
@@ -597,8 +822,19 @@ function conLimite(promesa, ms, descripcion) {
   return Promise.race([promesa, vencido]).finally(() => clearTimeout(limite))
 }
 
-function lanzarParPty() {
-  const hijo = spawn(PYTHON, ["-I", "-c", PAR_PTY], { stdio: ["ignore", "pipe", "inherit"] })
+// Un par que anuncia su ruta y después NO lee nunca: lo que el puente escriba se acumula en el pty
+// hasta que el kernel deja de aceptar y `write_timeout` vence del lado de pyserial.
+const PAR_PTY_MUDO = `
+import os, pty, sys, time
+maestro, esclavo = pty.openpty()
+sys.stdout.write(os.ttyname(esclavo) + "\\n")
+sys.stdout.flush()
+while True:
+    time.sleep(1)
+`
+
+function lanzarParPty(programa = PAR_PTY) {
+  const hijo = spawn(PYTHON, ["-I", "-c", programa], { stdio: ["ignore", "pipe", "inherit"] })
   const ruta = new Promise((resolver, rechazar) => {
     let acumulado = ""
     hijo.stdout.setEncoding("utf8")
@@ -664,6 +900,46 @@ test("puente Python real: si el puerto desaparece, el puente avisa PUERTO_PERDID
     assert.equal(error.codigo, "PUENTE_NO_LANZADO")
     return true
   })
+})
+
+test("puente Python real: con el puerto ya abierto por otro, un segundo puente rechaza con PUERTO_NO_ABIERTO (exclusive=True, A1 M1)", OPCIONES_PTY, async () => {
+  const par = lanzarParPty()
+  let primero
+  try {
+    const ruta = await par.ruta
+    primero = await abrirPuenteSerie({ puerto: ruta, python: PYTHON })
+    await assert.rejects(conLimite(abrirPuenteSerie({ puerto: ruta, python: PYTHON }), 10000, "segundo abridor"), (error) => {
+      assert.equal(error.codigo, "PUERTO_NO_ABIERTO")
+      assert.match(error.message, /exclusively|lock/i, "el motivo de pyserial viaja como detalle")
+      return true
+    })
+    // El primero sigue vivo: una línea va y vuelve.
+    const eco = new Promise((resolver) => primero.alRecibir((linea) => resolver(linea)))
+    primero.enviar("sigo")
+    assert.equal(await conLimite(eco, 10000, "eco tras el rechazo"), "eco:sigo")
+  } finally {
+    par.hijo.kill()
+    await par.terminado
+    await primero?.cerrar()
+  }
+})
+
+test("puente Python real: si la placa no drena el UART, la escritura vence y el puente avisa ESCRITURA_VENCIDA (no PUERTO_PERDIDO) y termina", OPCIONES_PTY, async () => {
+  const par = lanzarParPty(PAR_PTY_MUDO)
+  let puente
+  try {
+    const ruta = await par.ruta
+    puente = await abrirPuenteSerie({ puerto: ruta, python: PYTHON })
+    const cierre = new Promise((resolver) => puente.alCerrar(resolver))
+    // Más de lo que el pty acepta sin que nadie lea del otro lado (unos KB): la escritura bloquea
+    // y a 1 s pyserial levanta SerialTimeoutException.
+    for (let i = 0; i < 200; i++) puente.enviar("x".repeat(190))
+    assert.equal(await conLimite(cierre, 10000, "cierre por escritura vencida"), "ESCRITURA_VENCIDA")
+  } finally {
+    par.hijo.kill()
+    await par.terminado
+    await puente?.cerrar()
+  }
 })
 
 test.after(() => rmSync(DIR_BASE, { recursive: true, force: true }))

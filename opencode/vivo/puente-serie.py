@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Puente serie del Modo Vivo V1 — tecnia-bot-docs/esp32-completo/MODO-VIVO-PLAN.md §10.2.
+"""Puente serie del Modo Vivo (protocolo v1, slices V1–V4) — tecnia-bot-docs/esp32-completo/MODO-VIVO-PLAN.md §10.2.
 
 Node y Bun no tienen puerto serie nativo, y `serialport` es un módulo nativo que no queremos
 instalar en cada escuela. El Python del penv de PlatformIO ya trae pyserial 3.5 en toda máquina
@@ -12,10 +12,18 @@ LÍNEAS entre el proceso padre (`transporte-serie.ts`) y la placa.
 No interpreta nada: ni JSON, ni comandos. Sólo stdlib + pyserial.
 
 Salida: código 0 cuando stdin se cierra (el padre terminó), 2 si el puerto no se pudo abrir
-(`PUERTO_NO_ABIERTO`), 3 si falta pyserial (`PYSERIAL_AUSENTE`), 4 si el puerto desapareció en
-el medio (`PUERTO_PERDIDO`). Por stderr va UNA línea por evento, con el código primero, y
-`PUERTO_ABIERTO <puerto>` cuando el puerto quedó abierto: es el centinela que espera el padre
-para no suponer que "no falló todavía" significa "abrió".
+(`PUERTO_NO_ABIERTO`, también cuando OTRO proceso ya lo tiene: se abre con `exclusive=True`,
+auditoría A1 M1, así un monitor viejo o una segunda ventana de OpenCode no se reparten las líneas
+en silencio; pyserial 3.5 lo implementa con `flock` en POSIX y lo ignora en Windows, donde el
+puerto ya es exclusivo por sistema), 3 si falta pyserial (`PYSERIAL_AUSENTE`), 4 si el puerto
+desapareció en el medio (`PUERTO_PERDIDO`), 5 si una escritura no entró en `write_timeout`
+(`ESCRITURA_VENCIDA`: el puerto sigue, pero la placa dejó de drenar el UART). Por stderr va UNA
+línea por evento, con el código primero, y `PUERTO_ABIERTO <puerto>` cuando el puerto quedó
+abierto: es el centinela que espera el padre para no suponer que "no falló todavía" significa
+"abrió".
+
+`PUERTO_PERDIDO` está verificado sólo en Linux (al desaparecer el dispositivo, `read` da EIO y
+pyserial lo levanta como `SerialException`); en Windows el camino existe pero no se probó.
 
 Al abrir el puerto, pyserial levanta DTR/RTS; en un DevKit eso dispara el circuito de
 auto-reset y la placa arranca de nuevo (hecho conocido del esquema del DevKit, sin cita en el
@@ -97,6 +105,7 @@ def main():
             stopbits=serial.STOPBITS_ONE,
             timeout=0.05,
             write_timeout=1,
+            exclusive=True,
         )
     except (serial.SerialException, OSError, ValueError) as error:
         avisar("PUERTO_NO_ABIERTO %s" % str(error).replace("\n", " "))
@@ -115,6 +124,10 @@ def main():
             try:
                 puerto.write(linea + b"\n")
                 puerto.flush()
+            except serial.SerialTimeoutException:
+                # Subclase de SerialException: va antes. El puerto está, pero nadie drena del otro lado.
+                avisar("ESCRITURA_VENCIDA la placa no aceptó la línea en %s s" % puerto.write_timeout)
+                terminar(5)
             except (serial.SerialException, OSError):
                 avisar("PUERTO_PERDIDO el puerto desapareció mientras se escribía")
                 terminar(4)
