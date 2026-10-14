@@ -734,6 +734,11 @@ if ok:
     agente_tecnia["model"] = modelo
     agentes[agent] = agente_tecnia
     oc["agent"] = agentes
+    # small_model: el modelo de las tareas chicas (el titulo de la charla). Si no se fija,
+    # OpenCode elige uno por su cuenta (provider.ts getSmallModel) y con la key de Google
+    # cae en otro Gemini que puede estar saturado o sin cuota: el docente ve un error que
+    # no viene de su modelo. Visto el 2026-10-14 ("is way too hot right now"). Va el mismo.
+    oc["small_model"] = modelo
     instrucciones = oc.get("instructions")
     if not isinstance(instrucciones, list):
         instrucciones = []
@@ -773,6 +778,7 @@ merge_opencode_jq() {
         | .default_agent = $agent
         | .autoupdate = false
         | .agent = ((.agent // {}) | .[$agent] = ((.[$agent] // {}) | .model = $modelo))
+        | .small_model = $modelo
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
         | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
@@ -826,6 +832,7 @@ EOF
   "\$schema": "$OPENCODE_SCHEMA",
   "default_agent": "$TECNIA_AGENT",
   "agent": { "$TECNIA_AGENT": { "model": "$MODELO_ELEGIDO" } },
+  "small_model": "$MODELO_ELEGIDO",
   "instructions": ["$PERFIL_FILE", "$MEMORIA_FILE"]
 }
 EOF
