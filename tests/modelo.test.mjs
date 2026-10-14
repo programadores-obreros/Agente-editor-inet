@@ -212,14 +212,15 @@ test("install.sh escribe el override por las tres vías (jq, python3, sin ningun
   assert.match(shCodigo, /No pude parsear %s: lo dejo intacto[\s\S]{0,400}\\"model\\": \\"%s\\"/, "con opencode.json roto no dice cómo agregar el modelo a mano")
 })
 
-test("install.sh fija small_model con el MISMO modelo del agente (títulos sin un Gemini ajeno)", () => {
+test("los dos instaladores fijan small_model con el MISMO modelo del agente (títulos sin un Gemini ajeno)", () => {
   // 2026-10-14, notebook Manjaro: con la key de Google y sin small_model, OpenCode elegía
   // por su cuenta otro Gemini para el título de la charla (provider.ts getSmallModel), que
   // estaba saturado: el docente vio "is way too hot right now" sin haber elegido ese modelo.
-  // install.ps1 lo suma en la versión siguiente, después de probar el .exe en la VM Windows.
+  // install.sh lo trae desde la 0.4.3; install.ps1 desde la 0.4.4, probado con el .exe en la VM.
   assert.match(shCodigo, /\| \.small_model = \$modelo/, "la vía jq no fija small_model")
   assert.match(shCodigo, /oc\["small_model"\] = modelo/, "la vía python3 no fija small_model")
   assert.match(shCodigo, /"small_model": "\$MODELO_ELEGIDO"/, "el opencode.json creado sin jq ni python3 no trae small_model")
+  assert.match(ps1Codigo, /Add-Member -NotePropertyName "small_model" -NotePropertyValue \$ModeloElegido/, "install.ps1 no fija small_model")
 })
 
 // ---------------------------------------------------------------------------
