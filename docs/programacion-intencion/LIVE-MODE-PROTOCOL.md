@@ -1,9 +1,11 @@
 ```
-STATUS: PROPOSED
-IMPLEMENTATION: NOT IMPLEMENTED
+STATUS: SUPERSEDED (2026-10-13)
+IMPLEMENTATION: Modo Vivo V1–V4 implementado en opencode/vivo/, opencode/codegen/runtime*.ts y opencode/tool/vivo.ts (rama feat/modo-vivo-v4-wifi)
 ```
-> Nada de este documento existe hoy en el código. `CURRENT-ARCHITECTURE.md:126` dice
-> explícitamente que no hay daemon.
+> Este documento fue la exploración previa. Lo vigente es `tecnia-bot-docs/esp32-completo/MODO-VIVO-PLAN.md`
+> (decisiones HD-08) y `PROTOCOLO-VIVO-V1.md` (contrato; §9 decisiones V4-x), resumidos en `DECISIONS.md`
+> («Modo Vivo — HD-08 y V4»). Sigue sin haber daemon: la sesión viva corre dentro del proceso de OpenCode
+> (puente Python con pyserial) y el runtime, en la placa.
 >
 > **EXPLORATORIO, no es una API final.** Cada nombre de abajo es un placeholder de
 > necesidad semántica, no un contrato congelado.

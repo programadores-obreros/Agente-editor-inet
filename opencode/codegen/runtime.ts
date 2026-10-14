@@ -12,7 +12,7 @@
 // sale de `vivo/protocolo.ts`; las líneas C++ de `runtime-cpp.ts`.
 
 import type { Placa } from "../nucleo/placas.ts"
-import { CAMPOS_POR_COMANDO, CAUSAS_DE_REINICIO, CODIGOS_DE_ERROR, COMANDOS_V1, LIMITE_LINEA_BYTES, MODOS_DE_PIN, NIVELES, VERSION_PROTOCOLO, esSsidValido } from "../vivo/protocolo.ts"
+import { CAMPOS_POR_COMANDO, CAUSAS_DE_REINICIO, CODIGOS_DE_ERROR, COMANDOS_V1, IP_PORTAL as IP_DEL_CONTRATO, LIMITE_LINEA_BYTES, MODOS_DE_PIN, NIVELES, VERSION_PROTOCOLO, esSsidValido } from "../vivo/protocolo.ts"
 import { RUTA_COMANDO, renderizarPaginaPortal, type PaginaPortal } from "../vivo/pagina-portal.ts"
 import { renderizarPlatformioIni } from "./platformio-ini.ts"
 import { renderizarNucleo, renderizarPortal, renderizarTransporte, type Octetos, type RedDelRuntime, type TablasDelRuntime } from "./runtime-cpp.ts"
@@ -34,7 +34,7 @@ export const BUILD_FLAGS_RUNTIME: readonly string[] = Object.freeze(["-DCORE_DEB
 // ── V4: la red propia (contrato §8 y §9) ───────────────────────────────────────────────────
 
 /** IP del punto de acceso (§8.1). El runtime la fija con `softAPConfig`; `hola.wifi.ip` la anuncia. */
-export const IP_PORTAL: Octetos = [192, 168, 4, 1]
+export const IP_PORTAL: Octetos = IP_DEL_CONTRATO // una sola definición: `vivo/protocolo.ts` (A6 M-03)
 export const MASCARA_PORTAL: Octetos = [255, 255, 255, 0]
 /** V4-5: sin `nombreRed`, el SSID es este prefijo + los 4 últimos hex de la MAC del AP, en minúscula. */
 export const PREFIJO_SSID = "tecnia-"

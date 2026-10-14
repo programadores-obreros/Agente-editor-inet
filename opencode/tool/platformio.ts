@@ -38,7 +38,8 @@ export function liberarTodosLosPuertos(): void {
   reservasDePuerto.clear()
 }
 
-function puertoEnSesionViva(puerto: string): string | null {
+/** La exclusión con el Modo Vivo como mensaje para el docente (null = libre). Exportada para probarla directo (A2 M3). */
+export function puertoEnSesionViva(puerto: string): string | null {
   if (duenoDelPuerto(puerto) === undefined) return null
   return `PUERTO_EN_SESION_VIVA: ${puerto} está abierto por una sesión del Modo Vivo. Cerrala primero con la tool \`vivo\` (accion "desconectar") y volvé a intentar.`
 }

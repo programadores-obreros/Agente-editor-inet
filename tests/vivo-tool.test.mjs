@@ -1,7 +1,9 @@
-// Modo Vivo V1 — la tool `vivo` (tool/vivo.ts): orquestación, códigos, reserva del puerto y la
-// exclusión con `platformio`. La sesión y el runtime se INYECTAN (misma técnica que `cargar`
-// en codegen-s1b): acá se prueba que la tool haga lo que dice el contrato con lo que recibe,
-// no el protocolo (tests/vivo-protocolo.test.mjs) ni la sesión (tests/vivo-sesion.test.mjs).
+// Modo Vivo (protocolo v1, slices V1–V4) — la tool `vivo` (tool/vivo.ts): orquestación, códigos,
+// reserva del puerto y la exclusión con `platformio` y `programa cargar`. La sesión y el runtime se
+// INYECTAN (misma técnica que `cargar` en codegen-s1b): acá se prueba que la tool haga lo que dice el
+// contrato con lo que recibe, no el protocolo (tests/vivo-protocolo.test.mjs) ni la sesión
+// (tests/vivo-sesion.test.mjs). La única excepción es la cadena V4 `hola.wifi` → sesión REAL → estado,
+// que la auditoría 2026-10-13 (A2-A4) encontró sin ningún test de punta a punta.
 
 import { test, after, beforeEach } from "node:test"
 import assert from "node:assert/strict"
@@ -9,14 +11,18 @@ import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { REPO, nuevoDir } from "./phase2-helpers.mjs"
 
-const { ejecutarVivo, carpetaDelRuntime, cerrarTodasLasSesiones, ACCIONES_VIVO } = await import(join(REPO, "opencode/tool/vivo.ts"))
+const { ejecutarVivo, carpetaDelRuntime, cerrarTodasLasSesiones, ACCIONES_VIVO, paginaDelProyecto, sortearClaveWifi } = await import(join(REPO, "opencode/tool/vivo.ts"))
 const vivoTool = (await import(join(REPO, "opencode/tool/vivo.ts"))).default
 const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.ts"))).default
 const platformioTool = (await import(join(REPO, "opencode/tool/platformio.ts"))).default
-const { pioDisponible, duenoDelPuerto, liberarTodosLosPuertos } = await import(join(REPO, "opencode/tool/platformio.ts"))
+const { pioDisponible, duenoDelPuerto, liberarTodosLosPuertos, puertoEnSesionViva } = await import(join(REPO, "opencode/tool/platformio.ts"))
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { CONOCIMIENTO_ACTIVO: K } = await import(join(REPO, "opencode/conocimiento/conocimiento-activo.ts"))
 const { REGISTRO_PLACAS } = await import(join(REPO, "opencode/nucleo/placas.ts"))
+const { tablasDePines } = await import(join(REPO, "opencode/codegen/runtime.ts"))
+const { abrirSesion } = await import(join(REPO, "opencode/vivo/sesion-viva.ts"))
+const P = await import(join(REPO, "opencode/vivo/protocolo.ts"))
+const { crearRuntimeSimulado } = await import(join(REPO, "tests/vivo-simulador.mjs"))
 
 const PROMPT = readFileSync(join(REPO, "opencode/agent/tecnia-bot.md"), "utf8")
 const FUENTE_TOOL = readFileSync(join(REPO, "opencode/tool/vivo.ts"), "utf8")
@@ -54,12 +60,34 @@ const OPS = [
   { tipo: "AsignarPin", payload: { componente: "cmp-1", terminal: "anodo", pin: "GPIO18" } },
 ]
 
-/** Sesión falsa con la interfaz pública de `vivo/sesion-viva.ts`: registra llamadas, contesta canned. */
-function sesionFalsa({ sesion = "CONECTADA", llamadas = [] } = {}) {
-  const estado = () => Object.freeze({ sesion, placa: esp32, runtime: { version: "0.1.0", protocolo: 1, placa: esp32.id, comandos: [], protocolos: [] }, componentes: [] })
+/**
+ * Sesión falsa con la interfaz pública de `vivo/sesion-viva.ts`: registra llamadas, contesta canned.
+ * `caer(motivo)` la pasa a DESCONECTADA y dispara `alCierre`, como hace la real (V4-9).
+ */
+function sesionFalsa({ sesion = "CONECTADA", llamadas = [], wifi } = {}) {
+  let estadoDeSesion = sesion
+  let motivo
+  const cierres = new Set()
+  const estado = () =>
+    Object.freeze({
+      sesion: estadoDeSesion,
+      placa: esp32,
+      runtime: { version: "0.1.0", protocolo: 1, placa: esp32.id, comandos: [], protocolos: [], ...(wifi ? { wifi } : {}) },
+      componentes: [],
+      ...(motivo ? { motivo } : {}),
+    })
   return {
     llamadas,
     estado,
+    caer(porQue) {
+      estadoDeSesion = "DESCONECTADA"
+      motivo = porQue
+      for (const cb of cierres) cb(porQue)
+    },
+    alCierre(cb) {
+      cierres.add(cb)
+      return () => cierres.delete(cb)
+    },
     async accionar(componente, accion) {
       llamadas.push(["accionar", componente, accion])
       return { ok: true, valor: { tipo: "ok", comando: accion.tipo === "pwm" ? "pwm.escribir" : "digital.escribir", pin: 18 } }
@@ -70,7 +98,6 @@ function sesionFalsa({ sesion = "CONECTADA", llamadas = [] } = {}) {
     },
     async comando(comando) {
       llamadas.push(["comando", comando])
-      if (comando.pin < 0) return { ok: false, codigo: "PIN_INEXISTENTE", datos: { pin: comando.pin } }
       return { ok: true, valor: comando.comando === "analogico.leer" ? { tipo: "lectura", pin: comando.pin, crudo: 2048 } : { tipo: "ok", comando: comando.comando, pin: comando.pin } }
     },
     async cerrar() {
@@ -81,14 +108,17 @@ function sesionFalsa({ sesion = "CONECTADA", llamadas = [] } = {}) {
 
 const puenteFalso = () => ({ enviar() {}, alRecibir: () => () => {}, alCerrar: () => () => {}, cerrar: async () => {} })
 
-/** Dependencias inyectadas: proyecto y conocimiento reales; runtime, puente, sesión, puerto y PlatformIO falsos. */
-function depsDe({ sesion = sesionFalsa(), cargas = [], codigoCarga = 0, puente = puenteFalso(), abrirPuenteSerie, detectarPuerto } = {}) {
+/** Dependencias inyectadas: proyecto, conocimiento y tablas reales; runtime, puente, sesión, puerto y PlatformIO falsos. */
+function depsDe({ sesion = sesionFalsa(), cargas = [], codigoCarga = 0, puente = puenteFalso(), abrirPuenteSerie, abrirSesion: abrir, detectarPuerto, generarRuntime } = {}) {
   return async () => ({
     obtenerServicioDeProyectoConVista,
     conocimiento: K,
-    generarRuntime: (placa, opciones) => ({ archivos: { "platformio.ini": `[env:${placa.id}]\nboard = esp32dev\n`, "src/main.cpp": `// runtime de prueba; clave ${opciones?.wifi?.clave ?? "sin-wifi"}\n` }, environment: placa.id, runtime: "0.1.0", protocolo: 1 }),
+    tablasDePines,
+    generarRuntime:
+      generarRuntime ??
+      ((placa, opciones) => ({ archivos: { "platformio.ini": `[env:${placa.id}]\nboard = esp32dev\n`, "src/main.cpp": `// runtime de prueba; clave ${opciones?.wifi?.clave ?? "sin-wifi"}\n` }, environment: placa.id, runtime: "0.1.0", protocolo: 1 })),
     sortearClave: () => "48213907",
-    abrirSesion: async () => sesion,
+    abrirSesion: abrir ?? (async () => sesion),
     abrirPuenteSerie: abrirPuenteSerie ?? (async () => puente),
     detectarPuerto: detectarPuerto ?? (async () => ({ port: PUERTO })),
     cargarRuntime: async (carpeta, environment, puerto, cwd) => {
@@ -98,6 +128,11 @@ function depsDe({ sesion = sesionFalsa(), cargas = [], codigoCarga = 0, puente =
   })
 }
 const vivo = async (dir, args, deps) => JSON.parse(await ejecutarVivo(args, { directory: dir }, deps))
+
+const seccionDelPrompt = () => {
+  const regla = PROMPT.slice(PROMPT.indexOf("## REGLA CRÍTICA — Modo Vivo"))
+  return regla.slice(0, regla.indexOf("\n## ", 5))
+}
 
 // ───────────────────────────── validaciones básicas ───────────────────────────────────
 
@@ -120,6 +155,21 @@ test("cargar / conectar sin placa en el proyecto: PROYECTO_SIN_PLACA, sin tocar 
     assert.equal(r.ok, false)
     assert.equal(r.codigo, "PROYECTO_SIN_PLACA", accion)
   }
+  assert.equal(duenoDelPuerto(PUERTO), undefined)
+})
+
+test("sólo ESP32: con un Arduino UNO, cargar y conectar devuelven PLACA_NO_SOPORTADA_EN_VIVO sin detectar ni tocar el puerto", async () => {
+  const dir = await armar([{ tipo: "SetPlaca", payload: { placa: "arduino-uno" } }])
+  let detecciones = 0
+  const deps = depsDe({ detectarPuerto: async () => (detecciones++, { port: PUERTO }) })
+  for (const accion of ["cargar", "conectar"]) {
+    const r = await vivo(dir, { accion }, deps)
+    assert.equal(r.ok, false)
+    assert.equal(r.codigo, "PLACA_NO_SOPORTADA_EN_VIVO", accion)
+    assert.equal(r.placa, "arduino-uno")
+    assert.match(r.resultado, /sólo ESP32/)
+  }
+  assert.equal(detecciones, 0)
   assert.equal(duenoDelPuerto(PUERTO), undefined)
 })
 
@@ -155,7 +205,7 @@ test("cargar: si PlatformIO falla se dice con código, y 127 es PLATFORMIO_NO_EN
 
 // ───────────────────────────── conectar / desconectar y el puerto ─────────────────────
 
-test("conectar reserva el puerto; cargar, platformio flash y otra sesión lo respetan; desconectar lo libera", async () => {
+test("conectar reserva el puerto; cargar, platformio flash, programa cargar y otra sesión lo respetan; desconectar lo libera", async () => {
   const dir = await armar(OPS)
   const sesion = sesionFalsa()
   const r = await vivo(dir, { accion: "conectar" }, depsDe({ sesion }))
@@ -169,16 +219,16 @@ test("conectar reserva el puerto; cargar, platformio flash y otra sesión lo res
   const otro = await armar(OPS)
   assert.equal((await vivo(otro, { accion: "conectar" }, depsDe())).codigo, "PUERTO_EN_SESION_VIVA", "otro proyecto no puede tomar el mismo puerto")
 
-  // La exclusión vive DESPUÉS del pre-chequeo de PlatformIO de esa tool: si en esta máquina (o
-  // bajo node, sin `Bun.which`) PlatformIO figura como no instalado, ese mensaje gana y acá no hay
-  // nada que afirmar. Con PlatformIO disponible, la respuesta tiene que ser la exclusión.
+  // La exclusión, probada directo (A2 M3: antes sólo se afirmaba si PlatformIO estaba instalado).
+  assert.match(puertoEnSesionViva(PUERTO), /^PUERTO_EN_SESION_VIVA/)
+  assert.equal(puertoEnSesionViva("/dev/ttyUSB8"), null)
+  // Y por las tools, cuando esta máquina tiene PlatformIO visible (si no, el pre-chequeo de esa tool gana y se salta).
   const flash = await platformioTool.execute({ action: "flash", port: PUERTO }, { directory: dir })
   if (!/no esta instalado/.test(flash)) {
     assert.match(flash, /PUERTO_EN_SESION_VIVA/)
-    const monitor = await platformioTool.execute({ action: "monitor", port: PUERTO }, { directory: dir })
-    assert.match(monitor, /PUERTO_EN_SESION_VIVA/)
+    assert.match(await platformioTool.execute({ action: "monitor", port: PUERTO }, { directory: dir }), /PUERTO_EN_SESION_VIVA/)
   } else {
-    assert.equal(pioDisponible(), pioDisponible(), "sin PlatformIO visible desde el test: la exclusión se prueba en el E2E físico")
+    assert.match(flash, /no esta instalado/, "sin PlatformIO visible desde el test: la exclusión por las tools se prueba en el E2E físico")
   }
 
   const estado = await vivo(dir, { accion: "estado" }, depsDe({ sesion }))
@@ -201,6 +251,50 @@ test("conectar con un runtime incompatible o un puente que no abre: no queda ses
 
   const sinPuerto = await vivo(dir, { accion: "conectar" }, depsDe({ abrirPuenteSerie: async () => { throw new Error("PUERTO_NO_ABIERTO: ocupado") } }))
   assert.equal(sinPuerto.codigo, "PUERTO_NO_ABIERTO")
+  assert.match(sinPuerto.resultado, /monitor serie/, "la causa más común (A1 M1): otro lector del puerto")
+  assert.equal(duenoDelPuerto(PUERTO), undefined)
+})
+
+test("X2: conectar sobre una sesión que ya se cayó NO es «ya conectado»: la cierra, libera el puerto y reconecta", async () => {
+  // Auditoría 2026-10-13 (A1-A2, A2-A3): con la sesión DESCONECTADA (cable, hijo Python muerto) la
+  // tool contestaba `ok: true` "YA CONECTADO — sesión DESCONECTADA" y dejaba el puerto reservado.
+  const dir = await armar(OPS)
+  const primera = sesionFalsa()
+  assert.equal((await vivo(dir, { accion: "conectar" }, depsDe({ sesion: primera }))).ok, true)
+  primera.caer("SIN_PONG")
+  // V4-9: al caerse, la tool libera el puerto en el acto (alCierre), sin esperar un 'desconectar'.
+  assert.equal(duenoDelPuerto(PUERTO), undefined, "el puerto se liberó al caer la sesión")
+  const estado = await vivo(dir, { accion: "estado" }, depsDe({ sesion: primera }))
+  assert.equal(estado.sesion, "SIN_SESION", "una sesión caída no figura como abierta")
+
+  // Y aunque la sesión caída siguiera registrada (cierre sin aviso), 'conectar' la reemplaza.
+  const segunda = sesionFalsa()
+  const r = await vivo(dir, { accion: "conectar" }, depsDe({ sesion: segunda }))
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.match(r.resultado, /^CONECTADO/)
+  assert.equal(r.estado.sesion, "CONECTADA")
+  assert.notEqual(duenoDelPuerto(PUERTO), undefined)
+
+  const tercera = sesionFalsa()
+  // Una sesión registrada que no está CONECTADA pero tampoco avisó: se cierra y se reconecta con `anterior`.
+  await vivo(dir, { accion: "desconectar" }, depsDe())
+  const deps3 = depsDe({ sesion: tercera })
+  // Para registrarla hay que entrar CONECTADA; después cambia de estado sin disparar alCierre.
+  const viva = sesionFalsa()
+  assert.equal((await vivo(dir, { accion: "conectar" }, depsDe({ sesion: viva }))).ok, true)
+  viva.estado = () => Object.freeze({ sesion: "DESCONECTADA", motivo: "SIN_PONG", placa: esp32, componentes: [] })
+  const reconectada = await vivo(dir, { accion: "conectar" }, deps3)
+  assert.equal(reconectada.ok, true, JSON.stringify(reconectada))
+  assert.deepEqual(reconectada.anterior, { sesion: "DESCONECTADA", motivo: "SIN_PONG" })
+  assert.match(reconectada.resultado, /la sesión anterior estaba DESCONECTADA; se cerró y se volvió a conectar/)
+  assert.ok(viva.llamadas.some((l) => l[0] === "cerrar"), "la vieja se cerró")
+  // Y cargar sobre una sesión caída tampoco se bloquea: la cierra y carga.
+  viva.estado = () => Object.freeze({ sesion: "DESCONECTADA", placa: esp32, componentes: [] })
+  tercera.estado = viva.estado
+  const cargas = []
+  const c = await vivo(dir, { accion: "cargar" }, depsDe({ cargas }))
+  assert.equal(c.ok, true, JSON.stringify(c))
+  assert.equal(cargas.length, 1)
   assert.equal(duenoDelPuerto(PUERTO), undefined)
 })
 
@@ -243,7 +337,7 @@ test("accionar y leer por componente van a la sesión con la petición traducida
   await vivo(dir, { accion: "desconectar" }, depsDe({ sesion }))
 })
 
-test("por pin: GPIO34 se lee analógico y GPIO4 digital según placas.ts; un pin que no existe llega a la sesión como -1 y vuelve con su código", async () => {
+test("por pin: GPIO34 se lee analógico y GPIO4 digital según placas.ts; un pin que no existe en la placa se rechaza en la tool, sin centinela ni sesión", async () => {
   const dir = await armar(OPS)
   const sesion = sesionFalsa()
   assert.equal((await vivo(dir, { accion: "conectar" }, depsDe({ sesion }))).ok, true)
@@ -256,27 +350,33 @@ test("por pin: GPIO34 se lee analógico y GPIO4 digital según placas.ts; un pin
   assert.deepEqual(sesion.llamadas.at(-1), ["comando", { comando: "pwm.escribir", pin: 23, porcentaje: 40 }])
   await vivo(dir, { accion: "accionar", pin: "GPIO23", nivel: "bajo" }, depsDe({ sesion }))
   assert.deepEqual(sesion.llamadas.at(-1), ["comando", { comando: "digital.escribir", pin: 23, nivel: "bajo" }])
+  const antes = sesion.llamadas.length
   const inexistente = await vivo(dir, { accion: "leer", pin: "GPIO99" }, depsDe({ sesion }))
   assert.equal(inexistente.ok, false)
-  assert.equal(inexistente.codigo, "PIN_INEXISTENTE")
+  assert.equal(inexistente.codigo, "PIN_INEXISTENTE_EN_PLACA")
+  assert.equal(sesion.llamadas.length, antes, "A6 C-04: ya no viaja un -1 a la sesión")
+  assert.doesNotMatch(FUENTE_TOOL, /\?\? -1/)
   await vivo(dir, { accion: "desconectar" }, depsDe({ sesion }))
 })
 
 // ───────────────────────────── la tool no es otra autoridad ───────────────────────────
 
-test("la tool no escribe en la IR ni en el almacén, y su descripción prohíbe afirmar lo no observado", () => {
+test("la tool no escribe en la IR ni en el almacén, y su descripción es el contrato de entrada/salida con la invariante", () => {
   assert.doesNotMatch(FUENTE_TOOL, /\.(aplicar|aplicarTransaccion|proponer)\(/)
   assert.doesNotMatch(FUENTE_TOOL, /almacen|crearAlmacen/)
   assert.match(vivoTool.description, /OBSERVÓ/)
   assert.match(vivoTool.description, /Nunca afirmes que un componente "está conectado"/)
   assert.match(vivoTool.description, /RUNTIME_INCOMPATIBLE/)
   assert.match(vivoTool.description, /PUERTO_EN_SESION_VIVA/)
+  assert.match(vivoTool.description, /PLACA_NO_SOPORTADA_EN_VIVO/)
+  assert.match(vivoTool.description, /`masPines`/)
+  // A6 M-02: la descripción no repite la pedagogía del prompt (la pregunta del nombre vive sólo en el prompt).
+  assert.doesNotMatch(vivoTool.description, /¿Cómo querés que se llame/)
 })
 
 test("el prompt: permiso `vivo`, regla del laboratorio con el orden cargar → conectar, y sólo lo OBSERVADO", () => {
   assert.match(PROMPT, /^\s+vivo:\s*"allow"$/m)
-  const regla = PROMPT.slice(PROMPT.indexOf("## REGLA CRÍTICA — Modo Vivo"))
-  const seccion = regla.slice(0, regla.indexOf("\n## ", 5))
+  const seccion = seccionDelPrompt()
   assert.match(seccion, /tool `vivo`/)
   assert.match(seccion, /`cargar`[\s\S]*→[\s\S]*`conectar`[\s\S]*`desconectar`/)
   assert.match(seccion, /RUNTIME_INCOMPATIBLE[^\n]*`cargar`/)
@@ -285,6 +385,28 @@ test("el prompt: permiso `vivo`, regla del laboratorio con el orden cargar → c
   assert.match(seccion, /la placa no ve el LED/)
   assert.match(seccion, /brownout/)
   assert.match(seccion, /reglas[^\n]*programa/i)
+  // Auditoría 2026-10-13 (A4, A5, A1-B3/B4): lo que faltaba decir.
+  assert.match(seccion, /Sólo ESP32/)
+  assert.match(seccion, /PLACA_NO_SOPORTADA_EN_VIVO/)
+  assert.match(seccion, /DHT[\s\S]{0,40}ultrasónico[\s\S]{0,40}DS18B20/, "dice qué sensores NO se leen en vivo")
+  assert.match(seccion, /preguntá cuál antes/)
+  assert.match(seccion, /borra lo que la placa\s+tenía/)
+  assert.match(seccion, /sin nombres ni apellidos de personas/)
+  assert.match(seccion, /una sola vez/)
+  assert.match(seccion, /no sirve para un servo/)
+  assert.match(seccion, /`masPines`/)
+  assert.match(seccion, /`programa cargar`/)
+})
+
+test("los códigos que el prompt cita en la regla del Modo Vivo existen (A6 M-01: LECTURA_INVALIDA no existía)", () => {
+  const seccion = seccionDelPrompt()
+  const citados = new Set([...seccion.matchAll(/`([A-Z][A-Z_]{4,})`/g)].map((m) => m[1]))
+  assert.ok(citados.size >= 10, `pocos códigos citados: ${[...citados].join(", ")}`)
+  const deLaTool = [...vivoTool.description.matchAll(/\b([A-Z][A-Z_]{4,})\b/g)].map((m) => m[1])
+  const deLaSesion = [...readFileSync(join(REPO, "opencode/vivo/sesion-viva.ts"), "utf8").matchAll(/"([A-Z][A-Z_]{4,})"/g)].map((m) => m[1])
+  const conocidos = new Set([...deLaTool, ...deLaSesion, ...P.CODIGOS_DE_ERROR, "CONECTADA", "CONECTANDO", "DESCONECTADA", "CARGADO"])
+  for (const codigo of citados) assert.ok(conocidos.has(codigo), `el prompt cita \`${codigo}\`, que no existe en la tool, la sesión ni el protocolo`)
+  assert.doesNotMatch(seccion, /LECTURA_INVALIDA/)
 })
 
 test("los instaladores llevan vivo/ (hermano de tool/, nunca adentro) y la lista del manifest", () => {
@@ -303,92 +425,159 @@ test("los instaladores llevan vivo/ (hermano de tool/, nunca adentro) y la lista
 
 // ───────────────────────────── V4: la red propia de la placa ──────────────────────────
 
-test("V4 cargar: la red va abierta por defecto (clave vacía al generador); con redConClave sortea 8 dígitos y los imprime", async () => {
+test("V4-4 cargar: la red va abierta por defecto (clave vacía al generador); con redConClave sortea 8 dígitos y los imprime UNA vez", async () => {
   const dir = await armar(OPS)
   const cargas = []
   const abierta = await vivo(dir, { accion: "cargar" }, depsDe({ cargas }))
   assert.equal(abierta.ok, true, JSON.stringify(abierta))
-  assert.deepEqual(abierta.wifi, { abierta: true, clave: "", ssid: null, pagina: "http://192.168.4.1/" })
+  assert.deepEqual(abierta.wifi, { abierta: true, clave: "", ssid: null, pagina: P.URL_PORTAL })
+  assert.equal(P.URL_PORTAL, "http://192.168.4.1/", "A6 M-03: la URL sale del contrato")
   assert.match(abierta.resultado, /abierta, sin clave/)
   assert.match(readFileSync(join(cargas[0].carpeta, "src", "main.cpp"), "utf8"), /clave \n/, "el generador recibió la clave vacía (red abierta)")
 
   const conClave = await vivo(dir, { accion: "cargar", redConClave: true }, depsDe({ cargas }))
   assert.equal(conClave.ok, true)
-  assert.deepEqual(conClave.wifi, { abierta: false, clave: "48213907", ssid: null, pagina: "http://192.168.4.1/" })
-  assert.match(conClave.resultado, /con clave 48213907/)
+  assert.deepEqual(conClave.wifi, { abierta: false, clave: "48213907", ssid: null, pagina: P.URL_PORTAL })
+  assert.match(conClave.resultado, /con clave 48213907 \(anotala: no se vuelve a mostrar\)/)
   assert.match(readFileSync(join(cargas[1].carpeta, "src", "main.cpp"), "utf8"), /clave 48213907/, "el generador recibió la clave")
 })
 
-test("V4 conectar: muestra la red que anunció el hola, abierta o con clave", async () => {
+test("V4 conectar: muestra la red que anunció el hola; la clave NO se repite (A1 M2), sólo `claveConfigurada`", async () => {
   const dir = await armar(OPS)
   for (const [clave, esperado] of [
     ["", /"tecnia-3f2a", abierta \(sin clave\)/],
-    ["48213907", /"tecnia-3f2a", clave 48213907/],
+    ["48213907", /"tecnia-3f2a", con clave \(la que imprimió 'cargar'\)/],
   ]) {
-    const sesion = sesionFalsa()
-    const estadoBase = sesion.estado
-    sesion.estado = () => ({ ...estadoBase(), runtime: { ...estadoBase().runtime, wifi: { ssid: "tecnia-3f2a", clave, ip: "192.168.4.1" } } })
+    const sesion = sesionFalsa({ wifi: { ssid: "tecnia-3f2a", clave, ip: "192.168.4.1" } })
     const c = await vivo(dir, { accion: "conectar" }, depsDe({ sesion }))
     assert.equal(c.ok, true, JSON.stringify(c))
     assert.match(c.resultado, esperado)
     assert.match(c.resultado, /192\.168\.4\.1/)
-    assert.equal(c.estado.runtime.wifi.ssid, "tecnia-3f2a")
+    assert.deepEqual(c.estado.runtime.wifi, { ssid: "tecnia-3f2a", ip: "192.168.4.1", claveConfigurada: clave !== "" })
+    const estado = await vivo(dir, { accion: "estado" }, depsDe({ sesion }))
+    assert.doesNotMatch(JSON.stringify(estado), /48213907/, "la clave no viaja en cada respuesta")
     await vivo(dir, { accion: "desconectar" }, depsDe({ sesion }))
   }
 })
 
-test("V4: la clave real es de 8 dígitos y cambia entre sorteos", async () => {
-  const { ejecutarVivo: _e } = await import(join(REPO, "opencode/tool/vivo.ts"))
-  const { randomInt } = await import("node:crypto")
-  const sortear = () => String(randomInt(0, 100_000_000)).padStart(8, "0")
-  const claves = new Set(Array.from({ length: 20 }, sortear))
+test("V4: la clave real (sortearClaveWifi) es de 8 dígitos y cambia entre sorteos", () => {
+  const claves = new Set(Array.from({ length: 20 }, sortearClaveWifi))
   for (const c of claves) assert.match(c, /^\d{8}$/)
   assert.ok(claves.size > 1)
+  assert.match(FUENTE_TOOL, /sortearClave: sortearClaveWifi/, "A2 M2: la tool usa la función que se prueba, no una copia")
 })
 
-test("V4: el prompt explica la red de la placa y prohíbe afirmar lo que pasó por la página", () => {
-  const regla = PROMPT.slice(PROMPT.indexOf("## REGLA CRÍTICA — Modo Vivo"))
-  const seccion = regla.slice(0, regla.indexOf("\n## ", 5))
-  assert.match(seccion, /red WiFi/)
-  assert.match(seccion, /192\.168\.4\.1/)
-  assert.match(seccion, /no afirmes[\s\S]*página/i)
+test("V4 cadena completa: hola.wifi del runtime simulado → sesión REAL → estado de la tool (A2-A4)", async () => {
+  // Mutante que sobrevivía a las cinco suites: borrar el spread de `wifi` en `aplicarHola`.
+  const dir = await armar(OPS)
+  const wifi = { ssid: "MI_ESP", clave: "48213907", ip: "192.168.4.1" }
+  const runtime = crearRuntimeSimulado({ wifi })
+  const receptores = new Set()
+  const cierres = new Set()
+  const entregar = (lineas) => queueMicrotask(() => { for (const linea of lineas) for (const r of receptores) r(linea) })
+  const puente = {
+    enviar: (linea) => entregar(runtime.procesar(linea)),
+    alRecibir: (cb) => (receptores.add(cb), () => receptores.delete(cb)),
+    alCerrar: (cb) => (cierres.add(cb), () => cierres.delete(cb)),
+    cerrar: async () => { for (const c of cierres) c("CERRADO_POR_TEST") },
+  }
+  const deps = depsDe({
+    puente,
+    abrirSesion: (opciones) => {
+      const promesa = abrirSesion(opciones)
+      entregar(runtime.arrancar())
+      return promesa
+    },
+  })
+  const c = await vivo(dir, { accion: "conectar" }, deps)
+  assert.equal(c.ok, true, JSON.stringify(c))
+  assert.equal(c.estado.sesion, "CONECTADA")
+  assert.deepEqual(c.estado.runtime.wifi, { ssid: "MI_ESP", ip: "192.168.4.1", claveConfigurada: true })
+  assert.match(c.resultado, /"MI_ESP", con clave/)
+  // Y un comando real de punta a punta por el mismo camino.
+  const alto = await vivo(dir, { accion: "accionar", componente: "cmp-1", nivel: "alto" }, deps)
+  assert.equal(alto.ok, true, JSON.stringify(alto))
+  assert.deepEqual(alto.respuesta, { tipo: "ok", comando: "digital.escribir", pin: 18 })
+  await vivo(dir, { accion: "desconectar" }, deps)
+  assert.equal(duenoDelPuerto(PUERTO), undefined)
 })
 
-test("V4 cargar: nombreRed fija el SSID (validado) y por defecto no se manda ninguno (la placa usa tecnia-xxxx)", async () => {
-  const { nombreDeRedValido } = await import(join(REPO, "opencode/tool/vivo.ts"))
+test("V4-5 cargar: nombreRed fija el SSID (validado por el contrato) y por defecto no se manda ninguno (la placa usa tecnia-xxxx)", async () => {
   const dir = await armar(OPS)
   const recibidas = []
-  const deps = async () => ({ ...(await depsDe()()), generarRuntime: (placa, opciones) => { recibidas.push(opciones); return { archivos: { "platformio.ini": "", "src/main.cpp": "" }, environment: placa.id, runtime: "0.1.0", protocolo: 1 } } })
+  const deps = depsDe({ generarRuntime: (placa, opciones) => { recibidas.push(opciones); return { archivos: { "platformio.ini": "", "src/main.cpp": "" }, environment: placa.id, runtime: "0.1.0", protocolo: 1 } } })
   const porDefecto = await vivo(dir, { accion: "cargar" }, deps)
   assert.equal(porDefecto.ok, true, JSON.stringify(porDefecto))
   assert.deepEqual(recibidas.at(-1).wifi, { clave: "" })
-  // La página sale del proyecto (LED en GPIO18, pulsador en GPIO4) y de la placa (el resto, sin prohibidos).
-  const pagina = recibidas.at(-1).pagina
-  assert.deepEqual(pagina.salidas, [18])
-  assert.deepEqual(pagina.entradasDigitales, [4])
-  assert.ok(pagina.entradasAnalogicas.includes(34) && !pagina.entradasAnalogicas.includes(4), "las analógicas de la placa, sin las usadas")
-  assert.ok(pagina.salidasExtra.includes(2) && !pagina.salidasExtra.includes(18) && !pagina.salidasExtra.includes(4), "el LED de placa va en 'más pines'; lo usado no se repite")
-  for (const prohibido of [1, 3, 6, 7, 8, 9, 10, 11]) assert.ok(!pagina.salidasExtra.includes(prohibido), `GPIO${prohibido} no se ofrece`)
-  for (const soloEntrada of [34, 35, 36, 39]) assert.ok(!pagina.salidasExtra.includes(soloEntrada), `GPIO${soloEntrada} no es salida`)
   assert.equal(porDefecto.wifi.ssid, null)
   const fijo = await vivo(dir, { accion: "cargar", nombreRed: "MI_ESP" }, deps)
   assert.equal(fijo.ok, true)
   assert.deepEqual(recibidas.at(-1).wifi, { clave: "", ssid: "MI_ESP" })
-  assert.deepEqual(recibidas.at(-1).pagina.salidas, [18])
   assert.equal(fijo.wifi.ssid, "MI_ESP")
   assert.match(fijo.resultado, /"MI_ESP", abierta, sin clave/)
   const invalido = await vivo(dir, { accion: "cargar", nombreRed: 'red "rara"' }, deps)
   assert.equal(invalido.codigo, "NOMBRE_RED_INVALIDO")
-  assert.equal(nombreDeRedValido("MI_ESP"), true)
-  assert.equal(nombreDeRedValido("x".repeat(33)), false)
-  assert.equal(nombreDeRedValido("señal"), false)
-  assert.equal(nombreDeRedValido(""), false)
+  assert.doesNotMatch(FUENTE_TOOL, /nombreDeRedValido/, "A6 L-04: sin alias de esSsidValido")
 })
 
-test("V4: el prompt manda a preguntar el nombre de la red antes de cargar y a pasarlo en nombreRed", () => {
-  const regla = PROMPT.slice(PROMPT.indexOf("## REGLA CRÍTICA — Modo Vivo"))
-  const seccion = regla.slice(0, regla.indexOf("\n## ", 5))
+test("V4: el prompt explica la red de la placa, manda a preguntar el nombre y prohíbe afirmar lo que pasó por la página", () => {
+  const seccion = seccionDelPrompt()
+  assert.match(seccion, /red WiFi/)
+  assert.match(seccion, /192\.168\.4\.1/)
+  assert.match(seccion, /no\s+afirmes[\s\S]*página/i)
   assert.match(seccion, /¿Cómo querés que se\s+llame la red de tu placa\?/)
   assert.match(seccion, /`nombreRed`/)
   assert.match(seccion, /cada grupo un nombre distinto/)
+})
+
+// ───────────────────────────── V4-6c: la página, sin pines de más ─────────────────────
+
+test("V4-6c paginaDelProyecto: por defecto SÓLO los pines del proyecto más las analógicas de la placa; sin «más pines»", async () => {
+  // A1-A3: «más pines» ofrecía todas las salidas de la placa a cualquiera que se uniera a la red abierta.
+  const dir = await armar(OPS)
+  const recibidas = []
+  const deps = depsDe({ generarRuntime: (placa, opciones) => { recibidas.push(opciones); return { archivos: { "platformio.ini": "", "src/main.cpp": "" }, environment: placa.id, runtime: "0.1.0", protocolo: 1 } } })
+  const r = await vivo(dir, { accion: "cargar" }, deps)
+  assert.equal(r.ok, true, JSON.stringify(r))
+  const pagina = recibidas.at(-1).pagina
+  assert.deepEqual(pagina.salidas, [18])
+  assert.deepEqual(pagina.salidasExtra, [], "sin masPines no hay salidas de más")
+  assert.equal(pagina.salidasConAviso, undefined)
+  assert.deepEqual(pagina.entradasDigitales, [4])
+  assert.ok(pagina.entradasAnalogicas.includes(34) && !pagina.entradasAnalogicas.includes(4), "las analógicas de la placa, sin las usadas")
+  assert.deepEqual(r.pagina, pagina, "la respuesta de cargar dice qué pines ofrece la página")
+})
+
+test("V4-6c paginaDelProyecto con masPines: salidas libres sin prohibidos ni solo-entrada; strapping aparte con aviso; nunca un pin en dos roles", () => {
+  const proyecto = obtenerServicioDeProyectoConVista({ directorio: nuevoDir("vivo-pagina"), idProyecto: "activo" })
+  const servicio = proyecto
+  const aplicar = (tipo, payload) => {
+    const r = servicio.aplicar({ idOperacion: `pag-${tipo}-${Math.random()}`, actor: "navegador", baseRevision: servicio.snapshot().revision, tipo, payload })
+    assert.equal(r.ok, true, JSON.stringify(r))
+  }
+  aplicar("SetPlaca", { placa: "esp32-devkit-v1" })
+  aplicar("AgregarComponente", { tipo: "led" })
+  aplicar("AsignarPin", { componente: "cmp-0", terminal: "anodo", pin: "GPIO32" }) // un LED en un pin con ADC
+  const ir = servicio.snapshot().proyecto
+
+  const sinMas = paginaDelProyecto(esp32, ir, K)
+  assert.deepEqual(sinMas.salidas, [32])
+  assert.ok(!sinMas.entradasAnalogicas.includes(32), "GPIO32 es salida del proyecto: no se ofrece como analógica (A2-A1)")
+  assert.deepEqual(sinMas.salidasExtra, [])
+
+  const conMas = paginaDelProyecto(esp32, ir, K, { masPines: true })
+  assert.deepEqual(conMas.salidas, [32])
+  for (const prohibido of [1, 3, 6, 7, 8, 9, 10, 11]) assert.ok(!conMas.salidasExtra.includes(prohibido) && !(conMas.salidasConAviso ?? []).includes(prohibido), `GPIO${prohibido} no se ofrece`)
+  for (const soloEntrada of [34, 35, 36, 39]) assert.ok(!conMas.salidasExtra.includes(soloEntrada), `GPIO${soloEntrada} no es salida`)
+  // Los strapping (H-A1, CK-CG1) van aparte, al final y con aviso; nunca mezclados con las salidas comunes.
+  const strapping = esp32.pines.filter((p) => p.restricciones.includes("strapping") || p.restricciones.includes("strappingVddSdio")).map((p) => p.numero)
+  assert.deepEqual(conMas.salidasConAviso, strapping.sort((a, b) => a - b))
+  for (const s of strapping) assert.ok(!conMas.salidasExtra.includes(s), `GPIO${s} es strapping: va con aviso`)
+  assert.ok(conMas.salidasExtra.includes(18) && conMas.salidasExtra.includes(23))
+  // Nunca un pin en dos listas (A2-A1: tras `analogico.leer` el core deja el pin sin salida).
+  const todas = [...conMas.salidas, ...conMas.salidasExtra, ...(conMas.salidasConAviso ?? []), ...conMas.entradasDigitales, ...conMas.entradasAnalogicas]
+  assert.equal(new Set(todas).size, todas.length, `un pin en dos roles: ${todas.join(", ")}`)
+  assert.ok(conMas.entradasAnalogicas.includes(34), "las analógicas que NO se ofrecen como salida siguen")
+  assert.ok(!conMas.entradasAnalogicas.includes(33), "GPIO33 se ofrece como salida con masPines: no también como analógica")
+  servicio.cerrar?.()
 })

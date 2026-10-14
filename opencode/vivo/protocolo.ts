@@ -88,6 +88,11 @@ export interface RedWifi {
   readonly ip: string
 }
 
+/** §8.1: la IP fija del punto de acceso. El runtime la FIJA con `softAPConfig` y la anuncia en `hola.wifi.ip`; la tool y el prompt la derivan de acá (A6 M-03: una sola definición). */
+export const IP_PORTAL = [192, 168, 4, 1] as const
+/** La URL de la página del portal, derivada de `IP_PORTAL`. */
+export const URL_PORTAL = `http://${IP_PORTAL.join(".")}/`
+
 /** Largo máximo de un SSID en bytes (802.11; `wifi_config_t.ap.ssid` en la ESP32 mide exactamente eso). */
 export const LARGO_MAXIMO_SSID = 32
 

@@ -1379,6 +1379,7 @@ HD-S2-*, HD-P3-* y HD-W0-*). El HUMAN PRODUCT OWNER resolvió:
   de un dominio separado futuro.
 - **HD-07 DEFERRED** — Modo Vivo: transporte, ownership del puerto serie, lifecycle del
   Live Service y contrato del Live Runtime sin decidir; sigue PROPOSED / NOT IMPLEMENTED.
+  *(Resuelto el 2026-10-12 por HD-08: ver "Modo Vivo — HD-08 y V4" al final de este registro.)*
 
 ## Phase 3 — Vertical semántico #1 ("mientras"): valores de HD-P3D y reapertura acotada (2026-10-02)
 
@@ -1589,3 +1590,49 @@ Decisiones de Alejandro Palestrini por chat, adoptando la recomendación escrita
   aviso `info`, nunca bloqueante: `PERSISTIBLE ⇒ RECARGABLE` se conserva.
 
 No se tocaron: `circuito.ts`, `representacion.ts`, `admision.ts`, codegen, IR, skills (slice B).
+
+## Modo Vivo — HD-08 y V4 (2026-10-12 / 2026-10-13)
+
+Resuelve HD-07. Decisiones de Alejandro Palestrini por chat, transcriptas con su texto en
+`tecnia-bot-docs/esp32-completo/DECISIONES-HUMANAS-2026-10-12.md`; plan en `MODO-VIVO-PLAN.md`
+(§6 y auditoría §10); contrato en `PROTOCOLO-VIVO-V1.md` (§9 lleva V4-3..V4-10 con su origen).
+El código cita estos ids, nunca "decisión por chat".
+
+**HD-08 (plan, "dale! vamos con todo")**
+
+- **HD-08-a** — el laboratorio es otra cosa que el programa generado: el runtime obedece órdenes
+  sueltas y **no corre reglas**; las reglas siguen viviendo sólo en `codegen/programa.ts`.
+- **HD-08-b** — el bot habla con la placa por **USB serie** (puente Python con pyserial del penv de
+  PlatformIO, `vivo/puente-serie.py`); el **WiFi es para el celular** (V4).
+- **HD-08-c** — la sesión viva es **exclusiva del puerto**: `platformio` (`flash`, `monitor`) y
+  `programa cargar` se niegan con `PUERTO_EN_SESION_VIVA` (registro en `platformio.ts`).
+- **HD-08-d** — V1 = LED, pulsador y potenciómetro (digital, PWM, ADC1).
+- **HD-08-e** — runtime **por placa**, cargado una vez (`codegen/runtime.ts` → `vivo/runtime-vivo/<placa>`);
+  revisado por V4-5b: la **página** del portal es del proyecto (si cambia un pin, se vuelve a `cargar`).
+- **HD-08-f** — SSID `tecnia-<4 caracteres>` con clave de 8 dígitos; **revisada el 2026-10-13**: la red
+  va **abierta** por defecto y la clave sólo con `redConClave` (V4-4).
+- **HD-08-g** — la página acciona, salvo relés sin carga declarada segura; mientras no hay relé en el
+  catálogo, V4-6c: la página ofrece sólo los pines del proyecto.
+- **HD-08-h** — sólo `esp32-devkit-v1` (la tool responde `PLACA_NO_SOPORTADA_EN_VIVO` con otra placa).
+- **HD-08-i** — el instalador traería el runtime precompilado por placa; **pendiente** (hoy `cargar`
+  compila en la PC del docente con PlatformIO).
+
+**V4 "portal" (E2E con celular Android el 2026-10-13: "anduvo todo, de una")**
+
+- **V4-1** — SSID por defecto `tecnia-` + 4 últimos hex de la MAC del AP.
+- **V4-2** — lo hecho desde el celular no se refleja en la sesión serie (queda para V5).
+- **V4-3** — el AP arranca sin canal explícito; el experimento del canal se repite controlado (A3 H7).
+- **V4-4** — red abierta por defecto; clave de 8 dígitos impresa **una sola vez**; `WiFi.persistent(false)`.
+- **V4-5** — el **nombre de la red lo elige quien usa la placa** (`nombreRed`, validado por `esSsidValido`;
+  sin nombres de personas: la red se ve desde afuera del aula).
+- **V4-5b** — la página muestra los pines del proyecto; "más pines" sólo con `masPines`.
+- **V4-6** — tras `analogico.leer` el pin queda sin configurar; `entradaPullUp` en 34–39 se rechaza.
+- **V4-6c** — `salidasExtra` vacío por defecto; strapping aparte y con aviso; nunca un pin en dos roles.
+- **V4-7** — el runtime nunca manda prosa (`-DCORE_DEBUG_LEVEL=0`); el host ignora líneas sin `{`.
+- **V4-8** — respuestas debidas tras `TIEMPO_AGOTADO` (sin id de correlación hasta el protocolo v2).
+- **V4-9** — `SIN_PONG` → `CONECTANDO` + 3 `hola`; la tool reconecta una sesión que no está `CONECTADA`.
+- **V4-10** — `setTxPower(11 dBm)` tras `softAP`; `Cache-Control: no-store`.
+
+**Qué no está decidido ni probado** (AUDITORIA-2026-10-13.md §5): la causa del reinicio a ~4 min con
+cliente (E2E con oyente serie y fuente externa pendiente), el experimento del canal, Windows/VM, iPhone,
+varios celulares a la vez, la ficha y el skill `modo-vivo`.

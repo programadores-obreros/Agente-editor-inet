@@ -63,12 +63,19 @@ desde otro repo (por ejemplo, el checkout de OpenCode), las reglas de ese repo n
   `docs/programacion-intencion/TARGET-ARCHITECTURE.md` (resumen implementable del
   target cerrado), `IR-SPEC.md` (especificación formal de la IR) y `BOARD-CONTRACT.md`/
   `COMPONENT-CATALOG.md` (contrato de placas y catálogo de componentes).
-- **PROPOSED / NOT IMPLEMENTED** ("Modo Vivo", comunicación en vivo con la placa): ver
-  `docs/programacion-intencion/LIVE-MODE.md` — cada documento de esa serie lleva su
-  propio banner de estado. No lo des por construido.
+- **Modo Vivo (V1–V4 implementados, 2026-10-12/13)**: el laboratorio en vivo con la
+  placa. Contrato en `tecnia-bot-docs/esp32-completo/PROTOCOLO-VIVO-V1.md` (§9 lleva las
+  decisiones V4-x; se citan por id desde el código), plan y decisiones HD-08 en
+  `MODO-VIVO-PLAN.md`, resumen en `DECISIONS.md` ("Modo Vivo — HD-08 y V4"). Código:
+  `opencode/vivo/` (protocolo, sesión serie, puente Python, página del portal),
+  `opencode/codegen/runtime*.ts` (el runtime C++ generado por placa) y `opencode/tool/vivo.ts`.
+  La serie `docs/programacion-intencion/LIVE-MODE*.md` fue la exploración previa y quedó
+  **SUPERSEDED**. Sigue sin haber daemon: la sesión vive en el proceso de OpenCode.
+  Qué falta antes del aula: AUDITORIA-2026-10-13.md §5 (sobre todo el E2E con oyente serie y
+  fuente externa para la causa del reinicio a ~4 min).
 
 > **Nota de mantenimiento**: `CURRENT-ARCHITECTURE.md` describe la Fase 0, previa a
-> `proyecto-fisico.ts`/`vista-fisica.ts`. Su §4 ("9 tools") ya no coincide con los 11
+> `proyecto-fisico.ts`/`vista-fisica.ts`. Su §4 ("9 tools") ya no coincide con los 13
 > archivos reales de `opencode/tool/` — es un desfasaje de documentación conocido, no
 > un bug de código.
 

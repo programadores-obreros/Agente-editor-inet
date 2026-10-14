@@ -4,6 +4,19 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+**La placa se prueba antes de programarla, y el programa generado llega solo a la placa.**
+
+### Agregado
+
+- **Modo Vivo (tool `vivo`): el laboratorio con la placa.** Un runtime base por placa, generado desde Component Knowledge y cargado una sola vez, con el que se prende, se mueve y se mide en vivo por USB sin compilar por cada acción: `cargar` → `conectar` → `accionar` / `leer` / `estado` → `desconectar`. El bot sólo afirma lo que la placa respondió, con hora; lo que no se observó figura sin dato. Mientras hay sesión viva, `platformio` y `programa cargar` no tocan ese puerto. Sólo ESP32 por ahora.
+- **La placa levanta su propia red WiFi y una página en el celular** (protocolo v1, V4): el nombre lo elige el grupo, la red va abierta por defecto (con `redConClave`, una clave de 8 dígitos que se imprime una sola vez), el portal se abre solo y la página ofrece sólo los pines del proyecto (con `masPines`, también las salidas libres; los pines que deciden el arranque van al final, con aviso). Probado en una DOIT ESP32 DevKit V1 con un Android el 2026-10-13.
+- **`programa` con `accion: "cargar"`**: el programa generado desde el proyecto físico ahora se regenera, se compila y se carga en la placa desde la misma tool, con el mismo checklist de seguridad y sólo a pedido. Antes el bot ofrecía "¿Lo cargo?" sin tener cómo hacerlo.
+- **La ESP32 DevKit V1 completa en Component Knowledge** (CK-PLACA-01): GPIO5 como strapping, bancos de ADC, DAC, touch, tolerancia a 5 V y el LED de placa (GPIO2, azul, prende en alto; verificado físicamente). Catálogo 2.5.0.
+
+### Pendiente antes del aula
+
+- La causa del **reinicio a ~4 minutos** con un celular conectado (visto en el E2E V4; falta repetirlo con el oyente serie encendido y una fuente externa de 5 V), el experimento del canal WiFi, Windows, iPhone y varios celulares a la vez. Detalle: `tecnia-bot-docs/esp32-completo/AUDITORIA-2026-10-13.md`.
+
 ## [0.4.2] — 2026-09-22
 
 **El chequeo de seguridad dejó de mirar sólo la placa y empezó a mirar al pibe.** Hasta acá, el repaso que el bot hace *antes de dar corriente* cuidaba el hardware —los 3,3 V del ESP32, la polaridad, los cortos— y **no decía una palabra sobre los 220 V**. En un aula donde se arma un relé para encender una lámpara, eso es el hueco que importa.

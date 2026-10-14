@@ -327,8 +327,8 @@ test("compilar: si el proyecto cambia mientras compila, el resultado lo dice (vi
   }
 })
 
-test("15 no acepta comandos, flags, platform ni environment del agente: sólo accion e idProyecto", async () => {
-  assert.deepEqual(Object.keys(programaTool.args).sort(), ["accion", "idProyecto"])
+test("15 no acepta comandos, flags, platform ni environment del agente: sólo accion, idProyecto y (para cargar) un puerto validado", async () => {
+  assert.deepEqual(Object.keys(programaTool.args).sort(), ["accion", "idProyecto", "puerto"])
   const dir = await armar()
   const bun = bunFalso()
   try {
@@ -339,9 +339,103 @@ test("15 no acepta comandos, flags, platform ni environment del agente: sólo ac
     const r = await programa(dir, { accion: "shell" })
     assert.equal(r.codigo, "ACCION_DESCONOCIDA")
     assert.equal(bun.llamadas.length, 1, "una acción desconocida no lanza nada")
+    assert.equal((await programa(dir, { accion: "cargar", puerto: "COM3; rm -rf /" })).codigo, "PUERTO_INVALIDO")
+    assert.equal(bun.llamadas.length, 1, "un puerto inválido no lanza nada")
   } finally {
     bun.restaurar()
   }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// cargar (auditoría 2026-10-13, A4): el programa generado llega a la placa por la misma tool
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("cargar: regenera, compila y carga EXACTAMENTE lo generado con `pio run --target upload` en el puerto detectado o indicado", async () => {
+  const dir = await armar()
+  const bun = bunFalso()
+  try {
+    const detectado = async () => ({ port: "/dev/ttyUSB7" })
+    const deps = async () => ({ obtenerServicioDeProyectoConVista, conocimiento: K, generarPrograma, detectarPuerto: detectado })
+    const r = JSON.parse(await ejecutarPrograma({ accion: "cargar" }, { directory: dir }, deps))
+    assert.equal(r.ok, true, JSON.stringify(r))
+    assert.equal(r.etapa, "carga")
+    assert.equal(r.puerto, "/dev/ttyUSB7")
+    assert.equal(r.vigente, true)
+    assert.match(r.resultado, /^CARGADO — revisión \d+, environment esp32-devkit-v1, en \/dev\/ttyUSB7\./)
+    assert.match(r.resultado, /runtime del Modo Vivo/, "avisa que pisa el runtime del laboratorio")
+    assert.equal(bun.llamadas.length, 1)
+    assert.deepEqual(bun.llamadas[0].cmd.slice(1), ["run", "-d", carpetaAbs(dir), "-e", "esp32-devkit-v1", "--target", "upload", "--upload-port", "/dev/ttyUSB7"])
+    assert.deepEqual(bun.llamadas[0].enDisco, codegenDe(dir).archivos, "PlatformIO carga sólo los bytes de generarPrograma")
+
+    // Con `puerto` explícito no se detecta nada.
+    const explicito = await programa(dir, { accion: "cargar", puerto: "COM3" })
+    assert.equal(explicito.ok, true, JSON.stringify(explicito))
+    assert.equal(explicito.puerto, "COM3")
+    assert.deepEqual(bun.llamadas[1].cmd.slice(-2), ["--upload-port", "COM3"])
+
+    // Sin placa: PLACA_NO_DETECTADA con la explicación del detector, sin lanzar PlatformIO.
+    const sinPlaca = async () => ({ obtenerServicioDeProyectoConVista, conocimiento: K, generarPrograma, detectarPuerto: async () => ({ error: "no hay placa" }) })
+    const s = JSON.parse(await ejecutarPrograma({ accion: "cargar" }, { directory: dir }, sinPlaca))
+    assert.equal(s.codigo, "PLACA_NO_DETECTADA")
+    assert.equal(s.etapa, "carga")
+    assert.equal(s.explicacion, "no hay placa")
+    assert.equal(bun.llamadas.length, 2)
+  } finally {
+    bun.restaurar()
+  }
+})
+
+test("cargar: un error de carga se informa aparte, y 127 es PLATFORMIO_NO_ENCONTRADO", async () => {
+  const dir = await armar()
+  const bun = bunFalso({ codigo: 1, stderr: "A fatal error occurred: Failed to connect to ESP32: Timed out waiting for packet header\n" })
+  try {
+    const r = await programa(dir, { accion: "cargar", puerto: "COM3" })
+    assert.equal(r.ok, false)
+    assert.equal(r.etapa, "carga")
+    assert.equal(r.codigo, "CARGA_FALLIDA")
+    assert.equal(r.exitCode, 1)
+    assert.match(r.salida, /Failed to connect/)
+    assert.match(r.resultado, /^NO SE CARGÓ — CARGA_FALLIDA$/)
+  } finally {
+    bun.restaurar()
+  }
+  const sinPio = bunFalso({ codigo: 127 })
+  try {
+    assert.equal((await programa(dir, { accion: "cargar", puerto: "COM3" })).codigo, "PLATFORMIO_NO_ENCONTRADO")
+  } finally {
+    sinPio.restaurar()
+  }
+})
+
+test("cargar: respeta la sesión viva (PUERTO_EN_SESION_VIVA) sin lanzar PlatformIO", async () => {
+  const { reservarPuerto, liberarPuerto } = await import(join(REPO, "opencode/tool/platformio.ts"))
+  const dir = await armar()
+  const bun = bunFalso()
+  reservarPuerto("COM3", "otra-sesion")
+  try {
+    const r = await programa(dir, { accion: "cargar", puerto: "COM3" })
+    assert.equal(r.ok, false)
+    assert.equal(r.codigo, "PUERTO_EN_SESION_VIVA")
+    assert.equal(r.etapa, "carga")
+    assert.match(r.resultado, /`vivo`/)
+    assert.equal(bun.llamadas.length, 0)
+  } finally {
+    liberarPuerto("COM3")
+    bun.restaurar()
+  }
+})
+
+test("la descripción y el prompt: cargar existe, sólo a pedido, con checklist, y borra lo que la placa tenía", () => {
+  assert.match(programaTool.description, /`cargar`: vuelve a generar, compila y CARGA/)
+  assert.match(programaTool.description, /Nunca digas que está en la placa si no ves `CARGADO`/)
+  assert.match(REGLA, /\*\*Cargarlo a la placa es `programa` con `accion: "cargar"`\*\*/)
+  assert.match(REGLA, /checklist de seguridad antes/)
+  assert.match(REGLA, /borra lo que la placa tenía/)
+  assert.match(REGLA, /`PUERTO_EN_SESION_VIVA`/)
+  assert.doesNotMatch(REGLA, /todavía no está disponible/)
+  // La regla general de cargar (código escrito a mano) manda al camino correcto para el proyecto físico.
+  const i = PROMPT.indexOf("Cargarlo a la placa es OTRA cosa")
+  assert.match(PROMPT.slice(i, i + 600), /`programa` con\s+`accion: "cargar"`/)
 })
 
 test("16 no acepta rutas del agente: idProyecto inválido se rechaza y la carpeta siempre cuelga de los datos del proyecto", async () => {
