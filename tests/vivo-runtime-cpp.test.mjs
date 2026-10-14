@@ -1,6 +1,12 @@
-// Modo Vivo V1 — el runtime en C++ (agente A): `codegen/runtime.ts` genera el firmware base de la
-// ESP32 y este archivo prueba que lo generado cumple el contrato (PROTOCOLO-VIVO-V1.md) sin
-// hardware, salvo la compilación real, que es opt-in.
+// Modo Vivo (protocolo v1, slices V1–V4) — el runtime en C++ (agente A): `codegen/runtime.ts` genera el
+// firmware base de la ESP32 y este archivo prueba que lo generado cumple el contrato (PROTOCOLO-VIVO-V1.md,
+// con las decisiones V4-x de §9) sin hardware, salvo la compilación real, que es opt-in.
+//
+// Historia (auditoría 2026-10-13, A2 A1 y A3 H4): el test C3 afirmaba "analogico.leer no cambia el modo del
+// pin", que es lo contrario del hardware (el core deja el pin en ANALOG), y el Arduino falso dejaba que
+// `digitalWrite` moviera un pin con el driver apagado: dos tests verdes sobre un OK falso. Ahora el Arduino
+// falso reproduce el efecto colateral (`analogRead` → ANALOG; `digitalWrite`/`digitalRead` inertes salvo
+// OUTPUT/INPUT; sin pull-up en los pines de sólo entrada) y D5 prueba que el falso ve el bug si vuelve.
 //
 // Qué protege:
 // - determinismo y hashes fijados de `src/main.cpp` y `platformio.ini`;
@@ -33,7 +39,9 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const { generarRuntime, CAMPOS_POR_COMANDO, VERSION_RUNTIME, pinesProhibidosDe, IP_PORTAL } = await import(join(REPO, "opencode/codegen/runtime.ts"))
+const { generarRuntime, VERSION_RUNTIME, pinesProhibidosDe, IP_PORTAL, BUILD_FLAGS_RUNTIME, CANAL_WIFI_MINIMO, CANAL_WIFI_MAXIMO } = await import(join(REPO, "opencode/codegen/runtime.ts"))
+const { renderizarPlatformioIni } = await import(join(REPO, "opencode/codegen/platformio-ini.ts"))
+const { identificador } = await import(join(REPO, "opencode/codegen/runtime-cpp.ts"))
 const { RUTA_COMANDO, renderizarPaginaPortal } = await import(join(REPO, "opencode/vivo/pagina-portal.ts"))
 const { REGISTRO_PLACAS } = await import(join(REPO, "opencode/nucleo/placas.ts"))
 const P = await import(join(REPO, "opencode/vivo/protocolo.ts"))
@@ -79,8 +87,14 @@ const paginaDe = (cpp) => {
     .join("")
 }
 
-const MODO_SALIDA = P.MODOS_DE_PIN.indexOf("salida") + 1
-const MODO_ENTRADA_PULL_UP = P.MODOS_DE_PIN.indexOf("entradaPullUp") + 1
+// Los modos del C++ valen su índice en MODOS_DE_PIN + 1 (0 = sin configurar): es la convención del C++, no del contrato.
+const MODO_SALIDA = P.MODOS_DE_PIN.indexOf(P.MODO.salida) + 1
+const MODO_ENTRADA = P.MODOS_DE_PIN.indexOf(P.MODO.entrada) + 1
+const MODO_ENTRADA_PULL_UP = P.MODOS_DE_PIN.indexOf(P.MODO.entradaPullUp) + 1
+// Lo que el core sabe de los pines (citas en el Arduino falso): modos y el efecto de analogRead.
+const GPIO = { INPUT: 0x01, OUTPUT: 0x03, INPUT_PULLUP: 0x05, ANALOG: 0xc0 } // esp32-hal-gpio.h:45-55
+/** driver/gpio.h:174: los de sólo entrada no tienen pull-up ni pull-down. Derivado de placas.ts, no escrito. */
+const SIN_PULL_UP = new Set(esp32.pines.filter((p) => p.restricciones.includes("soloEntrada")).map((p) => p.numero))
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Traductor C++ → JS (subconjunto del runtime)
@@ -98,6 +112,8 @@ const texto = (x) => (typeof x === "string" ? x : textoDe(x, x.indexOf(0) < 0 ? 
  * URL `http://192.168.4.1/`) ni de un literal de carácter (`'"'` desbalancearía las comillas dobles).
  */
 const sinComentarioDeLinea = (linea) => linea.replace(/^((?:[^"'/]|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)'|\/(?!\/))*?)\s*\/\/.*$/, "$1")
+/** Un fuente TS sin comentarios (de línea y de bloque): para las guardias sobre el código del generador. */
+const sinComentariosTs = (ts) => ts.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
 /** El C++ sin comentarios: para las guardias que miden código y no citas. */
 const sinComentarios = (cpp) =>
   cpp
@@ -210,6 +226,9 @@ const ESP_RST = { UNKNOWN: 0, POWERON: 1, EXT: 2, SW: 3, PANIC: 4, INT_WDT: 5, T
 // V4: lo que el Arduino falso sabe del core para la capa 3.
 const WIFI_MODE = { NULL: 0, STA: 1, AP: 2, APSTA: 3 } // esp_wifi_types.h: wifi_mode_t
 const HTTP = { GET: 1, POST: 3, HEAD: 2, PUT: 4 } // http_parser.h:96-99
+const WIFI_POWER_11dBm = 44 // WiFiGeneric.h:120
+const WIFI_SECOND_CHAN_NONE = 0 // esp_wifi_types.h:129
+const CANAL_POR_DEFECTO = 1 // WiFiAP.h:40: channel = 1 si no se pasa
 const MAC_DE_PRUEBA = [0x24, 0x0a, 0xc4, 0x12, 0x3f, 0x2a] // → ssid "tecnia-3f2a"
 const SSID_DE_PRUEBA = "tecnia-3f2a"
 const WIFI_DE_PRUEBA = { ssid: SSID_DE_PRUEBA, clave: "", ip: IP_TEXTO }
@@ -266,8 +285,10 @@ const crearServidorFalso = (puerto, llamadas) => {
 }
 
 /** El programa COMPLETO (las dos capas, o las tres) sobre un Arduino falso que registra cada llamada y lo que sale por el serie. */
-function ejecutarPrograma(cpp = MAIN, { causa = ESP_RST.POWERON, reloj = () => 0, mac = MAC_DE_PRUEBA, apLevanta = true, configLevanta = true } = {}) {
-  const placa = { modos: new Map(), niveles: new Map(), canales: new Map(), lecturas: new Map(), analogicos: new Map(), llamadas: [], modoWifi: WIFI_MODE.NULL, servidor: null, dns: null }
+function ejecutarPrograma(cpp = MAIN, { causa = ESP_RST.POWERON, reloj = () => 0, mac = MAC_DE_PRUEBA, apLevanta = true, configLevanta = true, heapLibre = 0, stackLibre = 0 } = {}) {
+  // `niveles` es el registro de salida (lo que escribió digitalWrite); el pin sólo lo muestra con el driver de salida
+  // habilitado (OUTPUT). `modos` es lo que el core configuró con pinMode, incluido ANALOG tras analogRead.
+  const placa = { modos: new Map(), niveles: new Map(), canales: new Map(), lecturas: new Map(), analogicos: new Map(), llamadas: [], modoWifi: WIFI_MODE.NULL, persistente: true, potencia: null, canalWifi: CANAL_POR_DEFECTO, servidor: null, dns: null }
   const rx = []
   let tx = ""
   const salida = []
@@ -287,9 +308,9 @@ function ejecutarPrograma(cpp = MAIN, { causa = ESP_RST.POWERON, reloj = () => 0
   const hw = {
     HIGH: 1,
     LOW: 0,
-    INPUT: 0x01, // esp32-hal-gpio.h:45
-    OUTPUT: 0x03, // :48
-    INPUT_PULLUP: 0x05, // :50
+    INPUT: GPIO.INPUT, // esp32-hal-gpio.h:45
+    OUTPUT: GPIO.OUTPUT, // :48
+    INPUT_PULLUP: GPIO.INPUT_PULLUP, // :50
     ESP_RST_UNKNOWN: ESP_RST.UNKNOWN,
     ESP_RST_POWERON: ESP_RST.POWERON,
     ESP_RST_EXT: ESP_RST.EXT,
@@ -308,18 +329,27 @@ function ejecutarPrograma(cpp = MAIN, { causa = ESP_RST.POWERON, reloj = () => 0
       placa.llamadas.push(["pinMode", pin, modo])
       placa.modos.set(pin, modo)
     },
+    // gpio_set_level (driver/gpio.h:130-140) escribe el registro de salida; el pad lo muestra sólo con el driver de
+    // salida habilitado (modo con el bit OUTPUT, esp32-hal-gpio.c:109-128: ANALOG >= 0x20 deja GPIO_MODE_DISABLE).
     digitalWrite: (pin, nivel) => {
       placa.llamadas.push(["digitalWrite", pin, nivel])
       placa.niveles.set(pin, nivel)
     },
+    // gpio_get_level (driver/gpio.h:143-154): "If the pad is not configured for input ... the returned value is always 0".
+    // INPUT, OUTPUT (0x03 incluye INPUT) e INPUT_PULLUP leen; ANALOG (0xC0) y sin configurar no. Un pull-up pedido en un
+    // pin que no lo tiene (driver/gpio.h:174) no sube nada: el pin flota y, determinista, se lee 0.
     digitalRead: (pin) => {
       placa.llamadas.push(["digitalRead", pin])
+      const modo = placa.modos.get(pin) ?? 0
+      if ((modo & GPIO.INPUT) === 0 || modo >= 0x20) return 0
       if (placa.lecturas.has(pin)) return placa.lecturas.get(pin)
-      if (placa.modos.get(pin) === 0x03) return placa.niveles.get(pin) ?? 0
-      return placa.modos.get(pin) === 0x05 ? 1 : 0
+      if (modo === GPIO.OUTPUT) return placa.niveles.get(pin) ?? 0
+      return modo === GPIO.INPUT_PULLUP && !SIN_PULL_UP.has(pin) ? 1 : 0
     },
+    // __analogReadRaw → __adcAttachPin → pinMode(pin, ANALOG) (esp32-hal-adc.c:161, :109, :136): el pin queda sin driver digital.
     analogRead: (pin) => {
       placa.llamadas.push(["analogRead", pin])
+      placa.modos.set(pin, GPIO.ANALOG)
       return placa.analogicos.get(pin) ?? 0
     },
     ledcSetup: (canal, hz, bits) => {
@@ -337,15 +367,40 @@ function ejecutarPrograma(cpp = MAIN, { causa = ESP_RST.POWERON, reloj = () => 0
     },
     // --- V4: WiFi, DNS y HTTP del core ---
     WIFI_AP: WIFI_MODE.AP, // WiFiType.h:34
+    WIFI_POWER_11dBm,
+    WIFI_SECOND_CHAN_NONE,
     NULL: null,
+    ESP: { getFreeHeap: () => heapLibre }, // Esp.h:69
+    uxTaskGetStackHighWaterMark: (tarea) => (tarea === null ? stackLibre : 0), // freertos/task.h:1778: NULL = la tarea que llama
+    // esp_wifi.h:615: exige WiFi iniciado; se registra el canal pedido. (Sólo compilado con la opción `canal`.)
+    esp_wifi_set_channel: (primario, segundo) => {
+      placa.llamadas.push(["esp_wifi_set_channel", primario, segundo])
+      if (placa.modoWifi === WIFI_MODE.NULL) return 0x3002 // ESP_ERR_WIFI_NOT_INIT
+      placa.canalWifi = primario
+      return 0
+    },
     HTTP_GET: HTTP.GET,
     HTTP_POST: HTTP.POST,
     IPAddress: (a, b, c, d) => `${a}.${b}.${c}.${d}`,
     WiFi: {
+      // WiFiGeneric.cpp:1229-1232: sólo guarda el flag; mode() lo usa al iniciar (:1256 → wifiLowLevelInit, :693-695).
+      persistent: (valor) => {
+        placa.llamadas.push(["WiFi.persistent", valor])
+        placa.persistente = valor
+      },
       mode: (modo) => {
         placa.llamadas.push(["WiFi.mode", modo])
         placa.modoWifi = modo
       },
+      // WiFiGeneric.cpp:1406-1412: false (y un log_w) si ni AP ni STA arrancaron; el AP arranca en softAP (enableAP).
+      setTxPower: (potencia) => {
+        placa.llamadas.push(["WiFi.setTxPower", potencia])
+        if (!placa.apIniciado) return false
+        placa.potencia = potencia
+        return true
+      },
+      // WiFiGeneric.cpp:1213-1221: el canal primario actual (esp_wifi_get_channel), 0 si no se inició.
+      channel: () => (placa.apIniciado ? placa.canalWifi : 0),
       // WiFiAP.cpp:337-343: solo llena la MAC si el modo no es NULL.
       softAPmacAddress: (destino) => {
         placa.llamadas.push(["WiFi.softAPmacAddress"])
@@ -358,6 +413,7 @@ function ejecutarPrograma(cpp = MAIN, { causa = ESP_RST.POWERON, reloj = () => 0
         const claveTexto = clave === null || clave === undefined ? null : texto(clave)
         placa.llamadas.push(["WiFi.softAP", texto(ssid), claveTexto, canal])
         if (texto(ssid).length === 0 || (claveTexto !== null && claveTexto.length > 0 && claveTexto.length < 8)) return false
+        placa.apIniciado = apLevanta
         return apLevanta
       },
       softAPConfig: (ip, puerta, mascara) => {
@@ -415,9 +471,20 @@ test("A1 determinismo: misma placa → mismos bytes; hashes fijados; environment
   assert.match(INI, /^platform = espressif32@6\.12\.0$/m)
   assert.match(INI, /^board = esp32dev$/m)
   assert.match(INI, /^framework = arduino$/m)
-  // Hashes fijados: cualquier cambio del generador los mueve a propósito (y el commit lo dice).
-  assert.equal(sha(INI), "b4ea2df4fc2401ec488b0254ff714176119e561447817a99631de64da7321fde")
-  assert.equal(sha(MAIN), "c7b8a9b625214f1eecd0c79e69149354c8bae0f40782b38ceeb30b04dbc2f160")
+  // V4-7: el ini del RUNTIME lleva -DCORE_DEBUG_LEVEL=0 (esp32-hal-log.h:36-39: sin la macro, el core toma
+  // CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL = 1 y log_e imprime prosa por UART0). El ini de generarPrograma NO cambia:
+  // renderizarPlatformioIni(placa) sin opciones (programa.ts:382) sigue con su hash de siempre.
+  assert.deepEqual(BUILD_FLAGS_RUNTIME, ["-DCORE_DEBUG_LEVEL=0"])
+  assert.match(INI, /^build_flags = -DCORE_DEBUG_LEVEL=0$/m)
+  assert.equal(INI, `${renderizarPlatformioIni(esp32).contenido.trimEnd()}\nbuild_flags = -DCORE_DEBUG_LEVEL=0\n`, "el ini del runtime es el de generarPrograma mas una linea")
+  assert.equal(sha(renderizarPlatformioIni(esp32).contenido), "b4ea2df4fc2401ec488b0254ff714176119e561447817a99631de64da7321fde", "el ini de generarPrograma, intacto")
+  assert.doesNotMatch(INI, /-W/, "las -W de la compilacion de prueba (E1-E3) no van al ini de produccion")
+  assert.match(readFileSync(join(REPO, "opencode/codegen/runtime.ts"), "utf8"), /esp32-hal-log\.h:36-3\d/, "V4-7 cita donde el core lee CORE_DEBUG_LEVEL")
+  // Hashes fijados: cualquier cambio del generador los mueve a propósito (y el commit lo dice). El de V1 se movió
+  // por V4-6 (modo del pin tras analogico.leer y tabla PINES_SIN_PULL_UP) y por los nombres de G-02: ya no es el
+  // binario del E2E físico del 2026-10-13 (c7b8a9b6…); el próximo E2E lo vuelve a fijar.
+  assert.equal(sha(INI), "214e1e08b9e73e97c21c3cb1f38490856bbb615c83aaff89728600ae0af86185")
+  assert.equal(sha(MAIN), "47da489bd082f63376435db4c2fc98ef55723df968549fcee88dffee9155b240")
 })
 
 test("A2 dos capas con cabecera: el núcleo no toca Arduino; el C++ es ASCII; cada hecho de hardware cita su fuente", () => {
@@ -430,13 +497,34 @@ test("A2 dos capas con cabecera: el núcleo no toca Arduino; el C++ es ASCII; ca
   for (const api of ["Serial.begin(VELOCIDAD_SERIE)", "pinMode(pin, INPUT_PULLUP)", "ledcSetup(canal, PWM_FRECUENCIA_HZ, PWM_BITS)", "ledcAttachPin(pin, canal)", "ledcWrite(canal,", "ledcDetachPin(pin)", "analogRead(pin)", "millis()", "esp_reset_reason()"]) {
     assert.ok(transporte.includes(api), `el transporte usa ${api}`)
   }
-  for (const cita of ["esp32-hal-gpio.h:45", "esp32-hal-ledc.c:19-21", "esp32-hal-ledc.c:163-181", "esp32-hal-adc.c:29", "esp_system.h:42-52", "HardwareSerial.h:230", "esp32-hal-matrix.c:43-46"]) {
+  for (const cita of ["esp32-hal-gpio.h:45", "esp32-hal-ledc.c:19-21", "esp32-hal-ledc.c:163-181", "esp32-hal-adc.c:29", "esp32-hal-adc.c:136", "esp_system.h:42-52", "HardwareSerial.h:230", "esp32-hal-matrix.c:43-46", "driver/gpio.h:174"]) {
     assert.ok(transporte.includes(cita), `cita ${cita}`)
   }
   assert.match(MAIN, /PWM_FRECUENCIA_HZ = 5000;/)
   assert.match(MAIN, /PWM_BITS = 8;/)
   assert.match(MAIN, /VELOCIDAD_SERIE = 115200;/)
   assert.ok(/^[\x09\x0a\x20-\x7e]*$/.test(MAIN), "el C++ generado es ASCII")
+  // G-02: los números con nombre y su derivación; un solo centinela 255 en todo el programa.
+  assert.match(MAIN, /^static const uint16_t ARMAZON_JSON_BYTES = 69;/m)
+  assert.equal(Number(MAIN.match(/ARMAZON_JSON_BYTES = (\d+);/)[1]), P.serializarRespuesta(P.respuestaDeError({ codigo: "CAMPO_DESCONOCIDO", comando: "", campo: "" })).length)
+  assert.equal(Number(MAIN.match(/HOLA_MAXIMO_BYTES = (\d+);/)[1]), holaV1.length, "sin wifi el hola más largo es el hola")
+  assert.match(MAIN, /TAMANO_SALIDA = \(PEOR_ERROR_BYTES > HOLA_MAXIMO_BYTES \? PEOR_ERROR_BYTES : HOLA_MAXIMO_BYTES\) \+ 1;/)
+  assert.match(MAIN, /ENTERO_MAXIMO_SIN_ULTIMO_DIGITO = 429496729;/)
+  assert.match(MAIN, /ULTIMO_DIGITO_DEL_ENTERO_MAXIMO = 5;/)
+  assert.match(MAIN, /DIGITOS_DEL_ENTERO_MAXIMO = 10;/)
+  assert.equal((sinComentarios(MAIN).match(/\b429496729\b/g) ?? []).length, 1, "el 429496729 aparece una sola vez: en su definición con nombre")
+  assert.doesNotMatch(sinComentarios(MAIN), /digitos\[10\]|\+ 128\b|largo > 10\b/, "ningún número mágico suelto")
+  assert.equal((sinComentarios(MAIN).match(/= 255;/g) ?? []).length, 2, "255 aparece como SIN_INDICE y como PWM_DUTY_MAXIMO (2^8 - 1); SIN_CANAL es un alias")
+  assert.match(MAIN, /^static const uint8_t SIN_CANAL = SIN_INDICE;/m)
+  // L-02/L-03/K-02: el C++ cita "sec. N" y los ids V4-x; el TS cita "§N" y no dice "decisión por chat".
+  for (const fuente of ["opencode/codegen/runtime.ts", "opencode/codegen/runtime-cpp.ts", "opencode/vivo/pagina-portal.ts"]) {
+    const ts = readFileSync(join(REPO, fuente), "utf8")
+    assert.match(ts.split("\n")[0], /^\/\/ Modo Vivo \(protocolo v1, slices V1–V4\)/, `${fuente}: cabecera`)
+    const soloTs = ts.split("\n").filter((l) => !/l\.push\(|valor: \[/.test(l)).join("\n")
+    assert.doesNotMatch(soloTs, /\bsec\. \d/, `${fuente}: "sec." sólo en las líneas C++`)
+    assert.doesNotMatch(ts, /por chat|decisi[oó]n de Alejandro/, `${fuente}: se cita el id de §9, no el chat`)
+  }
+  assert.doesNotMatch(MAIN, /§/, "el C++ es ASCII: cita sec.")
 })
 
 const PROHIBIDOS_EN_CPP = [/\bString\b/, /std::/, /\bnew /, /\bmalloc\b/, /\bfree\(/, /\bdelay\s*\(/]
@@ -485,12 +573,29 @@ test("B1 las tablas de política (§5) del C++ coinciden con nucleo/placas.ts, l
   assert.deepEqual(tablaDelCpp("PINES_PROHIBIDOS"), [1, 3, 6, 7, 8, 9, 10, 11])
   assert.deepEqual(tablaDelCpp("PINES_SIN_SALIDA"), [34, 35, 36, 39])
   assert.deepEqual(tablaDelCpp("PINES_CON_ADC"), [32, 33, 34, 35, 36, 39])
+  // V4-6: la tabla de los sin pull-up sale de las capacidades (driver/gpio.h:174: pull-up sólo con entrada Y salida),
+  // no de números escritos; en la ESP32 coincide con la restricción soloEntrada del registro.
+  assert.deepEqual(tablaDelCpp("PINES_SIN_PULL_UP"), numeros((p) => p.restricciones.includes("soloEntrada")))
+  assert.deepEqual(tablaDelCpp("PINES_SIN_PULL_UP"), numeros((p) => !(p.capacidades.entradaDigital && p.capacidades.salidaDigital)))
+  assert.deepEqual(tablaDelCpp("PINES_SIN_PULL_UP"), [34, 35, 36, 39])
+  assert.doesNotMatch(sinComentariosTs(readFileSync(join(REPO, "opencode/codegen/runtime.ts"), "utf8")), /\b3[4569]\b/, "runtime.ts no escribe 34..39 (las citas en comentarios no cuentan)")
 })
 
-test("B2 CAMPOS_POR_COMANDO es la tabla del parser de referencia: cada campo falta en el mismo orden que en protocolo.ts", () => {
+test("B2 K-01: el C++ emitido reclama los campos faltantes en el orden de protocolo.ts::CAMPOS_POR_COMANDO (la única tabla; runtime.ts ya no tiene copia)", () => {
+  // La tabla que el C++ lleva compilada, leída del C++: `if (comando == COMANDO_X && posicion == i) return CAMPO_Y;`
+  const delCpp = {}
+  for (const [, comando, posicion, campo] of MAIN.matchAll(/^  if \(comando == COMANDO_(\w+) && posicion == (\d+)\) return CAMPO_(\w+);$/gm)) {
+    ;(delCpp[comando] ??= [])[Number(posicion)] = campo
+  }
+  const esperada = Object.fromEntries(Object.entries(P.CAMPOS_POR_COMANDO).map(([c, campos]) => [identificador(c), campos.map(identificador)]).filter(([, campos]) => campos.length > 0))
+  assert.deepEqual(delCpp, esperada, "misma tabla, mismo orden")
+  const fuente = readFileSync(join(REPO, "opencode/codegen/runtime.ts"), "utf8")
+  assert.doesNotMatch(fuente, /CAMPOS_POR_COMANDO\s*[:=]/, "sin copia de la tabla en runtime.ts")
+  assert.match(fuente, /import \{[^}]*\bCAMPOS_POR_COMANDO\b[^}]*\} from "\.\.\/vivo\/protocolo\.ts"/, "se importa la de protocolo.ts")
+  // Y la tabla importada es la que el parser de referencia aplica.
   const ejemplo = { pin: "23", modo: "salida", nivel: "alto", porcentaje: "50" }
   for (const comando of P.COMANDOS_V1) {
-    const campos = CAMPOS_POR_COMANDO[comando]
+    const campos = P.CAMPOS_POR_COMANDO[comando]
     const completa = [comando, ...campos.map((c) => `${c}=${ejemplo[c]}`)].join(" ")
     assert.equal(P.parsearLineaDeComando(completa).ok, true, completa)
     for (let i = 0; i < campos.length; i++) {
@@ -500,7 +605,7 @@ test("B2 CAMPOS_POR_COMANDO es la tabla del parser de referencia: cada campo fal
     const conExtra = `${completa} extra=1`
     assert.equal(P.parsearLineaDeComando(conExtra).error.codigo, "CAMPO_DESCONOCIDO")
   }
-  assert.deepEqual(Object.keys(CAMPOS_POR_COMANDO).sort(), [...P.COMANDOS_V1])
+  assert.deepEqual(Object.keys(P.CAMPOS_POR_COMANDO).sort(), [...P.COMANDOS_V1])
 })
 
 test("B3 una placa que no cabe en V1 no genera un runtime 'más o menos': el UNO (bancos D y A) se rechaza", () => {
@@ -516,7 +621,7 @@ test("C1 CASOS_DORADOS: el núcleo en C++ recién arrancado reproduce cada caso 
   const nucleo = ejecutarNucleo()
   const simulador = crearRuntimeSimulado()
   assert.deepEqual(nucleo.arrancar(), simulador.arrancar(), "reinicio (encendido) y después hola")
-  assert.equal(CASOS_DORADOS.length, 26)
+  assert.equal(CASOS_DORADOS.length, 33, "26 de V1 + 7 de V4-6 (pull-up en sólo entrada; modo del pin tras analogico.leer)")
   for (const caso of CASOS_DORADOS) assert.deepEqual(nucleo.procesar(caso.entrada), caso.salida, JSON.stringify(caso.entrada))
 })
 
@@ -641,6 +746,26 @@ const CORPUS = [
   "digital.leer pin=4",
   "digital.leer pin=25",
   "digital.leer pin=26",
+  // V4-6 (A2 A1): escribir → leer analógico → escribir → releer, en un pin que es salida y ADC a la vez (33); y
+  // PWM → analógico → PWM → releer; y pull-up → analógico → leer digital en uno de sólo entrada.
+  "digital.escribir pin=33 nivel=alto",
+  "digital.leer pin=33",
+  "analogico.leer pin=33",
+  "digital.leer pin=33",
+  "digital.escribir pin=33 nivel=alto",
+  "digital.leer pin=33",
+  "pwm.escribir pin=33 porcentaje=40",
+  "analogico.leer pin=33",
+  "digital.leer pin=33",
+  "pwm.escribir pin=33 porcentaje=100",
+  "digital.leer pin=33",
+  "pin.modo pin=35 modo=entradaPullUp",
+  "pin.modo pin=35 modo=entrada",
+  "analogico.leer pin=35",
+  "digital.leer pin=35",
+  "pin.modo pin=36 modo=entradaPullUp",
+  "pin.modo pin=39 modo=entradaPullUp",
+  "pin.modo pin=32 modo=entradaPullUp",
   // Nombres y valores largos: salen enteros en el error.
   `${"a".repeat(150)} pin=1`,
   `x ${"b".repeat(150)}=1`,
@@ -677,6 +802,8 @@ test("C2 diferencial: ante cada línea del corpus, el núcleo en C++ da exactame
   assert.deepEqual([...codigos].sort(), [...P.CODIGOS_DE_ERROR].sort(), "el corpus cubre los diez códigos del contrato")
   // La sección "con estado" del corpus cambió modos de verdad en el núcleo.
   assert.equal(nucleo.g_modo[4], MODO_SALIDA)
+  assert.equal(nucleo.g_modo[33], MODO_SALIDA, "el pwm 100 % lo dejó como salida")
+  assert.equal(nucleo.g_modo[35], MODO_ENTRADA, "tras analogico.leer, el digital.leer lo volvió a configurar como entrada")
 })
 
 test("C3 el núcleo le pide al hardware exactamente lo que el contrato dice (§2): salida si hace falta, entrada por defecto, PWM 0/100 como niveles", () => {
@@ -698,13 +825,25 @@ test("C3 el núcleo le pide al hardware exactamente lo que el contrato dice (§2
   nucleo.procesar("digital.leer pin=40")
   nucleo.procesar("analogico.leer pin=4")
   nucleo.procesar("pin.modo pin=34 modo=salida")
-  assert.deepEqual(nucleo.llamadas, [], "un comando rechazado por política no toca el hardware")
+  nucleo.procesar("pin.modo pin=34 modo=entradaPullUp")
+  assert.deepEqual(nucleo.llamadas, [], "un comando rechazado por política no toca el hardware (tampoco el pull-up en un pin sin pull-up, V4-6)")
   nucleo.procesar("analogico.leer pin=34")
-  assert.deepEqual(nucleo.llamadas, [["leerAnalogico", 34]], "analogico.leer no cambia el modo del pin")
+  assert.deepEqual(nucleo.llamadas, [["leerAnalogico", 34]], "analogico.leer no pide pinModo: el core ya deja el pin en ANALOG")
+  assert.equal(nucleo.g_modo[34], 0, "V4-6: tras analogico.leer el pin queda SIN configurar")
   nucleo.fijarAnalogico(34, 4095)
   assert.deepEqual(nucleo.procesar("analogico.leer pin=34"), ['{"crudo":4095,"pin":34,"tipo":"lectura"}'])
   nucleo.fijarEntrada(32, 1)
   assert.deepEqual(nucleo.procesar("digital.leer pin=32"), ['{"nivel":"alto","pin":32,"tipo":"lectura"}'])
+  // V4-6: escribir → analógico → escribir: la segunda escritura vuelve a pedir pinModo(salida); antes no lo hacía.
+  nucleo.llamadas.length = 0
+  nucleo.procesar("digital.escribir pin=33 nivel=alto")
+  nucleo.procesar("analogico.leer pin=33")
+  nucleo.procesar("digital.escribir pin=33 nivel=alto")
+  assert.deepEqual(nucleo.llamadas, [["pinModo", 33, MODO_SALIDA], ["escribirDigital", 33, 1], ["leerAnalogico", 33], ["pinModo", 33, MODO_SALIDA], ["escribirDigital", 33, 1]])
+  nucleo.llamadas.length = 0
+  nucleo.procesar("analogico.leer pin=33")
+  nucleo.procesar("digital.leer pin=33")
+  assert.deepEqual(nucleo.llamadas, [["leerAnalogico", 33], ["pinModo", 33, MODO_ENTRADA], ["leerDigital", 33]], "tras analógico, la lectura digital configura entrada")
   // Sin canales de PWM libres: PIN_SIN_CAPACIDAD, nunca un `ok` falso.
   const sinCanales = ejecutarNucleo(MAIN, { canalesPwm: 1 })
   assert.deepEqual(sinCanales.procesar("pwm.escribir pin=18 porcentaje=50"), ['{"comando":"pwm.escribir","pin":18,"tipo":"ok"}'])
@@ -824,6 +963,13 @@ test("D3 LEDC: un canal por pin a 5 kHz y 8 bits, duty redondeado, 0/100 % suelt
   prog.loop()
   assert.deepEqual(ll(), [["ledcSetup", 0, 5000, 8], ["ledcAttachPin", 18, 0], ["ledcWrite", 0, 26], ["ledcDetachPin", 18], ["pinMode", 18, 0x03], ["pinMode", 18, 0x05]], "pin.modo sobre un pin con PWM lo suelta antes de configurarlo")
   prog.leerSalida()
+  // V4-6: una lectura analógica sobre un pin con PWM suelta el canal (el pad queda en ANALOG, el driver apagado);
+  // el PWM siguiente vuelve a enganchar. GPIO33 es salida y ADC a la vez.
+  ll = desde()
+  prog.enviar("pwm.escribir pin=33 porcentaje=10\nanalogico.leer pin=33\npwm.escribir pin=33 porcentaje=20\n")
+  prog.loop()
+  assert.deepEqual(ll(), [["ledcSetup", 0, 5000, 8], ["ledcAttachPin", 33, 0], ["ledcWrite", 0, 26], ["ledcDetachPin", 33], ["pinMode", 33, 0x03], ["analogRead", 33], ["ledcSetup", 0, 5000, 8], ["ledcAttachPin", 33, 0], ["ledcWrite", 0, 51]])
+  assert.deepEqual(prog.leerSalida(), ['{"comando":"pwm.escribir","pin":33,"tipo":"ok"}', '{"crudo":0,"pin":33,"tipo":"lectura"}', '{"comando":"pwm.escribir","pin":33,"tipo":"ok"}'])
   // 16 canales: los pines de salida de la placa son más que eso; el 17.º PWM simultáneo se rechaza.
   const salidas = esp32.pines.filter((p) => p.capacidades.pwm && !pinesProhibidos(esp32).includes(p.numero)).map((p) => p.numero)
   assert.ok(salidas.length > 16, `la placa tiene ${salidas.length} pines con PWM`)
@@ -879,6 +1025,55 @@ test("D4 pines y lecturas por Arduino: INPUT por defecto en digital.leer, INPUT_
   ])
 })
 
+test("D5 V4-6 en el Arduino falso: tras analogRead el pin queda en ANALOG y digitalWrite no se ve; el runtime reconfigura y la escritura siguiente se ve; entradaPullUp en 34-39 se rechaza; y el falso VE el bug si vuelve", () => {
+  const prog = ejecutarPrograma(MAIN)
+  prog.setup()
+  prog.leerSalida()
+  prog.enviar(["digital.escribir pin=32 nivel=alto", "digital.leer pin=32", "analogico.leer pin=32", "digital.leer pin=32", "digital.escribir pin=32 nivel=alto", "digital.leer pin=32"].join("\n") + "\n")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), [
+    '{"comando":"digital.escribir","pin":32,"tipo":"ok"}',
+    '{"nivel":"alto","pin":32,"tipo":"lectura"}',
+    '{"crudo":0,"pin":32,"tipo":"lectura"}',
+    '{"nivel":"bajo","pin":32,"tipo":"lectura"}',
+    '{"comando":"digital.escribir","pin":32,"tipo":"ok"}',
+    '{"nivel":"alto","pin":32,"tipo":"lectura"}',
+  ])
+  assert.equal(prog.placa.modos.get(32), GPIO.OUTPUT, "el pad terminó como salida de verdad")
+  // Los mismos bytes que el simulador de referencia (los casos dorados de V4-6, sobre el programa entero).
+  const simulador = crearRuntimeSimulado()
+  simulador.arrancar()
+  for (const caso of CASOS_DORADOS.slice(26)) {
+    prog.enviar(`${caso.entrada}\n`)
+    prog.loop()
+    assert.deepEqual(prog.leerSalida(), simulador.procesar(caso.entrada), caso.entrada)
+    assert.deepEqual(prog.leerSalida(), [], "nada de más")
+  }
+  // Pull-up en un pin de sólo entrada: PIN_SIN_CAPACIDAD y ningún pinMode (antes: ok con el pin flotando).
+  const n = prog.placa.llamadas.length
+  prog.enviar("pin.modo pin=36 modo=entradaPullUp\npin.modo pin=36 modo=entrada\ndigital.leer pin=36\n")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), ['{"codigo":"PIN_SIN_CAPACIDAD","comando":"pin.modo","pin":36,"tipo":"error"}', '{"comando":"pin.modo","pin":36,"tipo":"ok"}', '{"nivel":"bajo","pin":36,"tipo":"lectura"}'])
+  assert.deepEqual(prog.placa.llamadas.slice(n), [["pinMode", 36, GPIO.INPUT], ["digitalRead", 36]])
+  // El Arduino falso se prueba a sí mismo: con el bug de vuelta (el núcleo no olvida el modo tras analogico.leer) la
+  // última lectura da "bajo" (el pad sigue en ANALOG, digitalWrite inerte); y un pull-up pedido en 34-39 lee 0.
+  const conBug = MAIN.replace("  g_modo[pin] = MODO_SIN_CONFIGURAR;\n", "")
+  assert.notEqual(conBug, MAIN, "el mutante existe")
+  const mutante = ejecutarPrograma(conBug)
+  mutante.setup()
+  mutante.leerSalida()
+  mutante.enviar("digital.escribir pin=32 nivel=alto\nanalogico.leer pin=32\ndigital.escribir pin=32 nivel=alto\ndigital.leer pin=32\n")
+  mutante.loop()
+  assert.equal(mutante.leerSalida().at(-1), '{"nivel":"bajo","pin":32,"tipo":"lectura"}', "con el bug, el ok es falso y el falso lo ve")
+  assert.equal(mutante.placa.modos.get(32), GPIO.ANALOG)
+  const sinPullUp = ejecutarPrograma(MAIN.replace("if (necesita == NECESITA_ENTRADA_CON_PULL_UP && (nucleo_pinSinEntrada(pin) || nucleo_pinSinPullUp(pin)))", "if (false)"))
+  sinPullUp.setup()
+  sinPullUp.leerSalida()
+  sinPullUp.enviar("pin.modo pin=36 modo=entradaPullUp\ndigital.leer pin=36\npin.modo pin=4 modo=entradaPullUp\ndigital.leer pin=4\n")
+  sinPullUp.loop()
+  assert.deepEqual(sinPullUp.leerSalida(), ['{"comando":"pin.modo","pin":36,"tipo":"ok"}', '{"nivel":"bajo","pin":36,"tipo":"lectura"}', '{"comando":"pin.modo","pin":4,"tipo":"ok"}', '{"nivel":"alto","pin":4,"tipo":"lectura"}'], "sin la guardia: ok falso en 36 (flota, lee bajo); en 4 el pull-up sí sube")
+})
+
 // ════════════════════════════════════════════════════════════════════════════════════
 // F — V4: red propia, DNS cautivo, HTTP y página
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -886,8 +1081,8 @@ test("D4 pines y lecturas por Arduino: INPUT por defecto en digital.leer, INPUT_
 const holaV1 = CASOS_DORADOS[0].salida[0]
 const holaConWifi = (wifi = WIFI_DE_PRUEBA) => P.serializarRespuesta({ tipo: "hola", runtime: RUNTIME_VERSION, protocolo: 1, placa: esp32.id, comandos: [...P.COMANDOS_V1], protocolos: [], wifi })
 
-test("F1 forma: el runtime de sólo serie no cambia ni un byte; con wifi el hash está fijado, hay tres capas e includes del core; la clave es \"\" u 8 dígitos", () => {
-  assert.equal(sha(MAIN), "c7b8a9b625214f1eecd0c79e69149354c8bae0f40782b38ceeb30b04dbc2f160", "el hash de V1 (el del E2E físico) no se mueve")
+test("F1 forma: el runtime de sólo serie no cambia ni un byte; con wifi el hash está fijado, hay tres capas e includes del core; la clave es \"\" u 8 dígitos; canal y diagnóstico sólo con su opción", () => {
+  assert.equal(sha(MAIN), "47da489bd082f63376435db4c2fc98ef55723df968549fcee88dffee9155b240", "el hash de V1 (sin wifi) no se mueve con la opción")
   assert.doesNotMatch(MAIN, /WiFi|WebServer|DNSServer|CAPA 3|String|wifi|ssid/i, "sin la opción no hay rastro de la red")
   assert.equal(INI_WIFI, INI, "el platformio.ini es el mismo: las librerías son del core, sin lib_deps")
   assert.deepEqual(generarRuntime(esp32, { wifi: { clave: "" }, pagina: PAGINA_DE_PRUEBA }), generadoWifi, "determinista")
@@ -898,18 +1093,37 @@ test("F1 forma: el runtime de sólo serie no cambia ni un byte; con wifi el hash
   assert.ok(/^[\x09\x0a\x20-\x7e]*$/.test(MAIN_WIFI), "ASCII")
   assert.doesNotMatch(MAIN_WIFI, /\d{4}-\d{2}-\d{2}T/, "sin marcas temporales")
   // Hashes fijados: red abierta (el default) y con clave. Cambiarlos es a propósito y el commit lo dice.
-  assert.equal(sha(MAIN_WIFI), "2fd2cced1ef8e6ec3089a5c47da39f664bed5f73b9297b1bb1c4570fdb76fa58")
-  assert.equal(sha(MAIN_WIFI_CON_CLAVE), "dd1893c70c1ae5e9a21269e54cd08ba5c1be1bb947f30dc0d339fb5b5e1ca799")
-  assert.equal(sha(MAIN_WIFI_SSID_FIJO), "f5ecf35d21cac35f9ca8ca351bd26c33179958a5d5abac8b3b5f574a7788aa96")
+  assert.equal(sha(MAIN_WIFI), "62d0f177ff8ece8146ac9e3585c4d46229b38bce555e0c4ecf629fd7d9b1e279")
+  assert.equal(sha(MAIN_WIFI_CON_CLAVE), "f2929a24d4b98f14eaf9ad49f4893bc55c2ca2939a0e30d509beee6071e820bf")
+  assert.equal(sha(MAIN_WIFI_SSID_FIJO), "fade204de4bf210617dc565e356fbb2c229449e7d569bdbe774e587f55ac643b")
   assert.ok(MAIN_WIFI.includes('static const char TEXTO_WIFI_CLAVE[] = "";') && MAIN_WIFI.includes("WiFi.softAP(ssid))"), "abierta: clave vacía en el hola y softAP(ssid) solo (passphrase NULL por defecto, WiFiAP.h:40)")
   assert.ok(MAIN_WIFI_CON_CLAVE.includes(`static const char TEXTO_WIFI_CLAVE[] = "${CLAVE_WIFI}";`) && MAIN_WIFI_CON_CLAVE.includes("WiFi.softAP(ssid, TEXTO_WIFI_CLAVE))"), "con clave: la clave va al softAP, sin canal")
-  // V4-3: nunca se pasa un canal a softAP ni se elige por MAC (E2E 2026-10-13: con canal 6/11 la red no se veía).
+  // V4-3: nunca se pasa un canal a softAP ni se elige por MAC. G-04: en el C++ queda UNA línea con el id; la historia
+  // del E2E (con canal 6/11 la red no se veía) vive en runtime-cpp.ts, no en cada main.cpp.
   for (const main of [MAIN_WIFI, MAIN_WIFI_CON_CLAVE, MAIN_WIFI_SSID_FIJO]) {
     const codigo = sinComentarios(main)
     assert.doesNotMatch(codigo, /WiFi\.softAP\([^)]*,[^)]*,/, "softAP con tres argumentos (canal explícito)")
-    assert.doesNotMatch(codigo, /CANALES_WIFI|g_canalWifi|% 3/, "sin elección de canal por MAC")
-    assert.ok(main.includes("Decision V4-3"), "la decisión está anotada en el C++ (en un comentario)")
+    assert.doesNotMatch(codigo, /CANALES_WIFI|g_canalWifi|% 3|esp_wifi_set_channel|CANAL_WIFI/, "sin elección de canal, sin canal explícito")
+    assert.equal((main.match(/Decision V4-3/g) ?? []).length, 1, "la decisión está anotada en el C++, en una sola línea")
+    assert.doesNotMatch(main, /no se veia|6 u 11/, "la historia del E2E no va en el C++")
   }
+  assert.match(readFileSync(join(REPO, "opencode/codegen/runtime-cpp.ts"), "utf8"), /Historia del E2E físico del 2026-10-13[\s\S]*canal explícito 6 u 11[\s\S]*WiFiAP\.cpp:152/, "la historia, con la cita de H7, está en el TS")
+  // Opción `canal` (experimento de V4-3): esp_wifi_set_channel DESPUÉS de softAP, con su include; 1..13 y nada más.
+  const conCanal = generarRuntime(esp32, { wifi: { clave: "", canal: 6 }, pagina: PAGINA_DE_PRUEBA }).archivos["src/main.cpp"]
+  assert.ok(conCanal.includes("#include <esp_wifi.h>") && conCanal.includes("static const uint8_t CANAL_WIFI = 6;") && conCanal.includes("esp_wifi_set_channel(CANAL_WIFI, WIFI_SECOND_CHAN_NONE);"))
+  assert.ok(conCanal.indexOf("WiFi.softAP(") < conCanal.indexOf("esp_wifi_set_channel(") && conCanal.includes("esp_wifi.h:615"), "después de softAP, con la cita")
+  assert.doesNotMatch(sinComentarios(conCanal), /WiFi\.softAP\([^)]*,[^)]*,/, "el canal no va en softAP (H7: wifi_config_t sin memset)")
+  assert.ok(!MAIN_WIFI.includes("<esp_wifi.h>"), "sin la opción, sin el include")
+  assert.equal(CANAL_WIFI_MINIMO, 1)
+  assert.equal(CANAL_WIFI_MAXIMO, 13)
+  for (const canal of [0, 14, 1.5, "6", -1, null]) assert.throws(() => generarRuntime(esp32, { wifi: { clave: "", canal }, pagina: PAGINA_DE_PRUEBA }), /canal WiFi/, JSON.stringify(canal))
+  for (const canal of [1, 6, 11, 13]) assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "", canal }, pagina: PAGINA_DE_PRUEBA }))
+  // Opción `diagnostico`: sin ella, ni la palabra; con ella, la función y su llamada en loop().
+  assert.doesNotMatch(MAIN_WIFI, /diagnostic|heapLibre|stackLibre|getFreeHeap|uxTaskGetStackHighWaterMark/i, "sin la opción no se compila nada del diagnóstico")
+  const conDiagnostico = generarRuntime(esp32, { wifi: { clave: "", diagnostico: true }, pagina: PAGINA_DE_PRUEBA }).archivos["src/main.cpp"]
+  assert.ok(conDiagnostico.includes("static void portal_diagnosticar() {") && seccionTransporte(conDiagnostico).includes("  portal_diagnosticar();"))
+  assert.throws(() => generarRuntime(esp32, { wifi: { clave: "", diagnostico: "si" }, pagina: PAGINA_DE_PRUEBA }), /true o false/)
+  assert.deepEqual(generarRuntime(esp32, { wifi: { clave: "", diagnostico: false }, pagina: PAGINA_DE_PRUEBA }), generadoWifi, "false = ausente")
   for (const clave of ["1234567", "123456789", "abcdefgh", "4821390 ", " 48213907", "4821-907", 48213907, undefined, null]) {
     assert.throws(() => generarRuntime(esp32, { wifi: { clave }, pagina: PAGINA_DE_PRUEBA }), /8 digitos/, JSON.stringify(clave))
   }
@@ -918,19 +1132,27 @@ test("F1 forma: el runtime de sólo serie no cambia ni un byte; con wifi el hash
   const paginasMalas = [
     [con({ salidas: [6] }), /prohibido/, "GPIO6 (flash) como salida"],
     [con({ entradasDigitales: [1] }), /prohibido/, "GPIO1 (UART0) como entrada"],
-    [con({ salidasExtra: [34] }), /no puede ser salida/, "GPIO34 (sólo entrada) como salida"],
+    [con({ salidasExtra: [35] }), /no puede ser salida/, "GPIO35 (sólo entrada) como salida"],
+    [con({ salidasExtra: [34] }), /GPIO34 esta en dos listas/, "GPIO34 ya está como analógica: la forma gana antes que la política"],
     [con({ entradasAnalogicas: [2] }), /no puede ser entrada analogica/, "GPIO2 (sin ADC) como analógica"],
     [con({ salidas: [40] }), /no existe/, "GPIO40 no existe"],
     [con({ entradasDigitales: [4, 4] }), /repite/, "repetido en su rol"],
-    [con({ salidas: [18], salidasExtra: [18] }), /salidas y en salidasExtra/, "el mismo en las dos listas de salidas"],
+    [con({ salidas: [18], salidasExtra: [18] }), /dos listas a la vez \(salidas y salidasExtra\)/, "el mismo en las dos listas de salidas"],
     [con({ salidas: "18" }), /lista de numeros/, "no es una lista"],
-    [con({ salidas: [2.5] }), /no existe/, "no entero"],
+    [con({ salidas: [2.5] }), /lista de numeros/, "no entero (forma: la página)"],
     [{ salidas: [18] }, /lista de numeros/, "faltan listas"],
     [null, /obligatoria/, "null"],
+    [con({ salidasConAviso: [35] }), /salidasConAviso: GPIO35 no puede ser salida/, "V4-6c: los con aviso también son salidas"],
+    [con({ salidasConAviso: [18] }), /GPIO18 esta en dos listas/, "un pin en dos roles"],
   ]
   for (const [pagina, forma, que] of paginasMalas) assert.throws(() => generarRuntime(esp32, { wifi: { clave: "" }, pagina }), forma, que)
   assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "" }, pagina: { salidas: [], salidasExtra: [], entradasDigitales: [], entradasAnalogicas: [] } }), "listas vacías: válidas")
   assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "" }, pagina: PAGINA_E2E }))
+  assert.doesNotThrow(() => generarRuntime(esp32, { wifi: { clave: "" }, pagina: { ...PAGINA_E2E, salidasConAviso: [0, 12, 15] } }), "V4-6c: strapping con aviso")
+  // C-02: la validación de clave/SSID/página vive UNA vez, en redDelRuntime; runtime-cpp.ts no la repite.
+  const cppTs = sinComentariosTs(readFileSync(join(REPO, "opencode/codegen/runtime-cpp.ts"), "utf8"))
+  assert.doesNotMatch(cppTs, /\[0-9\]\{8\}|esSsidValido/, "runtime-cpp.ts no vuelve a validar clave ni SSID")
+  assert.equal((sinComentariosTs(readFileSync(join(REPO, "opencode/codegen/runtime.ts"), "utf8")).match(/obligatoria/g) ?? []).length, 1, "K-05: un solo chequeo de pagina")
   // SSID fijo: va tal cual a softAP y a nucleo_fijarSsid; la MAC no se lee (ya no arma el nombre ni elige canal).
   assert.ok(MAIN_WIFI_SSID_FIJO.includes(`static const char SSID_FIJO[] = "${SSID_FIJO}";`) && MAIN_WIFI_SSID_FIJO.includes("WiFi.softAP(SSID_FIJO))") && MAIN_WIFI_SSID_FIJO.includes("nucleo_fijarSsid(SSID_FIJO);"))
   assert.ok(!MAIN_WIFI_SSID_FIJO.includes("DIGITOS_HEX") && !MAIN_WIFI_SSID_FIJO.includes("PREFIJO_SSID") && !sinComentarios(MAIN_WIFI_SSID_FIJO).includes("softAPmacAddress("))
@@ -974,26 +1196,54 @@ test("F2 el núcleo traducido: sin SSID fijado el hola es el de V1; con el SSID 
   }
   // El hola más largo posible (SSID de 32 y clave de 8) entra en g_salida con margen: nucleo_emitirByte recorta en
   // TAMANO_SALIDA, así que un desborde es imposible, pero un hola recortado sería un JSON roto y tampoco se quiere.
-  const tamanoSalida = Number(MAIN_WIFI_CON_CLAVE.match(/TAMANO_SALIDA = (\d+);/)[1])
+  // G-02: TAMANO_SALIDA se deriva (el mayor entre el peor error y el hola mas largo, mas el 0 final); el hola mas
+  // largo de verdad mide exactamente HOLA_MAXIMO_BYTES y entra entero.
+  const constante = (cpp, nombre) => Number(cpp.match(new RegExp(`${nombre} = (\\d+);`))[1])
+  const holaMaximoBytes = constante(MAIN_WIFI_CON_CLAVE, "HOLA_MAXIMO_BYTES")
+  const tamanoSalida = Math.max(P.LIMITE_LINEA_BYTES + constante(MAIN_WIFI_CON_CLAVE, "ARMAZON_JSON_BYTES"), holaMaximoBytes) + 1
   const masLargo = ejecutarNucleo(MAIN_WIFI_CON_CLAVE)
   masLargo.fijarSsid("x".repeat(P.LARGO_MAXIMO_SSID))
   const lineaMasLarga = masLargo.procesar("hola")[0]
   assert.equal(lineaMasLarga, holaConWifi({ ssid: "x".repeat(P.LARGO_MAXIMO_SSID), clave: CLAVE_WIFI, ip: IP_TEXTO }))
-  assert.ok(lineaMasLarga.length + 1 < tamanoSalida, `hola de ${lineaMasLarga.length} bytes contra TAMANO_SALIDA = ${tamanoSalida}`)
+  assert.equal(lineaMasLarga.length, holaMaximoBytes, "la derivación del C++ es exacta")
+  assert.ok(lineaMasLarga.length + 1 <= tamanoSalida, `hola de ${lineaMasLarga.length} bytes contra TAMANO_SALIDA = ${tamanoSalida}`)
+  assert.ok(holaMaximoBytes > constante(MAIN_WIFI, "HOLA_MAXIMO_BYTES") && constante(MAIN_WIFI, "HOLA_MAXIMO_BYTES") > constante(MAIN, "HOLA_MAXIMO_BYTES"), "con clave > abierta > sin wifi")
+  // Y el peor error de verdad (CAMPO_DESCONOCIDO de un comando conocido de 4 bytes con un campo que llena la línea;
+  // con un comando de 1 byte ganaría COMANDO_DESCONOCIDO, que es más corto) también entra entero.
+  const campoMaximo = "c".repeat(P.LIMITE_LINEA_BYTES - "\n".length - "ping ".length - "=1".length)
+  const peor = `ping ${campoMaximo}=1`
+  assert.equal(Buffer.byteLength(peor) + 1, P.LIMITE_LINEA_BYTES)
+  const [respuestaPeor] = masLargo.procesar(peor)
+  assert.equal(respuestaPeor, P.serializarRespuesta({ tipo: "error", codigo: "CAMPO_DESCONOCIDO", comando: "ping", campo: campoMaximo }))
+  assert.ok(respuestaPeor.length + 1 <= tamanoSalida)
 })
 
 test("F3 al arrancar con wifi: modo AP, SSID = tecnia- + 4 hex de la MAC del AP en minúscula, softAP SIN canal (V4-3) y softAPConfig, DNS cautivo, rutas, y el hola por serie anuncia la red", () => {
   const prog = ejecutarPrograma(MAIN_WIFI)
   prog.setup()
   const ll = prog.placa.llamadas
-  const desde = ll.findIndex((x) => x[0] === "WiFi.mode")
-  assert.deepEqual(ll.slice(desde, desde + 5), [
+  const desde = ll.findIndex((x) => x[0] === "WiFi.persistent")
+  assert.deepEqual(ll.slice(desde, desde + 7), [
+    ["WiFi.persistent", false], // V4-4 / H7: antes de mode(): nada en la NVS
     ["WiFi.mode", WIFI_MODE.AP],
     ["WiFi.softAPmacAddress"],
-    ["WiFi.softAP", SSID_DE_PRUEBA, null, undefined],
+    ["WiFi.softAP", SSID_DE_PRUEBA, null, undefined], // V4-3: sin canal
     ["WiFi.softAPConfig", IP_TEXTO, IP_TEXTO, "255.255.255.0"],
+    ["WiFi.setTxPower", WIFI_POWER_11dBm], // V4-10: después de softAP (la API exige la red iniciada)
     ["dns.start", 53, "*", IP_TEXTO],
   ])
+  assert.equal(prog.placa.persistente, false)
+  assert.equal(prog.placa.potencia, WIFI_POWER_11dBm, "setTxPower devolvió true: el AP ya estaba iniciado")
+  assert.ok(!ll.some((x) => x[0] === "esp_wifi_set_channel"), "sin la opción canal no se fija ninguno")
+  assert.equal(prog.placa.canalWifi, CANAL_POR_DEFECTO)
+  // Con la opción canal: esp_wifi_set_channel después de softAP (con WiFi iniciado: no da ESP_ERR_WIFI_NOT_INIT).
+  const conCanal = ejecutarPrograma(generarRuntime(esp32, { wifi: { clave: "", canal: 11 }, pagina: PAGINA_DE_PRUEBA }).archivos["src/main.cpp"])
+  conCanal.setup()
+  const llc = conCanal.placa.llamadas
+  assert.ok(llc.findIndex((x) => x[0] === "WiFi.softAP") < llc.findIndex((x) => x[0] === "esp_wifi_set_channel"), "después de softAP")
+  assert.deepEqual(llc.find((x) => x[0] === "esp_wifi_set_channel"), ["esp_wifi_set_channel", 11, WIFI_SECOND_CHAN_NONE])
+  assert.equal(conCanal.placa.canalWifi, 11)
+  assert.equal(conCanal.leerSalida()[1], holaConWifi(), "el hola no cambia por el canal")
   assert.deepEqual(ll.at(-1), ["server.begin", 80])
   assert.ok(ll.findIndex((x) => x[0] === "Serial.begin") < desde, "el serie arranca antes que la red")
   assert.deepEqual(prog.leerSalida(), [P.serializarRespuesta({ tipo: "reinicio", causa: "encendido" }), holaConWifi()], "reinicio y después el hola con la red")
@@ -1042,6 +1292,7 @@ test("F4 HTTP: 302 al portal para rutas y hosts ajenos; GET / sirve la página; 
   prog.setup()
   prog.leerSalida()
   const UBICACION = ["Location", `http://${IP_TEXTO}/`, true]
+  const SIN_CACHE = ["Cache-Control", "no-store", false] // V4-10 (H8)
   // Portal cautivo: los chequeos de conectividad de Android, iOS y Windows, cualquier dominio, y GET /comando.
   for (const pedido of [
     { ruta: "/generate_204", host: "connectivitycheck.gstatic.com" },
@@ -1060,7 +1311,7 @@ test("F4 HTTP: 302 al portal para rutas y hosts ajenos; GET / sirve la página; 
   ]) {
     const r = prog.pedir(pedido)
     assert.equal(r.codigo, 302, JSON.stringify(pedido))
-    assert.deepEqual(r.encabezados, [UBICACION], JSON.stringify(pedido))
+    assert.deepEqual(r.encabezados, [UBICACION, SIN_CACHE], JSON.stringify(pedido))
     assert.equal(r.tipo, "text/plain")
   }
   // La página, con el Host nuestro (con o sin :80).
@@ -1069,7 +1320,7 @@ test("F4 HTTP: 302 al portal para rutas y hosts ajenos; GET / sirve la página; 
     assert.equal(r.codigo, 200)
     assert.equal(r.tipo, "text/html; charset=utf-8")
     assert.equal(r.cuerpo, paginaDe(MAIN_WIFI), "el cuerpo es exactamente el literal PAGINA")
-    assert.deepEqual(r.encabezados, [], "sin Location")
+    assert.deepEqual(r.encabezados, [SIN_CACHE], "sin Location; con Cache-Control: no-store (V4-10)")
   }
   // POST /comando: la misma línea que el serie, para las mismas entradas, sobre el MISMO núcleo (mismo estado).
   const porHttp = (cuerpo) => prog.pedir({ metodo: "POST", ruta: "/comando", cuerpo })
@@ -1203,10 +1454,10 @@ test("F6 guardias con wifi: capa 1 y capa 2 sin String; String sólo en la capa 
   assert.ok(js.includes(`const TEXTO_URL_PORTAL = cadena("http://${IP_TEXTO}/");`), "el // de la URL no se recortó como comentario")
   // Cada hecho de hardware de la capa 3 cita su fuente.
   const portal = seccionPortal(MAIN_WIFI)
-  for (const cita of ["WiFiAP.cpp:136-175", "WiFiAP.cpp:337-343", "WiFiAP.cpp:199-210", "WiFiAP.h:40", "WiFiAP.cpp:107", "WiFiGeneric.h:176", "WiFiType.h:34", "esp_wifi.h:709", "DNSServer.cpp:116", "DNSServer.cpp:76", "WebServer.h:140", "WebServer.h:142", "WebServer.h:103", "WebServer.h:107", "WebServer.cpp:355-367", "WebServer.cpp:385-417", "WebServer.cpp:450-463", "WebServer.cpp:539-549", "WebServer.cpp:623-625", "WebServer.cpp:275-342", "WebServer.cpp:279-281", "Parsing.cpp:199-221", "Parsing.cpp:213-217", "Parsing.cpp:171-172", "WString.h:204", "WString.h:87", "WString.h:240", "pgmspace.h:32", "IPAddress.h:49", "esp_wifi_types.h:260", "CaptivePortal:15-17"]) {
+  for (const cita of ["WiFiAP.cpp:136-175", "WiFiAP.cpp:337-343", "WiFiAP.cpp:199-210", "WiFiAP.h:40", "WiFiAP.cpp:107", "WiFiGeneric.h:176", "WiFiType.h:34", "esp_wifi.h:709", "DNSServer.cpp:116", "DNSServer.cpp:76", "WebServer.h:140", "WebServer.h:142", "WebServer.h:103", "WebServer.h:107", "WebServer.cpp:355-367", "WebServer.cpp:385-417", "WebServer.cpp:450-463", "WebServer.cpp:539-549", "WebServer.cpp:623-625", "WebServer.cpp:275-342", "WebServer.cpp:279-281", "Parsing.cpp:199-221", "Parsing.cpp:213-217", "Parsing.cpp:171-172", "WString.h:204", "WString.h:87", "WString.h:240", "pgmspace.h:32", "IPAddress.h:49", "esp_wifi_types.h:260", "CaptivePortal:15-17", "WiFiGeneric.cpp:1229-1232", "WiFiGeneric.cpp:763", "WiFiGeneric.cpp:693-695", "WiFiGeneric.cpp:1406-1412", "WiFiGeneric.h:186", "esp_wifi.h:935-952", "WiFiAP.h:40"]) {
     assert.ok(MAIN_WIFI.includes(cita), `cita ${cita}`)
   }
-  for (const api of ["WiFi.mode(WIFI_AP)", "WiFi.softAPmacAddress(mac)", "WiFi.softAPConfig(IP_PORTAL, IP_PORTAL, MASCARA_PORTAL)", "dnsServer.start(PUERTO_DNS, TEXTO_DOMINIO_TODOS, IP_PORTAL)", "server.on(TEXTO_RUTA_PAGINA, HTTP_GET, portal_pagina)", "server.on(TEXTO_RUTA_COMANDO, HTTP_POST, portal_comando)", "server.onNotFound(portal_redirigir)", "server.begin()", "dnsServer.processNextRequest()", "server.handleClient()", "server.send_P(200, TEXTO_TIPO_HTML, PAGINA)", "server.send(200, TEXTO_TIPO_JSON, g_salida)", "server.send(302, TEXTO_TIPO_TEXTO_PLANO, TEXTO_REDIRIGIENDO)", "server.sendHeader(TEXTO_ENCABEZADO_LOCATION, TEXTO_URL_PORTAL, true)", "nucleo_procesar((uint16_t)largo)", "nucleo_fijarSsid(ssid)"]) {
+  for (const api of ["WiFi.mode(WIFI_AP)", "WiFi.softAPmacAddress(mac)", "WiFi.softAPConfig(IP_PORTAL, IP_PORTAL, MASCARA_PORTAL)", "dnsServer.start(PUERTO_DNS, TEXTO_DOMINIO_TODOS, IP_PORTAL)", "server.on(TEXTO_RUTA_PAGINA, HTTP_GET, portal_pagina)", "server.on(TEXTO_RUTA_COMANDO, HTTP_POST, portal_comando)", "server.onNotFound(portal_redirigir)", "server.begin()", "dnsServer.processNextRequest()", "server.handleClient()", "server.send_P(200, TEXTO_TIPO_HTML, PAGINA)", "server.send(200, TEXTO_TIPO_JSON, g_salida)", "server.send(302, TEXTO_TIPO_TEXTO_PLANO, TEXTO_REDIRIGIENDO)", "server.sendHeader(TEXTO_ENCABEZADO_LOCATION, TEXTO_URL_PORTAL, true)", "server.sendHeader(TEXTO_ENCABEZADO_CACHE, TEXTO_SIN_CACHE)", "nucleo_procesar((uint16_t)largo)", "nucleo_fijarSsid(ssid)", "WiFi.persistent(false)", "WiFi.setTxPower(WIFI_POWER_11dBm)"]) {
     assert.ok(portal.includes(api), `la capa 3 usa ${api}`)
   }
   assert.ok(seccionTransporte(MAIN_WIFI).includes("  portal_iniciar();") && seccionTransporte(MAIN_WIFI).includes("  portal_atender();"), "setup() y loop() llaman a la capa 3")
@@ -1214,6 +1465,55 @@ test("F6 guardias con wifi: capa 1 y capa 2 sin String; String sólo en la capa 
   assert.match(portal, /static const uint16_t PUERTO_HTTP = 80;/)
   assert.match(portal, /static const uint16_t PUERTO_DNS = 53;/)
   assert.match(portal, /static const char TEXTO_TIPO_HTML\[\] = "text\/html; charset=utf-8";/)
+  // Orden, en el código: persistent < mode < softAP < softAPConfig < setTxPower.
+  const codigo = sinComentarios(portal)
+  const orden = ["WiFi.persistent(false)", "WiFi.mode(WIFI_AP)", "WiFi.softAP(", "WiFi.softAPConfig(", "WiFi.setTxPower(WIFI_POWER_11dBm)"].map((api) => codigo.indexOf(api))
+  assert.ok(orden.every((i) => i > 0) && orden.every((i, k) => k === 0 || i > orden[k - 1]), orden.join(","))
+  assert.equal((codigo.match(/TEXTO_SIN_CACHE\)/g) ?? []).length, 2, "Cache-Control en la página y en el 302 (no en el JSON del comando, que el navegador no cachea en un POST)")
+})
+
+test("F7 diagnóstico (opción wifi.diagnostico): cada 10 s una línea JSON canónica con canal, heap y stack; nunca sin la opción; el host la ignora por tipo desconocido", () => {
+  let ahora = 0
+  const cpp = generarRuntime(esp32, { wifi: { clave: "", ssid: SSID_FIJO, canal: 6, diagnostico: true }, pagina: PAGINA_E2E }).archivos["src/main.cpp"]
+  const prog = ejecutarPrograma(cpp, { reloj: () => ahora, heapLibre: 213456, stackLibre: 7000 })
+  prog.setup()
+  assert.equal(prog.leerSalida().length, 2, "reinicio y hola")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), [], "en el arranque todavía no (millis 0 - 0 < 10000)")
+  ahora = 9999
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), [])
+  ahora = 10000
+  prog.loop()
+  const linea = '{"canal":6,"heapLibre":213456,"stackLibre":7000,"tipo":"diagnostico"}'
+  assert.deepEqual(prog.leerSalida(), [linea], "claves en orden alfabético, sin espacios")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), [], "una sola vez por intervalo")
+  ahora = 25000
+  prog.enviar("ping\n")
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), ['{"tipo":"pong","uptimeMs":25000}', linea], "la respuesta al comando sale antes que el diagnóstico del mismo loop")
+  assert.equal(prog.pendiente(), "")
+  // Está fuera del contrato (§3): parsearRespuesta la rechaza; la sesión del host la ignora (lo implementa el integrador).
+  assert.deepEqual(P.parsearRespuesta(linea), { ok: false, error: { codigo: "LINEA_INVALIDA" } })
+  assert.ok(linea.startsWith("{"), "empieza con { : no es prosa (V4-7)")
+  // Desborde de millis: aritmética sin signo en el C++; acá se prueba el salto grande hacia adelante.
+  ahora = 4294967295
+  prog.loop()
+  assert.deepEqual(prog.leerSalida(), [linea])
+  // Sin la opción: ni una línea de más, por más que pase el tiempo.
+  let t = 0
+  const sinOpcion = ejecutarPrograma(MAIN_WIFI_SSID_FIJO, { reloj: () => t })
+  sinOpcion.setup()
+  sinOpcion.leerSalida()
+  for (t = 10000; t < 100000; t += 10000) sinOpcion.loop()
+  assert.deepEqual(sinOpcion.leerSalida(), [])
+  // Red caída: canal 0 (WiFi.channel() con la red sin iniciar) y sigue informando heap y stack.
+  const caida = ejecutarPrograma(cpp, { reloj: () => 10000, apLevanta: false, heapLibre: 1, stackLibre: 2 })
+  caida.setup()
+  caida.leerSalida()
+  caida.loop()
+  assert.deepEqual(caida.leerSalida(), ['{"canal":0,"heapLibre":1,"stackLibre":2,"tipo":"diagnostico"}'])
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -1222,7 +1522,18 @@ test("F6 guardias con wifi: capa 1 y capa 2 sin String; String sólo en la capa 
 
 const ACTIVO = process.env.TECNIA_CODEGEN_PIO === "1"
 
-/** Compila un runtime generado con PlatformIO y deja la evidencia (ini, cpp, log, resumen.json) en `carpeta`. */
+/**
+ * Sólo en la compilación de prueba (nunca en el ini de producción, A1 lo fija): `build_src_flags` aplica a `src/`
+ * (el runtime) y no al core ni a sus librerías, así "0 advertencias" mide el C++ generado y no arduino-esp32.
+ */
+const FLAGS_DE_PRUEBA = "-Wall -Wextra -Wshadow"
+const iniDePrueba = (ini) => `${ini.trimEnd()}\nbuild_src_flags = ${FLAGS_DE_PRUEBA}\n`
+
+/**
+ * Compila un runtime generado con PlatformIO y deja la evidencia (ini, cpp, log, resumen.json) en `carpeta`, dentro
+ * de un directorio temporal por defecto (L3: un test no escribe fuera del repo sin que se lo pidan); con
+ * `TECNIA_EVIDENCIA_DIR=<dir>` la deja en `<dir>/<carpeta>`.
+ */
 async function compilarConEvidencia(runtime, carpeta, extras = {}) {
   const { pioCandidatos } = await import(join(REPO, "opencode/tool/platformio.ts"))
   const ini = runtime.archivos["platformio.ini"]
@@ -1231,7 +1542,7 @@ async function compilarConEvidencia(runtime, carpeta, extras = {}) {
   try {
     for (const [ruta, contenido] of Object.entries(runtime.archivos)) {
       mkdirSync(join(dir, ruta, ".."), { recursive: true })
-      writeFileSync(join(dir, ruta), contenido)
+      writeFileSync(join(dir, ruta), ruta === "platformio.ini" ? iniDePrueba(contenido) : contenido)
     }
     const pio = process.env.TECNIA_PIO_BIN ?? pioCandidatos().find((c) => existsSync(c)) ?? "pio"
     const argumentos = ["run", "-d", dir, "-e", runtime.environment]
@@ -1240,14 +1551,16 @@ async function compilarConEvidencia(runtime, carpeta, extras = {}) {
     const build = join(dir, ".pio", "build", runtime.environment)
     const firmware = join(build, "firmware.bin")
     const advertencias = log.split("\n").filter((l) => /warning:/.test(l))
-    const evidencia = process.env.TECNIA_CODEGEN_EVIDENCIA ?? join(homedir(), "tecnia-bot-docs", "esp32-completo", "evidencia-v1", carpeta)
+    const evidencia = join(process.env.TECNIA_EVIDENCIA_DIR ?? mkdtempSync(join(tmpdir(), "tecnia-vivo-evidencia-")), carpeta)
     mkdirSync(evidencia, { recursive: true })
     writeFileSync(join(evidencia, "platformio.ini"), ini)
+    writeFileSync(join(evidencia, "platformio.prueba.ini"), iniDePrueba(ini))
     writeFileSync(join(evidencia, "main.cpp"), main)
     writeFileSync(join(evidencia, "pio-run.log"), log)
     for (const [nombre, contenido] of Object.entries(extras.archivos ?? {})) writeFileSync(join(evidencia, nombre), contenido)
     const resumen = {
       comando: [pio.replace(homedir(), "~"), ...argumentos.map((a) => (a === dir ? "<temporal>" : a))].join(" "),
+      flagsDePrueba: `build_src_flags = ${FLAGS_DE_PRUEBA} (solo en platformio.prueba.ini; el platformio.ini es el de produccion)`,
       environment: runtime.environment,
       runtime: runtime.runtime,
       protocolo: runtime.protocolo,
@@ -1267,7 +1580,8 @@ async function compilarConEvidencia(runtime, carpeta, extras = {}) {
     assert.equal(corrida.error, undefined, String(corrida.error))
     assert.equal(corrida.status, 0, log.slice(-4000))
     assert.ok(existsSync(firmware) && statSync(firmware).size > 0, "no se produjo firmware.bin")
-    assert.deepEqual(advertencias, [], "el runtime compila sin advertencias")
+    assert.deepEqual(advertencias, [], `el runtime compila sin advertencias con ${FLAGS_DE_PRUEBA}`)
+    console.log(`evidencia en ${evidencia}`)
     return resumen
   } finally {
     rmSync(dir, { recursive: true, force: true })
@@ -1276,7 +1590,7 @@ async function compilarConEvidencia(runtime, carpeta, extras = {}) {
 
 const OPT_IN = { skip: ACTIVO ? false : "opt-in: TECNIA_CODEGEN_PIO=1 (necesita PlatformIO y espressif32@6.12.0 instalados)", timeout: 15 * 60 * 1000 }
 
-test("E1 compilación real: generarRuntime → platformio.ini + src/main.cpp → `pio run -e esp32-devkit-v1` → firmware (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
+test("E1 compilación real: generarRuntime → platformio.ini + src/main.cpp → `pio run -e esp32-devkit-v1` → firmware, 0 advertencias con -Wall -Wextra -Wshadow (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
   await compilarConEvidencia(generado, "runtime")
 })
 
@@ -1285,9 +1599,39 @@ test("E2 compilación real con wifi (V4, página del E2E): las tres capas con Wi
   const pagina = paginaDe(runtime.archivos["src/main.cpp"])
   const resumen = await compilarConEvidencia(runtime, "runtime-v4", {
     archivos: { "pagina.html": pagina },
-    resumen: { wifi: { clave: "", ssid: "tecnia- + 4 hex de la MAC del AP (en la placa)", ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { ...PAGINA_E2E, bytes: pagina.length, sha256: sha(pagina) } },
+    resumen: { wifi: { clave: "", ssid: "tecnia- + 4 hex de la MAC del AP (en la placa)", ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)", persistent: false, txPower: "WIFI_POWER_11dBm (V4-10)" }, pagina: { ...PAGINA_E2E, bytes: pagina.length, sha256: sha(pagina) } },
   })
   assert.ok(resumen.firmware.bytes > 285840, "con WiFi + HTTP el firmware es más grande que el de V1 (285840 bytes)")
+})
+
+/** Una compilación suelta, sin evidencia ni aserciones: para probar que la guardia de advertencias marca lo que tiene que marcar. */
+async function compilarSuelto(archivos) {
+  const { pioCandidatos } = await import(join(REPO, "opencode/tool/platformio.ts"))
+  const dir = mkdtempSync(join(tmpdir(), "tecnia-vivo-mutante-"))
+  try {
+    for (const [ruta, contenido] of Object.entries(archivos)) {
+      mkdirSync(join(dir, ruta, ".."), { recursive: true })
+      writeFileSync(join(dir, ruta), contenido)
+    }
+    const pio = process.env.TECNIA_PIO_BIN ?? pioCandidatos().find((c) => existsSync(c)) ?? "pio"
+    const corrida = spawnSync(pio, ["run", "-d", dir, "-e", generado.environment], { encoding: "utf8", env: { ...process.env, PLATFORMIO_SETTING_ENABLE_TELEMETRY: "no" }, maxBuffer: 64 * 1024 * 1024 })
+    const log = `${corrida.stdout ?? ""}${corrida.stderr ?? ""}`
+    return { status: corrida.status, advertencias: log.split("\n").filter((l) => /warning:/.test(l)) }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test("E4 la guardia de advertencias se prueba a sí misma: un main.cpp con una variable que hace sombra da un warning con las flags de prueba y ninguno sin ellas (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
+  // Un global `largo` antes de `nucleo_procesar(uint16_t largo)`: -Wshadow lo marca; sin -Wshadow, nada.
+  const conSombra = MAIN.replace("static uint16_t nucleo_procesar(uint16_t largo) {", "static uint16_t largo = 0;\nstatic uint16_t nucleo_procesar(uint16_t largo) {")
+  assert.notEqual(conSombra, MAIN, "el mutante existe")
+  const conFlags = await compilarSuelto({ "platformio.ini": iniDePrueba(INI), "src/main.cpp": conSombra })
+  assert.equal(conFlags.status, 0, "sigue compilando (es un warning)")
+  assert.ok(conFlags.advertencias.some((l) => /shadows/.test(l)), `la guardia marca la sombra: ${conFlags.advertencias.join(" | ")}`)
+  const sinFlags = await compilarSuelto({ "platformio.ini": INI, "src/main.cpp": conSombra })
+  assert.equal(sinFlags.status, 0)
+  assert.deepEqual(sinFlags.advertencias, [], "sin las flags de prueba el mismo mutante no avisa: la guardia depende de ellas")
 })
 
 test("E3 compilación real con wifi, SSID fijo y la página del E2E (la variante que se flashea: MI_ESP, red abierta, GPIO2/18/4/34); evidencia en runtime-v4-ssid-fijo/ (TECNIA_CODEGEN_PIO=1)", OPT_IN, async () => {
@@ -1295,6 +1639,6 @@ test("E3 compilación real con wifi, SSID fijo y la página del E2E (la variante
   const pagina = paginaDe(runtime.archivos["src/main.cpp"])
   await compilarConEvidencia(runtime, "runtime-v4-ssid-fijo", {
     archivos: { "pagina.html": pagina },
-    resumen: { wifi: { clave: "", ssid: SSID_FIJO, ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)" }, pagina: { ...PAGINA_E2E, bytes: pagina.length, sha256: sha(pagina) } },
+    resumen: { wifi: { clave: "", ssid: SSID_FIJO, ip: IP_TEXTO, canal: "por defecto de softAP (V4-3)", persistent: false, txPower: "WIFI_POWER_11dBm (V4-10)", cacheControl: "no-store (V4-10)" }, pagina: { ...PAGINA_E2E, bytes: pagina.length, sha256: sha(pagina) } },
   })
 })
