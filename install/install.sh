@@ -41,7 +41,7 @@ NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins them
 if [ -f "$MANIFEST" ]; then
   while IFS= read -r rel; do
     case "$rel" in ""|"#"*|version=*|repo_dir=*) continue ;; esac
-    printf '%s\n' "$NUEVOS" | grep -qxF "$rel" || rm -f "$CONFIG_DIR/$rel"
+    grep -qxF -- "$rel" <<< "$NUEVOS" || rm -f "$CONFIG_DIR/$rel"
   done < "$MANIFEST"
 fi
 
@@ -188,16 +188,16 @@ clasificar_respuesta_google() {
   local codigo="${1:-0}" cuerpo="${2:-}"
   case "$codigo" in ''|*[!0-9]*) codigo=0 ;; esac
   if [ "$codigo" -ge 200 ] && [ "$codigo" -lt 300 ]; then printf 'anda|\n'; return 0; fi
-  if [ "$codigo" = "429" ] || printf '%s' "$cuerpo" | grep -q '"RESOURCE_EXHAUSTED"'; then
+  if [ "$codigo" = "429" ] || grep -q '"RESOURCE_EXHAUSTED"' <<< "$cuerpo"; then
     printf 'cuota|\n'; return 0
   fi
   if [ "$codigo" = "400" ] || [ "$codigo" = "403" ] \
-    || printf '%s' "$cuerpo" | grep -qE '"(INVALID_ARGUMENT|PERMISSION_DENIED|UNAUTHENTICATED)"' \
-    || printf '%s' "$cuerpo" | grep -q '"API_KEY_INVALID"'; then
+    || grep -qE '"(INVALID_ARGUMENT|PERMISSION_DENIED|UNAUTHENTICATED)"' <<< "$cuerpo" \
+    || grep -q '"API_KEY_INVALID"' <<< "$cuerpo"; then
     printf 'invalida|\n'; return 0
   fi
   # El modelo, no la key. Va ANTES del cajon de sinProbar a proposito.
-  if [ "$codigo" = "404" ] || printf '%s' "$cuerpo" | grep -q '"NOT_FOUND"'; then
+  if [ "$codigo" = "404" ] || grep -q '"NOT_FOUND"' <<< "$cuerpo"; then
     printf 'modeloIdo|\n'; return 0
   fi
   printf 'sinProbar|Google contesto HTTP %s\n' "$codigo"
@@ -900,7 +900,7 @@ buscar_pio() {
     for nombre in pio platformio; do
       ruta="$dir/penv/bin/$nombre"
       [ -x "$ruta" ] || continue
-      if salida="$("$ruta" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+      if salida="$("$ruta" --version 2>&1)" && grep -qi platformio <<< "$salida"; then
         printf '%s\n' "$ruta"
         return 0
       fi
@@ -908,7 +908,7 @@ buscar_pio() {
   done < <(pio_core_dirs)
   for nombre in pio platformio; do
     command -v "$nombre" >/dev/null 2>&1 || continue
-    if salida="$("$nombre" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+    if salida="$("$nombre" --version 2>&1)" && grep -qi platformio <<< "$salida"; then
       command -v "$nombre"
       return 0
     fi
