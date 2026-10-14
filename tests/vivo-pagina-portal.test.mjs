@@ -1,5 +1,6 @@
-// Modo Vivo V4 — la página del portal (`opencode/vivo/pagina-portal.ts`): una función pura de la lista de
-// pines a un HTML ASCII, sin internet, que habla con `POST /comando` y muestra SOLO los pines que le dan.
+// Modo Vivo (protocolo v1, slices V1–V4) — la página del portal (`opencode/vivo/pagina-portal.ts`): una función
+// pura de la lista de pines a un HTML ASCII, sin internet, que habla con `POST /comando` y muestra SOLO los pines
+// que le dan. V4-6c (§9): los strapping van al final de "más pines", bajo un aviso, sólo si vienen en `salidasConAviso`.
 // Corre solo: `node --test tests/vivo-pagina-portal.test.mjs`.
 
 import { test } from "node:test"
@@ -9,7 +10,7 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const { renderizarPaginaPortal, RUTA_COMANDO } = await import(join(REPO, "opencode/vivo/pagina-portal.ts"))
+const { renderizarPaginaPortal, RUTA_COMANDO, AVISO_STRAPPING } = await import(join(REPO, "opencode/vivo/pagina-portal.ts"))
 
 const PAGINA = Object.freeze({ salidas: [2, 18], salidasExtra: [5, 23], entradasDigitales: [4], entradasAnalogicas: [34, 35] })
 const VACIA = Object.freeze({ salidas: [], salidasExtra: [], entradasDigitales: [], entradasAnalogicas: [] })
@@ -66,7 +67,40 @@ test("entrada inválida: no es lista, no entero, negativo → lanza; no conoce n
     assert.throws(() => renderizarPaginaPortal(mala), /lista de numeros/)
   }
   assert.doesNotThrow(() => renderizarPaginaPortal({ ...VACIA, salidas: [6, 1, 200] }), "pines prohibidos o inexistentes no son asunto de la página")
+  // La FORMA sí es asunto de la página (C-02: un solo lugar): falta una lista, un pin repetido, un pin en dos listas.
+  assert.throws(() => renderizarPaginaPortal({ salidas: [18] }), /pagina\.salidasExtra: tiene que ser una lista/)
+  assert.throws(() => renderizarPaginaPortal(null), /objeto PaginaPortal/)
+  assert.throws(() => renderizarPaginaPortal({ ...VACIA, entradasDigitales: [4, 4] }), /pagina\.entradasDigitales: repite GPIO4/)
+  assert.throws(() => renderizarPaginaPortal({ ...VACIA, salidas: [18], salidasExtra: [18] }), /GPIO18 esta en dos listas a la vez \(salidas y salidasExtra\)/)
+  assert.throws(() => renderizarPaginaPortal({ ...VACIA, salidas: [32], entradasAnalogicas: [32] }), /GPIO32 esta en dos listas a la vez/, "la tool nunca ofrece un pin en dos roles (V4-6c)")
   const fuente = readFileSync(join(REPO, "opencode/vivo/pagina-portal.ts"), "utf8")
   assert.doesNotMatch(fuente, /from\s+["']node:/, "sin node: (también corre en el navegador)")
   assert.doesNotMatch(fuente, /from\s+["'][^"']*(codegen|tool|agent|nucleo)\//, "no importa codegen ni el núcleo")
+})
+
+test("V4-6c salidasConAviso: sin el campo (o vacío) el HTML es byte a byte el de antes; con él, los strapping van al final de 'más pines' bajo el aviso; un pin en dos listas lanza", () => {
+  const sinCampo = renderizarPaginaPortal(PAGINA)
+  assert.equal(renderizarPaginaPortal({ ...PAGINA, salidasConAviso: [] }), sinCampo, "vacío = ausente")
+  assert.equal(renderizarPaginaPortal({ ...PAGINA, salidasConAviso: undefined }), sinCampo)
+  assert.ok(!sinCampo.includes("CON_AVISO") && !sinCampo.includes("aviso") && !sinCampo.includes("deciden c&oacute;mo arranca"), "sin el campo no hay rastro del aviso")
+  const con = renderizarPaginaPortal({ ...PAGINA, salidasConAviso: [0, 12, 15] })
+  assert.ok(/^[\x0a\x20-\x7e]*$/.test(con) && !/'|\/\/|\\/.test(con), "sigue ASCII y apta para el traductor")
+  assert.ok(con.includes("var CON_AVISO = [0, 12, 15];") && con.includes("var OTRAS = [5, 23];"))
+  assert.ok(con.includes(`aviso.innerHTML = "${AVISO_STRAPPING}";`) && AVISO_STRAPPING.includes("Usalos s&oacute;lo si sab&eacute;s por qu&eacute;."), "el aviso, con sus tildes como entidades")
+  // Orden dentro de "más pines": primero las filas de OTRAS, después el aviso, después las CON_AVISO; mismos botones.
+  const js = con.slice(con.indexOf("<script>"), con.indexOf("</script>"))
+  const posOtras = js.indexOf('porId("otras").appendChild(filaDeSalida(OTRAS[i]))')
+  const posAviso = js.indexOf('porId("otras").appendChild(aviso)')
+  const posConAviso = js.indexOf('porId("otras").appendChild(filaDeSalida(CON_AVISO[i]))')
+  assert.ok(posOtras > 0 && posOtras < posAviso && posAviso < posConAviso, "otras < aviso < con aviso")
+  assert.ok(con.includes(".aviso{") && con.includes('id="mas"'), "el botón de más pines y el estilo del aviso")
+  assert.doesNotThrow(() => new Function(js.slice("<script>".length)))
+  // Sólo strapping con aviso y sin extra: el botón "más pines" igual aparece (hay algo que esconder).
+  const soloAviso = renderizarPaginaPortal({ ...VACIA, salidasConAviso: [2] })
+  assert.ok(soloAviso.includes('id="mas"') && soloAviso.includes("var OTRAS = [];") && soloAviso.includes("var CON_AVISO = [2];"))
+  // Un pin que ya está en otra lista: lanza (como lo no ASCII).
+  assert.throws(() => renderizarPaginaPortal({ ...PAGINA, salidasConAviso: [2] }), /GPIO2 esta en dos listas a la vez \(salidas y salidasConAviso\)/)
+  assert.throws(() => renderizarPaginaPortal({ ...PAGINA, salidasConAviso: [5] }), /GPIO5 esta en dos listas a la vez \(salidasExtra y salidasConAviso\)/)
+  assert.throws(() => renderizarPaginaPortal({ ...PAGINA, salidasConAviso: [0, 0] }), /salidasConAviso: repite GPIO0/)
+  assert.throws(() => renderizarPaginaPortal({ ...PAGINA, salidasConAviso: "0" }), /salidasConAviso: tiene que ser una lista/)
 })

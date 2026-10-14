@@ -1,4 +1,5 @@
-// Modo Vivo V4 — la página que sirve el runtime en `GET /` (PROTOCOLO-VIVO-V1.md sec. 8.3, "por pines").
+// Modo Vivo (protocolo v1, slices V1–V4) — la página que sirve el runtime en `GET /` (PROTOCOLO-VIVO-V1.md
+// §8.3, "por pines"; §9 V4-5b: la página es del proyecto, V4-6c: los strapping al final y con aviso).
 //
 // Vive en `vivo/` porque es INTERFAZ (lo que ve el alumno en el celular), no generación de firmware:
 // `codegen/runtime*.ts` la importa como texto y la embebe en el C++. Es una función PURA de la lista de
@@ -7,7 +8,10 @@
 // de la placa, con la hora del celular en que llegó. Sin `node:`: también corre en el navegador.
 //
 // Qué pines mostrar lo decide quien llama (`PaginaPortal`): esta función no conoce ninguna placa ni ningún
-// número de GPIO; el generador valida las listas contra la política de `placas.ts`.
+// número de GPIO. Dos validaciones, en dos lugares, a propósito (auditoría A6, C-02): la FORMA de las listas
+// (números enteros, ningún pin en dos listas) la valida esta función, porque es un módulo público de `vivo/`
+// que también corre en el navegador; la POLÍTICA (existe, prohibido, capacidad del rol) la valida el
+// generador contra `placas.ts` (`codegen/runtime.ts::validarPaginaPortal`), que es quien conoce la placa.
 //
 // Restricciones de forma, todas con motivo:
 // - Sólo ASCII (tildes y eñes con entidades HTML): `main.cpp` es ASCII.
@@ -17,7 +21,7 @@
 // - Sin `http://` ni `https://`: no hay nada afuera de la placa a lo que apuntar.
 // - El JS es ES5 (var/function): el celular del aula puede ser viejo; `fetch` es lo único moderno.
 
-/** Ruta del `POST` con una línea del formato plano (contrato sec. 8.2). */
+/** Ruta del `POST` con una línea del formato plano (contrato §8.2). */
 export const RUTA_COMANDO = "/comando"
 
 /** Los pines que la página ofrece. Listas vacías son válidas: la sección no se muestra. */
@@ -26,6 +30,11 @@ export interface PaginaPortal {
   readonly salidas: readonly number[]
   /** Más salidas, escondidas detrás de "más pines". */
   readonly salidasExtra: readonly number[]
+  /**
+   * V4-6c: salidas que son pines strapping (deciden cómo arranca la placa). Van DESPUÉS de `salidasExtra`,
+   * también detrás de "más pines", bajo un aviso. Opcional: ausente o vacío, el HTML no cambia en nada.
+   */
+  readonly salidasConAviso?: readonly number[]
   /** Lecturas digitales: `pin.modo entradaPullUp` la primera vez, después `digital.leer`. */
   readonly entradasDigitales: readonly number[]
   /** Lecturas analógicas: `analogico.leer` (crudo, tal cual lo da la placa). */
@@ -34,12 +43,29 @@ export interface PaginaPortal {
 
 const lista = (numeros: readonly number[]): string => `[${numeros.join(", ")}]`
 
+/** Las listas de `PaginaPortal`, en el orden en que se validan; `salidasConAviso` es la única opcional. */
+const LISTAS_DE_LA_PAGINA = ["salidas", "salidasExtra", "salidasConAviso", "entradasDigitales", "entradasAnalogicas"] as const satisfies readonly (keyof PaginaPortal)[]
+
+/** El aviso de V4-6c, tal cual lo lee quien usa la placa (tildes con entidades: la página es ASCII). */
+export const AVISO_STRAPPING = "Estos pines deciden c&oacute;mo arranca la placa. Si quedan forzados en alto o bajo al reiniciar, la placa puede no arrancar. Usalos s&oacute;lo si sab&eacute;s por qu&eacute;."
+
 /** La página entera como texto ASCII con saltos de línea `\n`. Lanza si algo no es ASCII o rompe el traductor. */
 export function renderizarPaginaPortal(pagina: PaginaPortal): string {
-  for (const [nombre, numeros] of Object.entries(pagina)) {
+  if (typeof pagina !== "object" || pagina === null) throw new Error("pagina: tiene que ser un objeto PaginaPortal")
+  const vistos = new Map<number, string>()
+  for (const nombre of LISTAS_DE_LA_PAGINA) {
+    const numeros = pagina[nombre]
+    if (numeros === undefined && nombre === "salidasConAviso") continue
     if (!Array.isArray(numeros) || numeros.some((n) => !Number.isInteger(n) || n < 0)) throw new Error(`pagina.${nombre}: tiene que ser una lista de numeros de GPIO`)
+    for (const n of numeros) {
+      const antes = vistos.get(n)
+      if (antes === nombre) throw new Error(`pagina.${nombre}: repite GPIO${n}`)
+      if (antes !== undefined) throw new Error(`pagina: GPIO${n} esta en dos listas a la vez (${antes} y ${nombre})`)
+      vistos.set(n, nombre)
+    }
   }
-  const haySalidas = pagina.salidas.length + pagina.salidasExtra.length > 0
+  const conAviso = pagina.salidasConAviso ?? []
+  const haySalidas = pagina.salidas.length + pagina.salidasExtra.length + conAviso.length > 0
   const hayEntradas = pagina.entradasDigitales.length + pagina.entradasAnalogicas.length > 0
   const l: string[] = []
   l.push("<!doctype html>")
@@ -60,6 +86,7 @@ export function renderizarPaginaPortal(pagina: PaginaPortal): string {
   l.push(".est{font-size:.85em;color:#555;margin-top:4px;word-break:break-all}")
   l.push("#registro{font-family:monospace;font-size:.78em;background:#1e1e1e;color:#e8e8e8;padding:8px;border-radius:6px;min-height:5em;word-break:break-all}")
   l.push(".oculto{display:none}")
+  if (conAviso.length > 0) l.push(".aviso{background:#fff4d6;border:1px solid #e0b960;border-radius:6px;padding:8px 10px;margin:10px 0 6px;font-size:.9em}")
   l.push("</style>")
   l.push("</head>")
   l.push("<body>")
@@ -68,7 +95,7 @@ export function renderizarPaginaPortal(pagina: PaginaPortal): string {
   if (haySalidas) {
     l.push("<h2>Salidas</h2>")
     l.push('<div id="salidas"></div>')
-    if (pagina.salidasExtra.length > 0) {
+    if (pagina.salidasExtra.length + conAviso.length > 0) {
       l.push('<button type="button" id="mas">m&aacute;s pines</button>')
       l.push('<div id="otras" class="oculto"></div>')
     }
@@ -89,6 +116,7 @@ export function renderizarPaginaPortal(pagina: PaginaPortal): string {
   l.push(`var RUTA = "${RUTA_COMANDO}";`)
   l.push(`var SALIDAS = ${lista(pagina.salidas)};`)
   l.push(`var OTRAS = ${lista(pagina.salidasExtra)};`)
+  if (conAviso.length > 0) l.push(`var CON_AVISO = ${lista(conAviso)};`)
   l.push(`var ENTRADAS_DIGITALES = ${lista(pagina.entradasDigitales)};`)
   l.push(`var ENTRADAS_ANALOGICAS = ${lista(pagina.entradasAnalogicas)};`)
   l.push("var cola = Promise.resolve();")
@@ -183,6 +211,15 @@ export function renderizarPaginaPortal(pagina: PaginaPortal): string {
   l.push("  var i;")
   l.push('  for (i = 0; i < SALIDAS.length; i++) porId("salidas").appendChild(filaDeSalida(SALIDAS[i]));')
   l.push('  for (i = 0; i < OTRAS.length; i++) porId("otras").appendChild(filaDeSalida(OTRAS[i]));')
+  if (conAviso.length > 0) {
+    // V4-6c: los strapping al final de "mas pines": primero las filas de OTRAS, despues el aviso, despues estas.
+    // Se arma en JS, como las filas, para que el HTML sin el campo quede byte a byte igual al de antes.
+    l.push('  var aviso = document.createElement("p");')
+    l.push('  aviso.className = "aviso";')
+    l.push(`  aviso.innerHTML = "${AVISO_STRAPPING}";`)
+    l.push('  porId("otras").appendChild(aviso);')
+    l.push('  for (i = 0; i < CON_AVISO.length; i++) porId("otras").appendChild(filaDeSalida(CON_AVISO[i]));')
+  }
   l.push('  if (porId("mas")) porId("mas").addEventListener("click", function () {')
   l.push('    var otras = porId("otras");')
   l.push('    otras.classList.toggle("oculto");')
