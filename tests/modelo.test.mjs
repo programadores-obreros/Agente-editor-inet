@@ -338,3 +338,18 @@ test("las guías de instalación y los bootstraps no dicen que la key es obligat
   }
   assert.match(leer("install/bootstrap.sh"), /opcional[\s\S]*Big Pickle[\s\S]*mejorar el modelo/, "bootstrap.sh no explica la opcionalidad ni Big Pickle")
 })
+
+test("los dos instaladores le ponen límite de espera al proveedor del modelo (el bot ya no queda trabado)", () => {
+  // 2026-10-14, taller con 30+ docentes: ~26 pedidos a Gemini colgados de 1 a 17 minutos,
+  // sin error, por la red del aula. OpenCode no tiene límite de espera por defecto; con
+  // headerTimeout/chunkTimeout corta el pedido con un error reintentable y reintenta solo.
+  // Va en el proveedor del modelo elegido (no siempre en google: sin key, Gemini aparecería).
+  assert.match(shCodigo, /^TIMEOUT_MODELO_MS=60000$/m, "install.sh no define el límite")
+  assert.match(shCodigo, /\.headerTimeout = \$timeout \| \.chunkTimeout = \$timeout/, "la vía jq no pone el límite")
+  assert.match(shCodigo, /\(\$modelo \| split\("\/"\)\[0\]\) as \$prov/, "la vía jq no usa el proveedor del modelo elegido")
+  assert.match(shCodigo, /opciones\["headerTimeout"\] = timeout_ms[\s\S]*?opciones\["chunkTimeout"\] = timeout_ms/, "la vía python3 no pone el límite")
+  assert.match(shCodigo, /"provider": \{ "\$\{MODELO_ELEGIDO%%\/\*\}": \{ "options": \{ "headerTimeout": \$TIMEOUT_MODELO_MS, "chunkTimeout": \$TIMEOUT_MODELO_MS \} \} \}/, "el opencode.json creado sin jq ni python3 no trae el límite")
+  assert.match(ps1Codigo, /^\$TimeoutModeloMs = 60000$/m, "install.ps1 no define el límite")
+  assert.match(ps1Codigo, /\$ProveedorElegido = \$ModeloElegido\.Split\("\/"\)\[0\]/, "install.ps1 no usa el proveedor del modelo elegido")
+  assert.match(ps1Codigo, /NotePropertyName "headerTimeout" -NotePropertyValue \$TimeoutModeloMs[\s\S]*?NotePropertyName "chunkTimeout" -NotePropertyValue \$TimeoutModeloMs/, "install.ps1 no pone el límite")
+})

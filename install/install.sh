@@ -602,6 +602,9 @@ TECNIA_THEME="tecnia-violet"
 TECNIA_AGENT="tecnia-bot"
 TUI_SCHEMA="https://opencode.ai/tui.json"
 OPENCODE_SCHEMA="https://opencode.ai/config.json"
+# Limite de espera del pedido al modelo (ms), para headerTimeout y chunkTimeout del
+# proveedor. Un pedido sano de Tecnia Bot contesta en 2-10 s; 60 s deja margen.
+TIMEOUT_MODELO_MS=60000
 
 # Resuelve el archivo de config a usar: .json si existe, si no .jsonc, si no .json.
 resolve_config_file() {
@@ -635,10 +638,11 @@ echo "==> Configurando OpenCode (theme + logo + agente por defecto + modelo)..."
 # Si un archivo existe pero NO se puede parsear, lo deja intacto y avisa (nunca
 # pisa la config del usuario). Idempotente.
 merge_via_python() {
-  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" "$MEMORIA_FILE" "$MODELO_ELEGIDO" <<'PYEOF'
+  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" "$MEMORIA_FILE" "$MODELO_ELEGIDO" "$TIMEOUT_MODELO_MS" <<'PYEOF'
 import json, sys
 
-tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path, memoria_path, modelo = sys.argv[1:11]
+tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path, memoria_path, modelo, timeout_ms = sys.argv[1:12]
+timeout_ms = int(timeout_ms)
 
 def strip_jsonc(text):
     out = []
@@ -739,6 +743,28 @@ if ok:
     # cae en otro Gemini que puede estar saturado o sin cuota: el docente ve un error que
     # no viene de su modelo. Visto el 2026-10-14 ("is way too hot right now"). Va el mismo.
     oc["small_model"] = modelo
+    # provider.<proveedor>.options.headerTimeout/chunkTimeout: sin esto, un pedido al
+    # modelo que se queda sin respuesta (red del aula que corta, Gemini saturado,
+    # notebook que se suspende) espera para siempre y el docente ve el bot trabado.
+    # Visto el 2026-10-14 en el taller: ~26 pedidos colgados de 1 a 17 minutos, sin
+    # error. Con el limite, OpenCode corta el pedido (error reintentable) y reintenta
+    # solo. Va solo en el proveedor del modelo elegido, que ya esta activo: un
+    # provider.google sin key haria aparecer a Gemini sin poder usarlo.
+    proveedor_id = modelo.split("/", 1)[0]
+    proveedores = oc.get("provider")
+    if not isinstance(proveedores, dict):
+        proveedores = {}
+    proveedor = proveedores.get(proveedor_id)
+    if not isinstance(proveedor, dict):
+        proveedor = {}
+    opciones = proveedor.get("options")
+    if not isinstance(opciones, dict):
+        opciones = {}
+    opciones["headerTimeout"] = timeout_ms
+    opciones["chunkTimeout"] = timeout_ms
+    proveedor["options"] = opciones
+    proveedores[proveedor_id] = proveedor
+    oc["provider"] = proveedores
     instrucciones = oc.get("instructions")
     if not isinstance(instrucciones, list):
         instrucciones = []
@@ -773,12 +799,14 @@ merge_tui_jq() {
 merge_opencode_jq() {
   [ -s "$OPENCODE_JSON" ] || printf '{}\n' > "$OPENCODE_JSON"
   local tmp; tmp="$(mktemp)"
-  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" --arg modelo "$MODELO_ELEGIDO" '
+  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" --arg modelo "$MODELO_ELEGIDO" --argjson timeout "$TIMEOUT_MODELO_MS" '
           .["$schema"] = (.["$schema"] // $schema)
         | .default_agent = $agent
         | .autoupdate = false
         | .agent = ((.agent // {}) | .[$agent] = ((.[$agent] // {}) | .model = $modelo))
         | .small_model = $modelo
+        | ($modelo | split("/")[0]) as $prov
+        | .provider = ((.provider // {}) | .[$prov] = ((.[$prov] // {}) | .options = ((.options // {}) | .headerTimeout = $timeout | .chunkTimeout = $timeout)))
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
         | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
@@ -833,6 +861,7 @@ EOF
   "default_agent": "$TECNIA_AGENT",
   "agent": { "$TECNIA_AGENT": { "model": "$MODELO_ELEGIDO" } },
   "small_model": "$MODELO_ELEGIDO",
+  "provider": { "${MODELO_ELEGIDO%%/*}": { "options": { "headerTimeout": $TIMEOUT_MODELO_MS, "chunkTimeout": $TIMEOUT_MODELO_MS } } },
   "instructions": ["$PERFIL_FILE", "$MEMORIA_FILE"]
 }
 EOF
