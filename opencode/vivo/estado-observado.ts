@@ -1,5 +1,5 @@
-// Estado OBSERVADO del Modo Vivo V1 — tecnia-bot-docs/esp32-completo/MODO-VIVO-PLAN.md §4 y
-// docs/programacion-intencion/LIVE-MODE-CAPABILITY-MODEL.md.
+// Estado OBSERVADO del Modo Vivo (protocolo v1, slices V1–V4) — tecnia-bot-docs/esp32-completo/
+// MODO-VIVO-PLAN.md §4 y docs/programacion-intencion/LIVE-MODE-CAPABILITY-MODEL.md.
 //
 // Es OTRO dominio, distinto de la IR: lo que la sesión viva vio en la placa en ESTA sesión. Nunca
 // entra en la IR, en el almacén ni en el hash; se pierde al cerrar la sesión, a propósito. Este
@@ -138,15 +138,39 @@ export function esCompatible(hola: Extract<Respuesta, { tipo: "hola" }>): boolea
 // Transiciones — cada una devuelve un estado NUEVO y congelado
 // ════════════════════════════════════════════════════════════════════════════════════
 
-function siguiente(estado: EstadoObservado, cambios: Partial<EstadoObservado>, quitar: readonly (keyof EstadoObservado)[] = []): EstadoObservado {
-  const base: Record<string, unknown> = { ...estado, ...cambios }
-  for (const clave of quitar) delete base[clave]
-  return congelarProfundo(base as unknown as EstadoObservado)
+/** Las claves de `EstadoObservado` que pueden no estar: las únicas que una transición puede quitar. */
+type ClaveOpcional = { [K in keyof EstadoObservado]-?: undefined extends EstadoObservado[K] ? K : never }[keyof EstadoObservado]
+
+/** Copia de `objeto` sin `claves`. Sólo claves opcionales: así el resultado sigue siendo un `EstadoObservado` entero. */
+function omitir<K extends ClaveOpcional>(objeto: EstadoObservado, claves: readonly K[]): Omit<EstadoObservado, K> {
+  const copia: { -readonly [P in keyof EstadoObservado]?: EstadoObservado[P] } = { ...objeto }
+  for (const clave of claves) delete copia[clave]
+  return copia as Omit<EstadoObservado, K>
+}
+
+function siguiente(estado: EstadoObservado, cambios: Partial<EstadoObservado>, quitar: readonly ClaveOpcional[] = []): EstadoObservado {
+  return congelarProfundo({ ...omitir(estado, quitar), ...cambios })
+}
+
+/** Los componentes sin su `ultimaObservacion`: lo que se vio ya no describe la placa. */
+function sinObservaciones(estado: EstadoObservado): ComponenteObservado[] {
+  return estado.componentes.map(({ ultimaObservacion: _anterior, ...resto }) => resto)
 }
 
 /** El puerto está abierto y se espera el `hola`. */
 export function marcarConectando(estado: EstadoObservado): EstadoObservado {
   return siguiente(estado, { sesion: "CONECTANDO" }, ["motivo", "incompatibilidad"])
+}
+
+/**
+ * V4-9 (contrato §9): pasaron más de 5 s sin `pong`. No se sabe qué le pasó a la placa (cable
+ * flojo, `loop()` bloqueado por un cliente HTTP lento, reinicio sin que llegara el `reinicio`), así
+ * que la sesión vuelve a `CONECTANDO` para pedir `hola` de nuevo, y las observaciones se descartan
+ * como en `aplicarReinicio`: un valor `OBSERVED` de antes del silencio no se puede vender como
+ * vigente. No se inventa un `ultimoReinicio`: nadie dijo que la placa reinició.
+ */
+export function marcarReconectando(estado: EstadoObservado): EstadoObservado {
+  return siguiente(estado, { sesion: "CONECTANDO", componentes: sinObservaciones(estado) }, ["motivo", "incompatibilidad"])
 }
 
 /** Nadie contestó el `hola`: lo más probable es que en la placa no haya un runtime. */
@@ -180,8 +204,7 @@ export function aplicarHola(estado: EstadoObservado, hola: Extract<Respuesta, { 
  * `OBSERVED` viejo sería venderlo como vigente.
  */
 export function aplicarReinicio(estado: EstadoObservado, causa: CausaDeReinicio, instante: number): EstadoObservado {
-  const componentes = estado.componentes.map(({ ultimaObservacion: _anterior, ...resto }) => resto)
-  return siguiente(estado, { sesion: "CONECTANDO", ultimoReinicio: { causa, instante }, componentes }, ["motivo", "incompatibilidad"])
+  return siguiente(estado, { sesion: "CONECTANDO", ultimoReinicio: { causa, instante }, componentes: sinObservaciones(estado) }, ["motivo", "incompatibilidad"])
 }
 
 export function marcarDesconectada(estado: EstadoObservado, motivo: string): EstadoObservado {
