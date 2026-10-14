@@ -4,6 +4,15 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-10-14
+
+**En Windows, el instalador ya no te dice que OpenCode no arranca cuando sí arranca.**
+
+### Corregido
+
+- **"OPENCODE NO ARRANCA" con OpenCode andando.** Desde fines de septiembre, toda instalación nueva en Windows terminaba con ese cartel y con error, aunque OpenCode estaba instalado y funcionando. La causa no estaba en Tecnia Bot sino en Scoop, el programa que instala OpenCode: su versión 0.6.0, del 30 de septiembre, le cambió el nombre a los archivos donde anota qué instaló, y el instalador los seguía buscando con el nombre viejo. Ahora reconoce los dos nombres, así que funciona con el Scoop nuevo y con las computadoras que ya tenían el viejo. El diagnóstico (*Diagnóstico de Tecnia Bot* en el menú inicio) también vuelve a mostrar bien la versión de OpenCode y de Node. Se reprodujo en una máquina Windows de prueba y se verificó con una instalación completa desde cero.
+- **Con key de Google, el título de la charla usa el mismo Gemini que el bot, también en Windows.** Es lo que la 0.4.3 hizo en Linux: OpenCode usa un modelo aparte para ponerle título a cada conversación y, si nadie se lo dice, elige otro Gemini que a veces está saturado. El docente veía un error de un modelo que nunca había elegido.
+
 ## [0.4.3] — 2026-10-14
 
 **Actualizar o reinstalar en Linux ya no te deja con archivos de menos.**
