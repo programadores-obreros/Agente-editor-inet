@@ -15,7 +15,9 @@ import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync
 import { execFileSync } from "node:child_process"
 import { join } from "node:path"
 import os from "node:os"
-import { REPO } from "./phase2-helpers.mjs"
+import { fileURLToPath } from "node:url"
+
+const REPO = join(fileURLToPath(new URL(".", import.meta.url)), "..")
 
 const SCRIPTS = ["install.sh", "bootstrap.sh", "update.sh", "uninstall.sh"].map((s) => join(REPO, "install", s))
 
