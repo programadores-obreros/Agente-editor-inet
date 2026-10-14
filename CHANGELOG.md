@@ -4,6 +4,13 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.5] — 2026-10-14
+
+**El bot ya no se queda trabado esperando una respuesta que no llega.**
+
+### Corregido
+
+- **"Se traba a los 30K y no sale más."** En el taller del 14 de octubre, con más de treinta docentes, muchos vieron el bot pensando minutos enteros sin contestar; cerrar y volver a abrir no lo arreglaba. El registro de una de las máquinas mostró unos veintiséis pedidos colgados, de uno a diecisiete minutos cada uno, sin ningún error. Cuando la conexión con Google se corta en el medio (una red del aula que se cae, Gemini saturado, una notebook que se suspende), OpenCode esperaba la respuesta para siempre. Los "30K" no tenían que ver: es lo que pesa cada pedido de Tecnia Bot desde el primer mensaje. Ahora el instalador le pone un límite de espera de un minuto al proveedor del modelo; si en ese tiempo no llega nada, OpenCode corta el pedido y lo reintenta solo. Un pedido normal tarda entre dos y diez segundos.
 ## [0.4.4] — 2026-10-14
 
 **En Windows, el instalador ya no te dice que OpenCode no arranca cuando sí arranca.**

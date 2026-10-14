@@ -657,6 +657,9 @@ $TecniaTheme   = "tecnia-violet"
 $TecniaAgent   = "tecnia-bot"
 $TuiSchema     = "https://opencode.ai/tui.json"
 $OpencodeSchema = "https://opencode.ai/config.json"
+# Limite de espera del pedido al modelo (ms), para headerTimeout y chunkTimeout del
+# proveedor. Un pedido sano de Tecnia Bot contesta en 2-10 s; 60 s deja margen.
+$TimeoutModeloMs = 60000
 
 # Resuelve el archivo de config: .json si existe, si no .jsonc, si no .json (a crear).
 function Resolve-ConfigFile($base) {
@@ -791,6 +794,35 @@ if ($ocHasContent -and $null -eq $oc) {
     # OpenCode elige uno por su cuenta y con la key de Google cae en otro Gemini que puede
     # estar saturado o sin cuota. Va el mismo que el del agente (igual que install.sh).
     $oc | Add-Member -NotePropertyName "small_model" -NotePropertyValue $ModeloElegido -Force
+
+    # provider.<proveedor>.options.headerTimeout/chunkTimeout: sin esto, un pedido al
+    # modelo que se queda sin respuesta (red del aula que corta, Gemini saturado,
+    # notebook que se suspende) espera para siempre y el docente ve el bot trabado.
+    # Visto el 2026-10-14 en el taller: ~26 pedidos colgados de 1 a 17 minutos, sin
+    # error. Con el limite, OpenCode corta el pedido (error reintentable) y reintenta
+    # solo. Va solo en el proveedor del modelo elegido, que ya esta activo: un
+    # provider.google sin key haria aparecer a Gemini sin poder usarlo.
+    $ProveedorElegido = $ModeloElegido.Split("/")[0]
+    $proveedores = $null
+    if (($oc.PSObject.Properties.Name -contains "provider") -and ($oc.provider -is [PSCustomObject])) {
+        $proveedores = $oc.provider
+    }
+    if ($null -eq $proveedores) { $proveedores = [PSCustomObject]@{} }
+    $proveedor = $null
+    if (($proveedores.PSObject.Properties.Name -contains $ProveedorElegido) -and ($proveedores.$ProveedorElegido -is [PSCustomObject])) {
+        $proveedor = $proveedores.$ProveedorElegido
+    }
+    if ($null -eq $proveedor) { $proveedor = [PSCustomObject]@{} }
+    $opciones = $null
+    if (($proveedor.PSObject.Properties.Name -contains "options") -and ($proveedor.options -is [PSCustomObject])) {
+        $opciones = $proveedor.options
+    }
+    if ($null -eq $opciones) { $opciones = [PSCustomObject]@{} }
+    $opciones | Add-Member -NotePropertyName "headerTimeout" -NotePropertyValue $TimeoutModeloMs -Force
+    $opciones | Add-Member -NotePropertyName "chunkTimeout" -NotePropertyValue $TimeoutModeloMs -Force
+    $proveedor | Add-Member -NotePropertyName "options" -NotePropertyValue $opciones -Force
+    $proveedores | Add-Member -NotePropertyName $ProveedorElegido -NotePropertyValue $proveedor -Force
+    $oc | Add-Member -NotePropertyName "provider" -NotePropertyValue $proveedores -Force
 
     # instructions: array de rutas que opencode carga en el contexto de cada sesion.
     # Agregamos el perfil si no esta (idempotente, sin duplicar), preservando el resto.
