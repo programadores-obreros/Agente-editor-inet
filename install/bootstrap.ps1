@@ -229,10 +229,24 @@ $ShimOpenCode = Join-Path $env:USERPROFILE "scoop\shims\opencode.exe"
 # Scoop actualice o resetee, ese "shim" seguira ejecutando la version vieja para
 # siempre. Un OpenCode fantasma, fuera de todo control de version.
 #
-# Scoop registra lo que instalo en apps\opencode\current\manifest.json: si eso no
-# esta, para Scoop OpenCode no existe, corra lo que corra.
+# Scoop registra lo que instalo en apps\opencode\current\: el manifiesto y el
+# install (donde va el "hold"). Scoop 0.6.0 (2026-09-30) los RENOMBRO:
+# manifest.json -> scoop-manifest.json e install.json -> scoop-install.json.
+# Buscar solo el nombre viejo daba "OPENCODE NO ARRANCA" con un OpenCode que
+# contestaba su version (CI Windows del 2026-10-14, issue #42; reproducido en la
+# VM win10 con Scoop 0.6.0). Se busca el nuevo y, si no esta, el viejo: las
+# instalaciones hechas con Scoop 0.5 siguen con los nombres de antes.
+function Get-ArchivoScoop([string]$dirApp, [string]$nombre) {
+    foreach ($n in @("scoop-$nombre.json", "$nombre.json")) {
+        $p = Join-Path $dirApp $n
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
+# Si no hay manifiesto, para Scoop OpenCode no existe, corra lo que corra.
 function Test-OpenCodeScoop {
-    return (Test-Path (Join-Path $OpenCodeAppDir "current\manifest.json"))
+    return [bool](Get-ArchivoScoop (Join-Path $OpenCodeAppDir "current") "manifest")
 }
 
 # Repara el shim cuando el programa ESTA pero le falta su lanzador de 20 KB.
@@ -388,7 +402,7 @@ function Test-OpenCode {
         $exeReal = Join-Path $dirReal "opencode.exe"
         $global:LASTEXITCODE = 1
         $vReal = try { (& $exeReal --version 2>&1 | Out-String).Trim() } catch { "excepcion: " + $_.Exception.Message }
-        Write-Host ("      DISCRIMINA: File.Exists(real exe)=" + [System.IO.File]::Exists($exeReal) + " | File.Exists(current\manifest.json)=" + [System.IO.File]::Exists((Join-Path $dirCurrent "manifest.json")) + " | real exe --version exit=" + $LASTEXITCODE + " salida=" + ($vReal -replace "\s+", " ").Substring(0, [Math]::Min(60, ($vReal -replace "\s+", " ").Length)))
+        Write-Host ("      DISCRIMINA: File.Exists(real exe)=" + [System.IO.File]::Exists($exeReal) + " | manifiesto Scoop en current=" + [bool](Get-ArchivoScoop $dirCurrent "manifest") + " | real exe --version exit=" + $LASTEXITCODE + " salida=" + ($vReal -replace "\s+", " ").Substring(0, [Math]::Min(60, ($vReal -replace "\s+", " ").Length)))
         return $false
     } catch {
         $script:SalidaOpenCode = $_.Exception.Message
@@ -544,12 +558,13 @@ function Test-OpenCodeInstalado {
     return ((Test-OpenCodeScoop) -and (Test-OpenCode))
 }
 
-# La version que Scoop tiene ACTIVA, leida de su manifest.json. Es la que
-# importa para hold/reset, mas alla de lo que conteste el binario.
+# La version que Scoop tiene ACTIVA, leida de su manifiesto (scoop-manifest.json
+# desde Scoop 0.6.0, manifest.json antes). Es la que importa para hold/reset,
+# mas alla de lo que conteste el binario.
 function Get-OpenCodeVersionInstalada {
-    $mf = Join-Path $OpenCodeAppDir "current\manifest.json"
+    $mf = Get-ArchivoScoop (Join-Path $OpenCodeAppDir "current") "manifest"
     try {
-        if (Test-Path $mf) { return ("" + (Get-Content $mf -Raw | ConvertFrom-Json).version).Trim() }
+        if ($mf) { return ("" + (Get-Content $mf -Raw | ConvertFrom-Json).version).Trim() }
     } catch { }
     if ($script:SalidaOpenCode -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
     return ""

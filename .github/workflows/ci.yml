@@ -236,11 +236,14 @@ jobs:
             else { Write-Host "  OK   opencode --version -> $salida" }
           }
 
-          $installJson = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\install.json"
-          if (-not (Test-Path $installJson)) { $fallas += "no existe $installJson" }
+          # Scoop 0.6.0 lo llama scoop-install.json; antes, install.json (issue #42).
+          $ocCurrent = Join-Path $env:USERPROFILE "scoop\apps\opencode\current"
+          $installJson = @("scoop-install.json", "install.json") | ForEach-Object { Join-Path $ocCurrent $_ } | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $installJson) { $fallas += "no existe scoop-install.json ni install.json en $ocCurrent" }
           else {
+            Write-Host "  OK   $(Split-Path -Leaf $installJson) de Scoop"
             $ij = Get-Content $installJson -Raw | ConvertFrom-Json
-            if ($ij.hold -ne $true) { $fallas += "install.json no tiene ""hold"": true (scoop hold no quedo)" }
+            if ($ij.hold -ne $true) { $fallas += "$(Split-Path -Leaf $installJson) no tiene ""hold"": true (scoop hold no quedo)" }
             else { Write-Host "  OK   scoop hold opencode" }
           }
 

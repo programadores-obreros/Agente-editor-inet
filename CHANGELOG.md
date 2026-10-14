@@ -17,6 +17,24 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 - La causa del **reinicio a ~4 minutos** con un celular conectado (visto en el E2E V4; falta repetirlo con el oyente serie encendido y una fuente externa de 5 V), el experimento del canal WiFi, Windows, iPhone y varios celulares a la vez. Detalle: `tecnia-bot-docs/esp32-completo/AUDITORIA-2026-10-13.md`.
 
+## [0.4.4] — 2026-10-14
+
+**En Windows, el instalador ya no te dice que OpenCode no arranca cuando sí arranca.**
+
+### Corregido
+
+- **"OPENCODE NO ARRANCA" con OpenCode andando.** Desde fines de septiembre, toda instalación nueva en Windows terminaba con ese cartel y con error, aunque OpenCode estaba instalado y funcionando. La causa no estaba en Tecnia Bot sino en Scoop, el programa que instala OpenCode: su versión 0.6.0, del 30 de septiembre, le cambió el nombre a los archivos donde anota qué instaló, y el instalador los seguía buscando con el nombre viejo. Ahora reconoce los dos nombres, así que funciona con el Scoop nuevo y con las computadoras que ya tenían el viejo. El diagnóstico (*Diagnóstico de Tecnia Bot* en el menú inicio) también vuelve a mostrar bien la versión de OpenCode y de Node. Se reprodujo en una máquina Windows de prueba y se verificó con una instalación completa desde cero.
+- **Con key de Google, el título de la charla usa el mismo Gemini que el bot, también en Windows.** Es lo que la 0.4.3 hizo en Linux: OpenCode usa un modelo aparte para ponerle título a cada conversación y, si nadie se lo dice, elige otro Gemini que a veces está saturado. El docente veía un error de un modelo que nunca había elegido.
+
+## [0.4.3] — 2026-10-14
+
+**Actualizar o reinstalar en Linux ya no te deja con archivos de menos.**
+
+### Corregido
+
+- **El instalador de Linux podía borrar archivos al azar al reinstalar o actualizar.** Antes de copiar la versión nueva, el instalador borra lo que la vieja tenía y la nueva ya no trae. Para decidir qué era viejo, encadenaba dos comandos de una forma que, cada tanto, daba "no está en la lista" para un archivo que sí estaba, y lo borraba. Pasaba sólo cuando ya había una instalación (o sea, al actualizar) y no siempre con el mismo archivo, por eso no se veía. Se encontró el 14 de octubre en una notebook con Manjaro a la que le faltaban una herramienta entera y una licencia. Ahora esa comprobación no usa la cadena que fallaba, y un test nuevo corre la limpieza real y verifica que no borre nada que siga en la instalación. En Windows no pasaba: el instalador de Windows funciona distinto.
+- **Con key de Google, el título de la charla usa el mismo Gemini que el bot.** OpenCode usa un modelo aparte para ponerle título a cada conversación y, si nadie se lo dice, elige uno por su cuenta. Con la key de Google elegía otro Gemini que a veces estaba saturado, y la docente veía un error (*"is way too hot right now"*) de un modelo que nunca había elegido. El instalador de Linux ahora lo fija igual que el del bot. El de Windows lo suma en la próxima versión, después de probar el instalador en una máquina Windows real.
+
 ## [0.4.2] — 2026-09-22
 
 **El chequeo de seguridad dejó de mirar sólo la placa y empezó a mirar al pibe.** Hasta acá, el repaso que el bot hace *antes de dar corriente* cuidaba el hardware —los 3,3 V del ESP32, la polaridad, los cortos— y **no decía una palabra sobre los 220 V**. En un aula donde se arma un relé para encender una lámpara, eso es el hueco que importa.

@@ -216,6 +216,7 @@ test("los dos instaladores fijan small_model con el MISMO modelo del agente (tí
   // 2026-10-14, notebook Manjaro: con la key de Google y sin small_model, OpenCode elegía
   // por su cuenta otro Gemini para el título de la charla (provider.ts getSmallModel), que
   // estaba saturado: el docente vio "is way too hot right now" sin haber elegido ese modelo.
+  // install.sh lo trae desde la 0.4.3; install.ps1 desde la 0.4.4, probado con el .exe en la VM.
   assert.match(shCodigo, /\| \.small_model = \$modelo/, "la vía jq no fija small_model")
   assert.match(shCodigo, /oc\["small_model"\] = modelo/, "la vía python3 no fija small_model")
   assert.match(shCodigo, /"small_model": "\$MODELO_ELEGIDO"/, "el opencode.json creado sin jq ni python3 no trae small_model")
