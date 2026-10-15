@@ -985,9 +985,62 @@ fi
 # Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
 # Se dice la ruta real: "instalado" a secas manda a mirar la carpeta de siempre,
 # que puede no ser donde quedo.
+# HERRAMIENTAS DE LAS PLACAS (ESP32 y Arduino UNO), bajadas AHORA y no en clase.
+# Mismo criterio que install.ps1 (ver el comentario largo ahi): la primera
+# compilacion de ESP32 baja mas de 1 GB sin progreso visible y en el taller del
+# 2026-10-14 no terminaba en 15 minutos. `pio pkg install` sobre un proyecto con
+# las versiones fijadas baja lo mismo sin compilar. Si ya estan, nada; desde
+# /actualizar (TECNIA_DESDE_ACTUALIZAR=1) solo avisa; con menos de 3 GB libres
+# avisa; si falla, avisa y sigue.
+preparar_placas() {
+  local pio="$1" core faltan="" p libre_kb proj
+  core="${PLATFORMIO_CORE_DIR:-$(dirname "$(dirname "$(dirname "$pio")")")}"
+  for p in toolchain-xtensa-esp32 framework-arduinoespressif32 toolchain-atmelavr framework-arduino-avr; do
+    [ -d "$core/packages/$p" ] || faltan="$faltan $p"
+  done
+  if [ -z "$faltan" ]; then
+    echo "  [OK] Herramientas de ESP32 y Arduino UNO ya bajadas."
+    return 0
+  fi
+  local como="Bajalas con buena red volviendo a correr el instalador (install/install.sh), o copiando ~/.platformio/packages y ~/.platformio/platforms de una computadora con Linux que ya compilo."
+  if [ "${TECNIA_DESDE_ACTUALIZAR:-}" = "1" ]; then
+    echo "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion las va a bajar (mas de 1 GB)."
+    echo "          $como"
+    return 0
+  fi
+  mkdir -p "$core"
+  libre_kb="$(df -Pk "$core" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$libre_kb" ] && [ "$libre_kb" -lt 3145728 ]; then
+    echo "  [AVISO] Hay $((libre_kb / 1048576)) GB libres: no bajo las herramientas de las placas (necesitan unos 3 GB mientras se instalan)."
+    echo "          Libera espacio y $como"
+    return 0
+  fi
+  echo "  [..] Bajando las herramientas de ESP32 y Arduino UNO (mas de 1 GB, una sola vez). Puede tardar varios minutos..."
+  proj="$(mktemp -d)"
+  cat > "$proj/platformio.ini" <<'INIEOF'
+[env:esp32dev]
+platform = espressif32@6.12.0
+board = esp32dev
+framework = arduino
+
+[env:uno]
+platform = atmelavr@5.2.0
+board = uno
+framework = arduino
+INIEOF
+  if "$pio" pkg install -d "$proj"; then
+    echo "  [OK] Herramientas de ESP32 y Arduino UNO bajadas: compilar no va a descargar nada."
+  else
+    echo "  [AVISO] No se pudieron bajar todas las herramientas de las placas."
+    echo "          La primera compilacion lo va a reintentar. $como"
+  fi
+  rm -rf "$proj"
+}
+
 PIO_BIN="$(buscar_pio || true)"
 if [ -n "$PIO_BIN" ]; then
   echo "  [OK] PlatformIO: $("$PIO_BIN" --version 2>/dev/null) ($PIO_BIN)"
+  preparar_placas "$PIO_BIN"
 else
   echo "  [FALTA] PlatformIO no esta instalado."
   echo "          Instalalo con: python3 <(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"

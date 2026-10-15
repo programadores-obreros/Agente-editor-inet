@@ -143,7 +143,7 @@ y avisando. El detalle, con el bug real del que salió la regla, está en `gotch
 
 ```ini
 [env:uno]
-platform = atmelavr
+platform = atmelavr@5.2.0
 board = uno
 framework = arduino
 monitor_speed = 9600
@@ -312,7 +312,7 @@ cualquiera de las dos, es esta.
 
 ```ini
 [env:uno]
-platform = atmelavr
+platform = atmelavr@5.2.0
 board = uno
 framework = arduino
 monitor_speed = 9600

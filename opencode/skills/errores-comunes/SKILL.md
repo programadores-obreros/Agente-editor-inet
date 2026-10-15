@@ -61,7 +61,7 @@ El codigo usa una libreria que no esta instalada en el proyecto PlatformIO.
 2. En `platformio.ini`, agrega la libreria en `lib_deps`:
 ```ini
 [env:uno]
-platform = atmelavr
+platform = atmelavr@5.2.0
 board = uno
 framework = arduino
 lib_deps =
@@ -246,14 +246,14 @@ No hay archivo `platformio.ini` en el directorio del proyecto, o tiene errores d
 2. Si no existe, crea un `platformio.ini` basico:
 ```ini
 [env:uno]
-platform = atmelavr
+platform = atmelavr@5.2.0
 board = uno
 framework = arduino
 ```
 3. Para ESP32:
 ```ini
 [env:esp32dev]
-platform = espressif32
+platform = espressif32@6.12.0
 board = esp32dev
 framework = arduino
 ```

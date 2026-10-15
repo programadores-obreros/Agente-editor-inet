@@ -133,6 +133,10 @@ if ((Test-Path (Join-Path $RepoDir ".git")) -and (Get-Command git -ErrorAction S
 
 # Reinstala la capa (copia archivos + mergea config, idempotente). Corre aunque
 # ya estuvieras en la ultima: es lo que aplica una key pegada con /connect.
+# TECNIA_DESDE_ACTUALIZAR: el instalador NO baja las herramientas de las placas
+# (mas de 1 GB) cuando lo llama /actualizar, que suele correrse en clase y sin
+# mostrar progreso: seria el mismo cuelgue que se quiere evitar. Solo avisa.
+$env:TECNIA_DESDE_ACTUALIZAR = "1"
 powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

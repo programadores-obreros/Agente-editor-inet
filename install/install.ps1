@@ -983,12 +983,79 @@ if ($PioScripts) {
     }
 }
 
+# HERRAMIENTAS DE LAS PLACAS (ESP32 y Arduino UNO), bajadas AHORA y no en clase.
+# La primera compilacion de cada placa baja su compilador y su framework: para
+# ESP32 son mas de 1 GB, sin progreso visible. En el taller del 2026-10-14, con
+# 30+ maquinas en la misma red, no terminaba en 15 minutos y el bot parecia
+# colgado (log de Windows: dos esperas de 15 min seguidas). `pio pkg install`
+# sobre un proyecto con las versiones fijadas baja lo mismo que la compilacion,
+# sin compilar (verificado en la VM win10: 84 s con buena red).
+#  - Si ya estan, no baja nada.
+#  - Desde /actualizar (TECNIA_DESDE_ACTUALIZAR=1) NO baja: solo avisa.
+#  - Con menos de 3 GB libres no baja: avisa (1,4 GB instalado + los archivos bajados).
+#  - Si falla, avisa y sigue: no es motivo para dejar la instalacion a medias.
+$PaquetesPlacas = @("toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr")
+$IniPlacas = @"
+[env:esp32dev]
+platform = espressif32@6.12.0
+board = esp32dev
+framework = arduino
+
+[env:uno]
+platform = atmelavr@5.2.0
+board = uno
+framework = arduino
+"@
+function Preparar-Placas($pio) {
+    $core = Split-Path (Split-Path (Split-Path $pio -Parent) -Parent) -Parent
+    if ($env:PLATFORMIO_CORE_DIR) { $core = $env:PLATFORMIO_CORE_DIR }
+    $faltan = @($PaquetesPlacas | Where-Object { -not (Test-Path (Join-Path $core "packages\$_")) })
+    if ($faltan.Count -eq 0) {
+        Write-Host "  [OK] Herramientas de ESP32 y Arduino UNO ya bajadas."
+        return
+    }
+    $comoConseguirlas = "Bajalas con buena red volviendo a correr el instalador (Instalar-Tecnia-Bot.exe), o copiando .platformio\packages y .platformio\platforms de una computadora que ya compilo."
+    if ($env:TECNIA_DESDE_ACTUALIZAR -eq "1") {
+        Write-Host "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion las va a bajar (mas de 1 GB)."
+        Write-Host "          $comoConseguirlas"
+        return
+    }
+    try {
+        $libreGB = [math]::Round((Get-PSDrive (Split-Path $core -Qualifier).TrimEnd(":")).Free / 1GB, 1)
+    } catch {
+        $libreGB = $null
+    }
+    if ($null -ne $libreGB -and $libreGB -lt 3) {
+        Write-Host "  [AVISO] Hay $libreGB GB libres: no bajo las herramientas de las placas (necesitan unos 3 GB mientras se instalan)."
+        Write-Host "          Libera espacio y $comoConseguirlas"
+        return
+    }
+    Write-Host "  [..] Bajando las herramientas de ESP32 y Arduino UNO (mas de 1 GB, una sola vez). Puede tardar varios minutos..."
+    $proj = Join-Path $env:TEMP "tecnia-placas"
+    try {
+        New-Item -ItemType Directory -Force $proj | Out-Null
+        Set-Content -Path (Join-Path $proj "platformio.ini") -Value $IniPlacas -Encoding ASCII
+        & $pio pkg install -d $proj
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] Herramientas de ESP32 y Arduino UNO bajadas: compilar no va a descargar nada."
+        } else {
+            Write-Host "  [AVISO] No se pudieron bajar todas las herramientas de las placas (codigo $LASTEXITCODE)."
+            Write-Host "          La primera compilacion lo va a reintentar. $comoConseguirlas"
+        }
+    } catch {
+        Write-Host "  [AVISO] No se pudieron bajar las herramientas de las placas ($($_.Exception.GetType().Name)). $comoConseguirlas"
+    } finally {
+        Remove-Item $proj -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
 # Se dice la ruta real: si PlatformIO se relocalizo a la raiz del disco, decir solo
 # "instalado" manda a mirar una carpeta que no existe.
 $pioPath = Buscar-Pio
 if ($pioPath) {
     Write-Host "  [OK] PlatformIO instalado en $pioPath (Tecnia Bot lo encuentra aunque no este en PATH)"
+    Preparar-Placas $pioPath
 } else {
     Write-Host "  [FALTA] PlatformIO no esta instalado. Ver docs/instalacion-windows.md"
 }
