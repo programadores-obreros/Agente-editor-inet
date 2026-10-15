@@ -142,7 +142,10 @@ fi
 
 # Reinstala la capa (copia archivos + mergea config, idempotente). Corre aunque
 # ya estuvieras en la última: es lo que aplica una key pegada con /connect.
-bash "$REPO_DIR/install/install.sh"
+# TECNIA_DESDE_ACTUALIZAR: el instalador NO baja las herramientas de las placas
+# (mas de 1 GB) cuando lo llama /actualizar, que suele correrse en clase y sin
+# mostrar progreso: seria el mismo cuelgue que se quiere evitar. Solo avisa.
+TECNIA_DESDE_ACTUALIZAR=1 bash "$REPO_DIR/install/install.sh"
 
 echo ""
 echo "==> Tecnia Bot actualizado. Reiniciá OpenCode para cargar los cambios."

@@ -4,6 +4,17 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.6] — 2026-10-14
+
+**La primera compilación ya no se pasa un cuarto de hora descargando en el medio de la clase.**
+
+### Corregido
+
+- **"Se queda parado" después de compilar, también con la 0.4.5.** La 0.4.5 resolvió los cortes con Gemini, pero en el taller el bot se seguía trabando. El registro de una docente mostró la causa real: después de escribir el programa, el bot mandó a compilar para ESP32 y la herramienta estuvo **15 minutos** sin dar señales; el bot lo reintentó y fueron **otros 15**. La primera vez que se compila para una placa, PlatformIO baja su compilador y su framework —para ESP32 son **más de 1 GB**— sin mostrar ningún avance, y con treinta computadoras bajando lo mismo por la red de la escuela no terminaba nunca.
+  - **El instalador ahora baja las herramientas de ESP32 y Arduino UNO** con las versiones fijadas, una sola vez: después, compilar no baja nada (ESP32 compila en segundos). Si ya están, no baja nada; si hay menos de 3 GB libres, avisa en vez de llenar el disco. `/actualizar` **no** las baja (suele hacerse en clase): sólo avisa si faltan y cómo conseguirlas.
+  - **Si una compilación se corta por tiempo, el bot ya no la reintenta solo.** Antes le decía "probá de nuevo, la segunda vez es rápido", y no lo era. Ahora explica que faltan las herramientas y cómo bajarlas una vez.
+  - **Mientras baja las herramientas, la herramienta lo dice** ("Bajando las herramientas de ESP32 por primera vez…") en vez de parecer colgada.
+  - **El bot escribe el `platformio.ini` con las versiones fijadas** (`espressif32@6.12.0`, `atmelavr@5.2.0`), las mismas que baja el instalador. Antes las dejaba sin versión y PlatformIO podía pedir otra.
 ## [0.4.5] — 2026-10-14
 
 **El bot ya no se queda trabado esperando una respuesta que no llega.**

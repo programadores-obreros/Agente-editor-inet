@@ -2,7 +2,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, win32 } from "node:path"
+import { dirname, join, win32 } from "node:path"
 
 interface RunResult {
   code: number
@@ -233,17 +233,65 @@ function describirDuracion(ms: number): string {
 }
 
 /**
- * Lo que se le dice al docente cuando compilar o cargar no termino a tiempo.
- * La causa casi siempre es la descarga inicial del toolchain, que por el pipe
- * no muestra progreso: el segundo intento arranca con todo bajado.
+ * Lo que se le dice al docente (y al bot) cuando compilar o cargar no termino a tiempo.
+ *
+ * La causa casi siempre es la descarga inicial de las herramientas de la placa
+ * (mas de 1 GB para ESP32), que por el pipe no muestra progreso. ANTES este
+ * mensaje decia "proba de nuevo, la segunda vez es rapido", y el bot lo hacia
+ * solo: en el taller del 2026-10-14 una docente espero 15 minutos, el bot
+ * reintento y espero otros 15 (log de Windows, sesion ses_ec459b9f). La segunda
+ * vez NO fue rapida: con la red del aula la descarga tampoco termino. Por eso el
+ * mensaje ahora le dice al bot que no reintente y al docente como bajarlas una
+ * sola vez.
  */
-function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number): string {
+function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number, faltaban: string[] = []): string {
+  const causa =
+    faltaban.length > 0
+      ? `Faltaban las herramientas de ${faltaban.join(" y ")}, y PlatformIO las estaba bajando (para ESP32 es más de 1 GB la primera vez): con esta red no llegó.`
+      : "Lo más probable es que PlatformIO estuviera bajando herramientas sin mostrar progreso, o que se haya colgado."
   return (
-    `No termine de ${que} en ${describirDuracion(timeoutMs)}. ` +
-    "PlatformIO sigue descargando herramientas o se colgó; probá de nuevo, la segunda vez es rápido " +
-    "(lo que ya se bajo queda guardado). Si vuelve a pasar, corré `/diagnostico`: puede ser la red " +
-    "de la escuela bloqueando las descargas."
+    `No termine de ${que} en ${describirDuracion(timeoutMs)}. ${causa}\n\n` +
+    "NO lo vuelvas a intentar ahora: otro intento con la misma red vuelve a tardar lo mismo. " +
+    "Decile al docente que las herramientas se bajan UNA sola vez por computadora: " +
+    "actualizando Tecnia Bot con buena red (por ejemplo en casa), o copiando las carpetas " +
+    "`.platformio\\packages` y `.platformio\\platforms` de una computadora que ya compiló. " +
+    "Si ya estaban bajadas, corré `/diagnostico`: puede ser la red de la escuela bloqueando las descargas."
   )
+}
+
+/*
+ * QUE HERRAMIENTAS NECESITA CADA PLACA, para avisar ANTES de que la primera
+ * compilacion se ponga a bajar mas de 1 GB en silencio. Son los paquetes que
+ * PlatformIO baja la primera vez para cada plataforma (los mas pesados).
+ */
+const HERRAMIENTAS_POR_PLATAFORMA: Array<{ plataforma: RegExp; nombre: string; paquetes: string[] }> = [
+  {
+    plataforma: /^\s*platform\s*=\s*(platformio\/)?espressif32\b/m,
+    nombre: "ESP32",
+    paquetes: ["toolchain-xtensa-esp32", "framework-arduinoespressif32"],
+  },
+  {
+    plataforma: /^\s*platform\s*=\s*(platformio\/)?atmelavr\b/m,
+    nombre: "Arduino UNO",
+    paquetes: ["toolchain-atmelavr", "framework-arduino-avr"],
+  },
+]
+
+/** La carpeta de PlatformIO (la que tiene `packages`), deducida del pio que se usa. */
+export function coreDir(pio: string = pioBin(), entorno: Record<string, string | undefined> = process.env): string {
+  if (pio !== "pio" && pio !== "platformio") return dirname(dirname(dirname(pio)))
+  return entorno.PLATFORMIO_CORE_DIR || join(homedir(), ".platformio")
+}
+
+/** Las placas del `platformio.ini` cuyas herramientas todavia no estan bajadas. */
+export function herramientasFaltantes(
+  iniText: string,
+  core: string,
+  existe: (ruta: string) => boolean = existsSync,
+): string[] {
+  return HERRAMIENTAS_POR_PLATAFORMA.filter(
+    (h) => h.plataforma.test(iniText) && h.paquetes.some((p) => !existe(join(core, "packages", p))),
+  ).map((h) => h.nombre)
 }
 
 /**
@@ -840,7 +888,26 @@ Acciones:
     const envFlag = args.environment ? ["-e", args.environment] : []
 
     // Compilar y cargar son los dos comandos largos (descargan toolchain la primera vez).
-    const compilar = () => run(["pio", "run", ...envFlag], cwd, signal, timeoutLargoMs())
+    // Si faltan las herramientas de la placa, la primera compilacion las baja en
+    // silencio: se avisa en el titulo de la tool para que no parezca un cuelgue.
+    let faltaban: string[] = []
+    const avisarDescarga = () => {
+      try {
+        const ini = join(cwd, "platformio.ini")
+        faltaban = existsSync(ini) ? herramientasFaltantes(readFileSync(ini, "utf-8"), coreDir()) : []
+      } catch {
+        faltaban = []
+      }
+      if (faltaban.length > 0 && typeof ctx.metadata === "function") {
+        ctx.metadata({
+          title: `Bajando las herramientas de ${faltaban.join(" y ")} por primera vez (puede tardar varios minutos)`,
+        })
+      }
+    }
+    const compilar = () => {
+      avisarDescarga()
+      return run(["pio", "run", ...envFlag], cwd, signal, timeoutLargoMs())
+    }
     const cargar = (puerto: string) =>
       run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal, timeoutLargoMs())
 
@@ -857,7 +924,7 @@ Acciones:
     // Timeout o cancelacion no son errores de compilacion: no se traducen, se explican.
     const noTermino = (r: RunResult, que: "compilar" | "cargar el codigo"): string | null =>
       r.code === CODIGO_TIMEOUT
-        ? mensajeTimeout(que, timeoutLargoMs())
+        ? mensajeTimeout(que, timeoutLargoMs(), faltaban)
         : r.code === CODIGO_CANCELADO
           ? `Se cancelo la accion antes de terminar de ${que}.`
           : null

@@ -240,15 +240,18 @@ test("run(): un proceso que no termina nunca se corta por timeout con código 12
   assert.equal(spawns[0].proc.matado, true, "al cortar hay que matar el proceso")
 })
 
-test("compile colgado: el mensaje dice que sigue descargando o se colgó y que reintente", async () => {
+test("compile colgado: el mensaje explica la descarga y le dice al bot que NO reintente", async () => {
   process.env.TECNIA_PIO_TIMEOUT_MS = "50"
   escenario()
   const base = guion
   guion = (cmd) => (cmd.join(" ").endsWith(" run") ? COLGADO() : base(cmd))
 
   const r = await mod.default.execute({ action: "compile" }, ctx)
-  assert.match(r, /sigue descargando herramientas o se colgó/)
-  assert.match(r, /probá de nuevo, la segunda vez es rápido/)
+  // 2026-10-14, taller: el mensaje viejo decía "probá de nuevo, la segunda vez es rápido",
+  // el bot reintentó solo y la docente esperó 15 + 15 minutos. La segunda vez no fue rápida.
+  assert.match(r, /bajando herramientas sin mostrar progreso, o que se haya colgado/)
+  assert.match(r, /NO lo vuelvas a intentar ahora/)
+  assert.doesNotMatch(r, /la segunda vez es rápido/)
   assert.doesNotMatch(r, /Error de compilacion/, "un timeout no es un error del código del alumno")
 })
 
@@ -259,7 +262,7 @@ test("both: si la carga se cuelga, avisa del timeout de la carga (el compile ya 
   guion = (cmd) => (cmd.join(" ").includes("--target upload") ? COLGADO() : base(cmd))
   const r = await mod.default.execute({ action: "both" }, ctx)
   assert.match(r, /No termine de cargar el codigo/)
-  assert.match(r, /se colgó; probá de nuevo/)
+  assert.match(r, /NO lo vuelvas a intentar ahora/)
 })
 
 test("run(): ctx.abort sigue cortando el proceso (código 130, sin esperar el timeout)", async () => {
@@ -460,4 +463,45 @@ test("recortarSalida: el error cerca del final se une con la cola sin marcador d
   assert.match(r, /^… \(79 líneas omitidas\)\nL80\n/)
   assert.match(r, /error: boom/)
   assert.match(r, /\nL100$/)
+})
+
+// ── herramientas de la placa que faltan (primera compilación) ────────────────
+
+test("herramientasFaltantes(): ESP32 sin toolchain se detecta; con todo bajado, nada", () => {
+  const ini = "[env:esp32dev]\nplatform = espressif32@6.12.0\nboard = esp32dev\n"
+  const nada = () => false
+  const todo = () => true
+  assert.deepEqual(mod.herramientasFaltantes(ini, "/core", nada), ["ESP32"])
+  assert.deepEqual(mod.herramientasFaltantes(ini, "/core", todo), [])
+  // Sin versión (como lo escribía el prompt hasta la 0.4.5) también se reconoce.
+  assert.deepEqual(mod.herramientasFaltantes("platform = espressif32\n", "/core", nada), ["ESP32"])
+  assert.deepEqual(mod.herramientasFaltantes("platform = platformio/atmelavr@5.2.0\n", "/core", nada), ["Arduino UNO"])
+  // Mira la carpeta packages del core.
+  const vistos = []
+  mod.herramientasFaltantes(ini, "/core", (r) => (vistos.push(r), true))
+  assert.ok(vistos.some((v) => v.endsWith(join("packages", "toolchain-xtensa-esp32"))), vistos.join(","))
+})
+
+test("coreDir(): sale del pio que se usa (penv/Scripts/pio.exe -> la carpeta .platformio)", () => {
+  assert.equal(mod.coreDir(join("/h", ".platformio", "penv", "bin", "pio")), join("/h", ".platformio"))
+  assert.equal(mod.coreDir("pio", { PLATFORMIO_CORE_DIR: "/otro" }), "/otro")
+})
+
+test("compile sin las herramientas de ESP32: avisa en el título y el timeout nombra la placa", async () => {
+  process.env.TECNIA_PIO_TIMEOUT_MS = "50"
+  process.env.PLATFORMIO_CORE_DIR = join(OUT, "core-vacio")
+  try {
+    escenario()
+    writeFileSync(join(OUT, "platformio.ini"), "[env:esp32dev]\nplatform = espressif32@6.12.0\nboard = esp32dev\nframework = arduino\n")
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").endsWith(" run") ? COLGADO() : base(cmd))
+    const titulos = []
+    const r = await mod.default.execute({ action: "compile" }, { ...ctx, metadata: (m) => titulos.push(m.title) })
+    assert.ok(titulos.some((t) => /Bajando las herramientas de ESP32/.test(t)), `sin aviso: ${titulos}`)
+    assert.match(r, /Faltaban las herramientas de ESP32/)
+    assert.match(r, /NO lo vuelvas a intentar ahora/)
+  } finally {
+    delete process.env.PLATFORMIO_CORE_DIR
+    rmSync(join(OUT, "platformio.ini"), { force: true })
+  }
 })

@@ -378,7 +378,7 @@ orden y sin preguntar (es andamiaje, no una decisión del docente):
 ```ini
 ; platformio.ini — para Arduino UNO
 [env:uno]
-platform = atmelavr
+platform = atmelavr@5.2.0
 board = uno
 framework = arduino
 monitor_speed = 9600
@@ -386,7 +386,7 @@ monitor_speed = 9600
 ```ini
 ; platformio.ini — para ESP32 DevKit
 [env:esp32dev]
-platform = espressif32
+platform = espressif32@6.12.0
 board = esp32dev
 framework = arduino
 monitor_speed = 115200
@@ -397,6 +397,11 @@ demás. Resolvela con la regla crítica de arriba —perfil, después diagnósti
 después preguntar— antes de escribir el ini. Elegir mal el board no da un error
 claro: da uno de compilación que parece del código, y el alumno se pone a
 corregir líneas que están bien.
+
+**Si compilar o cargar se corta por tiempo ("No termine de…"), NO reintentes.** La
+primera compilación de una placa baja sus herramientas (más de 1 GB para ESP32) y
+con la red del aula un segundo intento tarda lo mismo. Pasale al docente el mensaje
+de la herramienta y esperá a que te diga que ya las tiene.
 
 El código va en `src/main.cpp`, no en un `.ino` suelto en la raíz: PlatformIO no
 mira ahí. Si el docente ya tiene un `.ino`, su contenido va adentro de
