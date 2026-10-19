@@ -986,7 +986,7 @@ function pioNoEncontrado() {
     "PlatformIO no esta instalado.\n\n" +
     "COMO SE ARREGLA (no hay que instalar nada aparte, ni VS Code, ni Python a mano):\n" +
     "  1. Instalalo VOS ahora: llama a este mismo tool con action: \"reparar\".\n" +
-    "     Avisale antes al usuario que tarda unos minutos y baja unos 60 MB.\n" +
+    "     Avisale antes al usuario que tarda unos minutos y baja unos 60 MB (mas de 1 GB si faltan las herramientas de ESP32/UNO).\n" +
     "  2. Plan B, solo si la reparacion desde aca no pudo correr (el tool lo dice):\n" +
     "     Menu inicio -> 'Reparar Tecnia Bot'. Hace exactamente lo mismo.\n" +
     "     En Linux/Mac, el tool devuelve el comando exacto (bash install/bootstrap.sh).\n" +
@@ -1007,7 +1007,7 @@ Acciones:
 - both: compilar y cargar en un solo paso
 - monitor: abre una ventana de terminal aparte con el monitor serial ya corriendo. El puerto se detecta solo (si hay varias placas, pide elegir). Los baudios: si no pasas 'baud', lee el monitor_speed del platformio.ini de la carpeta actual (del environment que indiques, o el primero que tenga uno) y si no hay ninguno usa 9600. NO requiere codigo cargado: sirve para ver los datos que manda la placa y para mandarle teclas (ej: comandar un servo desde el teclado). Cuando el usuario pida "ver el monitor serial", "abrir la terminal serial" o similar, llama a esta accion DIRECTAMENTE, sin pedir ni crear un proyecto.
 - diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)
-- reparar: instala PlatformIO Core cuando falta, corriendo el instalador de Tecnia Bot (en Linux/Mac devuelve el comando exacto para hacerlo a mano). Tarda unos minutos y baja unos 60 MB: avisale antes.`,
+- reparar: instala PlatformIO Core cuando falta, corriendo el instalador de Tecnia Bot (en Linux/Mac devuelve el comando exacto para hacerlo a mano). Tarda unos minutos y baja unos 60 MB (mas de 1 GB si faltan las herramientas de ESP32/UNO): avisale antes.`,
   args: {
     action: tool.schema
       .enum(["compile", "flash", "both", "monitor", "diagnostico", "reparar"])
@@ -1018,7 +1018,7 @@ Acciones:
         "Usa 'reparar' apenas veas que falta PlatformIO y el usuario quiera compilar o " +
         "cargar codigo: hacelo vos. El acceso directo del menu inicio, Reparar Tecnia Bot, " +
         "es el plan B, solo si desde aca no se pudo correr. Tarda unos minutos y baja unos " +
-        "60 MB, asi que avisale antes de arrancar."
+        "60 MB, o mas de 1 GB si faltan las herramientas de ESP32/UNO, asi que avisale antes de arrancar."
       ),
     port: tool.schema
       .string()

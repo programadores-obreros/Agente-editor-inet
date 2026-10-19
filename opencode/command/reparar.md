@@ -7,7 +7,8 @@ docente ya pidió la reparación al escribir `/reparar`, volver a preguntarle es
 hacerle repetir lo que ya dijo.
 
 Avisale sí que arranca y que tarda: corre el instalador completo, baja unos 60 MB
-y puede llevar varios minutos. Una pantalla quieta sin explicación se lee como
+(más de 1 GB si faltan las herramientas de ESP32/UNO: mejor con buena red) y puede
+llevar varios minutos. Una pantalla quieta sin explicación se lee como
 que se colgó.
 
 ## Qué repara
@@ -22,6 +23,7 @@ falte:
 | Python | hace falta para PlatformIO |
 | PlatformIO Core | compilar y cargar código a la placa |
 | La capa educativa | el agente, los skills, las fichas |
+| Herramientas de ESP32 y UNO | compilador y framework, más de 1 GB, una sola vez |
 
 Lo que ya está no se toca. Es seguro correrlo las veces que haga falta.
 
