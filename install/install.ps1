@@ -1060,7 +1060,7 @@ function Preparar-Placas($pio) {
     # Y el pendrive dice la carpeta REAL de destino, no "la del usuario".
     $comoConseguirlas = "Bajalas con buena red corriendo 'Reparar Tecnia Bot' del menu inicio o volviendo a correr el instalador (Instalar-Tecnia-Bot.exe); /actualizar NO las baja. O copia las carpetas packages y platforms de la carpeta .platformio de una computadora que ya compilo adentro de $core."
     if ($env:TECNIA_DESDE_ACTUALIZAR -eq "1") {
-        Write-Host "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion las va a bajar (mas de 1 GB)."
+        Write-Host "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion va a intentar bajarlas (mas de 1 GB) y, sin buena red, se corta a los 3 minutos."
         Write-Host "          $comoConseguirlas"
         return
     }
@@ -1087,7 +1087,7 @@ function Preparar-Placas($pio) {
             Write-Host "  [OK] Herramientas de ESP32 y Arduino UNO bajadas: compilar no va a descargar nada."
         } else {
             Write-Host "  [AVISO] No se pudieron bajar todas las herramientas de las placas (codigo $LASTEXITCODE)."
-            Write-Host "          La primera compilacion lo va a reintentar. $comoConseguirlas"
+            Write-Host "          La primera compilacion lo intenta de nuevo, pero sin buena red se corta a los 3 minutos. $comoConseguirlas"
         }
     } catch {
         Write-Host "  [AVISO] No se pudieron bajar las herramientas de las placas ($($_.Exception.GetType().Name)). $comoConseguirlas"
