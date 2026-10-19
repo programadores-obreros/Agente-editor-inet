@@ -110,6 +110,22 @@ function Rutas-PioCore {
     return ($dirs | Select-Object -Unique)
 }
 
+# LA CARPETA DONDE PlatformIO GUARDA LAS HERRAMIENTAS (`packages`), que NO tiene
+# por que ser la del penv de arriba. PlatformIO usa <raiz del disco>\.platformio
+# si esa CARPETA existe, aunque el penv este en el perfil (get_default_core_dir).
+# Es la MISMA regla que coreDir() en opencode\tool\platformio.ts y que
+# Core-PlatformIO en install.ps1: PLATFORMIO_CORE_DIR; si no, <raiz>\.platformio si
+# es carpeta (un archivo con ese nombre no cuenta); si no, el perfil.
+function Core-PlatformIO {
+    if ($env:PLATFORMIO_CORE_DIR) { return $env:PLATFORMIO_CORE_DIR }
+    $raiz = [System.IO.Path]::GetPathRoot($U)
+    if ($raiz) {
+        $enRaiz = Join-Path $raiz ".platformio"
+        if (Test-Path -LiteralPath $enRaiz -PathType Container) { return $enRaiz }
+    }
+    return (Join-Path $U ".platformio")
+}
+
 # Los ejecutables candidatos, en orden. Se miran pio.exe Y platformio.exe: estan
 # los dos normalmente, pero el instalador oficial nombra platformio.exe en su
 # mensaje final y no queremos depender de que exista justo el que elegimos.
@@ -298,6 +314,12 @@ Titulo "PlatformIO: en cual de los cuatro pasos se corto"
 $P = $PioCore
 Dato "core_dir en uso" $P
 Dato "PLATFORMIO_CORE_DIR" $(if ($env:PLATFORMIO_CORE_DIR) { $env:PLATFORMIO_CORE_DIR } else { "sin setear (se usa el default)" })
+# Las herramientas de ESP32/UNO que baja el instalador, en la carpeta donde
+# PlatformIO las busca. Si el bot corto una compilacion "por falta de
+# herramientas", este renglon dice si de verdad faltan y DONDE se las espera.
+$CorePaquetes = Core-PlatformIO
+$faltanPlacas = @(@("toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr") | Where-Object { -not (Test-Path (Join-Path $CorePaquetes "packages\$_")) })
+Dato "herramientas ESP32/UNO" $(if ($faltanPlacas.Count -eq 0) { "bajadas en $CorePaquetes" } else { "FALTAN en ${CorePaquetes}: " + ($faltanPlacas -join ", ") })
 # EL SHIM DE PYTHON SE LLAMA python3.exe, NO python.exe.
 #
 # Este renglon miraba scoop\shims\python.exe, que NO EXISTE EN NINGUNA MAQUINA.

@@ -105,6 +105,44 @@ test("el bootstrap lanza install.ps1 con el powershell.exe de $PSHOME, no por no
   }
 })
 
+// En una notebook real, instalacion.log saltaba de "Instalando la capa" a "LISTO!":
+// Start-Transcript no graba lo que el hijo escribe directo a la consola. El primer
+// arreglo fue "| Out-Host", pero con un pipe `pio pkg install` esconde la barra de
+// progreso (la docente ve todo quieto durante 1 GB de descarga) y los errores de
+// install.ps1 igual no llegaban al log. Ahora el transcript se pasa de mano.
+test("instalacion.log se pasa de mano a install.ps1 (transcript encadenado, sin pipe)", () => {
+  const boot = sinComentariosPs(leer("install/bootstrap.ps1"))
+  const lineas = boot.split("\n")
+  const iLanza = lineas.findIndex((l) => /install\\install\.ps1/.test(l) && /-File/.test(l))
+  assert.notEqual(iLanza, -1, "no encuentro la línea que lanza install.ps1")
+  assert.equal(lineas.filter((l) => /install\\install\.ps1/.test(l) && /-File/.test(l)).length, 1, "install.ps1 se lanza en más de un lugar")
+  const lanza = lineas[iLanza]
+  assert.doesNotMatch(lanza, /\|/, `install.ps1 se lanza con un pipe: pio pierde la consola y esconde el progreso: ${lanza.trim()}`)
+  const antes = lineas.slice(0, iLanza).join("\n")
+  const despues = lineas.slice(iLanza + 1).join("\n")
+  // Antes de lanzar: la ruta al hijo y el transcript propio cerrado (dos no pueden escribir el mismo archivo).
+  const pasa = antes.lastIndexOf("$env:TECNIA_LOG_INSTALACION = $LogInstalacion")
+  const para = antes.lastIndexOf("Stop-Transcript")
+  assert.ok(pasa !== -1, "bootstrap.ps1 no le pasa la ruta del log a install.ps1")
+  assert.ok(para > pasa, "bootstrap.ps1 no cierra su transcript antes de lanzar install.ps1")
+  // Inmediatamente después: guarda el código del hijo ANTES de reabrir el transcript, y reabre con -Append.
+  const siguiente = lineas.slice(iLanza + 1).find((l) => l.trim() !== "")
+  assert.match(siguiente, /^\s*\$CodigoInstall = \$LASTEXITCODE\s*$/, "el código de install.ps1 se tiene que guardar en la línea siguiente")
+  assert.match(despues, /Start-Transcript -Path \$LogInstalacion -Append/, "bootstrap.ps1 no reabre instalacion.log con -Append")
+  assert.match(despues, /if \(\$CodigoInstall -ne 0\)/, "la verificación no usa el código de install.ps1")
+  assert.doesNotMatch(despues.slice(0, despues.indexOf("$cfgDir")), /\$LASTEXITCODE -ne 0/, "se mira $LASTEXITCODE después de reabrir el transcript")
+
+  const inst = sinComentariosPs(leer("install/install.ps1"))
+  assert.match(inst, /if \(\$env:TECNIA_LOG_INSTALACION\) \{[\s\S]{0,200}Start-Transcript -Path \$env:TECNIA_LOG_INSTALACION -Append/, "install.ps1 no abre el log que le pasan")
+  // El try empieza antes del primer paso y el finally cierra el transcript, también si algo se corta.
+  const iTry = inst.indexOf("\ntry {")
+  assert.ok(iTry !== -1 && iTry < inst.indexOf("==> Instalando Tecnia Bot en:"), "el cuerpo de install.ps1 no está dentro del try")
+  assert.match(inst, /\} catch \{[\s\S]{0,600}Write-Host[\s\S]{0,300}\} finally \{\s*\n\s*if \(\$TranscriptPropio\) \{ try \{ Stop-Transcript/, "install.ps1 no escribe el error ni cierra el transcript en el camino de error")
+  assert.match(inst, /if \(\$FalloInstalacion\) \{ exit 1 \}\s*$/, "un error en install.ps1 tiene que seguir saliendo con código 1")
+  // update.ps1 lanza install.ps1 sin la variable: no graba, y no se rompe.
+  assert.doesNotMatch(sinComentariosPs(leer("install/update.ps1")), /TECNIA_LOG_INSTALACION/)
+})
+
 // ── C. El aviso de pip no asusta ───────────────────────────────────────────────
 //
 // `get-platformio.py` intenta actualizar pip dentro del venv y en Windows falla

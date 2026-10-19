@@ -994,7 +994,11 @@ fi
 # avisa; si falla, avisa y sigue.
 preparar_placas() {
   local pio="$1" core faltan="" p libre_kb proj
-  core="${PLATFORMIO_CORE_DIR:-$(dirname "$(dirname "$(dirname "$pio")")")}"
+  # La carpeta donde PlatformIO guarda packages, con SU regla y no la del pio: la
+  # misma que coreDir() en opencode/tool/platformio.ts. En Linux no hay mudanza a
+  # la raiz del disco: PLATFORMIO_CORE_DIR (vacia cuenta como no puesta) o
+  # ~/.platformio, aunque el penv este en otro lado.
+  core="${PLATFORMIO_CORE_DIR:-$HOME/.platformio}"
   for p in toolchain-xtensa-esp32 framework-arduinoespressif32 toolchain-atmelavr framework-arduino-avr; do
     [ -d "$core/packages/$p" ] || faltan="$faltan $p"
   done
@@ -1002,9 +1006,11 @@ preparar_placas() {
     echo "  [OK] Herramientas de ESP32 y Arduino UNO ya bajadas."
     return 0
   fi
-  local como="Bajalas con buena red volviendo a correr el instalador (install/install.sh), o copiando ~/.platformio/packages y ~/.platformio/platforms de una computadora con Linux que ya compilo."
+  # El mismo consejo que mensajeTimeout() en platformio.ts: /actualizar NO las baja
+  # (llega aca con TECNIA_DESDE_ACTUALIZAR=1), y el pendrive dice la carpeta real.
+  local como="Bajalas con buena red volviendo a correr el instalador (bash install/install.sh); /actualizar NO las baja. O copia las carpetas packages y platforms de la carpeta .platformio de una computadora con Linux que ya compilo adentro de $core."
   if [ "${TECNIA_DESDE_ACTUALIZAR:-}" = "1" ]; then
-    echo "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion las va a bajar (mas de 1 GB)."
+    echo "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion va a intentar bajarlas (mas de 1 GB) y, sin buena red, se corta a los 3 minutos."
     echo "          $como"
     return 0
   fi
@@ -1032,7 +1038,7 @@ INIEOF
     echo "  [OK] Herramientas de ESP32 y Arduino UNO bajadas: compilar no va a descargar nada."
   else
     echo "  [AVISO] No se pudieron bajar todas las herramientas de las placas."
-    echo "          La primera compilacion lo va a reintentar. $como"
+    echo "          La primera compilacion lo intenta de nuevo, pero sin buena red se corta a los 3 minutos. $como"
   fi
   rm -rf "$proj"
 }

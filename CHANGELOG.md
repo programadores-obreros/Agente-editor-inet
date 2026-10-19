@@ -4,6 +4,19 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-10-19
+
+**Si a una computadora le faltan las herramientas de ESP32 o Arduino UNO, el bot avisa en 3 minutos, no en 15, y le dice al docente qué hacer.**
+
+### Corregido
+
+- **El registro de la instalación ahora cuenta todo.** En una notebook con Windows 10, el registro (`instalacion.log`) pasaba de "Instalando la capa de Tecnia Bot" a "LISTO!" sin nada en el medio: la segunda mitad de la instalación —la configuración del modelo y la descarga de las herramientas de ESP32 y UNO— no quedaba anotada. Si esa descarga fallaba en la computadora de un docente, el registro no lo iba a mostrar. Ahora esa parte queda anotada, también si la instalación se corta con un error. Mientras se bajan las herramientas, la barra de progreso se sigue viendo en pantalla.
+- **Sin las herramientas de ESP32 o UNO, compilar se corta a los 3 minutos, no a los 15.** Desde la 0.4.6 las herramientas las baja el instalador; si igual faltan, es que esa descarga no llegó, y con la red del aula desde el bot tampoco va a llegar. Esperar un cuarto de hora para enterarse era lo que trababa la clase. Con las herramientas ya instaladas no cambia nada. Vale también para **cargar** sin compilar antes, que compila por adentro y antes esperaba 15 minutos sin avisar. Una escuela con red lenta puede fijar otro tope con la variable de entorno `TECNIA_PIO_TIMEOUT_MS` (en milisegundos), y se respeta tal cual, también para más.
+- **El bot le dice al docente cómo conseguir las herramientas, por un camino que funciona.** Al reproducir el caso del taller, el bot no reintentaba (eso ya andaba bien desde la 0.4.6), pero el consejo era "actualizar Tecnia Bot con buena red", y `/actualizar` justamente no las baja; además terminaba ofreciendo "correr un diagnóstico". Ahora le pasa las dos opciones: con buena red, "Reparar Tecnia Bot" desde el menú inicio o volver a correr `Instalar-Tecnia-Bot.exe` (`/actualizar` no las baja, a propósito: se corre en clase), o traer las carpetas en un pendrive desde una computadora donde ya compila, con la carpeta exacta donde copiarlas. El instalador da el mismo consejo.
+- **Si lo que se corta es la carga, el bot no habla de herramientas.** En "compilar y cargar", cuando la compilación ya había terminado bien y lo que no terminaba era la carga, el mensaje igual hablaba de herramientas faltantes y del pendrive. Ahora dice que la compilación anduvo y pide revisar el cable, el puerto y, en un ESP32, el botón BOOT.
+- **El aviso "Bajando las herramientas…" mira la misma carpeta que PlatformIO, y el instalador también.** Si existe `C:\.platformio`, PlatformIO guarda todo ahí aunque el resto esté en la carpeta del usuario; Tecnia Bot miraba la otra y podía avisar de más o de menos. Ahora el bot, el instalador (que además mide el espacio libre en ese disco) y el diagnóstico usan la misma regla que PlatformIO.
+- **Una ESP32-C3 o S3 ya no muestra "Bajando las herramientas…" de más.** El aviso le pedía a toda placa ESP32 el compilador del ESP32 clásico, que la C3 y la S3 no usan: si ese compilador no estaba, cada compilación anunciaba una descarga que no existía. Ahora a cada placa se le pide lo que de verdad usa de lo que baja el instalador.
+
 ## [0.4.6] — 2026-10-14
 
 **La primera compilación ya no se pasa un cuarto de hora descargando en el medio de la clase.**
