@@ -66,7 +66,8 @@ try {
     Get-ChildItem $RepoDir -Filter "instalacion-*.log" | Sort-Object LastWriteTime -Descending |
         Select-Object -Skip 5 | Remove-Item -Force -ErrorAction SilentlyContinue
 } catch { }
-try { Start-Transcript -Path $LogInstalacion -Force | Out-Null } catch { }
+$HayTranscript = $false
+try { Start-Transcript -Path $LogInstalacion -Force | Out-Null; $HayTranscript = $true } catch { }
 
 # ---- LA VERSION DE OPENCODE ESTA FIJADA, Y EN UN SOLO LUGAR -------------------
 #
@@ -1303,12 +1304,37 @@ Write-Host "  [..] Instalando la capa de Tecnia Bot..."
 # cae al nombre, como antes.
 $PsExe = Join-Path $PSHOME "powershell.exe"
 if (-not (Test-Path $PsExe)) { $PsExe = "powershell" }
-# "| Out-Host" para que la salida quede en instalacion.log. Start-Transcript no graba
-# lo que un proceso hijo escribe directo a la consola: en una notebook real el log
-# saltaba de "Instalando la capa" a "LISTO!" sin nada en el medio, y ahi adentro
-# estan los timeouts del modelo y la descarga de las herramientas de las placas.
-# $LASTEXITCODE sigue siendo el de install.ps1 aunque la salida pase por el pipe.
-& $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1") | Out-Host
+# EL LOG SE PASA DE MANO ("transcript encadenado"), y no por un pipe.
+#
+# Start-Transcript no graba lo que un proceso hijo escribe directo a la consola: en
+# una notebook real el log saltaba de "Instalando la capa" a "LISTO!" sin nada en
+# el medio, y ahi adentro estan los timeouts del modelo y la descarga de las
+# herramientas de las placas. El primer arreglo fue "| Out-Host", y tenia dos
+# problemas: `pio pkg install` (que lanza install.ps1) veia un pipe en
+# vez de una consola y escondia la barra de progreso -la docente veia todo quieto
+# durante una descarga de mas de 1 GB-, y stderr y los errores terminantes de
+# install.ps1 igual no quedaban en el log.
+#
+# Ahora: se cierra el transcript de aca, install.ps1 abre el SUYO sobre el mismo
+# archivo (-Append, porque recibe la ruta en TECNIA_LOG_INSTALACION) y lo cierra al
+# terminar, aunque se corte; despues se reabre aca, tambien con -Append. El hijo
+# corre con la consola de verdad, sin pipe. Lo que pio escribe directo a la
+# consola (la barra) sigue sin quedar en el log, igual que antes con cualquier
+# programa: lo que queda son los [OK]/[AVISO] de install.ps1, con el codigo de pio.
+#
+# Si el transcript de aca no arranco, no se le pasa nada al hijo: sin la variable,
+# install.ps1 no graba (que es tambien como lo corre update.ps1).
+if ($HayTranscript) {
+    $env:TECNIA_LOG_INSTALACION = $LogInstalacion
+    try { Stop-Transcript | Out-Null } catch { }
+}
+& $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
+# Se guarda YA: es el codigo de install.ps1 y lo que sigue no lo tiene que pisar.
+$CodigoInstall = $LASTEXITCODE
+if ($HayTranscript) {
+    Remove-Item Env:TECNIA_LOG_INSTALACION -ErrorAction SilentlyContinue
+    try { Start-Transcript -Path $LogInstalacion -Append | Out-Null } catch { }
+}
 
 # SE VERIFICA QUE LA CAPA HAYA QUEDADO, y por dos vias.
 #
@@ -1319,9 +1345,9 @@ if (-not (Test-Path $PsExe)) { $PsExe = "powershell" }
 #
 # Faltaba tambien -NoProfile, que el .iss si usa: un perfil de PowerShell
 # corporativo roto reventaba este paso y nadie se enteraba.
-if ($LASTEXITCODE -ne 0) {
+if ($CodigoInstall -ne 0) {
     Write-Host ""
-    Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $LASTEXITCODE)." -ForegroundColor Red
+    Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $CodigoInstall)." -ForegroundColor Red
     Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }

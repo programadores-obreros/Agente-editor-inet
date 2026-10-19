@@ -7,6 +7,20 @@
 
 $ErrorActionPreference = "Stop"
 
+# EL LOG DE LA INSTALACION, si lo pidieron. bootstrap.ps1 cierra su transcript, nos
+# pasa la ruta de instalacion.log en TECNIA_LOG_INSTALACION y nos lanza SIN pipe
+# (con pipe, `pio pkg install` escondia la barra de progreso). Aca se reabre el
+# MISMO archivo con -Append y se cierra al final, tambien si algo se corta: por eso
+# todo lo que sigue va dentro de un try. El cuerpo NO se reindento a proposito,
+# para que el cambio se lea en dos lineas y no en mil.
+# Sin la variable (update.ps1, o a mano) no se graba nada, como siempre.
+$TranscriptPropio = $false
+if ($env:TECNIA_LOG_INSTALACION) {
+    try { Start-Transcript -Path $env:TECNIA_LOG_INSTALACION -Append | Out-Null; $TranscriptPropio = $true } catch { }
+}
+$FalloInstalacion = $false
+try {
+
 # Directorio de config global de OpenCode en Windows (respeta XDG si esta seteado)
 if ($env:XDG_CONFIG_HOME) {
     $ConfigDir = Join-Path $env:XDG_CONFIG_HOME "opencode"
@@ -1006,21 +1020,49 @@ platform = atmelavr@5.2.0
 board = uno
 framework = arduino
 "@
+# LA CARPETA DONDE PlatformIO GUARDA `packages`, con SU regla y no la del pio.exe.
+#
+# Antes salia de la ruta de pio.exe (tres Split-Path), y no es lo mismo: PlatformIO
+# usa <raiz del disco del perfil>\.platformio si esa CARPETA existe, aunque el penv
+# este en el perfil (platformio/project/options.py, get_default_core_dir). Con un
+# C:\.platformio viejo, esto miraba el perfil, decia "faltan", bajaba todo... en
+# C:\.platformio, y media el espacio libre en el disco equivocado.
+#
+# Es la MISMA regla que coreDir() en opencode\tool\platformio.ts (y que
+# Core-PlatformIO en diagnostico.ps1): PLATFORMIO_CORE_DIR; si no,
+# <raiz>\.platformio si es carpeta (-PathType Container: pio usa isdir, un archivo
+# con ese nombre no cuenta); si no, $env:USERPROFILE\.platformio.
+function Core-PlatformIO {
+    if ($env:PLATFORMIO_CORE_DIR) { return $env:PLATFORMIO_CORE_DIR }
+    $raiz = [System.IO.Path]::GetPathRoot($env:USERPROFILE)
+    if ($raiz) {
+        $enRaiz = Join-Path $raiz ".platformio"
+        if (Test-Path -LiteralPath $enRaiz -PathType Container) { return $enRaiz }
+    }
+    return (Join-Path $env:USERPROFILE ".platformio")
+}
+
 function Preparar-Placas($pio) {
-    $core = Split-Path (Split-Path (Split-Path $pio -Parent) -Parent) -Parent
-    if ($env:PLATFORMIO_CORE_DIR) { $core = $env:PLATFORMIO_CORE_DIR }
+    $core = Core-PlatformIO
     $faltan = @($PaquetesPlacas | Where-Object { -not (Test-Path (Join-Path $core "packages\$_")) })
     if ($faltan.Count -eq 0) {
-        Write-Host "  [OK] Herramientas de ESP32 y Arduino UNO ya bajadas."
+        Write-Host "  [OK] Herramientas de ESP32 y Arduino UNO ya bajadas (en $core)."
         return
     }
-    $comoConseguirlas = "Bajalas con buena red volviendo a correr el instalador (Instalar-Tecnia-Bot.exe), o copiando .platformio\packages y .platformio\platforms de una computadora que ya compilo."
+    # El MISMO consejo que mensajeTimeout() en opencode\tool\platformio.ts: el camino
+    # que de verdad las baja es el instalador completo ("Reparar Tecnia Bot" o el
+    # .exe). /actualizar NO: llega aca con TECNIA_DESDE_ACTUALIZAR=1 y solo avisa.
+    # Y el pendrive dice la carpeta REAL de destino, no "la del usuario".
+    $comoConseguirlas = "Bajalas con buena red corriendo 'Reparar Tecnia Bot' del menu inicio o volviendo a correr el instalador (Instalar-Tecnia-Bot.exe); /actualizar NO las baja. O copia las carpetas packages y platforms de la carpeta .platformio de una computadora que ya compilo adentro de $core."
     if ($env:TECNIA_DESDE_ACTUALIZAR -eq "1") {
         Write-Host "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion las va a bajar (mas de 1 GB)."
         Write-Host "          $comoConseguirlas"
         return
     }
     try {
+        # El disco del CORE, que es donde se escribe el GB y pico (puede no ser el del pio.exe).
+        # Con un core UNC (\\servidor\...) no hay letra de unidad: Split-Path tira, se
+        # sigue sin el dato y se intenta igual, como antes.
         $libreGB = [math]::Round((Get-PSDrive (Split-Path $core -Qualifier).TrimEnd(":")).Free / 1GB, 1)
     } catch {
         $libreGB = $null
@@ -1063,3 +1105,16 @@ if ($pioPath) {
 Write-Host ""
 Write-Host "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
 Write-Host "apreta Tab y elegi 'tecnia-bot'."
+
+} catch {
+    # El error se escribe ACA, con el transcript todavia abierto: si se dejara
+    # subir solo, PowerShell lo imprimiria despues del finally y el log -justo el
+    # de la corrida que fallo- no lo tendria. El exit 1 de abajo es el mismo codigo
+    # que daba un error sin atrapar, y es lo que mira bootstrap.ps1.
+    $FalloInstalacion = $true
+    Write-Host ""
+    Write-Host ("  [X] La instalacion se corto: " + ($_ | Out-String).Trim()) -ForegroundColor Red
+} finally {
+    if ($TranscriptPropio) { try { Stop-Transcript | Out-Null } catch { } }
+}
+if ($FalloInstalacion) { exit 1 }

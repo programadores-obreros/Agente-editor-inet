@@ -1,8 +1,8 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { join, win32 } from "node:path"
+import { isAbsolute, join, win32 } from "node:path"
 
 interface RunResult {
   code: number
@@ -125,13 +125,20 @@ export function pioDisponible(): boolean {
  * Los comandos de consulta (`pio --version`, `pio device list`, PowerShell)
  * tardan segundos: si a los 60 s no contestaron, algo esta roto.
  *
- * Se puede acortar por variable de entorno (la usan los tests para probar el
- * camino del timeout sin esperar 15 minutos).
+ * Se puede cambiar por variable de entorno, `TECNIA_PIO_TIMEOUT_MS`: la usan los
+ * tests para probar el camino del timeout sin esperar 15 minutos, y una escuela
+ * con red lenta la puede subir. Un valor que no es un numero positivo ("abc",
+ * "0") se ignora, como si no estuviera.
  */
 const TIMEOUT_CORTO_MS = 60_000
-export function timeoutLargoMs(): number {
+const TIMEOUT_LARGO_MS = 15 * 60_000
+/** Los ms que pidio `TECNIA_PIO_TIMEOUT_MS`, o null si no esta o no sirve. */
+function timeoutPedidoMs(): number | null {
   const n = Number(process.env.TECNIA_PIO_TIMEOUT_MS)
-  return Number.isFinite(n) && n > 0 ? n : 15 * 60_000
+  return process.env.TECNIA_PIO_TIMEOUT_MS && Number.isFinite(n) && n > 0 ? n : null
+}
+export function timeoutLargoMs(): number {
+  return timeoutPedidoMs() ?? TIMEOUT_LARGO_MS
 }
 
 /*
@@ -141,10 +148,16 @@ export function timeoutLargoMs(): number {
  * desde el bot: esperar 15 minutos para enterarse es lo que trabo a la docente
  * del taller. Se espera poco y se explica. Con buena red (en casa la descarga
  * entera tardo unos 3 minutos) puede llegar a terminar igual.
+ *
+ * Si `TECNIA_PIO_TIMEOUT_MS` esta, manda ELLA, tambien hacia arriba. La primera
+ * version hacia `Math.min(variable, 3 min)` con faltantes: una escuela con red
+ * lenta que la subia a 40 minutos para dejar terminar la descarga se quedaba
+ * igual con 3, sin forma de cambiarlo. Quien setea la variable sabe lo que pide.
+ * Sin la variable: 3 minutos si faltan herramientas, 15 si no.
  */
 const TIMEOUT_SIN_HERRAMIENTAS_MS = 3 * 60_000
 export function timeoutCompilarMs(faltaban: string[]): number {
-  return faltaban.length > 0 ? Math.min(timeoutLargoMs(), TIMEOUT_SIN_HERRAMIENTAS_MS) : timeoutLargoMs()
+  return timeoutPedidoMs() ?? (faltaban.length > 0 ? TIMEOUT_SIN_HERRAMIENTAS_MS : TIMEOUT_LARGO_MS)
 }
 
 /** Lo que devuelve `run()` cuando el comando no termino a tiempo (mismo codigo que `timeout(1)`). */
@@ -246,6 +259,25 @@ function describirDuracion(ms: number): string {
 }
 
 /**
+ * Como se consiguen las herramientas de la placa: el camino que de verdad las BAJA.
+ *
+ * Es el instalador completo. En Windows, "Reparar Tecnia Bot" (el acceso del menu
+ * inicio, que corre bootstrap.ps1) o volver a correr Instalar-Tecnia-Bot.exe.
+ * `/actualizar` NO sirve: update.ps1 pone TECNIA_DESDE_ACTUALIZAR=1 y ahi el
+ * instalador solo avisa, porque se corre en clase y sin progreso a la vista. La
+ * primera version de este mensaje decia "Actualizar Tecnia Bot con buena red" y
+ * mandaba al docente justo al unico camino que no las baja.
+ *
+ * El mismo consejo vive en `$comoConseguirlas` de install.ps1 y en `como` de
+ * install.sh: si cambia uno, cambian los tres.
+ */
+function comoBajarlas(plataforma: string): string {
+  return plataforma === "win32"
+    ? "Con buena red (por ejemplo en casa), correr \"Reparar Tecnia Bot\" desde el menú inicio, o volver a correr el instalador `Instalar-Tecnia-Bot.exe`: las baja una sola vez y quedan para siempre. Ojo: `/actualizar` NO las baja."
+    : "Con buena red (por ejemplo en casa), volver a correr el instalador (`bash install/install.sh` en la carpeta de Tecnia Bot): las baja una sola vez y quedan para siempre. Ojo: `/actualizar` NO las baja."
+}
+
+/**
  * Lo que se le dice al docente (y al bot) cuando compilar o cargar no termino a tiempo.
  *
  * La causa casi siempre es la descarga inicial de las herramientas de la placa
@@ -256,8 +288,21 @@ function describirDuracion(ms: number): string {
  * vez NO fue rapida: con la red del aula la descarga tampoco termino. Por eso el
  * mensaje ahora le dice al bot que no reintente y al docente como bajarlas una
  * sola vez.
+ *
+ * El pendrive nombra la carpeta REAL de destino, la de `coreDir()`. Decir "la
+ * carpeta del usuario" mandaba a copiar al lugar equivocado justo en la maquina
+ * donde PlatformIO usa `C:\.platformio`: lo copiado no se veia y seguia bajando.
+ *
+ * Exportada solo para los tests: home/plataforma vienen de afuera para probar el
+ * texto de Windows desde Linux.
  */
-function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number, faltaban: string[] = []): string {
+export function mensajeTimeout(
+  que: "compilar" | "cargar el codigo",
+  timeoutMs: number,
+  faltaban: string[] = [],
+  core: string = coreDir(),
+  plataforma: string = process.platform,
+): string {
   const causa =
     faltaban.length > 0
       ? `Faltaban las herramientas de ${faltaban.join(" y ")}, y PlatformIO las estaba bajando (para ESP32 es más de 1 GB la primera vez): con esta red no llegó.`
@@ -266,10 +311,28 @@ function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number,
     `No termine de ${que} en ${describirDuracion(timeoutMs)}. ${causa}\n\n` +
     "NO lo vuelvas a intentar ahora: otro intento con la misma red vuelve a tardar lo mismo, " +
     "y no ofrezcas un diagnóstico en lugar de esto. Pasale al docente estas opciones, con tus palabras:\n" +
-    "1. Actualizar Tecnia Bot con buena red (por ejemplo en casa): baja las herramientas una sola vez y quedan para siempre.\n" +
-    "2. Traerlas en un pendrive desde una computadora donde ya compila: copiar las carpetas " +
-    "`.platformio\\packages` y `.platformio\\platforms` de la carpeta del usuario.\n" +
+    `1. ${comoBajarlas(plataforma)}\n` +
+    "2. Traerlas en un pendrive desde una computadora donde ya compila: copiar las carpetas `packages` y " +
+    `\`platforms\` de la carpeta \`.platformio\` de esa computadora adentro de \`${core}\` en esta.\n` +
     "Si ya estaban bajadas y aun así no termina, ahí sí corré `/diagnostico`: puede ser la red de la escuela bloqueando las descargas."
+  )
+}
+
+/**
+ * Cuando en "compilar y cargar" la compilacion TERMINO BIEN y lo que se corto fue
+ * la carga. Ahi las herramientas de compilar ya estaban (si no, no compilaba):
+ * hablarle de herramientas faltantes y de pendrive manda al docente a resolver un
+ * problema que no tiene. Lo que queda es la carga misma: una placa que no
+ * contesta, o la herramienta de carga (esptool/avrdude, pocos MB) que PlatformIO
+ * baja la primera vez que carga.
+ */
+export function mensajeTimeoutCarga(timeoutMs: number): string {
+  return (
+    `La compilación terminó bien, pero no termine de cargar el codigo en ${describirDuracion(timeoutMs)}. ` +
+    "Puede ser que la placa no conteste, o que PlatformIO estuviera bajando la herramienta de carga (pocos MB, solo la primera vez).\n\n" +
+    "NO lo vuelvas a intentar ahora por tu cuenta. Pedile al docente que revise el cable USB (que sea de datos, no solo de carga) " +
+    "y que la placa sea la del puerto elegido; si es un ESP32, que mantenga apretado el botón BOOT cuando arranca la carga. " +
+    "Cuando te diga que está, ahí sí probá cargar de nuevo."
   )
 }
 
@@ -277,19 +340,58 @@ function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number,
  * QUE HERRAMIENTAS NECESITA CADA PLACA, para avisar ANTES de que la primera
  * compilacion se ponga a bajar mas de 1 GB en silencio. Son los paquetes que
  * PlatformIO baja la primera vez para cada plataforma (los mas pesados).
+ *
+ * SOLO LAS QUE BAJA EL INSTALADOR, y segun el `board`. La primera version pedia
+ * `toolchain-xtensa-esp32` para todo `platform = espressif32`, pero ese compilador
+ * es solo del ESP32 clasico: una ESP32-C3 usa `toolchain-riscv32-esp` y una S3
+ * `toolchain-xtensa-esp32s3`. En una computadora que ya habia compilado una C3
+ * (sin la descarga del instalador), el aviso decia "faltan" PARA SIEMPRE y, con el
+ * corte de 3 minutos, cada compilacion quedaba limitada a 3 minutos.
+ *
+ * La regla: lo COMUN a toda la plataforma se pide siempre (el framework Arduino de
+ * espressif32 es uno solo para todas las variantes; el compilador AVR, uno para
+ * todas las AVR) y lo que depende del chip, solo para los `board` del catalogo
+ * (skill `placas`) que el instalador deja listos: esp32dev, uno y micro.
+ *
+ * Se descarto deducir el chip del nombre del board: hay cientos de ids
+ * (`lolin_s3`, `heltec_wifi_lora_32_V3` que es una S3 sin decirlo) y adivinar se
+ * equivoca. Y aunque se acertara, el mensaje de faltantes manda a correr el
+ * instalador, que NO baja el compilador de una C3: avisar de algo que el camino
+ * propuesto no arregla seria otro mensaje falso. Con una placa fuera del
+ * catalogo, lo peor que pasa es que no se avisa y se espera como antes (15 min).
  */
-const HERRAMIENTAS_POR_PLATAFORMA: Array<{ plataforma: RegExp; nombre: string; paquetes: string[] }> = [
+const HERRAMIENTAS_POR_PLATAFORMA: Array<{
+  plataforma: RegExp
+  nombre: string
+  paquetes: string[]
+  porPlaca: Map<string, string[]>
+}> = [
   {
     plataforma: /^\s*platform\s*=\s*(platformio\/)?espressif32\b/m,
     nombre: "ESP32",
-    paquetes: ["toolchain-xtensa-esp32", "framework-arduinoespressif32"],
+    paquetes: ["framework-arduinoespressif32"],
+    porPlaca: new Map([["esp32dev", ["toolchain-xtensa-esp32"]]]),
   },
   {
     plataforma: /^\s*platform\s*=\s*(platformio\/)?atmelavr\b/m,
     nombre: "Arduino UNO",
-    paquetes: ["toolchain-atmelavr", "framework-arduino-avr"],
+    paquetes: ["toolchain-atmelavr"],
+    // El ATmega32U4 de la Micro (Mis Ladrillos) usa el mismo core Arduino AVR que el UNO.
+    porPlaca: new Map([
+      ["uno", ["framework-arduino-avr"]],
+      ["micro", ["framework-arduino-avr"]],
+    ]),
   },
 ]
+
+/** Lo mismo que el `os.path.isdir` con que PlatformIO decide: un ARCHIVO con ese nombre no cuenta. */
+export function esCarpeta(ruta: string): boolean {
+  try {
+    return statSync(ruta, { throwIfNoEntry: false })?.isDirectory() ?? false
+  } catch {
+    return false
+  }
+}
 
 /**
  * La carpeta donde PlatformIO guarda `packages`, con SU regla y no deducida del pio.
@@ -299,17 +401,35 @@ const HERRAMIENTAS_POR_PLATAFORMA: Array<{ plataforma: RegExp; nombre: string; p
  * usuario (platformio/project/options.py, get_default_core_dir). Paso en la VM:
  * con un `C:\.platformio` viejo, el aviso de descarga miraba la carpeta del
  * usuario mientras PlatformIO bajaba todo en la raiz del disco.
+ *
+ * La regla, en orden (la misma que usan install.ps1, install.sh y diagnostico.ps1):
+ *   1. `PLATFORMIO_CORE_DIR`, si tiene algo. Vacia es como no tenerla: en
+ *      Windows una variable vacia ni existe, y una ruta vacia no es una carpeta.
+ *   2. Windows: `<raiz del disco del perfil>\.platformio` si es CARPETA (pio usa
+ *      `isdir`: un archivo que se llame asi no cuenta). Con un perfil UNC
+ *      (`\\servidor\perfiles\ana`) la raiz es `\\servidor\perfiles\`, igual
+ *      que el `splitdrive` de Python.
+ *   3. `<perfil>\.platformio`.
+ *
+ * Si el perfil llega vacio o relativo (un USERPROFILE roto), NO se arma una ruta
+ * relativa: `.platformio` a secas se resolveria contra la carpeta del proyecto y
+ * el aviso miraria cualquier cosa. En Windows se cae a `C:\.platformio`, que es
+ * a donde PlatformIO se muda cuando el perfil no le sirve; en Linux a
+ * `/.platformio` (homedir() en Linux siempre es absoluto, esto es solo un piso).
  */
 export function coreDir(
   home: string = homedir(),
   plataforma: string = process.platform,
   entorno: Record<string, string | undefined> = process.env,
-  existe: (ruta: string) => boolean = existsSync,
+  esCarpetaFn: (ruta: string) => boolean = esCarpeta,
 ): string {
   if (entorno.PLATFORMIO_CORE_DIR) return entorno.PLATFORMIO_CORE_DIR
-  if (plataforma !== "win32") return join(home, ".platformio")
-  const raiz = win32.join(win32.parse(home).root || "C:\\", ".platformio")
-  return existe(raiz) ? raiz : win32.join(home, ".platformio")
+  if (plataforma !== "win32") return join(isAbsolute(home) ? home : "/", ".platformio")
+  // "C:foo" no es absoluto y su root es "C:", que armaria "C:.platformio": relativa.
+  const absoluto = win32.isAbsolute(home) && win32.parse(home).root.length > 1
+  const enRaiz = win32.join(absoluto ? win32.parse(home).root : "C:\\", ".platformio")
+  if (!absoluto) return enRaiz
+  return esCarpetaFn(enRaiz) ? enRaiz : win32.join(home, ".platformio")
 }
 
 /** Las placas del `platformio.ini` cuyas herramientas todavia no estan bajadas. */
@@ -318,9 +438,13 @@ export function herramientasFaltantes(
   core: string,
   existe: (ruta: string) => boolean = existsSync,
 ): string[] {
-  return HERRAMIENTAS_POR_PLATAFORMA.filter(
-    (h) => h.plataforma.test(iniText) && h.paquetes.some((p) => !existe(join(core, "packages", p))),
-  ).map((h) => h.nombre)
+  // Todos los `board =` del ini (puede haber un env por placa).
+  const placas = [...iniText.matchAll(/^\s*board\s*=\s*([^\s;#]+)/gm)].map((m) => m[1] ?? "")
+  return HERRAMIENTAS_POR_PLATAFORMA.filter((h) => {
+    if (!h.plataforma.test(iniText)) return false
+    const paquetes = [...h.paquetes, ...placas.flatMap((b) => h.porPlaca.get(b) ?? [])]
+    return paquetes.some((p) => !existe(join(core, "packages", p)))
+  }).map((h) => h.nombre)
 }
 
 /**
@@ -937,8 +1061,21 @@ Acciones:
       avisarDescarga()
       return run(["pio", "run", ...envFlag], cwd, signal, timeoutCompilarMs(faltaban))
     }
-    const cargar = (puerto: string) =>
-      run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal, timeoutLargoMs())
+    /*
+     * `pio run --target upload` COMPILA antes de cargar, asi que en `flash` solo
+     * (sin compilar antes) baja las mismas herramientas que compilar y necesita el
+     * mismo aviso y el mismo tope. Antes `flash` esperaba 15 minutos en silencio
+     * en la misma computadora donde `compile` cortaba a los 3 y explicaba.
+     *
+     * Despues de un `compilar()` que termino bien (en `both`) ya no hay nada que
+     * bajar para compilar: ahi se espera el tope largo y no se vuelve a avisar.
+     */
+    let compiloAntes = false
+    const timeoutCarga = () => (compiloAntes ? timeoutLargoMs() : timeoutCompilarMs(faltaban))
+    const cargar = (puerto: string) => {
+      if (!compiloAntes) avisarDescarga()
+      return run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal, timeoutCarga())
+    }
 
     /*
      * Primero se traduce sobre el texto COMPLETO (el patron puede estar en
@@ -951,9 +1088,13 @@ Acciones:
       return `**Que significa:**\n${traduccion}\n\n**Error original:**\n\`\`\`\n${original}\n\`\`\``
     }
     // Timeout o cancelacion no son errores de compilacion: no se traducen, se explican.
+    // Si la compilacion ya habia terminado bien, un corte en la carga no es de
+    // herramientas faltantes: tiene su propio mensaje, sin pendrive.
     const noTermino = (r: RunResult, que: "compilar" | "cargar el codigo"): string | null =>
       r.code === CODIGO_TIMEOUT
-        ? mensajeTimeout(que, que === "compilar" ? timeoutCompilarMs(faltaban) : timeoutLargoMs(), faltaban)
+        ? que === "cargar el codigo" && compiloAntes
+          ? mensajeTimeoutCarga(timeoutCarga())
+          : mensajeTimeout(que, que === "compilar" ? timeoutCompilarMs(faltaban) : timeoutCarga(), faltaban)
         : r.code === CODIGO_CANCELADO
           ? `Se cancelo la accion antes de terminar de ${que}.`
           : null
@@ -1102,6 +1243,7 @@ Acciones:
         if (compile.code !== 0) {
           return noTermino(compile, "compilar") ?? `Error al compilar (no se intento cargar):\n\n${explicarFalla(compile)}`
         }
+        compiloAntes = true
         let puerto = args.port
         if (!puerto) {
           const detected = await detectPort(cwd, signal)

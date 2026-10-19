@@ -221,6 +221,8 @@ jobs:
       #   2. Scoop lo tiene fijado ("hold": true), para que un update no lo mueva.
       #   3. opencode.json tiene el agente por defecto y el modelo gratuito.
       #   4. El pio.exe que instalo el bootstrap arranca.
+      #   5. instalacion.log tiene la salida de install.ps1 (el transcript se pasa
+      #      de mano al hijo; en una notebook real el log se salteaba esa mitad).
       - name: Verificar lo que dejo el bootstrap
         run: |
           $ErrorActionPreference = "Stop"
@@ -266,6 +268,12 @@ jobs:
             if ($LASTEXITCODE -ne 0) { $fallas += "pio --version devolvio $LASTEXITCODE" }
             else { Write-Host "  OK   $v" }
           }
+
+          # bootstrap.ps1 deja el log en la raiz del repo ($RepoDir), que aca es el checkout.
+          $log = Join-Path $PWD "instalacion.log"
+          if (-not (Test-Path $log)) { $fallas += "no existe $log" }
+          elseif (-not (Select-String -LiteralPath $log -SimpleMatch "==> Instalando Tecnia Bot en:" -Quiet)) { $fallas += "instalacion.log no tiene la salida de install.ps1 (falta '==> Instalando Tecnia Bot en:')" }
+          else { Write-Host "  OK   instalacion.log tiene la salida de install.ps1" }
 
           if ($fallas.Count -gt 0) {
             $fallas | ForEach-Object { Write-Host "::error::$_" }

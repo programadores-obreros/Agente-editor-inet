@@ -19,7 +19,7 @@
 import { test, before, after, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
-import { join, dirname } from "node:path"
+import { join, dirname, isAbsolute } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
 
@@ -261,7 +261,7 @@ test("both: si la carga se cuelga, avisa del timeout de la carga (el compile ya 
   const base = guion
   guion = (cmd) => (cmd.join(" ").includes("--target upload") ? COLGADO() : base(cmd))
   const r = await mod.default.execute({ action: "both" }, ctx)
-  assert.match(r, /No termine de cargar el codigo/)
+  assert.match(r, /no termine de cargar el codigo/)
   assert.match(r, /NO lo vuelvas a intentar ahora/)
 })
 
@@ -516,11 +516,219 @@ test("compile sin las herramientas de ESP32: avisa en el título y el timeout no
     assert.match(r, /Faltaban las herramientas de ESP32/)
     assert.match(r, /NO lo vuelvas a intentar ahora/)
     // En la VM el bot ofreció "correr un diagnóstico" y no le dijo al docente cómo conseguirlas.
-    assert.match(r, /Actualizar Tecnia Bot con buena red/)
+    assert.match(r, /volver a correr el instalador/)
     assert.match(r, /pendrive/)
     assert.match(r, /no ofrezcas un diagnóstico en lugar de esto/)
+    // /actualizar NO las baja (TECNIA_DESDE_ACTUALIZAR=1): mandar ahí era mandar al único camino que no sirve.
+    assert.doesNotMatch(r, /Actualizar Tecnia Bot con buena red/)
+    // El pendrive nombra la carpeta REAL de destino: la de coreDir(), acá PLATFORMIO_CORE_DIR.
+    assert.ok(r.includes(join(OUT, "core-vacio")), `el mensaje no nombra el core real: ${r}`)
   } finally {
     delete process.env.PLATFORMIO_CORE_DIR
     rmSync(join(OUT, "platformio.ini"), { force: true })
   }
+})
+
+// ── el tope de cada espera, medido de verdad ─────────────────────────────────
+//
+// Se espía `AbortSignal.timeout`: se guardan los ms que pidió `run()` y, para los
+// comandos largos, se devuelve una señal de 1 ms para no esperar 3 minutos. Los
+// cortos (`pio --version`, `device list`: 60 s) pasan tal cual, porque el pio
+// falso contesta al instante y no tienen que cortarse.
+
+async function conTimeoutsEspiados(fn) {
+  const orig = AbortSignal.timeout
+  const pedidos = []
+  AbortSignal.timeout = (ms) => {
+    pedidos.push(ms)
+    return orig.call(AbortSignal, ms > 60_000 ? 1 : ms)
+  }
+  try {
+    return { r: await fn(), pedidos }
+  } finally {
+    AbortSignal.timeout = orig
+  }
+}
+
+const INI_ESP32 = "[env:esp32dev]\nplatform = espressif32@6.12.0\nboard = esp32dev\nframework = arduino\n"
+
+/** Proyecto ESP32 con un core propio (vacío o con los paquetes pedidos), y lo limpia al final. */
+async function conProyectoEsp32(paquetes, fn) {
+  const core = join(OUT, `core-${Math.random().toString(36).slice(2)}`)
+  for (const p of paquetes) mkdirSync(join(core, "packages", p), { recursive: true })
+  mkdirSync(core, { recursive: true })
+  process.env.PLATFORMIO_CORE_DIR = core
+  writeFileSync(join(OUT, "platformio.ini"), INI_ESP32)
+  try {
+    return await fn(core)
+  } finally {
+    delete process.env.PLATFORMIO_CORE_DIR
+    rmSync(join(OUT, "platformio.ini"), { force: true })
+    rmSync(core, { recursive: true, force: true })
+  }
+}
+
+test("compile sin herramientas: el corte es a los 3 minutos y el mensaje lo dice", async () => {
+  await conProyectoEsp32([], async () => {
+    escenario()
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").endsWith(" run") ? COLGADO() : base(cmd))
+    const { r, pedidos } = await conTimeoutsEspiados(() => mod.default.execute({ action: "compile" }, ctx))
+    assert.ok(pedidos.includes(180_000), `no se pidió el corte de 3 min: ${pedidos}`)
+    assert.ok(!pedidos.includes(900_000), `se esperó 15 min sin herramientas: ${pedidos}`)
+    assert.match(r, /No termine de compilar en 3 minutos/)
+  })
+})
+
+test("compile con herramientas: el corte es a los 15 minutos", async () => {
+  await conProyectoEsp32(["framework-arduinoespressif32", "toolchain-xtensa-esp32"], async () => {
+    escenario()
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").endsWith(" run") ? COLGADO() : base(cmd))
+    const titulos = []
+    const { r, pedidos } = await conTimeoutsEspiados(() =>
+      mod.default.execute({ action: "compile" }, { ...ctx, metadata: (m) => titulos.push(m.title) }),
+    )
+    assert.ok(pedidos.includes(900_000), `con herramientas tiene que esperar 15 min: ${pedidos}`)
+    assert.ok(!pedidos.includes(180_000), `cortó a los 3 min con todo bajado: ${pedidos}`)
+    assert.match(r, /No termine de compilar en 15 minutos/)
+    assert.doesNotMatch(r, /Faltaban las herramientas/)
+    assert.equal(titulos.length, 0, `avisó una descarga que no hay: ${titulos}`)
+  })
+})
+
+test("flash sin herramientas: avisa la descarga y corta a los 3 minutos (upload también compila)", async () => {
+  await conProyectoEsp32([], async (core) => {
+    escenario({ lista: [CH340] })
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").includes("--target upload") ? COLGADO() : base(cmd))
+    const titulos = []
+    const { r, pedidos } = await conTimeoutsEspiados(() =>
+      mod.default.execute({ action: "flash" }, { ...ctx, metadata: (m) => titulos.push(m.title) }),
+    )
+    assert.ok(titulos.some((t) => /Bajando las herramientas de ESP32/.test(t)), `flash no avisó la descarga: ${titulos}`)
+    assert.ok(pedidos.includes(180_000), `flash sin herramientas no cortó a los 3 min: ${pedidos}`)
+    assert.ok(!pedidos.includes(900_000), `flash esperó 15 min sin herramientas: ${pedidos}`)
+    assert.match(r, /No termine de cargar el codigo en 3 minutos/)
+    assert.match(r, /Faltaban las herramientas de ESP32/)
+    assert.ok(r.includes(core), "el pendrive tiene que nombrar el core real")
+  })
+})
+
+test("both con corte en la CARGA (la compilación terminó bien): no habla de herramientas ni de pendrive", async () => {
+  // El core está vacío al compilar (faltaban), pero el compile terminó bien: el
+  // corte en la carga no tiene nada que ver con las herramientas de compilar.
+  await conProyectoEsp32([], async () => {
+    escenario({ lista: [CH340], compile: { code: 0 } })
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").includes("--target upload") ? COLGADO() : base(cmd))
+    const { r, pedidos } = await conTimeoutsEspiados(() => mod.default.execute({ action: "both" }, ctx))
+    assert.match(r, /La compilación terminó bien, pero no termine de cargar el codigo en 15 minutos/)
+    assert.doesNotMatch(r, /pendrive/i)
+    assert.doesNotMatch(r, /Faltaban las herramientas/)
+    assert.equal(pedidos.filter((ms) => ms === 900_000).length, 1, `la carga después de compilar espera el tope largo: ${pedidos}`)
+  })
+})
+
+test("coreDir(): PLATFORMIO_CORE_DIR vacía se ignora; perfil UNC; perfil vacío o relativo da ruta absoluta", () => {
+  const nada = () => false
+  const home = "C:\\Users\\docente"
+  assert.equal(mod.coreDir(home, "win32", { PLATFORMIO_CORE_DIR: "" }, nada), "C:\\Users\\docente\\.platformio")
+  // Perfil en un servidor: la "raíz" es \\servidor\recurso\, como el splitdrive de Python.
+  const unc = "\\\\srv\\perfiles\\ana"
+  assert.equal(mod.coreDir(unc, "win32", {}, nada), "\\\\srv\\perfiles\\ana\\.platformio")
+  assert.equal(mod.coreDir(unc, "win32", {}, (r) => r === "\\\\srv\\perfiles\\.platformio"), "\\\\srv\\perfiles\\.platformio")
+  // USERPROFILE roto: nunca ".platformio" a secas (se resolvería contra la carpeta del proyecto).
+  for (const roto of ["", "C:relativo", "docente"]) {
+    const r = mod.coreDir(roto, "win32", {}, nada)
+    assert.equal(r, "C:\\.platformio", `con home ${JSON.stringify(roto)}`)
+  }
+  assert.ok(isAbsolute(mod.coreDir("", "linux", {}, nada)), "en Linux, un HOME vacío no puede dar una ruta relativa")
+})
+
+test("coreDir(): un C:\\.platformio que es ARCHIVO no cuenta (pio usa isdir, no exists)", () => {
+  const raiz = join(OUT, "raiz-falsa")
+  rmSync(raiz, { recursive: true, force: true })
+  mkdirSync(raiz, { recursive: true })
+  const comoWindows = (r) => mod.esCarpeta(join(raiz, r.replace(/^C:\\/, "").replaceAll("\\", "/")))
+  try {
+    writeFileSync(join(raiz, ".platformio"), "no soy una carpeta")
+    assert.equal(existsSync(join(raiz, ".platformio")), true, "existsSync lo da por bueno: por eso no alcanza")
+    assert.equal(mod.esCarpeta(join(raiz, ".platformio")), false)
+    assert.equal(mod.coreDir("C:\\Users\\ana", "win32", {}, comoWindows), "C:\\Users\\ana\\.platformio")
+    rmSync(join(raiz, ".platformio"))
+    mkdirSync(join(raiz, ".platformio"))
+    assert.equal(mod.esCarpeta(join(raiz, ".platformio")), true)
+    assert.equal(mod.coreDir("C:\\Users\\ana", "win32", {}, comoWindows), "C:\\.platformio")
+    assert.equal(mod.esCarpeta(join(raiz, "no-existe")), false)
+  } finally {
+    rmSync(raiz, { recursive: true, force: true })
+  }
+})
+
+test("timeoutCompilarMs(): TECNIA_PIO_TIMEOUT_MS manda también hacia arriba; si no sirve, se ignora", () => {
+  try {
+    // Una escuela con red lenta la sube a 10 minutos: se respeta aunque falten herramientas.
+    process.env.TECNIA_PIO_TIMEOUT_MS = "600000"
+    assert.equal(mod.timeoutCompilarMs(["ESP32"]), 600_000)
+    assert.equal(mod.timeoutCompilarMs([]), 600_000)
+    for (const basura of ["abc", "0", "-5", ""]) {
+      process.env.TECNIA_PIO_TIMEOUT_MS = basura
+      assert.equal(mod.timeoutCompilarMs(["ESP32"]), 180_000, `con ${JSON.stringify(basura)} y faltantes`)
+      assert.equal(mod.timeoutCompilarMs([]), 900_000, `con ${JSON.stringify(basura)} sin faltantes`)
+    }
+  } finally {
+    delete process.env.TECNIA_PIO_TIMEOUT_MS
+  }
+})
+
+test("herramientasFaltantes(): ESP32-C3 y S3 con lo suyo bajado no dan un 'faltan' eterno", () => {
+  const hay = (...paquetes) => (r) => paquetes.some((p) => r.endsWith(join("packages", p)))
+  const ini = (board, platform = "espressif32@6.12.0") => `[env:x]\nplatform = ${platform}\nboard = ${board}\nframework = arduino\n`
+  // La C3 compila con toolchain-riscv32-esp y la S3 con toolchain-xtensa-esp32s3:
+  // pedirles el compilador del ESP32 clásico era decir "faltan" para siempre.
+  assert.deepEqual(mod.herramientasFaltantes(ini("esp32-c3-devkitm-1"), "/core", hay("framework-arduinoespressif32", "toolchain-riscv32-esp")), [])
+  assert.deepEqual(mod.herramientasFaltantes(ini("esp32-s3-devkitc-1"), "/core", hay("framework-arduinoespressif32", "toolchain-xtensa-esp32s3")), [])
+  // Sin el framework (lo común a todas las variantes) sí faltan.
+  assert.deepEqual(mod.herramientasFaltantes(ini("esp32-c3-devkitm-1"), "/core", hay("toolchain-riscv32-esp")), ["ESP32"])
+  // El esp32dev del catálogo (lo que deja el instalador) sigue pidiendo su compilador.
+  assert.deepEqual(mod.herramientasFaltantes(ini("esp32dev"), "/core", hay("framework-arduinoespressif32")), ["ESP32"])
+  assert.deepEqual(mod.herramientasFaltantes(ini("esp32dev"), "/core", hay("framework-arduinoespressif32", "toolchain-xtensa-esp32")), [])
+  // AVR: la Micro (Mis Ladrillos) usa el mismo core Arduino que el UNO.
+  assert.deepEqual(mod.herramientasFaltantes(ini("micro", "atmelavr@5.2.0"), "/core", hay("toolchain-atmelavr", "framework-arduino-avr")), [])
+  assert.deepEqual(mod.herramientasFaltantes(ini("uno", "atmelavr@5.2.0"), "/core", hay("toolchain-atmelavr")), ["Arduino UNO"])
+  // Un board con nombre de propiedad de Object no rompe nada.
+  assert.deepEqual(mod.herramientasFaltantes(ini("constructor"), "/core", hay("framework-arduinoespressif32")), [])
+})
+
+test("mensajeTimeout(): nombra la carpeta real del core y el camino que de verdad baja las herramientas", () => {
+  const win = mod.mensajeTimeout("compilar", 180_000, ["ESP32"], "C:\\.platformio", "win32")
+  assert.match(win, /Reparar Tecnia Bot/)
+  assert.match(win, /Instalar-Tecnia-Bot\.exe/)
+  assert.match(win, /`\/actualizar` NO las baja/)
+  assert.doesNotMatch(win, /Actualizar Tecnia Bot con buena red/, "/actualizar no baja las herramientas (TECNIA_DESDE_ACTUALIZAR=1)")
+  assert.ok(win.includes("adentro de `C:\\.platformio`"), `no nombra el core real: ${win}`)
+  assert.doesNotMatch(win, /carpeta del usuario/)
+  assert.match(win, /3 minutos/)
+  const linux = mod.mensajeTimeout("compilar", 180_000, ["ESP32"], "/home/ana/.platformio", "linux")
+  assert.match(linux, /bash install\/install\.sh/)
+  assert.ok(linux.includes("/home/ana/.platformio"))
+})
+
+test("los instaladores dicen lo mismo que el bot: /actualizar no baja, y el pendrive va al core real", () => {
+  const ps1 = readFileSync(join(REPO, "install/install.ps1"), "utf8")
+  const sh = readFileSync(join(REPO, "install/install.sh"), "utf8")
+  const como = ps1.match(/\$comoConseguirlas = "([^"]+)"/)
+  assert.ok(como, "install.ps1 no define $comoConseguirlas")
+  assert.match(como[1], /Reparar Tecnia Bot/)
+  assert.match(como[1], /Instalar-Tecnia-Bot\.exe/)
+  assert.match(como[1], /\/actualizar NO las baja/)
+  assert.match(como[1], /adentro de \$core/)
+  assert.match(sh, /local como="[^"]*\/actualizar NO las baja[^"]*adentro de \$core\."/)
+  // Y el core sale de la regla de PlatformIO, no de la ruta del pio.
+  assert.match(ps1, /function Preparar-Placas\(\$pio\) \{\s*\n\s*\$core = Core-PlatformIO/)
+  assert.match(ps1, /function Core-PlatformIO \{[\s\S]{0,400}Test-Path -LiteralPath \$enRaiz -PathType Container/)
+  assert.doesNotMatch(ps1, /\$core = Split-Path/, "install.ps1 vuelve a sacar el core de la ruta de pio.exe")
+  assert.match(sh, /core="\$\{PLATFORMIO_CORE_DIR:-\$HOME\/\.platformio\}"/)
+  assert.match(readFileSync(join(REPO, "install/diagnostico.ps1"), "utf8"), /function Core-PlatformIO \{[\s\S]{0,400}-PathType Container/)
 })
