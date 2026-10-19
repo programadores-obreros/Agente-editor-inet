@@ -45,7 +45,12 @@ Copy-Item (Join-Path $Src "tool\*")    (Join-Path $ConfigDir "tool\")    -Recurs
 Copy-Item (Join-Path $Src "skills\*")  (Join-Path $ConfigDir "skills\")  -Recurse -Force
 Copy-Item (Join-Path $Src "command\*") (Join-Path $ConfigDir "command\") -Recurse -Force
 
-# Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
+# Plugins + theme violeta. plugins\ trae dos cosas distintas:
+# - tecnia-logo.tsx: plugin de TUI (logo del splash), se declara en tui.json mas abajo.
+# - tecnia-idioma.ts (+ idioma\): plugin de servidor que saca la planificacion en
+#   ingles que el modelo a veces escribe como texto visible. OpenCode lo carga solo
+#   (escanea plugins\*.ts del config): no se declara en ningun json. -Recurse copia
+#   la subcarpeta idioma\, y el manifest de abajo la lista sola.
 Copy-Item (Join-Path $Src "plugins\*") (Join-Path $ConfigDir "plugins\") -Recurse -Force
 Copy-Item (Join-Path $Src "themes\*")  (Join-Path $ConfigDir "themes\")  -Recurse -Force
 

@@ -4,6 +4,12 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.8] — sin publicar
+
+### Corregido
+
+- **El bot ya no le muestra al docente su plan en inglés.** Con Gemini, en charlas largas y sobre todo después de que una herramienta da error, el modelo a veces escribía su planificación como texto visible y en inglés ("Let's communicate this clearly and warmly, following our rules: …"), y una vez que pasaba tendía a repetirlo: en una charla real fueron más de dos tercios de los textos, y el docente tuvo que pedir "en español, si?". Pedirlo en el prompt no alcanzaba. Ahora un plugin nuevo (`tecnia-idioma`) saca esos párrafos antes de guardar cada respuesta, y también del historial que lee el modelo, para que no se contagie. El español, el código y los términos técnicos ("LED", "WiFi", "Error 2") no se tocan. Mientras la respuesta llega, el inglés todavía puede verse un instante antes de desaparecer. El prompt además pide escribir en español también entre una herramienta y otra.
+
 ## [0.4.7] — 2026-10-18
 
 **Si a una computadora le faltan las herramientas de la placa, el bot avisa en 3 minutos, no en 15, y le dice al docente qué hacer.**

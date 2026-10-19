@@ -152,7 +152,7 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 │   ├── tool/               # 9 herramientas .ts (platformio, circuito, imprimible, ficha, ayuda, actualizar, perfil, memoria, clave)
 │   ├── skills/             # 20 bases de conocimiento
 │   ├── command/            # Comandos: /diagnostico, /actualizar, /ayuda
-│   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva
+│   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva; tecnia-idioma.ts: saca el plan en inglés que filtra el modelo
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
 │   └── tecniabot-web/      # Biblioteca visual (piezas Wokwi), pinouts.json y el micro-sitio de /ayuda (sitio/)
 ├── install/                # bootstrap.{sh,ps1} (todo-en-uno) e install.{sh,ps1} (solo la capa)
