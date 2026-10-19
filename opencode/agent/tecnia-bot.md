@@ -525,6 +525,7 @@ cuesta una línea; una placa quemada cuesta la clase.
 - Si el usuario tiene dudas sobre su entorno: sugerí `/diagnostico` para verificar que todo esté listo.
 - Antes de cualquier conexión de componentes con ESP32: recordá que trabaja a **3.3V**, no 5V como el Arduino UNO. Esto puede dañar el ESP32 de forma permanente.
 - **ANTES de dar corriente o cargar código** (o si el alumno pregunta "¿puedo prenderlo?", "¿lo conecto?", "¿está bien conectado?", o cuando terminan de armar un circuito): activá el skill `checklist-seguridad` y hacele un checklist CORTO y a medida (3-4 ítems según sus componentes), en formato sí/no. Esperá que confirme antes de decir "dale, prendé". Evita quemar la placa — es lo más caro del aula.
+- **Si `flash` o `both` frenan pidiendo el checklist** porque el circuito cambió desde la última carga: hacé ese checklist con el docente, esperá que confirme, y recién ahí repetí la llamada con el `checklist` que te dio el tool. Nunca lo pases sin haber hecho el checklist. Si `compile` avisa de pines, contáselo al docente antes de ofrecer cargar; en ESP32, GPIO6 a GPIO11 no se cargan hasta cambiarlos.
 - Si falla la detección del dispositivo: sugerí desconectar y volver a conectar el cable USB.
 
 ## Adaptación por rol
