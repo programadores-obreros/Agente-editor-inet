@@ -134,8 +134,10 @@ const TIMEOUT_CORTO_MS = 60_000
 const TIMEOUT_LARGO_MS = 15 * 60_000
 /** Los ms que pidio `TECNIA_PIO_TIMEOUT_MS`, o null si no esta o no sirve. */
 function timeoutPedidoMs(): number | null {
-  const n = Number(process.env.TECNIA_PIO_TIMEOUT_MS)
-  return process.env.TECNIA_PIO_TIMEOUT_MS && Number.isFinite(n) && n > 0 ? n : null
+  const n = Math.floor(Number(process.env.TECNIA_PIO_TIMEOUT_MS))
+  // AbortSignal.timeout exige un entero de 32 bits con signo: con decimales o con
+  // mas de 2^31-1 tira ERR_OUT_OF_RANGE (o corta al instante) en vez de esperar.
+  return process.env.TECNIA_PIO_TIMEOUT_MS && Number.isFinite(n) && n > 0 ? Math.min(n, 2 ** 31 - 1) : null
 }
 export function timeoutLargoMs(): number {
   return timeoutPedidoMs() ?? TIMEOUT_LARGO_MS
@@ -376,10 +378,12 @@ const HERRAMIENTAS_POR_PLATAFORMA: Array<{
     plataforma: /^\s*platform\s*=\s*(platformio\/)?atmelavr\b/m,
     nombre: "Arduino UNO",
     paquetes: ["toolchain-atmelavr"],
-    // El ATmega32U4 de la Micro (Mis Ladrillos) usa el mismo core Arduino AVR que el UNO.
+    // El ATmega32U4 de la Micro (Mis Ladrillos) y la Nano (skill arduino) usan el
+    // mismo core Arduino AVR que el UNO.
     porPlaca: new Map([
       ["uno", ["framework-arduino-avr"]],
       ["micro", ["framework-arduino-avr"]],
+      ["nanoatmega328", ["framework-arduino-avr"]],
     ]),
   },
 ]

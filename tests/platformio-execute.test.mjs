@@ -615,6 +615,34 @@ test("flash sin herramientas: avisa la descarga y corta a los 3 minutos (upload 
   })
 })
 
+test("flash con herramientas: espera 15 minutos y no avisa descarga", async () => {
+  await conProyectoEsp32(["framework-arduinoespressif32", "toolchain-xtensa-esp32"], async () => {
+    escenario({ lista: [CH340] })
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").includes("--target upload") ? COLGADO() : base(cmd))
+    const titulos = []
+    const { r, pedidos } = await conTimeoutsEspiados(() =>
+      mod.default.execute({ action: "flash" }, { ...ctx, metadata: (m) => titulos.push(m.title) }),
+    )
+    assert.ok(pedidos.includes(900_000), `flash con herramientas tiene que esperar 15 min: ${pedidos}`)
+    assert.ok(!pedidos.includes(180_000), `flash cortó a los 3 min con todo bajado: ${pedidos}`)
+    assert.doesNotMatch(r, /Faltaban las herramientas/)
+    assert.equal(titulos.length, 0, `avisó una descarga que no hay: ${titulos}`)
+  })
+})
+
+test("TECNIA_PIO_TIMEOUT_MS con decimales o enorme: queda en un entero que AbortSignal.timeout acepta", () => {
+  try {
+    process.env.TECNIA_PIO_TIMEOUT_MS = "1500.5"
+    assert.equal(mod.timeoutCompilarMs(["ESP32"]), 1500)
+    process.env.TECNIA_PIO_TIMEOUT_MS = String(2 ** 40)
+    assert.equal(mod.timeoutLargoMs(), 2 ** 31 - 1)
+    assert.doesNotThrow(() => AbortSignal.timeout(mod.timeoutLargoMs()))
+  } finally {
+    delete process.env.TECNIA_PIO_TIMEOUT_MS
+  }
+})
+
 test("both con corte en la CARGA (la compilación terminó bien): no habla de herramientas ni de pendrive", async () => {
   // El core está vacío al compilar (faltaban), pero el compile terminó bien: el
   // corte en la carga no tiene nada que ver con las herramientas de compilar.
