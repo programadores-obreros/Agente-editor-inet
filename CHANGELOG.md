@@ -6,6 +6,12 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [0.4.8] — sin publicar
 
+### Agregado
+
+- **Antes de cargar, el bot mira los pines del código.** Al compilar, avisa si el código usa un pin que en esa placa trae problemas: en un ESP32, GPIO6 a GPIO11 (son de la memoria interna y la placa no arranca más), 34 a 39 como salida o con pull-up (son solo de entrada), una lectura analógica que el WiFi pisa, los pines de arranque y los del USB; en un Arduino UNO o Nano, D0/D1 junto con el monitor serie y `analogWrite` en un pin sin PWM. Con GPIO6 a GPIO11 la carga se frena hasta que se cambie el pin; lo demás son avisos para charlar con el docente. Si el pin está en una variable que cambia mientras el programa corre, el bot no adivina y no avisa nada. Que no avise no quiere decir que el cableado esté bien.
+- **El checklist de seguridad ya no depende de que el bot se acuerde.** Si el circuito cambió desde la última carga en esa placa (un pin nuevo, un pin que pasa de entrada a salida, un sensor o un servo nuevo), cargar se frena y el bot tiene que hacer el checklist con el docente antes de poder seguir. Si solo cambió el programa (otro tiempo, otra condición), carga directo. El LED de la propia placa no cuenta. La última carga se anota en la carpeta `.pio` del proyecto, y solo si terminó bien.
+- Cuando el circuito cambia, la compilación le recuerda al bot qué conocimientos cargar: ESP32 si hay WiFi, sensores y librerías si hay un DHT, actuadores si hay un servo o un relé.
+
 ### Corregido
 
 - **El bot ya no le muestra al docente su plan en inglés.** Con Gemini, en charlas largas y sobre todo después de que una herramienta da error, el modelo a veces escribía su planificación como texto visible y en inglés ("Let's communicate this clearly and warmly, following our rules: …"), y una vez que pasaba tendía a repetirlo: en una charla real fueron más de dos tercios de los textos, y el docente tuvo que pedir "en español, si?". Pedirlo en el prompt no alcanzaba. Ahora un plugin nuevo (`tecnia-idioma`) saca esos párrafos antes de guardar cada respuesta, y también del historial que lee el modelo, para que no se contagie. El español, el código y los términos técnicos ("LED", "WiFi", "Error 2") no se tocan. Mientras la respuesta llega, el inglés todavía puede verse un instante antes de desaparecer. El prompt además pide escribir en español también entre una herramienta y otra.
