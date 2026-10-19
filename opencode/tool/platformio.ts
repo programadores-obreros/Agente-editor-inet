@@ -2,7 +2,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, win32 } from "node:path"
+import { join, win32 } from "node:path"
 
 interface RunResult {
   code: number
@@ -134,6 +134,19 @@ export function timeoutLargoMs(): number {
   return Number.isFinite(n) && n > 0 ? n : 15 * 60_000
 }
 
+/*
+ * Si las herramientas de la placa NO estan bajadas, compilar es en realidad bajar
+ * mas de 1 GB. Desde 0.4.6 eso lo hace el instalador; si igual faltan, es que la
+ * descarga del instalador no llego, y con la red del aula tampoco va a llegar
+ * desde el bot: esperar 15 minutos para enterarse es lo que trabo a la docente
+ * del taller. Se espera poco y se explica. Con buena red (en casa la descarga
+ * entera tardo unos 3 minutos) puede llegar a terminar igual.
+ */
+const TIMEOUT_SIN_HERRAMIENTAS_MS = 3 * 60_000
+export function timeoutCompilarMs(faltaban: string[]): number {
+  return faltaban.length > 0 ? Math.min(timeoutLargoMs(), TIMEOUT_SIN_HERRAMIENTAS_MS) : timeoutLargoMs()
+}
+
 /** Lo que devuelve `run()` cuando el comando no termino a tiempo (mismo codigo que `timeout(1)`). */
 export const CODIGO_TIMEOUT = 124
 /** Lo que devuelve `run()` cuando el usuario corto la accion desde OpenCode (Ctrl+C: 128+SIGINT). */
@@ -251,11 +264,12 @@ function mensajeTimeout(que: "compilar" | "cargar el codigo", timeoutMs: number,
       : "Lo más probable es que PlatformIO estuviera bajando herramientas sin mostrar progreso, o que se haya colgado."
   return (
     `No termine de ${que} en ${describirDuracion(timeoutMs)}. ${causa}\n\n` +
-    "NO lo vuelvas a intentar ahora: otro intento con la misma red vuelve a tardar lo mismo. " +
-    "Decile al docente que las herramientas se bajan UNA sola vez por computadora: " +
-    "actualizando Tecnia Bot con buena red (por ejemplo en casa), o copiando las carpetas " +
-    "`.platformio\\packages` y `.platformio\\platforms` de una computadora que ya compiló. " +
-    "Si ya estaban bajadas, corré `/diagnostico`: puede ser la red de la escuela bloqueando las descargas."
+    "NO lo vuelvas a intentar ahora: otro intento con la misma red vuelve a tardar lo mismo, " +
+    "y no ofrezcas un diagnóstico en lugar de esto. Pasale al docente estas opciones, con tus palabras:\n" +
+    "1. Actualizar Tecnia Bot con buena red (por ejemplo en casa): baja las herramientas una sola vez y quedan para siempre.\n" +
+    "2. Traerlas en un pendrive desde una computadora donde ya compila: copiar las carpetas " +
+    "`.platformio\\packages` y `.platformio\\platforms` de la carpeta del usuario.\n" +
+    "Si ya estaban bajadas y aun así no termina, ahí sí corré `/diagnostico`: puede ser la red de la escuela bloqueando las descargas."
   )
 }
 
@@ -277,10 +291,25 @@ const HERRAMIENTAS_POR_PLATAFORMA: Array<{ plataforma: RegExp; nombre: string; p
   },
 ]
 
-/** La carpeta de PlatformIO (la que tiene `packages`), deducida del pio que se usa. */
-export function coreDir(pio: string = pioBin(), entorno: Record<string, string | undefined> = process.env): string {
-  if (pio !== "pio" && pio !== "platformio") return dirname(dirname(dirname(pio)))
-  return entorno.PLATFORMIO_CORE_DIR || join(homedir(), ".platformio")
+/**
+ * La carpeta donde PlatformIO guarda `packages`, con SU regla y no deducida del pio.
+ *
+ * Antes salia de la ruta de pio.exe, y no es lo mismo: PlatformIO usa
+ * `C:\.platformio` si esa carpeta EXISTE, aunque el penv este en el perfil del
+ * usuario (platformio/project/options.py, get_default_core_dir). Paso en la VM:
+ * con un `C:\.platformio` viejo, el aviso de descarga miraba la carpeta del
+ * usuario mientras PlatformIO bajaba todo en la raiz del disco.
+ */
+export function coreDir(
+  home: string = homedir(),
+  plataforma: string = process.platform,
+  entorno: Record<string, string | undefined> = process.env,
+  existe: (ruta: string) => boolean = existsSync,
+): string {
+  if (entorno.PLATFORMIO_CORE_DIR) return entorno.PLATFORMIO_CORE_DIR
+  if (plataforma !== "win32") return join(home, ".platformio")
+  const raiz = win32.join(win32.parse(home).root || "C:\\", ".platformio")
+  return existe(raiz) ? raiz : win32.join(home, ".platformio")
 }
 
 /** Las placas del `platformio.ini` cuyas herramientas todavia no estan bajadas. */
@@ -906,7 +935,7 @@ Acciones:
     }
     const compilar = () => {
       avisarDescarga()
-      return run(["pio", "run", ...envFlag], cwd, signal, timeoutLargoMs())
+      return run(["pio", "run", ...envFlag], cwd, signal, timeoutCompilarMs(faltaban))
     }
     const cargar = (puerto: string) =>
       run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal, timeoutLargoMs())
@@ -924,7 +953,7 @@ Acciones:
     // Timeout o cancelacion no son errores de compilacion: no se traducen, se explican.
     const noTermino = (r: RunResult, que: "compilar" | "cargar el codigo"): string | null =>
       r.code === CODIGO_TIMEOUT
-        ? mensajeTimeout(que, timeoutLargoMs(), faltaban)
+        ? mensajeTimeout(que, que === "compilar" ? timeoutCompilarMs(faltaban) : timeoutLargoMs(), faltaban)
         : r.code === CODIGO_CANCELADO
           ? `Se cancelo la accion antes de terminar de ${que}.`
           : null

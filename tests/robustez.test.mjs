@@ -105,6 +105,17 @@ test("el bootstrap lanza install.ps1 con el powershell.exe de $PSHOME, no por no
   }
 })
 
+// En una notebook real, instalacion.log saltaba de "Instalando la capa" a "LISTO!":
+// Start-Transcript no graba lo que el hijo escribe directo a la consola.
+test("la salida de install.ps1 queda en instalacion.log (pasa por Out-Host)", () => {
+  const codigo = sinComentariosPs(leer("install/bootstrap.ps1"))
+  const lanza = codigo.split("\n").filter((l) => /install\\install\.ps1/.test(l) && /-File/.test(l))
+  assert.ok(lanza.length >= 1, "no encuentro la línea que lanza install.ps1")
+  for (const l of lanza) {
+    assert.match(l, /\|\s*Out-Host\s*$/, `la salida de install.ps1 no pasa por el host y el transcript no la graba: ${l.trim()}`)
+  }
+})
+
 // ── C. El aviso de pip no asusta ───────────────────────────────────────────────
 //
 // `get-platformio.py` intenta actualizar pip dentro del venv y en Windows falla

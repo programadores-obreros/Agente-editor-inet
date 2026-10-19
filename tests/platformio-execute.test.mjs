@@ -482,9 +482,24 @@ test("herramientasFaltantes(): ESP32 sin toolchain se detecta; con todo bajado, 
   assert.ok(vistos.some((v) => v.endsWith(join("packages", "toolchain-xtensa-esp32"))), vistos.join(","))
 })
 
-test("coreDir(): sale del pio que se usa (penv/Scripts/pio.exe -> la carpeta .platformio)", () => {
-  assert.equal(mod.coreDir(join("/h", ".platformio", "penv", "bin", "pio")), join("/h", ".platformio"))
-  assert.equal(mod.coreDir("pio", { PLATFORMIO_CORE_DIR: "/otro" }), "/otro")
+test("coreDir(): la regla de PlatformIO (C:\\.platformio gana si existe, aunque pio este en el perfil)", () => {
+  const home = "C:\\Users\\docente"
+  assert.equal(mod.coreDir(home, "win32", {}, () => false), "C:\\Users\\docente\\.platformio")
+  // Paso en la VM: un C:\.platformio viejo y el aviso miraba la carpeta equivocada.
+  assert.equal(mod.coreDir(home, "win32", {}, (r) => r === "C:\\.platformio"), "C:\\.platformio")
+  assert.equal(mod.coreDir("D:\\perfiles\\ana", "win32", {}, (r) => r === "D:\\.platformio"), "D:\\.platformio")
+  assert.equal(mod.coreDir(home, "win32", { PLATFORMIO_CORE_DIR: "E:\\pio" }, () => true), "E:\\pio")
+  assert.equal(mod.coreDir("/home/ana", "linux", {}, () => true), join("/home/ana", ".platformio"))
+})
+
+test("timeoutCompilarMs(): sin herramientas espera 3 minutos, no 15", () => {
+  delete process.env.TECNIA_PIO_TIMEOUT_MS
+  assert.equal(mod.timeoutCompilarMs([]), 15 * 60_000)
+  assert.equal(mod.timeoutCompilarMs(["ESP32"]), 3 * 60_000)
+  // La variable de los tests manda si es más corta.
+  process.env.TECNIA_PIO_TIMEOUT_MS = "50"
+  assert.equal(mod.timeoutCompilarMs(["ESP32"]), 50)
+  delete process.env.TECNIA_PIO_TIMEOUT_MS
 })
 
 test("compile sin las herramientas de ESP32: avisa en el título y el timeout nombra la placa", async () => {
@@ -500,6 +515,10 @@ test("compile sin las herramientas de ESP32: avisa en el título y el timeout no
     assert.ok(titulos.some((t) => /Bajando las herramientas de ESP32/.test(t)), `sin aviso: ${titulos}`)
     assert.match(r, /Faltaban las herramientas de ESP32/)
     assert.match(r, /NO lo vuelvas a intentar ahora/)
+    // En la VM el bot ofreció "correr un diagnóstico" y no le dijo al docente cómo conseguirlas.
+    assert.match(r, /Actualizar Tecnia Bot con buena red/)
+    assert.match(r, /pendrive/)
+    assert.match(r, /no ofrezcas un diagnóstico en lugar de esto/)
   } finally {
     delete process.env.PLATFORMIO_CORE_DIR
     rmSync(join(OUT, "platformio.ini"), { force: true })

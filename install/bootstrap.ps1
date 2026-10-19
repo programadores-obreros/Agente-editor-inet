@@ -1303,7 +1303,12 @@ Write-Host "  [..] Instalando la capa de Tecnia Bot..."
 # cae al nombre, como antes.
 $PsExe = Join-Path $PSHOME "powershell.exe"
 if (-not (Test-Path $PsExe)) { $PsExe = "powershell" }
-& $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
+# "| Out-Host" para que la salida quede en instalacion.log. Start-Transcript no graba
+# lo que un proceso hijo escribe directo a la consola: en una notebook real el log
+# saltaba de "Instalando la capa" a "LISTO!" sin nada en el medio, y ahi adentro
+# estan los timeouts del modelo y la descarga de las herramientas de las placas.
+# $LASTEXITCODE sigue siendo el de install.ps1 aunque la salida pase por el pipe.
+& $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1") | Out-Host
 
 # SE VERIFICA QUE LA CAPA HAYA QUEDADO, y por dos vias.
 #

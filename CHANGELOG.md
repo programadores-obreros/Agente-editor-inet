@@ -4,6 +4,17 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-10-18
+
+**Si a una computadora le faltan las herramientas de la placa, el bot avisa en 3 minutos, no en 15, y le dice al docente qué hacer.**
+
+### Corregido
+
+- **El registro de la instalación ahora cuenta todo.** En una notebook con Windows 10, el registro (`instalacion.log`) pasaba de "Instalando la capa de Tecnia Bot" a "LISTO!" sin nada en el medio: la segunda mitad de la instalación —la configuración del modelo y la descarga de las herramientas de ESP32 y UNO— no quedaba anotada. Si esa descarga fallaba en la computadora de un docente, el registro no lo iba a mostrar. Ahora queda todo.
+- **Sin las herramientas de la placa, compilar se corta a los 3 minutos, no a los 15.** Desde la 0.4.6 las herramientas las baja el instalador; si igual faltan, es que esa descarga no llegó, y con la red del aula desde el bot tampoco va a llegar. Esperar un cuarto de hora para enterarse era lo que trababa la clase. Con las herramientas ya instaladas no cambia nada.
+- **El bot le dice al docente cómo conseguir las herramientas.** Al reproducir el caso del taller, el bot no reintentaba (eso ya andaba bien desde la 0.4.6), pero en vez de explicar cómo bajarlas ofrecía "correr un diagnóstico". Ahora le pasa las dos opciones: actualizar Tecnia Bot con buena red, o traer las carpetas en un pendrive desde una computadora donde ya compila.
+- **El aviso "Bajando las herramientas…" mira la misma carpeta que PlatformIO.** Si existe `C:\.platformio`, PlatformIO guarda todo ahí aunque el resto esté en la carpeta del usuario; Tecnia Bot miraba la otra y podía avisar de más o de menos. Ahora usa la misma regla que PlatformIO.
+
 ## [0.4.6] — 2026-10-14
 
 **La primera compilación ya no se pasa un cuarto de hora descargando en el medio de la clase.**
