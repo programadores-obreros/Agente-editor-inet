@@ -87,25 +87,32 @@ function claveDe(texto: string, opciones: Opciones): string {
   // si puede ser eco (hasta MAX_ECO caracteres); si no, su largo alcanza,
   // porque el resultado ya no depende de él. Más la señal de inglés pedido.
   const u = opciones.ultimoUsuario ?? ""
-  return (opciones.exento ? "E" : "-") + (u.length <= MAX_ECO ? u : "#" + u.length) + "\u0000" + texto
+  // Con el largo adelante, ningún texto puede hacerse pasar por separador:
+  // "E12:<mensaje de 12>texto" o, si el mensaje no puede ser eco, "EL5000:texto".
+  return (opciones.exento ? "E" : "-") + (u.length <= MAX_ECO ? `${u.length}:${u}` : `L${u.length}:`) + texto
 }
 function limpio(texto: string, opciones: Opciones = {}): ReturnType<typeof limpiar> {
   const clave = claveDe(texto, opciones)
   const hit = cache.get(clave)
   if (hit) return hit
   const r = limpiar(texto, opciones)
-  if (texto.length <= MAX_TEXTO) cache.set(clave, r, clave.length + (r.cambio ? r.texto.length : 0))
+  if (texto.length <= MAX_TEXTO) {
+    const peso = clave.length + (r.cambio ? r.texto.length + r.quitados.reduce((n, q) => n + q.length, 0) : 0)
+    cache.set(clave, r, peso)
+  }
   return r
 }
 
 /**
  * El texto de un mensaje del docente: sus partes de texto (no sintéticas),
  * juntas y desenvueltas. "" si no tiene texto (una imagen sola); undefined si
- * todas sus partes son sintéticas (lo agrega OpenCode, no es un turno del docente).
+ * no es un turno del docente: todas sus partes son sintéticas, o es el mensaje
+ * que crea la compactación (una parte `compaction` y ningún texto).
  */
 function textoDeUsuario(parts: unknown): string | undefined {
   if (!Array.isArray(parts)) return ""
   if (parts.length > 0 && parts.every((p) => p && p.synthetic)) return undefined
+  if (parts.some((p) => p && p.type === "compaction") && !parts.some((p) => p && p.type === "text")) return undefined
   return desenvolver(
     parts
       .filter((p) => p && p.type === "text" && typeof p.text === "string" && !p.synthetic)
@@ -120,8 +127,10 @@ type Docente = { mensaje: string; restan: number }
 const DOCENTE_INICIAL: Docente = { mensaje: "", restan: 0 }
 const TURNOS_DE_INGLES = 3
 function avanzarTurno(antes: Docente, mensaje: string): Docente {
-  if (pideEspanol(mensaje)) return { mensaje, restan: 0 }
+  // El pedido de inglés gana: "pasame la consigna en inglés y abajo
+  // explicámela en español" pide las dos cosas, y el inglés no se puede borrar.
   if (pideIngles(mensaje)) return { mensaje, restan: TURNOS_DE_INGLES }
+  if (pideEspanol(mensaje)) return { mensaje, restan: 0 }
   return { mensaje, restan: Math.max(0, antes.restan - 1) }
 }
 const opcionesDe = (d: Docente): Opciones => ({ ultimoUsuario: d.mensaje || undefined, exento: d.restan > 0 })
@@ -223,6 +232,11 @@ const server: Plugin = async ({ client }) => {
         // se juzga con lo que había pedido hasta ese momento.
         let docente = DOCENTE_INICIAL
         let sesion: string | undefined
+        // Después de una compactación el historial empieza en el resumen: los
+        // turnos de antes (y un pedido de inglés reciente) ya no están en él.
+        const primerUsuario = output.messages.find((m) => m?.info?.role === "user")
+        const empiezaCompactado =
+          Array.isArray(primerUsuario?.parts) && primerUsuario.parts.some((p) => p && p.type === "compaction")
         for (const [i, msg] of output.messages.entries()) {
           try {
             if (msg?.info?.role === "user") {
@@ -261,7 +275,15 @@ const server: Plugin = async ({ client }) => {
         // plugin arrancó a mitad de charla (`opencode run -s`, OpenCode
         // reiniciado), chat.message sólo vio el último mensaje y no sabe que
         // dos turnos atrás el docente pidió inglés. Vale lo rehecho acá.
-        if (sesion) recordarDocente(sesion, docente)
+        // Dos excepciones: mientras compacta, el transform corre sobre una copia
+        // parcial (compaction.ts:378-379) y no debe pisar nada; y si el
+        // historial empieza compactado, un pedido de inglés de antes del resumen
+        // sólo lo sabe lo guardado: vale el mayor de los dos.
+        if (sesion && !compactando.has(sesion)) {
+          const guardado = docentes.get(sesion)
+          if (empiezaCompactado && guardado) docente = { ...docente, restan: Math.max(docente.restan, guardado.restan) }
+          recordarDocente(sesion, docente)
+        }
         if (partes > 0) anotar("saqué planificación en inglés del historial que ve el modelo", { partes })
       } catch {
         // historial intacto

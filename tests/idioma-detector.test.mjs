@@ -460,15 +460,37 @@ test("4b: más del TRIPLE de funcionales inglesas que españolas (9 contra 4 se 
 })
 
 test("rescate: una oración del borrador repite la respuesta si comparte el 70 % de sus bigramas", () => {
-  // 4 de 5 bigramas (0,8): repite, no se rescata.
+  // Bloque de dos líneas: la segunda es nueva, así que el bloque entero no repite.
+  const nueva = "\nDespués medí la tensión con el tester en los bornes del regulador."
+  // Primera línea: 4 de 5 bigramas (0,8) en la respuesta: repite, no vuelve.
   assert.equal(
-    limpiar("Let's tell the user:\nPrimero revisá bien cada conexión suelta.\n\nAhora revisá bien cada conexión suelta.").texto,
-    "Ahora revisá bien cada conexión suelta.",
+    limpiar("Let's tell the user:\nPrimero revisá bien cada conexión suelta." + nueva + "\n\nAhora revisá bien cada conexión suelta.").texto,
+    "Después medí la tensión con el tester en los bornes del regulador.\n\nAhora revisá bien cada conexión suelta.",
   )
-  // 3 de 5 (0,6): no repite, se rescata.
+  // 3 de 5 (0,6): no repite, vuelve.
   assert.equal(
-    limpiar("Let's tell the user:\nPrimero revisá bien cada conexión suelta.\n\nAhora revisá bien cada conexión floja.").texto,
-    "Primero revisá bien cada conexión suelta.\n\nAhora revisá bien cada conexión floja.",
+    limpiar("Let's tell the user:\nPrimero revisá bien cada conexión floja." + nueva + "\n\nAhora revisá bien cada conexión suelta.").texto,
+    "Primero revisá bien cada conexión floja." + nueva + "\n\nAhora revisá bien cada conexión suelta.",
+  )
+  // Una oración con UN solo bigrama no alcanza para decir que repite.
+  assert.equal(
+    limpiar("Let's tell the user:\nYa conexiones revisadas." + nueva + "\n\nQuedaron las conexiones revisadas por vos.").texto,
+    "Ya conexiones revisadas." + nueva + "\n\nQuedaron las conexiones revisadas por vos.",
+  )
+})
+
+test("rescate: si la mitad de las palabras del borrador ya está en la respuesta, no vuelve (misma respuesta dicha de otra forma)", () => {
+  assert.equal(
+    limpiar(
+      "The diagnostic tool shows the board on COM9.\nLet's answer clearly:\n**Sí, ahora la veo en COM9.**\nEstá conectada con el chip CH340.\n\n¡Sí! Ahí apareció en el puerto `COM9` con el chip CH340. ¿La cargo?",
+    ).texto,
+    "¡Sí! Ahí apareció en el puerto `COM9` con el chip CH340. ¿La cargo?",
+  )
+  assert.equal(
+    limpiar(
+      "Let's draft the answer:\nPrimero conectá el sensor al GPIO 4 y después cargá el ejemplo.\nSi no anda, revisá la resistencia de 10k.\n\nPrimero conectá el sensor al GPIO 4 y cargá el ejemplo. Si no anda, revisá la resistencia de 10k.",
+    ).texto,
+    "Primero conectá el sensor al GPIO 4 y cargá el ejemplo. Si no anda, revisá la resistencia de 10k.",
   )
 })
 
@@ -559,4 +581,76 @@ test("si después de sacar el plan sólo queda una cita entera, también se va",
 
 test("el código inline no cuenta aunque adentro diga let's o the user", () => {
   intacto("Ejecutá `let's check the user and the tool output then` en el loop.")
+})
+
+// ---------------------------------------------------------------------------
+// Ronda 5
+// ---------------------------------------------------------------------------
+
+test("lo que presenta 'Tone:' o 'Key points:' no se rescata, ni sobran sus restos", () => {
+  assert.equal(limpiar("Let's check the rules:\n- Tone: Rioplatense, con vos.\n- End with a question.\n\nChe, ya compiló. ¿La cargo?").texto, "Che, ya compiló. ¿La cargo?")
+  assert.equal(limpiar("Let's check the rules:\n- Tone: cálido y con voseo.\n\nChe, ya compiló.").texto, "Che, ya compiló.")
+})
+
+test("misma línea: 'Let me explain: <respuesta en español>' no queda vacío", () => {
+  for (const [t, queda] of [
+    ["Let me explain: el PWM prende y apaga el pin muy rápido, y el promedio es el brillo.", "el PWM prende y apaga el pin muy rápido, y el promedio es el brillo."],
+    ["Let me explain: el PWM prende y apaga el pin muy rápido. ¿Querés un ejemplo?", "el PWM prende y apaga el pin muy rápido. ¿Querés un ejemplo?"],
+    ["Let me check: tu placa está en COM5 y responde bien.", "tu placa está en COM5 y responde bien."],
+    ["Let's tell the user: ¡Compiló sin errores!", "¡Compiló sin errores!"],
+  ])
+    assert.equal(limpiar(t).texto, queda, t)
+  // El prompt recitado no vuelve nunca, aunque no quede nada.
+  assert.equal(limpiar("Now let's compile the project.\nRemember the rule: compilar es control de calidad nuestro.").texto, "")
+})
+
+test("restos cosméticos: 'Thinking:' y una interjección pegada al plan se van", () => {
+  assert.equal(limpiar("Thinking:\n\nChe, el puerto está ocupado: cerrá el monitor serie y probá de nuevo.").texto, "Che, el puerto está ocupado: cerrá el monitor serie y probá de nuevo.")
+  assert.equal(limpiar("Great! I will now upload the program to the board and then we will check it.\n\nListo.").texto, "Listo.")
+})
+
+test("eco corto ('dale', 'si'): no es eco, y un párrafo en inglés sin marca no se vacía", () => {
+  const RESP = "The board is ready and it is connected to the port, so we can upload the code now if you want it."
+  for (const u of ["dale", "si"]) assert.equal(limpiar(`"${u}"\n\n${RESP}`, { ultimoUsuario: u }).cambio, false, u)
+})
+
+test("4b mira sólo los párrafos ANTES del primer español: lo que sigue a 'Acá va el cartel…' se queda", () => {
+  const u = "armame el cartel para la puerta del laboratorio"
+  intacto(`"${u}"\n\nAcá va el cartel, como lo usan en la escuela bilingüe.\n\nPlease do not touch the boards on the table. If you need help, ask the teacher and wait for your turn, because the lab is shared with the other classes.`)
+  assert.equal(
+    limpiar(`"${u}"\n\nAcá va el cartel, como lo usan en la escuela bilingüe.\n\nPlease do not touch the boards on the table. If you need help, ask the teacher and wait for your turn, because the lab is shared with the other classes.`, { ultimoUsuario: u }).cambio,
+    false,
+  )
+})
+
+test("4b no se aplica si el docente escribió en inglés o la respuesta repite lo que pidió", () => {
+  const corregir = "corregime: The sensor is connected to the pin 4 and it is working fine"
+  const eco1 = '"The sensor is connected to the pin 4 and it is working fine"'
+  assert.equal(
+    limpiar(`${eco1}\n\nThe sentence is correct, but it is better if you say "connected to pin 4" without "the", because it is a specific pin.`, { ultimoUsuario: corregir }).cambio,
+    false,
+  )
+  const letra = "pasame la letra de happy birthday"
+  assert.equal(
+    limpiar(`"${letra}"\n\nHappy birthday to you, happy birthday to you, happy birthday dear teacher, happy birthday to you. And many more, and may all of your wishes come true for you.`, { ultimoUsuario: letra }).cambio,
+    false,
+  )
+})
+
+test("rescate: un borrador corto incluido tal cual en la respuesta no se duplica", () => {
+  assert.equal(limpiar("Let's tell the user:\n¿Lo cargo a la placa?\n\nYa compiló. ¿Lo cargo a la placa?").texto, "Ya compiló. ¿Lo cargo a la placa?")
+})
+
+test("misma línea: un borrador con una sola funcional española no se rescata", () => {
+  assert.equal(
+    limpiar("Response structure:\n1. Greeting: Hola profe.\n2. Explain: El PWM prende y apaga el pin.").texto,
+    "El PWM prende y apaga el pin.",
+  )
+})
+
+test("rescate: el chequeo por párrafo necesita 3+ palabras; con menos, la respuesta corta vuelve", () => {
+  assert.equal(
+    limpiar("Let's answer directly and in Spanish:\n**No, no la veo.** Windows no detecta la placa.\n\nProbá con otro cable USB; si Windows no la detecta, puede ser el driver de la placa.").texto,
+    "**No, no la veo.** Windows no detecta la placa.\n\nProbá con otro cable USB; si Windows no la detecta, puede ser el driver de la placa.",
+  )
 })

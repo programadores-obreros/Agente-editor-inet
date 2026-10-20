@@ -407,3 +407,74 @@ test("rendimiento: un mensaje del docente de 100 KB y 60 citas no frenan el hist
   assert.ok(performance.now() - t0 < 1500, `tardó ${(performance.now() - t0).toFixed(0)} ms`)
   assert.equal(messages[1].parts[0].text, resp + " 0")
 })
+
+// ---------------------------------------------------------------------------
+// Ronda 5: pedido mixto, turnos con imagen y compactación
+// ---------------------------------------------------------------------------
+
+const CONSIGNA_EN = "Let's build a traffic light! First, connect the red LED to pin 13 and then the green one to pin 11. After that, we will upload the code to the board."
+
+test("pedido mixto (inglés Y español): gana el inglés, no se borra lo pedido", async () => {
+  for (const [k, pedido] of [
+    "pasame la consigna en inglés y abajo explicámela en español",
+    "traducí la consigna al inglés; lo demás dejalo en castellano",
+    "pasala al inglés, pero hablame en español",
+  ].entries()) {
+    const { h } = await hooks()
+    await textoDocente(h, "m" + k, pedido)
+    const texto = CONSIGNA_EN + "\n\nY en español: armamos un semáforo."
+    assert.equal(await completar(h, "m" + k, texto), texto, pedido)
+  }
+})
+
+test("transform: un turno con sólo una imagen cuenta como turno", async () => {
+  const { h } = await hooks()
+  const u = (id, parts) => ({ info: { id, role: "user", sessionID: "s" }, parts })
+  const img = [{ type: "file", mime: "image/png", url: "data:," }]
+  const messages = [
+    u("u1", [{ type: "text", text: "en inglés porfa" }]),
+    u("u2", img),
+    u("u3", img),
+    u("u4", [{ type: "text", text: "seguí" }]),
+    { info: { id: "a4", role: "assistant", sessionID: "s", agent: "tecnia-bot" }, parts: [{ id: "a4p", type: "text", text: PLAN_EN }] },
+  ]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(messages[4].parts[0].text, "Listo, ya está.", "u1 (3), imagen (2), imagen (1), u4 (0): ya no vale")
+})
+
+test("compactación: mientras compacta, el transform no pisa lo que se sabe del docente", async () => {
+  const { h } = await hooks()
+  await textoDocente(h, "s", "en inglés porfa")
+  await h["experimental.session.compacting"]({ sessionID: "s" }, { context: [] })
+  // La copia parcial que resume no trae el pedido.
+  await h["experimental.chat.messages.transform"]({}, { messages: [{ info: { id: "u0", role: "user", sessionID: "s" }, parts: [{ type: "text", text: "hola" }] }] })
+  await h.event({ event: { type: "session.compacted", properties: { sessionID: "s" } } })
+  assert.equal(await completar(h, "s", PLAN_EN), PLAN_EN, "el pedido de inglés sigue valiendo")
+})
+
+test("compactación: si el historial empieza en el resumen, vale el mayor 'restan' entre lo guardado y lo rehecho", async () => {
+  const { h } = await hooks()
+  await textoDocente(h, "s", "en inglés porfa")
+  const messages = [
+    // El mensaje que crea la compactación: una parte `compaction` y ningún texto. No es un turno.
+    { info: { id: "uc", role: "user", sessionID: "s" }, parts: [{ type: "compaction", auto: true }] },
+    { info: { id: "ac", role: "assistant", sessionID: "s", agent: "compaction", summary: true }, parts: [{ type: "text", text: "## Goal\n- The user wants an English worksheet." }] },
+  ]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(await completar(h, "s", PLAN_EN), PLAN_EN)
+})
+
+test("transform: el mensaje que crea la compactación (sin texto) no cuenta como turno", async () => {
+  const { h } = await hooks()
+  const u = (id, parts) => ({ info: { id, role: "user", sessionID: "s" }, parts })
+  const messages = [
+    u("u1", [{ type: "text", text: "en inglés porfa" }]),
+    u("uc", [{ type: "compaction", auto: true }]),
+    u("u2", [{ type: "text", text: "seguí" }]),
+    u("u3", [{ type: "text", text: "otra" }]),
+    { info: { id: "a3", role: "assistant", sessionID: "s", agent: "tecnia-bot" }, parts: [{ id: "a3p", type: "text", text: PLAN_EN }] },
+  ]
+  const a3 = messages[4]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(messages[4], a3, "u1 (3), u2 (2), u3 (1): todavía vale")
+})

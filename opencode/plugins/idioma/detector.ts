@@ -186,6 +186,9 @@ const MARCA_PLAN = new RegExp(
   "i",
 )
 
+// "Remember the rule:", "Let's check the rules:": lo que sigue es el prompt recitado.
+const RECITA_REGLA = /\b(?:remember the rule|our rules|the rules)\b/i
+
 // "The tool reported:", "The diagnostic tool tells us:": lo que sigue es la
 // salida de la herramienta copiada, no un borrador para el docente.
 const INFORME_DE_TOOL = /\bthe (?:\w+ )?tool (?:\w+ )?(?:reported|returned|says|said|shows|showed|tells|told|confirms|confirmed|gave|output)\b/i
@@ -194,7 +197,7 @@ const INFORME_DE_TOOL = /\bthe (?:\w+ )?tool (?:\w+ )?(?:reported|returned|says|
 // ("Response structure:", "Tone:"). Sólo las formas inequívocas de varias
 // palabras: "Structure:", "Plan:", "Draft:", "Answer:", "Steps:" sueltos
 // aparecen en respuestas legítimas ("Plan: primero compilamos…").
-const ANDAMIO = /^\s*(?:[-*]\s+|\d+[.)]\s*)?(?:\*\*)?(?:response structure|final answer|my response|key points|tone)(?:\*\*)?\s*:/i
+const ANDAMIO = /^\s*(?:[-*]\s+|\d+[.)]\s*)?(?:\*\*)?(?:response structure|final answer|my response|key points|tone|thinking)(?:\*\*)?\s*:/i
 // Ítem con una etiqueta en inglés y dos puntos: "1. Enthusiastic confirmation:".
 // Una etiqueta así SOLA no es marca ("1. Wiring:", "1. Setup:" son listas
 // legítimas): cuenta sólo si el texto tiene un andamio o una marca de plan.
@@ -216,6 +219,10 @@ function etiquetaInglesa(segmento: string): boolean {
 
 // Interjecciones en inglés que a veces quedan SOLAS como texto entre tools.
 const INTERJECCION = /^\s*(?:aha|hmm+|okay|got it)\s*[.!…]*\s*$/i
+
+// Interjecciones que pueden ir pegadas al plan ("Great! I will now…"). Sin
+// "ok": en castellano también se usa ("OK. The board is ready…" deja "OK.").
+const INTERJECCION_INGLESA = /^\s*(?:aha|hmm+|okay|sure|great|perfect|alright|got it)\s*[.!…]*\s*$/i
 
 // Una línea de error/aviso no se borra nunca: es lo que la respuesta muestra.
 const LINEA_ERROR = /^\s*(?:\*\*)?(?:error|warning|fatal)\b/i
@@ -751,8 +758,11 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
         linea: s.linea,
         parrafo: s.parrafo,
         parrafoCitado: -1,
-        andamio: s.marca && (ANDAMIO.test(s.texto) || s.etiqueta),
-        informe: INFORME_DE_TOOL.test(s.texto),
+        // Sólo las etiquetas de ítem ceden borradores rescatables; "Tone:" o
+        // "Key points:" presentan reglas del plan, no la respuesta.
+        andamio: s.marca && s.etiqueta,
+        // La salida de una tool copiada o el prompt recitado no se rescatan nunca.
+        informe: INFORME_DE_TOOL.test(s.texto) || RECITA_REGLA.test(s.texto),
       }
     }
   }
@@ -762,7 +772,8 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
   // inglés en la MISMA línea ("OK. The board is ready…": "OK." no se vuelve
   // inglés por lo que viene después). Una entrada con dos puntos no contagia
   // lo que presenta: "Here's what you will need:" no se lleva "- 3 LEDs".
-  const conSenal = (x: Segmento) => x.dueno !== "neutro" && !x.citado && !x.dosPuntos
+  // Una entrada CON marca de plan sí ("- Tone: …\n- End with a question.").
+  const conSenal = (x: Segmento) => x.dueno !== "neutro" && !x.citado && !(x.dosPuntos && !x.marca)
   const anterior: (Segmento | undefined)[] = []
   let ultimo: Segmento | undefined
   for (const [k, s] of textos.entries()) {
@@ -814,14 +825,28 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
   // del ancla con 8+ funcionales inglesas y más del triple que españolas, que
   // no parecen un error/log ni los presenta una entrada no inglesa.
   //
+  // Y sólo si el mensaje del docente está en español (no pidió inglés ni
+  // escribió en inglés: "corregime: The sensor is connected…" se queda), y la
+  // respuesta no repite palabras del pedido que no son castellanas ("pasame
+  // la letra de happy birthday" -> "Happy birthday to you…" se queda).
+  //
   // CONFLICTO (ronda 4): se pidió también "nunca dejar el texto vacío por esta
   // regla"; pero la fuga de la VM era exactamente eco + respuesta en inglés y
   // nada más, así que con esa guarda volvería a pasar. Gana el requisito duro
-  // (frenar la fuga de la VM): acá SÍ puede quedar vacío. Para cambiarlo,
-  // VACIAR_CON_ECO = false.
-  const VACIAR_CON_ECO = true
+  // (frenar la fuga de la VM): acá SÍ puede quedar vacío.
   const primero = textos[0]
-  if (primero && eco.has(primero)) {
+  // Sólo se mira si hubo eco (y por eso el mensaje es corto: u existe).
+  const cuentaDocente = u && crudo ? contar(crudo) : undefined
+  const docenteEnEspanol = !!cuentaDocente && cuentaDocente.en <= cuentaDocente.es && !pideIngles(crudo)
+  // Palabras del pedido escritas en minúscula, sin tildes y que no son
+  // funcionales españolas ("happy", "birthday"; no "ESP32" ni "PWM").
+  const delPedido = new Set((u && crudo ? (crudo.match(/\b[a-z]{4,}\b/g) ?? []) : []).filter((w) => !ES.has(w)))
+  const repitePedido = (texto: string) => {
+    let n = 0
+    for (const w of new Set(texto.toLowerCase().match(/\b[a-z]{4,}\b/g) ?? [])) if (delPedido.has(w) && ++n >= 2) return true
+    return false
+  }
+  if (primero && eco.has(primero) && docenteEnEspanol) {
     const parrafoAncla = primerEs < 0 ? Infinity : textos[primerEs]!.parrafo
     const porParrafo = new Map<number, Segmento[]>()
     for (const s of textos) {
@@ -842,10 +867,17 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
         if (s.dosPuntos && s.propio !== "en") entrada = true
       }
       const texto = grupo.map((s) => s.texto).join("\n")
-      if (en >= 8 && en > 3 * es && !presentado && !PARECE_ERROR.test(texto)) for (const s of propios) fuertes.add(s)
+      if (en >= 8 && en > 3 * es && !presentado && !PARECE_ERROR.test(texto) && !repitePedido(texto)) for (const s of propios) fuertes.add(s)
     }
-    const quedaria = textos.some((s) => !borrar.has(s) && !fuertes.has(s) && !eco.has(s))
-    if (fuertes.size > 0 && (quedaria || VACIAR_CON_ECO)) for (const s of fuertes) borrar.add(s)
+    for (const s of fuertes) borrar.add(s)
+  }
+
+  // Una interjección inglesa pegada ANTES de inglés que se borra, en la misma
+  // línea ("Great! I will now upload…"), se va con él. Sola o seguida de
+  // español ("Perfect!\n\nYa está.") se queda.
+  for (const [k, s] of textos.entries()) {
+    const sig = textos[k + 1]
+    if (s.dueno === "neutro" && sig && sig.linea === s.linea && borrar.has(sig) && INTERJECCION_INGLESA.test(s.texto)) borrar.add(s)
   }
 
   // El eco se borra SÓLO junto con inglés: '"el LED no prende"\n\nTenés razón…' queda.
@@ -883,8 +915,18 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
   // - lo que REPITE la respuesta que queda: el texto entero incluido en ella,
   //   o alguna oración con el 70 % o más de sus bigramas en ella (sin contar
   //   placa/pin/LED/cable…, que están en todas las respuestas).
+  // Lo presentado en la MISMA línea ("Let me explain: el PWM prende…") se
+  // rescata si es de una etiqueta de ítem, o si sin él no quedaría nada en
+  // español; y en los dos casos con 2+ funcionales españolas.
+  const quedaEspanol = textos.some((s) => !s.quitado && s.propio === "es")
   const rescatables = textos.filter(
-    (s) => s.quitado && s.citado && (s.citaEnBloque || s.citaDeAndamio) && !s.citaDeInforme && s.en <= s.es && !eco.has(s),
+    (s) =>
+      s.quitado &&
+      s.citado &&
+      !s.citaDeInforme &&
+      s.en <= s.es &&
+      !eco.has(s) &&
+      (s.citaEnBloque || ((s.citaDeAndamio || !quedaEspanol) && s.es >= 2)),
   )
   if (rescatables.length > 0) {
     const restoTexto = textos
@@ -901,12 +943,22 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
         return bs.length >= 2 && bs.filter((b) => restoBigramas.has(b)).length / bs.length >= 0.7
       })
     }
+    // Y por párrafo: si la mitad o más de las palabras del borrador ya está en
+    // lo que queda, es la misma respuesta dicha de otra forma ("**Sí, ahora la
+    // veo en COM9.** Está conectada con el chip CH340." contra "¡Sí! Ahí
+    // apareció en el puerto COM9 con el chip CH340.").
+    const restoPalabras = new Set(palabrasClave(restoTexto))
+    const parrafoRepite = new Map<number, boolean>()
+    for (const p of new Set(rescatables.filter((s) => s.propio === "es").map((s) => s.parrafo))) {
+      const ws = palabrasClave(rescatables.filter((s) => s.parrafo === p && s.propio === "es").map((s) => s.texto).join(" "))
+      parrafoRepite.set(p, ws.length >= 3 && ws.filter((w) => restoPalabras.has(w)).length / ws.length >= 0.5)
+    }
     // Primero el español; los neutros ("- 3 LEDs") vuelven sólo en un párrafo
     // donde volvió algo en español: solos son restos del plan ("- Response
     // style:", "Working directory: `C:\…`").
     const parrafos = new Set<number>()
     for (const s of rescatables)
-      if (s.propio === "es" && !repite(s)) {
+      if (s.propio === "es" && !parrafoRepite.get(s.parrafo) && !repite(s)) {
         s.quitado = false
         parrafos.add(s.parrafo)
       }
