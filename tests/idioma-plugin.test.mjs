@@ -101,7 +101,7 @@ test("text.complete: si el log falla, el texto igual se limpia", async () => {
 function historial() {
   const user = {
     info: { id: "msg_u", role: "user", sessionID: "s" },
-    parts: [{ id: "prt_u", type: "text", text: "Let's see what the board says, please answer in English." }],
+    parts: [{ id: "prt_u", type: "text", text: "Let's see what the board says, please." }],
   }
   const asistenteSucio = {
     info: { id: "msg_a1", role: "assistant", sessionID: "s", agent: "tecnia-bot", mode: "tecnia-bot" },
@@ -265,4 +265,53 @@ test("el prompt tiene la regla de idioma junto a «Hablás siempre en español r
   assert.ok(i > 0 && j > i, "la regla tiene que estar después de «Hablás siempre en español rioplatense»")
   assert.ok(j - i < 400, "y pegada a esa línea, no perdida más abajo")
   assert.match(prompt, /no lo repitas/)
+})
+
+// ---------------------------------------------------------------------------
+// Ronda 3: el último mensaje del docente y el agente leído de `mode`
+// ---------------------------------------------------------------------------
+
+const DOCENTE = "che, ¿el ESP32 se banca PWM para bajarle el brillo al LED?"
+const RESPUESTA_EN =
+  "Yes! The ESP32 supports PWM (Pulse Width Modulation) on any output GPIO using `ledcAttach` and `ledcWrite`, and you can set the frequency and the resolution of each channel as you need."
+
+test("un mensaje con sólo `mode: \"tecnia-bot\"` (sin `agent`) también se filtra", async () => {
+  const { h } = await hooks()
+  const msg = { info: { id: "m", role: "assistant", mode: "tecnia-bot" }, parts: [{ id: "t", type: "text", text: FUGA }] }
+  const messages = [msg]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(messages[0].parts[0].text, LIMPIO)
+  await h.event(actualizado({ id: "m2", sessionID: "s", role: "assistant", mode: "tecnia-bot" }))
+  const output = { text: FUGA }
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "m2", partID: "p" }, output)
+  assert.equal(output.text, LIMPIO)
+})
+
+test("chat.message: si el docente pidió inglés, text.complete deja el texto como está", async () => {
+  const { h } = await hooks()
+  await h["chat.message"]({ sessionID: "s" }, { message: {}, parts: [{ type: "text", text: "armame una consigna en inglés para los chicos" }] })
+  const output = { text: "Let's build a traffic light! You will need three LEDs and three resistors." }
+  const antes = output.text
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "x", partID: "p" }, output)
+  assert.equal(output.text, antes)
+})
+
+test("chat.message: el eco del mensaje del docente se reconoce y se va con la respuesta en inglés", async () => {
+  const { h } = await hooks()
+  await h["chat.message"]({ sessionID: "s" }, { message: {}, parts: [{ type: "text", text: DOCENTE }] })
+  const output = { text: `"${DOCENTE}"\n\n${RESPUESTA_EN}` }
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "x", partID: "p" }, output)
+  assert.equal(output.text, "")
+})
+
+test("transform: cada respuesta se juzga con el mensaje del docente que la precede", async () => {
+  const { h } = await hooks()
+  const usuario = (id, text) => ({ info: { id, role: "user", sessionID: "s" }, parts: [{ id: id + "p", type: "text", text }] })
+  const asistente = (id, text) => ({ info: { id, role: "assistant", sessionID: "s", agent: "tecnia-bot" }, parts: [{ id: id + "p", type: "text", text }] })
+  const pedido = "Let's build a traffic light! You will need three LEDs and three resistors."
+  const messages = [usuario("u1", "armame una consigna en inglés"), asistente("a1", pedido), usuario("u2", "¿y ahora qué hago?"), asistente("a2", FUGA)]
+  const a1 = messages[1]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(messages[1], a1, "lo pedido en inglés no se toca")
+  assert.equal(messages[3].parts[0].text, LIMPIO)
 })

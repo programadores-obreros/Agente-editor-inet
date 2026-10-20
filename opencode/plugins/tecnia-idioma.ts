@@ -48,30 +48,67 @@
 // copia (structuredClone, :378) de la charla que va a resumir. Ahí limpiar
 // los mensajes de tecnia-bot está bien: el resumen no hereda la fuga.
 //
+// EL ÚLTIMO MENSAJE DEL DOCENTE. Si pidió inglés o una traducción ("armame
+// una consigna en inglés", "traducime esto"), ese turno no se filtra; y si el
+// modelo lo repite entre comillas antes de contestar, esa repetición es eco del
+// plan (ver detector.ts, Opciones). Se aprende de `chat.message` (cada mensaje
+// nuevo del docente) y del propio historial que llega al transform; si no se
+// sabe, el detector funciona igual, sólo sin esas dos excepciones.
+//
+// NO SE FILTRAN los subagentes de `task` (agente "general" u otros): sus
+// mensajes no son de tecnia-bot. Tecnia Bot hoy no delega en subagentes; si
+// algún día lo hace, hay que sumar sus nombres a AGENTE.
+//
 // Defensivo: cualquier error deja el texto como estaba. Un filtro de idioma no
 // puede ser la razón de que el bot deje de contestar.
 // ============================================================================
 import type { Hooks, Plugin, PluginModule } from "@opencode-ai/plugin"
-import { limpiar, MAX_TEXTO } from "./idioma/detector.ts"
+import { limpiar, MAX_TEXTO, type Opciones } from "./idioma/detector.ts"
 
 const SERVICIO = "tecnia-idioma"
 const AGENTE = "tecnia-bot"
 
 // limpiar() es barato, pero el transform recorre TODO el historial en cada paso
-// de cada turno. Se recuerda el resultado por texto; con tope, para no crecer
-// sin fin en una charla de horas. Los textos más largos que el tope del
-// detector vuelven sin tocar y no se guardan.
+// de cada turno. Se recuerda el resultado por texto (y por el mensaje del
+// docente, que cambia la decisión). Tope por cantidad y por caracteres: al
+// llenarse se va la entrada MÁS VIEJA, no toda la caché. Los textos más largos
+// que el tope del detector vuelven sin tocar y no se guardan.
 const MAX_CACHE = 500
-const cache = new Map<string, ReturnType<typeof limpiar>>()
-function limpio(texto: string): ReturnType<typeof limpiar> {
-  const hit = cache.get(texto)
-  if (hit) return hit
-  const r = limpiar(texto)
+const MAX_CACHE_CHARS = 2_000_000
+const cache = new Map<string, { r: ReturnType<typeof limpiar>; peso: number }>()
+let pesoCache = 0
+function limpio(texto: string, opciones: Opciones = {}): ReturnType<typeof limpiar> {
+  const clave = (opciones.ultimoUsuario ?? "") + "\u0000" + texto
+  const hit = cache.get(clave)
+  if (hit) {
+    // Al final del Map = usada hace poco.
+    cache.delete(clave)
+    cache.set(clave, hit)
+    return hit.r
+  }
+  const r = limpiar(texto, opciones)
   if (texto.length <= MAX_TEXTO) {
-    if (cache.size >= MAX_CACHE) cache.clear()
-    cache.set(texto, r)
+    const peso = clave.length + (r.cambio ? r.texto.length : 0)
+    while (cache.size > 0 && (cache.size >= MAX_CACHE || pesoCache + peso > MAX_CACHE_CHARS)) {
+      const [viejo, v] = cache.entries().next().value!
+      cache.delete(viejo)
+      pesoCache -= v.peso
+    }
+    cache.set(clave, { r, peso })
+    pesoCache += peso
   }
   return r
+}
+
+/** El texto de un mensaje del docente: sus partes de texto, juntas. */
+function textoDeUsuario(parts: unknown): string | undefined {
+  if (!Array.isArray(parts)) return undefined
+  const t = parts
+    .filter((p) => p && p.type === "text" && typeof p.text === "string" && !p.synthetic)
+    .map((p) => p.text as string)
+    .join("\n")
+    .trim()
+  return t || undefined
 }
 
 type InfoMensaje = { id?: string; sessionID?: string; role?: string; agent?: string; mode?: string; summary?: boolean }
@@ -96,6 +133,14 @@ const server: Plugin = async ({ client }) => {
   const mensajes = new Map<string, InfoMensaje>()
   // Sesiones compactando ahora (respaldo por si el evento del mensaje no llegó).
   const compactando = new Set<string>()
+  // sessionID -> último mensaje del docente (con tope, igual que `mensajes`).
+  const ultimoUsuario = new Map<string, string>()
+  const recordarUsuario = (sessionID: string | undefined, texto: string | undefined) => {
+    if (!sessionID || !texto) return
+    ultimoUsuario.delete(sessionID)
+    if (ultimoUsuario.size >= MAX_MENSAJES) ultimoUsuario.delete(ultimoUsuario.keys().next().value!)
+    ultimoUsuario.set(sessionID, texto)
+  }
 
   const hooks: Hooks = {
     event: async ({ event }) => {
@@ -116,6 +161,14 @@ const server: Plugin = async ({ client }) => {
       }
     },
 
+    "chat.message": async (input, output) => {
+      try {
+        recordarUsuario(input.sessionID, textoDeUsuario(output.parts))
+      } catch {
+        // sin el mensaje, el detector funciona igual
+      }
+    },
+
     "experimental.session.compacting": async (input) => {
       try {
         compactando.add(input.sessionID)
@@ -129,7 +182,7 @@ const server: Plugin = async ({ client }) => {
         const info = mensajes.get(input.messageID)
         if (info ? !esDeTecniaBot(info) : compactando.has(input.sessionID)) return
         const antes = output.text
-        const r = limpio(antes)
+        const r = limpio(antes, { ultimoUsuario: ultimoUsuario.get(input.sessionID) })
         if (!r.cambio) return
         output.text = r.texto
         anotar("saqué planificación en inglés de un texto del modelo", {
@@ -149,8 +202,18 @@ const server: Plugin = async ({ client }) => {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
         let partes = 0
+        let usuario: string | undefined
         for (const [i, msg] of output.messages.entries()) {
           try {
+            // El docente: se recuerda su texto para los mensajes del asistente que siguen.
+            if (msg?.info?.role === "user") {
+              const t = textoDeUsuario(msg.parts)
+              if (t) {
+                usuario = t
+                recordarUsuario((msg.info as InfoMensaje).sessionID, t)
+              }
+              continue
+            }
             // Sólo lo que escribió tecnia-bot: nunca el docente, nunca el resumen
             // de la compactación ni otros agentes; y adentro, sólo las partes de
             // texto: nunca las tools ni sus resultados, nunca el reasoning.
@@ -158,7 +221,7 @@ const server: Plugin = async ({ client }) => {
             let cambio = false
             const parts = msg.parts.map((p) => {
               if (p.type !== "text" || !p.text) return p
-              const r = limpio(p.text)
+              const r = limpio(p.text, { ultimoUsuario: usuario })
               if (!r.cambio) return p
               cambio = true
               partes++

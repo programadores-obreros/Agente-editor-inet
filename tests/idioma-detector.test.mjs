@@ -280,3 +280,158 @@ test("un identificador con _ no cuenta como palabra: lo de afuera de la cita que
   assert.equal(s.soloCita, true)
   assert.equal(s.propio, "es")
 })
+
+// ---------------------------------------------------------------------------
+// Ronda 3: lo que dejó pasar la 0.4.8 en la VM y lo que encontró la re-revisión
+// ---------------------------------------------------------------------------
+
+// Un mensaje del docente inventado (el real no se copia al repo).
+const DOCENTE = "che, ¿el ESP32 se banca PWM para bajarle el brillo al LED?"
+
+test("rescate: la respuesta en español presentada por una entrada del plan se conserva aunque quede otro español", () => {
+  assert.equal(
+    limpiar("Let's answer directly and in Spanish:\n**No, ahora mismo no la veo.** Windows no detecta ninguna placa conectada.\n\n¿Querés que te diga cómo revisar el cable?").texto,
+    "**No, ahora mismo no la veo.** Windows no detecta ninguna placa conectada.\n\n¿Querés que te diga cómo revisar el cable?",
+  )
+  assert.equal(
+    limpiar("Let's get started:\n1. Conectá el LED al pin 13.\n2. Subí el código.\n\n¿Te ayudo con algo más?").texto,
+    "1. Conectá el LED al pin 13.\n2. Subí el código.\n\n¿Te ayudo con algo más?",
+  )
+  assert.equal(
+    limpiar("Here's what we'll need:\n- 3 LEDs\n- 3 resistencias de 220 Ω\n- Un protoboard\n\nCon eso armamos el semáforo.").texto,
+    "- 3 LEDs\n- 3 resistencias de 220 Ω\n- Un protoboard\n\nCon eso armamos el semáforo.",
+  )
+  assert.equal(
+    limpiar("Now let's see the wiring:\n\nEl LED va al pin 13 y la resistencia a GND.\n\n¿Lo armaste?").texto,
+    "El LED va al pin 13 y la resistencia a GND.\n\n¿Lo armaste?",
+  )
+})
+
+test("rescate: si el borrador repite la respuesta que queda, NO se rescata (no se duplica)", () => {
+  assert.equal(
+    limpiar('Let\'s tell the user:\n"Che, la placa se desconectó del puerto."\n\nAnd let\'s end with a question.Che, la placa se desconectó del puerto. ¿La reconectás?').texto,
+    "Che, la placa se desconectó del puerto. ¿La reconectás?",
+  )
+})
+
+test("andamio del plan: se van las etiquetas en inglés y quedan los borradores en español", () => {
+  assert.equal(
+    limpiar(
+      "Response structure:\n1. Enthusiastic confirmation: ¡Obvio que sí! El ESP32 tiene PWM en casi todos sus pines.\n2. Explain how it works: Se usa con `ledcAttach` y `ledcWrite`.\n3. Closing question: ¿Querés que armemos un ejemplo?",
+    ).texto,
+    "¡Obvio que sí! El ESP32 tiene PWM en casi todos sus pines.\nSe usa con `ledcAttach` y `ledcWrite`.\n¿Querés que armemos un ejemplo?",
+  )
+  // Con una respuesta final que repite los borradores, queda sólo la respuesta.
+  assert.equal(
+    limpiar(
+      "Response structure:\n1. Enthusiastic confirmation: ¡Obvio que sí! El ESP32 tiene PWM.\n2. Closing question: ¿Querés un ejemplo?\n\n¡Obvio que sí! El ESP32 tiene PWM en casi todos sus pines. ¿Querés un ejemplo?",
+    ).texto,
+    "¡Obvio que sí! El ESP32 tiene PWM en casi todos sus pines. ¿Querés un ejemplo?",
+  )
+})
+
+test("una lista en español con etiquetas en español no es un andamio", () => {
+  intacto("Para armarlo:\n1. Materiales: un LED y una resistencia.\n2. Conexión: el LED va al pin 13.")
+})
+
+test("eco del mensaje del docente entre comillas: no es el ancla del español, y la respuesta en inglés se va", () => {
+  const RESPUESTA =
+    "Yes! The ESP32 supports PWM (Pulse Width Modulation) on any output GPIO using `ledcAttach` and `ledcWrite`, and you can set the frequency and the resolution of each channel as you need."
+  const texto = `"${DOCENTE}"\n\n${RESPUESTA}`
+  assert.equal(limpiar(texto, { ultimoUsuario: DOCENTE }).texto, "")
+  // Sin saber el mensaje del docente: la cita sola que queda era parte de la fuga.
+  assert.equal(limpiar(texto).texto, "")
+  // Eco + respuesta en español: se va sólo el eco.
+  assert.equal(limpiar(`"${DOCENTE}"\n\n¡Sí! El ESP32 tiene PWM en casi todos sus pines.`, { ultimoUsuario: DOCENTE }).texto, "¡Sí! El ESP32 tiene PWM en casi todos sus pines.")
+})
+
+test("una respuesta ENTERA en inglés al principio se va aunque no tenga marca de plan", () => {
+  const r = limpiar("Yes! The ESP32 supports PWM on any output pin. You can use it to dim the LED and it works with all the boards that we have in the lab.")
+  assert.equal(r.texto, "")
+  // Salvo lo que es un error o lo presenta una entrada que no es inglesa.
+  intacto("ESP32-S3 DevKitC-1:\nThe board is not responding and the port will not open.\n\nProbá otro cable.")
+  intacto("A fatal error occurred: Failed to connect to ESP32: No serial data received.")
+  intacto("Serial.println imprime the value of the sensor")
+})
+
+test("si el docente pidió inglés o una traducción, ese turno no se toca", () => {
+  const pedido = { ultimoUsuario: "armame una consigna en inglés para los chicos" }
+  const textos = [
+    "Let's build a traffic light! You will need three LEDs and three resistors. First, connect the red LED to pin 13.",
+    "Worksheet: Let's learn about sensors!\n\n1. What is a sensor?\n2. How does the DHT11 work?",
+    "Dear supplier,\n\nWe need 20 Arduino boards for the school. Could you send us a quote?\n\nThank you.",
+  ]
+  for (const t of textos) assert.equal(limpiar(t, pedido).cambio, false, t)
+  assert.equal(limpiar(textos[0], { ultimoUsuario: "traducime esto" }).cambio, false)
+  assert.equal(limpiar(textos[0], { ultimoUsuario: "¿Cómo se dice semáforo en english?" }).cambio, false)
+  // Sin el pedido, el primero sí es una fuga.
+  assert.equal(limpiar(textos[0]).texto, "")
+})
+
+test("una línea de error no se borra nunca, aunque diga 'the user'", () => {
+  intacto("Error: the user does not have permission to open /dev/ttyUSB0 and the upload failed.\n\nAgregá tu usuario al grupo dialout.")
+})
+
+test("interjección sola: se va; en español o con más texto, se queda", () => {
+  for (const t of ["Aha!", "Okay.", "Sure!", "Got it.", "Perfect!", "Great!"]) assert.equal(limpiar(t).texto, "", t)
+  intacto("Ok.")
+  intacto("¡Perfecto!")
+  intacto("Genial.")
+})
+
+test("no son marcas: 'Wait 2 seconds', un título con Let's, 'the soldering tool'", () => {
+  intacto("Wait 2 seconds and then the LED will turn on.\n\nEso es lo que dice el manual: esperá 2 segundos.")
+  intacto("## Let's build a traffic light\n\nVamos a armar un semáforo con tres LEDs.")
+  intacto("The soldering tool is hot, so be careful with it.\n\nEso le decís a los chicos antes de soldar.")
+})
+
+test("marcas nuevas: I am going to, I must, my plan, the teacher, thinking about", () => {
+  for (const [t, queda] of [
+    ["I am going to compile the project first and then upload it to the board.\n\nVoy a compilar el proyecto.", "Voy a compilar el proyecto."],
+    ["The teacher wants to upload the code to the board. I must check the port first.\n\nReviso el puerto.", "Reviso el puerto."],
+    ["My plan is to compile it and then flash it to the board.\n\nLo compilo y lo cargo.", "Lo compilo y lo cargo."],
+    ["Thinking about this: the board is not detected, so the cable might be the problem.\n\nPuede ser el cable.", "Puede ser el cable."],
+    ["Let's check la placa first.\n\nReviso la placa.", "Reviso la placa."],
+  ])
+    assert.equal(limpiar(t).texto, queda, t)
+})
+
+test("la red de código no deja colgando pedazos de una fuga", () => {
+  assert.equal(
+    limpiar('The tool returned action: "compile" and status = ok. Let\'s tell the user it compiled.\n\n¡Listo! Compiló sin errores.').texto,
+    "¡Listo! Compiló sin errores.",
+  )
+  assert.equal(
+    limpiar('The tool reported: {"ok": false, "error": "port busy"}. Let\'s communicate this clearly and warmly.\n\nChe, el puerto está ocupado. ¿Cerraste el Arduino IDE?').texto,
+    "Che, el puerto está ocupado. ¿Cerraste el Arduino IDE?",
+  )
+  assert.equal(limpiar("Let's check whether ok = true before we answer the user.\n\n¡Listo! Ya compiló.").texto, "¡Listo! Ya compiló.")
+  assert.equal(limpiar("The upload failed; let's tell the user to close the IDE.\n\nCerrá el Arduino IDE y probá de nuevo.").texto, "Cerrá el Arduino IDE y probá de nuevo.")
+  // Una línea con código de verdad y sin marca de plan no se toca.
+  assert.equal(
+    limpiar("Let's show the fix to the user.\nThe loop calls digitalWrite(2, HIGH);\n\nListo.").texto,
+    "The loop calls digitalWrite(2, HIGH);\n\nListo.",
+  )
+})
+
+test("mutantes que sobrevivían: IP con puntos, entrada sin marca después de un plan, continuación de lista", () => {
+  // "192.168.4.1." no corta oración: la línea es una sola y tiene español.
+  intacto("Let's go to 192.168.4.1. Ahora entrá desde el celu.")
+  // "Here's what you will need:" no tiene marca: la lista que presenta se queda.
+  assert.equal(
+    limpiar("Let's tell the user the materials.\n\nHere's what you will need:\n- 3 LEDs\n- 3 resistencias de 220 Ω\n\nCon eso armamos el semáforo.").texto,
+    "- 3 LEDs\n- 3 resistencias de 220 Ω\n\nCon eso armamos el semáforo.",
+  )
+  // Sangrado después de un ítem de lista = continuación, no código: el plan se va.
+  assert.equal(limpiar("1. Paso uno\n\n    Let's wait for the user here.\n2. Listo.").texto, "1. Paso uno\n\n2. Listo.")
+})
+
+test("respuesta entera en inglés: un error largo o un texto presentado con dos puntos no cuentan", () => {
+  intacto("Failed to connect to ESP32 because the chip is not in download mode and the port is busy, so it could not open it at all.")
+  intacto("ESP32-S3 DevKitC-1:\nThe board is not responding and the port will not open, so it is not possible to upload the code to it.\n\nProbá otro cable.")
+})
+
+test("red de código: con marca de plan no protege, y en la misma línea que un plan se va la línea entera", () => {
+  assert.equal(limpiar("Let's call digitalWrite(2, HIGH); for the user.\n\nListo.").texto, "Listo.")
+  assert.equal(limpiar("Let's tell the user. The loop calls digitalWrite(2, HIGH);\n\nListo.").texto, "Listo.")
+})
