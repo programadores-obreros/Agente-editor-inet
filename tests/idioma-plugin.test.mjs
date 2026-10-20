@@ -104,7 +104,7 @@ function historial() {
     parts: [{ id: "prt_u", type: "text", text: "Let's see what the board says, please answer in English." }],
   }
   const asistenteSucio = {
-    info: { id: "msg_a1", role: "assistant", sessionID: "s" },
+    info: { id: "msg_a1", role: "assistant", sessionID: "s", agent: "tecnia-bot", mode: "tecnia-bot" },
     parts: [
       { id: "prt_r", type: "reasoning", text: "The user wants to know if the board is there. Let's check." },
       { id: "prt_t1", type: "text", text: FUGA },
@@ -113,7 +113,7 @@ function historial() {
     ],
   }
   const asistenteLimpio = {
-    info: { id: "msg_a2", role: "assistant", sessionID: "s" },
+    info: { id: "msg_a2", role: "assistant", sessionID: "s", agent: "tecnia-bot", mode: "tecnia-bot" },
     parts: [{ id: "prt_t3", type: "text", text: "¡Listo, compiló! ¿Lo cargo a la placa?" }],
   }
   return { user, asistenteSucio, asistenteLimpio }
@@ -164,9 +164,94 @@ test("transform: historial sin fugas, sin cambios ni log", async () => {
   assert.equal(logs.length, 0)
 })
 
-test("transform: con mensajes rotos no tira", async () => {
+test("transform: con mensajes rotos no tira, y un mensaje roto no frena a los demás", async () => {
   const { h } = await hooks()
   await assert.doesNotReject(h["experimental.chat.messages.transform"]({}, { messages: [null, { info: {} }] }))
+  const { asistenteSucio } = historial()
+  const roto = { info: { role: "assistant", agent: "tecnia-bot" }, parts: [{ type: "text", get text() { throw new Error("x") } }] }
+  const messages = [roto, asistenteSucio]
+  await assert.doesNotReject(h["experimental.chat.messages.transform"]({}, { messages }))
+  assert.equal(messages[1].parts[1].text, LIMPIO)
+})
+
+test("transform: sólo tecnia-bot; nunca el resumen de la compactación ni otros agentes", async () => {
+  const { h } = await hooks()
+  const resumen = { info: { id: "msg_c", role: "assistant", agent: "compaction", mode: "compaction", summary: true }, parts: [{ id: "c", type: "text", text: "## Goal\n- The user wants the LED to blink. Let's keep the board on COM3." }] }
+  const resumenRaro = { info: { id: "msg_c2", role: "assistant", agent: "tecnia-bot", summary: true }, parts: [{ id: "c2", type: "text", text: PLAN }] }
+  const otro = { info: { id: "msg_b", role: "assistant", agent: "build", mode: "build" }, parts: [{ id: "b", type: "text", text: PLAN }] }
+  const messages = [resumen, resumenRaro, otro]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(messages[0], resumen)
+  assert.equal(messages[1], resumenRaro)
+  assert.equal(messages[2], otro)
+})
+
+test("transform: un mensaje que queda sin texto se manda con \"\" (sin relleno: Gemini lo acepta, probado en la VM)", async () => {
+  const { h } = await hooks()
+  const solo = { info: { id: "m", role: "assistant", agent: "tecnia-bot" }, parts: [{ id: "p", type: "step-start" }, { id: "t", type: "text", text: PLAN }] }
+  const messages = [solo]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(messages[0].parts[1].text, "")
+  assert.equal(messages[0].parts.length, 2)
+})
+
+// ---------------------------------------------------------------------------
+// text.complete: a quién se le aplica
+// ---------------------------------------------------------------------------
+
+const actualizado = (info) => ({ event: { type: "message.updated", properties: { info } } })
+
+test("text.complete: el resumen de la compactación NO se toca (se sabe por message.updated)", async () => {
+  const { h } = await hooks()
+  await h.event(actualizado({ id: "msg_c", sessionID: "s", role: "assistant", agent: "compaction", mode: "compaction", summary: true }))
+  const output = { text: "## Goal\n- The user wants the LED to blink. Let's keep the board on COM3." }
+  const antes = output.text
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "msg_c", partID: "p" }, output)
+  assert.equal(output.text, antes)
+})
+
+test("text.complete: otro agente no se toca; tecnia-bot sí", async () => {
+  const { h } = await hooks()
+  await h.event(actualizado({ id: "msg_b", sessionID: "s", role: "assistant", agent: "build", mode: "build" }))
+  await h.event(actualizado({ id: "msg_t", sessionID: "s", role: "assistant", agent: "tecnia-bot", mode: "tecnia-bot" }))
+  const otro = { text: FUGA }
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "msg_b", partID: "p" }, otro)
+  assert.equal(otro.text, FUGA)
+  const nuestro = { text: FUGA }
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "msg_t", partID: "p" }, nuestro)
+  assert.equal(nuestro.text, LIMPIO)
+})
+
+test("text.complete: respaldo por session.compacting si el evento del mensaje no llegó", async () => {
+  const { h } = await hooks()
+  await h["experimental.session.compacting"]({ sessionID: "s" }, { context: [] })
+  const durante = { text: FUGA }
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "desconocido", partID: "p" }, durante)
+  assert.equal(durante.text, FUGA, "mientras compacta, no se toca")
+  // Otra sesión no está compactando.
+  const otra = { text: FUGA }
+  await h["experimental.text.complete"]({ sessionID: "otra", messageID: "desconocido", partID: "p" }, otra)
+  assert.equal(otra.text, LIMPIO)
+  // session.compacted limpia la marca.
+  await h.event({ event: { type: "session.compacted", properties: { sessionID: "s" } } })
+  const despues = { text: FUGA }
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "desconocido", partID: "p" }, despues)
+  assert.equal(despues.text, LIMPIO)
+})
+
+test("text.complete: si la compactación falla sin session.compacted, el próximo mensaje normal limpia la marca", async () => {
+  const { h } = await hooks()
+  await h["experimental.session.compacting"]({ sessionID: "s" }, { context: [] })
+  await h.event(actualizado({ id: "msg_n", sessionID: "s", role: "assistant", agent: "tecnia-bot" }))
+  const output = { text: FUGA }
+  await h["experimental.text.complete"]({ sessionID: "s", messageID: "otro-desconocido", partID: "p" }, output)
+  assert.equal(output.text, LIMPIO)
+})
+
+test("text.complete: si leer el texto tira, no propaga (try/catch)", async () => {
+  const { h } = await hooks()
+  const output = { get text() { throw new Error("x") }, set text(v) {} }
+  await assert.doesNotReject(h["experimental.text.complete"]({ sessionID: "s", messageID: "m", partID: "p" }, output))
 })
 
 // ---------------------------------------------------------------------------

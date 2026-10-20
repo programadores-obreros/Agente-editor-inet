@@ -18,7 +18,7 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const { limpiar, analizar } = await import(join(REPO, "opencode/plugins/idioma/detector.ts"))
+const { limpiar, analizar, MAX_TEXTO } = await import(join(REPO, "opencode/plugins/idioma/detector.ts"))
 
 /** El texto tiene que volver idéntico, sin marcar cambio. */
 function intacto(texto) {
@@ -102,7 +102,7 @@ test("un ítem de lista en inglés con la respuesta pegada al final", () => {
 })
 
 test("las líneas neutras dentro del plan (salida de una tool copiada) se van con el plan", () => {
-  const r = limpiar("Look at that! The port appeared!\n`COM9` — **placa**, chip CH340.\nSo the answer is yes, we see the board now.\n\n¡Sí! Ahora la veo en `COM9`.")
+  const r = limpiar("Look at that! The port appeared!\n`COM9` — **placa**, chip CH340.\nSo the answer is yes, let's tell the user.\n\n¡Sí! Ahora la veo en `COM9`.")
   assert.equal(r.texto, "¡Sí! Ahora la veo en `COM9`.")
 })
 
@@ -134,7 +134,7 @@ test("la regla del prompt recitada en la misma línea NO se rescata", () => {
   // "Remember the rule: <regla en español>" es el modelo leyendo el prompt en voz alta.
   const r = limpiar("Now let's compile the project.\nRemember the rule: compilar es control de calidad nuestro, lo hacemos directamente.")
   assert.equal(r.texto, "")
-  const r2 = limpiar('The upload worked. Remember the rule: "decí en UNA línea qué vas a hacer y esperá."\nVoy a cargar el programa a la placa.')
+  const r2 = limpiar('The upload was fine. Remember the rule: "decí en UNA línea qué vas a hacer y esperá."\nVoy a cargar el programa a la placa.')
   assert.equal(r2.texto, "Voy a cargar el programa a la placa.")
 })
 
@@ -172,4 +172,111 @@ test("limpiar es idempotente: limpiar dos veces da lo mismo", () => {
   const una = limpiar(sucio).texto
   assert.equal(una, "¡Listo, compiló! ¿Lo cargo a la placa?")
   assert.equal(limpiar(una).cambio, false)
+})
+
+// ---------------------------------------------------------------------------
+// Ronda de revisión (riesgo + confiabilidad): casos que antes se rompían
+// ---------------------------------------------------------------------------
+
+test("código: valla con sangría adentro de una lista no se pierde (ni lo que sigue)", () => {
+  intacto(
+    "1. Primero esto\n   1. Abrí el archivo y pegá esto\n\n      ```cpp\n      // Turn the LED on if it is dark and then wait\n      if (x) {}\n      ```\n2. Subilo.",
+  )
+})
+
+test("código: valla adentro de una cita `>` no se pierde", () => {
+  intacto("Mirá:\n\n> ```cpp\n> // Let's turn the LED on and wait for the user\n> digitalWrite(2, HIGH);\n> ```\n\n¿Lo ves?")
+  const r = limpiar("Let's show the code to the user now.\n\n> ```cpp\n> // Let's turn the LED on and wait\n> digitalWrite(2, HIGH);\n> ```")
+  assert.equal(r.texto, "> ```cpp\n> // Let's turn the LED on and wait\n> digitalWrite(2, HIGH);\n> ```")
+})
+
+test("código: bloque sangrado con 4 espacios se conserva aunque el plan se vaya", () => {
+  const r = limpiar("Let's write this for the user:\n\n    // wait for the user and then turn the LED on\n    if (dark) { digitalWrite(2, HIGH); }\n\nListo.")
+  assert.equal(r.texto, "    // wait for the user and then turn the LED on\n    if (dark) { digitalWrite(2, HIGH); }\n\nListo.")
+})
+
+test("código: red de seguridad, una línea que parece código nunca se borra", () => {
+  const r = limpiar("Let's check the pin now.\nif the value is low then digitalWrite(2, HIGH);\n\nListo, ya está.")
+  assert.equal(r.texto, "if the value is low then digitalWrite(2, HIGH);\n\nListo, ya está.")
+})
+
+test("tablas y citas `>` nunca se borran", () => {
+  intacto("| Pin | What it does |\n|---|---|\n| GPIO 2 | It is the LED of the board |\n\nEsa es la tabla.")
+  intacto("> The port is busy and it can't be opened, let's not touch it.\n\nEso es lo que dice el monitor.")
+})
+
+test("orden: después del primer español del texto no se borra nada (lo pidió o lo muestra)", () => {
+  intacto("Te cuento qué pasó.\n\nA fatal error occurred: Could not open port COM3, the port is busy or doesn't exist.\n\nCerrá el monitor serie y probá de nuevo.")
+  intacto("Acá tenés el texto para la clase de inglés técnico.\n\nThe Arduino Uno is a board that we can program. It has 14 digital pins and we use them to read sensors.")
+  intacto("Traducido al inglés queda así:\n\nThe LED is on and the board is ready.\n\nThe sensor is connected to the pin 4 and it works.")
+  intacto("Te salió este error:\n\nThe port is busy and it can't be opened.\n\n¿Probás con otro cable?")
+  // Costo aceptado: un plan DESPUÉS de la respuesta se deja pasar.
+  intacto("¡Listo! Ya compiló.\nNow I should ask if they want to upload it to the board.")
+})
+
+test("sin marca de plan no se borra nada: títulos, listas y errores sueltos en inglés", () => {
+  intacto("What you will need:\n- 3 LEDs\n- 3 resistencias de 220 Ω\n- Un protoboard\n\nCon eso armamos el semáforo.")
+  intacto("## Getting started with the ESP32\n\nPrimero conectá la placa por USB.")
+  intacto("Serial.println imprime the value of the sensor")
+  intacto("A fatal error occurred: Failed to connect to ESP32: No serial data received.")
+})
+
+test("un neutro español antes del inglés en la misma línea no se vuelve inglés", () => {
+  intacto("Perfecto. The board is ready and it is connected. ¿Lo cargo?")
+  intacto("Claro. In English it would be: the LED is on. ¿Algo más?")
+})
+
+test("umbral (mutante en>=1): una sola funcional inglesa no alcanza", () => {
+  // "Upload the sketch." tiene una sola ("the"): queda neutro y no se borra.
+  const r = limpiar("Upload the sketch.\n\nLet's write out the response.Che, ya está.")
+  assert.equal(r.texto, "Upload the sketch.\n\nChe, ya está.")
+})
+
+test("umbral (mutante en>es): 3 inglesas contra 2 españolas sigue siendo español", () => {
+  // Es el primer español del texto: de ahí en adelante no se toca nada.
+  intacto("Con el sensor leés the value of the pin.\nLet's write out the response.Che, ya está.")
+})
+
+test("el código inline no cuenta (mutante sin protección del inline)", () => {
+  intacto("Ejecutá `if the value is not ready then wait for the sensor` en el loop.")
+})
+
+test("CRLF: sin cambios vuelven los mismos bytes; con fuga se limpia igual", () => {
+  intacto("¡Listo! Compiló bien.\r\n\r\n¿Lo cargo a la placa?\r\n")
+  const r = limpiar("Now let's compile the project and then we will check it.\r\n\r\nChe, ya compiló. ¿Lo cargo?")
+  assert.equal(r.texto, "Che, ya compiló. ¿Lo cargo?")
+})
+
+test("un identificador con _ no es una palabra: is_the_led_on no cuenta como inglés", () => {
+  const [s] = analizar("is_the_led_on is_the_pin_ok")
+  assert.equal(s.propio, "neutro")
+})
+
+test("rendimiento: arriba del tope vuelve sin tocar, y abajo del tope es rápido", () => {
+  const enorme = Array.from({ length: 20_000 }, (_, i) => `Let's check line ${i}.`).join("\n")
+  let t0 = performance.now()
+  const r = limpiar(enorme)
+  assert.equal(r.cambio, false)
+  assert.equal(r.texto, enorme)
+  assert.ok(performance.now() - t0 < 50, "arriba del tope tiene que volver al toque")
+  // Casi en el tope y con la forma más cara: comillas que abren y nunca cierran.
+  const casi = ("Let's check “this ".repeat(1200) + "Listo.").slice(0, MAX_TEXTO - 10)
+  t0 = performance.now()
+  limpiar(casi)
+  assert.ok(performance.now() - t0 < 500, `tardó ${(performance.now() - t0).toFixed(0)} ms`)
+})
+
+test("código: una valla sangrada protege aunque adentro haya prosa en inglés (no sólo la red de seguridad)", () => {
+  intacto("1. Paso uno\n\n      ```\n      Let's wait for the user here and then continue\n      ```\n2. Listo.")
+})
+
+test("un neutro antes del plan en la misma línea se queda; el plan se va", () => {
+  // "OK." no tiene señal: no hereda el inglés que viene DESPUÉS en su línea.
+  assert.equal(limpiar("OK. The board is ready and let's check it.\n\nListo, compiló.").texto, "OK.\n\nListo, compiló.")
+})
+
+test("un identificador con _ no cuenta como palabra: lo de afuera de la cita queda vacío", () => {
+  const [s] = analizar('is_ok "Che, ya está listo."')
+  assert.equal(s.soloCita, true)
+  assert.equal(s.propio, "es")
 })
