@@ -1,9 +1,9 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { isAbsolute, join, win32 } from "node:path"
+import { isAbsolute, join, resolve, win32 } from "node:path"
 
 interface RunResult {
   code: number
@@ -857,7 +857,7 @@ async function placasSinDriver(cwd: string, signal?: AbortSignal) {
   return r.code === 0 ? leerDispositivosConProblema(r.stdout) : []
 }
 
-async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string } | { error: string }> {
+async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string; hwid?: string } | { error: string }> {
   const result = await run(["pio", "device", "list", "--json-output"], cwd, signal)
 
   let devices: Device[] = []
@@ -900,7 +900,7 @@ async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: st
 
   const unica = candidates[0]
   if (unica && candidates.length === 1) {
-    return { port: unica.port }
+    return { port: unica.port, hwid: unica.hwid }
   }
 
   const lista = candidates.map((d, i) => `${i + 1}. ${d.port}${d.description ? ` (${d.description})` : ""}`).join("\n")
@@ -977,21 +977,26 @@ function monitorSpeedDelProyecto(cwd: string, env?: string): number | null {
  * checklist de seguridad antes de cargar, pero pedirlo no alcanza: en las
  * pruebas el bot a veces cargaba sin hacerlo.
  *
- * Lo que sigue es un analizador PURO sobre el texto del codigo, en tres partes:
- *   1. Limpia comentarios y textos entre comillas, asi un `// GPIO7` o un
- *      `Serial.println("pin 7")` no cuentan como uso de un pin.
- *   2. Resuelve el pin de cada `pinMode`, `digitalWrite`, `analogRead`, etc.:
- *      numeros, `#define`, constantes, arreglos y variables que NUNCA se vuelven
- *      a asignar. Una variable que cambia en tiempo de ejecucion queda sin
- *      resolver y NO genera avisos: preferimos callar a avisar de un pin que el
- *      codigo quizas nunca usa. Un aviso falso enseña a ignorar los avisos.
- *   3. Aplica las reglas de la placa (solo esp32dev y UNO/Nano: las del
- *      catalogo; con otra placa no se opina).
+ * Lo que sigue es un analizador PURO sobre el texto del codigo:
+ *   1. Limpia cada archivo POR SEPARADO: comentarios, textos entre comillas
+ *      (tambien los R"(...)" del HTML de un servidor web) y separadores de
+ *      digitos (1'000). Por separado para que un `/*` sin cerrar en un archivo
+ *      no tape el resto del proyecto.
+ *   2. Resuelve el preprocesador lo que se puede saber: las condiciones de placa
+ *      (`#ifdef ESP32`, `#if defined(__AVR__)`...) se evaluan para la placa del
+ *      platformio.ini y la rama que no se compila se TIRA entera: ni avisos ni
+ *      #define. Una condicion desconocida (`#ifdef DEBUG`) deja la rama como
+ *      "incierta": los bloqueos de adentro bajan a aviso.
+ *   3. Resuelve el pin de cada uso: numeros, `#define`, constantes, arreglos,
+ *      variables que NUNCA se vuelven a asignar, y los pines que se le pasan al
+ *      constructor de una libreria de hardware (DHT, LiquidCrystal, Stepper...).
+ *      Una variable que cambia en tiempo de ejecucion queda sin resolver y NO
+ *      genera avisos: un aviso falso enseña a ignorar los avisos.
+ *   4. Aplica las reglas de la placa (solo esp32dev y UNO/Nano: las del
+ *      catalogo; con otra placa no se opina de pines).
  *
  * QUE NUNCA DICE. Nunca dice "pines OK": que no encuentre nada no prueba que el
- * cableado este bien (el pin puede estar en una variable que no resolvio, o el
- * cable puede ir a otro lado). Es la regla del repo: un OK falso es peor que un
- * error.
+ * cableado este bien. Es la regla del repo: un OK falso es peor que un error.
  *
  * LOS CONJUNTOS DE PINES SON COPIA de los de `circuito.ts` (`GPIO_FLASH`,
  * `GPIO_SOLO_ENTRADA`, `GPIO_STRAPPING`, `GPIO_UART_USB`, `UNO_POOL_PWM`). Las
@@ -1019,70 +1024,342 @@ export function familiaDePlaca(board: string | null | undefined): FamiliaPlaca |
 }
 
 /*
- * INFERIDO: LED_BUILTIN vale 2 en esp32dev (la variante `esp32` del core
- * Arduino lo define asi en las versiones que fijamos, y es el LED azul del
- * DevKit) y 13 en UNO/Nano. Y el mapa An -> pin: en UNO/Nano A0..A7 son 14..21;
- * en el ESP32 es la tabla de la variante `esp32` (A0=GPIO36, A3=GPIO39,
- * A4=GPIO32...). No lo saque de compilar: sale de las variantes del core.
+ * EL LED DE LA PLACA.
+ *
+ * `LED_BUILTIN`: en UNO/Nano el core lo define como 13. En esp32dev NO lo define:
+ * la variante `esp32` del core que fijamos (`variants/esp32/pins_arduino.h`) no
+ * lo trae, asi que un `LED_BUILTIN` sin definir ahi ni compila. La primera
+ * version de esto lo daba por 2 y estaba mal. Si el codigo lo define, manda lo
+ * que dice el codigo (`#define LED_BUILTIN 7` es GPIO7, y bloquea).
+ *
+ * `LED_PLACA` es otra cosa: el pin donde esta soldado el LED de la placa, para no
+ * pedir el checklist por un blink. GPIO2 en el DevKit es INFERIDO de los clones
+ * DOIT, que son los que circulan (y lo que dice `ejemplos/blink-esp32`).
+ *
+ * INFERIDO tambien el mapa An -> pin: en UNO/Nano A0..A7 son 14..21; en el ESP32
+ * es la tabla de la variante `esp32` (A0=GPIO36, A3=GPIO39, A4=GPIO32...).
  */
+const LED_BUILTIN_DEL_CORE: Partial<Record<FamiliaPlaca, number>> = { uno: 13 }
 const LED_PLACA: Record<FamiliaPlaca, number> = { esp32: 2, uno: 13 }
 const ANALOGICOS: Record<FamiliaPlaca, Record<number, number>> = {
   esp32: { 0: 36, 3: 39, 4: 32, 5: 33, 6: 34, 7: 35, 10: 4, 11: 0, 12: 2, 13: 15, 14: 13, 15: 12, 16: 14, 17: 27, 18: 25, 19: 26 },
   uno: { 0: 14, 1: 15, 2: 16, 3: 17, 4: 18, 5: 19, 6: 20, 7: 21 },
 }
 
-/**
- * Saca comentarios y (si `textos`) lo que va entre comillas, cambiandolo por
- * espacios y CONSERVANDO los saltos de linea: los numeros de linea siguen
- * valiendo, que hace falta para saber si un uso esta dentro de un `#if`.
- * Las comillas quedan; lo de adentro no.
- */
-export function limpiarCodigo(src: string, textos = true): string {
-  let out = ""
-  let i = 0
+type Tri = boolean | null
+
+// ── 1. Limpieza ────────────────────────────────────────────────────────────
+
+interface Limpio {
+  /** Sin comentarios y sin lo de adentro de los textos: para buscar llamadas. */
+  codigo: string
+  /** Sin comentarios pero con los textos: para leer los #include "x.h". */
+  conTextos: string
+}
+
+/** `R"(` o `u8R"(`: el R arranca un texto crudo si no es la cola de un identificador. */
+function esInicioRaw(src: string, i: number): boolean {
+  const previo = src.slice(Math.max(0, i - 3), i)
+  return !/\w$/.test(previo) || /(?:^|\W)(?:u8|u|U|L)$/.test(previo)
+}
+
+/** `1'000`: el apostrofo esta adentro de un numero, no abre un caracter. */
+function esSeparadorDeDigitos(src: string, i: number): boolean {
+  if (!/[0-9a-fA-F]/.test(src[i - 1] ?? "") || !/[0-9a-fA-F]/.test(src[i + 1] ?? "")) return false
+  let k = i - 1
+  while (k >= 0 && /[\w'.]/.test(src[k]!)) k--
+  return /[0-9]/.test(src[k + 1] ?? "")
+}
+
+function limpiar(crudo: string): Limpio {
+  // CRLF -> LF: los editores de Windows guardan asi, y con un `\r` al final las
+  // directivas (`#define MOTOR 7\r`) no se reconocian y el pin quedaba sin resolver.
+  const src = crudo.replace(/\r\n?/g, "\n")
+  let codigo = ""
+  let conTextos = ""
   const n = src.length
+  const blanquear = (s: string) => s.replace(/[^\n]/g, " ")
+  let i = 0
   while (i < n) {
+    const antes = i
     const c = src[i]!
     const d = src[i + 1]
     if (c === "/" && d === "/") {
-      while (i < n && src[i] !== "\n") {
-        out += " "
-        i++
-      }
+      let j = i
+      while (j < n && src[j] !== "\n") j++
+      const b = blanquear(src.slice(i, j))
+      codigo += b
+      conTextos += b
+      i = j
     } else if (c === "/" && d === "*") {
-      out += "  "
-      i += 2
-      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) {
-        out += src[i] === "\n" ? "\n" : " "
+      const fin = src.indexOf("*/", i + 2)
+      const j = fin < 0 ? n : fin + 2
+      const b = blanquear(src.slice(i, j))
+      codigo += b
+      conTextos += b
+      i = j
+    } else if (c === "R" && d === '"' && esInicioRaw(src, i)) {
+      const abre = src.indexOf("(", i + 2)
+      const delim = abre < 0 ? "" : src.slice(i + 2, abre)
+      if (abre < 0 || delim.length > 16 || /[\s\\()"]/.test(delim)) {
+        codigo += c
+        conTextos += c
         i++
+      } else {
+        const cierre = src.indexOf(`)${delim}"`, abre + 1)
+        const j = cierre < 0 ? n : cierre + delim.length + 2
+        const cuerpo = src.slice(i, j)
+        codigo += blanquear(cuerpo)
+        conTextos += cuerpo
+        i = j
       }
-      if (i < n) {
-        out += "  "
-        i += 2
-      }
-    } else if (textos && (c === '"' || c === "'")) {
-      out += c
+    } else if (c === "'" && esSeparadorDeDigitos(src, i)) {
+      codigo += c
+      conTextos += c
       i++
-      while (i < n && src[i] !== c && src[i] !== "\n") {
-        if (src[i] === "\\" && i + 1 < n) {
-          out += "  "
-          i += 2
-          continue
-        }
-        out += " "
-        i++
-      }
-      if (i < n && src[i] === c) {
-        out += c
-        i++
-      }
+    } else if (c === '"' || c === "'") {
+      let j = i + 1
+      while (j < n && src[j] !== c && src[j] !== "\n") j += src[j] === "\\" ? 2 : 1
+      j = Math.min(j, n)
+      const cerro = j < n && src[j] === c
+      if (cerro) j++
+      const cuerpo = src.slice(i, j)
+      codigo += c + blanquear(cerro ? cuerpo.slice(1, -1) : cuerpo.slice(1)) + (cerro ? c : "")
+      conTextos += cuerpo
+      i = j
     } else {
-      out += c
+      codigo += c
+      conTextos += c
       i++
     }
+    // Guarda de progreso: un caso que no avance colgaria al tool (y a OpenCode).
+    if (i <= antes) {
+      codigo += src[antes] ?? ""
+      conTextos += src[antes] ?? ""
+      i = antes + 1
+    }
+  }
+  return { codigo, conTextos }
+}
+
+/**
+ * Saca comentarios y (si `textos`) lo de adentro de las comillas, cambiandolo
+ * por espacios y CONSERVANDO los saltos de linea. Las comillas quedan. Con
+ * `textos = false` los textos se dejan, pero igual se recorren: un "/*.txt" o un
+ * "http://" no abren un comentario.
+ */
+export function limpiarCodigo(src: string, textos = true): string {
+  const l = limpiar(src)
+  return textos ? l.codigo : l.conTextos
+}
+
+// ── 2. Preprocesador ─────────────────────────────────────────────────────────
+
+/** Que macros de placa estan definidas (true) o seguro NO (false) para este `board`. Las demas no se saben. */
+export function macrosDePlaca(board: string): Map<string, boolean> {
+  const familia = familiaDePlaca(board)
+  const m = new Map<string, boolean>()
+  if (!familia) return m
+  const esp = familia === "esp32"
+  for (const x of ["ESP32", "ARDUINO_ARCH_ESP32", "ESP_PLATFORM"]) m.set(x, esp)
+  for (const x of ["__AVR__", "ARDUINO_ARCH_AVR"]) m.set(x, !esp)
+  m.set("ARDUINO_AVR_UNO", board === "uno")
+  m.set("ARDUINO_AVR_NANO", board.startsWith("nanoatmega328"))
+  return m
+}
+
+const y3 = (a: Tri, b: Tri): Tri => (a === false || b === false ? false : a === true && b === true ? true : null)
+const o3 = (a: Tri, b: Tri): Tri => (a === true || b === true ? true : a === false && b === false ? false : null)
+const no3 = (a: Tri): Tri => (a === null ? null : !a)
+
+/**
+ * Evalua la condicion de un `#if`/`#elif` con logica de tres valores: true,
+ * false, o null si depende de algo que no sabemos (un flag del compilador, una
+ * comparacion de versiones). Solo entiende `defined`, `!`, `&&`, `||`,
+ * parentesis, numeros y nombres sueltos; cualquier otra cosa es null.
+ */
+export function evaluarCondicion(expr: string, conocidas: Map<string, Tri>): Tri {
+  const toks = expr.match(/0x[0-9a-fA-F]+|\d+[uUlL]*|[A-Za-z_]\w*|&&|\|\||[()!]|\S/g) ?? []
+  if (toks.some((t) => !/^(0x[0-9a-fA-F]+|\d+[uUlL]*|[A-Za-z_]\w*|&&|\|\||[()!])$/.test(t))) return null
+  let p = 0
+  const valorNombre = (x: string): Tri => conocidas.get(x) ?? null
+  const primario = (): Tri | undefined => {
+    const t = toks[p++]
+    if (t === undefined) return undefined
+    if (t === "(") {
+      const v = disyuncion()
+      return toks[p++] === ")" ? v : undefined
+    }
+    if (t === "!") {
+      const v = primario()
+      return v === undefined ? undefined : no3(v)
+    }
+    if (t === "defined") {
+      const conParen = toks[p] === "("
+      if (conParen) p++
+      const nombre = toks[p++]
+      if (!nombre || !/^[A-Za-z_]\w*$/.test(nombre)) return undefined
+      if (conParen && toks[p++] !== ")") return undefined
+      return valorNombre(nombre)
+    }
+    if (/^\d|^0x/.test(t)) return parseInt(t, /^0x/i.test(t) ? 16 : 10) !== 0
+    if (/^[A-Za-z_]/.test(t)) return valorNombre(t)
+    return undefined
+  }
+  const conjuncion = (): Tri | undefined => {
+    let v = primario()
+    while (v !== undefined && toks[p] === "&&") {
+      p++
+      const w = primario()
+      v = w === undefined ? undefined : y3(v, w)
+    }
+    return v
+  }
+  const disyuncion = (): Tri | undefined => {
+    let v = conjuncion()
+    while (v !== undefined && toks[p] === "||") {
+      p++
+      const w = conjuncion()
+      v = w === undefined ? undefined : o3(v, w)
+    }
+    return v
+  }
+  const v = disyuncion()
+  return v === undefined || p !== toks.length ? null : v
+}
+
+interface Definicion {
+  valor: string
+  incierta: boolean
+  ambigua: boolean
+  /** Todos los valores que tuvo, para la huella cuando queda ambigua. */
+  todos: string[]
+}
+
+interface Preprocesado {
+  /** Lineas de `codigo`, con las ramas que no se compilan en blanco. */
+  lineas: string[]
+  lineasTexto: string[]
+  /** La linea esta en una rama de condicion desconocida. */
+  incierta: boolean[]
+  /** La linea es cuerpo de una macro con parametros: lo de adentro no es un uso. */
+  cuerpoDeMacro: boolean[]
+  defines: Map<string, Definicion>
+}
+
+const DIRECTIVA = /^\s*#\s*([a-z]+)\b(.*)$/
+
+/**
+ * Recorre UN archivo limpio y decide que se compila para esta placa.
+ *
+ * Los include guards (`#ifndef X_H` seguido de `#define X_H`) no son condiciones:
+ * cuentan como siempre verdaderos. Un `#define` en una rama que no se compila no
+ * existe. Un nombre definido mas de una vez en ramas inciertas queda ambiguo y
+ * no se resuelve.
+ */
+function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
+  const lc = lim.codigo.split("\n")
+  const lt = lim.conTextos.split("\n")
+  const conocidas = new Map<string, Tri>(macros)
+  const pila: Array<{ valor: Tri; tomado: Tri }> = []
+  const estado = (): "activo" | "inactivo" | "incierto" =>
+    pila.some((f) => f.valor === false) ? "inactivo" : pila.some((f) => f.valor === null) ? "incierto" : "activo"
+  const out: Preprocesado = { lineas: [], lineasTexto: [], incierta: [], cuerpoDeMacro: [], defines: new Map() }
+  const emitir = (k: number, visible: boolean, incierta: boolean, macro: boolean) => {
+    out.lineas.push(visible ? (lc[k] ?? "") : "")
+    out.lineasTexto.push(visible ? (lt[k] ?? "") : "")
+    out.incierta.push(incierta)
+    out.cuerpoDeMacro.push(macro)
+  }
+  const registrar = (nombre: string, valor: string, incierta: boolean) => {
+    const previa = out.defines.get(nombre)
+    const todos = [...new Set([...(previa?.todos ?? []), valor])]
+    if (!incierta) out.defines.set(nombre, { valor, incierta: false, ambigua: false, todos })
+    else if (previa && previa.valor !== valor) out.defines.set(nombre, { ...previa, ambigua: true, todos })
+    else if (!previa) out.defines.set(nombre, { valor, incierta: true, ambigua: false, todos })
+  }
+
+  let continuacion: { visible: boolean; incierta: boolean; macro: boolean; nombre: string | null; partes: string[] } | null = null
+  for (let k = 0; k < lc.length; k++) {
+    const linea = lc[k] ?? ""
+    if (continuacion) {
+      const c = continuacion
+      emitir(k, c.visible, c.incierta, c.macro)
+      if (c.nombre) c.partes.push(linea.replace(/\\\s*$/, "").trim())
+      if (!/\\\s*$/.test(linea)) {
+        if (c.nombre && c.visible) registrar(c.nombre, c.partes.join(" ").trim(), c.incierta)
+        continuacion = null
+      }
+      continue
+    }
+    const m = linea.match(DIRECTIVA)
+    const dir = m?.[1]
+    const resto = (m?.[2] ?? "").replace(/\\\s*$/, "").trim()
+    const primerNombre = resto.match(/^[A-Za-z_]\w*/)?.[0] ?? ""
+    if (dir === "if" || dir === "ifdef" || dir === "ifndef") {
+      let cond: Tri
+      if (dir === "if") cond = evaluarCondicion(resto, conocidas)
+      else {
+        // Include guard: `#ifndef X` y la proxima linea con algo es `#define X`.
+        let j = k + 1
+        while (j < lc.length && !(lc[j] ?? "").trim()) j++
+        const esGuard = dir === "ifndef" && primerNombre !== "" && new RegExp(`^\\s*#\\s*define\\s+${primerNombre}\\b`).test(lc[j] ?? "")
+        const definida = conocidas.get(primerNombre) ?? null
+        cond = esGuard ? true : dir === "ifdef" ? definida : no3(definida)
+      }
+      emitir(k, false, false, false)
+      pila.push({ valor: cond, tomado: cond })
+      continue
+    }
+    if (dir === "elif" || dir === "else" || dir === "endif") {
+      const top = pila[pila.length - 1]
+      if (top && dir === "elif") {
+        const c = evaluarCondicion(resto, conocidas)
+        top.valor = top.tomado === true ? false : top.tomado === false ? c : c === false ? false : null
+        top.tomado = o3(top.tomado, c)
+      } else if (top && dir === "else") {
+        top.valor = no3(top.tomado)
+        top.tomado = true
+      } else if (top) pila.pop()
+      emitir(k, false, false, false)
+      continue
+    }
+    const e = estado()
+    const visible = e !== "inactivo"
+    const incierta = e === "incierto"
+    if (dir === "define" && visible) {
+      const d = resto.match(/^([A-Za-z_]\w*)(\(\s*([^)]*)\))?\s*([\s\S]*)$/)
+      const nombre = d?.[1] ?? ""
+      // `#define INIT() pinMode(7, OUTPUT)` no tiene parametros: su cuerpo SI es un uso.
+      const conParametros = d?.[2] !== undefined && (d?.[3] ?? "").trim() !== ""
+      if (nombre) conocidas.set(nombre, incierta ? (conocidas.get(nombre) === true ? true : null) : true)
+      emitir(k, true, incierta, conParametros)
+      const valor = d?.[2] !== undefined ? "" : (d?.[4] ?? "").trim()
+      if (/\\\s*$/.test(linea)) {
+        continuacion = { visible: true, incierta, macro: conParametros, nombre: d?.[2] !== undefined ? null : nombre, partes: [valor] }
+      } else if (nombre && d?.[2] === undefined) registrar(nombre, valor, incierta)
+      continue
+    }
+    if (dir === "undef" && visible) {
+      if (incierta) {
+        const previa = out.defines.get(primerNombre)
+        if (previa) out.defines.set(primerNombre, { ...previa, ambigua: true })
+        conocidas.set(primerNombre, null)
+      } else {
+        out.defines.delete(primerNombre)
+        conocidas.set(primerNombre, false)
+      }
+    }
+    emitir(k, visible, incierta, false)
+    if (dir === "define" && /\\\s*$/.test(linea)) continuacion = { visible: false, incierta, macro: false, nombre: null, partes: [] }
   }
   return out
 }
+
+// ── 3. Simbolos y usos ──────────────────────────────────────────────────────
+
+const TIPOS_C =
+  "(?:unsigned\\s+|signed\\s+)?(?:int|byte|short|long|char|uint8_t|uint16_t|uint32_t|int8_t|int16_t|int32_t|size_t|gpio_num_t|pin_size_t)"
 
 /** Los argumentos de una llamada, desde justo despues del `(`. Respeta parentesis anidados. */
 function argumentosDesde(texto: string, desde: number): string[] | null {
@@ -1094,7 +1371,7 @@ function argumentosDesde(texto: string, desde: number): string[] | null {
     if (c === "(" || c === "[" || c === "{") nivel++
     else if (c === ")" || c === "]" || c === "}") {
       if (nivel === 0) {
-        if (c !== ")") return null
+        if (c !== ")" && c !== "}") return null
         args.push(actual.trim())
         return args
       }
@@ -1109,8 +1386,8 @@ function argumentosDesde(texto: string, desde: number): string[] | null {
   return null
 }
 
-/** El valor de una inicializacion: hasta el `;`, la `,` o el fin de linea del nivel de afuera. */
-function valorHasta(texto: string, desde: number): string {
+/** El valor de una inicializacion: hasta el `;` o la `,` del nivel de afuera. Devuelve tambien donde corto. */
+function valorHasta(texto: string, desde: number): { valor: string; fin: number } {
   let nivel = 0
   let i = desde
   for (; i < texto.length; i++) {
@@ -1119,9 +1396,9 @@ function valorHasta(texto: string, desde: number): string {
     else if (c === ")" || c === "]" || c === "}") {
       if (nivel === 0) break
       nivel--
-    } else if (nivel === 0 && (c === ";" || c === "," || c === "\n")) break
+    } else if (nivel === 0 && (c === ";" || c === ",")) break
   }
-  return texto.slice(desde, i).trim()
+  return { valor: texto.slice(desde, i).trim(), fin: i }
 }
 
 /** `(5)` o `((LED))`: el parentesis que abre es el que cierra al final. `(a)+(b)` no. */
@@ -1136,48 +1413,62 @@ function envueltoEnParentesis(e: string): boolean {
   return true
 }
 
-const TIPOS_C =
-  "(?:unsigned\\s+|signed\\s+)?(?:int|byte|short|long|char|uint8_t|uint16_t|uint32_t|int8_t|int16_t|int32_t|size_t|gpio_num_t|pin_size_t)"
-
 interface Simbolos {
   defines: Map<string, string>
   /** Valor inicial de cada variable o constante que se declara UNA vez y no se reasigna. */
   valores: Map<string, string>
   arreglos: Map<string, string[]>
+  /** Todo lo que se escribio para cada nombre (define o inicializacion): va a la huella si no se resuelve. */
+  textos: Map<string, string[]>
 }
 
-/** Junta lo resoluble: #define, constantes, variables nunca reasignadas y arreglos. */
-function juntarSimbolos(codigo: string): Simbolos {
-  const defines = new Map<string, string>()
-  for (const m of codigo.matchAll(/^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)[ \t]+([^\n]+)$/gm)) {
-    defines.set(m[1]!, m[2]!.trim())
+/** Junta lo resoluble del codigo ya preprocesado. `defines` viene del preprocesador, archivo por archivo. */
+function juntarSimbolos(codigo: string, defines: Map<string, Definicion>): Simbolos {
+  const textos = new Map<string, string[]>()
+  const anotar = (nombre: string, t: string) => textos.set(nombre, [...(textos.get(nombre) ?? []), t])
+  const defs = new Map<string, string>()
+  for (const [nombre, d] of defines) {
+    for (const v of d.todos) anotar(nombre, v)
+    if (!d.ambigua) defs.set(nombre, d.valor)
   }
 
-  const decl = new RegExp(
-    `\\b(?:(?:static|const|constexpr|volatile)\\s+)*${TIPOS_C}\\s+(?:(?:const|constexpr)\\s+)?([A-Za-z_]\\w*)\\s*(\\[[^\\]]*\\])?\\s*=\\s*`,
-    "g",
-  )
   const declaraciones = new Map<string, number>()
   const iniciales = new Map<string, string>()
   const arreglosCrudos = new Map<string, string[]>()
+  const decl = new RegExp(`\\b(?:(?:static|const|constexpr|volatile)\\s+)*${TIPOS_C}\\s+(?:(?:const|constexpr)\\s+)?(?=[A-Za-z_])`, "g")
+  const declarador = /\s*\*?\s*([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*/y
   for (const m of codigo.matchAll(decl)) {
-    const nombre = m[1]!
-    declaraciones.set(nombre, (declaraciones.get(nombre) ?? 0) + 1)
-    const desde = m.index! + m[0].length
-    if (m[2] !== undefined) {
-      if (codigo[desde] !== "{") continue
-      const elems = argumentosDesde(codigo.replace(/\}/g, ")"), desde + 1)
-      if (elems) arreglosCrudos.set(nombre, elems.filter((e) => e !== ""))
-    } else {
-      iniciales.set(nombre, valorHasta(codigo, desde))
+    let pos = m.index! + m[0].length
+    // `const int a = 4, b = 7;`: un declarador atras de otro, hasta el `;`.
+    for (let vuelta = 0; vuelta < 64; vuelta++) {
+      declarador.lastIndex = pos
+      const d = declarador.exec(codigo)
+      if (!d) break
+      const nombre = d[1]!
+      pos = declarador.lastIndex
+      if (codigo[pos] === "=" && codigo[pos + 1] !== "=") {
+        pos++
+        while (/\s/.test(codigo[pos] ?? "")) pos++
+        declaraciones.set(nombre, (declaraciones.get(nombre) ?? 0) + 1)
+        if (d[2] !== undefined) {
+          if (codigo[pos] !== "{") break
+          const elems = argumentosDesde(codigo, pos + 1)
+          if (elems) {
+            const limpios = elems.filter((e) => e !== "")
+            arreglosCrudos.set(nombre, limpios)
+            anotar(nombre, `{${limpios.join(",")}}`)
+          }
+          pos = valorHasta(codigo, pos).fin
+        } else {
+          const v = valorHasta(codigo, pos)
+          iniciales.set(nombre, v.valor)
+          anotar(nombre, v.valor)
+          pos = v.fin
+        }
+      } else if (codigo[pos] !== ",") break
+      if (codigo[pos] !== ",") break
+      pos++
     }
-  }
-
-  // Un parametro con el mismo nombre que una global la tapa adentro de su funcion:
-  // no sabemos cual de las dos se usa, asi que no se resuelve.
-  const parametros = new Set<string>()
-  for (const m of codigo.matchAll(new RegExp(`[(,]\\s*(?:const\\s+)?${TIPOS_C}\\s*&?\\s*([A-Za-z_]\\w*)\\s*(?=[,)])`, "g"))) {
-    parametros.add(m[1]!)
   }
 
   const reasignada = (nombre: string, arreglo: boolean): boolean => {
@@ -1185,34 +1476,70 @@ function juntarSimbolos(codigo: string): Simbolos {
     const asign = arreglo ? new RegExp(`\\b${nombre}\\s*\\[[^\\]]*\\]\\s*${op}`, "g") : new RegExp(`\\b${nombre}\\s*${op}`, "g")
     const veces = [...codigo.matchAll(asign)].length
     const incrementos = new RegExp(`(?:\\+\\+|--)\\s*${nombre}\\b|\\b${nombre}\\s*(?:\\[[^\\]]*\\]\\s*)?(?:\\+\\+|--)`).test(codigo)
+    // `&pin` o `int& r = pin`: se puede escribir por otro lado, ya no se sabe cuanto vale.
+    const porReferencia = new RegExp(`(?<![&\\w])&\\s*${nombre}\\b|&\\s*[A-Za-z_]\\w*\\s*=\\s*${nombre}\\b`).test(codigo)
     // La declaracion misma (`int led = 13`, `int leds[3] = {...}`) matchea una vez: no cuenta.
-    return veces > 1 || incrementos
+    return veces > 1 || incrementos || porReferencia
   }
 
   const valores = new Map<string, string>()
   for (const [nombre, valor] of iniciales) {
-    if (declaraciones.get(nombre) === 1 && !parametros.has(nombre) && !reasignada(nombre, false)) valores.set(nombre, valor)
+    if (declaraciones.get(nombre) === 1 && !reasignada(nombre, false)) valores.set(nombre, valor)
   }
   const arreglos = new Map<string, string[]>()
   for (const [nombre, elems] of arreglosCrudos) {
-    if (declaraciones.get(nombre) === 1 && !parametros.has(nombre) && !reasignada(nombre, true)) arreglos.set(nombre, elems)
+    if (declaraciones.get(nombre) === 1 && !reasignada(nombre, true)) arreglos.set(nombre, elems)
   }
-  return { defines, valores, arreglos }
+  return { defines: defs, valores, arreglos, textos }
+}
+
+const NO_SON_FUNCIONES = new Set(["if", "for", "while", "switch", "catch", "return", "sizeof", "else", "do"])
+
+/**
+ * Donde vive cada parametro: el cuerpo de la funcion que lo declara. Un
+ * parametro que se llama igual que una global la tapa SOLO adentro de esa
+ * funcion; afuera la global se sigue resolviendo.
+ */
+function ambitosDeParametros(codigo: string): Array<{ desde: number; hasta: number; params: Set<string> }> {
+  const ambitos: Array<{ desde: number; hasta: number; params: Set<string> }> = []
+  for (const m of codigo.matchAll(/\b([A-Za-z_]\w*)\s*\(([^()]*)\)\s*(?:const\s*)?\{/g)) {
+    if (NO_SON_FUNCIONES.has(m[1]!)) continue
+    const params = new Set(
+      m[2]!
+        .split(",")
+        .map((p) => p.replace(/=.*$/, "").match(/([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)?$/)?.[1])
+        .filter((x): x is string => !!x && x !== "void"),
+    )
+    if (params.size === 0) continue
+    const abre = m.index! + m[0].length - 1
+    let nivel = 0
+    let hasta = codigo.length
+    for (let i = abre; i < codigo.length; i++) {
+      if (codigo[i] === "{") nivel++
+      else if (codigo[i] === "}" && --nivel === 0) {
+        hasta = i
+        break
+      }
+    }
+    ambitos.push({ desde: abre, hasta, params })
+  }
+  return ambitos
 }
 
 interface PinResuelto {
   pines: number[]
-  /** Es el LED de la placa (`LED_BUILTIN`): no cuenta como hardware conectado. */
+  /** Es el LED_BUILTIN del core: no cuenta como hardware conectado. */
   dePlaca: boolean
 }
 
 /** El numero (o los numeros, si es un arreglo recorrido) de una expresion de pin; null si no se sabe. */
-function resolverPin(expr: string, s: Simbolos, familia: FamiliaPlaca | null, prof = 0): PinResuelto | null {
+function resolverPin(expr: string, s: Simbolos, familia: FamiliaPlaca | null, sombra: Set<string>, prof = 0): PinResuelto | null {
   if (prof > 8) return null
   let e = expr.trim()
   while (envueltoEnParentesis(e)) e = e.slice(1, -1).trim()
-  if (/^\d+$/.test(e)) return { pines: [Number(e)], dePlaca: false }
-  if (e === "LED_BUILTIN") return familia ? { pines: [LED_PLACA[familia]], dePlaca: true } : { pines: [], dePlaca: true }
+  e = e.replace(/^\((?:unsigned\s+)?(?:int|uint8_t|byte|gpio_num_t|pin_size_t)\)\s*/, "")
+  const numero = e.match(/^(0x[0-9a-f]+|\d+)[ul]*$/i)
+  if (numero) return { pines: [parseInt(numero[1]!, /^0x/i.test(numero[1]!) ? 16 : 10)], dePlaca: false }
   const gpio = e.match(/^GPIO_NUM_(\d+)$/)
   if (gpio) return { pines: [Number(gpio[1])], dePlaca: false }
   const analog = e.match(/^A(\d+)$/)
@@ -1221,23 +1548,51 @@ function resolverPin(expr: string, s: Simbolos, familia: FamiliaPlaca | null, pr
     return p === undefined ? null : { pines: [p], dePlaca: false }
   }
   const indice = e.match(/^([A-Za-z_]\w*)\s*\[(.*)\]$/)
-  if (indice) {
-    const elems = s.arreglos.get(indice[1]!)
+  const elementos = (nombre: string, elegir: (xs: string[]) => string[]): PinResuelto | null => {
+    const elems = sombra.has(nombre) ? undefined : s.arreglos.get(nombre)
     if (!elems) return null
-    // Indice fijo: ese elemento. Indice variable (el `for` de siempre): todos.
-    const elegidos = /^\d+$/.test(indice[2]!.trim()) ? [elems[Number(indice[2])]].filter((x): x is string => x !== undefined) : elems
-    const partes = elegidos.map((x) => resolverPin(x, s, familia, prof + 1))
+    const partes = elegir(elems).map((x) => resolverPin(x, s, familia, sombra, prof + 1))
     if (partes.length === 0 || partes.some((p) => p === null)) return null
     return { pines: partes.flatMap((p) => p!.pines), dePlaca: partes.every((p) => p!.dePlaca) }
   }
+  if (indice) {
+    // Indice fijo: ese elemento. Indice variable (el `for` de siempre): todos.
+    const idx = indice[2]!.trim()
+    return elementos(indice[1]!, (xs) => (/^\d+$/.test(idx) ? [xs[Number(idx)]].filter((x): x is string => x !== undefined) : xs))
+  }
   if (/^[A-Za-z_]\w*$/.test(e)) {
+    if (sombra.has(e)) return null
     const def = s.defines.get(e) ?? s.valores.get(e)
-    return def === undefined ? null : resolverPin(def, s, familia, prof + 1)
+    if (def !== undefined) return resolverPin(def, s, familia, sombra, prof + 1)
+    if (e === "LED_BUILTIN") {
+      const p = familia ? LED_BUILTIN_DEL_CORE[familia] : undefined
+      return { pines: p === undefined ? [] : [p], dePlaca: true }
+    }
+    // Un arreglo nombrado entero (las filas de un Keypad): todos sus pines.
+    return elementos(e, (xs) => xs)
   }
   return null
 }
 
-export type ModoPin = "OUTPUT" | "INPUT" | "INPUT_PULLUP" | "INPUT_PULLDOWN" | "ANALOG" | "PWM" | "SERVO" | "DHT" | "?"
+export type ModoPin =
+  | "OUTPUT"
+  | "INPUT"
+  | "INPUT_PULLUP"
+  | "INPUT_PULLDOWN"
+  | "ANALOG"
+  | "PWM"
+  | "SERVO"
+  | "DHT"
+  | "LCD"
+  | "PASO"
+  | "NEOPIXEL"
+  | "ONEWIRE"
+  | "ULTRASONIDO"
+  | "RFID"
+  | "TECLADO"
+  | "INFRARROJO"
+  | "UART"
+  | "?"
 
 export interface UsoPin {
   expr: string
@@ -1247,28 +1602,90 @@ export interface UsoPin {
   modo: ModoPin
   /** Viene de un `pinMode` (y no de un digitalWrite, analogRead, etc.). */
   declarado: boolean
-  /** Esta dentro de un `#if`/`#ifdef`: puede que ni se compile. */
+  /** Esta en una rama de `#if` cuya condicion no se sabe: puede que ni se compile. */
   enIf: boolean
+  /** "Serial1": los pines por defecto de Serial1 en el ESP32, que son de la flash. */
+  origen?: "Serial1"
+  /** Lo que se escribio para cada nombre de la expresion, si no se resolvio: va a la huella. */
+  definiciones?: string
 }
 
 const MODOS_PINMODE = new Set(["OUTPUT", "INPUT", "INPUT_PULLUP", "INPUT_PULLDOWN"])
 
-/** Cada uso de un pin en el codigo, ya resuelto (o marcado como no resuelto). */
-export function usosDePines(src: string, familia: FamiliaPlaca | null): UsoPin[] {
-  const codigo = limpiarCodigo(src)
-  const s = juntarSimbolos(codigo)
-  // `.attach(` es de muchas librerias (Ticker tambien): solo cuenta como servo si se incluye Servo.
-  const conServo = usaServo(limpiarCodigo(src, false))
+/*
+ * LOS CONSTRUCTORES DE LIBRERIAS DE HARDWARE, con la posicion de cada pin. Sin
+ * esto, `LiquidCrystal lcd(7, 8, ...)` en un ESP32 pasaba sin aviso: el pin
+ * nunca aparece en un pinMode, lo maneja la libreria.
+ */
+const CONSTRUCTORES: Array<{ re: RegExp; pines: Array<[number, ModoPin]> | ModoPin }> = [
+  { re: /\bLiquidCrystal\s+[A-Za-z_]\w*\s*\(/g, pines: "LCD" },
+  { re: /\bStepper\s+[A-Za-z_]\w*\s*\(/g, pines: [[1, "PASO"], [2, "PASO"], [3, "PASO"], [4, "PASO"]] },
+  { re: /\bAccelStepper\s+[A-Za-z_]\w*\s*\(/g, pines: [[1, "PASO"], [2, "PASO"], [3, "PASO"], [4, "PASO"]] },
+  { re: /\bAdafruit_NeoPixel\s+[A-Za-z_]\w*\s*(?:=\s*Adafruit_NeoPixel\s*)?\(/g, pines: [[1, "NEOPIXEL"]] },
+  { re: /\bDHT\s+[A-Za-z_]\w*\s*\(/g, pines: [[0, "DHT"]] },
+  { re: /\bOneWire\s+[A-Za-z_]\w*\s*\(/g, pines: [[0, "ONEWIRE"]] },
+  { re: /\b(?:NewPing|Ultrasonic)\s+[A-Za-z_]\w*\s*\(/g, pines: [[0, "ULTRASONIDO"], [1, "INPUT"]] },
+  { re: /\bMFRC522\s+[A-Za-z_]\w*\s*\(/g, pines: [[0, "RFID"], [1, "RFID"]] },
+  { re: /\bKeypad\s+[A-Za-z_]\w*\s*(?:=\s*Keypad\s*)?\(/g, pines: [[1, "TECLADO"], [2, "TECLADO"]] },
+  { re: /\bIRrecv\s+[A-Za-z_]\w*\s*\(/g, pines: [[0, "INFRARROJO"]] },
+]
 
-  // Que lineas estan adentro de un #if. Una linea de directiva no es codigo.
-  const lineas = codigo.split("\n")
-  const enIfPorLinea: boolean[] = []
-  let nivel = 0
-  for (const l of lineas) {
-    if (/^\s*#\s*endif\b/.test(l)) nivel = Math.max(0, nivel - 1)
-    enIfPorLinea.push(nivel > 0)
-    if (/^\s*#\s*if(n?def)?\b/.test(l)) nivel++
+// Las funciones de Arduino, NO los metodos de otro objeto: `mcp.pinMode(7, ...)`
+// es un pin del expansor, no el GPIO7.
+const NO_ES_METODO = "(?<!(?:\\.|->)\\s*)"
+const LLAMADAS: Array<[RegExp, (a: string[]) => Array<[string, ModoPin, boolean]>]> = [
+  [new RegExp(`${NO_ES_METODO}\\bpinMode\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], (MODOS_PINMODE.has(a[1] ?? "") ? a[1] : "?") as ModoPin, true]] : [])],
+  [new RegExp(`${NO_ES_METODO}\\bdigitalWrite\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], "OUTPUT", false]] : [])],
+  [new RegExp(`${NO_ES_METODO}\\bdigitalRead\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], "INPUT", false]] : [])],
+  [new RegExp(`${NO_ES_METODO}\\banalogRead\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], "ANALOG", false]] : [])],
+  [new RegExp(`${NO_ES_METODO}\\banalogWrite\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], "PWM", false]] : [])],
+  [new RegExp(`${NO_ES_METODO}\\bledcAttach(?:Pin)?\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], "PWM", false]] : [])],
+  [new RegExp(`${NO_ES_METODO}\\btone\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], "OUTPUT", false]] : [])],
+]
+
+interface Preparado {
+  codigo: string
+  /** Lineas con los textos, para leer los #include. */
+  conTextos: string
+  incierta: boolean[]
+  cuerpoDeMacro: boolean[]
+  s: Simbolos
+}
+
+export interface Archivo {
+  nombre: string
+  texto: string
+}
+
+/** Limpia y preprocesa cada archivo por su lado y los junta. */
+function preparar(archivos: Archivo[], board: string): Preparado {
+  const macros = macrosDePlaca(board)
+  const lineas: string[] = []
+  const lineasTexto: string[] = []
+  const incierta: boolean[] = []
+  const cuerpoDeMacro: boolean[] = []
+  const defines = new Map<string, Definicion>()
+  for (const a of archivos) {
+    const p = preprocesar(limpiar(a.texto), macros)
+    lineas.push(...p.lineas)
+    lineasTexto.push(...p.lineasTexto)
+    incierta.push(...p.incierta)
+    cuerpoDeMacro.push(...p.cuerpoDeMacro)
+    // Un mismo nombre con valores distintos en dos archivos: no se sabe cual vale.
+    for (const [n, d] of p.defines) {
+      const previa = defines.get(n)
+      const todos = [...new Set([...(previa?.todos ?? []), ...d.todos])]
+      defines.set(n, previa && previa.valor !== d.valor ? { ...d, ambigua: true, todos } : previa?.ambigua ? { ...previa, todos } : { ...d, todos })
+    }
   }
+  const codigo = lineas.join("\n")
+  return { codigo, conTextos: lineasTexto.join("\n"), incierta, cuerpoDeMacro, s: juntarSimbolos(codigo, defines) }
+}
+
+/** Cada uso de un pin en el codigo ya preparado, resuelto o marcado como no resuelto. */
+function usosDe(p: Preparado, familia: FamiliaPlaca | null): UsoPin[] {
+  const { codigo, s } = p
+  const ambitos = ambitosDeParametros(codigo)
   const inicioLinea: number[] = [0]
   for (let i = 0; i < codigo.length; i++) if (codigo[i] === "\n") inicioLinea.push(i + 1)
   const lineaDe = (idx: number) => {
@@ -1285,40 +1702,86 @@ export function usosDePines(src: string, familia: FamiliaPlaca | null): UsoPin[]
   const usos: UsoPin[] = []
   const agregar = (expr: string, modo: ModoPin, declarado: boolean, idx: number) => {
     const linea = lineaDe(idx)
-    if (/^\s*#/.test(lineas[linea] ?? "")) return // cuerpo de un #define con parametros
-    let r = resolverPin(expr, s, familia)
+    if (p.cuerpoDeMacro[linea]) return // `#define F(p) pinMode(p, ...)`: el p no es un pin todavia
+    const sombra = new Set<string>()
+    for (const a of ambitos) if (idx > a.desde && idx < a.hasta) for (const x of a.params) sombra.add(x)
+    // `digitalWrite(ledPin, ...)` adentro de `parpadear(int ledPin)`: el pin real esta en la llamada, no aca.
+    if (sombra.has(expr.trim())) return
+    let r = resolverPin(expr, s, familia, sombra)
     // En UNO/Nano, `analogRead(0)` es A0, no D0.
-    if (r && modo === "ANALOG" && familia === "uno") r = { ...r, pines: r.pines.map((p) => (p < 8 ? p + 14 : p)) }
+    if (r && modo === "ANALOG" && familia === "uno") r = { ...r, pines: r.pines.map((x) => (x < 8 ? x + 14 : x)) }
+    const limpio = expr.replace(/\s+/g, " ").trim()
+    const definiciones = r
+      ? undefined
+      : [...new Set(limpio.match(/[A-Za-z_]\w*/g) ?? [])]
+          .filter((n) => s.textos.has(n))
+          .map((n) => `${n}=${s.textos.get(n)!.join("|")}`)
+          .join(";") || undefined
     usos.push({
-      expr: expr.replace(/\s+/g, " ").trim(),
+      expr: limpio,
       pines: r?.pines ?? [],
       dePlaca: r?.dePlaca ?? false,
       resuelto: r !== null,
       modo,
       declarado,
-      enIf: enIfPorLinea[linea] ?? false,
+      enIf: p.incierta[linea] ?? false,
+      ...(definiciones ? { definiciones } : {}),
     })
   }
 
-  const llamadas: Array<[RegExp, (a: string[]) => [string, ModoPin, boolean] | null]> = [
-    [/\bpinMode\s*\(/g, (a) => (a[0] ? [a[0], (MODOS_PINMODE.has(a[1] ?? "") ? a[1] : "?") as ModoPin, true] : null)],
-    [/\bdigitalWrite\s*\(/g, (a) => (a[0] ? [a[0], "OUTPUT", false] : null)],
-    [/\bdigitalRead\s*\(/g, (a) => (a[0] ? [a[0], "INPUT", false] : null)],
-    [/\banalogRead\s*\(/g, (a) => (a[0] ? [a[0], "ANALOG", false] : null)],
-    [/\banalogWrite\s*\(/g, (a) => (a[0] ? [a[0], "PWM", false] : null)],
-    [/\bledcAttach(?:Pin)?\s*\(/g, (a) => (a[0] ? [a[0], "PWM", false] : null)],
-    [/\btone\s*\(/g, (a) => (a[0] ? [a[0], "OUTPUT", false] : null)],
-    [/\.\s*attach\s*\(/g, (a) => (a[0] && conServo ? [a[0], "SERVO", false] : null)],
-    [/\bDHT\s+[A-Za-z_]\w*\s*\(/g, (a) => (a[0] ? [a[0], "DHT", false] : null)],
-  ]
-  for (const [re, aUso] of llamadas) {
+  for (const [re, aUsos] of LLAMADAS) {
     for (const m of codigo.matchAll(re)) {
       const args = argumentosDesde(codigo, m.index! + m[0].length)
-      const uso = args ? aUso(args) : null
-      if (uso) agregar(uso[0], uso[1], uso[2], m.index!)
+      for (const u of args ? aUsos(args) : []) agregar(u[0], u[1], u[2], m.index!)
+    }
+  }
+  for (const c of CONSTRUCTORES) {
+    for (const m of codigo.matchAll(c.re)) {
+      const args = argumentosDesde(codigo, m.index! + m[0].length) ?? []
+      const posiciones: Array<[number, ModoPin]> = typeof c.pines === "string" ? args.map((_, i) => [i, c.pines as ModoPin]) : c.pines
+      for (const [i, modo] of posiciones) if (args[i]) agregar(args[i]!, modo, false, m.index!)
+    }
+  }
+  // FastLED: el pin va en la plantilla, `FastLED.addLeds<WS2812, 5, GRB>(...)`.
+  for (const m of codigo.matchAll(/\bFastLED\s*\.\s*addLeds\s*<\s*[^,<>]+,\s*([^,<>]+)/g)) agregar(m[1]!, "NEOPIXEL", false, m.index!)
+  // Servo: `.attach(` solo sobre objetos declarados `Servo x` (Ticker tambien tiene attach).
+  const servos = new Set<string>()
+  for (const m of codigo.matchAll(/\bServo\s+([A-Za-z_][\w\s,[\]]*?);/g)) {
+    for (const n of m[1]!.split(",")) {
+      const nombre = n.trim().match(/^[A-Za-z_]\w*/)?.[0]
+      if (nombre) servos.add(nombre)
+    }
+  }
+  if (servos.size > 0) {
+    const nombres = [...servos].join("|")
+    for (const m of codigo.matchAll(new RegExp(`\\b(?:${nombres})\\s*(?:\\[[^\\]]*\\]\\s*)?\\.\\s*attach\\s*\\(`, "g"))) {
+      const args = argumentosDesde(codigo, m.index! + m[0].length)
+      if (args?.[0]) agregar(args[0], "SERVO", false, m.index!)
+    }
+  }
+  // Serial1/Serial2 con pines: `Serial1.begin(9600, SERIAL_8N1, RX, TX)`.
+  for (const m of codigo.matchAll(/(?<!\w)Serial([12])\s*\.\s*begin\s*\(/g)) {
+    const args = argumentosDesde(codigo, m.index! + m[0].length) ?? []
+    if (args.length >= 4) {
+      for (const a of [args[2], args[3]]) if (a && a !== "-1") agregar(a, "UART", false, m.index!)
+    } else if (m[1] === "1" && familia === "esp32") {
+      /*
+       * Serial1 SIN PINES en el ESP32 usa los de fabrica: RX1=GPIO9 y TX1=GPIO10
+       * (core 2.0.17, `HardwareSerial.h`), que son de la flash. Lo verifico el
+       * revisor de riesgo en el core fijado. Se registra como un uso propio para
+       * que el aviso diga que es por Serial1 y no "GPIO9" a secas.
+       */
+      usos.push({ expr: "Serial1", pines: [9, 10], dePlaca: false, resuelto: true, modo: "UART", declarado: false, enIf: p.incierta[lineaDe(m.index!)] ?? false, origen: "Serial1" })
     }
   }
   return usos
+}
+
+const defaultDeFamilia = (familia: FamiliaPlaca | null) => (familia === "esp32" ? "esp32dev" : familia === "uno" ? "uno" : "?")
+
+/** Cada uso de un pin en un codigo suelto (un solo archivo). */
+export function usosDePines(src: string, familia: FamiliaPlaca | null, board = defaultDeFamilia(familia)): UsoPin[] {
+  return usosDe(preparar([{ nombre: "main.cpp", texto: src }], board), familia)
 }
 
 export interface Hallazgo {
@@ -1332,23 +1795,38 @@ export function nombrePin(pin: number, familia: FamiliaPlaca | null): string {
   return `GPIO${pin}`
 }
 
-const usaWifi = (codigo: string) => /^\s*#\s*include\s*[<"](WiFi|WiFiMulti|WebServer|HTTPClient|esp_now)\.h[>"]/m.test(codigo) || /\bWiFi\s*\./.test(codigo)
-const usaSerial = (codigo: string) => /\bSerial\s*\.\s*begin\s*\(/.test(codigo)
-const usaServo = (codigo: string) => /^\s*#\s*include\s*[<"](ESP32)?Servo\.h[>"]/m.test(codigo)
+const INCLUDE = /^\s*#\s*include\s*[<"]([^>"]+)[>"]/gm
+const incluye = (p: Preparado, re: RegExp) => [...p.conTextos.matchAll(INCLUDE)].some((m) => re.test(m[1]!.trim()))
+const usaWifi = (p: Preparado) => incluye(p, /^(WiFi|WiFiMulti|WebServer|HTTPClient|esp_now)\.h$/) || /\bWiFi\s*\./.test(p.codigo)
+const usaSerial = (p: Preparado) => /\bSerial\s*\.\s*begin\s*\(/.test(p.codigo)
+const usaServo = (p: Preparado) => incluye(p, /^(ESP32)?Servo\.h$/)
+
+/** Las palabras de un identificador: `pinReleLuz` -> pin, rele, luz; `RELAY_1` -> relay. */
+function palabras(id: string): string[] {
+  return id
+    .replace(/([a-zé])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-zéÉ]+/)
+    .filter(Boolean)
+    .map((w) => w.toLowerCase())
+}
+const PALABRAS_RELE = new Set(["rele", "relé", "reles", "relés", "relay", "relays"])
+/** El nombre dice relé. Por palabras, para que `release` o `irrelevante` no cuenten. INFERIDO: un relé no tiene libreria. */
+const esRele = (texto: string) => (texto.match(/[A-Za-z_é]\w*/g) ?? []).some((id) => palabras(id).some((w) => PALABRAS_RELE.has(w)))
+
+const SALIDA = new Set<ModoPin>(["OUTPUT", "PWM", "SERVO", "DHT", "LCD", "PASO", "NEOPIXEL", "ONEWIRE", "ULTRASONIDO", "RFID"])
+const ENTRADA = new Set<ModoPin>(["INPUT", "INPUT_PULLUP", "INPUT_PULLDOWN", "ANALOG"])
 
 /**
- * Las reglas de pines. Puro: recibe el codigo y la familia de la placa.
+ * Las reglas de pines sobre lo ya preparado.
  *
- * NIVELES. "bloqueo" es solo GPIO6 a GPIO11 en el ESP32 fuera de un `#if`:
- * cargar eso deja la placa sin arrancar, y es lo unico que frena `flash`/`both`.
- * Lo demas son avisos (34 a 39 como salida o con pull-up no ROMPEN nada: el pin
- * no hace lo que se espera, y eso decidio una persona que es un aviso, no un
- * freno) y notas.
+ * NIVELES. "bloqueo" es solo la flash del ESP32 (GPIO6 a GPIO11, tambien via
+ * Serial1 sin pines) fuera de una rama incierta: cargar eso deja la placa sin
+ * arrancar, y es lo unico que frena `flash`/`both` sin vuelta. Lo demas son
+ * avisos (34 a 39 como salida o con pull-up no ROMPEN nada: el pin no hace lo
+ * que se espera, y una persona decidio que eso es un aviso, no un freno) y notas.
  */
-export function analizarPines(src: string, familia: FamiliaPlaca | null): Hallazgo[] {
+function hallazgosDe(p: Preparado, usos: UsoPin[], familia: FamiliaPlaca | null): Hallazgo[] {
   if (!familia) return []
-  const sinComentarios = limpiarCodigo(src, false)
-  const usos = usosDePines(src, familia).filter((u) => u.resuelto)
   const hallazgos: Hallazgo[] = []
   const vistos = new Set<string>()
   const agregar = (nivel: Hallazgo["nivel"], texto: string) => {
@@ -1356,47 +1834,53 @@ export function analizarPines(src: string, familia: FamiliaPlaca | null): Hallaz
     vistos.add(texto)
     hallazgos.push({ nivel, texto })
   }
-  const SALIDA = new Set<ModoPin>(["OUTPUT", "PWM", "SERVO", "DHT"])
-  const ENTRADA = new Set<ModoPin>(["INPUT", "INPUT_PULLUP", "INPUT_PULLDOWN", "ANALOG"])
+  const wifi = usaWifi(p)
+  const serial = usaSerial(p)
+  const servo = usaServo(p)
 
-  // LED_BUILTIN no se saltea aca: como salida no dispara ninguna regla, y como
-  // ENTRADA en el ESP32 es GPIO2, que es de arranque igual se llame como se llame.
-  for (const u of usos) {
-    for (const p of u.pines) {
-      const n = nombrePin(p, familia)
+  for (const u of usos.filter((x) => x.resuelto)) {
+    if (u.origen === "Serial1") {
+      const texto =
+        "Serial1.begin sin pines usa GPIO9 y GPIO10, que en el ESP32 son de la memoria flash: la placa se cuelga. Hay que pasarle dos pines libres, por ejemplo Serial1.begin(9600, SERIAL_8N1, 25, 26)."
+      if (u.enIf) agregar("aviso", `${texto} Está adentro de un #if, así que quizás no se compila.`)
+      else agregar("bloqueo", texto)
+      continue
+    }
+    for (const pin of u.pines) {
+      const n = nombrePin(pin, familia)
       if (familia === "esp32") {
-        if (PINES_FLASH.has(p)) {
+        if (PINES_FLASH.has(pin)) {
           if (u.enIf)
             agregar("aviso", `${n} es de la memoria flash del ESP32 (GPIO6 a GPIO11). Está adentro de un #if, así que quizás no se compila; si se compila, la placa no arranca.`)
           else
             agregar("bloqueo", `${n} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa o la deja sin arrancar. Hay que cambiarlo por otro pin (los más tranquilos: GPIO4, 5, 18, 19 o 23).`)
-        } else if (PINES_SOLO_ENTRADA.has(p) && SALIDA.has(u.modo)) {
+        } else if (PINES_SOLO_ENTRADA.has(pin) && SALIDA.has(u.modo)) {
           agregar("aviso", `${n} es SOLO ENTRADA en el ESP32 (34, 35, 36 y 39): no puede encender nada ni mandar señal. Lo que esté conectado ahí no va a andar.`)
-        } else if (PINES_SOLO_ENTRADA.has(p) && (u.modo === "INPUT_PULLUP" || u.modo === "INPUT_PULLDOWN")) {
+        } else if (PINES_SOLO_ENTRADA.has(pin) && (u.modo === "INPUT_PULLUP" || u.modo === "INPUT_PULLDOWN")) {
           agregar("aviso", `${n} no tiene resistencia interna de pull-up ni pull-down (34, 35, 36 y 39): ${u.modo} no hace nada y el botón queda flotando. Hace falta una resistencia externa de 10 kΩ.`)
-        } else if (PINES_NO_EXPUESTOS.has(p)) {
+        } else if (PINES_NO_EXPUESTOS.has(pin)) {
           agregar("aviso", `${n} no sale en la placa ESP32 DevKit: no hay dónde conectarlo.`)
         }
-        if (PINES_ADC2.has(p) && u.modo === "ANALOG" && usaWifi(sinComentarios)) {
+        if (PINES_ADC2.has(pin) && u.modo === "ANALOG" && wifi) {
           agregar("aviso", `${n} es del ADC2 y el código usa WiFi: con el WiFi prendido, analogRead ahí falla o da cualquier cosa. Para leer un sensor analógico con WiFi va un pin del ADC1: GPIO32, 33, 34, 35, 36 o 39.`)
         }
-        if (p === 12 || p === 0) {
+        if (pin === 12 || pin === 0) {
           agregar("aviso", `Cuidado con ${n}: es un pin de arranque del ESP32. Si lo que está conectado lo deja en el nivel equivocado al encender, la placa no arranca o no se deja cargar.`)
-        } else if ((p === 15 || p === 2) && ENTRADA.has(u.modo)) {
+        } else if ((pin === 15 || pin === 2) && ENTRADA.has(u.modo)) {
           agregar("nota", `Nota: ${n} es un pin de arranque del ESP32; como entrada anda, pero si lo que está conectado lo fuerza al encender, la carga puede fallar.`)
         }
-        if (PINES_UART_USB.has(p)) {
-          agregar("aviso", `${n} es ${p === 1 ? "TX" : "RX"} del USB de la placa: con algo conectado ahí, la carga puede fallar y el monitor serie muestra basura.`)
+        if (PINES_UART_USB.has(pin)) {
+          agregar("aviso", `${n} es ${pin === 1 ? "TX" : "RX"} del USB de la placa: con algo conectado ahí, la carga puede fallar y el monitor serie muestra basura.`)
         }
       } else {
-        if ((p === 0 || p === 1) && u.modo !== "ANALOG" && usaSerial(sinComentarios)) {
-          agregar("aviso", `${n} es ${p === 1 ? "TX" : "RX"} del USB y el código usa Serial: los dos se pisan. Con algo conectado ahí la carga puede fallar y el monitor serie muestra basura.`)
+        if ((pin === 0 || pin === 1) && u.modo !== "ANALOG" && serial) {
+          agregar("aviso", `${n} es ${pin === 1 ? "TX" : "RX"} del USB y el código usa Serial: los dos se pisan. Con algo conectado ahí la carga puede fallar y el monitor serie muestra basura.`)
         }
-        if (u.modo === "PWM" && !UNO_PWM.has(p)) {
+        if (u.modo === "PWM" && !UNO_PWM.has(pin)) {
           agregar("aviso", `${n} no hace PWM en el UNO/Nano: analogWrite ahí solo prende o apaga, sin valores intermedios. Los que hacen PWM son D3, D5, D6, D9, D10 y D11, los marcados con ~.`)
         }
         // INFERIDO: la libreria Servo del core AVR toma el Timer1, que es el del PWM de D9 y D10.
-        if (u.modo === "PWM" && (p === 9 || p === 10) && usaServo(sinComentarios)) {
+        if (u.modo === "PWM" && (pin === 9 || pin === 10) && servo) {
           agregar("aviso", `${n} pierde el PWM cuando se usa la librería Servo, que ocupa el mismo temporizador que D9 y D10: analogWrite ahí no va a regular.`)
         }
       }
@@ -1404,6 +1888,12 @@ export function analizarPines(src: string, familia: FamiliaPlaca | null): Hallaz
   }
   const orden = { bloqueo: 0, aviso: 1, nota: 2 }
   return hallazgos.sort((a, b) => orden[a.nivel] - orden[b.nivel])
+}
+
+/** Las reglas de pines sobre un codigo suelto. */
+export function analizarPines(src: string, familia: FamiliaPlaca | null, board = defaultDeFamilia(familia)): Hallazgo[] {
+  const p = preparar([{ nombre: "main.cpp", texto: src }], board)
+  return hallazgosDe(p, usosDe(p, familia), familia)
 }
 
 /*
@@ -1416,17 +1906,16 @@ export function analizarPines(src: string, familia: FamiliaPlaca | null): Hallaz
  *
  * La huella es lo que dice el codigo del circuito: la placa, cada pin con su
  * modo, y las librerias de hardware de una lista blanca. NO entra el LED de la
- * placa (LED_BUILTIN), ni la logica, ni el WiFi: no hay nada que conectar.
- * Despues de una carga que termina con codigo 0, se guarda en
- * `<proyecto>/.pio/tecnia/ultima-carga.json`. La proxima carga compara: si hay
- * ALTAS nuevas (un pin, un modo o una libreria que antes no estaba), frena y pide
- * el checklist. Sacar cosas no pide nada.
+ * placa, ni la logica, ni el WiFi: no hay nada que conectar. Un pin que no se
+ * resolvio entra con su nombre Y con lo que tiene escrito (`MOTOR=4`): asi
+ * cambiar el #define de 4 a 25 cambia la huella aunque no se sepa el numero.
  *
  * El freno se levanta con un codigo de 6 caracteres que sale de la huella: el
- * tool se lo da al bot junto con la instruccion de hacer el checklist. No es
- * una contraseña (el bot lo tiene), es un paso obligado: para cargar, el bot
- * tiene que volver a llamar, y el mensaje que lo frena le dice que antes haga el
- * checklist con el docente. Un codigo viejo no sirve para un circuito nuevo.
+ * tool se lo da al bot junto con la instruccion de hacer el checklist. NO es una
+ * cerradura (el bot tiene el codigo): es un PASO OBLIGADO, una vuelta extra con
+ * la instruccion escrita. Si sirve o hace falta preguntarle al docente directo
+ * (`ctx.ask`) se decide con las mediciones de MED-2. Un codigo viejo no sirve
+ * para un circuito nuevo.
  */
 const LIBRERIAS_HARDWARE: Record<string, string> = {
   "DHT.h": "DHT",
@@ -1468,51 +1957,53 @@ export interface Rasgos {
   rele: boolean
 }
 
-/** La huella del hardware que dice el codigo, y los rasgos que deciden que skills recordar. */
-export function huellaDelCodigo(src: string, board: string): { huella: Huella; rasgos: Rasgos } {
-  const familia = familiaDePlaca(board)
-  const sinComentarios = limpiarCodigo(src, false)
-  const usos = usosDePines(src, familia).filter((u) => !u.dePlaca)
-
+function huellaDe(p: Preparado, usos: UsoPin[], board: string, familia: FamiliaPlaca | null): { huella: Huella; rasgos: Rasgos } {
+  const sinCore = usos.filter((u) => !u.dePlaca)
   // Si el pin tiene pinMode, manda el pinMode; si no, como se lo usa.
   const porPin = new Map<string, UsoPin[]>()
-  for (const u of usos) {
-    for (const clave of u.resuelto ? u.pines.map(String) : [u.expr]) {
-      porPin.set(clave, [...(porPin.get(clave) ?? []), u])
-    }
+  for (const u of sinCore) {
+    const claves = u.resuelto ? u.pines.map(String) : [u.definiciones ? `${u.expr}{${u.definiciones}}` : u.expr]
+    for (const clave of claves) porPin.set(clave, [...(porPin.get(clave) ?? []), u])
+  }
+  /*
+   * EL LED DE LA PLACA no pide checklist, escrito como sea que lo escriban los
+   * blinks: `ejemplos/blink-uno` hace `pinMode(13, OUTPUT)` y `ejemplos/blink-esp32`
+   * `PIN_LED = 2`. Pero solo si el pin es el del LED Y se lo nombra como LED (un
+   * numero, LED_BUILTIN o un nombre con "led"): `LAMPARA = 13` es otra cosa y
+   * pide checklist, igual que un relé en ese pin. Con una placa fuera del
+   * catalogo no sabemos el pin, asi que alcanza con el nombre.
+   */
+  const exentoLed = (u: UsoPin, clave: string) => {
+    if (u.modo !== "OUTPUT" || esRele(u.expr)) return false
+    const nombreLed = u.expr === "LED_BUILTIN" || /led/i.test(u.expr)
+    return familia ? clave === String(LED_PLACA[familia]) && (/^\d+$/.test(u.expr) || nombreLed) : nombreLed
   }
   const entradas = new Set<string>()
-  const esRele = (u: UsoPin) => /rel[eé]|relay/i.test(u.expr)
   for (const [clave, us] of porPin) {
     const declarados = us.filter((u) => u.declarado)
     for (const u of declarados.length > 0 ? declarados : us) {
-      /*
-       * EL PIN DEL LED DE LA PLACA COMO SALIDA SE TRATA COMO EL LED DE LA PLACA,
-       * escrito con numero o con LED_BUILTIN. Los blinks del repo
-       * (`ejemplos/blink-uno`, `pinMode(13, OUTPUT)`; `ejemplos/blink-esp32`,
-       * `PIN_LED = 2`) no usan LED_BUILTIN, y pedir el checklist para el primer
-       * blink es justo el freno innecesario que hace que se lo saltee despues.
-       * El costo: algo externo en ese pin como salida no pide checklist. Salvo un
-       * relé por nombre, que si lo pide. INFERIDO que el caso comun es el LED.
-       */
-      if (familia && clave === String(LED_PLACA[familia]) && u.modo === "OUTPUT" && !us.some(esRele)) continue
-      entradas.add(`pin:${clave}:${u.modo}`)
+      if (!exentoLed(u, clave)) entradas.add(`pin:${clave}:${u.modo}`)
     }
   }
   const libs = new Set<string>()
-  for (const m of sinComentarios.matchAll(/^\s*#\s*include\s*[<"]([^>"]+)[>"]/gm)) {
+  for (const m of p.conTextos.matchAll(INCLUDE)) {
     const lib = LIBRERIAS_HARDWARE[m[1]!.trim()]
     if (lib) libs.add(lib)
   }
   for (const l of libs) entradas.add(`lib:${l}`)
-
-  // INFERIDO: un relé no tiene libreria; se reconoce por el nombre del pin
-  // (`RELE`, `pinRele`, `relay1`). Sin ese nombre no se sabe que es un relé.
-  const rele = usos.some(esRele) || /#\s*define\s+\w*(?:RELE|RELAY)\w*\s/i.test(sinComentarios)
+  const nombres = [...p.s.textos.keys()]
+  const rele = sinCore.some((u) => esRele(u.expr)) || nombres.some((n) => esRele(n))
   return {
     huella: { placa: board, entradas: [...entradas].sort() },
-    rasgos: { wifi: usaWifi(sinComentarios), dht: libs.has("DHT"), servo: libs.has("Servo"), rele },
+    rasgos: { wifi: usaWifi(p), dht: libs.has("DHT"), servo: libs.has("Servo"), rele },
   }
+}
+
+/** La huella del hardware que dice un codigo suelto, y los rasgos que deciden que skills recordar. */
+export function huellaDelCodigo(src: string, board: string): { huella: Huella; rasgos: Rasgos } {
+  const familia = familiaDePlaca(board)
+  const p = preparar([{ nombre: "main.cpp", texto: src }], board)
+  return huellaDe(p, usosDe(p, familia), board, familia)
 }
 
 /** El codigo de 6 hex que levanta el freno del checklist para ESTA huella. */
@@ -1539,15 +2030,25 @@ const MODO_LEGIBLE: Record<ModoPin, string> = {
   PWM: "con PWM",
   SERVO: "con un servo",
   DHT: "con un DHT",
+  LCD: "con un LCD",
+  PASO: "con un motor paso a paso",
+  NEOPIXEL: "con LEDs NeoPixel",
+  ONEWIRE: "con un sensor OneWire",
+  ULTRASONIDO: "con un ultrasónico",
+  RFID: "con un lector RFID",
+  TECLADO: "con un teclado",
+  INFRARROJO: "con un receptor infrarrojo",
+  UART: "como puerto serie",
   "?": "",
 }
 
 /** `pin:4:OUTPUT` -> "GPIO4 como salida"; `lib:DHT` -> "librería DHT". */
 export function describirEntrada(e: string, familia: FamiliaPlaca | null): string {
+  if (e === HUELLA_INCOMPLETA.entradas[0]) return "el código que no pude leer"
   if (e.startsWith("lib:")) return `librería ${e.slice(4)}`
   const m = e.match(/^pin:(.+):([A-Z_?]+)$/)
   if (!m) return e
-  const pin = /^\d+$/.test(m[1]!) ? nombrePin(Number(m[1]), familia) : m[1]!
+  const pin = /^\d+$/.test(m[1]!) ? nombrePin(Number(m[1]), familia) : m[1]!.replace(/\{.*\}$/, "")
   return `${pin} ${MODO_LEGIBLE[m[2] as ModoPin] ?? ""}`.trim()
 }
 
@@ -1561,39 +2062,116 @@ export function skillsParaRasgos(r: Rasgos): string[] {
   return [...new Set(skills)]
 }
 
-/** El `board =` del environment pedido, o el del primero que tenga uno. */
-export function leerBoard(iniText: string, env?: string): string | null {
-  let seccion = ""
-  const porSeccion = new Map<string, string>()
+// ── 4. El proyecto en disco ─────────────────────────────────────────────────
+
+/** Las secciones del platformio.ini, con sus claves. Las lineas con sangria continuan el valor anterior. */
+export function leerIni(iniText: string): Map<string, Map<string, string>> {
+  const secciones = new Map<string, Map<string, string>>()
+  let actual: Map<string, string> | null = null
+  let ultima = ""
   for (const cruda of iniText.split(/\r?\n/)) {
-    const linea = cruda.replace(/[;#].*$/, "").trim()
-    const cab = linea.match(/^\[([^\]]+)\]$/)
+    const sinComentario = cruda.replace(/(^|\s)[;#].*$/, "")
+    if (!sinComentario.trim()) continue
+    const cab = sinComentario.trim().match(/^\[([^\]]+)\]$/)
     if (cab) {
-      seccion = (cab[1] ?? "").trim()
+      actual = new Map()
+      secciones.set((cab[1] ?? "").trim(), actual)
+      ultima = ""
       continue
     }
-    const kv = linea.match(/^board\s*=\s*(\S+)$/)
-    if (kv && seccion && !porSeccion.has(seccion)) porSeccion.set(seccion, kv[1]!)
-  }
-  if (env && porSeccion.has(`env:${env}`)) return porSeccion.get(`env:${env}`)!
-  if (porSeccion.has("env")) return porSeccion.get("env")!
-  for (const [s, b] of porSeccion) if (s.startsWith("env:")) return b
-  return null
-}
-
-/** Todo el codigo de `src/` pegado, para analizarlo junto. Vacio si no hay. */
-function leerFuentes(cwd: string): string {
-  const partes: string[] = []
-  const recorrer = (dir: string, prof: number) => {
-    if (prof > 3 || !esCarpeta(dir)) return
-    for (const nombre of readdirSync(dir).sort()) {
-      const ruta = join(dir, nombre)
-      if (esCarpeta(ruta)) recorrer(ruta, prof + 1)
-      else if (/\.(ino|cpp|c|h|hpp)$/i.test(nombre)) partes.push(readFileSync(ruta, "utf8"))
+    if (!actual) continue
+    if (/^\s/.test(sinComentario) && ultima) {
+      actual.set(ultima, `${actual.get(ultima) ?? ""}\n${sinComentario.trim()}`)
+      continue
+    }
+    const kv = sinComentario.match(/^\s*([\w.-]+)\s*=\s*(.*)$/)
+    if (kv) {
+      ultima = kv[1]!
+      actual.set(ultima, kv[2]!.trim())
     }
   }
-  recorrer(join(cwd, "src"), 0)
-  return partes.join("\n")
+  return secciones
+}
+
+/**
+ * Las placas que se van a cargar. Si se pidio un environment, ese. Si no, los
+ * `default_envs` de `[platformio]`; si no hay, TODOS los `[env:x]` (eso es lo que
+ * hace `pio run` sin `-e`). Cada env toma su `board` o, si no tiene, el de `[env]`.
+ */
+export function placasElegidas(iniText: string, env?: string): string[] {
+  const ini = leerIni(iniText)
+  const comun = ini.get("env")
+  const envs = [...ini.keys()].filter((s) => s.startsWith("env:")).map((s) => s.slice(4))
+  const boardDe = (e: string) => ini.get(`env:${e}`)?.get("board") ?? comun?.get("board")
+  const porDefecto = (ini.get("platformio")?.get("default_envs") ?? "").split(/[\s,]+/).filter((e) => envs.includes(e))
+  const elegidos = env && envs.includes(env) ? [env] : porDefecto.length > 0 ? porDefecto : envs
+  const boards = elegidos.map(boardDe).filter((b): b is string => !!b)
+  if (boards.length === 0 && envs.length === 0 && comun?.get("board")) boards.push(comun.get("board")!)
+  return [...new Set(boards)]
+}
+
+/** El `board =` que se va a usar (el primero si hay varios). Se mantiene por compatibilidad. */
+export function leerBoard(iniText: string, env?: string): string | null {
+  return placasElegidas(iniText, env)[0] ?? null
+}
+
+const CARPETAS_QUE_NO = new Set(["examples", "example", "extras", "test", "tests", "docs", "doc"])
+
+/**
+ * Todo el codigo del proyecto: `src/` (o el `src_dir`), `include/` (o el
+ * `include_dir`) y `lib/`, recursivo. No sigue carpetas que son links (pueden
+ * salir del proyecto o dar vueltas) ni entra a los ejemplos de las librerias de
+ * `lib/`, que traen sus propios pinMode. Lo que no se puede leer se ANOTA: el
+ * analisis queda incompleto y el checklist va siempre (falla cerrado).
+ */
+function leerFuentes(cwd: string, iniText: string): { archivos: Archivo[]; ilegibles: string[]; hayCarpetas: boolean } {
+  const pio = leerIni(iniText).get("platformio")
+  const carpeta = (clave: string, porDefecto: string) => {
+    const v = (pio?.get(clave) ?? porDefecto).replace(/\$\{PROJECT_DIR\}|\$PROJECT_DIR/g, cwd).trim()
+    return isAbsolute(v) ? v : join(cwd, v)
+  }
+  const raices = [...new Set([carpeta("include_dir", "include"), carpeta("src_dir", "src"), carpeta("lib_dir", "lib")])]
+  const archivos: Archivo[] = []
+  const ilegibles: string[] = []
+  let hayCarpetas = false
+  const nombreRel = (r: string) => (r.startsWith(cwd) ? r.slice(cwd.length).replace(/^[\\/]/, "") : r)
+  const recorrer = (dir: string, prof: number) => {
+    if (prof > 6) return
+    let nombres: string[]
+    try {
+      nombres = readdirSync(dir).sort()
+    } catch {
+      ilegibles.push(nombreRel(dir))
+      return
+    }
+    for (const nombre of nombres) {
+      const ruta = join(dir, nombre)
+      let st: ReturnType<typeof lstatSync>
+      try {
+        st = lstatSync(ruta)
+      } catch {
+        ilegibles.push(nombreRel(ruta))
+        continue
+      }
+      if (st.isDirectory()) {
+        if (!nombre.startsWith(".") && !CARPETAS_QUE_NO.has(nombre.toLowerCase())) recorrer(ruta, prof + 1)
+      } else if (/\.(ino|cpp|c|h|hpp)$/i.test(nombre)) {
+        try {
+          archivos.push({ nombre: nombreRel(ruta), texto: readFileSync(ruta, "utf8") })
+        } catch {
+          ilegibles.push(nombreRel(ruta))
+        }
+      }
+    }
+  }
+  for (const r of raices) {
+    if (!existsSync(r)) continue
+    hayCarpetas = true
+    recorrer(r, 0)
+  }
+  // Los .h primero: los #define de configuracion suelen vivir ahi.
+  archivos.sort((a, b) => Number(!/\.h(pp)?$/i.test(a.nombre)) - Number(!/\.h(pp)?$/i.test(b.nombre)) || (a.nombre < b.nombre ? -1 : 1))
+  return { archivos, ilegibles, hayCarpetas }
 }
 
 export interface AnalisisProyecto {
@@ -1601,41 +2179,151 @@ export interface AnalisisProyecto {
   hallazgos: Hallazgo[]
   huella: Huella
   rasgos: Rasgos
+  /** Lo que no se pudo leer o analizar. Si hay algo, el checklist va siempre y no se guarda estado. */
+  incompleto: string[]
 }
 
-/** Lo que el codigo del proyecto dice de los pines. null si no hay ini o no hay codigo. */
-export function analizarProyecto(cwd: string, env?: string): AnalisisProyecto | null {
-  try {
-    const ini = join(cwd, "platformio.ini")
-    if (!existsSync(ini)) return null
-    const board = leerBoard(readFileSync(ini, "utf8"), env) ?? "?"
-    const src = leerFuentes(cwd)
-    if (!src.trim()) return null
-    const familia = familiaDePlaca(board)
-    return { familia, hallazgos: analizarPines(src, familia), ...huellaDelCodigo(src, board) }
-  } catch {
-    return null
+/** La huella fija de un analisis incompleto: su codigo no depende de lo que no se pudo leer. */
+export const HUELLA_INCOMPLETA: Huella = { placa: "analisis-incompleto", entradas: ["analisis-incompleto"] }
+
+/** Junta los analisis de varias placas (varios envs sin uno elegido). */
+function unirAnalisis(partes: Array<{ board: string; familia: FamiliaPlaca | null; hallazgos: Hallazgo[]; huella: Huella; rasgos: Rasgos }>): Omit<AnalisisProyecto, "incompleto"> {
+  const vistos = new Set<string>()
+  const hallazgos = partes.flatMap((p) => p.hallazgos).filter((h) => (vistos.has(h.texto) ? false : (vistos.add(h.texto), true)))
+  const orden = { bloqueo: 0, aviso: 1, nota: 2 }
+  const familias = new Set(partes.map((p) => p.familia))
+  return {
+    familia: familias.size === 1 ? [...familias][0]! : null,
+    hallazgos: hallazgos.sort((a, b) => orden[a.nivel] - orden[b.nivel]),
+    huella: {
+      placa: partes.map((p) => p.board).sort().join("+"),
+      entradas: [...new Set(partes.flatMap((p) => p.huella.entradas))].sort(),
+    },
+    rasgos: {
+      wifi: partes.some((p) => p.rasgos.wifi),
+      dht: partes.some((p) => p.rasgos.dht),
+      servo: partes.some((p) => p.rasgos.servo),
+      rele: partes.some((p) => p.rasgos.rele),
+    },
   }
+}
+
+/**
+ * Lo que el codigo del proyecto dice de los pines. null SOLO si no hay
+ * platformio.ini o no hay ninguna carpeta de codigo (ahi no hay nada que cargar
+ * todavia). Cualquier otra falla devuelve un analisis INCOMPLETO, que hace que
+ * flash/both pidan el checklist: antes un archivo ilegible apagaba el bloqueo
+ * de la flash y el checklist a la vez.
+ */
+export function analizarProyecto(cwd: string, env?: string): AnalisisProyecto | null {
+  const ini = join(cwd, "platformio.ini")
+  if (!existsSync(ini)) return null
+  let iniText: string
+  try {
+    iniText = readFileSync(ini, "utf8")
+  } catch {
+    return { familia: null, hallazgos: [], huella: HUELLA_INCOMPLETA, rasgos: { wifi: false, dht: false, servo: false, rele: false }, incompleto: ["platformio.ini"] }
+  }
+  try {
+    const { archivos, ilegibles, hayCarpetas } = leerFuentes(cwd, iniText)
+    if (!hayCarpetas || (archivos.length === 0 && ilegibles.length === 0)) return null
+    const boards = placasElegidas(iniText, env)
+    const partes = (boards.length > 0 ? boards : ["?"]).map((board) => {
+      const familia = familiaDePlaca(board)
+      const p = preparar(archivos, board)
+      const usos = usosDe(p, familia)
+      return { board, familia, hallazgos: hallazgosDe(p, usos, familia), ...huellaDe(p, usos, board, familia) }
+    })
+    return { ...unirAnalisis(partes), incompleto: ilegibles }
+  } catch {
+    return { familia: null, hallazgos: [], huella: HUELLA_INCOMPLETA, rasgos: { wifi: false, dht: false, servo: false, rele: false }, incompleto: ["(el análisis falló)"] }
+  }
+}
+
+// ── 5. La ultima carga ──────────────────────────────────────────────────────
+
+/*
+ * QUE SE GUARDA Y DONDE.
+ *
+ * En el proyecto, `.pio/tecnia/ultima-carga.json`: la huella, el puerto, el hwid
+ * que da `pio device list` y la carpeta del proyecto. Y en la compu,
+ * `~/.config/opencode/tecnia-cargas.json`: por puerto, que proyecto se cargo
+ * ultimo, pero GUARDADO COMO HASH (ni la ruta ni el hwid quedan legibles: la ruta
+ * puede tener el nombre de una persona, y el desinstalador no conoce este
+ * archivo).
+ *
+ * Con eso, ademas del circuito, se pide el checklist si se carga a OTRA placa
+ * (otro puerto u otro hwid) o si en esa placa lo ultimo que se cargo fue OTRO
+ * proyecto: el circuito que esta en la mesa puede no ser el de este codigo.
+ *
+ * EL ORDEN. El bloqueo de la flash y la comparacion del circuito van ANTES de
+ * buscar la placa (no hace falta la placa para saberlo, y asi no se toca nada).
+ * La comparacion de la placa necesita el puerto, asi que va DESPUES de
+ * detectPort y antes de cargar.
+ */
+export interface UltimaCarga extends Huella {
+  puerto?: string
+  hwid?: string
+  proyecto?: string
 }
 
 const rutaUltimaCarga = (cwd: string) => join(cwd, ".pio", "tecnia", "ultima-carga.json")
+const rutaCargasGlobal = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode", "tecnia-cargas.json")
+const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16)
 
-/** La huella de la ultima carga que termino bien en este proyecto, o null. */
-export function leerUltimaCarga(cwd: string): Huella | null {
+/** La ultima carga que termino bien en este proyecto, o null. */
+export function leerUltimaCarga(cwd: string): UltimaCarga | null {
   try {
-    const d = JSON.parse(readFileSync(rutaUltimaCarga(cwd), "utf8")) as Partial<Huella>
+    const d = JSON.parse(readFileSync(rutaUltimaCarga(cwd), "utf8")) as Partial<UltimaCarga>
     if (typeof d.placa !== "string" || !Array.isArray(d.entradas)) return null
-    return { placa: d.placa, entradas: d.entradas.filter((e): e is string => typeof e === "string") }
+    const str = (x: unknown) => (typeof x === "string" ? x : undefined)
+    return {
+      placa: d.placa,
+      entradas: d.entradas.filter((e): e is string => typeof e === "string"),
+      puerto: str(d.puerto),
+      hwid: str(d.hwid),
+      proyecto: str(d.proyecto),
+    }
   } catch {
     return null
   }
 }
 
-/** Solo se llama despues de una carga con codigo 0. Si no se puede escribir, la proxima carga vuelve a pedir el checklist: es el lado seguro. */
-function guardarUltimaCarga(cwd: string, h: Huella): void {
+function leerCargasGlobal(): Record<string, { proyecto: string; hwid: string | null }> {
+  try {
+    const d = JSON.parse(readFileSync(rutaCargasGlobal(), "utf8"))
+    return d && typeof d === "object" ? d : {}
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * Solo se llama despues de una carga con codigo 0. Si no se puede escribir, la
+ * proxima carga vuelve a pedir el checklist: es el lado seguro. Con un analisis
+ * incompleto (o sin analisis) NO se guarda la huella del proyecto, pero SI el
+ * registro de la placa: ahora en esa placa esta este proyecto.
+ */
+function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, puerto: string, hwid: string | undefined): void {
+  const proyecto = resolve(cwd)
+  if (a && a.incompleto.length === 0) guardarHuella(cwd, a.huella, puerto, hwid, proyecto)
+  try {
+    const global = leerCargasGlobal()
+    global[puerto] = { proyecto: hash(proyecto), hwid: hwid ? hash(hwid) : null }
+    mkdirSync(join(rutaCargasGlobal(), ".."), { recursive: true })
+    writeFileSync(rutaCargasGlobal(), JSON.stringify(global, null, 2))
+  } catch {
+    /* sin el registro global solo se pierde el aviso de "otro proyecto" */
+  }
+}
+
+function guardarHuella(cwd: string, h: Huella, puerto: string, hwid: string | undefined, proyecto: string): void {
   try {
     mkdirSync(join(cwd, ".pio", "tecnia"), { recursive: true })
-    writeFileSync(rutaUltimaCarga(cwd), JSON.stringify({ placa: h.placa, entradas: h.entradas, cargado: new Date().toISOString() }, null, 2))
+    writeFileSync(
+      rutaUltimaCarga(cwd),
+      JSON.stringify({ placa: h.placa, entradas: h.entradas, puerto, hwid: hwid ?? null, proyecto, cargado: new Date().toISOString() }, null, 2),
+    )
   } catch {
     /* lado seguro: se vuelve a pedir el checklist */
   }
@@ -1647,9 +2335,16 @@ const listaHallazgos = (hs: Hallazgo[]) => hs.map((h) => `- ${h.texto}`).join("\
 const avisosTrasCargar = (a: AnalisisProyecto | null) =>
   a && a.hallazgos.length > 0 ? `\n\n**Contale al docente estos pines:**\n${listaHallazgos(a.hallazgos)}` : ""
 
+const avisoIncompleto = (a: AnalisisProyecto) =>
+  `No pude leer todo el código del proyecto (${a.incompleto.join(", ")}): los avisos de pines pueden estar incompletos.`
+
 /**
  * Lo que dice `compile` cuando termino bien. Si hay un bloqueo NO dice "listo
  * para cargar" a secas; y nunca dice que los pines esten bien.
+ *
+ * Responde EXACTAMENTE lo mismo que la 0.4.7 cuando: no hay hallazgos, el
+ * analisis esta completo, y no corresponde el recordatorio (el codigo no usa
+ * WiFi, DHT, Servo ni relé, o la huella es igual a la de la ultima carga).
  */
 export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | null): string {
   const OK = "Compilacion exitosa. El codigo esta listo para cargar al dispositivo."
@@ -1662,6 +2357,7 @@ export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | 
         `**Hay que cambiar antes de cargar:**\n${listaHallazgos(bloqueos)}`
       : OK
   if (resto.length > 0) msg += `\n\n**Revisá estos pines con el docente antes de cargar:**\n${listaHallazgos(resto)}`
+  if (a.incompleto.length > 0) msg += `\n\n${avisoIncompleto(a)}`
   const skills = skillsParaRasgos(a.rasgos)
   if (skills.length > 0 && huellaCambio(a.huella, previa)) {
     msg += `\n\nRecordatorio: el circuito cambió; si todavía no los cargaste, activá los skills ${skills.map((s) => `\`${s}\``).join(", ")} antes de explicarlo o cargarlo.`
@@ -1669,10 +2365,24 @@ export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | 
   return msg
 }
 
+const coincide = (checklist: string | undefined, ...codigos: string[]) => codigos.includes((checklist ?? "").trim().toLowerCase())
+
+function pedirChecklist(motivo: string, lo: string, codigo: string, checklist: string | undefined): string {
+  return (
+    `FRENÉ LA CARGA: antes de cargar hay un paso obligado, el checklist de seguridad. ${motivo}\n\n` +
+    (lo ? `${lo}\n\n` : "") +
+    (checklist ? "El código de checklist que pasaste no corresponde a este circuito.\n\n" : "") +
+    "Activá el skill `checklist-seguridad` y hacé con el docente un checklist CORTO y a medida, en formato sí/no. " +
+    "Esperá que confirme. Recién cuando confirme, volvé a llamar a `platformio` con la misma acción y " +
+    `\`checklist: "${codigo}"\`. No pases ese código sin haber hecho el checklist: el tool no puede comprobarlo, depende de vos.`
+  )
+}
+
 /**
- * Lo que frena `flash`/`both` ANTES de buscar la placa. null si se puede seguir.
- * Primero los pines que rompen (no hay codigo que los levante); despues el
- * checklist, si el circuito tiene altas nuevas y no vino el codigo correcto.
+ * El primer freno de `flash`/`both`, ANTES de buscar la placa. null si se puede
+ * seguir. Primero los pines que rompen (no hay codigo que los levante); despues
+ * el checklist si el analisis esta incompleto (siempre) o si el circuito tiene
+ * altas nuevas desde la ultima carga de este proyecto.
  */
 export function frenoAntesDeCargar(a: AnalisisProyecto | null, previa: Huella | null, checklist: string | undefined): string | null {
   if (!a) return null
@@ -1684,18 +2394,52 @@ export function frenoAntesDeCargar(a: AnalisisProyecto | null, previa: Huella | 
       "Contale al docente qué pin es y por qué, cambialo en el código y en el cableado, compilá de nuevo y recién ahí cargá."
     )
   }
+  if (a.incompleto.length > 0) {
+    const codigo = codigoChecklist(HUELLA_INCOMPLETA)
+    if (coincide(checklist, codigo)) return null
+    return pedirChecklist(`${avisoIncompleto(a)} Sin eso no sé qué cambió en el circuito, así que el checklist va en cada carga hasta que se pueda leer.`, "", codigo, checklist)
+  }
   const altas = altasNuevas(a.huella, previa)
   if (altas.length === 0) return null
   const codigo = codigoChecklist(a.huella)
-  if ((checklist ?? "").trim().toLowerCase() === codigo) return null
-  return (
-    "FRENÉ LA CARGA: el circuito cambió desde la última carga en esta placa, y antes de cargar hay que hacer el checklist de seguridad.\n\n" +
-    `Lo nuevo: ${altas.map((e) => describirEntrada(e, a.familia)).join(", ")}.\n\n` +
-    (checklist ? "El código de checklist que pasaste no corresponde a este circuito.\n\n" : "") +
-    "Activá el skill `checklist-seguridad` y hacé con el docente un checklist CORTO y a medida de lo nuevo, en formato sí/no. " +
-    "Esperá que confirme. Recién cuando confirme, volvé a llamar a `platformio` con la misma acción y " +
-    `\`checklist: "${codigo}"\`. No pases ese código sin haber hecho el checklist: es lo que evita quemar la placa.`
+  if (coincide(checklist, codigo)) return null
+  return pedirChecklist(
+    "El circuito cambió desde la última carga de este proyecto.",
+    `Lo nuevo: ${altas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`,
+    codigo,
+    checklist,
   )
+}
+
+/**
+ * El segundo freno, DESPUES de detectPort: la placa. Solo si el codigo maneja
+ * algun pin (un blink del LED de la placa no tiene nada que revisar) y el
+ * analisis esta completo (si no, ya freno el primero). Se acepta el codigo del
+ * primer freno: si recien se hizo el checklist para este circuito, no se pide
+ * otro.
+ */
+export function frenoPorPlaca(
+  a: AnalisisProyecto | null,
+  previa: UltimaCarga | null,
+  cwd: string,
+  puerto: string,
+  hwid: string | undefined,
+  checklist: string | undefined,
+  cargas: Record<string, { proyecto: string; hwid: string | null }> = leerCargasGlobal(),
+): string | null {
+  if (!a || a.incompleto.length > 0 || a.huella.entradas.length === 0) return null
+  const codigoCircuito = codigoChecklist(a.huella)
+  const codigo = codigoChecklist({ placa: `${a.huella.placa}@${puerto}|${hwid ?? ""}`, entradas: a.huella.entradas })
+  if (coincide(checklist, codigoCircuito, codigo)) return null
+  const proyecto = hash(resolve(cwd))
+  const otraPlaca = !previa?.puerto || previa.puerto !== puerto || (!!previa.hwid && !!hwid && previa.hwid !== hwid)
+  const registro = cargas[puerto]
+  const otroProyecto = !!registro && registro.proyecto !== proyecto
+  if (!otraPlaca && !otroProyecto) return null
+  const motivo = otroProyecto
+    ? `En la placa de ${puerto} lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.`
+    : `La última carga de este proyecto fue en otra placa o por otro puerto, y ahora va a ${puerto}.`
+  return pedirChecklist(motivo, `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`, codigo, checklist)
 }
 
 /**
@@ -1743,7 +2487,7 @@ Acciones:
 - diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)
 - reparar: instala PlatformIO Core cuando falta, corriendo el instalador de Tecnia Bot (en Linux/Mac devuelve el comando exacto para hacerlo a mano). Tarda unos minutos y baja unos 60 MB (mas de 1 GB si faltan las herramientas de ESP32/UNO): avisale antes.
 
-Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la memoria flash frena la carga. flash y both frenan si el circuito cambio desde la ultima carga y piden hacer el checklist de seguridad con el docente; despues se vuelve a llamar con el parametro 'checklist' que da el tool.`,
+Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la memoria flash frena la carga. flash y both frenan si el circuito o la placa cambiaron desde la ultima carga: hacer el checklist de seguridad con el docente es un paso obligado, y despues se vuelve a llamar con el parametro 'checklist' que da el tool.`,
   args: {
     action: tool.schema
       .enum(["compile", "flash", "both", "monitor", "diagnostico", "reparar"])
@@ -1974,18 +2718,24 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
       }
 
       case "flash": {
+        // Orden: pines y circuito ANTES de buscar la placa; la placa, despues (ver "QUE SE GUARDA Y DONDE").
         const analisis = analizarProyecto(cwd, args.environment)
-        const freno = frenoAntesDeCargar(analisis, leerUltimaCarga(cwd), args.checklist)
+        const previa = leerUltimaCarga(cwd)
+        const freno = frenoAntesDeCargar(analisis, previa, args.checklist)
         if (freno) return freno
         let puerto = args.port
+        let hwid: string | undefined
         if (!puerto) {
           const detected = await detectPort(cwd, signal)
           if ("error" in detected) return detected.error
           puerto = detected.port
+          hwid = detected.hwid
         }
+        const frenoPlaca = frenoPorPlaca(analisis, previa, cwd, puerto, hwid, args.checklist)
+        if (frenoPlaca) return frenoPlaca
         const result = await cargar(puerto)
         if (result.code === 0) {
-          if (analisis) guardarUltimaCarga(cwd, analisis.huella)
+          guardarUltimaCarga(cwd, analisis, puerto, hwid)
           return `Codigo cargado exitosamente en ${puerto}.` + avisosTrasCargar(analisis)
         }
         return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
@@ -1998,17 +2748,22 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         }
         compiloAntes = true
         const analisis = analizarProyecto(cwd, args.environment)
-        const freno = frenoAntesDeCargar(analisis, leerUltimaCarga(cwd), args.checklist)
+        const previa = leerUltimaCarga(cwd)
+        const freno = frenoAntesDeCargar(analisis, previa, args.checklist)
         if (freno) return `La compilacion fue bien. ${freno}`
         let puerto = args.port
+        let hwid: string | undefined
         if (!puerto) {
           const detected = await detectPort(cwd, signal)
           if ("error" in detected) return detected.error
           puerto = detected.port
+          hwid = detected.hwid
         }
+        const frenoPlaca = frenoPorPlaca(analisis, previa, cwd, puerto, hwid, args.checklist)
+        if (frenoPlaca) return `La compilacion fue bien. ${frenoPlaca}`
         const flash = await cargar(puerto)
         if (flash.code === 0) {
-          if (analisis) guardarUltimaCarga(cwd, analisis.huella)
+          guardarUltimaCarga(cwd, analisis, puerto, hwid)
           return `Compilacion y carga exitosa en ${puerto}.` + avisosTrasCargar(analisis)
         }
         return (

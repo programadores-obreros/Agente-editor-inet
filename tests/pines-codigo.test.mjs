@@ -18,18 +18,27 @@
 // Mutaciones verificadas a mano al escribirlo (cada una pone rojo al menos un test):
 // el rango 6–11, el umbral de 34–39, la comparación del código del checklist, y
 // la escritura del estado sólo después de una carga con código 0.
+//
+// HISTORIA DE LOS HUECOS (ronda de revisión de la 0.4.8). La primera versión de
+// este archivo pasaba en verde con 26 mutantes vivos de 64: no probaba los escapes
+// de los textos, las prioridades entre #define y const, ni el orden de los
+// avisos; y una mutación del limpiador colgó la suite entera, porque nada medía
+// que terminara. Además las fixtures usaban LED_BUILTIN en ESP32, donde el core
+// fijado NO lo define: probaban un supuesto falso. Los tests de abajo cubren eso.
 
 import { test, before, after, beforeEach } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, mkdtempSync, symlinkSync } from "node:fs"
+import { spawnSync } from "node:child_process"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const OUT = join(os.tmpdir(), "tecniabot-pines-codigo-test")
+// Carpeta propia por corrida (no una ruta fija): dos corridas no se pisan.
+const OUT = mkdtempSync(join(os.tmpdir(), "tecniabot-pines-"))
 const HOME_FALSO = join(OUT, "home")
-const HOME_ORIGINAL = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
+const HOME_ORIGINAL = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
 
 // ── Bun falso (el mismo patrón que platformio-execute.test.mjs) ────────────────
 
@@ -71,13 +80,19 @@ let mod
 let ctx
 
 before(async () => {
-  if (existsSync(OUT)) rmSync(OUT, { recursive: true })
   mkdirSync(HOME_FALSO, { recursive: true })
   process.env.HOME = HOME_FALSO
   process.env.USERPROFILE = HOME_FALSO
+  process.env.XDG_CONFIG_HOME = join(HOME_FALSO, ".config")
+  // Un schema que ANOTA lo que se le pide (tipo, opcional, valores del enum), para
+  // probar los args del tool por lo que son y no por cómo están escritos.
   writeFileSync(
     join(OUT, "mock-plugin.ts"),
-    "const chain=new Proxy(function(){return chain},{get:()=>chain,apply:()=>chain});export const tool=(c)=>c;tool.schema=chain;",
+    [
+      "const nodo = (tipo, extra = {}) => { const n = { tipo, ...extra, opcional: false, optional() { n.opcional = true; return n }, describe(d) { n.descripcion = d; return n } }; return n }",
+      "export const tool = (c) => c",
+      "tool.schema = { string: () => nodo('string'), number: () => nodo('number'), boolean: () => nodo('boolean'), enum: (v) => nodo('enum', { valores: v }) }",
+    ].join("\n"),
   )
   const src = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
     .replace('/// <reference path="../env.d.ts" />', "")
@@ -93,8 +108,11 @@ beforeEach(() => {
 })
 
 after(() => {
-  process.env.HOME = HOME_ORIGINAL.HOME
-  process.env.USERPROFILE = HOME_ORIGINAL.USERPROFILE
+  for (const [k, v] of Object.entries(HOME_ORIGINAL)) {
+    if (v === undefined) delete process.env[k]
+    else process.env[k] = v
+  }
+  rmSync(OUT, { recursive: true, force: true })
 })
 
 let nProyecto = 0
@@ -172,7 +190,7 @@ test("ESP32: GPIO6 a GPIO11 es bloqueo; GPIO5 y GPIO12 no lo son", () => {
   }
 })
 
-test("ESP32: GPIO7 adentro de un #if baja a aviso", () => {
+test("ESP32: GPIO7 adentro de un #if de condición desconocida baja a aviso", () => {
   const src = "#ifdef PRUEBA\nvoid setup(){ pinMode(7, OUTPUT); }\n#endif\nvoid loop(){}\n"
   const hs = mod.analizarPines(src, "esp32")
   assert.deepEqual(niveles(hs), ["aviso"])
@@ -294,11 +312,14 @@ test("FALSO POSITIVO: pines en comentarios y en textos no cuentan", () => {
 
 test("FALSO POSITIVO: LED_BUILTIN no avisa y no entra en la huella", () => {
   const src = "void setup(){ pinMode(LED_BUILTIN, OUTPUT); }\nvoid loop(){ digitalWrite(LED_BUILTIN, HIGH); }"
-  assert.deepEqual(mod.analizarPines(src, "esp32"), [])
   assert.deepEqual(mod.analizarPines(src, "uno"), [])
-  assert.deepEqual(mod.huellaDelCodigo(src, "esp32dev").huella.entradas, [])
-  // Un fade del LED de la placa (analogWrite, no OUTPUT) tampoco: sigue siendo el LED de la placa.
-  assert.deepEqual(mod.huellaDelCodigo("void loop(){ analogWrite(LED_BUILTIN, 128); }", "esp32dev").huella.entradas, [])
+  assert.deepEqual(mod.huellaDelCodigo(src, "uno").huella.entradas, [])
+  // En ESP32 el core NO define LED_BUILTIN: el código tiene que definirlo, y el GPIO2 con ese nombre es el LED.
+  const esp = "#define LED_BUILTIN 2\n" + src
+  assert.deepEqual(mod.analizarPines(esp, "esp32"), [])
+  assert.deepEqual(mod.huellaDelCodigo(esp, "esp32dev").huella.entradas, [])
+  // Un fade del LED de la placa del UNO (analogWrite, no OUTPUT) tampoco: es el LED_BUILTIN del core.
+  assert.deepEqual(mod.huellaDelCodigo("void loop(){ analogWrite(LED_BUILTIN, 128); }", "uno").huella.entradas, [])
   // Un #define que apunta a LED_BUILTIN es lo mismo.
   assert.deepEqual(mod.huellaDelCodigo("#define LED LED_BUILTIN\nvoid setup(){ pinMode(LED, OUTPUT); }", "uno").huella.entradas, [])
 })
@@ -330,8 +351,15 @@ test("UNO: analogRead(0) y analogRead(A0) son el mismo pin para la huella", () =
   assert.equal(mod.describirEntrada(con0.entradas[0], "uno"), "A0 como entrada analógica")
 })
 
-test("ESP32: LED_BUILTIN como ENTRADA es GPIO2, y lleva la nota de arranque", () => {
-  assert.deepEqual(niveles(mod.analizarPines("void setup(){ pinMode(LED_BUILTIN, INPUT); }", "esp32")), ["nota"])
+test("ESP32: LED_BUILTIN es lo que define el código; sin definir, no es ningún pin", () => {
+  // El core fijado no lo define en esp32dev (variants/esp32/pins_arduino.h). La
+  // primera versión lo daba por 2: un supuesto falso, probado con fixtures falsas.
+  assert.deepEqual(niveles(mod.analizarPines("#define LED_BUILTIN 7\nvoid setup(){ pinMode(LED_BUILTIN, OUTPUT); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(niveles(mod.analizarPines("#define LED_BUILTIN 2\nvoid setup(){ pinMode(LED_BUILTIN, INPUT); }", "esp32")), ["nota"])
+  assert.deepEqual(mod.analizarPines("void setup(){ pinMode(LED_BUILTIN, INPUT); }", "esp32"), [])
+  assert.deepEqual(mod.usosDePines("void setup(){ pinMode(LED_BUILTIN, OUTPUT); }", "esp32")[0].pines, [])
+  // En UNO sigue siendo el 13 del core.
+  assert.deepEqual(mod.usosDePines("void setup(){ pinMode(LED_BUILTIN, OUTPUT); }", "uno")[0].pines, [13])
 })
 
 test("Ticker.attach no es un servo: sin Servo.h, .attach no cuenta", () => {
@@ -404,7 +432,7 @@ test("compile con GPIO7: compila, NO dice 'listo para cargar' a secas y nombra e
 })
 
 test("compile sin hallazgos: el mensaje de siempre, sin 'pines OK'", async () => {
-  const dir = proyecto("esp32dev", "void setup(){ pinMode(LED_BUILTIN, OUTPUT); }\nvoid loop(){}")
+  const dir = proyecto("esp32dev", "#define LED_BUILTIN 2\nvoid setup(){ pinMode(LED_BUILTIN, OUTPUT); }\nvoid loop(){}")
   const r = await ejecutar({ action: "compile", project_path: dir })
   assert.equal(r, "Compilacion exitosa. El codigo esta listo para cargar al dispositivo.")
 })
@@ -458,8 +486,8 @@ test("both con GPIO7: compila, y no busca la placa ni carga", async () => {
   assert.ok(!cargo())
 })
 
-test("flash con GPIO7 dentro de #if: no bloquea (es aviso); con el checklist, carga y lo cuenta", async () => {
-  const dir = proyecto("esp32dev", "#if 0\nvoid x(){ pinMode(7, OUTPUT); }\n#endif\nvoid setup(){}")
+test("flash con GPIO7 dentro de un #ifdef desconocido: no bloquea (es aviso); con el checklist, carga y lo cuenta", async () => {
+  const dir = proyecto("esp32dev", "#ifdef DEBUG\nvoid x(){ pinMode(7, OUTPUT); }\n#endif\nvoid setup(){}")
   const r1 = await ejecutar({ action: "flash", project_path: dir })
   assert.doesNotMatch(r1, /NO CARGUÉ NADA/, "adentro de un #if no es bloqueo")
   assert.match(r1, /FRENÉ LA CARGA/, "es un pin nuevo: pide el checklist como cualquier otro")
@@ -567,11 +595,14 @@ test("cambiar de placa con el mismo circuito pide el checklist de nuevo", async 
   assert.match(await ejecutar({ action: "flash", project_path: dir, checklist: codigo }), /FRENÉ LA CARGA/)
 })
 
-test("el parámetro checklist es OPCIONAL y el enum de acciones no cambió", () => {
-  const src = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
-  assert.match(src, /checklist: tool\.schema\s*\.string\(\)\s*\.optional\(\)/)
-  const m = src.match(/\.enum\(\[([^\]]+)\]\)/)
-  assert.deepEqual(m[1].split(",").map((s) => s.trim().replace(/"/g, "")).sort(), ["both", "compile", "diagnostico", "flash", "monitor", "reparar"])
+test("el parámetro checklist es un string OPCIONAL y el enum de acciones no cambió", () => {
+  // Leído del schema que arma el tool (con el mock que anota), no del texto del fuente.
+  const { args } = mod.default
+  assert.equal(args.checklist.tipo, "string")
+  assert.equal(args.checklist.opcional, true)
+  assert.match(args.checklist.descripcion, /checklist de seguridad/)
+  assert.equal(args.action.tipo, "enum")
+  assert.deepEqual([...args.action.valores].sort(), ["both", "compile", "diagnostico", "flash", "monitor", "reparar"])
 })
 
 test("el prompt le explica al bot el freno del checklist con el parámetro real", () => {
@@ -582,4 +613,451 @@ test("el prompt le explica al bot el freno del checklist con el parámetro real"
   assert.ok(linea, "el prompt no menciona que flash/both pueden frenar pidiendo el checklist")
   assert.match(linea, /`checklist`/, "no nombra el parámetro `checklist`")
   assert.match(linea, /Nunca lo pases sin haber hecho el checklist/)
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Ronda de revisión: lo que encontraron las revisiones de riesgo y confiabilidad
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Un proyecto con los archivos que se le pidan (rutas relativas) y el ini tal cual. */
+function proyectoCon(archivos, ini = "[env:esp32dev]\nplatform = x\nboard = esp32dev\nframework = arduino\n") {
+  const dir = join(OUT, `proy-${++nProyecto}`)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, "platformio.ini"), ini)
+  for (const [ruta, texto] of Object.entries(archivos)) {
+    mkdirSync(join(dir, ruta, ".."), { recursive: true })
+    writeFileSync(join(dir, ruta), texto)
+  }
+  return dir
+}
+const codigoDe = (r) => r.match(/checklist: "([0-9a-f]{6})"/)?.[1]
+const estadoDe = (dir) => join(dir, ".pio", "tecnia", "ultima-carga.json")
+
+// ── 1. Falla cerrado ────────────────────────────────────────────────────────
+
+test("FALLA CERRADO: un link roto en src/ no apaga el checklist; pide el código fijo y no guarda estado", async () => {
+  // Antes, cualquier error de lectura devolvía null y apagaba A LA VEZ el bloqueo
+  // de la flash y el checklist: el analizador fallaba abierto.
+  const dir = proyectoCon({ "src/main.cpp": "void setup(){ pinMode(4, OUTPUT); }" })
+  symlinkSync(join(dir, "no-existe.h"), join(dir, "src", "roto.h"))
+  const r1 = await ejecutar({ action: "flash", project_path: dir })
+  assert.match(r1, /FRENÉ LA CARGA/)
+  assert.match(r1, /No pude leer todo el código del proyecto \(src[\\/]roto\.h\)/)
+  assert.match(r1, /paso obligado/)
+  assert.equal(codigoDe(r1), mod.codigoChecklist(mod.HUELLA_INCOMPLETA), "el código sale de la huella fija de 'analisis-incompleto'")
+  assert.ok(!buscoPlaca() && !cargo())
+
+  spawns = []
+  const r2 = await ejecutar({ action: "flash", project_path: dir, checklist: codigoDe(r1) })
+  assert.match(r2, /Codigo cargado exitosamente/)
+  assert.ok(!existsSync(estadoDe(dir)), "con el análisis incompleto no se guarda la huella")
+  spawns = []
+  assert.match(await ejecutar({ action: "flash", project_path: dir }), /FRENÉ LA CARGA/, "el checklist va en cada carga mientras no se pueda leer")
+
+  // compile lo dice, sin frenar.
+  const rc = await ejecutar({ action: "compile", project_path: dir })
+  assert.match(rc, /listo para cargar/)
+  assert.match(rc, /No pude leer todo el código/)
+})
+
+test("FALLA CERRADO: el bloqueo de la flash sigue valiendo con lo que sí se pudo leer", async () => {
+  const dir = proyectoCon({ "src/main.cpp": "void setup(){ pinMode(7, OUTPUT); }" })
+  symlinkSync(join(dir, "no-existe.h"), join(dir, "src", "roto.h"))
+  assert.match(await ejecutar({ action: "flash", project_path: dir }), /NO CARGUÉ NADA/)
+})
+
+test("FALLA CERRADO: un platformio.ini ilegible o un src_dir que no es carpeta dejan el análisis incompleto", () => {
+  const conIniCarpeta = join(OUT, `proy-${++nProyecto}`)
+  mkdirSync(join(conIniCarpeta, "platformio.ini"), { recursive: true })
+  mkdirSync(join(conIniCarpeta, "src"))
+  assert.deepEqual(mod.analizarProyecto(conIniCarpeta).incompleto, ["platformio.ini"])
+
+  const srcArchivo = proyectoCon({ "codigo": "no soy una carpeta" }, "[platformio]\nsrc_dir = codigo\n[env:esp32dev]\nboard = esp32dev\n")
+  assert.deepEqual(mod.analizarProyecto(srcArchivo).incompleto, ["codigo"])
+  // Sin ini, o sin ninguna carpeta de código, no hay nada que analizar todavía.
+  assert.equal(mod.analizarProyecto(proyectoCon({}, "[env:esp32dev]\nboard = esp32dev\n")), null)
+})
+
+// ── 2. Compilación condicional ───────────────────────────────────────────────
+
+const PORTABLE = "#if defined(ESP32)\n#define LED 2\n#define BOTON 4\n#else\n#define LED 7\n#define BOTON 8\n#endif\nvoid setup(){ pinMode(LED, OUTPUT); pinMode(BOTON, INPUT_PULLUP); }"
+
+test("#if defined(ESP32): en esp32dev se usa SOLO la rama de ESP32, y en UNO solo la otra", () => {
+  assert.deepEqual(mod.analizarPines(PORTABLE, "esp32"), [], "tomó el LED 7 de la rama de AVR")
+  assert.deepEqual(mod.huellaDelCodigo(PORTABLE, "esp32dev").huella.entradas, ["pin:4:INPUT_PULLUP"])
+  assert.doesNotMatch(textos(mod.analizarPines(PORTABLE, "uno")), /GPIO/)
+  assert.deepEqual(mod.huellaDelCodigo(PORTABLE, "uno").huella.entradas, ["pin:7:OUTPUT", "pin:8:INPUT_PULLUP"])
+})
+
+test("#if defined(ESP32) alrededor de pinMode(7) en esp32dev: se compila, así que BLOQUEA", () => {
+  assert.deepEqual(niveles(mod.analizarPines("#if defined(ESP32)\nvoid setup(){ pinMode(7, OUTPUT); }\n#endif", "esp32")), ["bloqueo"])
+  assert.deepEqual(niveles(mod.analizarPines("#ifdef ARDUINO_ARCH_ESP32\nvoid setup(){ pinMode(7, OUTPUT); }\n#endif", "esp32")), ["bloqueo"])
+  // Y la rama de AVR en un ESP32 no se compila: ni avisos.
+  assert.deepEqual(mod.analizarPines("#ifdef __AVR__\nvoid setup(){ pinMode(7, OUTPUT); }\n#endif", "esp32"), [])
+  assert.deepEqual(mod.analizarPines("#ifndef ESP32\nvoid setup(){ pinMode(7, OUTPUT); }\n#endif", "esp32"), [])
+})
+
+test("#elif y #else se evalúan para la placa", () => {
+  const src = "#if defined(__AVR__)\nvoid a(){ pinMode(7, OUTPUT); }\n#elif defined(ESP32)\nvoid b(){ pinMode(8, OUTPUT); }\n#else\nvoid c(){ pinMode(9, OUTPUT); }\n#endif"
+  assert.match(textos(mod.analizarPines(src, "esp32")), /^GPIO8 está cableado/)
+  assert.equal(mod.analizarPines(src, "esp32").length, 1)
+  assert.deepEqual(mod.huellaDelCodigo(src, "uno").huella.entradas, ["pin:7:OUTPUT"])
+  assert.deepEqual(mod.huellaDelCodigo("#if defined(ARDUINO_AVR_NANO)\nvoid a(){ pinMode(5, OUTPUT); }\n#endif", "uno").huella.entradas, [])
+  assert.deepEqual(mod.huellaDelCodigo("#if defined(ARDUINO_AVR_NANO)\nvoid a(){ pinMode(5, OUTPUT); }\n#endif", "nanoatmega328").huella.entradas, ["pin:5:OUTPUT"])
+})
+
+test("un header con include guard y pinMode(7) BLOQUEA: el guard no es una condición", () => {
+  const src = "#ifndef PINES_H\n#define PINES_H\ninline void iniciar(){ pinMode(7, OUTPUT); }\n#endif\n"
+  assert.deepEqual(niveles(mod.analizarPines(src, "esp32")), ["bloqueo"])
+})
+
+test("un #ifdef DEBUG vacío ANTES no contagia: pinMode(7) después de su #endif bloquea", () => {
+  assert.deepEqual(niveles(mod.analizarPines("#ifdef DEBUG\n#endif\nvoid setup(){ pinMode(7, OUTPUT); }", "esp32")), ["bloqueo"])
+})
+
+test("#ifdef anidados: pinMode(7) entre el #endif de adentro y el de afuera sigue siendo aviso", () => {
+  const src = "#ifdef A\n#ifdef B\n#endif\nvoid setup(){ pinMode(7, OUTPUT); }\n#endif\n"
+  assert.deepEqual(niveles(mod.analizarPines(src, "esp32")), ["aviso"])
+})
+
+test("un nombre definido distinto en ramas desconocidas queda sin resolver, y la huella guarda los dos valores", () => {
+  const src = "#ifdef DEBUG\n#define MOTOR 7\n#else\n#define MOTOR 4\n#endif\nvoid setup(){ pinMode(MOTOR, OUTPUT); }"
+  assert.deepEqual(mod.analizarPines(src, "esp32"), [])
+  assert.deepEqual(mod.huellaDelCodigo(src, "esp32dev").huella.entradas, ["pin:MOTOR{MOTOR=7|4}:OUTPUT"])
+})
+
+test("evaluarCondicion(): tres valores, y lo que no entiende es null", () => {
+  const c = mod.macrosDePlaca("esp32dev")
+  assert.equal(mod.evaluarCondicion("defined(ESP32) && !defined(__AVR__)", c), true)
+  assert.equal(mod.evaluarCondicion("defined ESP32 || defined(DEBUG)", c), true)
+  assert.equal(mod.evaluarCondicion("defined(DEBUG) && defined(__AVR__)", c), false)
+  assert.equal(mod.evaluarCondicion("defined(DEBUG)", c), null)
+  assert.equal(mod.evaluarCondicion("ESP_ARDUINO_VERSION >= 2", c), null)
+  assert.equal(mod.evaluarCondicion("0", c), false)
+  assert.equal(mod.evaluarCondicion("(1)", c), true)
+})
+
+// ── 3. Más fuentes ──────────────────────────────────────────────────────────
+
+test("un header en include/ con #define MOTOR 7 bloquea; 7→4→25 después de cargar pide el checklist de nuevo", async () => {
+  const main = '#include "config.h"\nvoid setup(){ pinMode(MOTOR, OUTPUT); }'
+  const dir = proyectoCon({ "include/config.h": "#pragma once\n#define MOTOR 7\n", "src/main.cpp": main })
+  assert.match(await ejecutar({ action: "flash", project_path: dir }), /NO CARGUÉ NADA[\s\S]*GPIO7/)
+
+  writeFileSync(join(dir, "include", "config.h"), "#pragma once\n#define MOTOR 4\n")
+  const r1 = await ejecutar({ action: "flash", project_path: dir })
+  assert.match(r1, /Lo nuevo: GPIO4 como salida/)
+  assert.match(await ejecutar({ action: "flash", project_path: dir, checklist: codigoDe(r1) }), /Codigo cargado exitosamente/)
+
+  writeFileSync(join(dir, "include", "config.h"), "#pragma once\n#define MOTOR 25\n")
+  spawns = []
+  const r2 = await ejecutar({ action: "flash", project_path: dir })
+  assert.match(r2, /FRENÉ LA CARGA[\s\S]*Lo nuevo: GPIO25 como salida/)
+  assert.ok(!cargo())
+})
+
+test("un pin sin resolver entra a la huella con lo que tiene escrito: cambiar su valor cambia el código", () => {
+  const a = mod.huellaDelCodigo("int pin = 4;\nvoid setup(){ pin = digitalRead(2) ? pin : 5; pinMode(pin, OUTPUT); }", "esp32dev").huella
+  const b = mod.huellaDelCodigo("int pin = 25;\nvoid setup(){ pin = digitalRead(2) ? pin : 5; pinMode(pin, OUTPUT); }", "esp32dev").huella
+  assert.notEqual(mod.codigoChecklist(a), mod.codigoChecklist(b))
+  assert.ok(a.entradas.includes("pin:pin{pin=4}:OUTPUT"), a.entradas.join())
+})
+
+test("lib/ se lee (sin los ejemplos de la librería), y src_dir / include_dir se respetan", () => {
+  const conLib = proyectoCon({
+    "src/main.cpp": '#include "motor.h"\nvoid setup(){ arrancar(); }',
+    "lib/Motor/src/motor.h": "inline void arrancar(){ pinMode(7, OUTPUT); }",
+    "lib/Motor/examples/demo/demo.ino": "void setup(){ pinMode(8, OUTPUT); }",
+  })
+  const a = mod.analizarProyecto(conLib)
+  assert.deepEqual(niveles(a.hallazgos), ["bloqueo"])
+  assert.match(textos(a.hallazgos), /GPIO7/)
+  assert.doesNotMatch(textos(a.hallazgos), /GPIO8/, "leyó los ejemplos de la librería")
+
+  const movido = proyectoCon(
+    { "codigo/principal.cpp": "void setup(){ pinMode(MOTOR, OUTPUT); }", "cabeceras/pines.h": "#define MOTOR 9\n", "src/viejo.cpp": "void x(){ pinMode(10, OUTPUT); }" },
+    "[platformio]\nsrc_dir = codigo\ninclude_dir = ${PROJECT_DIR}/cabeceras\n[env:esp32dev]\nboard = esp32dev\n",
+  )
+  const b = mod.analizarProyecto(movido)
+  assert.match(textos(b.hallazgos), /GPIO9/)
+  assert.doesNotMatch(textos(b.hallazgos), /GPIO10/, "leyó src/ aunque el ini dice otra carpeta")
+})
+
+test("cada archivo se limpia por su lado: un /* sin cerrar en un .h no tapa el main.cpp", () => {
+  const dir = proyectoCon({ "src/licencia.h": "/* licencia sin cerrar\n", "src/main.cpp": "void setup(){ pinMode(7, OUTPUT); }" })
+  assert.deepEqual(niveles(mod.analizarProyecto(dir).hallazgos), ["bloqueo"])
+  const dir2 = proyectoCon({ "src/a.h": "#ifndef A\n#define A\n", "src/main.cpp": "void setup(){ pinMode(7, OUTPUT); }" })
+  assert.deepEqual(niveles(mod.analizarProyecto(dir2).hallazgos), ["bloqueo"], "un #if sin cerrar en otro archivo bajó el bloqueo")
+})
+
+test("varios archivos, subcarpetas y .ino: todo se lee", () => {
+  const dir = proyectoCon({ "src/pines.h": "#define MOTOR 7\n", "src/sub/motor.cpp": "void m(){ pinMode(MOTOR, OUTPUT); }", "src/sketch.ino": "void setup(){ pinMode(8, OUTPUT); }" })
+  const t = textos(mod.analizarProyecto(dir).hallazgos)
+  assert.match(t, /GPIO7/)
+  assert.match(t, /GPIO8/)
+})
+
+// ── 4. Métodos de otros objetos ──────────────────────────────────────────────
+
+test("mcp.pinMode(7) y exp->digitalWrite(8) son pines de un expansor, no GPIO7/8", () => {
+  assert.deepEqual(mod.analizarPines("#include <Adafruit_MCP23X17.h>\nAdafruit_MCP23X17 mcp;\nvoid setup(){ mcp.pinMode(7, OUTPUT); exp->digitalWrite(8, HIGH); }", "esp32"), [])
+})
+
+// ── 5. Falsos negativos de la flash ──────────────────────────────────────────
+
+test("constructores de librerías con un pin de la flash bloquean", () => {
+  const casos = [
+    "#include <LiquidCrystal.h>\nLiquidCrystal lcd(12, 11, 5, 4, 3, 2);",
+    "#include <Stepper.h>\nStepper motor(2048, 8, 10, 9, 11);",
+    "#include <Adafruit_NeoPixel.h>\nAdafruit_NeoPixel tira(16, 7, NEO_GRB + NEO_KHZ800);",
+    "#include <Adafruit_NeoPixel.h>\nAdafruit_NeoPixel tira = Adafruit_NeoPixel(16, 7, NEO_GRB);",
+    "#include <DHT.h>\nDHT dht(7, DHT22);",
+    "#include <OneWire.h>\nOneWire bus(7);",
+    "#include <Servo.h>\nServo garra;\nvoid setup(){ garra.attach(7); }",
+    "#include <FastLED.h>\nCRGB leds[8];\nvoid setup(){ FastLED.addLeds<WS2812, 7, GRB>(leds, 8); }",
+    "#include <NewPing.h>\nNewPing sonar(7, 4, 200);",
+  ]
+  for (const src of casos) assert.ok(niveles(mod.analizarPines(src, "esp32")).includes("bloqueo"), `no bloqueó:\n${src}`)
+  // El primer argumento del Stepper son los pasos, no un pin.
+  assert.doesNotMatch(textos(mod.analizarPines("#include <Stepper.h>\nStepper motor(9, 4, 5, 18, 19);", "esp32")), /GPIO9/)
+})
+
+test("Serial1.begin sin pines en ESP32 bloquea (RX1/TX1 de fábrica son 9 y 10); con pines, se miran esos", () => {
+  const sinPines = mod.analizarPines("void setup(){ Serial1.begin(9600); }", "esp32")
+  assert.deepEqual(niveles(sinPines), ["bloqueo"])
+  assert.match(textos(sinPines), /Serial1\.begin sin pines usa GPIO9 y GPIO10/)
+  assert.deepEqual(mod.analizarPines("void setup(){ Serial1.begin(9600, SERIAL_8N1, 16, 17); }", "esp32"), [])
+  assert.deepEqual(niveles(mod.analizarPines("void setup(){ Serial1.begin(9600, SERIAL_8N1, 7, 17); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(mod.analizarPines("void setup(){ Serial2.begin(9600); }", "esp32"), [], "Serial2 de fábrica usa 16/17")
+  assert.equal(niveles(mod.analizarPines("#ifdef DEBUG\nvoid setup(){ Serial1.begin(9600); }\n#endif", "esp32"))[0], "aviso")
+})
+
+test("const int a = 4, b = 7; resuelve los dos", () => {
+  assert.deepEqual(niveles(mod.analizarPines("const int a = 4, b = 7;\nvoid setup(){ pinMode(b, OUTPUT); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(mod.analizarPines("const int a = 4, b = 7;\nvoid setup(){ pinMode(a, OUTPUT); }", "esp32"), [])
+  assert.deepEqual(niveles(mod.analizarPines("int x = digitalRead(4), MOTOR = 7;\nvoid setup(){ pinMode(MOTOR, OUTPUT); }", "esp32")), ["bloqueo"])
+})
+
+test("un parámetro que se llama como una global la tapa SOLO adentro de su función", () => {
+  const src = "const int ledPin = 7;\nvoid parpadear(int ledPin){ digitalWrite(ledPin, HIGH); }\nvoid setup(){ pinMode(ledPin, OUTPUT); parpadear(ledPin); }"
+  assert.deepEqual(niveles(mod.analizarPines(src, "esp32")), ["bloqueo"], "afuera de la función la global vale 7")
+  // Y adentro no se inventa nada: el pin real está en la llamada.
+  assert.deepEqual(mod.huellaDelCodigo(src.replace("= 7", "= 4"), "esp32dev").huella.entradas, ["pin:4:OUTPUT"])
+})
+
+test("GPIO_NUM_7, ledcAttachPin(7) y tone(7) cuentan aunque no haya pinMode", () => {
+  for (const src of ["void setup(){ pinMode(GPIO_NUM_7, OUTPUT); }", "void setup(){ ledcAttachPin(7, 0); }", "void setup(){ ledcAttach(7, 5000, 8); }", "void loop(){ tone(7, 440); }"]) {
+    assert.deepEqual(niveles(mod.analizarPines(src, "esp32")), ["bloqueo"], src)
+  }
+  assert.deepEqual(mod.huellaDelCodigo("void setup(){ ledcAttachPin(25, 0); }", "esp32dev").huella.entradas, ["pin:25:PWM"])
+  assert.deepEqual(mod.huellaDelCodigo("void loop(){ tone(25, 440); }", "esp32dev").huella.entradas, ["pin:25:OUTPUT"])
+})
+
+// ── 6. Qué placa ────────────────────────────────────────────────────────────
+
+test("placasElegidas(): default_envs, [env] común pisado por el env, varios envs, y el environment pedido", () => {
+  const varios = "[platformio]\ndefault_envs = esp\n[env]\nboard = uno\n[env:esp]\nboard = esp32dev\n[env:clase]\n[env:nano]\nboard = nanoatmega328\n"
+  assert.deepEqual(mod.placasElegidas(varios), ["esp32dev"], "default_envs manda")
+  assert.deepEqual(mod.placasElegidas(varios, "clase"), ["uno"], "un env sin board toma el de [env]")
+  assert.deepEqual(mod.placasElegidas(varios, "nano"), ["nanoatmega328"])
+  assert.deepEqual(mod.placasElegidas(varios.replace("default_envs = esp\n", "")), ["esp32dev", "uno", "nanoatmega328"], "sin elegir, son todos")
+  assert.deepEqual(mod.placasElegidas("[platformio]\ndefault_envs =\n    b\n[env:a]\nboard = uno\n[env:b]\nboard = esp32dev\n"), ["esp32dev"], "default_envs en varias líneas")
+})
+
+test("sin env elegido y con varias placas, se analiza cada una y se juntan los avisos", async () => {
+  const ini = "[env:uno]\nboard = uno\n[env:esp32dev]\nboard = esp32dev\n"
+  const dir = proyectoCon({ "src/main.cpp": "void setup(){ pinMode(7, OUTPUT); }" }, ini)
+  const a = mod.analizarProyecto(dir)
+  assert.deepEqual(niveles(a.hallazgos), ["bloqueo"], "el bloqueo de la placa ESP32 se perdió")
+  assert.equal(a.huella.placa, "esp32dev+uno")
+  // Pidiendo el env del UNO, no hay bloqueo de ESP32.
+  assert.deepEqual(mod.analizarProyecto(dir, "uno").hallazgos, [])
+  // Y con default_envs apuntando al ESP32 aunque el primer env sea el UNO, bloquea.
+  const dir2 = proyectoCon({ "src/main.cpp": "void setup(){ pinMode(7, OUTPUT); }" }, "[platformio]\ndefault_envs = esp32dev\n\n" + ini)
+  assert.match(await ejecutar({ action: "flash", project_path: dir2 }), /NO CARGUÉ NADA/)
+})
+
+// ── 8. LED de la placa y relés ───────────────────────────────────────────────
+
+test("el pin 13 con otro nombre (LAMPARA) SÍ pide checklist; con un nombre de LED o un número, no", () => {
+  assert.deepEqual(mod.huellaDelCodigo("const int LAMPARA = 13;\nvoid setup(){ pinMode(LAMPARA, OUTPUT); }", "uno").huella.entradas, ["pin:13:OUTPUT"])
+  assert.deepEqual(mod.huellaDelCodigo("const int ledVerde = 13;\nvoid setup(){ pinMode(ledVerde, OUTPUT); }", "uno").huella.entradas, [])
+  assert.deepEqual(mod.huellaDelCodigo("void setup(){ pinMode(13, OUTPUT); }", "uno").huella.entradas, [])
+  assert.deepEqual(mod.huellaDelCodigo("const int LED_ROJO = 18;\nvoid setup(){ pinMode(LED_ROJO, OUTPUT); }", "esp32dev").huella.entradas, ["pin:18:OUTPUT"], "un LED externo en otro pin sí cuenta")
+})
+
+test("relé por palabras: pinRele, RELAY_1 y #define RELE sí; RELEASE e irrelevante no", () => {
+  const rele = (src) => mod.huellaDelCodigo(src, "esp32dev").rasgos.rele
+  assert.equal(rele("const int pinRele = 26;\nvoid setup(){ pinMode(pinRele, OUTPUT); }"), true)
+  assert.equal(rele("const int RELAY_1 = 26;\nvoid setup(){ pinMode(RELAY_1, OUTPUT); }"), true)
+  assert.equal(rele("#define RELE 4\nvoid setup(){}"), true)
+  assert.equal(rele("const int RELEASE_MS = 26;\nvoid setup(){ pinMode(RELEASE_MS, OUTPUT); }"), false)
+  assert.equal(rele("const int irrelevante = 26;\nvoid setup(){ pinMode(irrelevante, OUTPUT); }"), false)
+  assert.equal(rele("// #define RELE 4\nvoid setup(){}"), false, "un relé comentado no es un relé")
+  assert.deepEqual(mod.skillsParaRasgos(mod.huellaDelCodigo("#define RELE 4\nvoid setup(){ pinMode(RELE, OUTPUT); }", "esp32dev").rasgos), ["actuadores", "checklist-seguridad"])
+})
+
+// ── 9. Por placa, no solo por proyecto ───────────────────────────────────────
+
+test("cargar el mismo proyecto en OTRA placa pide el checklist; el estado guarda puerto, hwid y proyecto", async () => {
+  const dir = proyecto("esp32dev", CON_BUZZER)
+  const r1 = await ejecutar({ action: "flash", project_path: dir })
+  await ejecutar({ action: "flash", project_path: dir, checklist: codigoDe(r1) })
+  const estado = JSON.parse(readFileSync(estadoDe(dir), "utf8"))
+  assert.equal(estado.puerto, "/dev/ttyUSB0")
+  assert.equal(estado.hwid, CH340.hwid)
+  assert.equal(estado.proyecto, dir)
+
+  spawns = []
+  const r2 = await ejecutar({ action: "flash", project_path: dir, port: "/dev/ttyUSB1" })
+  assert.match(r2, /FRENÉ LA CARGA[\s\S]*otra placa o por otro puerto/)
+  assert.ok(!cargo())
+  assert.match(await ejecutar({ action: "flash", project_path: dir, port: "/dev/ttyUSB1", checklist: codigoDe(r2) }), /Codigo cargado exitosamente en \/dev\/ttyUSB1/)
+})
+
+test("si en esa placa lo último que se cargó fue OTRO proyecto, pide el checklist (después de buscar la placa)", async () => {
+  const a = proyecto("esp32dev", CON_BUZZER)
+  const b = proyecto("esp32dev", "const int MOTOR = 26;\nvoid setup(){ pinMode(MOTOR, OUTPUT); }")
+  await ejecutar({ action: "flash", project_path: a, checklist: codigoDe(await ejecutar({ action: "flash", project_path: a })) })
+  await ejecutar({ action: "flash", project_path: b, checklist: codigoDe(await ejecutar({ action: "flash", project_path: b })) })
+  spawns = []
+  const r = await ejecutar({ action: "flash", project_path: a })
+  assert.match(r, /OTRO proyecto/)
+  assert.ok(buscoPlaca(), "este freno necesita el puerto: va después de buscar la placa")
+  assert.ok(!cargo())
+  // El registro de la compu guarda hashes: ni la ruta ni el hwid quedan legibles.
+  const global = readFileSync(join(process.env.XDG_CONFIG_HOME, "opencode", "tecnia-cargas.json"), "utf8")
+  assert.ok(!global.includes(a) && !global.includes("1A86"), global)
+})
+
+test("both: estado SOLO tras una carga con código 0, y los avisos llegan después de cargar", async () => {
+  const dir = proyecto("esp32dev", "const int SALIDA = 34;\nvoid setup(){ pinMode(SALIDA, OUTPUT); }")
+  const codigo = codigoDe(await ejecutar({ action: "both", project_path: dir }))
+  escenario({ upload: { code: 1, stderr: "A fatal error occurred: Failed to connect to ESP32\n" } })
+  assert.match(await ejecutar({ action: "both", project_path: dir, checklist: codigo }), /error al cargar/)
+  assert.ok(!existsSync(estadoDe(dir)), "both guardó el estado de una carga que falló")
+  escenario()
+  const r = await ejecutar({ action: "both", project_path: dir, checklist: codigo })
+  assert.match(r, /Compilacion y carga exitosa/)
+  assert.match(r, /Contale al docente estos pines:[\s\S]*GPIO34 es SOLO ENTRADA/)
+  assert.ok(existsSync(estadoDe(dir)))
+})
+
+test("el código del checklist se acepta con espacios alrededor", async () => {
+  const dir = proyecto("esp32dev", CON_BUZZER)
+  const codigo = codigoDe(await ejecutar({ action: "flash", project_path: dir }))
+  assert.match(await ejecutar({ action: "flash", project_path: dir, checklist: `  ${codigo} ` }), /Codigo cargado exitosamente/)
+})
+
+// ── 10. Lo que confundía al analizador ───────────────────────────────────────
+
+test("textos crudos R\"(...)\", separadores 1'000, \"/*.txt\" y \"http://\" no rompen la limpieza", () => {
+  const html = 'const char pagina[] PROGMEM = R"rawliteral(\n<p>pinMode(7, OUTPUT) it\'s "x"</p>\n)rawliteral";\nvoid setup(){ pinMode(4, OUTPUT); }'
+  assert.deepEqual(mod.analizarPines(html, "esp32"), [], "leyó un pinMode adentro del HTML")
+  assert.deepEqual(niveles(mod.analizarPines(html.replace("pinMode(4", "pinMode(7"), "esp32")), ["bloqueo"], "el texto crudo se comió el código de después")
+  assert.deepEqual(niveles(mod.analizarPines("long x = 1'000;\nvoid setup(){ pinMode(7, OUTPUT); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(mod.huellaDelCodigo('const char* g = "/*.txt";\n#include <Servo.h>\nServo s;\nvoid setup(){ s.attach(4); }', "esp32dev").huella.entradas, ["lib:Servo", "pin:4:SERVO"])
+  assert.deepEqual(niveles(mod.analizarPines('const char* u = "http://x";\n#include <Servo.h>\nServo s;\nvoid setup(){ s.attach(34); }', "esp32")), ["aviso"])
+  assert.match(mod.limpiarCodigo('char* u = "http://x"; int a;', false), /int a;/)
+})
+
+test("Serial.begin y WiFi adentro de un texto no disparan avisos", () => {
+  assert.deepEqual(mod.analizarPines('const char* s = "Serial.begin(9600)";\nvoid setup(){ pinMode(1, OUTPUT); }', "uno"), [])
+  assert.deepEqual(mod.analizarPines('const char* s = "WiFi.begin";\nvoid loop(){ analogRead(25); }', "esp32"), [])
+})
+
+test("Ticker.attach(7) no es un servo (no hay `Servo` declarado)", () => {
+  assert.deepEqual(mod.analizarPines("#include <Ticker.h>\n#include <Servo.h>\nTicker t;\nServo s;\nvoid setup(){ t.attach(7, cb); s.attach(4); }", "esp32"), [])
+})
+
+// ── 11. Placas fuera del catálogo ───────────────────────────────────────────
+
+test("placa fuera del catálogo: no pide checklist por el LED (por nombre), sí por otro hardware", () => {
+  const blink = readFileSync(join(REPO, "ejemplos", "blink-esp32", "src", "main.cpp"), "utf8")
+  assert.deepEqual(mod.huellaDelCodigo(blink, "esp32-c3-devkitm-1").huella.entradas, [])
+  assert.deepEqual(mod.huellaDelCodigo("void setup(){ pinMode(LED_BUILTIN, OUTPUT); }", "esp32-c3-devkitm-1").huella.entradas, [])
+  assert.deepEqual(mod.huellaDelCodigo("const int MOTOR = 5;\nvoid setup(){ pinMode(MOTOR, OUTPUT); }", "esp32-c3-devkitm-1").huella.entradas, ["pin:5:OUTPUT"])
+  assert.deepEqual(mod.analizarPines("void setup(){ pinMode(7, OUTPUT); }", null), [])
+})
+
+// ── 12. Los mutantes que sobrevivieron ───────────────────────────────────────
+
+test("textos: las comillas escapadas no cierran el texto, y un texto sin cerrar termina en la línea", () => {
+  assert.deepEqual(mod.analizarPines('const char* s = "a\\"pinMode(7, OUTPUT)\\"";\nvoid setup(){}', "esp32"), [])
+  assert.deepEqual(niveles(mod.analizarPines('const char* s = "sin cerrar\nvoid setup(){ pinMode(7, OUTPUT); }', "esp32")), ["bloqueo"])
+})
+
+test("resolución: #define gana, += reasigna, == no, y una variable declarada dos veces no se resuelve", () => {
+  assert.deepEqual(niveles(mod.analizarPines("#define MOTOR 7\nconst int MOTOR = 4;\nvoid setup(){ pinMode(MOTOR, OUTPUT); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(mod.analizarPines("int pin = 7;\nvoid setup(){ pin += 1; pinMode(pin, OUTPUT); }", "esp32"), [])
+  assert.deepEqual(niveles(mod.analizarPines("int pin = 7;\nvoid setup(){ if (pin == 4) {} pinMode(pin, OUTPUT); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(mod.analizarPines("int pin = 7;\nvoid setup(){ int pin = 4; pinMode(pin, OUTPUT); }", "esp32"), [])
+  assert.deepEqual(mod.analizarPines("int pin = 7;\nint* p = &pin;\nvoid setup(){ *p = 4; pinMode(pin, OUTPUT); }", "esp32"), [], "escrita por puntero")
+})
+
+test("compile: el recordatorio sale con un cambio de placa, y no sale sin hardware", async () => {
+  const dir = proyecto("esp32dev", "#include <DHT.h>\nDHT dht(4, DHT22);\nvoid setup(){ dht.begin(); }")
+  await ejecutar({ action: "flash", project_path: dir, checklist: codigoDe(await ejecutar({ action: "flash", project_path: dir })) })
+  assert.doesNotMatch(await ejecutar({ action: "compile", project_path: dir }), /Recordatorio/)
+  writeFileSync(join(dir, "platformio.ini"), "[env:uno]\nboard = uno\n")
+  assert.match(await ejecutar({ action: "compile", project_path: dir }), /Recordatorio/, "otra placa con las mismas entradas es un cambio")
+  // WiFi solo, sin pines ni carga previa: no hay circuito que cambió.
+  const wifi = proyecto("esp32dev", '#include <WiFi.h>\nvoid setup(){ WiFi.begin("a", "b"); }')
+  assert.doesNotMatch(await ejecutar({ action: "compile", project_path: wifi }), /Recordatorio/)
+})
+
+test("huella: el pinMode manda sobre digitalWrite/digitalRead del mismo pin", () => {
+  assert.deepEqual(mod.huellaDelCodigo("void setup(){ pinMode(4, INPUT); }\nvoid loop(){ digitalWrite(4, HIGH); }", "esp32dev").huella.entradas, ["pin:4:INPUT"])
+  assert.deepEqual(mod.huellaDelCodigo("void loop(){ digitalWrite(4, HIGH); digitalRead(4); }", "esp32dev").huella.entradas, ["pin:4:INPUT", "pin:4:OUTPUT"])
+})
+
+test("un #include comentado no cuenta como librería", () => {
+  assert.deepEqual(mod.huellaDelCodigo("// #include <DHT.h>\n/* #include <Servo.h> */\nvoid setup(){}", "esp32dev").huella.entradas, [])
+})
+
+test("GPIO3 es RX y GPIO1 es TX", () => {
+  assert.match(textos(mod.analizarPines("void setup(){ pinMode(3, INPUT); }", "esp32")), /GPIO3 es RX/)
+})
+
+test("los hallazgos salen ordenados (bloqueo, aviso, nota) y sin repetirse", () => {
+  const src = "void setup(){ pinMode(2, INPUT); pinMode(34, OUTPUT); pinMode(7, OUTPUT); digitalWrite(7, HIGH); }"
+  assert.deepEqual(niveles(mod.analizarPines(src, "esp32")), ["bloqueo", "aviso", "nota"])
+})
+
+test("GPIO_NUM_7 resuelve, y analogRead(A0) con WiFi es GPIO36 (ADC1) pero A14 es GPIO13 (ADC2)", () => {
+  assert.deepEqual(mod.usosDePines("void setup(){ pinMode(GPIO_NUM_7, OUTPUT); }", "esp32")[0].pines, [7])
+  assert.deepEqual(mod.analizarPines("#include <WiFi.h>\nvoid loop(){ analogRead(A0); }", "esp32"), [])
+  assert.match(textos(mod.analizarPines("#include <WiFi.h>\nvoid loop(){ analogRead(A14); }", "esp32")), /GPIO13 es del ADC2/)
+})
+
+test("macros: el cuerpo de un #define sin parámetros es un uso; el de uno con parámetros no", () => {
+  assert.deepEqual(niveles(mod.analizarPines("#define INIT pinMode(7, OUTPUT)\nvoid setup(){ INIT; }", "esp32")), ["bloqueo"])
+  assert.deepEqual(niveles(mod.analizarPines("#define INIT() \\\n  pinMode(7, OUTPUT)\nvoid setup(){ INIT(); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(mod.analizarPines("int p = 7;\n#define SALIDA(p) pinMode(p, OUTPUT)\nvoid setup(){ SALIDA(4); }", "esp32"), [])
+})
+
+test("con fin de línea de Windows (CRLF) los #define se resuelven igual", () => {
+  const src = "#define MOTOR 7\r\n#ifdef DEBUG\r\n#endif\r\nvoid setup(){ pinMode(MOTOR, OUTPUT); }\r\n"
+  assert.deepEqual(niveles(mod.analizarPines(src, "esp32")), ["bloqueo"])
+})
+
+test("limpiarCodigo() termina siempre: con entradas rotas no se cuelga (en un proceso aparte, con tope de tiempo)", () => {
+  // Una mutación del limpiador colgó la suite entera: un bucle infinito no lo
+  // corta un timeout de node:test, porque el código es sincrónico. Por eso se
+  // corre en un proceso hijo que se mata a los 15 segundos.
+  const script = join(OUT, "limpieza-colgada.mjs")
+  writeFileSync(
+    script,
+    [
+      "globalThis.Bun = { which: () => null, spawn() {} }",
+      `const m = await import(${JSON.stringify(join(OUT, "platformio.ts"))})`,
+      `const rotas = ['"sin cerrar', "'", 'R"(sin cerrar', 'R"', 'R"x', "/* sin cerrar", "//", "\\\\", '"\\\\', "1'", "'1", 'u8R"(', "#if\\n#elif\\n#else\\n#endif\\n#endif", "#define X \\\\"]`,
+      "for (const r of rotas) { m.limpiarCodigo(r); m.limpiarCodigo(r, false); m.analizarPines(r, 'esp32') }",
+      "console.log('termino')",
+    ].join("\n"),
+  )
+  const r = spawnSync(process.execPath, [script], { timeout: 15_000, encoding: "utf8" })
+  assert.equal(r.signal, null, "lo tuve que matar: se colgó")
+  assert.equal(r.status, 0, r.stderr)
+  assert.match(r.stdout, /termino/)
 })
