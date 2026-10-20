@@ -1180,7 +1180,7 @@ const no3 = (a: Tri): Tri => (a === null ? null : !a)
  */
 export function evaluarCondicion(expr: string, conocidas: Map<string, Tri>): Tri {
   const toks = expr.match(/0x[0-9a-fA-F]+|\d+[uUlL]*|[A-Za-z_]\w*|&&|\|\||[()!]|\S/g) ?? []
-  if (toks.some((t) => !/^(0x[0-9a-fA-F]+|\d+[uUlL]*|[A-Za-z_]\w*|&&|\|\||[()!])$/.test(t))) return null
+  // Un token que no entiende (`>=`, `+`) corta el parseo antes del final, y eso da null abajo.
   let p = 0
   const valorNombre = (x: string): Tri => conocidas.get(x) ?? null
   const primario = (): Tri | undefined => {
@@ -2169,8 +2169,8 @@ function leerFuentes(cwd: string, iniText: string): { archivos: Archivo[]; ilegi
     hayCarpetas = true
     recorrer(r, 0)
   }
-  // Los .h primero: los #define de configuracion suelen vivir ahi.
-  archivos.sort((a, b) => Number(!/\.h(pp)?$/i.test(a.nombre)) - Number(!/\.h(pp)?$/i.test(b.nombre)) || (a.nombre < b.nombre ? -1 : 1))
+  // El orden de los archivos no cambia el resultado: los #define de varios
+  // archivos se juntan sin importar cual va primero (ver `preparar`).
   return { archivos, ilegibles, hayCarpetas }
 }
 
@@ -2436,9 +2436,12 @@ export function frenoPorPlaca(
   const registro = cargas[puerto]
   const otroProyecto = !!registro && registro.proyecto !== proyecto
   if (!otraPlaca && !otroProyecto) return null
-  const motivo = otroProyecto
-    ? `En la placa de ${puerto} lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.`
-    : `La última carga de este proyecto fue en otra placa o por otro puerto, y ahora va a ${puerto}.`
+  const motivo = [
+    otraPlaca ? `La última carga de este proyecto fue en otra placa o por otro puerto, y ahora va a ${puerto}.` : "",
+    otroProyecto ? `En la placa de ${puerto} lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
   return pedirChecklist(motivo, `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`, codigo, checklist)
 }
 

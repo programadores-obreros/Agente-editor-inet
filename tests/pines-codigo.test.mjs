@@ -726,6 +726,31 @@ test("un nombre definido distinto en ramas desconocidas queda sin resolver, y la
   assert.deepEqual(mod.huellaDelCodigo(src, "esp32dev").huella.entradas, ["pin:MOTOR{MOTOR=7|4}:OUTPUT"])
 })
 
+test("#elif después de una rama ya tomada no se compila, y #undef saca el nombre", () => {
+  const src = "#if defined(ESP32)\nvoid a(){}\n#elif defined(ARDUINO_ARCH_ESP32)\nvoid b(){ pinMode(7, OUTPUT); }\n#endif"
+  assert.deepEqual(mod.analizarPines(src, "esp32"), [])
+  // Si la primera rama es desconocida, la del #elif puede compilarse: aviso, no silencio.
+  assert.deepEqual(niveles(mod.analizarPines(src.replace("defined(ESP32)", "defined(DEBUG)"), "esp32")), ["aviso"])
+  assert.deepEqual(mod.analizarPines("#define LED 7\n#undef LED\nvoid setup(){ pinMode(LED, OUTPUT); }", "esp32"), [])
+})
+
+test("preprocesador: #define en varias líneas, #ifdef de un nombre del propio código, y el mismo nombre distinto en dos archivos", () => {
+  assert.deepEqual(niveles(mod.analizarPines("#define MOTOR \\\n  7\nvoid setup(){ pinMode(MOTOR, OUTPUT); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(niveles(mod.analizarPines("#define USAR_MOTOR\n#ifdef USAR_MOTOR\nvoid setup(){ pinMode(7, OUTPUT); }\n#endif", "esp32")), ["bloqueo"], "USAR_MOTOR está definido en el código: la rama se compila")
+  const dos = proyectoCon({ "src/a.cpp": "#define LED 4\nvoid a(){ pinMode(LED, OUTPUT); }", "src/b.cpp": "#define LED 7\nvoid b(){ pinMode(LED, OUTPUT); }" })
+  assert.deepEqual(mod.analizarProyecto(dos).hallazgos, [], "dos archivos con LED distinto: no se sabe cuál, no se inventa")
+})
+
+test("pines en hexa, y el arreglo entero que se le pasa a un Keypad", () => {
+  assert.deepEqual(niveles(mod.analizarPines("void setup(){ pinMode(0x07, OUTPUT); }", "esp32")), ["bloqueo"])
+  const teclado = "#include <Keypad.h>\nbyte filas[4] = {7, 4, 5, 18};\nbyte columnas[4] = {19, 21, 22, 23};\nKeypad k = Keypad(makeKeymap(teclas), filas, columnas, 4, 4);"
+  assert.deepEqual(niveles(mod.analizarPines(teclado, "esp32")), ["bloqueo"])
+})
+
+test("Serial1 sin pines en UNO no es la regla del ESP32", () => {
+  assert.deepEqual(mod.analizarPines("void setup(){ Serial1.begin(9600); }", "uno"), [])
+})
+
 test("evaluarCondicion(): tres valores, y lo que no entiende es null", () => {
   const c = mod.macrosDePlaca("esp32dev")
   assert.equal(mod.evaluarCondicion("defined(ESP32) && !defined(__AVR__)", c), true)
@@ -781,6 +806,15 @@ test("lib/ se lee (sin los ejemplos de la librería), y src_dir / include_dir se
   const b = mod.analizarProyecto(movido)
   assert.match(textos(b.hallazgos), /GPIO9/)
   assert.doesNotMatch(textos(b.hallazgos), /GPIO10/, "leyó src/ aunque el ini dice otra carpeta")
+})
+
+test("una carpeta que es un link no se sigue: puede salir del proyecto", () => {
+  const afuera = join(OUT, `afuera-${++nProyecto}`)
+  mkdirSync(afuera)
+  writeFileSync(join(afuera, "ajeno.cpp"), "void x(){ pinMode(7, OUTPUT); }")
+  const dir = proyectoCon({ "src/main.cpp": "void setup(){}" })
+  symlinkSync(afuera, join(dir, "src", "externo"))
+  assert.deepEqual(mod.analizarProyecto(dir).hallazgos, [])
 })
 
 test("cada archivo se limpia por su lado: un /* sin cerrar en un .h no tapa el main.cpp", () => {
@@ -883,6 +917,8 @@ test("el pin 13 con otro nombre (LAMPARA) SÍ pide checklist; con un nombre de L
   assert.deepEqual(mod.huellaDelCodigo("const int LAMPARA = 13;\nvoid setup(){ pinMode(LAMPARA, OUTPUT); }", "uno").huella.entradas, ["pin:13:OUTPUT"])
   assert.deepEqual(mod.huellaDelCodigo("const int ledVerde = 13;\nvoid setup(){ pinMode(ledVerde, OUTPUT); }", "uno").huella.entradas, [])
   assert.deepEqual(mod.huellaDelCodigo("void setup(){ pinMode(13, OUTPUT); }", "uno").huella.entradas, [])
+  // Un relé con "led" en el nombre (el LED indicador del módulo) sigue siendo un relé.
+  assert.deepEqual(mod.huellaDelCodigo("const int LED_RELE = 13;\nvoid setup(){ pinMode(LED_RELE, OUTPUT); }", "uno").huella.entradas, ["pin:13:OUTPUT"])
   assert.deepEqual(mod.huellaDelCodigo("const int LED_ROJO = 18;\nvoid setup(){ pinMode(LED_ROJO, OUTPUT); }", "esp32dev").huella.entradas, ["pin:18:OUTPUT"], "un LED externo en otro pin sí cuenta")
 })
 
@@ -913,6 +949,15 @@ test("cargar el mismo proyecto en OTRA placa pide el checklist; el estado guarda
   assert.match(r2, /FRENÉ LA CARGA[\s\S]*otra placa o por otro puerto/)
   assert.ok(!cargo())
   assert.match(await ejecutar({ action: "flash", project_path: dir, port: "/dev/ttyUSB1", checklist: codigoDe(r2) }), /Codigo cargado exitosamente en \/dev\/ttyUSB1/)
+})
+
+test("both también frena si el proyecto va a otra placa", async () => {
+  const dir = proyecto("esp32dev", CON_BUZZER)
+  await ejecutar({ action: "both", project_path: dir, checklist: codigoDe(await ejecutar({ action: "both", project_path: dir })) })
+  spawns = []
+  const r = await ejecutar({ action: "both", project_path: dir, port: "/dev/ttyUSB1" })
+  assert.match(r, /La compilacion fue bien\. FRENÉ LA CARGA[\s\S]*otra placa/)
+  assert.ok(!cargo())
 })
 
 test("si en esa placa lo último que se cargó fue OTRO proyecto, pide el checklist (después de buscar la placa)", async () => {
@@ -955,7 +1000,9 @@ test("textos crudos R\"(...)\", separadores 1'000, \"/*.txt\" y \"http://\" no r
   const html = 'const char pagina[] PROGMEM = R"rawliteral(\n<p>pinMode(7, OUTPUT) it\'s "x"</p>\n)rawliteral";\nvoid setup(){ pinMode(4, OUTPUT); }'
   assert.deepEqual(mod.analizarPines(html, "esp32"), [], "leyó un pinMode adentro del HTML")
   assert.deepEqual(niveles(mod.analizarPines(html.replace("pinMode(4", "pinMode(7"), "esp32")), ["bloqueo"], "el texto crudo se comió el código de después")
-  assert.deepEqual(niveles(mod.analizarPines("long x = 1'000;\nvoid setup(){ pinMode(7, OUTPUT); }", "esp32")), ["bloqueo"])
+  assert.deepEqual(niveles(mod.analizarPines("void setup(){ long x = 1'000; pinMode(7, OUTPUT); }", "esp32")), ["bloqueo"], "el separador abrió un carácter y se comió la línea")
+  // Y al revés: `case'a'` es un carácter, aunque la palabra de antes termine en una letra hexadecimal.
+  assert.deepEqual(niveles(mod.analizarPines("void loop(){ switch (c) { case'a': pinMode(7, OUTPUT); } }", "esp32")), ["bloqueo"])
   assert.deepEqual(mod.huellaDelCodigo('const char* g = "/*.txt";\n#include <Servo.h>\nServo s;\nvoid setup(){ s.attach(4); }', "esp32dev").huella.entradas, ["lib:Servo", "pin:4:SERVO"])
   assert.deepEqual(niveles(mod.analizarPines('const char* u = "http://x";\n#include <Servo.h>\nServo s;\nvoid setup(){ s.attach(34); }', "esp32")), ["aviso"])
   assert.match(mod.limpiarCodigo('char* u = "http://x"; int a;', false), /int a;/)
