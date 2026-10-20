@@ -242,7 +242,7 @@ const PARECE_CODIGO =
 // inglés", "in English", "traducime". Afirmativo: "no en inglés" o "sin
 // traducir" no cuentan, ni "Inglese" (apellido) ni "traductor" (la herramienta).
 const PEDIDO_INGLES =
-  /\b(?:en|al|a|in|to)\s+(?:ingl[eé]s|inglish|english)\b|\btraduc(?:í|i|e|ime|ilo|ila|ilos|ilas|ímelo|imelo|ir|irlo|irla|ción|cion|ciones)\b/gi
+  /\b(?:en|al|a|in|to)\s+(?:ingl[eé]s|inglish|english)(?![\p{L}])|(?<![\p{L}])traduc(?:í|i|e|ime|ilo|ila|ilos|ilas|ímelo|imelo|ir|irlo|irla|ción|cion|ciones)(?![\p{L}])/giu
 const PEDIDO_ESPANOL = /\b(?:en|al|a)\s+(?:español|espanol|castellano)\b/gi
 const NEGACION = /\b(?:no|sin|nunca|ni)\b[^.!?\n]{0,12}$/i
 function pedidoAfirmativo(texto: string, re: RegExp): boolean {
@@ -251,10 +251,55 @@ function pedidoAfirmativo(texto: string, re: RegExp): boolean {
   while ((m = re.exec(texto))) if (!NEGACION.test(texto.slice(Math.max(0, m.index - 20), m.index))) return true
   return false
 }
-/** ¿El docente pidió algo en inglés o una traducción? */
-export const pideIngles = (texto: string | undefined) => !!texto && pedidoAfirmativo(texto, PEDIDO_INGLES)
 /** ¿El docente pidió volver al español? */
 export const pideEspanol = (texto: string | undefined) => !!texto && pedidoAfirmativo(texto, PEDIDO_ESPANOL)
+
+// "en inglés" con un verbo de PEDIDO en su misma cláusula: "pasame la consigna
+// en inglés", "escribime en inglés", "decime 'got it' en inglés".
+const VERBO_PEDIDO =
+  /(?<![\p{L}])(?:pas[aá](?:me|la|lo|las|los|mela|melo)?|escrib[ií](?:me|lo|la|melo|mela)?|arm[aá](?:me|lo|la|melo|mela)?|dame|d[aá]melo|d[aá]mela|dec[ií](?:me|lo|la)?|hac[eé](?:me|lo|la|melo|mela)?|redact[aá](?:me|lo|la)?|mand[aá](?:me|lo|la)?|pon[eé](?:me|lo|la)?|gener[aá](?:me|lo|la)?|prepar[aá](?:me|lo|la)?|explic[aá](?:me|lo|la)?|cont[aá]me|respond[eé]me|contest[aá]me|habl[aá]me|traduc(?:í|i|ime|ilo|ila|ir|irlo|irla|ímelo|imelo)|quiero|necesito)(?![\p{L}])/iu
+// "en inglés" en una QUEJA sobre lo que hizo el bot: "me estás contestando en
+// inglés", "me escribiste en inglés", "está todo en inglés", "eso que pusiste
+// en inglés", "apareció un texto en inglés".
+const QUEJA =
+  /(?<![\p{L}])(?:contest\p{L}*|respond\p{L}*|escrib(?:iste|ís|is|es|e|iendo)|est[aá]s?|estaba|pusiste|pon[eé]s|apareci[oó]|aparece|sali[oó]|sale|habl[aá]s|hablaste|dijiste|dec[ií]s|mandaste)(?![\p{L}])/iu
+const CORTE_DE_CLAUSULA = /[,.;:?!¿¡\n]|\sy\s/g
+
+/**
+ * Cómo pide inglés un mensaje: "fuerte" (un verbo de pedido en la misma
+ * cláusula, o "traducí…"), "debil" ("en inglés porfa", "in English", sin
+ * verbo) o null (no lo pide, o lo menciona en una queja).
+ */
+function pedidoDeIngles(texto: string): "fuerte" | "debil" | null {
+  let mejor: "fuerte" | "debil" | null = null
+  PEDIDO_INGLES.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = PEDIDO_INGLES.exec(texto))) {
+    if (NEGACION.test(texto.slice(Math.max(0, m.index - 20), m.index))) continue
+    if (/^traduc/i.test(m[0])) return "fuerte"
+    const antes = texto.slice(0, m.index)
+    let corte = 0
+    for (const c of antes.matchAll(CORTE_DE_CLAUSULA)) corte = c.index! + c[0].length
+    const clausula = antes.slice(corte)
+    if (VERBO_PEDIDO.test(clausula)) return "fuerte"
+    if (QUEJA.test(clausula)) continue
+    mejor = "debil"
+  }
+  return mejor
+}
+
+/**
+ * ¿Gana el pedido de inglés? Con verbo de pedido, siempre: "pasame la consigna
+ * en inglés y abajo explicámela en español" pide las dos cosas y el inglés no
+ * se puede borrar. Sin verbo ("en inglés porfa"), sólo si no pide también
+ * español: ante la duda gana el español, que es lo que el filtro protege.
+ * Una queja ("me estás contestando en inglés, hablame en español") no es pedido.
+ */
+export function pideIngles(texto: string | undefined): boolean {
+  if (!texto) return false
+  const p = pedidoDeIngles(texto)
+  return p === "fuerte" || (p === "debil" && !pideEspanol(texto))
+}
 
 /**
  * El texto real del docente. Desde el segundo paso de un turno, OpenCode puede
@@ -687,6 +732,17 @@ const bigramas = (ws: string[]) => ws.slice(1).map((w, k) => ws[k] + " " + w)
 const esRelleno = (s: Segmento, espanolDespues: Set<Segmento>) =>
   s.dosPuntos && !s.finDeLinea && espanolDespues.has(s) && /^\s*let's\s+\w+\s*:\s*$/i.test(s.texto.replace(/’/g, "'"))
 
+// Para "la respuesta repite lo que pidió": palabras del taller que valen en
+// los dos idiomas (no prueban que el docente haya pedido algo en inglés).
+const COGNADOS = new Set(
+  "wifi bluetooth serial monitor display servo motor sensor arduino esp32 esp8266 led leds pin pines placa board cable usb lcd oled buzzer relay rele modulo module protoboard breadboard windows codigo puerto port driver chip".split(
+    " ",
+  ),
+)
+/** Una palabra del pedido que no es castellana ni del taller: sólo letras ASCII, 4+. */
+const palabraAjena = (w: string) => /^[a-z]{4,}$/.test(w) && !ES.has(w) && !COGNADOS.has(w) && !DOMINIO.has(w)
+const PREGUNTA_EN_ESPANOL = /\bqu[eé]\s+(?:significa|es|son|quiere\s+decir)\b/i
+
 /** Segmenta y decide qué se borra. Exportado para los tests y la evaluación del corpus. */
 export function analizar(original: string, opciones: Opciones = {}): Segmento[] {
   const t = original.replace(/\r\n?/g, "\n")
@@ -838,12 +894,20 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
   // Sólo se mira si hubo eco (y por eso el mensaje es corto: u existe).
   const cuentaDocente = u && crudo ? contar(crudo) : undefined
   const docenteEnEspanol = !!cuentaDocente && cuentaDocente.en <= cuentaDocente.es && !pideIngles(crudo)
-  // Palabras del pedido escritas en minúscula, sin tildes y que no son
-  // funcionales españolas ("happy", "birthday"; no "ESP32" ni "PWM").
-  const delPedido = new Set((u && crudo ? (crudo.match(/\b[a-z]{4,}\b/g) ?? []) : []).filter((w) => !ES.has(w)))
+  // "La respuesta repite lo que pidió": copia 2+ palabras SEGUIDAS del pedido
+  // que no son castellanas ni del taller ("happy birthday" sí; "bluetooth y
+  // wifi", "sensor … arduino", "monitor serial" no). Y si el pedido es una
+  // pregunta en español ("qué significa feedback loop", "qué es X"), la
+  // respuesta tiene que ser en español aunque nombre lo preguntado.
+  const pareDelPedido = new Set<string>()
+  if (u && crudo && !PREGUNTA_EN_ESPANOL.test(crudo)) {
+    const ws = crudo.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+    for (let k = 1; k < ws.length; k++) if (palabraAjena(ws[k - 1]!) && palabraAjena(ws[k]!)) pareDelPedido.add(ws[k - 1] + " " + ws[k])
+  }
   const repitePedido = (texto: string) => {
-    let n = 0
-    for (const w of new Set(texto.toLowerCase().match(/\b[a-z]{4,}\b/g) ?? [])) if (delPedido.has(w) && ++n >= 2) return true
+    if (pareDelPedido.size === 0) return false
+    const ws = texto.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []
+    for (let k = 1; k < ws.length; k++) if (pareDelPedido.has(ws[k - 1] + " " + ws[k])) return true
     return false
   }
   if (primero && eco.has(primero) && docenteEnEspanol) {

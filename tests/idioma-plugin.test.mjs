@@ -478,3 +478,12 @@ test("transform: el mensaje que crea la compactación (sin texto) no cuenta como
   await h["experimental.chat.messages.transform"]({}, { messages })
   assert.equal(messages[4], a3, "u1 (3), u2 (2), u3 (1): todavía vale")
 })
+
+test("una queja 'me estás contestando en inglés' no apaga el filtro: se limpia ese turno y los siguientes", async () => {
+  const { h } = await hooks()
+  const fuga = "Let's tell the user that the board is ready and that we will upload now.\n\nListo, la placa está lista. ¿La cargo?"
+  for (const m of ["me estás contestando en inglés, hablame en español", "dale, cargala", "¿y ahora qué hago?"]) {
+    await textoDocente(h, "q", m)
+    assert.equal(await completar(h, "q", fuga), "Listo, la placa está lista. ¿La cargo?", m)
+  }
+})

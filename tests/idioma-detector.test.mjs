@@ -630,9 +630,10 @@ test("4b no se aplica si el docente escribió en inglés o la respuesta repite l
     limpiar(`${eco1}\n\nThe sentence is correct, but it is better if you say "connected to pin 4" without "the", because it is a specific pin.`, { ultimoUsuario: corregir }).cambio,
     false,
   )
-  const letra = "pasame la letra de happy birthday"
+  // Letra inventada (no se copian canciones reales a los tests).
+  const letra = "pasame la letra de jumping robot para el buzzer"
   assert.equal(
-    limpiar(`"${letra}"\n\nHappy birthday to you, happy birthday to you, happy birthday dear teacher, happy birthday to you. And many more, and may all of your wishes come true for you.`, { ultimoUsuario: letra }).cambio,
+    limpiar(`"${letra}"\n\nJumping robot, jumping robot, blink your lights and turn your wheels. Jumping robot, dance with me in the lab, and all the kids will sing with you.`, { ultimoUsuario: letra }).cambio,
     false,
   )
 })
@@ -652,5 +653,68 @@ test("rescate: el chequeo por párrafo necesita 3+ palabras; con menos, la respu
   assert.equal(
     limpiar("Let's answer directly and in Spanish:\n**No, no la veo.** Windows no detecta la placa.\n\nProbá con otro cable USB; si Windows no la detecta, puede ser el driver de la placa.").texto,
     "**No, no la veo.** Windows no detecta la placa.\n\nProbá con otro cable USB; si Windows no la detecta, puede ser el driver de la placa.",
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Ronda 6
+// ---------------------------------------------------------------------------
+
+test("4b: 'repite lo que pidió' exige 2+ palabras SEGUIDAS no castellanas ni del taller", () => {
+  const casos = [
+    ["el esp32 tiene bluetooth y wifi?", "Yes! The ESP32 has both WiFi and Bluetooth built in, so you can use them in your projects and it is very easy to start with the examples."],
+    ["como conecto el sensor de temperatura al arduino", "To connect the temperature sensor to the Arduino, you need to wire the data pin to a digital pin and add a pull-up resistor, and then you can read it with the library."],
+    ["como uso el monitor serial", "You can open the serial monitor from the tools menu, and then you have to set the baud rate to the same value that is in your code."],
+    ["el servo no se mueve, que hago", "If the servo is not moving, check that it has its own power supply and that the signal wire is on a PWM pin of the board."],
+  ]
+  for (const [u, resp] of casos) assert.equal(limpiar(`"${u}"\n\n${resp}`, { ultimoUsuario: u }).texto, "", u)
+  // Igual que antes: la letra pedida (inventada) con "jumping robot" seguido, se queda.
+  const letra = "pasame la letra de jumping robot para el buzzer"
+  assert.equal(limpiar(`"${letra}"\n\nJumping robot, jumping robot, blink your lights and turn your wheels. Jumping robot, dance with me in the lab, and all the kids will sing with you.`, { ultimoUsuario: letra }).cambio, false)
+  // Mismas palabras, pero no seguidas en el pedido: no cuenta.
+  const suelto = "pasame la letra de la canción del robot que hace jumping"
+  assert.equal(limpiar(`"${suelto}"\n\nJumping robot, jumping robot, blink your lights and turn your wheels. Jumping robot, dance with me in the lab, and all the kids will sing with you.`, { ultimoUsuario: suelto }).texto, "")
+})
+
+test("4b: 'qué significa X' o 'qué es X' es una pregunta en español: la respuesta en inglés se va", () => {
+  const resp = "A feedback loop is when the output of a system is fed back as an input, so the system can correct itself and keep the value where you want it."
+  for (const u of ["qué significa feedback loop", "que significa feedback loop?", "qué es un feedback loop"]) assert.equal(limpiar(`"${u}"\n\n${resp}`, { ultimoUsuario: u }).texto, "", u)
+})
+
+test("pedido de inglés: una QUEJA que menciona 'en inglés' no es pedido; el verbo de pedido sí", () => {
+  for (const queja of [
+    "me estás contestando en inglés, hablame en español",
+    "¿por qué me respondés en inglés? en español por favor",
+    "me escribiste en inglés otra vez, en español porfa",
+    "eso que pusiste en inglés pasalo a español",
+    "está todo en inglés, ponelo en castellano",
+    "che, apareció un texto en inglés arriba. respondeme en español",
+  ])
+    assert.equal(pideIngles(queja), false, queja)
+  for (const pedido of [
+    "pasame la consigna en inglés y abajo explicámela en español",
+    "traducí la consigna al inglés; lo demás dejalo en castellano",
+    "pasala al inglés, pero hablame en español",
+    "respondeme en inglés",
+    "decime 'got it' en inglés",
+    "en ingles porfa",
+  ])
+    assert.equal(pideIngles(pedido), true, pedido)
+})
+
+test("pedido de inglés: casos finos", () => {
+  // Una queja sola, sin pedir español, tampoco es pedido.
+  assert.equal(pideIngles("me estás contestando en inglés"), false)
+  // "en inglés" sin verbo de pedido y con español: ante la duda gana el español.
+  assert.equal(pideIngles("la consigna en inglés y la explicación en español"), false)
+  // "traducí" solo (con tilde al final) es pedido.
+  assert.equal(pideIngles("traducí esto"), true)
+})
+
+test("4b: dos palabras del taller seguidas ('serial monitor') no cuentan como repetir el pedido", () => {
+  const u = "como abro el serial monitor"
+  assert.equal(
+    limpiar(`"${u}"\n\nYou can open the serial monitor from the tools menu, and then you have to set the baud rate to the same value that is in your code.`, { ultimoUsuario: u }).texto,
+    "",
   )
 })
