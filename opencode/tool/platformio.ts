@@ -1067,7 +1067,7 @@ function limpiar(crudo: string): Limpio {
   // CRLF -> LF: los editores de Windows guardan asi, y con un `\r` al final las
   // directivas (`#define MOTOR 7\r`) no se reconocian y el pin quedaba sin resolver.
   // Y el BOM de UTF-8 del principio, que algunos editores agregan.
-  const src = crudo.replace(/^﻿/, "").replace(/\r\n?/g, "\n")
+  const src = crudo.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n")
   let codigo = ""
   let conTextos = ""
   const n = src.length
