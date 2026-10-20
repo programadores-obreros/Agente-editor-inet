@@ -1,6 +1,6 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
-import { createHash } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve, win32 } from "node:path"
@@ -1063,22 +1063,20 @@ function esInicioRaw(src: string, i: number): boolean {
   return !/\w$/.test(previo) || /(?:^|\W)(?:u8|u|U|L)$/.test(previo)
 }
 
-/** `1'000`: el apostrofo esta adentro de un numero, no abre un caracter. */
-function esSeparadorDeDigitos(src: string, i: number): boolean {
-  if (!/[0-9a-fA-F]/.test(src[i - 1] ?? "") || !/[0-9a-fA-F]/.test(src[i + 1] ?? "")) return false
-  let k = i - 1
-  while (k >= 0 && /[\w'.]/.test(src[k]!)) k--
-  return /[0-9]/.test(src[k + 1] ?? "")
-}
-
 function limpiar(crudo: string): Limpio {
   // CRLF -> LF: los editores de Windows guardan asi, y con un `\r` al final las
   // directivas (`#define MOTOR 7\r`) no se reconocian y el pin quedaba sin resolver.
-  const src = crudo.replace(/\r\n?/g, "\n")
+  // Y el BOM de UTF-8 del principio, que algunos editores agregan.
+  const src = crudo.replace(/^﻿/, "").replace(/\r\n?/g, "\n")
   let codigo = ""
   let conTextos = ""
   const n = src.length
   const blanquear = (s: string) => s.replace(/[^\n]/g, " ")
+  // Donde empezo la palabra o el numero que se esta copiando, -1 si no hay. Sirve
+  // para saber si un apostrofo es un separador de digitos (`1'000`) sin volver
+  // para atras: la primera version caminaba hacia atras en cada apostrofo, y un
+  // numero con 30 000 separadores tardaba 13 segundos.
+  let inicioToken = -1
   let i = 0
   while (i < n) {
     const antes = i
@@ -1091,6 +1089,7 @@ function limpiar(crudo: string): Limpio {
       codigo += b
       conTextos += b
       i = j
+      inicioToken = -1
     } else if (c === "/" && d === "*") {
       const fin = src.indexOf("*/", i + 2)
       const j = fin < 0 ? n : fin + 2
@@ -1098,6 +1097,7 @@ function limpiar(crudo: string): Limpio {
       codigo += b
       conTextos += b
       i = j
+      inicioToken = -1
     } else if (c === "R" && d === '"' && esInicioRaw(src, i)) {
       const abre = src.indexOf("(", i + 2)
       const delim = abre < 0 ? "" : src.slice(i + 2, abre)
@@ -1113,7 +1113,8 @@ function limpiar(crudo: string): Limpio {
         conTextos += cuerpo
         i = j
       }
-    } else if (c === "'" && esSeparadorDeDigitos(src, i)) {
+      inicioToken = -1
+    } else if (c === "'" && inicioToken >= 0 && /[0-9]/.test(src[inicioToken]!) && /[0-9a-fA-F]/.test(d ?? "")) {
       codigo += c
       conTextos += c
       i++
@@ -1127,7 +1128,11 @@ function limpiar(crudo: string): Limpio {
       codigo += c + blanquear(cerro ? cuerpo.slice(1, -1) : cuerpo.slice(1)) + (cerro ? c : "")
       conTextos += cuerpo
       i = j
+      inicioToken = -1
     } else {
+      if (/[\w.]/.test(c)) {
+        if (inicioToken < 0) inicioToken = i
+      } else inicioToken = -1
       codigo += c
       conTextos += c
       i++
@@ -1155,77 +1160,164 @@ export function limpiarCodigo(src: string, textos = true): string {
 
 // ── 2. Preprocesador ─────────────────────────────────────────────────────────
 
-/** Que macros de placa estan definidas (true) o seguro NO (false) para este `board`. Las demas no se saben. */
-export function macrosDePlaca(board: string): Map<string, boolean> {
+interface Macro {
+  /** true definida, false seguro que NO, null no se sabe. */
+  definida: Tri
+  /** Su valor numerico, si se sabe (para `#if ARDUINO >= 100`). */
+  valor: number | null
+}
+
+/** Las macros que se saben, mas reglas por prefijo para las de OTRAS arquitecturas (que son falsas). */
+export class Macros extends Map<string, Macro> {
+  falsasPorPrefijo: RegExp[] = []
+  buscar(nombre: string): Macro | undefined {
+    return this.get(nombre) ?? (this.falsasPorPrefijo.some((r) => r.test(nombre)) ? { definida: false, valor: null } : undefined)
+  }
+  clonar(): Macros {
+    const m = new Macros(this)
+    m.falsasPorPrefijo = this.falsasPorPrefijo
+    return m
+  }
+}
+
+const SI = (valor: number | null = 1): Macro => ({ definida: true, valor })
+const NO: Macro = { definida: false, valor: null }
+
+/**
+ * Que macros define el compilador para este `board`, y cuales seguro NO. Las de
+ * otras arquitecturas (ESP8266, RP2040, SAMD, STM32, otros AVR) son falsas: un
+ * blink multiplaca con `#if defined(ESP8266) ... #elif defined(ESP32)` tiene que
+ * caer en la rama de su placa, no quedar "incierto". `ARDUINO` siempre esta.
+ * Los valores de version son aproximados (alcanza para `ARDUINO >= 100`).
+ */
+export function macrosDePlaca(board: string): Macros {
   const familia = familiaDePlaca(board)
-  const m = new Map<string, boolean>()
-  if (!familia) return m
+  const m = new Macros()
+  if (!familia) {
+    m.set("ARDUINO", SI(null))
+    return m
+  }
   const esp = familia === "esp32"
-  for (const x of ["ESP32", "ARDUINO_ARCH_ESP32", "ESP_PLATFORM"]) m.set(x, esp)
-  for (const x of ["__AVR__", "ARDUINO_ARCH_AVR"]) m.set(x, !esp)
-  m.set("ARDUINO_AVR_UNO", board === "uno")
-  m.set("ARDUINO_AVR_NANO", board.startsWith("nanoatmega328"))
+  m.set("ARDUINO", SI(10812))
+  for (const x of ["ESP32", "ARDUINO_ARCH_ESP32", "ESP_PLATFORM", "CONFIG_IDF_TARGET_ESP32"]) m.set(x, esp ? SI() : NO)
+  m.set("ARDUINO_ESP32_DEV", board === "esp32dev" ? SI() : NO)
+  for (const x of ["__AVR__", "ARDUINO_ARCH_AVR", "__AVR_ATmega328P__"]) m.set(x, esp ? NO : SI())
+  m.set("ARDUINO_AVR_UNO", board === "uno" ? SI() : NO)
+  m.set("ARDUINO_AVR_NANO", board.startsWith("nanoatmega328") ? SI() : NO)
+  m.set("F_CPU", SI(esp ? 240000000 : 16000000))
+  for (const x of ["ESP8266", "TEENSYDUINO", "CORE_TEENSY"]) m.set(x, NO)
+  m.falsasPorPrefijo = [
+    /^ARDUINO_ARCH_(?!ESP32$|AVR$)/,
+    /^ARDUINO_ESP8266_/,
+    /^ARDUINO_SAMD_/,
+    /^ARDUINO_AVR_(?!UNO$|NANO$)/,
+    /^__AVR_AT/,
+    /^CONFIG_IDF_TARGET_ESP32./,
+    ...(esp ? [/^__AVR/] : [/^CONFIG_IDF_TARGET_/, /^ARDUINO_ESP32/]),
+  ]
   return m
 }
 
-const y3 = (a: Tri, b: Tri): Tri => (a === false || b === false ? false : a === true && b === true ? true : null)
 const o3 = (a: Tri, b: Tri): Tri => (a === true || b === true ? true : a === false && b === false ? false : null)
 const no3 = (a: Tri): Tri => (a === null ? null : !a)
 
 /**
  * Evalua la condicion de un `#if`/`#elif` con logica de tres valores: true,
  * false, o null si depende de algo que no sabemos (un flag del compilador, una
- * comparacion de versiones). Solo entiende `defined`, `!`, `&&`, `||`,
- * parentesis, numeros y nombres sueltos; cualquier otra cosa es null.
+ * version desconocida). Entiende `defined`, `!`, `&&`, `||`, comparaciones,
+ * `+ - *`, parentesis, numeros y nombres. Lo que no entiende es null. Tiene tope
+ * de anidamiento: 3000 parentesis desbordaban la pila.
  */
-export function evaluarCondicion(expr: string, conocidas: Map<string, Tri>): Tri {
-  const toks = expr.match(/0x[0-9a-fA-F]+|\d+[uUlL]*|[A-Za-z_]\w*|&&|\|\||[()!]|\S/g) ?? []
-  // Un token que no entiende (`>=`, `+`) corta el parseo antes del final, y eso da null abajo.
+export function evaluarCondicion(expr: string, conocidas: Macros): Tri {
+  const toks = expr.match(/0x[0-9a-fA-F]+[uUlL]*|\d+[uUlL]*|[A-Za-z_]\w*|&&|\|\||==|!=|<=|>=|[()!<>+\-*]|\S/g) ?? []
+  if (toks.length > 4000) return null
+  type Num = number | null
   let p = 0
-  const valorNombre = (x: string): Tri => conocidas.get(x) ?? null
-  const primario = (): Tri | undefined => {
-    const t = toks[p++]
-    if (t === undefined) return undefined
-    if (t === "(") {
-      const v = disyuncion()
-      return toks[p++] === ")" ? v : undefined
-    }
-    if (t === "!") {
-      const v = primario()
-      return v === undefined ? undefined : no3(v)
-    }
-    if (t === "defined") {
-      const conParen = toks[p] === "("
-      if (conParen) p++
-      const nombre = toks[p++]
-      if (!nombre || !/^[A-Za-z_]\w*$/.test(nombre)) return undefined
-      if (conParen && toks[p++] !== ")") return undefined
-      return valorNombre(nombre)
-    }
-    if (/^\d|^0x/.test(t)) return parseInt(t, /^0x/i.test(t) ? 16 : 10) !== 0
-    if (/^[A-Za-z_]/.test(t)) return valorNombre(t)
-    return undefined
+  let prof = 0
+  const ver = (n: string) => (conocidas instanceof Macros ? conocidas.buscar(n) : (conocidas as Map<string, Macro>).get(n))
+  const falla = (): never => {
+    throw new Error("condicion")
   }
-  const conjuncion = (): Tri | undefined => {
+  const primario = (): Num => {
+    if (++prof > 200) falla()
+    try {
+      const t = toks[p++]
+      if (t === undefined) return falla()
+      if (t === "(") {
+        const v = disyuncion()
+        if (toks[p++] !== ")") falla()
+        return v
+      }
+      if (t === "!") {
+        const v = primario()
+        return v === null ? null : v === 0 ? 1 : 0
+      }
+      if (t === "-") {
+        const v = primario()
+        return v === null ? null : -v
+      }
+      if (t === "defined") {
+        const conParen = toks[p] === "("
+        if (conParen) p++
+        const nombre = toks[p++] ?? ""
+        if (!/^[A-Za-z_]\w*$/.test(nombre)) falla()
+        if (conParen && toks[p++] !== ")") falla()
+        const m = ver(nombre)
+        return !m || m.definida === null ? null : m.definida ? 1 : 0
+      }
+      if (/^\d/.test(t)) return parseInt(t.replace(/[uUlL]+$/, ""), /^0x/i.test(t) ? 16 : 10)
+      if (/^[A-Za-z_]/.test(t)) {
+        const m = ver(t)
+        return !m || m.definida === null ? null : m.definida === false ? 0 : m.valor
+      }
+      return falla()
+    } finally {
+      prof--
+    }
+  }
+  const suma = (): Num => {
     let v = primario()
-    while (v !== undefined && toks[p] === "&&") {
-      p++
+    while (toks[p] === "+" || toks[p] === "-" || toks[p] === "*") {
+      const op = toks[p++]
       const w = primario()
-      v = w === undefined ? undefined : y3(v, w)
+      v = v === null || w === null ? null : op === "+" ? v + w : op === "-" ? v - w : v * w
     }
     return v
   }
-  const disyuncion = (): Tri | undefined => {
+  const comparacion = (): Num => {
+    let v = suma()
+    while (["==", "!=", "<", ">", "<=", ">="].includes(toks[p] ?? "")) {
+      const op = toks[p++]
+      const w = suma()
+      if (v === null || w === null) v = null
+      else v = (op === "==" ? v === w : op === "!=" ? v !== w : op === "<" ? v < w : op === ">" ? v > w : op === "<=" ? v <= w : v >= w) ? 1 : 0
+    }
+    return v
+  }
+  const conjuncion = (): Num => {
+    let v = comparacion()
+    while (toks[p] === "&&") {
+      p++
+      const w = comparacion()
+      v = v === 0 || w === 0 ? 0 : v === null || w === null ? null : 1
+    }
+    return v
+  }
+  const disyuncion = (): Num => {
     let v = conjuncion()
-    while (v !== undefined && toks[p] === "||") {
+    while (toks[p] === "||") {
       p++
       const w = conjuncion()
-      v = w === undefined ? undefined : o3(v, w)
+      v = (v !== null && v !== 0) || (w !== null && w !== 0) ? 1 : v === 0 && w === 0 ? 0 : null
     }
     return v
   }
-  const v = disyuncion()
-  return v === undefined || p !== toks.length ? null : v
+  try {
+    const v = disyuncion()
+    return p !== toks.length || v === null ? null : v !== 0
+  } catch {
+    return null
+  }
 }
 
 interface Definicion {
@@ -1242,34 +1334,40 @@ interface Preprocesado {
   lineasTexto: string[]
   /** La linea esta en una rama de condicion desconocida. */
   incierta: boolean[]
-  /** La linea es cuerpo de una macro con parametros: lo de adentro no es un uso. */
-  cuerpoDeMacro: boolean[]
+  /** Si la linea es cuerpo de una macro con parametros, cual: sus usos son plantillas, no pines. */
+  macroDeLinea: Array<{ nombre: string; params: string[] } | null>
   defines: Map<string, Definicion>
 }
 
 const DIRECTIVA = /^\s*#\s*([a-z]+)\b(.*)$/
+const valorNumerico = (v: string): number | null => {
+  const m = v.trim().match(/^\(?\s*(0x[0-9a-f]+|\d+)[ul]*\s*\)?$/i)
+  return m ? parseInt(m[1]!, /^0x/i.test(m[1]!) ? 16 : 10) : null
+}
 
 /**
  * Recorre UN archivo limpio y decide que se compila para esta placa.
  *
- * Los include guards (`#ifndef X_H` seguido de `#define X_H`) no son condiciones:
- * cuentan como siempre verdaderos. Un `#define` en una rama que no se compila no
- * existe. Un nombre definido mas de una vez en ramas inciertas queda ambiguo y
- * no se resuelve.
+ * Un include guard (`#ifndef X_H` seguido de `#define X_H` SIN valor) no es una
+ * condicion: cuenta como verdadero. En cambio `#ifndef LED` + `#define LED 8` es
+ * un valor por defecto: depende de si LED ya viene definido (por ejemplo, por
+ * `build_flags = -DLED=4`), y se evalua como cualquier otro `#ifndef`. Un
+ * `#define` en una rama que no se compila no existe. Un nombre definido mas de
+ * una vez en ramas inciertas queda ambiguo y no se resuelve.
  */
-function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
+function preprocesar(lim: Limpio, macros: Macros, predefinidas: Map<string, string> = new Map()): Preprocesado {
   const lc = lim.codigo.split("\n")
   const lt = lim.conTextos.split("\n")
-  const conocidas = new Map<string, Tri>(macros)
+  const conocidas = macros.clonar()
   const pila: Array<{ valor: Tri; tomado: Tri }> = []
   const estado = (): "activo" | "inactivo" | "incierto" =>
     pila.some((f) => f.valor === false) ? "inactivo" : pila.some((f) => f.valor === null) ? "incierto" : "activo"
-  const out: Preprocesado = { lineas: [], lineasTexto: [], incierta: [], cuerpoDeMacro: [], defines: new Map() }
-  const emitir = (k: number, visible: boolean, incierta: boolean, macro: boolean) => {
+  const out: Preprocesado = { lineas: [], lineasTexto: [], incierta: [], macroDeLinea: [], defines: new Map() }
+  const emitir = (k: number, visible: boolean, incierta: boolean, macro: { nombre: string; params: string[] } | null) => {
     out.lineas.push(visible ? (lc[k] ?? "") : "")
     out.lineasTexto.push(visible ? (lt[k] ?? "") : "")
     out.incierta.push(incierta)
-    out.cuerpoDeMacro.push(macro)
+    out.macroDeLinea.push(macro)
   }
   const registrar = (nombre: string, valor: string, incierta: boolean) => {
     const previa = out.defines.get(nombre)
@@ -1278,8 +1376,13 @@ function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
     else if (previa && previa.valor !== valor) out.defines.set(nombre, { ...previa, ambigua: true, todos })
     else if (!previa) out.defines.set(nombre, { valor, incierta: true, ambigua: false, todos })
   }
+  // Lo que viene de `build_flags` (-DX=4) esta definido antes de la primera linea.
+  for (const [n, v] of predefinidas) {
+    registrar(n, v, false)
+    conocidas.set(n, SI(valorNumerico(v)))
+  }
 
-  let continuacion: { visible: boolean; incierta: boolean; macro: boolean; nombre: string | null; partes: string[] } | null = null
+  let continuacion: { visible: boolean; incierta: boolean; macro: { nombre: string; params: string[] } | null; nombre: string | null; partes: string[] } | null = null
   for (let k = 0; k < lc.length; k++) {
     const linea = lc[k] ?? ""
     if (continuacion) {
@@ -1300,14 +1403,15 @@ function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
       let cond: Tri
       if (dir === "if") cond = evaluarCondicion(resto, conocidas)
       else {
-        // Include guard: `#ifndef X` y la proxima linea con algo es `#define X`.
+        // Include guard: `#ifndef X` y la proxima linea con algo es `#define X` sin valor.
         let j = k + 1
         while (j < lc.length && !(lc[j] ?? "").trim()) j++
-        const esGuard = dir === "ifndef" && primerNombre !== "" && new RegExp(`^\\s*#\\s*define\\s+${primerNombre}\\b`).test(lc[j] ?? "")
-        const definida = conocidas.get(primerNombre) ?? null
+        const esGuard = dir === "ifndef" && primerNombre !== "" && new RegExp(`^\\s*#\\s*define\\s+${primerNombre}\\s*$`).test(lc[j] ?? "")
+        const m2 = conocidas.buscar(primerNombre)
+        const definida = m2 ? m2.definida : null
         cond = esGuard ? true : dir === "ifdef" ? definida : no3(definida)
       }
-      emitir(k, false, false, false)
+      emitir(k, false, false, null)
       pila.push({ valor: cond, tomado: cond })
       continue
     }
@@ -1321,7 +1425,7 @@ function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
         top.valor = no3(top.tomado)
         top.tomado = true
       } else if (top) pila.pop()
-      emitir(k, false, false, false)
+      emitir(k, false, false, null)
       continue
     }
     const e = estado()
@@ -1331,12 +1435,16 @@ function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
       const d = resto.match(/^([A-Za-z_]\w*)(\(\s*([^)]*)\))?\s*([\s\S]*)$/)
       const nombre = d?.[1] ?? ""
       // `#define INIT() pinMode(7, OUTPUT)` no tiene parametros: su cuerpo SI es un uso.
-      const conParametros = d?.[2] !== undefined && (d?.[3] ?? "").trim() !== ""
-      if (nombre) conocidas.set(nombre, incierta ? (conocidas.get(nombre) === true ? true : null) : true)
-      emitir(k, true, incierta, conParametros)
+      const params = (d?.[3] ?? "").split(",").map((x) => x.trim()).filter(Boolean)
+      const macro = d?.[2] !== undefined && params.length > 0 ? { nombre, params } : null
       const valor = d?.[2] !== undefined ? "" : (d?.[4] ?? "").trim()
+      if (nombre) {
+        const previa = conocidas.buscar(nombre)
+        conocidas.set(nombre, incierta ? { definida: previa?.definida === true ? true : null, valor: null } : SI(valorNumerico(valor)))
+      }
+      emitir(k, true, incierta, macro)
       if (/\\\s*$/.test(linea)) {
-        continuacion = { visible: true, incierta, macro: conParametros, nombre: d?.[2] !== undefined ? null : nombre, partes: [valor] }
+        continuacion = { visible: true, incierta, macro, nombre: d?.[2] !== undefined ? null : nombre, partes: [valor] }
       } else if (nombre && d?.[2] === undefined) registrar(nombre, valor, incierta)
       continue
     }
@@ -1344,14 +1452,14 @@ function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
       if (incierta) {
         const previa = out.defines.get(primerNombre)
         if (previa) out.defines.set(primerNombre, { ...previa, ambigua: true })
-        conocidas.set(primerNombre, null)
+        conocidas.set(primerNombre, { definida: null, valor: null })
       } else {
         out.defines.delete(primerNombre)
-        conocidas.set(primerNombre, false)
+        conocidas.set(primerNombre, NO)
       }
     }
-    emitir(k, visible, incierta, false)
-    if (dir === "define" && /\\\s*$/.test(linea)) continuacion = { visible: false, incierta, macro: false, nombre: null, partes: [] }
+    emitir(k, visible, incierta, null)
+    if (dir === "define" && /\\\s*$/.test(linea)) continuacion = { visible: false, incierta, macro: null, nombre: null, partes: [] }
   }
   return out
 }
@@ -1361,12 +1469,17 @@ function preprocesar(lim: Limpio, macros: Map<string, boolean>): Preprocesado {
 const TIPOS_C =
   "(?:unsigned\\s+|signed\\s+)?(?:int|byte|short|long|char|uint8_t|uint16_t|uint32_t|int8_t|int16_t|int32_t|size_t|gpio_num_t|pin_size_t)"
 
-/** Los argumentos de una llamada, desde justo despues del `(`. Respeta parentesis anidados. */
-function argumentosDesde(texto: string, desde: number): string[] | null {
+/**
+ * Los argumentos de una llamada, desde justo despues del `(`. Respeta parentesis
+ * anidados. Con TOPE: 20 000 `pinMode(` sin cerrar hacian recorrer el archivo
+ * entero 20 000 veces (12 segundos). Una llamada de verdad no mide 4000 caracteres.
+ */
+function argumentosDesde(texto: string, desde: number, tope = 4000): string[] | null {
   const args: string[] = []
   let nivel = 0
   let actual = ""
-  for (let i = desde; i < texto.length; i++) {
+  const fin = Math.min(texto.length, desde + tope)
+  for (let i = desde; i < fin; i++) {
     const c = texto[i]!
     if (c === "(" || c === "[" || c === "{") nivel++
     else if (c === ")" || c === "]" || c === "}") {
@@ -1390,7 +1503,8 @@ function argumentosDesde(texto: string, desde: number): string[] | null {
 function valorHasta(texto: string, desde: number): { valor: string; fin: number } {
   let nivel = 0
   let i = desde
-  for (; i < texto.length; i++) {
+  const tope = Math.min(texto.length, desde + 20000)
+  for (; i < tope; i++) {
     const c = texto[i]!
     if (c === "(" || c === "[" || c === "{") nivel++
     else if (c === ")" || c === "]" || c === "}") {
@@ -1418,14 +1532,76 @@ interface Simbolos {
   /** Valor inicial de cada variable o constante que se declara UNA vez y no se reasigna. */
   valores: Map<string, string>
   arreglos: Map<string, string[]>
-  /** Todo lo que se escribio para cada nombre (define o inicializacion): va a la huella si no se resuelve. */
+  /**
+   * Lo que se escribio para cada nombre que NO cambia en tiempo de ejecucion
+   * (define o inicializacion): va a la huella si no se resuelve. Las variables
+   * reasignadas y las de control de un `for` no entran: si entraran, agregar un
+   * `for (int i = 0...)` en otra funcion cambiaba la huella y pedia el checklist
+   * por una edicion que no toca el circuito.
+   */
   textos: Map<string, string[]>
 }
 
-/** Junta lo resoluble del codigo ya preprocesado. `defines` viene del preprocesador, archivo por archivo. */
+/**
+ * UNA pasada por todos los identificadores: cuantas veces se asigna cada uno,
+ * cuales se incrementan, y a cuales se les toma la direccion (`&pin`, `int& r =
+ * pin`). La primera version corria tres regex por variable sobre TODO el codigo:
+ * con una libreria de 2 MB eran segundos.
+ */
+function indiceDeAsignaciones(codigo: string): { asignaciones: Map<string, number>; cambiantes: Set<string> } {
+  const asignaciones = new Map<string, number>()
+  const cambiantes = new Set<string>()
+  const n = codigo.length
+  const blanco = (c: string | undefined) => c === " " || c === "\t" || c === "\n"
+  for (const m of codigo.matchAll(/[A-Za-z_]\w*/g)) {
+    const nombre = m[0]
+    const ini = m.index!
+    if (/[0-9]/.test(codigo[ini - 1] ?? "")) continue // sufijo de un numero (0x1F, 7U)
+    let k = ini - 1
+    while (k >= 0 && blanco(codigo[k])) k--
+    const prev = codigo[k]
+    const prev2 = codigo[k - 1]
+    // Un miembro (`s.pin`, `p->pin`, `Clase::pin`) no es la variable de afuera.
+    if (prev === "." || (prev === ">" && prev2 === "-") || (prev === ":" && prev2 === ":")) continue
+    if ((prev === "+" && prev2 === "+") || (prev === "-" && prev2 === "-")) cambiantes.add(nombre)
+    if (prev === "&" && prev2 !== "&") {
+      let q = k - 1
+      while (q >= 0 && blanco(codigo[q])) q--
+      if (!/[\w)\]]/.test(codigo[q] ?? "")) cambiantes.add(nombre)
+    }
+    let j = ini + nombre.length
+    while (j < n && blanco(codigo[j])) j++
+    if (codigo[j] === "[") {
+      const cierre = codigo.indexOf("]", j)
+      if (cierre > 0 && cierre - j < 200) {
+        j = cierre + 1
+        while (j < n && blanco(codigo[j])) j++
+      }
+    }
+    const c0 = codigo[j]
+    const c1 = codigo[j + 1]
+    if ((c0 === "+" && c1 === "+") || (c0 === "-" && c1 === "-")) cambiantes.add(nombre)
+    else if ((c0 === "=" && c1 !== "=") || ("+-*/%&|^".includes(c0 ?? "x") && c1 === "=") || ((c0 === "<" || c0 === ">") && c1 === c0 && codigo[j + 2] === "=")) {
+      asignaciones.set(nombre, (asignaciones.get(nombre) ?? 0) + 1)
+    }
+  }
+  for (const m of codigo.matchAll(/&\s*[A-Za-z_]\w*\s*=\s*([A-Za-z_]\w*)/g)) cambiantes.add(m[1]!)
+  return { asignaciones, cambiantes }
+}
+
+/**
+ * Junta lo resoluble del codigo ya preprocesado. `defines` viene del
+ * preprocesador. Solo cuentan las declaraciones de afuera de los parentesis:
+ * un parametro con valor por defecto (`Zumbador(uint8_t pin = 8)`) o la variable
+ * de un `for` no son una constante del programa.
+ */
 function juntarSimbolos(codigo: string, defines: Map<string, Definicion>): Simbolos {
   const textos = new Map<string, string[]>()
-  const anotar = (nombre: string, t: string) => textos.set(nombre, [...(textos.get(nombre) ?? []), t])
+  const anotar = (nombre: string, t: string) => {
+    const xs = textos.get(nombre) ?? []
+    if (!xs.includes(t)) xs.push(t)
+    textos.set(nombre, xs)
+  }
   const defs = new Map<string, string>()
   for (const [nombre, d] of defines) {
     for (const v of d.todos) anotar(nombre, v)
@@ -1437,7 +1613,15 @@ function juntarSimbolos(codigo: string, defines: Map<string, Definicion>): Simbo
   const arreglosCrudos = new Map<string, string[]>()
   const decl = new RegExp(`\\b(?:(?:static|const|constexpr|volatile)\\s+)*${TIPOS_C}\\s+(?:(?:const|constexpr)\\s+)?(?=[A-Za-z_])`, "g")
   const declarador = /\s*\*?\s*([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*/y
+  // Profundidad de parentesis, llevada en una sola pasada porque los matches vienen en orden.
+  let cursor = 0
+  let parentesis = 0
   for (const m of codigo.matchAll(decl)) {
+    for (; cursor < m.index!; cursor++) {
+      if (codigo[cursor] === "(") parentesis++
+      else if (codigo[cursor] === ")") parentesis = Math.max(0, parentesis - 1)
+    }
+    if (parentesis > 0) continue
     let pos = m.index! + m[0].length
     // `const int a = 4, b = 7;`: un declarador atras de otro, hasta el `;`.
     for (let vuelta = 0; vuelta < 64; vuelta++) {
@@ -1452,7 +1636,7 @@ function juntarSimbolos(codigo: string, defines: Map<string, Definicion>): Simbo
         declaraciones.set(nombre, (declaraciones.get(nombre) ?? 0) + 1)
         if (d[2] !== undefined) {
           if (codigo[pos] !== "{") break
-          const elems = argumentosDesde(codigo, pos + 1)
+          const elems = argumentosDesde(codigo, pos + 1, 20000)
           if (elems) {
             const limpios = elems.filter((e) => e !== "")
             arreglosCrudos.set(nombre, limpios)
@@ -1471,59 +1655,112 @@ function juntarSimbolos(codigo: string, defines: Map<string, Definicion>): Simbo
     }
   }
 
-  const reasignada = (nombre: string, arreglo: boolean): boolean => {
-    const op = "(?:[-+*/%&|^]|<<|>>)?=(?!=)"
-    const asign = arreglo ? new RegExp(`\\b${nombre}\\s*\\[[^\\]]*\\]\\s*${op}`, "g") : new RegExp(`\\b${nombre}\\s*${op}`, "g")
-    const veces = [...codigo.matchAll(asign)].length
-    const incrementos = new RegExp(`(?:\\+\\+|--)\\s*${nombre}\\b|\\b${nombre}\\s*(?:\\[[^\\]]*\\]\\s*)?(?:\\+\\+|--)`).test(codigo)
-    // `&pin` o `int& r = pin`: se puede escribir por otro lado, ya no se sabe cuanto vale.
-    const porReferencia = new RegExp(`(?<![&\\w])&\\s*${nombre}\\b|&\\s*[A-Za-z_]\\w*\\s*=\\s*${nombre}\\b`).test(codigo)
-    // La declaracion misma (`int led = 13`, `int leds[3] = {...}`) matchea una vez: no cuenta.
-    return veces > 1 || incrementos || porReferencia
-  }
-
+  const { asignaciones, cambiantes } = indiceDeAsignaciones(codigo)
+  // Cambia en tiempo de ejecucion: mas asignaciones que declaraciones con valor, `++`, o `&`.
+  const reasignada = (n: string) => (asignaciones.get(n) ?? 0) > (declaraciones.get(n) ?? 0) || cambiantes.has(n)
   const valores = new Map<string, string>()
   for (const [nombre, valor] of iniciales) {
-    if (declaraciones.get(nombre) === 1 && !reasignada(nombre, false)) valores.set(nombre, valor)
+    if (declaraciones.get(nombre) === 1 && !reasignada(nombre)) valores.set(nombre, valor)
   }
   const arreglos = new Map<string, string[]>()
   for (const [nombre, elems] of arreglosCrudos) {
-    if (declaraciones.get(nombre) === 1 && !reasignada(nombre, true)) arreglos.set(nombre, elems)
+    if (declaraciones.get(nombre) === 1 && !reasignada(nombre)) arreglos.set(nombre, elems)
   }
+  for (const n of [...textos.keys()]) if (!defines.has(n) && reasignada(n)) textos.delete(n)
   return { defines: defs, valores, arreglos, textos }
 }
 
 const NO_SON_FUNCIONES = new Set(["if", "for", "while", "switch", "catch", "return", "sizeof", "else", "do"])
 
-/**
- * Donde vive cada parametro: el cuerpo de la funcion que lo declara. Un
- * parametro que se llama igual que una global la tapa SOLO adentro de esa
- * funcion; afuera la global se sigue resolviendo.
- */
-function ambitosDeParametros(codigo: string): Array<{ desde: number; hasta: number; params: Set<string> }> {
-  const ambitos: Array<{ desde: number; hasta: number; params: Set<string> }> = []
-  for (const m of codigo.matchAll(/\b([A-Za-z_]\w*)\s*\(([^()]*)\)\s*(?:const\s*)?\{/g)) {
-    if (NO_SON_FUNCIONES.has(m[1]!)) continue
-    const params = new Set(
-      m[2]!
-        .split(",")
-        .map((p) => p.replace(/=.*$/, "").match(/([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)?$/)?.[1])
-        .filter((x): x is string => !!x && x !== "void"),
-    )
-    if (params.size === 0) continue
-    const abre = m.index! + m[0].length - 1
-    let nivel = 0
-    let hasta = codigo.length
-    for (let i = abre; i < codigo.length; i++) {
-      if (codigo[i] === "{") nivel++
-      else if (codigo[i] === "}" && --nivel === 0) {
-        hasta = i
-        break
-      }
+interface Ambito {
+  desde: number
+  hasta: number
+  tipo: "param" | "for"
+  /** param: la funcion y la posicion del parametro. */
+  funcion?: string
+  indice?: number
+  /** for: los valores que recorre, si se saben (`for (int p = 2; p <= 4; p++)` -> 2, 3, 4). */
+  pines?: number[] | null
+}
+
+/** Para cada `{`, donde cierra. Una sola pasada con una pila. */
+function cierresDeLlaves(codigo: string): Map<number, number> {
+  const cierres = new Map<number, number>()
+  const pila: number[] = []
+  for (let i = 0; i < codigo.length; i++) {
+    if (codigo[i] === "{") pila.push(i)
+    else if (codigo[i] === "}") {
+      const a = pila.pop()
+      if (a !== undefined) cierres.set(a, i)
     }
-    ambitos.push({ desde: abre, hasta, params })
   }
-  return ambitos
+  return cierres
+}
+
+/** Un entero de una expresion chica (`2+N`, `LED_BASE * 2`), o null. */
+function enteroDe(expr: string, s: Simbolos, familia: FamiliaPlaca | null): number | null {
+  const toks = expr.match(/0x[0-9a-fA-F]+|\d+|[A-Za-z_]\w*|[()+\-*]|\S/g) ?? []
+  let p = 0
+  const prim = (): number | null => {
+    const t = toks[p++]
+    if (t === undefined) return null
+    if (t === "(") {
+      const v = sum()
+      return toks[p++] === ")" ? v : null
+    }
+    if (/^\d/.test(t)) return parseInt(t, /^0x/i.test(t) ? 16 : 10)
+    if (/^[A-Za-z_]/.test(t)) {
+      const r = resolverPin(t, s, familia, new Set())
+      return r && r.pines.length === 1 && !r.dePlaca ? r.pines[0]! : null
+    }
+    return null
+  }
+  const sum = (): number | null => {
+    let v = prim()
+    while (v !== null && (toks[p] === "+" || toks[p] === "-" || toks[p] === "*")) {
+      const op = toks[p++]
+      const w = prim()
+      v = w === null ? null : op === "+" ? v + w : op === "-" ? v - w : v * w
+    }
+    return v
+  }
+  const v = sum()
+  return p === toks.length ? v : null
+}
+
+/**
+ * Donde vive cada parametro y cada variable de `for`. Un parametro que se llama
+ * igual que una global la tapa SOLO adentro de esa funcion. Un `for` con limites
+ * que se pueden resolver recorre pines concretos (el semaforo de 2 a 4).
+ */
+function ambitosDe(codigo: string, s: Simbolos, familia: FamiliaPlaca | null): Map<string, Ambito[]> {
+  const porNombre = new Map<string, Ambito[]>()
+  const anotar = (n: string, a: Ambito) => porNombre.set(n, [...(porNombre.get(n) ?? []), a])
+  const cierres = cierresDeLlaves(codigo)
+  for (const m of codigo.matchAll(/\b([A-Za-z_]\w*)\s*\(([^()]*)\)\s*(?:const\s*)?(?::[^{;]*)?\{/g)) {
+    if (NO_SON_FUNCIONES.has(m[1]!)) continue
+    const params = m[2]!.split(",").map((x) => x.replace(/=.*$/, "").match(/([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)?$/)?.[1])
+    const abre = m.index! + m[0].length - 1
+    const hasta = cierres.get(abre) ?? codigo.length
+    params.forEach((nombre, indice) => {
+      if (nombre && nombre !== "void") anotar(nombre, { desde: abre, hasta, tipo: "param", funcion: m[1]!, indice })
+    })
+  }
+  const reFor = new RegExp(
+    `\\bfor\\s*\\(\\s*(?:${TIPOS_C}\\s+)?([A-Za-z_]\\w*)\\s*=\\s*([^;]+);\\s*\\1\\s*(<=|<|!=)\\s*([^;]+);\\s*(?:\\1\\s*\\+\\+|\\+\\+\\s*\\1|\\1\\s*\\+=\\s*1)\\s*\\)`,
+    "g",
+  )
+  for (const m of codigo.matchAll(reFor)) {
+    let j = m.index! + m[0].length
+    while (/\s/.test(codigo[j] ?? "")) j++
+    const hasta = codigo[j] === "{" ? (cierres.get(j) ?? codigo.length) : j + valorHasta(codigo, j).valor.length + 1
+    const ini = enteroDe(m[2]!, s, familia)
+    const lim = enteroDe(m[4]!, s, familia)
+    const fin = lim === null ? null : m[3] === "<=" ? lim : lim - 1
+    const pines = ini !== null && fin !== null && fin >= ini && fin - ini < 40 ? Array.from({ length: fin - ini + 1 }, (_, k) => ini + k) : null
+    anotar(m[1]!, { desde: m.index!, hasta, tipo: "for", pines })
+  }
+  return porNombre
 }
 
 interface PinResuelto {
@@ -1604,7 +1841,9 @@ export interface UsoPin {
   declarado: boolean
   /** Esta en una rama de `#if` cuya condicion no se sabe: puede que ni se compile. */
   enIf: boolean
-  /** "Serial1": los pines por defecto de Serial1 en el ESP32, que son de la flash. */
+  /** Esta en un archivo de `lib/`: lo de adentro de una libreria sin resolver no va a la huella. */
+  deLib?: boolean
+  /** "Serial1": los pines de fabrica de Serial1 en el ESP32, que son de la flash. */
   origen?: "Serial1"
   /** Lo que se escribio para cada nombre de la expresion, si no se resolvio: va a la huella. */
   definiciones?: string
@@ -1643,34 +1882,52 @@ const LLAMADAS: Array<[RegExp, (a: string[]) => Array<[string, ModoPin, boolean]
   [new RegExp(`${NO_ES_METODO}\\btone\\s*\\(`, "g"), (a) => (a[0] ? [[a[0], "OUTPUT", false]] : [])],
 ]
 
+/** Lo que tiene que aparecer en un archivo de `lib/` para que valga la pena analizarlo entero. */
+const DISPARADORES = /pinMode|digitalWrite|digitalRead|analogRead|analogWrite|ledcAttach|\btone\b|Serial[12]|\.attach|LiquidCrystal\b|Stepper|NeoPixel|\bDHT\b|OneWire|NewPing|Ultrasonic|MFRC522|Keypad|IRrecv|FastLED/
+
 interface Preparado {
   codigo: string
   /** Lineas con los textos, para leer los #include. */
   conTextos: string
   incierta: boolean[]
-  cuerpoDeMacro: boolean[]
+  macroDeLinea: Array<{ nombre: string; params: string[] } | null>
+  deLib: boolean[]
   s: Simbolos
 }
 
 export interface Archivo {
   nombre: string
   texto: string
+  /** Viene de `lib/`: codigo de terceros. */
+  deLib?: boolean
 }
 
-/** Limpia y preprocesa cada archivo por su lado y los junta. */
-function preparar(archivos: Archivo[], board: string): Preparado {
+/**
+ * Limpia y preprocesa cada archivo por su lado y los junta. De un archivo de
+ * `lib/` sin nada que maneje pines (los headers del core, las tablas de fuentes de
+ * una pantalla) quedan solo las directivas: sus #define pueden importar, el resto
+ * no, y analizarlo entero costaba segundos.
+ */
+function preparar(archivos: Archivo[], board: string, predefinidas: Map<string, string> = new Map()): Preparado {
   const macros = macrosDePlaca(board)
   const lineas: string[] = []
   const lineasTexto: string[] = []
   const incierta: boolean[] = []
-  const cuerpoDeMacro: boolean[] = []
+  const macroDeLinea: Preparado["macroDeLinea"] = []
+  const deLib: boolean[] = []
   const defines = new Map<string, Definicion>()
   for (const a of archivos) {
-    const p = preprocesar(limpiar(a.texto), macros)
+    let lim = limpiar(a.texto)
+    if (a.deLib && !DISPARADORES.test(lim.codigo)) {
+      const directivas = (t: string) => t.split("\n").map((l) => (/^\s*#/.test(l) ? l : "")).join("\n")
+      lim = { codigo: directivas(lim.codigo), conTextos: directivas(lim.conTextos) }
+    }
+    const p = preprocesar(lim, macros, predefinidas)
     lineas.push(...p.lineas)
     lineasTexto.push(...p.lineasTexto)
     incierta.push(...p.incierta)
-    cuerpoDeMacro.push(...p.cuerpoDeMacro)
+    macroDeLinea.push(...p.macroDeLinea)
+    for (let k = 0; k < p.lineas.length; k++) deLib.push(!!a.deLib)
     // Un mismo nombre con valores distintos en dos archivos: no se sabe cual vale.
     for (const [n, d] of p.defines) {
       const previa = defines.get(n)
@@ -1679,13 +1936,13 @@ function preparar(archivos: Archivo[], board: string): Preparado {
     }
   }
   const codigo = lineas.join("\n")
-  return { codigo, conTextos: lineasTexto.join("\n"), incierta, cuerpoDeMacro, s: juntarSimbolos(codigo, defines) }
+  return { codigo, conTextos: lineasTexto.join("\n"), incierta, macroDeLinea, deLib, s: juntarSimbolos(codigo, defines) }
 }
 
 /** Cada uso de un pin en el codigo ya preparado, resuelto o marcado como no resuelto. */
 function usosDe(p: Preparado, familia: FamiliaPlaca | null): UsoPin[] {
   const { codigo, s } = p
-  const ambitos = ambitosDeParametros(codigo)
+  const ambitos = ambitosDe(codigo, s, familia)
   const inicioLinea: number[] = [0]
   for (let i = 0; i < codigo.length; i++) if (codigo[i] === "\n") inicioLinea.push(i + 1)
   const lineaDe = (idx: number) => {
@@ -1699,22 +1956,53 @@ function usosDe(p: Preparado, familia: FamiliaPlaca | null): UsoPin[] {
     return lo
   }
 
+  /*
+   * PLANTILLAS: un pinMode cuyo pin es el PARAMETRO de una funcion propia o de una
+   * macro (`void configurarSalida(int pin){ pinMode(pin, OUTPUT); }`, `#define
+   * SALIDA(p) pinMode(p, OUTPUT)`). El pin real esta en cada llamada, asi que se
+   * anota la plantilla y despues se busca cada `configurarSalida(7)`.
+   */
+  const plantillas: Array<{ nombre: string; indice: number; modo: ModoPin; declarado: boolean }> = []
+  const vistas = new Set<string>()
+  const plantilla = (nombre: string, indice: number, modo: ModoPin, declarado: boolean) => {
+    const k = `${nombre}/${indice}/${modo}/${declarado}`
+    if (!vistas.has(k) && plantillas.length < 200) {
+      vistas.add(k)
+      plantillas.push({ nombre, indice, modo, declarado })
+    }
+  }
+
   const usos: UsoPin[] = []
   const agregar = (expr: string, modo: ModoPin, declarado: boolean, idx: number) => {
     const linea = lineaDe(idx)
-    if (p.cuerpoDeMacro[linea]) return // `#define F(p) pinMode(p, ...)`: el p no es un pin todavia
+    const e = expr.trim()
+    const macro = p.macroDeLinea[linea]
+    if (macro) {
+      const i = macro.params.indexOf(e)
+      if (i >= 0) return plantilla(macro.nombre, i, modo, declarado)
+    }
+    const enIf = p.incierta[linea] ?? false
+    const deLib = p.deLib[linea] ?? false
     const sombra = new Set<string>()
-    for (const a of ambitos) if (idx > a.desde && idx < a.hasta) for (const x of a.params) sombra.add(x)
-    // `digitalWrite(ledPin, ...)` adentro de `parpadear(int ledPin)`: el pin real esta en la llamada, no aca.
-    if (sombra.has(expr.trim())) return
-    let r = resolverPin(expr, s, familia, sombra)
+    if (/^[A-Za-z_]\w*$/.test(e)) {
+      // El ambito mas de adentro que contiene este uso.
+      const amb = (ambitos.get(e) ?? []).filter((a) => idx > a.desde && idx < a.hasta).sort((a, b) => b.desde - a.desde)[0]
+      if (amb?.tipo === "param") return plantilla(amb.funcion!, amb.indice!, modo, declarado)
+      if (amb?.tipo === "for") {
+        if (amb.pines) usos.push({ expr: e, pines: amb.pines, dePlaca: false, resuelto: true, modo, declarado, enIf, deLib })
+        else usos.push({ expr: e, pines: [], dePlaca: false, resuelto: false, modo, declarado, enIf, deLib, definiciones: "for" })
+        return
+      }
+    }
+    for (const [n, as] of ambitos) if (as.some((a) => idx > a.desde && idx < a.hasta)) sombra.add(n)
+    let r = resolverPin(e, s, familia, sombra)
     // En UNO/Nano, `analogRead(0)` es A0, no D0.
     if (r && modo === "ANALOG" && familia === "uno") r = { ...r, pines: r.pines.map((x) => (x < 8 ? x + 14 : x)) }
-    const limpio = expr.replace(/\s+/g, " ").trim()
+    const limpio = e.replace(/\s+/g, " ")
     const definiciones = r
       ? undefined
       : [...new Set(limpio.match(/[A-Za-z_]\w*/g) ?? [])]
-          .filter((n) => s.textos.has(n))
+          .filter((n) => s.textos.has(n) && !sombra.has(n))
           .map((n) => `${n}=${s.textos.get(n)!.join("|")}`)
           .join(";") || undefined
     usos.push({
@@ -1724,7 +2012,8 @@ function usosDe(p: Preparado, familia: FamiliaPlaca | null): UsoPin[] {
       resuelto: r !== null,
       modo,
       declarado,
-      enIf: p.incierta[linea] ?? false,
+      enIf,
+      deLib,
       ...(definiciones ? { definiciones } : {}),
     })
   }
@@ -1746,32 +2035,58 @@ function usosDe(p: Preparado, familia: FamiliaPlaca | null): UsoPin[] {
   for (const m of codigo.matchAll(/\bFastLED\s*\.\s*addLeds\s*<\s*[^,<>]+,\s*([^,<>]+)/g)) agregar(m[1]!, "NEOPIXEL", false, m.index!)
   // Servo: `.attach(` solo sobre objetos declarados `Servo x` (Ticker tambien tiene attach).
   const servos = new Set<string>()
-  for (const m of codigo.matchAll(/\bServo\s+([A-Za-z_][\w\s,[\]]*?);/g)) {
+  for (const m of codigo.matchAll(/\bServo\s+([A-Za-z_][\w\s,[\]]{0,2000}?);/g)) {
     for (const n of m[1]!.split(",")) {
       const nombre = n.trim().match(/^[A-Za-z_]\w*/)?.[0]
       if (nombre) servos.add(nombre)
     }
   }
-  if (servos.size > 0) {
+  if (servos.size > 0 && servos.size < 500) {
     const nombres = [...servos].join("|")
     for (const m of codigo.matchAll(new RegExp(`\\b(?:${nombres})\\s*(?:\\[[^\\]]*\\]\\s*)?\\.\\s*attach\\s*\\(`, "g"))) {
       const args = argumentosDesde(codigo, m.index! + m[0].length)
       if (args?.[0]) agregar(args[0], "SERVO", false, m.index!)
     }
   }
-  // Serial1/Serial2 con pines: `Serial1.begin(9600, SERIAL_8N1, RX, TX)`.
+
+  /*
+   * Serial1/Serial2. En el ESP32 (core 2.0.17, `HardwareSerial.h`), Serial1 de
+   * fabrica es RX1=GPIO9 y TX1=GPIO10, de la flash: lo verifico el revisor de
+   * riesgo. Bloquea `Serial1.begin(baud)` o `begin(baud, cfg)` sin pines, y un
+   * `-1` explicito en RX o TX (es "el de fabrica"). NO bloquea con 3 argumentos
+   * (el RX ya es otro) ni si antes hay un `Serial1.setPins(...)`: ahi el codigo
+   * eligio sus pines, y un bloqueo sin salida es peor que un aviso de menos.
+   */
+  const conSetPins = new Set<string>()
+  for (const m of codigo.matchAll(/(?<!\w)Serial([12])\s*\.\s*setPins\s*\(/g)) {
+    conSetPins.add(m[1]!)
+    const args = argumentosDesde(codigo, m.index! + m[0].length) ?? []
+    for (const a of [args[0], args[1]]) if (a && a !== "-1") agregar(a, "UART", false, m.index!)
+  }
   for (const m of codigo.matchAll(/(?<!\w)Serial([12])\s*\.\s*begin\s*\(/g)) {
     const args = argumentosDesde(codigo, m.index! + m[0].length) ?? []
-    if (args.length >= 4) {
-      for (const a of [args[2], args[3]]) if (a && a !== "-1") agregar(a, "UART", false, m.index!)
-    } else if (m[1] === "1" && familia === "esp32") {
-      /*
-       * Serial1 SIN PINES en el ESP32 usa los de fabrica: RX1=GPIO9 y TX1=GPIO10
-       * (core 2.0.17, `HardwareSerial.h`), que son de la flash. Lo verifico el
-       * revisor de riesgo en el core fijado. Se registra como un uso propio para
-       * que el aviso diga que es por Serial1 y no "GPIO9" a secas.
-       */
-      usos.push({ expr: "Serial1", pines: [9, 10], dePlaca: false, resuelto: true, modo: "UART", declarado: false, enIf: p.incierta[lineaDe(m.index!)] ?? false, origen: "Serial1" })
+    const [rx, tx] = [args[2], args[3]]
+    for (const a of [rx, tx]) if (a && a !== "-1") agregar(a, "UART", false, m.index!)
+    if (m[1] !== "1" || familia !== "esp32" || conSetPins.has("1")) continue
+    const deFabrica = args.length < 3 ? [9, 10] : [...(rx === "-1" ? [9] : []), ...(tx === "-1" ? [10] : [])]
+    if (deFabrica.length > 0) {
+      const linea = lineaDe(m.index!)
+      usos.push({ expr: "Serial1", pines: deFabrica, dePlaca: false, resuelto: true, modo: "UART", declarado: false, enIf: p.incierta[linea] ?? false, deLib: p.deLib[linea] ?? false, origen: "Serial1" })
+    }
+  }
+
+  // Las llamadas a las funciones y macros-plantilla, hasta que no aparezcan nuevas.
+  for (let i = 0; i < plantillas.length; i++) {
+    const t = plantillas[i]!
+    for (const m of codigo.matchAll(new RegExp(`(?<![\\w.:>])\\b${t.nombre}\\s*\\(`, "g"))) {
+      const linea = lineaDe(m.index!)
+      if (p.macroDeLinea[linea]?.nombre === t.nombre && /^\s*#/.test(codigo.slice(inicioLinea[linea], m.index!))) continue
+      // `void configurarSalida(int pin)` es la definicion, no una llamada.
+      const antes = codigo.slice(Math.max(0, m.index! - 40), m.index!).match(/([A-Za-z_]\w*|[*&])\s*$/)?.[1]
+      if (antes && !["return", "else", "do", "case"].includes(antes)) continue
+      const args = argumentosDesde(codigo, m.index! + m[0].length)
+      const arg = args?.[t.indice]
+      if (arg) agregar(arg, t.modo, t.declarado, m.index!)
     }
   }
   return usos
@@ -1840,8 +2155,10 @@ function hallazgosDe(p: Preparado, usos: UsoPin[], familia: FamiliaPlaca | null)
 
   for (const u of usos.filter((x) => x.resuelto)) {
     if (u.origen === "Serial1") {
+      const cuales = u.pines.map((x) => `GPIO${x}`).join(" y ")
       const texto =
-        "Serial1.begin sin pines usa GPIO9 y GPIO10, que en el ESP32 son de la memoria flash: la placa se cuelga. Hay que pasarle dos pines libres, por ejemplo Serial1.begin(9600, SERIAL_8N1, 25, 26)."
+        (u.pines.length === 2 ? "Serial1.begin sin pines usa GPIO9 y GPIO10" : `Serial1.begin con un -1 usa el pin de fábrica, ${cuales}`) +
+        `, que en el ESP32 ${u.pines.length === 2 ? "son" : "es"} de la memoria flash: la placa se cuelga. Hay que pasarle dos pines libres, por ejemplo Serial1.begin(9600, SERIAL_8N1, 25, 26).`
       if (u.enIf) agregar("aviso", `${texto} Está adentro de un #if, así que quizás no se compila.`)
       else agregar("bloqueo", texto)
       continue
@@ -1907,8 +2224,10 @@ export function analizarPines(src: string, familia: FamiliaPlaca | null, board =
  * La huella es lo que dice el codigo del circuito: la placa, cada pin con su
  * modo, y las librerias de hardware de una lista blanca. NO entra el LED de la
  * placa, ni la logica, ni el WiFi: no hay nada que conectar. Un pin que no se
- * resolvio entra con su nombre Y con lo que tiene escrito (`MOTOR=4`): asi
- * cambiar el #define de 4 a 25 cambia la huella aunque no se sepa el numero.
+ * resolvio entra con su nombre Y con lo que tiene escrito si eso no cambia en
+ * tiempo de ejecucion (`MOTOR{MOTOR=7|4}`); la variable de un `for` y las
+ * variables reasignadas entran solo con su nombre, para que una edicion que no
+ * toca el circuito no pida el checklist.
  *
  * El freno se levanta con un codigo de 6 caracteres que sale de la huella: el
  * tool se lo da al bot junto con la instruccion de hacer el checklist. NO es una
@@ -1958,7 +2277,11 @@ export interface Rasgos {
 }
 
 function huellaDe(p: Preparado, usos: UsoPin[], board: string, familia: FamiliaPlaca | null): { huella: Huella; rasgos: Rasgos } {
-  const sinCore = usos.filter((u) => !u.dePlaca)
+  // El LED_BUILTIN del core no es hardware conectado. Y lo de adentro de una
+  // libreria de `lib/` que no se resolvio (sus parametros, sus miembros, sus
+  // `_pin`) no es el circuito del docente: no entra a la huella ni a "Lo nuevo".
+  // Lo que SI se resolvio adentro de una libreria (un literal) sigue contando.
+  const sinCore = usos.filter((u) => !u.dePlaca && (u.resuelto || !u.deLib))
   // Si el pin tiene pinMode, manda el pinMode; si no, como se lo usa.
   const porPin = new Map<string, UsoPin[]>()
   for (const u of sinCore) {
@@ -1978,11 +2301,19 @@ function huellaDe(p: Preparado, usos: UsoPin[], board: string, familia: FamiliaP
     const nombreLed = u.expr === "LED_BUILTIN" || /led/i.test(u.expr)
     return familia ? clave === String(LED_PLACA[familia]) && (/^\d+$/.test(u.expr) || nombreLed) : nombreLed
   }
+  /*
+   * EL RELÉ SE MARCA EN LA ENTRADA. Antes un relé en el pin donde antes habia un
+   * LED daba la misma entrada (`pin:26:OUTPUT`) y se cargaba sin checklist: el
+   * mismo pin, el mismo modo, y del otro lado 220 V. Ahora es `pin:26:OUTPUT:rele`.
+   * Se reconoce por el nombre (INFERIDO: un relé no tiene libreria); con un
+   * numero pelado y sin nombre no se sabe.
+   */
   const entradas = new Set<string>()
   for (const [clave, us] of porPin) {
     const declarados = us.filter((u) => u.declarado)
+    const conRele = us.some((u) => esRele(u.expr))
     for (const u of declarados.length > 0 ? declarados : us) {
-      if (!exentoLed(u, clave)) entradas.add(`pin:${clave}:${u.modo}`)
+      if (!exentoLed(u, clave)) entradas.add(`pin:${clave}:${u.modo}${conRele ? ":rele" : ""}`)
     }
   }
   const libs = new Set<string>()
@@ -1991,7 +2322,7 @@ function huellaDe(p: Preparado, usos: UsoPin[], board: string, familia: FamiliaP
     if (lib) libs.add(lib)
   }
   for (const l of libs) entradas.add(`lib:${l}`)
-  const nombres = [...p.s.textos.keys()]
+  const nombres = [...p.s.textos.keys(), ...p.s.defines.keys()]
   const rele = sinCore.some((u) => esRele(u.expr)) || nombres.some((n) => esRele(n))
   return {
     huella: { placa: board, entradas: [...entradas].sort() },
@@ -2018,6 +2349,19 @@ export function altasNuevas(actual: Huella, previa: Huella | null): string[] {
   return actual.entradas.filter((e) => !antes.has(e))
 }
 
+const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16)
+
+/** La huella tal como se guarda: cada parte como hash. Se compara hash con hash. */
+export function hashearHuella(h: Huella): Huella {
+  return { placa: hash(h.placa), entradas: h.entradas.map(hash) }
+}
+
+/** Las altas de `actual` contra una previa ya hasheada, devueltas en claro (para decir que es lo nuevo). */
+function altasContra(actual: Huella, previa: Huella | null): string[] {
+  const enClaro = new Map(actual.entradas.map((e) => [hash(e), e] as const))
+  return altasNuevas(hashearHuella(actual), previa).map((x) => enClaro.get(x) ?? x)
+}
+
 const huellaCambio = (actual: Huella, previa: Huella | null) =>
   previa ? previa.placa !== actual.placa || previa.entradas.join("\n") !== actual.entradas.join("\n") : actual.entradas.length > 0
 
@@ -2042,14 +2386,13 @@ const MODO_LEGIBLE: Record<ModoPin, string> = {
   "?": "",
 }
 
-/** `pin:4:OUTPUT` -> "GPIO4 como salida"; `lib:DHT` -> "librería DHT". */
+/** `pin:4:OUTPUT` -> "GPIO4 como salida"; `pin:26:OUTPUT:rele` -> "GPIO26 como salida (un relé)"; `lib:DHT` -> "librería DHT". */
 export function describirEntrada(e: string, familia: FamiliaPlaca | null): string {
-  if (e === HUELLA_INCOMPLETA.entradas[0]) return "el código que no pude leer"
   if (e.startsWith("lib:")) return `librería ${e.slice(4)}`
-  const m = e.match(/^pin:(.+):([A-Z_?]+)$/)
+  const m = e.match(/^pin:(.+):([A-Z_?]+)(:rele)?$/)
   if (!m) return e
   const pin = /^\d+$/.test(m[1]!) ? nombrePin(Number(m[1]), familia) : m[1]!.replace(/\{.*\}$/, "")
-  return `${pin} ${MODO_LEGIBLE[m[2] as ModoPin] ?? ""}`.trim()
+  return `${pin} ${MODO_LEGIBLE[m[2] as ModoPin] ?? ""}${m[3] ? " (un relé)" : ""}`.replace(/\s+/g, " ").trim()
 }
 
 /** Los skills que conviene tener cargados para lo que el codigo usa. Los nombres son carpetas de opencode/skills. */
@@ -2093,21 +2436,43 @@ export function leerIni(iniText: string): Map<string, Map<string, string>> {
   return secciones
 }
 
+export interface Entorno {
+  nombre: string
+  board: string
+  /** Los `-D` de `build_flags`: nombre -> valor ("1" si no tiene). */
+  flags: Map<string, string>
+  /** `build_src_filter` (o el viejo `src_filter`), si hay. */
+  filtro: string | null
+}
+
 /**
- * Las placas que se van a cargar. Si se pidio un environment, ese. Si no, los
+ * Los environments que se van a cargar. Si se pidio uno, ese. Si no, los
  * `default_envs` de `[platformio]`; si no hay, TODOS los `[env:x]` (eso es lo que
- * hace `pio run` sin `-e`). Cada env toma su `board` o, si no tiene, el de `[env]`.
+ * hace `pio run` sin `-e`). Cada env toma sus claves o, si no las tiene, las de
+ * `[env]`; `${env.build_flags}` se reemplaza por el de `[env]`.
  */
-export function placasElegidas(iniText: string, env?: string): string[] {
+export function entornosElegidos(iniText: string, env?: string): Entorno[] {
   const ini = leerIni(iniText)
   const comun = ini.get("env")
   const envs = [...ini.keys()].filter((s) => s.startsWith("env:")).map((s) => s.slice(4))
-  const boardDe = (e: string) => ini.get(`env:${e}`)?.get("board") ?? comun?.get("board")
+  const clave = (e: string | null, k: string) => (e ? ini.get(`env:${e}`)?.get(k) : undefined) ?? comun?.get(k)
   const porDefecto = (ini.get("platformio")?.get("default_envs") ?? "").split(/[\s,]+/).filter((e) => envs.includes(e))
-  const elegidos = env && envs.includes(env) ? [env] : porDefecto.length > 0 ? porDefecto : envs
-  const boards = elegidos.map(boardDe).filter((b): b is string => !!b)
-  if (boards.length === 0 && envs.length === 0 && comun?.get("board")) boards.push(comun.get("board")!)
-  return [...new Set(boards)]
+  const elegidos: Array<string | null> = env && envs.includes(env) ? [env] : porDefecto.length > 0 ? porDefecto : envs.length > 0 ? envs : [null]
+  const out: Entorno[] = []
+  for (const e of elegidos) {
+    const board = clave(e, "board")
+    if (!board) continue
+    const crudos = (clave(e, "build_flags") ?? "").replace(/\$\{env\.build_flags\}/g, comun?.get("build_flags") ?? "")
+    const flags = new Map<string, string>()
+    for (const m of crudos.matchAll(/-D\s*([A-Za-z_]\w*)(?:=("[^"]*"|'[^']*'|\S+))?/g)) flags.set(m[1]!, (m[2] ?? "1").replace(/^["']|["']$/g, ""))
+    out.push({ nombre: e ?? "env", board, flags, filtro: clave(e, "build_src_filter") ?? clave(e, "src_filter") ?? null })
+  }
+  return out
+}
+
+/** Las placas que se van a cargar (ver `entornosElegidos`). */
+export function placasElegidas(iniText: string, env?: string): string[] {
+  return [...new Set(entornosElegidos(iniText, env).map((e) => e.board))]
 }
 
 /** El `board =` que se va a usar (el primero si hay varios). Se mantiene por compatibilidad. */
@@ -2115,28 +2480,73 @@ export function leerBoard(iniText: string, env?: string): string | null {
   return placasElegidas(iniText, env)[0] ?? null
 }
 
+/**
+ * `build_src_filter = +<*> -<viejo/>`: si un archivo de `src/` se compila. Solo
+ * los patrones simples (`*`, `**`, carpeta con `/` al final), en orden, como
+ * PlatformIO: el ultimo que coincide manda. Sin filtro, todo se compila.
+ */
+export function entraPorFiltro(rel: string, filtro: string | null): boolean {
+  if (!filtro) return true
+  let entra = true
+  for (const m of filtro.matchAll(/([+-])<([^>]+)>/g)) {
+    const patron = m[2]!.trim().replace(/\\/g, "/")
+    const re = new RegExp(
+      "^" +
+        patron
+          .replace(/[.+^${}()|[\]]/g, "\\$&")
+          .replace(/\*\*/g, "\u0000")
+          .replace(/\*/g, "[^/]*")
+          .replace(/\u0000/g, ".*")
+          .replace(/\/$/, "/.*") +
+        "$",
+    )
+    if (re.test(rel.replace(/\\/g, "/"))) entra = m[1] === "+"
+  }
+  return entra
+}
+
 const CARPETAS_QUE_NO = new Set(["examples", "example", "extras", "test", "tests", "docs", "doc"])
+const EXTENSIONES = /\.(ino|pde|cpp|cc|cxx|c|h|hh|hpp|hxx)$/i
+const PROFUNDIDAD_MAXIMA = 8
+
+/** El texto de un archivo, con UTF-16 (con BOM) decodificado: un .ino guardado asi se leia como basura y no avisaba de nada. */
+function leerTexto(ruta: string): string {
+  const b = readFileSync(ruta)
+  if (b[0] === 0xff && b[1] === 0xfe) return b.subarray(2).toString("utf16le")
+  if (b[0] === 0xfe && b[1] === 0xff) {
+    const cuerpo = Buffer.from(b.subarray(2, 2 + ((b.length - 2) & ~1)))
+    return cuerpo.swap16().toString("utf16le")
+  }
+  return b.toString("utf8")
+}
 
 /**
- * Todo el codigo del proyecto: `src/` (o el `src_dir`), `include/` (o el
- * `include_dir`) y `lib/`, recursivo. No sigue carpetas que son links (pueden
- * salir del proyecto o dar vueltas) ni entra a los ejemplos de las librerias de
- * `lib/`, que traen sus propios pinMode. Lo que no se puede leer se ANOTA: el
- * analisis queda incompleto y el checklist va siempre (falla cerrado).
+ * Todo el codigo del proyecto: `src/` (o el `src_dir`, respetando el
+ * `build_src_filter`), `include/` (o el `include_dir`) y `lib/`, recursivo. No
+ * entra a los ejemplos de las librerias. Lo que NO puede leer de verdad lo ANOTA
+ * y el analisis queda incompleto (el checklist va siempre: falla cerrado): un
+ * archivo ilegible, una carpeta sin permiso, una carpeta que es un link o un
+ * junction (puede salir del proyecto o dar vueltas: no se sigue, pero tampoco se
+ * ignora en silencio), y lo que pasa la profundidad maxima.
  */
-function leerFuentes(cwd: string, iniText: string): { archivos: Archivo[]; ilegibles: string[]; hayCarpetas: boolean } {
+function leerFuentes(cwd: string, iniText: string, filtro: string | null): { archivos: Archivo[]; ilegibles: string[]; hayCarpetas: boolean } {
   const pio = leerIni(iniText).get("platformio")
   const carpeta = (clave: string, porDefecto: string) => {
     const v = (pio?.get(clave) ?? porDefecto).replace(/\$\{PROJECT_DIR\}|\$PROJECT_DIR/g, cwd).trim()
     return isAbsolute(v) ? v : join(cwd, v)
   }
-  const raices = [...new Set([carpeta("include_dir", "include"), carpeta("src_dir", "src"), carpeta("lib_dir", "lib")])]
+  const src = carpeta("src_dir", "src")
+  const lib = carpeta("lib_dir", "lib")
+  const raices = [...new Set([carpeta("include_dir", "include"), src, lib])]
   const archivos: Archivo[] = []
   const ilegibles: string[] = []
   let hayCarpetas = false
   const nombreRel = (r: string) => (r.startsWith(cwd) ? r.slice(cwd.length).replace(/^[\\/]/, "") : r)
-  const recorrer = (dir: string, prof: number) => {
-    if (prof > 6) return
+  const recorrer = (dir: string, prof: number, raiz: string) => {
+    if (prof > PROFUNDIDAD_MAXIMA) {
+      ilegibles.push(`${nombreRel(dir)} (demasiado profundo)`)
+      return
+    }
     let nombres: string[]
     try {
       nombres = readdirSync(dir).sort()
@@ -2153,11 +2563,30 @@ function leerFuentes(cwd: string, iniText: string): { archivos: Archivo[]; ilegi
         ilegibles.push(nombreRel(ruta))
         continue
       }
-      if (st.isDirectory()) {
-        if (!nombre.startsWith(".") && !CARPETAS_QUE_NO.has(nombre.toLowerCase())) recorrer(ruta, prof + 1)
-      } else if (/\.(ino|cpp|c|h|hpp)$/i.test(nombre)) {
+      let esCarpetaReal = st.isDirectory()
+      if (st.isSymbolicLink()) {
+        let destino: ReturnType<typeof statSync> | undefined
         try {
-          archivos.push({ nombre: nombreRel(ruta), texto: readFileSync(ruta, "utf8") })
+          destino = statSync(ruta)
+        } catch {
+          destino = undefined
+        }
+        if (destino?.isDirectory()) {
+          if (!CARPETAS_QUE_NO.has(nombre.toLowerCase())) ilegibles.push(`${nombreRel(ruta)} (link a una carpeta)`)
+          continue
+        }
+        if (!destino) {
+          if (EXTENSIONES.test(nombre)) ilegibles.push(nombreRel(ruta))
+          continue
+        }
+        esCarpetaReal = false
+      }
+      if (esCarpetaReal) {
+        if (!nombre.startsWith(".") && !CARPETAS_QUE_NO.has(nombre.toLowerCase())) recorrer(ruta, prof + 1, raiz)
+      } else if (EXTENSIONES.test(nombre)) {
+        if (raiz === src && !entraPorFiltro(ruta.slice(src.length).replace(/^[\\/]/, ""), filtro)) continue
+        try {
+          archivos.push({ nombre: nombreRel(ruta), texto: leerTexto(ruta), ...(raiz === lib ? { deLib: true } : {}) })
         } catch {
           ilegibles.push(nombreRel(ruta))
         }
@@ -2167,7 +2596,7 @@ function leerFuentes(cwd: string, iniText: string): { archivos: Archivo[]; ilegi
   for (const r of raices) {
     if (!existsSync(r)) continue
     hayCarpetas = true
-    recorrer(r, 0)
+    recorrer(r, 0, r)
   }
   // El orden de los archivos no cambia el resultado: los #define de varios
   // archivos se juntan sin importar cual va primero (ver `preparar`).
@@ -2183,8 +2612,22 @@ export interface AnalisisProyecto {
   incompleto: string[]
 }
 
-/** La huella fija de un analisis incompleto: su codigo no depende de lo que no se pudo leer. */
-export const HUELLA_INCOMPLETA: Huella = { placa: "analisis-incompleto", entradas: ["analisis-incompleto"] }
+/** La ruta del proyecto como se compara: en Windows, en minusculas y con `/` (C:\Users\Ana y c:/users/ana son la misma). */
+export function rutaNormalizada(cwd: string): string {
+  if (/^[a-z]:[\\/]/i.test(cwd) || process.platform === "win32") return win32.resolve(cwd).replace(/\\/g, "/").toLowerCase()
+  return resolve(cwd)
+}
+
+/**
+ * La huella de un analisis incompleto: sale del proyecto y de la lista de lo
+ * que no se pudo leer. Antes era una sola huella fija para todos los proyectos,
+ * asi que su codigo servia en cualquier lado.
+ */
+export function huellaIncompleta(cwd: string, incompleto: string[]): Huella {
+  return { placa: "analisis-incompleto", entradas: [hash(rutaNormalizada(cwd)), ...[...incompleto].sort()] }
+}
+
+const SIN_RASGOS: Rasgos = { wifi: false, dht: false, servo: false, rele: false }
 
 /** Junta los analisis de varias placas (varios envs sin uno elegido). */
 function unirAnalisis(partes: Array<{ board: string; familia: FamiliaPlaca | null; hallazgos: Hallazgo[]; huella: Huella; rasgos: Rasgos }>): Omit<AnalisisProyecto, "incompleto"> {
@@ -2218,116 +2661,144 @@ function unirAnalisis(partes: Array<{ board: string; familia: FamiliaPlaca | nul
 export function analizarProyecto(cwd: string, env?: string): AnalisisProyecto | null {
   const ini = join(cwd, "platformio.ini")
   if (!existsSync(ini)) return null
+  const incompleto = (que: string[]): AnalisisProyecto => ({ familia: null, hallazgos: [], huella: huellaIncompleta(cwd, que), rasgos: SIN_RASGOS, incompleto: que })
   let iniText: string
   try {
     iniText = readFileSync(ini, "utf8")
   } catch {
-    return { familia: null, hallazgos: [], huella: HUELLA_INCOMPLETA, rasgos: { wifi: false, dht: false, servo: false, rele: false }, incompleto: ["platformio.ini"] }
+    return incompleto(["platformio.ini"])
   }
   try {
-    const { archivos, ilegibles, hayCarpetas } = leerFuentes(cwd, iniText)
+    const entornos = entornosElegidos(iniText, env)
+    const { archivos, ilegibles, hayCarpetas } = leerFuentes(cwd, iniText, entornos[0]?.filtro ?? null)
     if (!hayCarpetas || (archivos.length === 0 && ilegibles.length === 0)) return null
-    const boards = placasElegidas(iniText, env)
-    const partes = (boards.length > 0 ? boards : ["?"]).map((board) => {
-      const familia = familiaDePlaca(board)
-      const p = preparar(archivos, board)
+    const lista = entornos.length > 0 ? entornos : [{ nombre: "?", board: "?", flags: new Map<string, string>(), filtro: null }]
+    const partes = lista.map((e) => {
+      const familia = familiaDePlaca(e.board)
+      const p = preparar(archivos, e.board, e.flags)
       const usos = usosDe(p, familia)
-      return { board, familia, hallazgos: hallazgosDe(p, usos, familia), ...huellaDe(p, usos, board, familia) }
+      return { board: e.board, familia, hallazgos: hallazgosDe(p, usos, familia), ...huellaDe(p, usos, e.board, familia) }
     })
     return { ...unirAnalisis(partes), incompleto: ilegibles }
   } catch {
-    return { familia: null, hallazgos: [], huella: HUELLA_INCOMPLETA, rasgos: { wifi: false, dht: false, servo: false, rele: false }, incompleto: ["(el análisis falló)"] }
+    return incompleto(["(el análisis falló)"])
   }
 }
 
 // ── 5. La ultima carga ──────────────────────────────────────────────────────
 
 /*
- * QUE SE GUARDA Y DONDE.
+ * QUE SE GUARDA Y DONDE, y por que son hashes.
  *
- * En el proyecto, `.pio/tecnia/ultima-carga.json`: la huella, el puerto, el hwid
- * que da `pio device list` y la carpeta del proyecto. Y en la compu,
- * `~/.config/opencode/tecnia-cargas.json`: por puerto, que proyecto se cargo
- * ultimo, pero GUARDADO COMO HASH (ni la ruta ni el hwid quedan legibles: la ruta
- * puede tener el nombre de una persona, y el desinstalador no conoce este
- * archivo).
+ * En el proyecto, `.pio/tecnia/ultima-carga.json`: la huella de la ultima carga
+ * que termino bien (cada parte como hash) y la identidad de la placa (hash con
+ * la sal de la compu). Nada mas: ni la ruta, ni el hwid, ni la fecha. Y en la
+ * compu, `~/.config/opencode/tecnia-cargas.json`: una sal aleatoria propia de
+ * esa compu y, por placa, que proyecto se cargo ultimo, los dos como hash con
+ * esa sal. La ruta puede tener el nombre de una persona; con la sal, el hash no
+ * se puede comparar contra una lista de nombres. El desinstalador lo borra junto
+ * con el perfil y la memoria.
  *
- * Con eso, ademas del circuito, se pide el checklist si se carga a OTRA placa
- * (otro puerto u otro hwid) o si en esa placa lo ultimo que se cargo fue OTRO
- * proyecto: el circuito que esta en la mesa puede no ser el de este codigo.
+ * LA IDENTIDAD DE LA PLACA sale de VID:PID y del numero de serie (SER) que
+ * informa `pio device list`. NUNCA del puerto ni de LOCATION: cambiar el cable de
+ * zocalo USB no cambia la placa, y antes pedia el checklist. Sin numero de serie
+ * —el CH340 de los clones no tiene— dos placas del mismo modelo son
+ * indistinguibles: solo se puede saber que es OTRA placa si cambia el modelo.
+ * Ahi "en esa placa lo ultimo fue otro proyecto" es un aviso, no un freno.
  *
  * EL ORDEN. El bloqueo de la flash y la comparacion del circuito van ANTES de
  * buscar la placa (no hace falta la placa para saberlo, y asi no se toca nada).
- * La comparacion de la placa necesita el puerto, asi que va DESPUES de
+ * La comparacion de la placa necesita la identidad, asi que va DESPUES de
  * detectPort y antes de cargar.
  */
 export interface UltimaCarga extends Huella {
-  puerto?: string
-  hwid?: string
-  proyecto?: string
+  /** Hash con sal de la identidad de la placa, o null si no se supo. */
+  placaFisica: string | null
+}
+
+interface CargasGlobal {
+  sal: string
+  placas: Record<string, string>
 }
 
 const rutaUltimaCarga = (cwd: string) => join(cwd, ".pio", "tecnia", "ultima-carga.json")
 const rutaCargasGlobal = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode", "tecnia-cargas.json")
-const hash = (s: string) => createHash("sha256").update(s).digest("hex").slice(0, 16)
 
-/** La ultima carga que termino bien en este proyecto, o null. */
+/** La ultima carga que termino bien en este proyecto (todo en hash), o null. Un archivo de otra version no cuenta. */
 export function leerUltimaCarga(cwd: string): UltimaCarga | null {
   try {
-    const d = JSON.parse(readFileSync(rutaUltimaCarga(cwd), "utf8")) as Partial<UltimaCarga>
-    if (typeof d.placa !== "string" || !Array.isArray(d.entradas)) return null
-    const str = (x: unknown) => (typeof x === "string" ? x : undefined)
+    const d = JSON.parse(readFileSync(rutaUltimaCarga(cwd), "utf8")) as Partial<UltimaCarga> & { version?: number }
+    if (d.version !== 2 || typeof d.placa !== "string" || !Array.isArray(d.entradas)) return null
     return {
       placa: d.placa,
       entradas: d.entradas.filter((e): e is string => typeof e === "string"),
-      puerto: str(d.puerto),
-      hwid: str(d.hwid),
-      proyecto: str(d.proyecto),
+      placaFisica: typeof d.placaFisica === "string" ? d.placaFisica : null,
     }
   } catch {
     return null
   }
 }
 
-function leerCargasGlobal(): Record<string, { proyecto: string; hwid: string | null }> {
+export function leerCargasGlobal(): CargasGlobal {
   try {
-    const d = JSON.parse(readFileSync(rutaCargasGlobal(), "utf8"))
-    return d && typeof d === "object" ? d : {}
+    const d = JSON.parse(readFileSync(rutaCargasGlobal(), "utf8")) as Partial<CargasGlobal>
+    if (typeof d.sal === "string" && d.sal.length >= 16 && d.placas && typeof d.placas === "object") return { sal: d.sal, placas: d.placas }
   } catch {
-    return {}
+    /* sin archivo o roto: una sal nueva */
   }
+  return { sal: randomBytes(16).toString("hex"), placas: {} }
 }
+
+/** VID:PID y numero de serie de lo que informa `pio device list`. Sin VID:PID, null. Un "serie" con `&` lo inventa Windows: no cuenta. */
+export function identidadDePlaca(hwid: string | undefined): { modelo: string; serie: string | null } | null {
+  if (!hwid) return null
+  const id = hwid.toUpperCase()
+  const junto = id.match(/VID:PID=([0-9A-F]{4}):([0-9A-F]{4})/)
+  const vid = junto?.[1] ?? id.match(/VID_([0-9A-F]{4})/)?.[1]
+  const pid = junto?.[2] ?? id.match(/PID_([0-9A-F]{4})/)?.[1]
+  if (!vid || !pid) return null
+  let serie = hwid.match(/\bSER=(\S+)/i)?.[1] ?? hwid.match(/^USB\\VID_[0-9A-F]{4}&PID_[0-9A-F]{4}[^\\]*\\([^\\\s]+)$/i)?.[1] ?? null
+  if (serie && serie.includes("&")) serie = null
+  return { modelo: `${vid}:${pid}`, serie }
+}
+
+const idDePlaca = (cargas: CargasGlobal, ident: { modelo: string; serie: string | null }) =>
+  hash(`${cargas.sal}|${ident.modelo}|${ident.serie ?? "sin-serie"}`)
 
 /**
- * Solo se llama despues de una carga con codigo 0. Si no se puede escribir, la
- * proxima carga vuelve a pedir el checklist: es el lado seguro. Con un analisis
- * incompleto (o sin analisis) NO se guarda la huella del proyecto, pero SI el
- * registro de la placa: ahora en esa placa esta este proyecto.
+ * Solo se llama despues de una carga con codigo 0. Devuelve si pudo anotar la
+ * carga del proyecto (si no, se avisa: la proxima vez se vuelve a pedir el
+ * checklist, que es el lado seguro). Con un analisis incompleto no se guarda la
+ * huella del proyecto, pero SI el registro de la placa: ahora en esa placa esta
+ * este proyecto.
  */
-function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, puerto: string, hwid: string | undefined): void {
-  const proyecto = resolve(cwd)
-  if (a && a.incompleto.length === 0) guardarHuella(cwd, a.huella, puerto, hwid, proyecto)
-  try {
-    const global = leerCargasGlobal()
-    global[puerto] = { proyecto: hash(proyecto), hwid: hwid ? hash(hwid) : null }
-    mkdirSync(join(rutaCargasGlobal(), ".."), { recursive: true })
-    writeFileSync(rutaCargasGlobal(), JSON.stringify(global, null, 2))
-  } catch {
-    /* sin el registro global solo se pierde el aviso de "otro proyecto" */
+function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, hwid: string | undefined): boolean {
+  const cargas = leerCargasGlobal()
+  const ident = identidadDePlaca(hwid)
+  const placaFisica = ident ? idDePlaca(cargas, ident) : null
+  let ok = true
+  if (a && a.incompleto.length === 0) {
+    try {
+      mkdirSync(join(cwd, ".pio", "tecnia"), { recursive: true })
+      writeFileSync(rutaUltimaCarga(cwd), JSON.stringify({ version: 2, ...hashearHuella(a.huella), placaFisica }, null, 2))
+    } catch {
+      ok = false
+    }
   }
+  if (placaFisica) {
+    try {
+      cargas.placas[placaFisica] = hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
+      mkdirSync(join(rutaCargasGlobal(), ".."), { recursive: true })
+      writeFileSync(rutaCargasGlobal(), JSON.stringify(cargas, null, 2))
+    } catch {
+      /* sin el registro global solo se pierde el aviso de "otro proyecto" */
+    }
+  }
+  return ok
 }
 
-function guardarHuella(cwd: string, h: Huella, puerto: string, hwid: string | undefined, proyecto: string): void {
-  try {
-    mkdirSync(join(cwd, ".pio", "tecnia"), { recursive: true })
-    writeFileSync(
-      rutaUltimaCarga(cwd),
-      JSON.stringify({ placa: h.placa, entradas: h.entradas, puerto, hwid: hwid ?? null, proyecto, cargado: new Date().toISOString() }, null, 2),
-    )
-  } catch {
-    /* lado seguro: se vuelve a pedir el checklist */
-  }
-}
+const NO_PUDE_ANOTAR =
+  "\n\nOjo: no pude anotar esta carga en la carpeta `.pio` del proyecto, así que la próxima vez se va a volver a pedir el checklist aunque no cambie nada."
 
 const listaHallazgos = (hs: Hallazgo[]) => hs.map((h) => `- ${h.texto}`).join("\n")
 
@@ -2359,7 +2830,7 @@ export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | 
   if (resto.length > 0) msg += `\n\n**Revisá estos pines con el docente antes de cargar:**\n${listaHallazgos(resto)}`
   if (a.incompleto.length > 0) msg += `\n\n${avisoIncompleto(a)}`
   const skills = skillsParaRasgos(a.rasgos)
-  if (skills.length > 0 && huellaCambio(a.huella, previa)) {
+  if (skills.length > 0 && huellaCambio(hashearHuella(a.huella), previa)) {
     msg += `\n\nRecordatorio: el circuito cambió; si todavía no los cargaste, activá los skills ${skills.map((s) => `\`${s}\``).join(", ")} antes de explicarlo o cargarlo.`
   }
   return msg
@@ -2371,7 +2842,7 @@ function pedirChecklist(motivo: string, lo: string, codigo: string, checklist: s
   return (
     `FRENÉ LA CARGA: antes de cargar hay un paso obligado, el checklist de seguridad. ${motivo}\n\n` +
     (lo ? `${lo}\n\n` : "") +
-    (checklist ? "El código de checklist que pasaste no corresponde a este circuito.\n\n" : "") +
+    (checklist ? "El código de checklist que pasaste no corresponde a esta carga.\n\n" : "") +
     "Activá el skill `checklist-seguridad` y hacé con el docente un checklist CORTO y a medida, en formato sí/no. " +
     "Esperá que confirme. Recién cuando confirme, volvé a llamar a `platformio` con la misma acción y " +
     `\`checklist: "${codigo}"\`. No pases ese código sin haber hecho el checklist: el tool no puede comprobarlo, depende de vos.`
@@ -2382,9 +2853,9 @@ function pedirChecklist(motivo: string, lo: string, codigo: string, checklist: s
  * El primer freno de `flash`/`both`, ANTES de buscar la placa. null si se puede
  * seguir. Primero los pines que rompen (no hay codigo que los levante); despues
  * el checklist si el analisis esta incompleto (siempre) o si el circuito tiene
- * altas nuevas desde la ultima carga de este proyecto.
+ * altas nuevas desde la ultima carga de este proyecto. `previa` viene en hash.
  */
-export function frenoAntesDeCargar(a: AnalisisProyecto | null, previa: Huella | null, checklist: string | undefined): string | null {
+export function frenoAntesDeCargar(a: AnalisisProyecto | null, previa: Huella | null, checklist: string | undefined, cwd = "."): string | null {
   if (!a) return null
   const bloqueos = a.hallazgos.filter((h) => h.nivel === "bloqueo")
   if (bloqueos.length > 0) {
@@ -2395,11 +2866,11 @@ export function frenoAntesDeCargar(a: AnalisisProyecto | null, previa: Huella | 
     )
   }
   if (a.incompleto.length > 0) {
-    const codigo = codigoChecklist(HUELLA_INCOMPLETA)
+    const codigo = codigoChecklist(huellaIncompleta(cwd, a.incompleto))
     if (coincide(checklist, codigo)) return null
     return pedirChecklist(`${avisoIncompleto(a)} Sin eso no sé qué cambió en el circuito, así que el checklist va en cada carga hasta que se pueda leer.`, "", codigo, checklist)
   }
-  const altas = altasNuevas(a.huella, previa)
+  const altas = altasContra(a.huella, previa)
   if (altas.length === 0) return null
   const codigo = codigoChecklist(a.huella)
   if (coincide(checklist, codigo)) return null
@@ -2413,36 +2884,49 @@ export function frenoAntesDeCargar(a: AnalisisProyecto | null, previa: Huella | 
 
 /**
  * El segundo freno, DESPUES de detectPort: la placa. Solo si el codigo maneja
- * algun pin (un blink del LED de la placa no tiene nada que revisar) y el
- * analisis esta completo (si no, ya freno el primero). Se acepta el codigo del
- * primer freno: si recien se hizo el checklist para este circuito, no se pide
- * otro.
+ * algun pin (un blink del LED de la placa no tiene nada que revisar), el
+ * analisis esta completo (si no, ya freno el primero) y se sabe que placa es.
+ *
+ * Su codigo sale de la huella Y de la identidad de la placa: repetir el codigo
+ * de un checklist anterior no lo levanta. La unica excepcion es cuando en esta
+ * misma llamada el primer freno pidio el checklist por altas nuevas y vino su
+ * codigo: el checklist se acaba de hacer para este circuito, no se pide otro.
+ *
+ * Devuelve `freno` (no se carga) o `aviso` (se carga, y se le cuenta al docente).
  */
 export function frenoPorPlaca(
   a: AnalisisProyecto | null,
   previa: UltimaCarga | null,
   cwd: string,
-  puerto: string,
   hwid: string | undefined,
   checklist: string | undefined,
-  cargas: Record<string, { proyecto: string; hwid: string | null }> = leerCargasGlobal(),
-): string | null {
+  cargas: CargasGlobal = leerCargasGlobal(),
+): { freno: string } | { aviso: string } | null {
   if (!a || a.incompleto.length > 0 || a.huella.entradas.length === 0) return null
-  const codigoCircuito = codigoChecklist(a.huella)
-  const codigo = codigoChecklist({ placa: `${a.huella.placa}@${puerto}|${hwid ?? ""}`, entradas: a.huella.entradas })
-  if (coincide(checklist, codigoCircuito, codigo)) return null
-  const proyecto = hash(resolve(cwd))
-  const otraPlaca = !previa?.puerto || previa.puerto !== puerto || (!!previa.hwid && !!hwid && previa.hwid !== hwid)
-  const registro = cargas[puerto]
-  const otroProyecto = !!registro && registro.proyecto !== proyecto
+  const ident = identidadDePlaca(hwid)
+  if (!ident) return null
+  const placaFisica = idDePlaca(cargas, ident)
+  const codigo = codigoChecklist({ placa: `${a.huella.placa}@${placaFisica}`, entradas: a.huella.entradas })
+  const recienHecho = altasContra(a.huella, previa).length > 0 && coincide(checklist, codigoChecklist(a.huella))
+  if (recienHecho || coincide(checklist, codigo)) return null
+  const otraPlaca = !!previa?.placaFisica && previa.placaFisica !== placaFisica
+  const registro = cargas.placas[placaFisica]
+  const otroProyecto = !!registro && registro !== hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
+  if (!otraPlaca && otroProyecto && !ident.serie) {
+    return {
+      aviso:
+        "\n\nOjo: en una placa de este modelo lo último que se cargó fue OTRO proyecto. Esta placa no tiene número de serie, así que no sé si es la misma: " +
+        "si lo es, el circuito que tiene conectado puede no ser el de este código. Contáselo al docente.",
+    }
+  }
   if (!otraPlaca && !otroProyecto) return null
   const motivo = [
-    otraPlaca ? `La última carga de este proyecto fue en otra placa o por otro puerto, y ahora va a ${puerto}.` : "",
-    otroProyecto ? `En la placa de ${puerto} lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.` : "",
+    otraPlaca ? "La última carga de este proyecto fue en OTRA placa." : "",
+    otroProyecto ? "En esta placa lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código." : "",
   ]
     .filter(Boolean)
     .join(" ")
-  return pedirChecklist(motivo, `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`, codigo, checklist)
+  return { freno: pedirChecklist(motivo, `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`, codigo, checklist) }
 }
 
 /**
@@ -2724,7 +3208,7 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         // Orden: pines y circuito ANTES de buscar la placa; la placa, despues (ver "QUE SE GUARDA Y DONDE").
         const analisis = analizarProyecto(cwd, args.environment)
         const previa = leerUltimaCarga(cwd)
-        const freno = frenoAntesDeCargar(analisis, previa, args.checklist)
+        const freno = frenoAntesDeCargar(analisis, previa, args.checklist, cwd)
         if (freno) return freno
         let puerto = args.port
         let hwid: string | undefined
@@ -2734,12 +3218,12 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           puerto = detected.port
           hwid = detected.hwid
         }
-        const frenoPlaca = frenoPorPlaca(analisis, previa, cwd, puerto, hwid, args.checklist)
-        if (frenoPlaca) return frenoPlaca
+        const placa = frenoPorPlaca(analisis, previa, cwd, hwid, args.checklist)
+        if (placa && "freno" in placa) return placa.freno
         const result = await cargar(puerto)
         if (result.code === 0) {
-          guardarUltimaCarga(cwd, analisis, puerto, hwid)
-          return `Codigo cargado exitosamente en ${puerto}.` + avisosTrasCargar(analisis)
+          const anotada = guardarUltimaCarga(cwd, analisis, hwid)
+          return `Codigo cargado exitosamente en ${puerto}.` + avisosTrasCargar(analisis) + (placa && "aviso" in placa ? placa.aviso : "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
       }
@@ -2752,7 +3236,7 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         compiloAntes = true
         const analisis = analizarProyecto(cwd, args.environment)
         const previa = leerUltimaCarga(cwd)
-        const freno = frenoAntesDeCargar(analisis, previa, args.checklist)
+        const freno = frenoAntesDeCargar(analisis, previa, args.checklist, cwd)
         if (freno) return `La compilacion fue bien. ${freno}`
         let puerto = args.port
         let hwid: string | undefined
@@ -2762,12 +3246,12 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           puerto = detected.port
           hwid = detected.hwid
         }
-        const frenoPlaca = frenoPorPlaca(analisis, previa, cwd, puerto, hwid, args.checklist)
-        if (frenoPlaca) return `La compilacion fue bien. ${frenoPlaca}`
+        const placa = frenoPorPlaca(analisis, previa, cwd, hwid, args.checklist)
+        if (placa && "freno" in placa) return `La compilacion fue bien. ${placa.freno}`
         const flash = await cargar(puerto)
         if (flash.code === 0) {
-          guardarUltimaCarga(cwd, analisis, puerto, hwid)
-          return `Compilacion y carga exitosa en ${puerto}.` + avisosTrasCargar(analisis)
+          const anotada = guardarUltimaCarga(cwd, analisis, hwid)
+          return `Compilacion y carga exitosa en ${puerto}.` + avisosTrasCargar(analisis) + (placa && "aviso" in placa ? placa.aviso : "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return (
           noTermino(flash, "cargar el codigo") ??
