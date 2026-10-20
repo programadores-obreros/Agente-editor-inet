@@ -309,9 +309,101 @@ test("transform: cada respuesta se juzga con el mensaje del docente que la prece
   const usuario = (id, text) => ({ info: { id, role: "user", sessionID: "s" }, parts: [{ id: id + "p", type: "text", text }] })
   const asistente = (id, text) => ({ info: { id, role: "assistant", sessionID: "s", agent: "tecnia-bot" }, parts: [{ id: id + "p", type: "text", text }] })
   const pedido = "Let's build a traffic light! You will need three LEDs and three resistors."
-  const messages = [usuario("u1", "armame una consigna en inglés"), asistente("a1", pedido), usuario("u2", "¿y ahora qué hago?"), asistente("a2", FUGA)]
+  // "en español, por favor" corta el pedido de inglés en el acto.
+  const messages = [usuario("u1", "armame una consigna en inglés"), asistente("a1", pedido), usuario("u2", "ahora en español, por favor"), asistente("a2", FUGA)]
   const a1 = messages[1]
   await h["experimental.chat.messages.transform"]({}, { messages })
   assert.equal(messages[1], a1, "lo pedido en inglés no se toca")
   assert.equal(messages[3].parts[0].text, LIMPIO)
+})
+
+// ---------------------------------------------------------------------------
+// Ronda 4: cuánto dura un pedido de inglés, partes sintéticas y caché
+// ---------------------------------------------------------------------------
+
+const PLAN_EN = "Let's tell the user that the board is ready.\n\nListo, ya está."
+const mensajeDocente = (h, sessionID, parts) => h["chat.message"]({ sessionID }, { message: {}, parts })
+const textoDocente = (h, sessionID, text) => mensajeDocente(h, sessionID, [{ type: "text", text }])
+async function completar(h, sessionID, text) {
+  const output = { text }
+  await h["experimental.text.complete"]({ sessionID, messageID: "x", partID: "p" }, output)
+  return output.text
+}
+
+test("pedido de inglés: vale ese turno y los 2 siguientes; al cuarto se filtra", async () => {
+  const { h } = await hooks()
+  await textoDocente(h, "s", "escribime en inglés un texto corto para la clase")
+  assert.equal(await completar(h, "s", PLAN_EN), PLAN_EN, "turno del pedido")
+  await textoDocente(h, "s", "hacelo más corto")
+  assert.equal(await completar(h, "s", PLAN_EN), PLAN_EN, "turno 2")
+  await mensajeDocente(h, "s", [{ type: "file", mime: "image/png", url: "data:," }])
+  assert.equal(await completar(h, "s", PLAN_EN), PLAN_EN, "turno 3 (una imagen sola también es un turno)")
+  await textoDocente(h, "s", "gracias")
+  assert.equal(await completar(h, "s", PLAN_EN), "Listo, ya está.", "turno 4: ya no vale")
+})
+
+test("pedido de inglés: 'en español' lo corta en el acto", async () => {
+  const { h } = await hooks()
+  await textoDocente(h, "s", "en inglés porfa")
+  await textoDocente(h, "s", "ahora en español, por favor")
+  assert.equal(await completar(h, "s", PLAN_EN), "Listo, ya está.")
+})
+
+test("transform: un mensaje del docente con sólo partes sintéticas no cuenta como turno", async () => {
+  const { h } = await hooks()
+  const u = (id, parts) => ({ info: { id, role: "user", sessionID: "s" }, parts })
+  const a = (id, text) => ({ info: { id, role: "assistant", sessionID: "s", agent: "tecnia-bot" }, parts: [{ id: id + "p", type: "text", text }] })
+  const messages = [
+    u("u1", [{ type: "text", text: "en inglés porfa" }]),
+    a("a1", "Done."),
+    u("u2", [{ type: "text", text: "continue", synthetic: true }]),
+    u("u3", [{ type: "text", text: "otra" }]),
+    u("u4", [{ type: "text", text: "y otra" }]),
+    a("a4", PLAN_EN),
+  ]
+  const a4 = messages[5]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(messages[5], a4, "todavía vale el pedido: u1 (3), u3 (2), u4 (1); el sintético no cuenta")
+})
+
+test("transform: si el plugin arrancó a mitad de charla, el historial manda sobre chat.message", async () => {
+  const { h } = await hooks()
+  // Proceso nuevo (`opencode run -s`): chat.message sólo ve el último mensaje...
+  await textoDocente(h, "s9", "hacelo más corto")
+  // ...pero el historial trae el pedido de inglés de un turno antes.
+  const u = (id, text) => ({ info: { id, role: "user", sessionID: "s9" }, parts: [{ type: "text", text }] })
+  const messages = [u("u1", "en inglés porfa"), { info: { id: "a1", role: "assistant", sessionID: "s9", agent: "tecnia-bot" }, parts: [] }, u("u2", "hacelo más corto")]
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.equal(await completar(h, "s9", PLAN_EN), PLAN_EN)
+})
+
+test("caché: la clave lleva la señal de inglés pedido (mismo texto y mismo mensaje, otra decisión)", async () => {
+  const { h } = await hooks()
+  const texto = PLAN_EN + " (señal)"
+  await textoDocente(h, "A", "en inglés porfa")
+  await textoDocente(h, "A", "ok")
+  assert.equal(await completar(h, "A", texto), texto, "A: el pedido sigue valiendo")
+  await textoDocente(h, "B", "ok")
+  assert.equal(await completar(h, "B", texto), "Listo, ya está. (señal)", "B: mismo mensaje 'ok', sin pedido")
+})
+
+test("caché: la clave lleva el mensaje del docente (con eco se borra, sin eco no)", async () => {
+  const { h } = await hooks()
+  const texto = `"${DOCENTE}"\n\n${RESPUESTA_EN}`
+  await textoDocente(h, "A", DOCENTE)
+  assert.equal(await completar(h, "A", texto), "")
+  await textoDocente(h, "B", "otra cosa")
+  assert.equal(await completar(h, "B", texto), texto)
+})
+
+test("rendimiento: un mensaje del docente de 100 KB y 60 citas no frenan el historial", async () => {
+  const { h } = await hooks()
+  const log = "Sensor value: 512 temp 26.5 hum 40\n".repeat(3000)
+  const resp = "En tu log aparecen líneas como:\n" + Array.from({ length: 60 }, (_, i) => `- "Sensor value: ${500 + i}"`).join("\n") + "\n\nTodo anda bien."
+  const messages = [{ info: { id: "u", role: "user", sessionID: "s" }, parts: [{ type: "text", text: log }] }]
+  for (let i = 0; i < 40; i++) messages.push({ info: { id: "a" + i, role: "assistant", sessionID: "s", agent: "tecnia-bot" }, parts: [{ type: "text", text: resp + " " + i }] })
+  const t0 = performance.now()
+  await h["experimental.chat.messages.transform"]({}, { messages })
+  assert.ok(performance.now() - t0 < 1500, `tardó ${(performance.now() - t0).toFixed(0)} ms`)
+  assert.equal(messages[1].parts[0].text, resp + " 0")
 })

@@ -48,12 +48,18 @@
 // copia (structuredClone, :378) de la charla que va a resumir. Ahí limpiar
 // los mensajes de tecnia-bot está bien: el resumen no hereda la fuga.
 //
-// EL ÚLTIMO MENSAJE DEL DOCENTE. Si pidió inglés o una traducción ("armame
-// una consigna en inglés", "traducime esto"), ese turno no se filtra; y si el
-// modelo lo repite entre comillas antes de contestar, esa repetición es eco del
-// plan (ver detector.ts, Opciones). Se aprende de `chat.message` (cada mensaje
-// nuevo del docente) y del propio historial que llega al transform; si no se
-// sabe, el detector funciona igual, sólo sin esas dos excepciones.
+// EL ÚLTIMO MENSAJE DEL DOCENTE. Sirve para dos cosas (ver detector.ts,
+// Opciones): si el modelo lo repite entre comillas antes de una fuga, esa
+// repetición es eco del plan; y si el docente PIDIÓ inglés o una traducción
+// ("escribime en inglés…", "traducime esto"), no se filtra. Se aprende de
+// `chat.message` (cada mensaje nuevo) y se rehace desde el historial que llega
+// al transform. Un turno sin texto (sólo una imagen) deja el mensaje en "".
+//
+// CUÁNTO DURA EL PEDIDO DE INGLÉS: el turno del pedido y los 2 siguientes
+// (3 turnos), o hasta que el docente pida español ("en español, si?"), lo
+// que pase primero. Así "agregale una oración más" o "hacelo más corto",
+// después de pedir el texto en inglés, siguen sin filtrarse; y una charla no
+// queda sin filtro para siempre por un pedido de hace una hora.
 //
 // NO SE FILTRAN los subagentes de `task` (agente "general" u otros): sus
 // mensajes no son de tecnia-bot. Tecnia Bot hoy no delega en subagentes; si
@@ -63,7 +69,8 @@
 // puede ser la razón de que el bot deje de contestar.
 // ============================================================================
 import type { Hooks, Plugin, PluginModule } from "@opencode-ai/plugin"
-import { limpiar, MAX_TEXTO, type Opciones } from "./idioma/detector.ts"
+import { crearCache } from "./idioma/cache.ts"
+import { desenvolver, limpiar, MAX_ECO, MAX_TEXTO, pideEspanol, pideIngles, type Opciones } from "./idioma/detector.ts"
 
 const SERVICIO = "tecnia-idioma"
 const AGENTE = "tecnia-bot"
@@ -73,43 +80,51 @@ const AGENTE = "tecnia-bot"
 // docente, que cambia la decisión). Tope por cantidad y por caracteres: al
 // llenarse se va la entrada MÁS VIEJA, no toda la caché. Los textos más largos
 // que el tope del detector vuelven sin tocar y no se guardan.
-const MAX_CACHE = 500
-const MAX_CACHE_CHARS = 2_000_000
-const cache = new Map<string, { r: ReturnType<typeof limpiar>; peso: number }>()
-let pesoCache = 0
+const cache = crearCache<ReturnType<typeof limpiar>>(500, 2_000_000)
+/** La clave de la caché: el texto, el mensaje del docente si puede ser eco, y la señal de inglés pedido. */
+function claveDe(texto: string, opciones: Opciones): string {
+  // No lleva el mensaje del docente entero (puede ser un log de 100 KB): sólo
+  // si puede ser eco (hasta MAX_ECO caracteres); si no, su largo alcanza,
+  // porque el resultado ya no depende de él. Más la señal de inglés pedido.
+  const u = opciones.ultimoUsuario ?? ""
+  return (opciones.exento ? "E" : "-") + (u.length <= MAX_ECO ? u : "#" + u.length) + "\u0000" + texto
+}
 function limpio(texto: string, opciones: Opciones = {}): ReturnType<typeof limpiar> {
-  const clave = (opciones.ultimoUsuario ?? "") + "\u0000" + texto
+  const clave = claveDe(texto, opciones)
   const hit = cache.get(clave)
-  if (hit) {
-    // Al final del Map = usada hace poco.
-    cache.delete(clave)
-    cache.set(clave, hit)
-    return hit.r
-  }
+  if (hit) return hit
   const r = limpiar(texto, opciones)
-  if (texto.length <= MAX_TEXTO) {
-    const peso = clave.length + (r.cambio ? r.texto.length : 0)
-    while (cache.size > 0 && (cache.size >= MAX_CACHE || pesoCache + peso > MAX_CACHE_CHARS)) {
-      const [viejo, v] = cache.entries().next().value!
-      cache.delete(viejo)
-      pesoCache -= v.peso
-    }
-    cache.set(clave, { r, peso })
-    pesoCache += peso
-  }
+  if (texto.length <= MAX_TEXTO) cache.set(clave, r, clave.length + (r.cambio ? r.texto.length : 0))
   return r
 }
 
-/** El texto de un mensaje del docente: sus partes de texto, juntas. */
+/**
+ * El texto de un mensaje del docente: sus partes de texto (no sintéticas),
+ * juntas y desenvueltas. "" si no tiene texto (una imagen sola); undefined si
+ * todas sus partes son sintéticas (lo agrega OpenCode, no es un turno del docente).
+ */
 function textoDeUsuario(parts: unknown): string | undefined {
-  if (!Array.isArray(parts)) return undefined
-  const t = parts
-    .filter((p) => p && p.type === "text" && typeof p.text === "string" && !p.synthetic)
-    .map((p) => p.text as string)
-    .join("\n")
-    .trim()
-  return t || undefined
+  if (!Array.isArray(parts)) return ""
+  if (parts.length > 0 && parts.every((p) => p && p.synthetic)) return undefined
+  return desenvolver(
+    parts
+      .filter((p) => p && p.type === "text" && typeof p.text === "string" && !p.synthetic)
+      .map((p) => p.text as string)
+      .join("\n")
+      .trim(),
+  )
 }
+
+/** Lo que se sabe del docente en una sesión: su último mensaje y cuántos turnos más vale un pedido de inglés. */
+type Docente = { mensaje: string; restan: number }
+const DOCENTE_INICIAL: Docente = { mensaje: "", restan: 0 }
+const TURNOS_DE_INGLES = 3
+function avanzarTurno(antes: Docente, mensaje: string): Docente {
+  if (pideEspanol(mensaje)) return { mensaje, restan: 0 }
+  if (pideIngles(mensaje)) return { mensaje, restan: TURNOS_DE_INGLES }
+  return { mensaje, restan: Math.max(0, antes.restan - 1) }
+}
+const opcionesDe = (d: Docente): Opciones => ({ ultimoUsuario: d.mensaje || undefined, exento: d.restan > 0 })
 
 type InfoMensaje = { id?: string; sessionID?: string; role?: string; agent?: string; mode?: string; summary?: boolean }
 /** El agente de un mensaje: 1.18.18 guarda `agent` y `mode` con el mismo nombre (prompt.ts:1190-1191). */
@@ -133,13 +148,13 @@ const server: Plugin = async ({ client }) => {
   const mensajes = new Map<string, InfoMensaje>()
   // Sesiones compactando ahora (respaldo por si el evento del mensaje no llegó).
   const compactando = new Set<string>()
-  // sessionID -> último mensaje del docente (con tope, igual que `mensajes`).
-  const ultimoUsuario = new Map<string, string>()
-  const recordarUsuario = (sessionID: string | undefined, texto: string | undefined) => {
-    if (!sessionID || !texto) return
-    ultimoUsuario.delete(sessionID)
-    if (ultimoUsuario.size >= MAX_MENSAJES) ultimoUsuario.delete(ultimoUsuario.keys().next().value!)
-    ultimoUsuario.set(sessionID, texto)
+  // sessionID -> lo que se sabe del docente (con tope, igual que `mensajes`).
+  const docentes = new Map<string, Docente>()
+  const recordarDocente = (sessionID: string | undefined, d: Docente) => {
+    if (!sessionID) return
+    docentes.delete(sessionID)
+    if (docentes.size >= MAX_MENSAJES) docentes.delete(docentes.keys().next().value!)
+    docentes.set(sessionID, d)
   }
 
   const hooks: Hooks = {
@@ -163,7 +178,9 @@ const server: Plugin = async ({ client }) => {
 
     "chat.message": async (input, output) => {
       try {
-        recordarUsuario(input.sessionID, textoDeUsuario(output.parts))
+        const mensaje = textoDeUsuario(output.parts)
+        if (mensaje === undefined) return
+        recordarDocente(input.sessionID, avanzarTurno(docentes.get(input.sessionID) ?? DOCENTE_INICIAL, mensaje))
       } catch {
         // sin el mensaje, el detector funciona igual
       }
@@ -182,7 +199,7 @@ const server: Plugin = async ({ client }) => {
         const info = mensajes.get(input.messageID)
         if (info ? !esDeTecniaBot(info) : compactando.has(input.sessionID)) return
         const antes = output.text
-        const r = limpio(antes, { ultimoUsuario: ultimoUsuario.get(input.sessionID) })
+        const r = limpio(antes, opcionesDe(docentes.get(input.sessionID) ?? DOCENTE_INICIAL))
         if (!r.cambio) return
         output.text = r.texto
         anotar("saqué planificación en inglés de un texto del modelo", {
@@ -202,16 +219,16 @@ const server: Plugin = async ({ client }) => {
     "experimental.chat.messages.transform": async (_input, output) => {
       try {
         let partes = 0
-        let usuario: string | undefined
+        // El docente se rehace turno a turno desde el historial: cada respuesta
+        // se juzga con lo que había pedido hasta ese momento.
+        let docente = DOCENTE_INICIAL
+        let sesion: string | undefined
         for (const [i, msg] of output.messages.entries()) {
           try {
-            // El docente: se recuerda su texto para los mensajes del asistente que siguen.
             if (msg?.info?.role === "user") {
               const t = textoDeUsuario(msg.parts)
-              if (t) {
-                usuario = t
-                recordarUsuario((msg.info as InfoMensaje).sessionID, t)
-              }
+              if (t !== undefined) docente = avanzarTurno(docente, t)
+              sesion = (msg.info as InfoMensaje).sessionID ?? sesion
               continue
             }
             // Sólo lo que escribió tecnia-bot: nunca el docente, nunca el resumen
@@ -221,7 +238,7 @@ const server: Plugin = async ({ client }) => {
             let cambio = false
             const parts = msg.parts.map((p) => {
               if (p.type !== "text" || !p.text) return p
-              const r = limpio(p.text, { ultimoUsuario: usuario })
+              const r = limpio(p.text, opcionesDe(docente))
               if (!r.cambio) return p
               cambio = true
               partes++
@@ -240,6 +257,11 @@ const server: Plugin = async ({ client }) => {
             // ese mensaje queda como estaba; los demás se siguen limpiando
           }
         }
+        // El historial (que ya trae el turno actual) es la mejor fuente: si el
+        // plugin arrancó a mitad de charla (`opencode run -s`, OpenCode
+        // reiniciado), chat.message sólo vio el último mensaje y no sabe que
+        // dos turnos atrás el docente pidió inglés. Vale lo rehecho acá.
+        if (sesion) recordarDocente(sesion, docente)
         if (partes > 0) anotar("saqué planificación en inglés del historial que ve el modelo", { partes })
       } catch {
         // historial intacto

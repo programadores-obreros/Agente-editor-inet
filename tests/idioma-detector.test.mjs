@@ -18,7 +18,7 @@ import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
-const { limpiar, analizar, MAX_TEXTO } = await import(join(REPO, "opencode/plugins/idioma/detector.ts"))
+const { limpiar, analizar, MAX_TEXTO, desenvolver, pideIngles, pideEspanol } = await import(join(REPO, "opencode/plugins/idioma/detector.ts"))
 
 /** El texto tiene que volver idéntico, sin marcar cambio. */
 function intacto(texto) {
@@ -339,15 +339,18 @@ test("eco del mensaje del docente entre comillas: no es el ancla del español, y
     "Yes! The ESP32 supports PWM (Pulse Width Modulation) on any output GPIO using `ledcAttach` and `ledcWrite`, and you can set the frequency and the resolution of each channel as you need."
   const texto = `"${DOCENTE}"\n\n${RESPUESTA}`
   assert.equal(limpiar(texto, { ultimoUsuario: DOCENTE }).texto, "")
-  // Sin saber el mensaje del docente: la cita sola que queda era parte de la fuga.
-  assert.equal(limpiar(texto).texto, "")
-  // Eco + respuesta en español: se va sólo el eco.
-  assert.equal(limpiar(`"${DOCENTE}"\n\n¡Sí! El ESP32 tiene PWM en casi todos sus pines.`, { ultimoUsuario: DOCENTE }).texto, "¡Sí! El ESP32 tiene PWM en casi todos sus pines.")
+  // Sin saber el mensaje del docente no hay eco, y sin eco un párrafo en
+  // inglés sin marca no se toca (ronda 4: puede ser una hoja de datos).
+  intacto(texto)
+  // Eco + respuesta en español: el eco se borra SÓLO junto con inglés; acá queda.
+  intacto(`"${DOCENTE}"\n\n¡Sí! El ESP32 tiene PWM en casi todos sus pines.`)
+  assert.equal(limpiar(`"${DOCENTE}"\n\n¡Sí! El ESP32 tiene PWM en casi todos sus pines.`, { ultimoUsuario: DOCENTE }).cambio, false)
 })
 
-test("una respuesta ENTERA en inglés al principio se va aunque no tenga marca de plan", () => {
-  const r = limpiar("Yes! The ESP32 supports PWM on any output pin. You can use it to dim the LED and it works with all the boards that we have in the lab.")
-  assert.equal(r.texto, "")
+test("una respuesta ENTERA en inglés sin marca se va SÓLO detrás del eco del docente", () => {
+  const RESP = "Yes! The ESP32 supports PWM on any output pin. You can use it to dim the LED and it works with all the boards that we have in the lab."
+  intacto(RESP)
+  assert.equal(limpiar(`"${DOCENTE}"\n\n${RESP}`, { ultimoUsuario: DOCENTE }).texto, "")
   // Salvo lo que es un error o lo presenta una entrada que no es inglesa.
   intacto("ESP32-S3 DevKitC-1:\nThe board is not responding and the port will not open.\n\nProbá otro cable.")
   intacto("A fatal error occurred: Failed to connect to ESP32: No serial data received.")
@@ -373,7 +376,9 @@ test("una línea de error no se borra nunca, aunque diga 'the user'", () => {
 })
 
 test("interjección sola: se va; en español o con más texto, se queda", () => {
-  for (const t of ["Aha!", "Okay.", "Sure!", "Got it.", "Perfect!", "Great!"]) assert.equal(limpiar(t).texto, "", t)
+  for (const t of ["Aha!", "Okay.", "Hmm...", "Got it."]) assert.equal(limpiar(t).texto, "", t)
+  // Ronda 4: "Sure!", "Perfect!", "Great!" pueden ser lo que el docente pidió.
+  for (const t of ["Sure!", "Perfect!", "Great!", "Perfect!\n\nYa está."]) intacto(t)
   intacto("Ok.")
   intacto("¡Perfecto!")
   intacto("Genial.")
@@ -434,4 +439,124 @@ test("respuesta entera en inglés: un error largo o un texto presentado con dos 
 test("red de código: con marca de plan no protege, y en la misma línea que un plan se va la línea entera", () => {
   assert.equal(limpiar("Let's call digitalWrite(2, HIGH); for the user.\n\nListo.").texto, "Listo.")
   assert.equal(limpiar("Let's tell the user. The loop calls digitalWrite(2, HIGH);\n\nListo.").texto, "Listo.")
+})
+
+// ---------------------------------------------------------------------------
+// Ronda 4: umbrales y reglas angostadas (cada test mata un mutante)
+// ---------------------------------------------------------------------------
+
+const eco = (resp) => `"${DOCENTE}"\n\n${resp}`
+const conDocente = { ultimoUsuario: DOCENTE }
+
+test("4b: hacen falta 8 funcionales inglesas (8 se va, 7 se queda)", () => {
+  // the, has, and, it, is, all, of, the = 8
+  assert.equal(limpiar(eco("Yes, the ESP32 has PWM and it is on all pins of the board."), conDocente).texto, "")
+  // the, has, and, it, is, all, of = 7 ("a" no cuenta)
+  assert.equal(limpiar(eco("Yes, the ESP32 has PWM and it is on all pins of a board."), conDocente).cambio, false)
+})
+
+test("4b: más del TRIPLE de funcionales inglesas que españolas (9 contra 4 se queda)", () => {
+  assert.equal(limpiar(eco("Yes, the ESP32 has PWM and it is on all the pins of the board, que es la del kit."), conDocente).cambio, false)
+})
+
+test("rescate: una oración del borrador repite la respuesta si comparte el 70 % de sus bigramas", () => {
+  // 4 de 5 bigramas (0,8): repite, no se rescata.
+  assert.equal(
+    limpiar("Let's tell the user:\nPrimero revisá bien cada conexión suelta.\n\nAhora revisá bien cada conexión suelta.").texto,
+    "Ahora revisá bien cada conexión suelta.",
+  )
+  // 3 de 5 (0,6): no repite, se rescata.
+  assert.equal(
+    limpiar("Let's tell the user:\nPrimero revisá bien cada conexión suelta.\n\nAhora revisá bien cada conexión floja.").texto,
+    "Primero revisá bien cada conexión suelta.\n\nAhora revisá bien cada conexión floja.",
+  )
+})
+
+test("rescate: placa, cable, Arduino, sensor no cuentan para decir que repite", () => {
+  // Sin los sustantivos del dominio, el borrador sólo tiene "revisá": no repite nada.
+  assert.equal(
+    limpiar("Let's tell the user:\nRevisá el cable, la placa Arduino y el sensor ESP32.\n\nMirá el cable, la placa Arduino y el sensor ESP32 del kit.").texto,
+    "Revisá el cable, la placa Arduino y el sensor ESP32.\n\nMirá el cable, la placa Arduino y el sensor ESP32 del kit.",
+  )
+})
+
+test("rescate: no vuelve lo que tiene más inglés que español, ni la salida de una tool, ni neutros sueltos", () => {
+  assert.equal(limpiar("Let's tell the user:\n\nChe, the board is ready.\n\nListo.").texto, "Listo.")
+  assert.equal(
+    limpiar('The tool reported:\n"Hay una placa enchufada pero no la puedo usar."\n\nLet\'s tell the user.Che, la placa tiene un problema.').texto,
+    "Che, la placa tiene un problema.",
+  )
+  assert.equal(limpiar("Let's check the env block:\nWorking directory: `C:\\x`.\n\nListo.").texto, "Listo.")
+})
+
+test("eco: hace falta el 80 % del mensaje del docente; una cita más corta no es eco", () => {
+  // "el ESP32 se banca PWM para bajarle" es ~60 % del mensaje: no es eco, y sin eco no hay 4b.
+  intacto(`"el ESP32 se banca PWM para bajarle"\n\nYes, the ESP32 has PWM and it is on all pins of the board.`)
+  assert.equal(
+    limpiar(`"el ESP32 se banca PWM para bajarle"\n\nYes, the ESP32 has PWM and it is on all pins of the board.`, conDocente).cambio,
+    false,
+  )
+})
+
+test("eco: el mensaje del docente envuelto en un recordatorio se desenvuelve", () => {
+  const envuelto = `<system-reminder>\nThe user sent the following message:\n${DOCENTE}\n\nPlease address this message and continue with your tasks.\n</system-reminder>`
+  assert.equal(desenvolver(envuelto), DOCENTE)
+  assert.equal(limpiar(eco("Yes, the ESP32 has PWM and it is on all pins of the board."), { ultimoUsuario: envuelto }).texto, "")
+  assert.equal(desenvolver("sin envoltorio"), "sin envoltorio")
+})
+
+test("líneas Warning: y Fatal: tampoco se borran nunca", () => {
+  intacto("Warning: let's not upload while the user has the monitor open.\n\nCerrá el monitor.")
+  intacto("Fatal: the user has no permission, let's tell them.\n\nPedí permiso al administrador.")
+})
+
+test("una etiqueta en español no se vuelve andamio aunque el texto tenga una marca", () => {
+  assert.equal(limpiar("Let's go.\n\n1. Materiales: un LED.\n\nListo.").texto, "1. Materiales: un LED.\n\nListo.")
+})
+
+test("red de código: flechas de cableado, comandos pio y llamadas al final de la línea", () => {
+  assert.equal(limpiar("Let's wire it now.\nVCC → 5V and GND → GND.\n\nListo.").texto, "VCC → 5V and GND → GND.\n\nListo.")
+  assert.equal(limpiar("Let's run it now.\npio run -t upload and then monitor.\n\nListo.").texto, "pio run -t upload and then monitor.\n\nListo.")
+  assert.equal(limpiar("Let's call it now.\nthen call setup()\n\nListo.").texto, "then call setup()\n\nListo.")
+})
+
+test("un JSON {…} sin cortar no se mutila aunque adentro tenga inglés", () => {
+  assert.equal(
+    limpiar('{"msg": "the board is ready and it is fine"}\n\nLet\'s tell the user.\n\nListo.').texto,
+    '{"msg": "the board is ready and it is fine"}\n\nListo.',
+  )
+})
+
+test("pedido de inglés: afirmativo; 'no en inglés', 'traductor' o 'Inglese' no cuentan", () => {
+  for (const sí of ["escribime en inglés un texto corto", "pasalo a inglish", "en ingles porfa", "in English please", "traducime esto"]) assert.equal(pideIngles(sí), true, sí)
+  for (const no of ["en español, si? no en inglés", "uso el traductor de google", "soy la profe Inglese", "no me traduzcas los errores", "la clase de inglés es mañana"]) assert.equal(pideIngles(no), false, no)
+  assert.equal(pideEspanol("ahora en español, por favor"), true)
+  assert.equal(pideEspanol("no en español"), false)
+})
+
+test("relleno 'Let's see:' con español en su línea: no cede la voz aunque otra línea tenga plan", () => {
+  assert.equal(
+    limpiar("Let's tell the user about it.\nLet's see: `pio run` compila. Probalo.").texto,
+    "Let's see: `pio run` compila. Probalo.",
+  )
+})
+
+test("4b con eco: un error/log o un párrafo presentado con dos puntos no se borran", () => {
+  intacto(eco("Failed to connect to ESP32 because the chip is not in download mode and the port is busy, so it could not open it at all."))
+  assert.equal(
+    limpiar(eco("Failed to connect to ESP32 because the chip is not in download mode and the port is busy, so it could not open it at all."), conDocente).cambio,
+    false,
+  )
+  assert.equal(
+    limpiar(eco("ESP32 DevKit:\nThe board is not responding and the port will not open, so it is not possible to upload the code to it."), conDocente).cambio,
+    false,
+  )
+})
+
+test("si después de sacar el plan sólo queda una cita entera, también se va", () => {
+  assert.equal(limpiar('Let\'s check the tool output first.\n\n"No encuentro ninguna placa conectada."').texto, "")
+})
+
+test("el código inline no cuenta aunque adentro diga let's o the user", () => {
+  intacto("Ejecutá `let's check the user and the tool output then` en el loop.")
 })
