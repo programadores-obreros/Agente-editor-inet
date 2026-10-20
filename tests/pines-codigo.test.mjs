@@ -297,6 +297,8 @@ test("FALSO POSITIVO: LED_BUILTIN no avisa y no entra en la huella", () => {
   assert.deepEqual(mod.analizarPines(src, "esp32"), [])
   assert.deepEqual(mod.analizarPines(src, "uno"), [])
   assert.deepEqual(mod.huellaDelCodigo(src, "esp32dev").huella.entradas, [])
+  // Un fade del LED de la placa (analogWrite, no OUTPUT) tampoco: sigue siendo el LED de la placa.
+  assert.deepEqual(mod.huellaDelCodigo("void loop(){ analogWrite(LED_BUILTIN, 128); }", "esp32dev").huella.entradas, [])
   // Un #define que apunta a LED_BUILTIN es lo mismo.
   assert.deepEqual(mod.huellaDelCodigo("#define LED LED_BUILTIN\nvoid setup(){ pinMode(LED, OUTPUT); }", "uno").huella.entradas, [])
 })
@@ -315,6 +317,21 @@ test("FALSO POSITIVO: los blinks del repo, con el pin del LED escrito a mano, no
   assert.deepEqual(mod.huellaDelCodigo("void setup(){ pinMode(13, INPUT); }", "uno").huella.entradas, ["pin:13:INPUT"])
   // Y en el UNO el 2 es un pin cualquiera.
   assert.deepEqual(mod.huellaDelCodigo("void setup(){ pinMode(2, OUTPUT); }", "uno").huella.entradas, ["pin:2:OUTPUT"])
+})
+
+test("UNO: analogRead(0) y analogRead(A0) son el mismo pin para la huella", () => {
+  // Si no, pasar de `analogRead(0)` a `analogRead(A0)` —el mismo cable— pediría el
+  // checklist de nuevo. (La regla de D0/D1 ya excluye las lecturas analógicas, por
+  // eso este mapeo no se ve en los avisos: se ve acá.)
+  const con0 = mod.huellaDelCodigo("void loop(){ int v = analogRead(0); }", "uno").huella
+  const conA0 = mod.huellaDelCodigo("void loop(){ int v = analogRead(A0); }", "uno").huella
+  assert.deepEqual(con0.entradas, ["pin:14:ANALOG"])
+  assert.deepEqual(con0, conA0)
+  assert.equal(mod.describirEntrada(con0.entradas[0], "uno"), "A0 como entrada analógica")
+})
+
+test("ESP32: LED_BUILTIN como ENTRADA es GPIO2, y lleva la nota de arranque", () => {
+  assert.deepEqual(niveles(mod.analizarPines("void setup(){ pinMode(LED_BUILTIN, INPUT); }", "esp32")), ["nota"])
 })
 
 test("Ticker.attach no es un servo: sin Servo.h, .attach no cuenta", () => {

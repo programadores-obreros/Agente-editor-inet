@@ -1359,8 +1359,9 @@ export function analizarPines(src: string, familia: FamiliaPlaca | null): Hallaz
   const SALIDA = new Set<ModoPin>(["OUTPUT", "PWM", "SERVO", "DHT"])
   const ENTRADA = new Set<ModoPin>(["INPUT", "INPUT_PULLUP", "INPUT_PULLDOWN", "ANALOG"])
 
+  // LED_BUILTIN no se saltea aca: como salida no dispara ninguna regla, y como
+  // ENTRADA en el ESP32 es GPIO2, que es de arranque igual se llame como se llame.
   for (const u of usos) {
-    if (u.dePlaca) continue
     for (const p of u.pines) {
       const n = nombrePin(p, familia)
       if (familia === "esp32") {
