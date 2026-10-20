@@ -197,7 +197,8 @@ test("uninstall.ps1 pregunta (20 s, No por defecto) antes de borrar la key y el 
   for (const [patron, que] of [
     [/SetEnvironmentVariable\("GOOGLE_GENERATIVE_AI_API_KEY",\s*\$null/, "la variable con la key"],
     [/Properties\.Remove\("google"\)/, "la key de auth.json"],
-    [/@\(\$PerfilFile, \$MemoriaFile\)/, "el perfil y la memoria"],
+    // Desde la 0.4.8 entra también tecnia-cargas.json (el registro del tool platformio).
+    [/@\(\$PerfilFile, \$MemoriaFile(?:, \$CargasFile)?\)/, "el perfil y la memoria"],
   ]) {
     const i = codigo.search(patron)
     assert.ok(i > pregunta, `borra ${que} sin haber preguntado antes`)

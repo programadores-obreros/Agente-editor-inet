@@ -421,3 +421,42 @@ test(
     }
   },
 )
+
+// ── 7. El registro de cargas del tool platformio (0.4.8) ─────────────────────
+//
+// `tecnia-cargas.json` guarda, por placa, qué proyecto se cargó último. Son
+// hashes con una sal propia de la compu, pero salen de rutas que pueden tener el
+// nombre de una persona: se borra junto con el perfil y la memoria, con la misma
+// regla de releer después de borrar.
+
+test("el registro de cargas se llama igual en platformio.ts y en los dos desinstaladores", () => {
+  const tool = leer("opencode/tool/platformio.ts")
+  assert.match(tool, /"opencode", "tecnia-cargas\.json"/, "platformio.ts ya no escribe tecnia-cargas.json en la carpeta de opencode")
+  assert.match(PS, /\$CargasFile\s*=\s*Join-Path \$ConfigDir "tecnia-cargas\.json"/)
+  assert.match(SH, /CARGAS_FILE="\$CONFIG_DIR\/tecnia-cargas\.json"/)
+})
+
+test("uninstall.ps1 y uninstall.sh borran tecnia-cargas.json con los datos personales, y lo releen", () => {
+  assert.match(PS, /\(Test-Path \$CargasFile\)/, "uninstall.ps1 no pregunta si sólo quedó el registro de cargas")
+  assert.match(PS, /@\(\$PerfilFile, \$MemoriaFile, \$CargasFile\) \| Where-Object \{ -not \(Borrar-YVerificar \$_\) \}/,
+    "uninstall.ps1 no borra (y relee) tecnia-cargas.json")
+  assert.match(SH, /\[ -f "\$CARGAS_FILE" \]/, "uninstall.sh no pregunta si sólo quedó el registro de cargas")
+  assert.match(SH, /for f in "\$PERFIL_FILE" "\$MEMORIA_FILE" "\$CARGAS_FILE"; do/, "uninstall.sh no borra (y relee) tecnia-cargas.json")
+})
+
+test(
+  "FUNCIONAL: uninstall.sh --borrar se lleva tecnia-cargas.json aunque no haya perfil ni memoria",
+  { skip: !puedeCorrer },
+  () => {
+    const base = armarEscuela({ auth: "{}" })
+    const cargas = join(base, "cfg", "opencode", "tecnia-cargas.json")
+    writeFileSync(cargas, '{"sal":"00112233445566778899aabbccddeeff","placas":{}}')
+    try {
+      const salida = desinstalar(base)
+      assert.throws(() => readFileSync(cargas), "tecnia-cargas.json sigue en la compu después de --borrar")
+      assert.match(salida, /borrados \(los relei y ya no estan\)/, salida)
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  },
+)

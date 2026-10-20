@@ -31,6 +31,10 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
 PERFIL_FILE="$CONFIG_DIR/tecnia-perfil.md"
 MEMORIA_FILE="$CONFIG_DIR/tecnia-memoria.md"
+# El registro de cargas del tool platformio (0.4.8): por placa, que proyecto se
+# cargo ultimo. Son hashes con una sal propia de la compu, pero salen de rutas
+# que pueden tener el nombre de una persona: va con el perfil y la memoria.
+CARGAS_FILE="$CONFIG_DIR/tecnia-cargas.json"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
 AUTH_FILE="$DATA_DIR/auth.json"
 
@@ -300,15 +304,15 @@ decidir() {  # 0 = quitar, 1 = conservar
   esac
 }
 
-if [ -f "$PERFIL_FILE" ] || [ -f "$MEMORIA_FILE" ]; then
-  if decidir "==> El perfil y la memoria del aula (tecnia-perfil.md, tecnia-memoria.md) son datos PERSONALES: lo que el bot aprendió de quien usa esta compu. ¿Borrarlos también?"; then
+if [ -f "$PERFIL_FILE" ] || [ -f "$MEMORIA_FILE" ] || [ -f "$CARGAS_FILE" ]; then
+  if decidir "==> El perfil, la memoria del aula y el registro de cargas (tecnia-perfil.md, tecnia-memoria.md, tecnia-cargas.json) son datos PERSONALES: lo que el bot aprendió de quien usa esta compu. ¿Borrarlos también?"; then
     # RELEER DESPUES DE BORRAR. El `rm -f` de antes, con `set -e`, tampoco mentia:
     # cortaba el script de una, sin decir nada, justo a mitad del desinstalador.
     # Ahora se borra, se relee, y se dice lo que paso. Son datos de MENORES
     # (Ley 25.326, ver opencode/tool/memoria.ts): la docente tiene que poder
     # saber si quedaron y donde para sacarlos a mano.
     QUEDARON=""
-    for f in "$PERFIL_FILE" "$MEMORIA_FILE"; do
+    for f in "$PERFIL_FILE" "$MEMORIA_FILE" "$CARGAS_FILE"; do
       [ -e "$f" ] || continue
       borrar_verificando "$f" || QUEDARON="${QUEDARON}$f"$'\n'
     done
@@ -320,10 +324,10 @@ if [ -f "$PERFIL_FILE" ] || [ -f "$MEMORIA_FILE" ]; then
       echo "        Casi siempre es que OpenCode esta abierto y los tiene tomados"
       echo "        (los dos entran por \"instructions\" de opencode.json)."
       echo "        Cerra OpenCode y volve a correr el desinstalador, o borralos a mano."
-      anotar_pendiente "datos personales del aula en $CONFIG_DIR (tecnia-perfil.md / tecnia-memoria.md)"
+      anotar_pendiente "datos personales del aula en $CONFIG_DIR (tecnia-perfil.md / tecnia-memoria.md / tecnia-cargas.json)"
     fi
   else
-    echo "    Se conservan en $CONFIG_DIR: tecnia-perfil.md y tecnia-memoria.md (borralos a mano si querés)."
+    echo "    Se conservan en $CONFIG_DIR: tecnia-perfil.md, tecnia-memoria.md y tecnia-cargas.json (borralos a mano si querés)."
   fi
 fi
 
