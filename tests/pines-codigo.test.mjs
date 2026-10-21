@@ -1353,7 +1353,7 @@ test("I7: una librería de 2 MB en lib/ se analiza rápido (objetivo: menos de 5
   for (let k = 0; k < 1000; k++) lib += `static void f${k}(u8g2_t *u8g2){ uint8_t v${k} = u8g2->x; uint16_t w${k} = v${k} + 1; u8g2->y = w${k}; }\n`
   const fila = 'const uint8_t u8g2_font_x[] U8G2_FONT_SECTION("u8g2_font_x") = "' + "\\x00abcdefgh".repeat(10) + '";\n'
   lib += fila.repeat(Math.ceil((2000 * 1024) / fila.length))
-  const dir = proyectoCon({ "src/main.cpp": "#include <U8g2lib.h>\nvoid setup(){ pinMode(4, OUTPUT); }", "lib/U8g2/src/clib/u8g2_x.c": lib })
+  const dir = proyectoCon({ "src/main.cpp": "#include <U8g2lib.h>\nvoid setup(){ pinMode(4, OUTPUT); }", "lib/U8g2/src/U8g2lib.h": "#pragma once\nclass U8G2 {};\n", "lib/U8g2/src/clib/u8g2_x.c": lib })
   const t0 = performance.now()
   const a = mod.analizarProyecto(dir)
   const ms = performance.now() - t0
@@ -1385,7 +1385,7 @@ test("entradas patológicas (separadores, pinMode sin cerrar, #if anidado) termi
 // ── Mutantes vivos de la tercera pasada ──────────────────────────────────────
 
 test("una constante en un header de lib/ sin pinMode propio se sigue leyendo", () => {
-  const dir = proyectoCon({ "src/main.cpp": '#include <Config.h>\nvoid setup(){ pinMode(MOTOR, OUTPUT); }', "lib/Config/Config.h": "#pragma once\nconst int MOTOR = 7;\n" })
+  const dir = proyectoCon({ "src/main.cpp": '#include <Config.h>\nvoid setup(){ pinMode(MOTOR, OUTPUT); }', "lib/HX711/HX711.h": "#pragma once\n", "lib/HX711/Config.h": "#pragma once\nconst int MOTOR = 7;\n" })
   assert.deepEqual(niveles(mod.analizarProyecto(dir).hallazgos), ["bloqueo"])
 })
 
@@ -1514,10 +1514,11 @@ test("B-3: los for con p--, p += 2 y >= se resuelven si los límites son literal
 
 test("B-4: la poda de lib/ no deja paréntesis abiertos que se coman las constantes de otro archivo", () => {
   const gfx = "#pragma once\nclass Pantalla {\n public:\n  void getTextBounds(const char *string, int16_t x, int16_t y, int16_t *x1,\n                     int16_t *y1, uint16_t *w, uint16_t *h);\n  void print(const char *s);\n};\n"
-  const dir = proyectoCon({ "src/main.cpp": "#include <Pines.h>\nvoid setup(){ pinMode(PIN_RELE, OUTPUT); }", "lib/Adafruit_GFX/Adafruit_GFX.h": gfx, "lib/Pines/Pines.h": "#pragma once\nconst int PIN_RELE = 7;\n" })
+  // La poda es solo para librerías de terceros conocidas: la cabecera de la pantalla va en una (OLED).
+  const dir = proyectoCon({ "src/main.cpp": "#include <Pines.h>\nvoid setup(){ pinMode(PIN_RELE, OUTPUT); }", "lib/Adafruit_SSD1306/Adafruit_SSD1306.h": gfx, "lib/Adafruit_SSD1306/Pines.h": "#pragma once\nconst int PIN_RELE = 7;\n" })
   assert.deepEqual(niveles(mod.analizarProyecto(dir).hallazgos), ["bloqueo"])
   // Y una constante de varias líneas queda entera.
-  const multi = proyectoCon({ "src/main.cpp": "#include <Pines.h>\nvoid setup(){ for (int i = 0; i < 2; i++) pinMode(LEDS[i], OUTPUT); }", "lib/Pines/Pines.h": "#pragma once\nconst int LEDS[] = {\n  4,\n  8\n};\n" })
+  const multi = proyectoCon({ "src/main.cpp": "#include <Pines.h>\nvoid setup(){ for (int i = 0; i < 2; i++) pinMode(LEDS[i], OUTPUT); }", "lib/Keypad/Keypad.h": "#pragma once\n", "lib/Keypad/Pines.h": "#pragma once\nconst int LEDS[] = {\n  4,\n  8\n};\n" })
   assert.deepEqual(niveles(mod.analizarProyecto(multi).hallazgos), ["bloqueo"])
 })
 
@@ -1564,4 +1565,37 @@ test("muchas funciones con parámetros y muchos usos: el costo no es usos × ám
   mod.analizarPines(s, "esp32")
   const ms = performance.now() - t0
   assert.ok(ms < 1000, `tardó ${ms.toFixed(0)} ms (antes eran 1,5 s; hoy unos 150)`)
+})
+
+// ── Mutantes vivos de la pasada de la tercera ronda ──────────────────────────
+
+test("clase propia: objeto sin argumentos usa el default del prototipo; sin default, el miembro entra con su nombre", () => {
+  const cpp = '#include "Zumbador.h"\nZumbador::Zumbador(uint8_t p) : _pin(p) {}\nvoid Zumbador::begin(){ pinMode(_pin, OUTPUT); }\n'
+  const conDefault = proyectoCon({ "src/main.cpp": "#include <Zumbador.h>\nZumbador z;\nvoid setup(){ z.begin(); }", "lib/Zumbador/Zumbador.h": "#pragma once\nclass Zumbador { public: Zumbador(uint8_t pin = 8); void begin(); private: uint8_t _pin; };\n", "lib/Zumbador/Zumbador.cpp": cpp })
+  assert.deepEqual(niveles(mod.analizarProyecto(conDefault).hallazgos), ["bloqueo"], "Zumbador z; con pin = 8 por defecto")
+  const sinDefault = proyectoCon({ "src/main.cpp": "#include <Zumbador.h>\nZumbador z;\nvoid setup(){ z.begin(); }", "lib/Zumbador/Zumbador.h": "#pragma once\nclass Zumbador { public: Zumbador(uint8_t pin); void begin(); private: uint8_t _pin; };\n", "lib/Zumbador/Zumbador.cpp": cpp })
+  assert.ok(mod.analizarProyecto(sinDefault).huella.entradas.includes("pin:_pin:OUTPUT"))
+})
+
+test("for: el límite de >= entra, y un recorrido de más de 40 valores no se resuelve", () => {
+  assert.ok(mod.huellaDelCodigo("void setup(){ for (int p = 9; p >= 5; p--) pinMode(p, OUTPUT); }", "esp32dev").huella.entradas.includes("pin:5:OUTPUT"))
+  assert.deepEqual(mod.huellaDelCodigo("void setup(){ for (int p = 0; p < 50; p++) pinMode(p, INPUT); }", "esp32dev").huella.entradas, ["pin:p{p=0}:INPUT"])
+})
+
+test("include guard: con build_flags que lo definen no es guard; si el #ifndef cierra antes del final, tampoco", () => {
+  const dir = proyectoCon({ "src/main.cpp": '#include "pin.h"\nvoid setup(){ pinMode(LED, OUTPUT); }', "include/pin.h": "#ifndef LED\n#define LED 7\n#endif\n" }, "[env:esp32dev]\nboard = esp32dev\nbuild_flags = -DLED=4\n")
+  assert.deepEqual(mod.analizarProyecto(dir).huella.entradas, ["pin:4:OUTPUT"])
+  assert.deepEqual(niveles(mod.analizarPines("#ifndef X\n#define X 1\nvoid g(){ pinMode(7, OUTPUT); }\n#endif\n#ifdef DEBUG\nvoid h(){}\n#endif", "esp32")), ["aviso"])
+})
+
+test("build_src_filter por environment: se ve en la huella de cada placa", () => {
+  const dir = proyectoCon(
+    { "src/esp/main.cpp": "void setup(){ pinMode(7, OUTPUT); }", "src/uno/main.cpp": "void setup(){ pinMode(8, OUTPUT); }" },
+    "[env:esp32dev]\nboard = esp32dev\nbuild_src_filter = +<*> -<uno/>\n[env:uno]\nboard = uno\nbuild_src_filter = +<*> -<esp/>\n",
+  )
+  assert.deepEqual(mod.analizarProyecto(dir).huella.entradas, ["pin:7:OUTPUT", "pin:8:OUTPUT"])
+})
+
+test("un parámetro arreglo tapa al arreglo global con el mismo nombre", () => {
+  assert.deepEqual(mod.analizarPines("const int L[] = {7};\nvoid f(int L[]){ pinMode(L[0], OUTPUT); }\nvoid setup(){}", "esp32"), [])
 })

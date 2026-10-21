@@ -1985,7 +1985,7 @@ function lineasQueQuedan(codigo: string): boolean[] {
 
 /**
  * Limpia y preprocesa cada archivo por su lado y los junta. De un archivo de
- * `lib/` sin nada que maneje pines (los headers del core, las tablas de fuentes de
+ * una libreria de terceros conocida en `lib/` sin nada que maneje pines (los headers del core, las tablas de fuentes de
  * una pantalla) quedan solo las directivas y las constantes: sus #define y sus
  * `const` pueden importar, el resto no, y analizarlo entero costaba segundos.
  */
@@ -1999,7 +1999,9 @@ function preparar(archivos: Archivo[], board: string, predefinidas: Map<string, 
   const defines = new Map<string, Definicion>()
   for (const a of archivos) {
     let lim = limpiar(a.texto)
-    if (a.enLib && !DISPARADORES.test(lim.codigo)) {
+    // Solo se poda lo de terceros CONOCIDOS: una libreria propia se analiza entera
+    // (un `Zumbador(uint8_t pin = 8);` en un header sin pinMode es el pin del objeto).
+    if (a.deLib && !DISPARADORES.test(lim.codigo)) {
       // Quedan las directivas y las constantes ENTERAS: un `const int MOTOR = 7;`
       // de un header de configuracion en lib/ puede ser el pin que usa src/. La
       // primera poda se quedaba con cualquier linea que dijera `const`, y un
