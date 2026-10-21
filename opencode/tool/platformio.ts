@@ -2407,12 +2407,10 @@ export function analizarPines(src: string, familia: FamiliaPlaca | null, board =
  * variables reasignadas entran solo con su nombre, para que una edicion que no
  * toca el circuito no pida el checklist.
  *
- * El freno se levanta con un codigo de 6 caracteres que sale de la huella: el
- * tool se lo da al bot junto con la instruccion de hacer el checklist. NO es una
- * cerradura (el bot tiene el codigo): es un PASO OBLIGADO, una vuelta extra con
- * la instruccion escrita. Si sirve o hace falta preguntarle al docente directo
- * (`ctx.ask`) se decide con las mediciones de MED-2. Un codigo viejo no sirve
- * para un circuito nuevo.
+ * Cuando hay altas, flash/both muestran el cartel de permiso de OpenCode, que
+ * contesta la PERSONA (ver "EL CARTEL DE PERMISO DE OPENCODE", mas abajo). El
+ * codigo que sale de la huella va en `patterns`/`always`: "Allow always" vale
+ * solo para ese mismo cambio, y no sirve para un circuito nuevo.
  */
 const LIBRERIAS_HARDWARE: Record<string, string> = {
   "DHT.h": "DHT",
@@ -2515,7 +2513,7 @@ export function huellaDelCodigo(src: string, board: string): { huella: Huella; r
   return huellaDe(p, usosDe(p, familia).usos, board, familia)
 }
 
-/** El codigo de 6 hex que levanta el freno del checklist para ESTA huella. */
+/** El codigo de 6 hex de ESTA huella: va en los `patterns` del cartel, para que "Allow always" valga solo para este cambio. */
 export function codigoChecklist(h: Huella): string {
   return createHash("sha256").update(`${h.placa}\n${h.entradas.join("\n")}`).digest("hex").slice(0, 6)
 }
@@ -3039,6 +3037,14 @@ const NO_PUDE_ANOTAR =
 
 const listaHallazgos = (hs: Hallazgo[]) => hs.map((h) => `- ${h.texto}`).join("\n")
 
+/** Lo que el bot le tiene que decir al docente ANTES de cargar, cuando va a aparecer el cartel. */
+const AVISO_DEL_CARTEL = (cambios: string[]) =>
+  "Antes de cargar: contale al docente en español qué cambió" +
+  (cambios.length > 0 ? ` (${cambios.join(", ")})` : "") +
+  " y repasá con él los ítems del checklist de seguridad (skill `checklist-seguridad`), cortos y a medida. " +
+  "Avisale que al cargar va a aparecer un cartel de OpenCode con botones en inglés: Allow once si ya revisó el circuito, Reject si todavía no. " +
+  "Nunca digas que lo revisaste vos."
+
 /** Despues de cargar, los avisos que quedan (no hay bloqueos: esos no llegan a cargar). */
 const avisosTrasCargar = (a: AnalisisProyecto | null) =>
   a && a.hallazgos.length > 0 ? `\n\n**Contale al docente estos pines:**\n${listaHallazgos(a.hallazgos)}` : ""
@@ -3051,8 +3057,13 @@ const avisoIncompleto = (a: AnalisisProyecto) =>
  * para cargar" a secas; y nunca dice que los pines esten bien.
  *
  * Responde EXACTAMENTE lo mismo que la 0.4.7 cuando: no hay hallazgos, el
- * analisis esta completo, y no corresponde el recordatorio (el codigo no usa
- * WiFi, DHT, Servo ni relé, o la huella es igual a la de la ultima carga).
+ * analisis esta completo, el circuito no tiene altas desde la ultima carga, y no
+ * corresponde el recordatorio (el codigo no usa WiFi, DHT, Servo ni relé, o la
+ * huella es igual a la de la ultima carga).
+ *
+ * Si al cargar va a aparecer el cartel del checklist, se lo dice al bot ACA, en
+ * la compilacion: que le cuente al docente que cambio y que el cartel tiene
+ * botones en ingles. Asi el docente no se encuentra el cartel de sorpresa.
  */
 export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | null): string {
   const OK = "Compilacion exitosa. El codigo esta listo para cargar al dispositivo."
@@ -3070,87 +3081,168 @@ export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | 
   if (skills.length > 0 && huellaCambio(hashearHuella(a.huella), previa)) {
     msg += `\n\nRecordatorio: el circuito cambió; si todavía no los cargaste, activá los skills ${skills.map((s) => `\`${s}\``).join(", ")} antes de explicarlo o cargarlo.`
   }
+  const pedido = bloqueos.length > 0 ? null : pedidoPorCircuito(a, previa)
+  if (pedido) msg += `\n\n${AVISO_DEL_CARTEL(pedido.metadata.cambios)}`
   return msg
 }
 
-const coincide = (checklist: string | undefined, ...codigos: string[]) => codigos.includes((checklist ?? "").trim().toLowerCase())
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * EL CARTEL DE PERMISO DE OPENCODE (0.4.8, cuarta ronda)
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Antes el freno devolvia un codigo de 6 caracteres que el BOT tenia que pasar
+ * de vuelta: un paso obligado, pero el codigo lo tenia el bot. Ahora el freno es
+ * el cartel de permiso de OpenCode (`ctx.ask`): lo contesta la PERSONA, con
+ * "Allow once" / "Allow always" / "Reject". Esos botones son de OpenCode y estan
+ * fijos en ingles (no hay forma de traducirlos); por eso la pregunta va en
+ * español, la leyenda de `plugins/tecnia-logo.tsx` explica los botones debajo
+ * del cartel, y el bot avisa antes de cargar que el cartel va a aparecer.
+ *
+ * La pregunta empieza SIEMPRE con PREGUNTA_CHECKLIST. El agente tiene la regla
+ * `"¿Revisaste el circuito?*": ask` (despues del `"*": deny`, porque gana la
+ * ultima que coincide) y la leyenda se muestra cuando hay un permiso pendiente
+ * con ese prefijo. Los tests verifican que los tres textos coincidan.
+ *
+ * `patterns` y `always` llevan el codigo que sale de la huella (y de la placa en
+ * el freno de placa): "Allow always" vale solo para ESE cambio. Con el analisis
+ * incompleto `always` va vacio: se pregunta en cada carga.
+ *
+ * El bloqueo de GPIO6 a GPIO11 sigue DURO: no hay cartel que lo levante.
+ */
+export const PREGUNTA_CHECKLIST = "¿Revisaste el circuito?"
+const LARGO_MAXIMO_PREGUNTA = 160
 
-function pedirChecklist(motivo: string, lo: string, codigo: string, checklist: string | undefined): string {
+export interface PedidoChecklist {
+  permission: string
+  patterns: string[]
+  always: string[]
+  metadata: { cambios: string[]; motivo: string }
+  /** Para el texto que se devuelve si la persona dice que no. */
+  motivo: string
+  detalle: string
+}
+
+/** Una entrada de la huella en pocas palabras: `pin:26:OUTPUT:rele` -> "relé en GPIO26". */
+export function resumenDeEntrada(e: string, familia: FamiliaPlaca | null): string {
+  if (e.startsWith("lib:")) return `librería ${e.slice(4)}`
+  const m = e.match(/^pin:(.+):([A-Z_?]+)(:rele)?$/)
+  if (!m) return e
+  const pin = /^\d+$/.test(m[1]!) ? nombrePin(Number(m[1]), familia) : m[1]!.replace(/\{.*\}$/, "")
+  if (m[3]) return `relé en ${pin}`
+  const que: Partial<Record<ModoPin, string>> = {
+    OUTPUT: "salida",
+    INPUT: "entrada",
+    INPUT_PULLUP: "entrada con pull-up",
+    INPUT_PULLDOWN: "entrada con pull-down",
+    ANALOG: "entrada analógica",
+    PWM: "PWM",
+    SERVO: "servo",
+    DHT: "sensor DHT",
+    LCD: "LCD",
+    PASO: "motor paso a paso",
+    NEOPIXEL: "NeoPixel",
+    ONEWIRE: "sensor OneWire",
+    ULTRASONIDO: "ultrasónico",
+    RFID: "lector RFID",
+    TECLADO: "teclado",
+    INFRARROJO: "receptor infrarrojo",
+    UART: "puerto serie",
+  }
+  return `${que[m[2] as ModoPin] ?? "pin"} en ${pin}`
+}
+
+/** La pregunta del cartel, con tope de largo: si no entra todo, "… y N más". */
+function pregunta(cola: string, cambios: string[]): string {
+  const base = `${PREGUNTA_CHECKLIST} ${cola}`
+  if (cambios.length === 0) return base.slice(0, LARGO_MAXIMO_PREGUNTA)
+  let texto = `${base}: ${cambios[0]}`
+  let usados = 1
+  for (const c of cambios.slice(1)) {
+    const resto = cambios.length - usados - 1
+    if (`${texto}, ${c}${resto > 0 ? ` … y ${resto} más` : ""}`.length > LARGO_MAXIMO_PREGUNTA) break
+    texto += `, ${c}`
+    usados++
+  }
+  if (usados < cambios.length) texto += ` … y ${cambios.length - usados} más`
+  return texto.length > LARGO_MAXIMO_PREGUNTA ? `${texto.slice(0, LARGO_MAXIMO_PREGUNTA - 1)}…` : texto
+}
+
+/**
+ * El bloqueo DURO de `flash`/`both`: un pin que deja la placa sin arrancar. No
+ * hay cartel ni respuesta que lo levante. Va antes de buscar la placa.
+ */
+export function bloqueoAntesDeCargar(a: AnalisisProyecto | null): string | null {
+  const bloqueos = a?.hallazgos.filter((h) => h.nivel === "bloqueo") ?? []
+  if (bloqueos.length === 0) return null
   return (
-    `FRENÉ LA CARGA: antes de cargar hay un paso obligado, el checklist de seguridad. ${motivo}\n\n` +
-    (lo ? `${lo}\n\n` : "") +
-    (checklist ? "El código de checklist que pasaste no corresponde a esta carga.\n\n" : "") +
-    "Activá el skill `checklist-seguridad` y hacé con el docente un checklist CORTO y a medida, en formato sí/no. " +
-    "Esperá que confirme. Recién cuando confirme, volvé a llamar a `platformio` con la misma acción y " +
-    `\`checklist: "${codigo}"\`. No pases ese código sin haber hecho el checklist: el tool no puede comprobarlo, depende de vos.`
+    "NO CARGUÉ NADA: el código usa un pin que deja la placa sin arrancar.\n\n" +
+    `${listaHallazgos(bloqueos)}\n\n` +
+    "Contale al docente qué pin es y por qué, cambialo en el código y en el cableado, compilá de nuevo y recién ahí cargá."
   )
 }
 
 /**
- * El primer freno de `flash`/`both`, ANTES de buscar la placa. null si se puede
- * seguir. Primero los pines que rompen (no hay codigo que los levante); despues
- * el checklist si el analisis esta incompleto (siempre) o si el circuito tiene
- * altas nuevas desde la ultima carga de este proyecto. `previa` viene en hash.
+ * El cartel por el CIRCUITO, antes de buscar la placa: si el analisis esta
+ * incompleto (en cada carga) o si el circuito tiene altas nuevas desde la ultima
+ * carga de este proyecto. `previa` viene en hash. null si no hay que preguntar.
  */
-export function frenoAntesDeCargar(a: AnalisisProyecto | null, previa: Huella | null, checklist: string | undefined, cwd = "."): string | null {
-  if (!a) return null
-  const bloqueos = a.hallazgos.filter((h) => h.nivel === "bloqueo")
-  if (bloqueos.length > 0) {
-    return (
-      "NO CARGUÉ NADA: el código usa un pin que deja la placa sin arrancar.\n\n" +
-      `${listaHallazgos(bloqueos)}\n\n` +
-      "Contale al docente qué pin es y por qué, cambialo en el código y en el cableado, compilá de nuevo y recién ahí cargá."
-    )
-  }
+export function pedidoPorCircuito(a: AnalisisProyecto | null, previa: Huella | null, cwd = "."): PedidoChecklist | null {
+  if (!a || bloqueoAntesDeCargar(a)) return null
   if (a.incompleto.length > 0) {
     const codigo = codigoChecklist(huellaIncompleta(cwd, a.incompleto))
-    if (coincide(checklist, codigo)) return null
-    return pedirChecklist(`${avisoIncompleto(a)} Sin eso no sé qué cambió en el circuito, así que el checklist va en cada carga hasta que se pueda leer.`, "", codigo, checklist)
+    const motivo = `${avisoIncompleto(a)} Sin eso no sé qué cambió en el circuito, así que se pregunta en cada carga hasta que se pueda leer.`
+    return {
+      permission: pregunta("No pude leer todo el código", []),
+      patterns: [`análisis incompleto ${codigo}`],
+      always: [],
+      metadata: { cambios: [], motivo },
+      motivo,
+      detalle: "",
+    }
   }
   const altas = altasContra(a.huella, previa)
   if (altas.length === 0) return null
   const codigo = codigoChecklist(a.huella)
-  if (coincide(checklist, codigo)) return null
-  return pedirChecklist(
-    "El circuito cambió desde la última carga de este proyecto.",
-    `Lo nuevo: ${altas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`,
-    codigo,
-    checklist,
-  )
+  const cambios = altas.map((e) => resumenDeEntrada(e, a.familia))
+  return {
+    permission: pregunta("Cambió", cambios),
+    patterns: [`cambio ${codigo}`],
+    always: [`cambio ${codigo}`],
+    metadata: { cambios, motivo: "El circuito cambió desde la última carga de este proyecto." },
+    motivo: "El circuito cambió desde la última carga de este proyecto.",
+    detalle: `Lo nuevo: ${altas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`,
+  }
 }
 
 /**
- * El segundo freno, DESPUES de detectPort: la placa. Solo si el codigo maneja
- * algun pin (un blink del LED de la placa no tiene nada que revisar), el
- * analisis esta completo (si no, ya freno el primero) y se sabe que placa es.
+ * El cartel por la PLACA, DESPUES de detectPort. Solo si el codigo maneja algun
+ * pin (un blink del LED de la placa no tiene nada que revisar), el analisis esta
+ * completo y se sabe que placa es. Si en esta misma carga ya se pregunto por el
+ * circuito, no se pregunta otra vez (`yaPreguntado`).
  *
- * Su codigo sale de la huella Y de la identidad de la placa: repetir el codigo
- * de un checklist anterior no lo levanta. La unica excepcion es cuando en esta
- * misma llamada el primer freno pidio el checklist por altas nuevas y vino su
- * codigo: el checklist se acaba de hacer para este circuito, no se pide otro.
- *
- * Devuelve `freno` (no se carga) o `aviso` (se carga, y se le cuenta al docente).
+ * Su codigo sale de la huella Y de la identidad de la placa: "Allow always" de
+ * un cambio no vale para otra placa. Devuelve `pedido` (preguntar) o `aviso` (se
+ * carga y se le cuenta al docente: una placa sin numero de serie).
  */
-export function frenoPorPlaca(
+export function pedidoPorPlaca(
   a: AnalisisProyecto | null,
   previa: UltimaCarga | null,
   cwd: string,
   hwid: string | undefined,
-  checklist: string | undefined,
+  yaPreguntado: boolean,
   cargas: CargasGlobal = leerCargasGlobal(),
-): { freno: string } | { aviso: string } | null {
-  if (!a || a.incompleto.length > 0 || a.huella.entradas.length === 0) return null
+): { pedido: PedidoChecklist } | { aviso: string } | null {
+  if (!a || a.incompleto.length > 0 || a.huella.entradas.length === 0 || yaPreguntado) return null
   const ident = identidadDePlaca(hwid)
   if (!ident) return null
   const placaFisica = idDePlaca(cargas, ident)
   const codigo = codigoChecklist({ placa: `${a.huella.placa}@${placaFisica}`, entradas: a.huella.entradas })
-  const recienHecho = altasContra(a.huella, previa).length > 0 && coincide(checklist, codigoChecklist(a.huella))
-  if (recienHecho || coincide(checklist, codigo)) return null
   /*
    * Si la ultima carga se anoto con OTRA sal (se borro o se rompio el registro
    * de la compu, o el proyecto vino con su .pio de otra compu), su placa no se
-   * puede comparar: "no se sabe" pide el checklist UNA vez, con un codigo
-   * estable, y despues de esa carga queda todo anotado con la sal de ahora.
+   * puede comparar: "no se sabe" pregunta UNA vez, y despues de esa carga queda
+   * todo anotado con la sal de ahora.
    */
   const noSeSabe = !!previa?.placaFisica && previa.marcaSal !== marcaDeSal(cargas)
   const otraPlaca = !noSeSabe && !!previa?.placaFisica && previa.placaFisica !== placaFisica
@@ -3173,7 +3265,91 @@ export function frenoPorPlaca(
   ]
     .filter(Boolean)
     .join(" ")
-  return { freno: pedirChecklist(motivo, `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`, codigo, checklist) }
+  return {
+    pedido: {
+      permission: pregunta(noSeSabe ? "No puedo saber si es la misma placa" : "Otra placa u otro proyecto en esta placa", []),
+      patterns: [`placa ${codigo}`],
+      always: [`placa ${codigo}`],
+      metadata: { cambios: a.huella.entradas.map((e) => resumenDeEntrada(e, a.familia)), motivo },
+      motivo,
+      detalle: `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`,
+    },
+  }
+}
+
+/**
+ * QUE TRAE EL RECHAZO DE `ctx.ask`, y lo que se asume.
+ *
+ * Leido del codigo de OpenCode (una copia mas nueva que 1.18.18, y el binario
+ * 1.18.34): el `ask` de una tool de plugin es `bridge.promise(toolCtx.ask(req))`,
+ * un `Effect.runPromise`. Si la persona aprieta Reject, `Permission.reply` falla
+ * con `RejectedError` (tag "PermissionRejectedError", mensaje "The user rejected
+ * permission to use this specific tool call."), o con `CorrectedError` (tag
+ * "PermissionCorrectedError", con `feedback`) si ademas escribio algo. Con una
+ * regla `deny` es `DeniedError` ("PermissionDeniedError").
+ *
+ * No se depende de las clases (no se pueden importar desde un plugin, y el
+ * envoltorio de Effect puede cambiar entre versiones): se mira `_tag`, `name`,
+ * `message` y la cadena de `cause`, buscando esos nombres o el texto del
+ * mensaje. Lo que no se reconoce se RELANZA: un error de verdad no se disfraza
+ * de "no quiso".
+ */
+type Rechazo = { tipo: "rechazo"; feedback?: string } | { tipo: "denegado" }
+
+export function comoRechazo(error: unknown): Rechazo | null {
+  const vistos = new Set<unknown>()
+  let e: unknown = error
+  for (let i = 0; i < 6 && e && typeof e === "object" && !vistos.has(e); i++) {
+    vistos.add(e)
+    const o = e as { _tag?: unknown; name?: unknown; message?: unknown; feedback?: unknown; cause?: unknown }
+    const texto = [o._tag, o.name, o.message].filter((x) => typeof x === "string").join(" ")
+    if (/PermissionCorrectedError|rejected permission[^]*following feedback/i.test(texto)) {
+      const feedback = typeof o.feedback === "string" ? o.feedback : (typeof o.message === "string" ? o.message.match(/following feedback:\s*([^]*)$/)?.[1] : undefined)
+      return { tipo: "rechazo", ...(feedback ? { feedback } : {}) }
+    }
+    if (/PermissionRejectedError|rejected permission/i.test(texto)) return { tipo: "rechazo" }
+    if (/PermissionDeniedError|rule which prevents you/i.test(texto)) return { tipo: "denegado" }
+    e = o.cause
+  }
+  return null
+}
+
+const NO_REINTENTES =
+  "NO vuelvas a intentar la carga por tu cuenta: esperá a que el docente diga que revisó el circuito y te pida cargar de nuevo. Nunca digas que lo revisaste vos."
+
+/**
+ * Muestra el cartel y espera. null si la persona permitio (se sigue con la
+ * carga); un texto si no hay que cargar. Falla CERRADO: sin `ctx.ask` no se carga.
+ */
+export async function preguntarChecklist(ctx: unknown, pedido: PedidoChecklist): Promise<string | null> {
+  const c = ctx as { ask?: (input: { permission: string; patterns: string[]; always: string[]; metadata: Record<string, unknown> }) => Promise<void> }
+  const detalle = `${pedido.motivo}${pedido.detalle ? `\n\n${pedido.detalle}` : ""}`
+  if (typeof c?.ask !== "function") {
+    return (
+      "No cargué: esta versión de OpenCode no puede mostrar el cartel para confirmar el checklist de seguridad, y cargar sin esa confirmación no es una opción.\n\n" +
+      `${detalle}\n\nPedile al docente que actualice Tecnia Bot (\`/actualizar\` o "Reparar Tecnia Bot").`
+    )
+  }
+  try {
+    await c.ask({ permission: pedido.permission, patterns: pedido.patterns, always: pedido.always, metadata: pedido.metadata })
+    return null
+  } catch (error) {
+    const r = comoRechazo(error)
+    if (!r) throw error
+    if (r.tipo === "denegado") {
+      return (
+        "No cargué: la configuración de permisos no deja mostrar el cartel del checklist " +
+        `(falta la regla \`"${PREGUNTA_CHECKLIST}*": ask\` del agente Tecnia Bot). Pedile al docente que corra "Reparar Tecnia Bot" o \`/actualizar\`.\n\n${detalle}`
+      )
+    }
+    return (
+      "No cargué: elegiste Reject (todavía no revisaste el circuito).\n\n" +
+      `${detalle}\n\n` +
+      (r.feedback ? `El docente escribió: «${r.feedback}».\n\n` : "") +
+      "Repasá con el docente el checklist de seguridad (skill `checklist-seguridad`), corto y a medida de lo nuevo. " +
+      NO_REINTENTES
+    )
+  }
 }
 
 /**
@@ -3221,7 +3397,7 @@ Acciones:
 - diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)
 - reparar: instala PlatformIO Core cuando falta, corriendo el instalador de Tecnia Bot (en Linux/Mac devuelve el comando exacto para hacerlo a mano). Tarda unos minutos y baja unos 60 MB (mas de 1 GB si faltan las herramientas de ESP32/UNO): avisale antes.
 
-Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la memoria flash frena la carga. flash y both frenan si el circuito o la placa cambiaron desde la ultima carga: hacer el checklist de seguridad con el docente es un paso obligado, y despues se vuelve a llamar con el parametro 'checklist' que da el tool.`,
+Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la memoria flash frena la carga. si el circuito o la placa cambiaron desde la ultima carga, flash y both muestran un cartel de OpenCode que contesta el docente: es el paso obligado del checklist de seguridad. Antes de cargar, contale que cambio y que el cartel tiene botones en ingles: Allow once si ya reviso el circuito, Reject si todavia no. Si contesta Reject, no reintentes hasta que te lo pida.`,
   args: {
     action: tool.schema
       .enum(["compile", "flash", "both", "monitor", "diagnostico", "reparar"])
@@ -3252,13 +3428,6 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
       .string()
       .optional()
       .describe("Ruta al proyecto PlatformIO. Por defecto usa el directorio actual."),
-    checklist: tool.schema
-      .string()
-      .optional()
-      .describe(
-        "Codigo de 6 caracteres que te da flash o both cuando frenan porque el circuito cambio desde la ultima carga. " +
-        "Pasalo SOLO despues de hacer el checklist de seguridad con el docente y de que confirme. Si el tool no te lo pidio, no lo pases.",
-      ),
   },
   async execute(args, ctx) {
     const cwd = args.project_path ?? ctx.directory
@@ -3455,8 +3624,13 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         // Orden: pines y circuito ANTES de buscar la placa; la placa, despues (ver "QUE SE GUARDA Y DONDE").
         const analisis = analizarProyecto(cwd, args.environment)
         const previa = leerUltimaCarga(cwd)
-        const freno = frenoAntesDeCargar(analisis, previa, args.checklist, cwd)
-        if (freno) return freno
+        const bloqueo = bloqueoAntesDeCargar(analisis)
+        if (bloqueo) return bloqueo
+        const porCircuito = pedidoPorCircuito(analisis, previa, cwd)
+        if (porCircuito) {
+          const no = await preguntarChecklist(ctx, porCircuito)
+          if (no) return no
+        }
         let puerto = args.port
         let hwid: string | undefined
         if (!puerto) {
@@ -3465,8 +3639,11 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           puerto = detected.port
           hwid = detected.hwid
         }
-        const placa = frenoPorPlaca(analisis, previa, cwd, hwid, args.checklist)
-        if (placa && "freno" in placa) return placa.freno
+        const placa = pedidoPorPlaca(analisis, previa, cwd, hwid, !!porCircuito)
+        if (placa && "pedido" in placa) {
+          const no = await preguntarChecklist(ctx, placa.pedido)
+          if (no) return no
+        }
         const result = await cargar(puerto)
         if (result.code === 0) {
           const anotada = guardarUltimaCarga(cwd, analisis, hwid)
@@ -3483,8 +3660,13 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         compiloAntes = true
         const analisis = analizarProyecto(cwd, args.environment)
         const previa = leerUltimaCarga(cwd)
-        const freno = frenoAntesDeCargar(analisis, previa, args.checklist, cwd)
-        if (freno) return `La compilacion fue bien. ${freno}`
+        const bloqueo = bloqueoAntesDeCargar(analisis)
+        if (bloqueo) return `La compilacion fue bien. ${bloqueo}`
+        const porCircuito = pedidoPorCircuito(analisis, previa, cwd)
+        if (porCircuito) {
+          const no = await preguntarChecklist(ctx, porCircuito)
+          if (no) return `La compilacion fue bien. ${no}`
+        }
         let puerto = args.port
         let hwid: string | undefined
         if (!puerto) {
@@ -3493,8 +3675,11 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           puerto = detected.port
           hwid = detected.hwid
         }
-        const placa = frenoPorPlaca(analisis, previa, cwd, hwid, args.checklist)
-        if (placa && "freno" in placa) return `La compilacion fue bien. ${placa.freno}`
+        const placa = pedidoPorPlaca(analisis, previa, cwd, hwid, !!porCircuito)
+        if (placa && "pedido" in placa) {
+          const no = await preguntarChecklist(ctx, placa.pedido)
+          if (no) return `La compilacion fue bien. ${no}`
+        }
         const flash = await cargar(puerto)
         if (flash.code === 0) {
           const anotada = guardarUltimaCarga(cwd, analisis, hwid)
