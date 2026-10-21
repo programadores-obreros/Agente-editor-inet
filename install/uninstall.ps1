@@ -248,7 +248,7 @@ if ((Test-Path $PerfilFile) -or (Test-Path $MemoriaFile) -or (Test-Path $CargasF
         # traga SilentlyContinue, y antes se imprimia "borrados" igual.
         $Quedaron = @(@($PerfilFile, $MemoriaFile, $CargasFile) | Where-Object { -not (Borrar-YVerificar $_) })
         if ($Quedaron.Count -eq 0) {
-            Write-Host "    Perfil y memoria borrados (los relei y ya no estan)."
+            Write-Host "    Perfil, memoria y registro de cargas borrados (los relei y ya no estan)."
         } else {
             Write-Host "    [X] NO PUDE BORRAR estos datos personales: SIGUEN EN ESTA COMPUTADORA."
             foreach ($f in $Quedaron) { Write-Host "        $f" }

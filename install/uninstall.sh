@@ -317,7 +317,7 @@ if [ -f "$PERFIL_FILE" ] || [ -f "$MEMORIA_FILE" ] || [ -f "$CARGAS_FILE" ]; the
       borrar_verificando "$f" || QUEDARON="${QUEDARON}$f"$'\n'
     done
     if [ -z "$QUEDARON" ]; then
-      echo "    Perfil y memoria borrados (los relei y ya no estan)."
+      echo "    Perfil, memoria y registro de cargas borrados (los relei y ya no estan)."
     else
       echo "    [X] NO PUDE BORRAR estos datos personales: SIGUEN EN ESTA COMPUTADORA."
       printf '%s' "$QUEDARON" | while IFS= read -r f; do [ -n "$f" ] && echo "        $f"; done

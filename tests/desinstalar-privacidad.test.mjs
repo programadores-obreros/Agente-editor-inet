@@ -157,8 +157,9 @@ test("uninstall.ps1: 'Perfil y memoria borrados' cuelga de una RELECTURA con Tes
   assert.ok(iRemove >= 0, "Borrar-YVerificar no borra nada")
   assert.ok(iTest > iRemove, "Borrar-YVerificar no relee con Test-Path DESPUÉS de Remove-Item")
 
-  const exito = [...PS.matchAll(/^[ \t]*Write-Host "[^"]*Perfil y memoria borrados[^"]*"/gm)]
-  assert.equal(exito.length, 1, `esperaba UNA afirmación de "Perfil y memoria borrados" y encontré ${exito.length}`)
+  // Desde la 0.4.8 el mensaje nombra también el registro de cargas del tool platformio.
+  const exito = [...PS.matchAll(/^[ \t]*Write-Host "[^"]*Perfil, memoria y registro de cargas borrados[^"]*"/gm)]
+  assert.equal(exito.length, 1, `esperaba UNA afirmación de "Perfil, memoria y registro de cargas borrados" y encontré ${exito.length}`)
   const iGuarda = PS.indexOf("if ($Quedaron.Count -eq 0)")
   assert.ok(iGuarda >= 0, "el mensaje ya no cuelga de la cuenta de lo que quedó: se afirma sin verificar")
   assert.ok(iGuarda < exito[0].index, "la guarda quedó DESPUÉS del mensaje de éxito")
@@ -454,7 +455,7 @@ test(
     try {
       const salida = desinstalar(base)
       assert.throws(() => readFileSync(cargas), "tecnia-cargas.json sigue en la compu después de --borrar")
-      assert.match(salida, /borrados \(los relei y ya no estan\)/, salida)
+      assert.match(salida, /Perfil, memoria y registro de cargas borrados \(los relei y ya no estan\)/, salida)
     } finally {
       rmSync(base, { recursive: true, force: true })
     }
