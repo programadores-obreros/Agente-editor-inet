@@ -1599,3 +1599,23 @@ test("build_src_filter por environment: se ve en la huella de cada placa", () =>
 test("un parámetro arreglo tapa al arreglo global con el mismo nombre", () => {
   assert.deepEqual(mod.analizarPines("const int L[] = {7};\nvoid f(int L[]){ pinMode(L[0], OUTPUT); }\nvoid setup(){}", "esp32"), [])
 })
+
+test("una carpeta de lib/ desconocida de más de 512 KB se poda y deja el análisis incompleto (no cuelga el tool)", () => {
+  let grande = ""
+  for (let k = 0; k < 6000; k++) grande += `static int f${k}(int a){ int v${k} = a; v${k} += 1; return v${k}; }\n`
+  grande += "x".repeat(0) + "const int MOTOR = 7;\n" + "// relleno\n".repeat(40000)
+  const dir = proyectoCon({ "src/main.cpp": "#include <Core.h>\nvoid setup(){ pinMode(MOTOR, OUTPUT); }", "lib/core/Core.h": grande })
+  const t0 = performance.now()
+  const a = mod.analizarProyecto(dir)
+  assert.ok(performance.now() - t0 < 2000)
+  assert.deepEqual(a.incompleto, ["lib/core (demasiado grande para analizarla entera)"])
+  assert.deepEqual(niveles(a.hallazgos), ["bloqueo"], "las constantes de la carpeta podada se siguen leyendo")
+})
+
+test("una clase cuyo header no se lee se reconoce por su constructor Clase::Clase", () => {
+  const dir = proyectoCon({
+    "src/main.cpp": "#include <Zumbador.h>\nZumbador z(7);\nvoid setup(){ z.begin(); }",
+    "src/zumbador.cpp": "Zumbador::Zumbador(uint8_t p) : _pin(p) {}\nvoid Zumbador::begin(){ pinMode(_pin, OUTPUT); }\n",
+  })
+  assert.deepEqual(niveles(mod.analizarProyecto(dir).hallazgos), ["bloqueo"])
+})

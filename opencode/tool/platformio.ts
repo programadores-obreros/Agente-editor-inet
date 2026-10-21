@@ -1952,6 +1952,8 @@ interface Preparado {
 export interface Archivo {
   nombre: string
   texto: string
+  /** Se poda aunque no sea de terceros: una carpeta propia demasiado grande (y el analisis queda incompleto). */
+  podar?: boolean
   /** Esta en `lib/` (se puede podar si no maneja pines). */
   enLib?: boolean
   /** Es de una libreria de terceros conocida: sus pines internos sin resolver no van a la huella. */
@@ -2001,7 +2003,7 @@ function preparar(archivos: Archivo[], board: string, predefinidas: Map<string, 
     let lim = limpiar(a.texto)
     // Solo se poda lo de terceros CONOCIDOS: una libreria propia se analiza entera
     // (un `Zumbador(uint8_t pin = 8);` en un header sin pinMode es el pin del objeto).
-    if (a.deLib && !DISPARADORES.test(lim.codigo)) {
+    if ((a.deLib || a.podar) && !DISPARADORES.test(lim.codigo)) {
       // Quedan las directivas y las constantes ENTERAS: un `const int MOTOR = 7;`
       // de un header de configuracion en lib/ puede ser el pin que usa src/. La
       // primera poda se quedaba con cualquier linea que dijera `const`, y un
@@ -2285,7 +2287,9 @@ export function nombrePin(pin: number, familia: FamiliaPlaca | null): string {
   return `GPIO${pin}`
 }
 
-const INCLUDE = /^\s*#\s*include\s*[<"]([^>"]+)[>"]/gm
+// `[ \t]*` y no `\s*`: con la bandera m, `\s*` cruza los saltos de linea, y sobre un
+// archivo podado (miles de lineas vacias) el retroceso tardaba casi 4 segundos.
+const INCLUDE = /^[ \t]*#[ \t]*include[ \t]*[<"]([^>"]+)[>"]/gm
 const incluye = (p: Preparado, re: RegExp) => [...p.conTextos.matchAll(INCLUDE)].some((m) => re.test(m[1]!.trim()))
 const usaWifi = (p: Preparado) => incluye(p, /^(WiFi|WiFiMulti|WebServer|HTTPClient|esp_now)\.h$/) || /\bWiFi\s*\./.test(p.codigo)
 const usaSerial = (p: Preparado) => /\bSerial\s*\.\s*begin\s*\(/.test(p.codigo)
@@ -2679,6 +2683,7 @@ export function entraPorFiltro(rel: string, filtro: string | null): boolean {
   return entra
 }
 
+const LIB_PROPIA_MAXIMA = 512 * 1024
 const CARPETAS_QUE_NO = new Set(["examples", "example", "extras", "test", "tests", "docs", "doc"])
 const EXTENSIONES = /\.(ino|pde|cpp|cc|cxx|c|h|hh|hpp|hxx)$/i
 const PROFUNDIDAD_MAXIMA = 8
@@ -2785,6 +2790,20 @@ function leerFuentes(cwd: string, iniText: string, filtro: string | null): { arc
   const conocidas = new Set<string>()
   for (const a of archivos) if (a.enLib && LIBRERIAS_HARDWARE[a.nombre.split(/[\\/]/).pop() ?? ""]) conocidas.add(carpetaDe.get(a) ?? "")
   for (const a of archivos) if (a.enLib && conocidas.has(carpetaDe.get(a) ?? "")) a.deLib = true
+  /*
+   * Una carpeta de lib/ que NO es una libreria conocida y pesa mas de 512 KB
+   * (alguien copio el core o el SDK adentro) no se puede analizar entera en un
+   * tiempo razonable: se poda como las de terceros y el analisis queda
+   * INCOMPLETO, asi que el checklist va en cada carga. Fallar cerrado, sin
+   * colgar el tool 17 segundos.
+   */
+  const peso = new Map<string, number>()
+  for (const a of archivos) if (a.enLib && !a.deLib) peso.set(carpetaDe.get(a) ?? "", (peso.get(carpetaDe.get(a) ?? "") ?? 0) + a.texto.length)
+  for (const [carpeta, bytes] of peso) {
+    if (bytes <= LIB_PROPIA_MAXIMA) continue
+    ilegibles.push(`${nombreRel(join(lib, carpeta))} (demasiado grande para analizarla entera)`)
+    for (const a of archivos) if (a.enLib && carpetaDe.get(a) === carpeta) a.podar = true
+  }
   // El orden de los archivos no cambia el resultado: los #define de varios
   // archivos se juntan sin importar cual va primero (ver `preparar`).
   return { archivos, ilegibles, hayCarpetas }
