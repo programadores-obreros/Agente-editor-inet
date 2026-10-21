@@ -1369,8 +1369,48 @@ test("entradas patológicas (separadores, pinMode sin cerrar, #if anidado) termi
       "console.log('termino', r.length)",
     ].join("\n"),
   )
-  const r = spawnSync(process.execPath, [script], { timeout: 10_000, encoding: "utf8" })
-  assert.equal(r.signal, null, "tardó más de 10 s (antes eran 25 s entre las dos primeras)")
+  const r = spawnSync(process.execPath, [script], { timeout: 5_000, encoding: "utf8" })
+  assert.equal(r.signal, null, "tardó más de 5 s (antes eran 25 s entre las dos primeras; hoy, menos de medio segundo)")
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stdout, /termino 1/, "el #if anidado no tiene que desbordar la pila")
+})
+
+// ── Mutantes vivos de la tercera pasada ──────────────────────────────────────
+
+test("una constante en un header de lib/ sin pinMode propio se sigue leyendo", () => {
+  const dir = proyectoCon({ "src/main.cpp": '#include <Config.h>\nvoid setup(){ pinMode(MOTOR, OUTPUT); }', "lib/Config/Config.h": "#pragma once\nconst int MOTOR = 7;\n" })
+  assert.deepEqual(niveles(mod.analizarProyecto(dir).hallazgos), ["bloqueo"])
+})
+
+test("la misma definición repetida en dos archivos no se duplica en la huella", () => {
+  const dir = proyectoCon({ "src/a.cpp": "static const int LED = 7;\nvoid a(){ pinMode(LED, OUTPUT); }", "src/b.cpp": "static const int LED = 7;\nvoid b(){ pinMode(LED, OUTPUT); }" })
+  assert.deepEqual(mod.analizarProyecto(dir).huella.entradas, ["pin:LED{LED=7}:OUTPUT"])
+})
+
+test("un miembro con el mismo nombre (s.pin = 4) no reasigna la global", () => {
+  assert.deepEqual(niveles(mod.analizarPines("int pin = 7;\nstruct S { int pin; } s;\nvoid setup(){ s.pin = 4; pinMode(pin, OUTPUT); }", "esp32")), ["bloqueo"])
+})
+
+test("evaluarCondicion: verdadero && falso es falso", () => {
+  assert.equal(mod.evaluarCondicion("defined(ESP32) && defined(__AVR__)", mod.macrosDePlaca("esp32dev")), false)
+  assert.equal(mod.evaluarCondicion("defined(ARDUINO_ARCH_RP2040)", mod.macrosDePlaca("esp32dev")), false, "las arquitecturas de otros son falsas por prefijo")
+  assert.equal(mod.evaluarCondicion("defined(ARDUINO_ARCH_STM32)", mod.macrosDePlaca("uno")), false)
+})
+
+test("la sal del registro de cargas es aleatoria por compu, y un estado de otra versión no cuenta", async () => {
+  const antes = process.env.XDG_CONFIG_HOME
+  try {
+    process.env.XDG_CONFIG_HOME = join(OUT, `sin-config-${++nProyecto}`)
+    const a = mod.leerCargasGlobal().sal
+    process.env.XDG_CONFIG_HOME = join(OUT, `sin-config-${++nProyecto}`)
+    assert.notEqual(mod.leerCargasGlobal().sal, a)
+  } finally {
+    process.env.XDG_CONFIG_HOME = antes
+  }
+  // Un ultima-carga.json viejo (en claro, sin "version": 2) se ignora: frena igual.
+  const dir = proyecto("esp32dev", CON_BUZZER)
+  mkdirSync(join(dir, ".pio", "tecnia"), { recursive: true })
+  writeFileSync(estadoDe(dir), JSON.stringify({ placa: "esp32dev", entradas: ["pin:25:OUTPUT"], ...mod.hashearHuella({ placa: "esp32dev", entradas: ["pin:25:OUTPUT"] }) }))
+  assert.equal(mod.leerUltimaCarga(dir), null)
+  assert.match(await ejecutar({ action: "flash", project_path: dir }), /FRENÉ LA CARGA/)
 })

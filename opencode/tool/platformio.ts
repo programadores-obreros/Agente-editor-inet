@@ -1905,8 +1905,8 @@ export interface Archivo {
 /**
  * Limpia y preprocesa cada archivo por su lado y los junta. De un archivo de
  * `lib/` sin nada que maneje pines (los headers del core, las tablas de fuentes de
- * una pantalla) quedan solo las directivas: sus #define pueden importar, el resto
- * no, y analizarlo entero costaba segundos.
+ * una pantalla) quedan solo las directivas y las constantes: sus #define y sus
+ * `const` pueden importar, el resto no, y analizarlo entero costaba segundos.
  */
 function preparar(archivos: Archivo[], board: string, predefinidas: Map<string, string> = new Map()): Preparado {
   const macros = macrosDePlaca(board)
@@ -1919,7 +1919,9 @@ function preparar(archivos: Archivo[], board: string, predefinidas: Map<string, 
   for (const a of archivos) {
     let lim = limpiar(a.texto)
     if (a.deLib && !DISPARADORES.test(lim.codigo)) {
-      const directivas = (t: string) => t.split("\n").map((l) => (/^\s*#/.test(l) ? l : "")).join("\n")
+      // Quedan las directivas y las constantes: un `const int MOTOR = 7;` de un
+      // header de configuracion en lib/ puede ser el pin que usa src/.
+      const directivas = (t: string) => t.split("\n").map((l) => (/^\s*#|\b(?:const|constexpr)\b/.test(l) ? l : "")).join("\n")
       lim = { codigo: directivas(lim.codigo), conTextos: directivas(lim.conTextos) }
     }
     const p = preprocesar(lim, macros, predefinidas)
