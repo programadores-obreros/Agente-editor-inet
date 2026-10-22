@@ -3081,7 +3081,8 @@ export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | 
   if (skills.length > 0 && huellaCambio(hashearHuella(a.huella), previa)) {
     msg += `\n\nRecordatorio: el circuito cambió; si todavía no los cargaste, activá los skills ${skills.map((s) => `\`${s}\``).join(", ")} antes de explicarlo o cargarlo.`
   }
-  const pedido = bloqueos.length > 0 ? null : pedidoPorCircuito(a, previa)
+  // Con un bloqueo no hay cartel (pedidoPorCircuito devuelve null): no se le habla de cargar.
+  const pedido = pedidoPorCircuito(a, previa)
   if (pedido) msg += `\n\n${AVISO_DEL_CARTEL(pedido.metadata.cambios)}`
   return msg
 }

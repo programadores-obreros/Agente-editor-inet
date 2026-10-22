@@ -1807,3 +1807,21 @@ test("la leyenda de tecnia-logo.tsx usa el mismo prefijo que el tool y explica l
   assert.match(tsx, /app_bottom\(\)/)
   assert.match(tsx, /\.startsWith\(PREGUNTA_CHECKLIST\)/)
 })
+
+test("cartel: si en la misma carga cambian el circuito Y la placa, se pregunta UNA vez (por el circuito)", async () => {
+  escenario({ placas: [CP2102_A] })
+  respuestaAsk = "allow"
+  const dir = proyecto("esp32dev", CON_BUZZER)
+  await ejecutar({ action: "flash", project_path: dir })
+  reescribir(dir, CON_BUZZER + "\nconst int PIR = 27;\nvoid x(){ pinMode(PIR, INPUT); }")
+  escenario({ placas: [CP2102_B] })
+  pedidos = []
+  assert.match(await ejecutar({ action: "flash", project_path: dir }), /Codigo cargado exitosamente/)
+  assert.equal(pedidos.length, 1, "el checklist recién hecho para este circuito ya cubre la placa nueva")
+  assert.match(pedidos[0].permission, /Cambió: entrada en GPIO27/)
+})
+
+test("compile con un bloqueo no habla del cartel", async () => {
+  const r = await ejecutar({ action: "compile", project_path: proyecto("esp32dev", "void setup(){ pinMode(7, OUTPUT); pinMode(25, OUTPUT); }") })
+  assert.doesNotMatch(r, /Allow once/)
+})
