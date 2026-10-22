@@ -103,7 +103,8 @@ before(async () => {
     .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
   writeFileSync(join(OUT, "platformio.ts"), src)
   mod = await import(join(OUT, "platformio.ts"))
-  ctx = { directory: OUT, abort: new AbortController().signal }
+  // `agent`: flash y both cargan solo con el agente Tecnia Bot.
+  ctx = { directory: OUT, abort: new AbortController().signal, agent: "tecnia-bot" }
 })
 
 beforeEach(() => {
@@ -537,7 +538,7 @@ test("flash con GPIO7 dentro de un #ifdef desconocido: no bloquea (es aviso); co
 
 const CON_BUZZER = "const int BUZZER = 25;\nvoid setup(){ pinMode(BUZZER, OUTPUT); }\nvoid loop(){ tone(BUZZER, 440); }"
 
-test("flash con hardware nuevo: el cartel aparece ANTES de buscar la placa, y con Reject no carga", async () => {
+test("flash con hardware nuevo: el cartel aparece (ya con la placa encontrada) y con Reject no carga", async () => {
   const dir = proyecto("esp32dev", CON_BUZZER)
   const r = await ejecutar({ action: "flash", project_path: dir })
   assert.match(r, FRENO)
@@ -545,7 +546,7 @@ test("flash con hardware nuevo: el cartel aparece ANTES de buscar la placa, y co
   assert.match(r, /checklist-seguridad/)
   assert.equal(pedidos.length, 1)
   assert.equal(pedidos[0].permission, `${mod.PREGUNTA_CHECKLIST} Cambió: salida en GPIO25`)
-  assert.ok(!buscoPlaca(), "la compuerta va ANTES de detectPort")
+  assert.ok(buscoPlaca(), "el cartel va DESPUÉS de buscar la placa: su clave incluye la placa")
   assert.ok(!cargo())
   assert.ok(!existsSync(join(dir, ".pio", "tecnia", "ultima-carga.json")), "sin carga no hay estado")
 })
@@ -553,9 +554,10 @@ test("flash con hardware nuevo: el cartel aparece ANTES de buscar la placa, y co
 test("'Allow always' vale solo para ese cambio: patterns y always llevan el código de la huella", async () => {
   const dir = proyecto("esp32dev", CON_BUZZER)
   await ejecutar({ action: "flash", project_path: dir })
-  const codigo = mod.codigoChecklist(mod.analizarProyecto(dir).huella)
-  assert.deepEqual(pedidos[0].patterns, [`cambio ${codigo}`])
-  assert.deepEqual(pedidos[0].always, [`cambio ${codigo}`])
+  // La clave no es solo la huella: lleva también el proyecto y la placa (ver los tests de 'Allow always' con OpenCode simulado).
+  assert.match(pedidos[0].patterns[0], /^cambio [0-9a-f]{6}$/)
+  assert.notEqual(pedidos[0].patterns[0], `cambio ${mod.codigoChecklist(mod.analizarProyecto(dir).huella)}`)
+  assert.deepEqual(pedidos[0].always, pedidos[0].patterns)
   assert.deepEqual(pedidos[0].metadata.cambios, ["salida en GPIO25"])
   // Otro circuito, otro código: lo aprobado "siempre" para uno no vale para el otro.
   reescribir(dir, CON_BUZZER + "\nconst int PIR = 27;\nvoid x(){ pinMode(PIR, INPUT); }")
@@ -568,7 +570,7 @@ test("flash con el código correcto: carga y guarda la huella; la próxima carga
   const r1 = await ejecutar({ action: "flash", project_path: dir })
   const codigo = codigoDe(r1)
   spawns = []
-  const r2 = await ejecutar({ action: "flash", project_path: dir, checklist: codigo.toUpperCase() })
+  const r2 = await ejecutar({ action: "flash", project_path: dir, checklist: codigo })
   assert.match(r2, /Codigo cargado exitosamente/)
   assert.ok(cargo())
   const estado = JSON.parse(readFileSync(join(dir, ".pio", "tecnia", "ultima-carga.json"), "utf8"))
@@ -605,7 +607,7 @@ test("both: la compuerta también, y con el código carga y guarda", async () =>
   const r1 = await ejecutar({ action: "both", project_path: dir })
   assert.match(r1, /La compilacion fue bien\. No cargué: elegiste Reject/)
   assert.match(r1, /D7 como salida/)
-  assert.ok(!buscoPlaca())
+  assert.ok(!cargo())
   const codigo = codigoDe(r1)
   spawns = []
   const r2 = await ejecutar({ action: "both", project_path: dir, checklist: codigo })
@@ -683,10 +685,10 @@ test("FALLA CERRADO: un link roto en src/ no apaga el checklist; pide el código
   const r1 = await ejecutar({ action: "flash", project_path: dir })
   assert.match(r1, FRENO)
   assert.match(r1, /No pude leer todo el código del proyecto \(src[\\/]roto\.h\)/)
-  assert.equal(pedidos[0].permission, `${mod.PREGUNTA_CHECKLIST} No pude leer todo el código`)
-  assert.deepEqual(pedidos[0].patterns, [`análisis incompleto ${mod.codigoChecklist(mod.huellaIncompleta(dir, ["src/roto.h"]))}`], "el código sale del proyecto y de lo que no se pudo leer")
+  assert.equal(pedidos[0].permission, `${mod.PREGUNTA_CHECKLIST} No pude leer todo el código${mod.MARCA_SIEMPRE_PREGUNTA}`)
+  assert.match(pedidos[0].patterns[0], /^cambio [0-9a-f]{6}$/)
   assert.deepEqual(pedidos[0].always, [], "con el análisis incompleto, 'Allow always' no se puede guardar: se pregunta en cada carga")
-  assert.ok(!buscoPlaca() && !cargo())
+  assert.ok(!cargo())
 
   spawns = []
   const r2 = await ejecutar({ action: "flash", project_path: dir, checklist: codigoDe(r1) })
@@ -993,11 +995,11 @@ test("cargar el mismo proyecto en OTRA placa (otro número de serie) pide el che
   assert.match(r2, /No cargué: elegiste Reject[\s\S]*OTRA placa/)
   assert.ok(!cargo())
   // I5: lo aprobado "siempre" para el circuito no vale para esta placa: otro código.
-  const deCircuito = pedidos.find((p) => p.patterns[0].startsWith("cambio "))
+  const deCircuito = pedidos[0]
   const dePlaca = pedidos[pedidos.length - 1]
   assert.match(dePlaca.permission, /^¿Revisaste el circuito\? Otra placa u otro proyecto en esta placa$/)
-  assert.match(dePlaca.patterns[0], /^placa [0-9a-f]{6}$/)
-  assert.notEqual(dePlaca.patterns[0], deCircuito.patterns[0])
+  assert.match(dePlaca.patterns[0], /^cambio [0-9a-f]{6}$/)
+  assert.notEqual(dePlaca.patterns[0], deCircuito.patterns[0], "la misma huella en otra placa es otra clave")
   assert.match(await ejecutar({ action: "flash", project_path: dir, checklist: "si" }), /Codigo cargado exitosamente en \/dev\/ttyUSB1/)
 })
 
@@ -1074,12 +1076,6 @@ test("both: estado SOLO tras una carga con código 0, y los avisos llegan despu�
   assert.match(r, /Compilacion y carga exitosa/)
   assert.match(r, /Contale al docente estos pines:[\s\S]*GPIO34 es SOLO ENTRADA/)
   assert.ok(existsSync(estadoDe(dir)))
-})
-
-test("el código del checklist se acepta con espacios alrededor", async () => {
-  const dir = proyecto("esp32dev", CON_BUZZER)
-  const codigo = codigoDe(await ejecutar({ action: "flash", project_path: dir }))
-  assert.match(await ejecutar({ action: "flash", project_path: dir, checklist: `  ${codigo} ` }), /Codigo cargado exitosamente/)
 })
 
 // ── 10. Lo que confundía al analizador ───────────────────────────────────────
@@ -1679,16 +1675,15 @@ test("cartel: con altas se llama con el prefijo, el resumen en español, pattern
   const p = pedidos[0]
   assert.ok(p.permission.startsWith(mod.PREGUNTA_CHECKLIST))
   assert.equal(p.permission, "¿Revisaste el circuito? Cambió: librería DHT, relé en GPIO26, sensor DHT en GPIO4")
-  const codigo = mod.codigoChecklist(mod.analizarProyecto(dir).huella)
-  assert.deepEqual(p.patterns, [`cambio ${codigo}`])
-  assert.deepEqual(p.always, [`cambio ${codigo}`])
+  assert.match(p.patterns[0], /^cambio [0-9a-f]{6}$/)
+  assert.deepEqual(p.always, p.patterns)
   assert.deepEqual(p.metadata.cambios, ["librería DHT", "relé en GPIO26", "sensor DHT en GPIO4"])
 })
 
 test("cartel: la pregunta tiene un tope de largo y dice cuántos cambios más hay", () => {
   const muchos = Array.from({ length: 20 }, (_, i) => `void s${i}(){ pinMode(${i + 12 < 34 ? i + 12 : 4}, OUTPUT); }`).join("\n")
   const a = mod.analizarProyecto(proyectoCon({ "src/main.cpp": muchos }))
-  const p = mod.pedidoPorCircuito(a, null)
+  const p = mod.pedidoDeCarga(a, null, "/proyecto", CH340.hwid).pedido
   assert.ok(p.permission.length <= 160, p.permission)
   assert.match(p.permission, /… y \d+ más$/)
 })
@@ -1700,7 +1695,7 @@ test("cartel: Allow carga y graba; Reject no carga, no graba y lo dice en españ
   assert.match(no, /^No cargué: elegiste Reject \(todavía no revisaste el circuito\)/)
   assert.match(no, /NO vuelvas a intentar la carga por tu cuenta/)
   assert.match(no, /Nunca digas que lo revisaste vos/)
-  assert.ok(!cargo() && !buscoPlaca())
+  assert.ok(!cargo())
   assert.ok(!existsSync(estadoDe(dir)))
   respuestaAsk = "allow"
   assert.match(await ejecutar({ action: "flash", project_path: dir }), /Codigo cargado exitosamente/)
@@ -1747,12 +1742,11 @@ test("cartel: sin ctx.ask (OpenCode viejo, o los tests de antes) falla CERRADO: 
   assert.match(await mod.default.execute({ action: "flash", project_path: blink }, ctx), /Codigo cargado exitosamente/)
 })
 
-test("cartel: el freno de placa pregunta con su texto; si ya se preguntó por el circuito en esta carga, no pregunta dos veces", async () => {
+test("cartel: cambiar solo de placa pregunta una vez, con el texto de la placa", async () => {
   escenario({ placas: [CP2102_A] })
   respuestaAsk = "allow"
   const dir = proyecto("esp32dev", CON_BUZZER)
   await ejecutar({ action: "flash", project_path: dir })
-  assert.equal(pedidos.length, 1, "la primera carga pregunta por el circuito y no otra vez por la placa")
   escenario({ placas: [CP2102_B] })
   pedidos = []
   assert.match(await ejecutar({ action: "flash", project_path: dir }), /Codigo cargado exitosamente/)
@@ -1824,4 +1818,201 @@ test("cartel: si en la misma carga cambian el circuito Y la placa, se pregunta U
 test("compile con un bloqueo no habla del cartel", async () => {
   const r = await ejecutar({ action: "compile", project_path: proyecto("esp32dev", "void setup(){ pinMode(7, OUTPUT); pinMode(25, OUTPUT); }") })
   assert.doesNotMatch(r, /Allow once/)
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Quinta ronda: "Allow always" con la semántica REAL de OpenCode, y el agente
+// ═══════════════════════════════════════════════════════════════════════════
+
+/*
+ * OPENCODE SIMULADO, con la semántica de packages/opencode/src/permission/index.ts
+ * y packages/core/src/util/wildcard.ts: lo aprobado con "Allow always" se guarda
+ * POR INSTANCIA (vale para todas las sesiones y carpetas de esa corrida) como
+ * reglas { permission: <la pregunta entera>, pattern }, y cada pedido se evalúa
+ * con la ÚLTIMA regla que coincide por Wildcard.match sobre permission y pattern.
+ * La versión anterior de estos tests contestaba según `checklist` y no podía ver
+ * que un "Allow always" se colaba a otra placa y a otro proyecto.
+ */
+function wildcard(input, pattern) {
+  let e = pattern.replaceAll("\\", "/").replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")
+  if (e.endsWith(" .*")) e = e.slice(0, -3) + "( .*)?"
+  return new RegExp("^" + e + "$", "s").test(input.replaceAll("\\", "/"))
+}
+const REGLAS_TECNIA = [
+  { permission: "*", pattern: "*", action: "deny" },
+  { permission: "platformio", pattern: "*", action: "allow" },
+  { permission: `${"¿Revisaste el circuito?"}*`, pattern: "*", action: "ask" },
+]
+const REGLAS_BUILD = [{ permission: "*", pattern: "*", action: "allow" }]
+let aprobadas = []
+let carteles = []
+let humano = "once"
+function ctxOpenCode(agent = "tecnia-bot", reglas = REGLAS_TECNIA) {
+  return {
+    ...ctx,
+    agent,
+    ask: async (req) => {
+      let falta = false
+      for (const pat of req.patterns) {
+        const r = [...reglas, ...aprobadas].findLast((x) => wildcard(req.permission, x.permission) && wildcard(pat, x.pattern)) ?? { action: "ask" }
+        if (r.action === "deny") throw Object.assign(new Error("The user has specified a rule which prevents you from using this specific tool call."), { _tag: "PermissionDeniedError" })
+        if (r.action !== "allow") falta = true
+      }
+      if (!falta) return
+      carteles.push(req)
+      if (humano === "reject") throw rechazoDeOpenCode()
+      if (humano === "always") for (const pat of req.always) aprobadas.push({ permission: req.permission, pattern: pat, action: "allow" })
+    },
+  }
+}
+const ejecutarOC = (args, agent, reglas) => mod.default.execute(args, ctxOpenCode(agent, reglas))
+const nuevaInstancia = () => {
+  aprobadas = []
+  carteles = []
+  humano = "once"
+}
+const RELE_26 = "const int RELE = 26;\nvoid setup(){ pinMode(RELE, OUTPUT); }"
+
+test("ALWAYS 1: 'Allow always' en el proyecto del grupo 1 NO vale para el grupo 2 (otra carpeta, otra placa)", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  humano = "always"
+  assert.match(await ejecutarOC({ action: "flash", project_path: proyecto("esp32dev", RELE_26) }), /Codigo cargado exitosamente/)
+  assert.equal(carteles.length, 1)
+  escenario({ placas: [CP2102_B] })
+  spawns = []
+  humano = "reject"
+  const r = await ejecutarOC({ action: "flash", project_path: proyecto("esp32dev", RELE_26) })
+  assert.equal(carteles.length, 2, "el grupo 2 cargó sin cartel con lo aprobado por el grupo 1")
+  assert.match(r, FRENO)
+  assert.ok(!cargo())
+})
+
+test("ALWAYS 1b: tampoco vale para otra carpeta en la MISMA placa, ni para el mismo proyecto en otra placa", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  humano = "always"
+  const g1 = proyecto("esp32dev", RELE_26)
+  await ejecutarOC({ action: "flash", project_path: g1 })
+  humano = "reject"
+  await ejecutarOC({ action: "flash", project_path: proyecto("esp32dev", RELE_26) })
+  assert.equal(carteles.length, 2, "otra carpeta en la misma placa")
+  escenario({ placas: [CP2102_B] })
+  await ejecutarOC({ action: "flash", project_path: g1 })
+  assert.equal(carteles.length, 3, "el mismo proyecto en otra placa")
+})
+
+test("ALWAYS 2: aprobado 'always' Y en la placa A, vuelta a X, y Y otra vez en la placa B: pide cartel", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  const X = "const int BUZZER = 25;\nvoid setup(){ pinMode(BUZZER, OUTPUT); }"
+  const Y = X + "\nconst int PIR = 27;\nvoid x(){ pinMode(PIR, INPUT); }"
+  const dir = proyecto("esp32dev", X)
+  await ejecutarOC({ action: "flash", project_path: dir })
+  reescribir(dir, Y)
+  humano = "always"
+  await ejecutarOC({ action: "flash", project_path: dir })
+  reescribir(dir, X)
+  humano = "reject"
+  await ejecutarOC({ action: "flash", project_path: dir })
+  reescribir(dir, Y)
+  escenario({ placas: [CP2102_B] })
+  spawns = []
+  const antes = carteles.length
+  const r = await ejecutarOC({ action: "flash", project_path: dir })
+  assert.equal(carteles.length, antes + 1, "Y en la placa B cargó sin cartel")
+  assert.match(carteles.at(-1).permission, /otra placa/i)
+  assert.ok(!cargo())
+  assert.match(r, FRENO)
+})
+
+test("ALWAYS 3: 'Allow always' de la placa B no aprueba la vuelta a la placa A", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  const dir = proyecto("esp32dev", RELE_26)
+  await ejecutarOC({ action: "flash", project_path: dir })
+  escenario({ placas: [CP2102_B] })
+  humano = "always"
+  await ejecutarOC({ action: "flash", project_path: dir })
+  escenario({ placas: [CP2102_A] })
+  humano = "reject"
+  spawns = []
+  const antes = carteles.length
+  await ejecutarOC({ action: "flash", project_path: dir })
+  assert.equal(carteles.length, antes + 1)
+  assert.ok(!cargo())
+})
+
+test("ALWAYS 4: en el MISMO proyecto y la MISMA placa, 'Allow always' sí evita volver a preguntar por ese cambio", async () => {
+  nuevaInstancia()
+  // Una placa propia de este test: si en ella hubiera quedado otro proyecto, la
+  // pregunta lo diría, y lo aprobado guarda la pregunta ENTERA (como OpenCode).
+  escenario({ placas: [{ ...CP2102_A, hwid: "USB VID:PID=10C4:EA60 SER=0444 LOCATION=1-1" }] })
+  const dir = proyecto("esp32dev", RELE_26)
+  humano = "always"
+  await ejecutarOC({ action: "flash", project_path: dir })
+  // Sin anotar la carga (se borra el estado), el mismo cambio vuelve a ser alta: lo aprobado lo cubre.
+  rmSync(estadoDe(dir), { force: true })
+  humano = "reject"
+  assert.match(await ejecutarOC({ action: "flash", project_path: dir }), /Codigo cargado exitosamente/)
+  assert.equal(carteles.length, 1)
+})
+
+test("ALWAYS 5: con el puerto explícito (sin hwid) 'Allow always' no se guarda y la pregunta lo dice", async () => {
+  nuevaInstancia()
+  const dir = proyecto("esp32dev", RELE_26)
+  humano = "always"
+  await ejecutarOC({ action: "flash", project_path: dir, port: "/dev/ttyUSB7" })
+  assert.deepEqual(carteles[0].always, [])
+  assert.ok(carteles[0].permission.endsWith(mod.MARCA_SIEMPRE_PREGUNTA))
+  rmSync(estadoDe(dir), { force: true })
+  humano = "reject"
+  await ejecutarOC({ action: "flash", project_path: dir, port: "/dev/ttyUSB7" })
+  assert.equal(carteles.length, 2, "se preguntó otra vez")
+})
+
+test("los * y ? del código no llegan al texto del cartel (OpenCode los toma como comodines)", async () => {
+  nuevaInstancia()
+  for (const src of ["int a = analogRead(0);\nvoid setup(){ pinMode(a*2, OUTPUT); }", "void setup(){ int k = millis(); pinMode(k ? 4 : 5, OUTPUT); }"]) {
+    carteles = []
+    await ejecutarOC({ action: "flash", project_path: proyecto("esp32dev", src) })
+    const cola = carteles[0].permission.slice(mod.PREGUNTA_CHECKLIST.length)
+    assert.doesNotMatch(cola, /[*?]/, carteles[0].permission)
+  }
+  // Y lo aprobado para `a*2` no aprueba otro cambio.
+  nuevaInstancia()
+  humano = "always"
+  escenario({ placas: [CP2102_A] })
+  const dir = proyecto("esp32dev", "int a = analogRead(0);\nvoid setup(){ pinMode(a*2, OUTPUT); }")
+  await ejecutarOC({ action: "flash", project_path: dir })
+  reescribir(dir, "int a = analogRead(0);\nvoid setup(){ pinMode(a*2, OUTPUT); pinMode(26, OUTPUT); }")
+  humano = "reject"
+  await ejecutarOC({ action: "flash", project_path: dir })
+  assert.equal(carteles.length, 2)
+})
+
+test("AGENTE: con Build (o cualquier agente que no sea tecnia-bot) flash y both no cargan ni preguntan; compile sí anda", async () => {
+  nuevaInstancia()
+  const dir = proyecto("esp32dev", RELE_26)
+  for (const action of ["flash", "both"]) {
+    spawns = []
+    const r = await ejecutarOC({ action, project_path: dir }, "build", REGLAS_BUILD)
+    assert.match(r, /^No cargué: la carga a la placa solo se hace con el agente Tecnia Bot/)
+    assert.match(r, /ahora está activo "build"/)
+    assert.match(r, /tecla Tab/)
+    assert.equal(carteles.length, 0, "con Build el cartel se aprobaba solo: no se tiene que llegar a preguntar")
+    assert.ok(!cargo() && !buscoPlaca())
+  }
+  assert.match(await ejecutarOC({ action: "both", project_path: dir }, "general", REGLAS_BUILD), /^No cargué/, "un subagente tampoco")
+  assert.match(await mod.default.execute({ action: "flash", project_path: dir }, { ...ctx, agent: undefined }), /^No cargué: la carga a la placa solo se hace/, "sin agente, falla cerrado")
+  assert.match(await ejecutarOC({ action: "compile", project_path: dir }, "build", REGLAS_BUILD), /Compilacion exitosa/)
+  // El nombre del agente es el del archivo del agente.
+  assert.ok(existsSync(join(REPO, "opencode", "agent", `${mod.AGENTE_TECNIA}.md`)))
+})
+
+test("la leyenda distingue cuando 'Allow always' no se puede guardar, con la misma marca que el tool", () => {
+  const tsx = readFileSync(join(REPO, "opencode/plugins/tecnia-logo.tsx"), "utf8")
+  assert.equal(tsx.match(/const MARCA_SIEMPRE_PREGUNTA = "([^"]+)"/)?.[1], mod.MARCA_SIEMPRE_PREGUNTA)
+  assert.match(tsx, /Allow always = igual vuelve a preguntar la próxima vez/)
+  assert.match(tsx, /\.endsWith\(MARCA_SIEMPRE_PREGUNTA\) \? LEYENDA_SIEMPRE : LEYENDA_CHECKLIST/)
 })

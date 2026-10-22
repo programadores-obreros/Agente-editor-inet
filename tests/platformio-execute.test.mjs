@@ -104,7 +104,8 @@ before(async () => {
     .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
   writeFileSync(join(OUT, "platformio.ts"), src)
   mod = await import(join(OUT, "platformio.ts"))
-  ctx = { directory: OUT, abort: new AbortController().signal }
+  // `agent`: flash y both cargan solo con el agente Tecnia Bot (0.4.8).
+  ctx = { directory: OUT, abort: new AbortController().signal, agent: "tecnia-bot" }
 })
 
 beforeEach(() => {

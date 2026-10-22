@@ -221,20 +221,28 @@ function TipLine(props: { api: TuiPluginApi; tip: string; label?: string }) {
 // El mismo prefijo que `PREGUNTA_CHECKLIST` de opencode/tool/platformio.ts (los
 // plugins y las tools no se importan entre sí: un test compara los dos textos).
 const PREGUNTA_CHECKLIST = "¿Revisaste el circuito?"
+// Igual que `MARCA_SIEMPRE_PREGUNTA` del tool: la pregunta termina asi cuando
+// "Allow always" no se puede guardar (analisis incompleto, placa sin identificar).
+const MARCA_SIEMPRE_PREGUNTA = " · se pregunta cada vez"
 const LEYENDA_CHECKLIST =
-  "Checklist: Allow once = Sí, lo revisé, cargá · Reject = Todavía no, no cargues · Allow always = no volver a preguntar por este cambio"
+  "Checklist: Allow once = Sí, lo revisé, cargá · Reject = Todavía no, no cargues · Allow always = no volver a preguntar por este cambio en esta placa"
+const LEYENDA_SIEMPRE =
+  "Checklist: Allow once = Sí, lo revisé, cargá · Reject = Todavía no, no cargues · Allow always = igual vuelve a preguntar la próxima vez"
 
-// ¿Hay un cartel del checklist abierto en la sesión que se está viendo?
-// Defensivo: cualquier cambio de API entre versiones da "no", nunca un error.
-function cartelDelChecklist(api: TuiPluginApi): boolean {
+// ¿Hay un cartel del checklist abierto en la sesión que se está viendo? Devuelve
+// la leyenda que corresponde, o null. Defensivo: cualquier cambio de API entre
+// versiones da "no hay", nunca un error.
+function leyendaDelCartel(api: TuiPluginApi): string | null {
   try {
     const ruta = (api as unknown as { route?: { current?: { name?: string; params?: { sessionID?: string } } } }).route?.current
-    if (ruta?.name !== "session" || !ruta.params?.sessionID) return false
+    if (ruta?.name !== "session" || !ruta.params?.sessionID) return null
     const estado = (api as unknown as { state?: { session?: { permission?: (id: string) => Array<{ permission?: string }> } } }).state
     const pendientes = estado?.session?.permission?.(ruta.params.sessionID) ?? []
-    return pendientes.some((p) => typeof p?.permission === "string" && p.permission.startsWith(PREGUNTA_CHECKLIST))
+    const cartel = pendientes.find((p) => typeof p?.permission === "string" && p.permission.startsWith(PREGUNTA_CHECKLIST))
+    if (!cartel?.permission) return null
+    return cartel.permission.endsWith(MARCA_SIEMPRE_PREGUNTA) ? LEYENDA_SIEMPRE : LEYENDA_CHECKLIST
   } catch {
-    return false
+    return null
   }
 }
 
@@ -294,10 +302,10 @@ const tui: TuiPlugin = async (api) => {
           // la VM se hizo con `<Show>`: esta forma queda por verificar ahi.
           return (
             <>
-              {cartelDelChecklist(api) ? (
+              {leyendaDelCartel(api) ? (
                 <box paddingLeft={2} paddingRight={2}>
                   <text fg={pick(api, "warning", FALLBACK_GOLD)} wrapMode="word" selectable={false}>
-                    {LEYENDA_CHECKLIST}
+                    {leyendaDelCartel(api)}
                   </text>
                 </box>
               ) : null}

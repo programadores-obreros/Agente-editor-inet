@@ -3081,9 +3081,9 @@ export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | 
   if (skills.length > 0 && huellaCambio(hashearHuella(a.huella), previa)) {
     msg += `\n\nRecordatorio: el circuito cambió; si todavía no los cargaste, activá los skills ${skills.map((s) => `\`${s}\``).join(", ")} antes de explicarlo o cargarlo.`
   }
-  // Con un bloqueo no hay cartel (pedidoPorCircuito devuelve null): no se le habla de cargar.
-  const pedido = pedidoPorCircuito(a, previa)
-  if (pedido) msg += `\n\n${AVISO_DEL_CARTEL(pedido.metadata.cambios)}`
+  // Con un bloqueo no hay cartel: no se le habla de cargar.
+  const cambios = cambiosParaElAviso(a, previa)
+  if (cambios) msg += `\n\n${AVISO_DEL_CARTEL(cambios)}`
   return msg
 }
 
@@ -3105,9 +3105,13 @@ export function mensajeCompilacion(a: AnalisisProyecto | null, previa: Huella | 
  * ultima que coincide) y la leyenda se muestra cuando hay un permiso pendiente
  * con ese prefijo. Los tests verifican que los tres textos coincidan.
  *
- * `patterns` y `always` llevan el codigo que sale de la huella (y de la placa en
- * el freno de placa): "Allow always" vale solo para ESE cambio. Con el analisis
- * incompleto `always` va vacio: se pregunta en cada carga.
+ * `patterns` y `always` llevan un codigo que sale de la huella, del proyecto y de
+ * la placa fisica: "Allow always" vale para ESE cambio, en ESE proyecto, en ESA
+ * placa (ver pedidoDeCarga). Con el analisis incompleto o una placa que no se
+ * puede identificar, `always` va vacio: se pregunta en cada carga.
+ *
+ * Y solo con el agente Tecnia Bot: con otro agente la regla del cartel no existe
+ * y OpenCode lo aprobaria solo (ver agenteQueNoPuedeCargar).
  *
  * El bloqueo de GPIO6 a GPIO11 sigue DURO: no hay cartel que lo levante.
  */
@@ -3153,20 +3157,40 @@ export function resumenDeEntrada(e: string, familia: FamiliaPlaca | null): strin
   return `${que[m[2] as ModoPin] ?? "pin"} en ${pin}`
 }
 
-/** La pregunta del cartel, con tope de largo: si no entra todo, "… y N más". */
-function pregunta(cola: string, cambios: string[]): string {
-  const base = `${PREGUNTA_CHECKLIST} ${cola}`
-  if (cambios.length === 0) return base.slice(0, LARGO_MAXIMO_PREGUNTA)
-  let texto = `${base}: ${cambios[0]}`
-  let usados = 1
-  for (const c of cambios.slice(1)) {
-    const resto = cambios.length - usados - 1
-    if (`${texto}, ${c}${resto > 0 ? ` … y ${resto} más` : ""}`.length > LARGO_MAXIMO_PREGUNTA) break
-    texto += `, ${c}`
-    usados++
+/*
+ * `*` y `?` NO pueden ir en el texto: OpenCode guarda "Allow always" como una
+ * regla con la pregunta ENTERA como `permission` y la compara con
+ * `Wildcard.match`, donde `*` y `?` son comodines. Un `pinMode(a*2, ...)` del
+ * alumno dejaba un "Allow always" que aprobaba cualquier otro cambio.
+ */
+const sinComodines = (t: string) => t.replace(/\*/g, "×").replace(/\?/g, "")
+
+/**
+ * Lo que se agrega al final de la pregunta cuando "Allow always" no se puede
+ * guardar (analisis incompleto, placa que no se puede identificar). La leyenda de
+ * `plugins/tecnia-logo.tsx` lo reconoce para no prometer "no volver a preguntar".
+ */
+export const MARCA_SIEMPRE_PREGUNTA = " · se pregunta cada vez"
+
+/** La pregunta del cartel, sin comodines y con tope de largo: si no entra todo, "… y N más". */
+function pregunta(cola: string, cambios: string[], siempre = false): string {
+  const tope = LARGO_MAXIMO_PREGUNTA - (siempre ? MARCA_SIEMPRE_PREGUNTA.length : 0)
+  const limpios = cambios.map(sinComodines)
+  const base = `${PREGUNTA_CHECKLIST} ${sinComodines(cola)}`
+  let texto = base
+  if (limpios.length > 0) {
+    texto = `${base}: ${limpios[0]}`
+    let usados = 1
+    for (const c of limpios.slice(1)) {
+      const resto = limpios.length - usados - 1
+      if (`${texto}, ${c}${resto > 0 ? ` … y ${resto} más` : ""}`.length > tope) break
+      texto += `, ${c}`
+      usados++
+    }
+    if (usados < limpios.length) texto += ` … y ${limpios.length - usados} más`
   }
-  if (usados < cambios.length) texto += ` … y ${cambios.length - usados} más`
-  return texto.length > LARGO_MAXIMO_PREGUNTA ? `${texto.slice(0, LARGO_MAXIMO_PREGUNTA - 1)}…` : texto
+  if (texto.length > tope) texto = `${texto.slice(0, tope - 1)}…`
+  return siempre ? texto + MARCA_SIEMPRE_PREGUNTA : texto
 }
 
 /**
@@ -3183,99 +3207,129 @@ export function bloqueoAntesDeCargar(a: AnalisisProyecto | null): string | null 
   )
 }
 
+/** El nombre del agente Tecnia Bot: el del archivo `opencode/agent/tecnia-bot.md`. */
+export const AGENTE_TECNIA = "tecnia-bot"
+
 /**
- * El cartel por el CIRCUITO, antes de buscar la placa: si el analisis esta
- * incompleto (en cada carga) o si el circuito tiene altas nuevas desde la ultima
- * carga de este proyecto. `previa` viene en hash. null si no hay que preguntar.
+ * LA CARGA SOLO CON EL AGENTE TECNIA BOT. La regla que hace aparecer el cartel
+ * (`"¿Revisaste el circuito?*": ask`) es de ese agente. Con Build o Plan (Tab) o
+ * con un subagente (`task`), los permisos por defecto de OpenCode son
+ * `"*": allow` y el cartel se aprobaria solo, sin que nadie lo vea. OpenCode le
+ * pasa a la tool el nombre del agente (`ctx.agent`, de `agent.name` en
+ * session/tools.ts), que es el nombre del archivo sin `.md`
+ * (config/agent.ts, configEntryNameFromPath). Falla cerrado: sin ese nombre, no
+ * se carga.
  */
-export function pedidoPorCircuito(a: AnalisisProyecto | null, previa: Huella | null, cwd = "."): PedidoChecklist | null {
-  if (!a || bloqueoAntesDeCargar(a)) return null
-  if (a.incompleto.length > 0) {
-    const codigo = codigoChecklist(huellaIncompleta(cwd, a.incompleto))
-    const motivo = `${avisoIncompleto(a)} Sin eso no sé qué cambió en el circuito, así que se pregunta en cada carga hasta que se pueda leer.`
-    return {
-      permission: pregunta("No pude leer todo el código", []),
-      patterns: [`análisis incompleto ${codigo}`],
-      always: [],
-      metadata: { cambios: [], motivo },
-      motivo,
-      detalle: "",
-    }
-  }
-  const altas = altasContra(a.huella, previa)
-  if (altas.length === 0) return null
-  const codigo = codigoChecklist(a.huella)
-  const cambios = altas.map((e) => resumenDeEntrada(e, a.familia))
-  return {
-    permission: pregunta("Cambió", cambios),
-    patterns: [`cambio ${codigo}`],
-    always: [`cambio ${codigo}`],
-    metadata: { cambios, motivo: "El circuito cambió desde la última carga de este proyecto." },
-    motivo: "El circuito cambió desde la última carga de este proyecto.",
-    detalle: `Lo nuevo: ${altas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`,
-  }
+export function agenteQueNoPuedeCargar(ctx: unknown): string | null {
+  const agente = (ctx as { agent?: unknown } | null)?.agent
+  if (agente === AGENTE_TECNIA) return null
+  return (
+    "No cargué: la carga a la placa solo se hace con el agente Tecnia Bot, que es el que muestra el cartel del checklist de seguridad" +
+    (typeof agente === "string" && agente ? ` (ahora está activo "${agente}")` : "") +
+    ". Cambiá de agente con la tecla Tab hasta que diga Tecnia Bot y pedí la carga de nuevo. Compilar sí se puede con cualquier agente."
+  )
 }
 
 /**
- * El cartel por la PLACA, DESPUES de detectPort. Solo si el codigo maneja algun
- * pin (un blink del LED de la placa no tiene nada que revisar), el analisis esta
- * completo y se sabe que placa es. Si en esta misma carga ya se pregunto por el
- * circuito, no se pregunta otra vez (`yaPreguntado`).
+ * EL CARTEL, UNO SOLO, DESPUES DE BUSCAR LA PLACA. Junta lo que cambio en el
+ * circuito (altas nuevas desde la ultima carga de este proyecto, o el analisis
+ * incompleto) y lo que cambio de placa (otra placa, otro proyecto en esta placa,
+ * o "no puedo saber si es la misma"). Va despues de detectPort porque la clave
+ * de "Allow always" necesita la placa: antes habia dos carteles, y el "Allow
+ * always" del de circuito —con una clave que era solo la huella— valia para
+ * cualquier proyecto y cualquier placa de esa corrida de OpenCode (OpenCode
+ * guarda lo aprobado por instancia, no por sesion ni por carpeta), y ademas
+ * salteaba el de placa.
  *
- * Su codigo sale de la huella Y de la identidad de la placa: "Allow always" de
- * un cambio no vale para otra placa. Devuelve `pedido` (preguntar) o `aviso` (se
- * carga y se le cuenta al docente: una placa sin numero de serie).
+ * La clave combina la huella, el proyecto (rutaNormalizada) y la placa fisica:
+ * "Allow always" vale para ese cambio, en ese proyecto, en esa placa. Si no hay
+ * con que identificar la placa (puerto explicito, hwid desconocido) o el
+ * analisis esta incompleto, `always` va vacio y la pregunta lleva
+ * MARCA_SIEMPRE_PREGUNTA.
+ *
+ * Devuelve el pedido (si hay que preguntar) y/o un aviso para despues de cargar
+ * (otro proyecto en una placa sin numero de serie).
  */
-export function pedidoPorPlaca(
+export function pedidoDeCarga(
   a: AnalisisProyecto | null,
   previa: UltimaCarga | null,
   cwd: string,
   hwid: string | undefined,
-  yaPreguntado: boolean,
   cargas: CargasGlobal = leerCargasGlobal(),
-): { pedido: PedidoChecklist } | { aviso: string } | null {
-  if (!a || a.incompleto.length > 0 || a.huella.entradas.length === 0 || yaPreguntado) return null
+): { pedido?: PedidoChecklist; aviso?: string } {
+  if (!a || bloqueoAntesDeCargar(a)) return {}
   const ident = identidadDePlaca(hwid)
-  if (!ident) return null
-  const placaFisica = idDePlaca(cargas, ident)
-  const codigo = codigoChecklist({ placa: `${a.huella.placa}@${placaFisica}`, entradas: a.huella.entradas })
-  /*
-   * Si la ultima carga se anoto con OTRA sal (se borro o se rompio el registro
-   * de la compu, o el proyecto vino con su .pio de otra compu), su placa no se
-   * puede comparar: "no se sabe" pregunta UNA vez, y despues de esa carga queda
-   * todo anotado con la sal de ahora.
-   */
-  const noSeSabe = !!previa?.placaFisica && previa.marcaSal !== marcaDeSal(cargas)
-  const otraPlaca = !noSeSabe && !!previa?.placaFisica && previa.placaFisica !== placaFisica
-  const registro = cargas.placas[placaFisica]
-  const otroProyecto = !!registro && registro !== hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
-  if (!noSeSabe && !otraPlaca && otroProyecto && !ident.serie) {
-    return {
-      aviso:
-        "\n\nOjo: en una placa de este modelo lo último que se cargó fue OTRO proyecto. Esta placa no tiene número de serie, así que no sé si es la misma: " +
-        "si lo es, el circuito que tiene conectado puede no ser el de este código. Contáselo al docente.",
+  const placaFisica = ident ? idDePlaca(cargas, ident) : null
+  const incompleto = a.incompleto.length > 0
+  const motivos: string[] = []
+  let cambios: string[] = []
+  let detalle = ""
+  if (incompleto) {
+    motivos.push(`${avisoIncompleto(a)} Sin eso no sé qué cambió en el circuito, así que se pregunta en cada carga hasta que se pueda leer.`)
+  } else {
+    const altas = altasContra(a.huella, previa)
+    if (altas.length > 0) {
+      cambios = altas.map((e) => resumenDeEntrada(e, a.familia))
+      detalle = `Lo nuevo: ${altas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`
+      motivos.push("El circuito cambió desde la última carga de este proyecto.")
     }
   }
-  if (!noSeSabe && !otraPlaca && !otroProyecto) return null
-  const motivo = [
-    noSeSabe
-      ? "No puedo saber si es la misma placa de la última carga: el registro de cargas de esta compu se borró o cambió, o el proyecto viene de otra compu."
-      : "",
-    otraPlaca ? "La última carga de este proyecto fue en OTRA placa." : "",
-    otroProyecto ? "En esta placa lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código." : "",
-  ]
-    .filter(Boolean)
-    .join(" ")
+  let aviso: string | undefined
+  let dePlaca = ""
+  if (!incompleto && a.huella.entradas.length > 0 && ident && placaFisica) {
+    /*
+     * Si la ultima carga se anoto con OTRA sal (se borro o se rompio el registro
+     * de la compu, o el proyecto vino con su .pio de otra compu), su placa no se
+     * puede comparar: "no se sabe" pregunta UNA vez, y despues de esa carga queda
+     * todo anotado con la sal de ahora.
+     */
+    const noSeSabe = !!previa?.placaFisica && previa.marcaSal !== marcaDeSal(cargas)
+    const otraPlaca = !noSeSabe && !!previa?.placaFisica && previa.placaFisica !== placaFisica
+    const registro = cargas.placas[placaFisica]
+    const otroProyecto = !!registro && registro !== hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
+    if (!noSeSabe && !otraPlaca && otroProyecto && !ident.serie) {
+      aviso =
+        "\n\nOjo: en una placa de este modelo lo último que se cargó fue OTRO proyecto. Esta placa no tiene número de serie, así que no sé si es la misma: " +
+        "si lo es, el circuito que tiene conectado puede no ser el de este código. Contáselo al docente."
+    } else if (noSeSabe || otraPlaca || otroProyecto) {
+      if (noSeSabe) motivos.push("No puedo saber si es la misma placa de la última carga: el registro de cargas de esta compu se borró o cambió, o el proyecto viene de otra compu.")
+      if (otraPlaca) motivos.push("La última carga de este proyecto fue en OTRA placa.")
+      if (otroProyecto) motivos.push("En esta placa lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.")
+      dePlaca = noSeSabe ? "No puedo saber si es la misma placa" : "Otra placa u otro proyecto en esta placa"
+      if (!detalle) detalle = `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`
+    }
+  }
+  if (motivos.length === 0) return aviso ? { aviso } : {}
+  const siempre = incompleto || !placaFisica
+  const clave = codigoChecklist({
+    placa: `${a.huella.placa}|${hash(rutaNormalizada(cwd))}|${placaFisica ?? "sin-placa"}`,
+    entradas: incompleto ? huellaIncompleta(cwd, a.incompleto).entradas : a.huella.entradas,
+  })
+  const permission = incompleto
+    ? pregunta("No pude leer todo el código", [], true)
+    : cambios.length > 0
+      ? pregunta("Cambió", dePlaca ? [...cambios, dePlaca.toLowerCase()] : cambios, siempre)
+      : pregunta(dePlaca, [], siempre)
+  const motivo = motivos.join(" ")
   return {
     pedido: {
-      permission: pregunta(noSeSabe ? "No puedo saber si es la misma placa" : "Otra placa u otro proyecto en esta placa", []),
-      patterns: [`placa ${codigo}`],
-      always: [`placa ${codigo}`],
-      metadata: { cambios: a.huella.entradas.map((e) => resumenDeEntrada(e, a.familia)), motivo },
+      permission,
+      patterns: [`cambio ${clave}`],
+      always: siempre ? [] : [`cambio ${clave}`],
+      metadata: { cambios: cambios.length > 0 ? cambios : a.huella.entradas.map((e) => resumenDeEntrada(e, a.familia)), motivo },
       motivo,
-      detalle: `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`,
+      detalle,
     },
+    ...(aviso ? { aviso } : {}),
   }
+}
+
+/** Si al cargar va a aparecer el cartel por el circuito, y que cambio: para el aviso de `compile`. */
+function cambiosParaElAviso(a: AnalisisProyecto, previa: Huella | null): string[] | null {
+  if (bloqueoAntesDeCargar(a)) return null
+  if (a.incompleto.length > 0) return []
+  const altas = altasContra(a.huella, previa)
+  return altas.length > 0 ? altas.map((e) => resumenDeEntrada(e, a.familia)) : null
 }
 
 /**
@@ -3398,7 +3452,7 @@ Acciones:
 - diagnostico: verificar entorno (PlatformIO instalado, dispositivos conectados)
 - reparar: instala PlatformIO Core cuando falta, corriendo el instalador de Tecnia Bot (en Linux/Mac devuelve el comando exacto para hacerlo a mano). Tarda unos minutos y baja unos 60 MB (mas de 1 GB si faltan las herramientas de ESP32/UNO): avisale antes.
 
-Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la memoria flash frena la carga. si el circuito o la placa cambiaron desde la ultima carga, flash y both muestran un cartel de OpenCode que contesta el docente: es el paso obligado del checklist de seguridad. Antes de cargar, contale que cambio y que el cartel tiene botones en ingles: Allow once si ya reviso el circuito, Reject si todavia no. Si contesta Reject, no reintentes hasta que te lo pida.`,
+Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la memoria flash frena la carga. si el circuito o la placa cambiaron desde la ultima carga, flash y both muestran un cartel de OpenCode que contesta el docente: es el paso obligado del checklist de seguridad. Cargar solo funciona con el agente Tecnia Bot. Antes de cargar, contale que cambio y que el cartel tiene botones en ingles: Allow once si ya reviso el circuito, Reject si todavia no. Si contesta Reject, no reintentes hasta que te lo pida.`,
   args: {
     action: tool.schema
       .enum(["compile", "flash", "both", "monitor", "diagnostico", "reparar"])
@@ -3623,15 +3677,12 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
 
       case "flash": {
         // Orden: pines y circuito ANTES de buscar la placa; la placa, despues (ver "QUE SE GUARDA Y DONDE").
+        const noPuede = agenteQueNoPuedeCargar(ctx)
+        if (noPuede) return noPuede
         const analisis = analizarProyecto(cwd, args.environment)
         const previa = leerUltimaCarga(cwd)
         const bloqueo = bloqueoAntesDeCargar(analisis)
         if (bloqueo) return bloqueo
-        const porCircuito = pedidoPorCircuito(analisis, previa, cwd)
-        if (porCircuito) {
-          const no = await preguntarChecklist(ctx, porCircuito)
-          if (no) return no
-        }
         let puerto = args.port
         let hwid: string | undefined
         if (!puerto) {
@@ -3640,20 +3691,24 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           puerto = detected.port
           hwid = detected.hwid
         }
-        const placa = pedidoPorPlaca(analisis, previa, cwd, hwid, !!porCircuito)
-        if (placa && "pedido" in placa) {
-          const no = await preguntarChecklist(ctx, placa.pedido)
+        // Un solo cartel, ya con la placa (ver pedidoDeCarga).
+        const carga = pedidoDeCarga(analisis, previa, cwd, hwid)
+        if (carga.pedido) {
+          const no = await preguntarChecklist(ctx, carga.pedido)
           if (no) return no
         }
         const result = await cargar(puerto)
         if (result.code === 0) {
           const anotada = guardarUltimaCarga(cwd, analisis, hwid)
-          return `Codigo cargado exitosamente en ${puerto}.` + avisosTrasCargar(analisis) + (placa && "aviso" in placa ? placa.aviso : "") + (anotada ? "" : NO_PUDE_ANOTAR)
+          return `Codigo cargado exitosamente en ${puerto}.` + avisosTrasCargar(analisis) + (carga.aviso ?? "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
       }
 
       case "both": {
+        // Con otro agente no se compila para despues no poder cargar: se avisa de entrada.
+        const noPuede = agenteQueNoPuedeCargar(ctx)
+        if (noPuede) return noPuede
         const compile = await compilar()
         if (compile.code !== 0) {
           return noTermino(compile, "compilar") ?? `Error al compilar (no se intento cargar):\n\n${explicarFalla(compile)}`
@@ -3663,11 +3718,6 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         const previa = leerUltimaCarga(cwd)
         const bloqueo = bloqueoAntesDeCargar(analisis)
         if (bloqueo) return `La compilacion fue bien. ${bloqueo}`
-        const porCircuito = pedidoPorCircuito(analisis, previa, cwd)
-        if (porCircuito) {
-          const no = await preguntarChecklist(ctx, porCircuito)
-          if (no) return `La compilacion fue bien. ${no}`
-        }
         let puerto = args.port
         let hwid: string | undefined
         if (!puerto) {
@@ -3676,15 +3726,16 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           puerto = detected.port
           hwid = detected.hwid
         }
-        const placa = pedidoPorPlaca(analisis, previa, cwd, hwid, !!porCircuito)
-        if (placa && "pedido" in placa) {
-          const no = await preguntarChecklist(ctx, placa.pedido)
+        // Un solo cartel, ya con la placa (ver pedidoDeCarga).
+        const carga = pedidoDeCarga(analisis, previa, cwd, hwid)
+        if (carga.pedido) {
+          const no = await preguntarChecklist(ctx, carga.pedido)
           if (no) return `La compilacion fue bien. ${no}`
         }
         const flash = await cargar(puerto)
         if (flash.code === 0) {
           const anotada = guardarUltimaCarga(cwd, analisis, hwid)
-          return `Compilacion y carga exitosa en ${puerto}.` + avisosTrasCargar(analisis) + (placa && "aviso" in placa ? placa.aviso : "") + (anotada ? "" : NO_PUDE_ANOTAR)
+          return `Compilacion y carga exitosa en ${puerto}.` + avisosTrasCargar(analisis) + (carga.aviso ?? "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return (
           noTermino(flash, "cargar el codigo") ??
