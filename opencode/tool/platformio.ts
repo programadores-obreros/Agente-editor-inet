@@ -3300,7 +3300,13 @@ export function pedidoDeCarga(
     }
   }
   if (motivos.length === 0) return aviso ? { aviso } : {}
-  const siempre = incompleto || !placaFisica
+  /*
+   * El cartel de PLACA (otra placa, otro proyecto en esta placa, o no se sabe)
+   * tampoco guarda "always": su texto y su clave no dependen de lo que tiene
+   * cargado la placa ahora, asi que lo aprobado una vez volveria a valer despues
+   * de que otro proyecto pase por esa placa y la recableen.
+   */
+  const siempre = incompleto || !placaFisica || dePlaca !== ""
   const clave = codigoChecklist({
     placa: `${a.huella.placa}|${hash(rutaNormalizada(cwd))}|${placaFisica ?? "sin-placa"}`,
     entradas: incompleto ? huellaIncompleta(cwd, a.incompleto).entradas : a.huella.entradas,
