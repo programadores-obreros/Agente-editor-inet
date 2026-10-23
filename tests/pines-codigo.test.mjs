@@ -997,7 +997,8 @@ test("cargar el mismo proyecto en OTRA placa (otro número de serie) pide el che
   // I5: lo aprobado "siempre" para el circuito no vale para esta placa: otro código.
   const deCircuito = pedidos[0]
   const dePlaca = pedidos[pedidos.length - 1]
-  assert.match(dePlaca.permission, /^¿Revisaste el circuito\? Otra placa u otro proyecto en esta placa$/)
+  assert.equal(dePlaca.permission, `¿Revisaste el circuito? Otra placa u otro proyecto en esta placa${mod.MARCA_SIEMPRE_PREGUNTA}`)
+  assert.deepEqual(dePlaca.always, [], "el cartel de placa no guarda always")
   assert.match(dePlaca.patterns[0], /^cambio [0-9a-f]{6}$/)
   assert.notEqual(dePlaca.patterns[0], deCircuito.patterns[0], "la misma huella en otra placa es otra clave")
   assert.match(await ejecutar({ action: "flash", project_path: dir, checklist: "si" }), /Codigo cargado exitosamente en \/dev\/ttyUSB1/)
@@ -1751,7 +1752,7 @@ test("cartel: cambiar solo de placa pregunta una vez, con el texto de la placa",
   pedidos = []
   assert.match(await ejecutar({ action: "flash", project_path: dir }), /Codigo cargado exitosamente/)
   assert.equal(pedidos.length, 1)
-  assert.equal(pedidos[0].permission, "¿Revisaste el circuito? Otra placa u otro proyecto en esta placa")
+  assert.equal(pedidos[0].permission, `¿Revisaste el circuito? Otra placa u otro proyecto en esta placa${mod.MARCA_SIEMPRE_PREGUNTA}`)
   assert.ok(buscoPlaca(), "el de placa va después de buscar la placa")
 })
 
@@ -1969,6 +1970,32 @@ test("ALWAYS 5: con el puerto explícito (sin hwid) 'Allow always' no se guarda 
   humano = "reject"
   await ejecutarOC({ action: "flash", project_path: dir, port: "/dev/ttyUSB7" })
   assert.equal(carteles.length, 2, "se preguntó otra vez")
+})
+
+test("ALWAYS 6: 'Allow always' del cartel de placa no vuelve a valer después de que otro proyecto pasó por esa placa", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  const P = proyecto("esp32dev", RELE_26)
+  const Q = proyecto("esp32dev", CON_BUZZER)
+  humano = "allow"
+  await ejecutarOC({ action: "flash", project_path: P })
+  escenario({ placas: [CP2102_B] })
+  await ejecutarOC({ action: "flash", project_path: Q })
+  // P en la placa B: "otro proyecto en esta placa", y el docente elige Allow always.
+  humano = "always"
+  await ejecutarOC({ action: "flash", project_path: P })
+  assert.deepEqual(carteles.at(-1).always, [])
+  assert.ok(carteles.at(-1).permission.endsWith(mod.MARCA_SIEMPRE_PREGUNTA))
+  // Q vuelve a pasar por B (recableada) y después otra vez P: tiene que preguntar.
+  humano = "allow"
+  await ejecutarOC({ action: "flash", project_path: Q })
+  humano = "reject"
+  spawns = []
+  const antes = carteles.length
+  const r = await ejecutarOC({ action: "flash", project_path: P })
+  assert.equal(carteles.length, antes + 1, "P volvió a la placa B sin cartel")
+  assert.ok(!cargo())
+  assert.match(r, FRENO)
 })
 
 test("los * y ? del código no llegan al texto del cartel (OpenCode los toma como comodines)", async () => {
