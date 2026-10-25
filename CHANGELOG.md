@@ -4,7 +4,9 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
-## [0.4.8] — sin publicar
+## [0.4.8] — 2026-10-24
+
+**Antes de cargar un circuito nuevo, el docente confirma el checklist en un cartel, y el bot revisa los pines del código.**
 
 ### Agregado
 
