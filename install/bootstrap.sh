@@ -111,7 +111,7 @@ buscar_pio() {
     for nombre in pio platformio; do
       ruta="$dir/penv/bin/$nombre"
       [ -x "$ruta" ] || continue
-      if salida="$("$ruta" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+      if salida="$("$ruta" --version 2>&1)" && grep -qi platformio <<< "$salida"; then
         printf '%s\n' "$ruta"
         return 0
       fi
@@ -121,7 +121,7 @@ buscar_pio() {
   # mano (o install.sh ya corrió) es una respuesta válida.
   for nombre in pio platformio; do
     command -v "$nombre" >/dev/null 2>&1 || continue
-    if salida="$("$nombre" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+    if salida="$("$nombre" --version 2>&1)" && grep -qi platformio <<< "$salida"; then
       command -v "$nombre"
       return 0
     fi

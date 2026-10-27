@@ -179,6 +179,10 @@ if ($tui) {
 # OpenCode al desinstalar es peor que dejar tres claves de mas.
 $PerfilFile  = Join-Path $ConfigDir "tecnia-perfil.md"
 $MemoriaFile = Join-Path $ConfigDir "tecnia-memoria.md"
+# El registro de cargas del tool platformio (0.4.8): por placa, que proyecto se
+# cargo ultimo. Son hashes con una sal propia de la compu, pero salen de rutas
+# que pueden tener el nombre de una persona: va con el perfil y la memoria.
+$CargasFile  = Join-Path $ConfigDir "tecnia-cargas.json"
 $ocTieneTexto = $false
 if ($OpencodeJson) { $ocTieneTexto = ((Get-Content $OpencodeJson -Raw -ErrorAction SilentlyContinue) -match '\S') }
 $oc = Read-JsonObject $OpencodeJson
@@ -208,6 +212,7 @@ if ($ocTieneTexto -and -not $oc) {
 #
 # Tres cosas que el instalador creo y son del docente, no del programa:
 #   - tecnia-perfil.md y tecnia-memoria.md: lo que el bot aprendio de ese aula
+#   - tecnia-cargas.json: el registro de que proyecto se cargo en cada placa
 #   - la key de Google, en auth.json y en la variable GOOGLE_GENERATIVE_AI_API_KEY
 # Borrarlas sin preguntar es perder trabajo ajeno; dejarlas sin avisar es dejar
 # una credencial en una maquina que quizas pasa a otra escuela. Se pregunta con
@@ -232,28 +237,28 @@ function Preguntar-SiNo($texto, $segundos) {
     return $false
 }
 
-if ((Test-Path $PerfilFile) -or (Test-Path $MemoriaFile)) {
+if ((Test-Path $PerfilFile) -or (Test-Path $MemoriaFile) -or (Test-Path $CargasFile)) {
     $quitar = [bool]$Borrar
     if (-not $Borrar -and -not $Conservar) {
-        $quitar = Preguntar-SiNo "==> El perfil y la memoria del aula (tecnia-perfil.md, tecnia-memoria.md) son datos PERSONALES: lo que el bot aprendio de quien usa esta compu. Borrarlos tambien?" 20
+        $quitar = Preguntar-SiNo "==> El perfil, la memoria del aula y el registro de cargas (tecnia-perfil.md, tecnia-memoria.md, tecnia-cargas.json) son datos PERSONALES: lo que el bot aprendio de quien usa esta compu. Borrarlos tambien?" 20
     }
     if ($quitar) {
         # RELEER DESPUES DE BORRAR: ver el encabezado. Con OpenCode abierto estos
         # dos archivos estan tomados, Remove-Item no borra nada, el error se lo
         # traga SilentlyContinue, y antes se imprimia "borrados" igual.
-        $Quedaron = @(@($PerfilFile, $MemoriaFile) | Where-Object { -not (Borrar-YVerificar $_) })
+        $Quedaron = @(@($PerfilFile, $MemoriaFile, $CargasFile) | Where-Object { -not (Borrar-YVerificar $_) })
         if ($Quedaron.Count -eq 0) {
-            Write-Host "    Perfil y memoria borrados (los relei y ya no estan)."
+            Write-Host "    Perfil, memoria y registro de cargas borrados (los relei y ya no estan)."
         } else {
             Write-Host "    [X] NO PUDE BORRAR estos datos personales: SIGUEN EN ESTA COMPUTADORA."
             foreach ($f in $Quedaron) { Write-Host "        $f" }
             Write-Host "        Casi siempre es que OpenCode esta abierto y los tiene tomados"
             Write-Host "        (los dos entran por `"instructions`" de opencode.json)."
             Write-Host "        Cerra OpenCode y volve a correr el desinstalador, o borralos a mano."
-            Anotar-Pendiente "datos personales del aula en ${ConfigDir}: tecnia-perfil.md / tecnia-memoria.md"
+            Anotar-Pendiente "datos personales del aula en ${ConfigDir}: tecnia-perfil.md / tecnia-memoria.md / tecnia-cargas.json"
         }
     } else {
-        Write-Host "    Se conservan en ${ConfigDir}: tecnia-perfil.md y tecnia-memoria.md (borralos a mano si queres)."
+        Write-Host "    Se conservan en ${ConfigDir}: tecnia-perfil.md, tecnia-memoria.md y tecnia-cargas.json (borralos a mano si queres)."
     }
 }
 

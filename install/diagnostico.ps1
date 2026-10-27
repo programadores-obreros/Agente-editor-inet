@@ -110,6 +110,22 @@ function Rutas-PioCore {
     return ($dirs | Select-Object -Unique)
 }
 
+# LA CARPETA DONDE PlatformIO GUARDA LAS HERRAMIENTAS (`packages`), que NO tiene
+# por que ser la del penv de arriba. PlatformIO usa <raiz del disco>\.platformio
+# si esa CARPETA existe, aunque el penv este en el perfil (get_default_core_dir).
+# Es la MISMA regla que coreDir() en opencode\tool\platformio.ts y que
+# Core-PlatformIO en install.ps1: PLATFORMIO_CORE_DIR; si no, <raiz>\.platformio si
+# es carpeta (un archivo con ese nombre no cuenta); si no, el perfil.
+function Core-PlatformIO {
+    if ($env:PLATFORMIO_CORE_DIR) { return $env:PLATFORMIO_CORE_DIR }
+    $raiz = [System.IO.Path]::GetPathRoot($U)
+    if ($raiz) {
+        $enRaiz = Join-Path $raiz ".platformio"
+        if (Test-Path -LiteralPath $enRaiz -PathType Container) { return $enRaiz }
+    }
+    return (Join-Path $U ".platformio")
+}
+
 # Los ejecutables candidatos, en orden. Se miran pio.exe Y platformio.exe: estan
 # los dos normalmente, pero el instalador oficial nombra platformio.exe en su
 # mensaje final y no queremos depender de que exista justo el que elegimos.
@@ -206,24 +222,37 @@ Titulo "OpenCode: la version que HAY vs la que se PROBO"
 # esta maquina cumple las dos cosas, porque "OpenCode anda pero el bot hace algo
 # raro" casi siempre es una version que no es la probada.
 #
-# Lo que Scoop tiene ACTIVO se lee de scoop\apps\opencode\current\manifest.json.
-# El hold se lee de current\install.json, clave "hold": true -- es lo que escribe
+# Lo que Scoop tiene ACTIVO se lee del manifiesto de scoop\apps\opencode\current\
+# (scoop-manifest.json desde Scoop 0.6.0, manifest.json antes). El hold se lee de
+# current\scoop-install.json (o install.json), clave "hold": true -- es lo que escribe
 # `scoop hold` (libexec/scoop-hold.ps1). `scoop hold` sin argumentos NO lista
 # nada, imprime el uso: no sirve para detectarlo.
+# Scoop 0.6.0 (2026-09-30) renombro manifest.json -> scoop-manifest.json e
+# install.json -> scoop-install.json (issue #42). Se busca el nombre nuevo y, si no
+# esta, el viejo: las instalaciones hechas con Scoop 0.5 siguen con el de antes.
+function Get-ArchivoScoop([string]$dirApp, [string]$nombre) {
+  foreach ($n in @("scoop-$nombre.json", "$nombre.json")) {
+    $p = Join-Path $dirApp $n
+    if (Test-Path $p) { return $p }
+  }
+  return $null
+}
 $pinArchivo = Join-Path $PSScriptRoot "OPENCODE_VERSION"
 $pin = if (Test-Path $pinArchivo) { (Get-Content $pinArchivo -Raw).Trim() } else { "" }
 Dato "fijada (OPENCODE_VERSION)" $(if ($pin) { $pin } else { "NO ESTA el archivo install\OPENCODE_VERSION" })
 $ocActual = "$U\scoop\apps\opencode\current"
 $ocInstalada = ""
-try { if (Test-Path "$ocActual\manifest.json") { $ocInstalada = ("" + (Get-Content "$ocActual\manifest.json" -Raw | ConvertFrom-Json).version).Trim() } } catch { }
-Dato "instalada (Scoop)" $(if ($ocInstalada) { $ocInstalada } else { "no se pudo leer current\manifest.json" })
+$ocManifiesto = Get-ArchivoScoop $ocActual "manifest"
+try { if ($ocManifiesto) { $ocInstalada = ("" + (Get-Content $ocManifiesto -Raw | ConvertFrom-Json).version).Trim() } } catch { }
+Dato "instalada (Scoop)" $(if ($ocInstalada) { $ocInstalada } else { "no se pudo leer el manifiesto de Scoop en current" })
 if ($pin -and $ocInstalada -and $pin -ne $ocInstalada) {
   Write-Host "     >> NO COINCIDEN: el bot se probo con la $pin. Reparar Tecnia Bot la activa si esta en el disco;" -ForegroundColor Yellow
   Write-Host "        si no, en PowerShell: scoop install opencode@$pin" -ForegroundColor Yellow
 }
 $ocHold = $false
-try { if (Test-Path "$ocActual\install.json") { $ocHold = [bool]((Get-Content "$ocActual\install.json" -Raw | ConvertFrom-Json).hold) } } catch { }
-Dato "scoop hold" $(if ($ocHold) { "OK (no se actualiza sola)" } elseif (Test-Path "$ocActual\install.json") { "NO: 'scoop update' la puede cambiar. Reparar Tecnia Bot lo pone." } else { "no se pudo leer current\install.json" })
+$ocInstall = Get-ArchivoScoop $ocActual "install"
+try { if ($ocInstall) { $ocHold = [bool]((Get-Content $ocInstall -Raw | ConvertFrom-Json).hold) } } catch { }
+Dato "scoop hold" $(if ($ocHold) { "OK (no se actualiza sola)" } elseif ($ocInstall) { "NO: 'scoop update' la puede cambiar. Reparar Tecnia Bot lo pone." } else { "no se pudo leer current\install.json" })
 $ocDirs = @(Get-ChildItem "$U\scoop\apps\opencode" -Directory -EA SilentlyContinue | Where-Object { $_.Name -ne "current" } | ForEach-Object { $_.Name })
 Dato "versiones en disco" $(if ($ocDirs.Count) { $ocDirs -join ", " } else { "ninguna" })
 
@@ -285,6 +314,12 @@ Titulo "PlatformIO: en cual de los cuatro pasos se corto"
 $P = $PioCore
 Dato "core_dir en uso" $P
 Dato "PLATFORMIO_CORE_DIR" $(if ($env:PLATFORMIO_CORE_DIR) { $env:PLATFORMIO_CORE_DIR } else { "sin setear (se usa el default)" })
+# Las herramientas de ESP32/UNO que baja el instalador, en la carpeta donde
+# PlatformIO las busca. Si el bot corto una compilacion "por falta de
+# herramientas", este renglon dice si de verdad faltan y DONDE se las espera.
+$CorePaquetes = Core-PlatformIO
+$faltanPlacas = @(@("toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr") | Where-Object { -not (Test-Path (Join-Path $CorePaquetes "packages\$_")) })
+Dato "herramientas ESP32/UNO" $(if ($faltanPlacas.Count -eq 0) { "bajadas en $CorePaquetes" } else { "FALTAN en ${CorePaquetes}: " + ($faltanPlacas -join ", ") })
 # EL SHIM DE PYTHON SE LLAMA python3.exe, NO python.exe.
 #
 # Este renglon miraba scoop\shims\python.exe, que NO EXISTE EN NINGUNA MAQUINA.
@@ -390,11 +425,13 @@ if ($nodeCmd) {
 }
 $nodeActual = "$U\scoop\apps\nodejs-lts\current"
 $nodeScoop = ""
-try { if (Test-Path "$nodeActual\manifest.json") { $nodeScoop = ("" + (Get-Content "$nodeActual\manifest.json" -Raw | ConvertFrom-Json).version).Trim() } } catch { }
+$nodeManifiesto = Get-ArchivoScoop $nodeActual "manifest"
+try { if ($nodeManifiesto) { $nodeScoop = ("" + (Get-Content $nodeManifiesto -Raw | ConvertFrom-Json).version).Trim() } } catch { }
 Dato "instalada (Scoop)" $(if ($nodeScoop) { $nodeScoop } else { "no la administra Scoop en este perfil" })
 $nodeHold = $false
-try { if (Test-Path "$nodeActual\install.json") { $nodeHold = [bool]((Get-Content "$nodeActual\install.json" -Raw | ConvertFrom-Json).hold) } } catch { }
-Dato "scoop hold" $(if ($nodeHold) { "OK (no se actualiza sola)" } elseif (Test-Path "$nodeActual\install.json") { "NO: 'scoop update' la puede cambiar. Reparar Tecnia Bot lo pone." } else { "no se pudo leer current\install.json" })
+$nodeInstall = Get-ArchivoScoop $nodeActual "install"
+try { if ($nodeInstall) { $nodeHold = [bool]((Get-Content $nodeInstall -Raw | ConvertFrom-Json).hold) } } catch { }
+Dato "scoop hold" $(if ($nodeHold) { "OK (no se actualiza sola)" } elseif ($nodeInstall) { "NO: 'scoop update' la puede cambiar. Reparar Tecnia Bot lo pone." } else { "no se pudo leer current\install.json" })
 # El skill tiene que estar ademas de Node: si la capa se instalo incompleta, Node
 # solo no alcanza y el sintoma es el mismo ("no me dibuja el diagrama").
 Dato "skill archify" $(if (Test-Path "$ocDir\skills\archify\bin\archify.mjs") { "OK" } else { "FALTA en la capa" })

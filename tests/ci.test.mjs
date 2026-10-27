@@ -70,6 +70,9 @@ test("el job de Windows verifica la versión de OpenCode, el hold, el modelo y p
   assert.match(win, /default_agent -ne "tecnia-bot"/, "tiene que comprobar default_agent")
   assert.match(win, /"opencode\/big-pickle"/, "sin key, el modelo tiene que quedar en opencode/big-pickle")
   assert.match(win, /\.platformio\\penv\\Scripts\\pio\.exe/, "tiene que verificar el pio.exe que instala el bootstrap")
+  // El log de la instalación tiene que traer la mitad que escribe install.ps1, y con su texto real.
+  assert.match(win, /instalacion\.log[\s\S]{0,300}-SimpleMatch "==> Instalando Tecnia Bot en:"/, "no verifica que instalacion.log tenga la salida de install.ps1")
+  assert.match(installPs1, /Write-Host "==> Instalando Tecnia Bot en: \$ConfigDir"/, "install.ps1 cambió el texto que busca la CI en instalacion.log")
 })
 
 test("el job de Windows compila ejemplos/_test-librerias (env uno) con el pio del bootstrap", () => {

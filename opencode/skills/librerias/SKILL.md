@@ -78,7 +78,7 @@ Una libreria por linea, indentada. Ejemplo ESP32 con servo + DHT22 + OLED:
 
 ```ini
 [env:esp32dev]
-platform = espressif32
+platform = espressif32@6.12.0
 board = esp32dev
 framework = arduino
 monitor_speed = 115200

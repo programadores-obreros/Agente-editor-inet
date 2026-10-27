@@ -7,6 +7,20 @@
 
 $ErrorActionPreference = "Stop"
 
+# EL LOG DE LA INSTALACION, si lo pidieron. bootstrap.ps1 cierra su transcript, nos
+# pasa la ruta de instalacion.log en TECNIA_LOG_INSTALACION y nos lanza SIN pipe
+# (con pipe, `pio pkg install` escondia la barra de progreso). Aca se reabre el
+# MISMO archivo con -Append y se cierra al final, tambien si algo se corta: por eso
+# todo lo que sigue va dentro de un try. El cuerpo NO se reindento a proposito,
+# para que el cambio se lea en dos lineas y no en mil.
+# Sin la variable (update.ps1, o a mano) no se graba nada, como siempre.
+$TranscriptPropio = $false
+if ($env:TECNIA_LOG_INSTALACION) {
+    try { Start-Transcript -Path $env:TECNIA_LOG_INSTALACION -Append | Out-Null; $TranscriptPropio = $true } catch { }
+}
+$FalloInstalacion = $false
+try {
+
 # Directorio de config global de OpenCode en Windows (respeta XDG si esta seteado)
 if ($env:XDG_CONFIG_HOME) {
     $ConfigDir = Join-Path $env:XDG_CONFIG_HOME "opencode"
@@ -51,7 +65,12 @@ Copy-Item (Join-Path $Src "conocimiento\*") (Join-Path $ConfigDir "conocimiento\
 # (lo importa tool\programa.ts con rutas ..\codegen\...).
 Copy-Item (Join-Path $Src "codegen\*") (Join-Path $ConfigDir "codegen\") -Recurse -Force
 
-# Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
+# Plugins + theme violeta. plugins\ trae dos cosas distintas:
+# - tecnia-logo.tsx: plugin de TUI (logo del splash), se declara en tui.json mas abajo.
+# - tecnia-idioma.ts (+ idioma\): plugin de servidor que saca la planificacion en
+#   ingles que el modelo a veces escribe como texto visible. OpenCode lo carga solo
+#   (escanea plugins\*.ts del config): no se declara en ningun json. -Recurse copia
+#   la subcarpeta idioma\, y el manifest de abajo la lista sola.
 Copy-Item (Join-Path $Src "plugins\*") (Join-Path $ConfigDir "plugins\") -Recurse -Force
 Copy-Item (Join-Path $Src "themes\*")  (Join-Path $ConfigDir "themes\")  -Recurse -Force
 
@@ -677,6 +696,9 @@ $TecniaTheme   = "tecnia-violet"
 $TecniaAgent   = "tecnia-bot"
 $TuiSchema     = "https://opencode.ai/tui.json"
 $OpencodeSchema = "https://opencode.ai/config.json"
+# Limite de espera del pedido al modelo (ms), para headerTimeout y chunkTimeout del
+# proveedor. Un pedido sano de Tecnia Bot contesta en 2-10 s; 60 s deja margen.
+$TimeoutModeloMs = 60000
 
 # Resuelve el archivo de config: .json si existe, si no .jsonc, si no .json (a crear).
 function Resolve-ConfigFile($base) {
@@ -807,6 +829,39 @@ if ($ocHasContent -and $null -eq $oc) {
     $agenteTecnia | Add-Member -NotePropertyName "model" -NotePropertyValue $ModeloElegido -Force
     $agentes | Add-Member -NotePropertyName $TecniaAgent -NotePropertyValue $agenteTecnia -Force
     $oc | Add-Member -NotePropertyName "agent" -NotePropertyValue $agentes -Force
+    # small_model: el modelo de las tareas chicas (el titulo de la charla). Si no se fija,
+    # OpenCode elige uno por su cuenta y con la key de Google cae en otro Gemini que puede
+    # estar saturado o sin cuota. Va el mismo que el del agente (igual que install.sh).
+    $oc | Add-Member -NotePropertyName "small_model" -NotePropertyValue $ModeloElegido -Force
+
+    # provider.<proveedor>.options.headerTimeout/chunkTimeout: sin esto, un pedido al
+    # modelo que se queda sin respuesta (red del aula que corta, Gemini saturado,
+    # notebook que se suspende) espera para siempre y el docente ve el bot trabado.
+    # Visto el 2026-10-14 en el taller: ~26 pedidos colgados de 1 a 17 minutos, sin
+    # error. Con el limite, OpenCode corta el pedido (error reintentable) y reintenta
+    # solo. Va solo en el proveedor del modelo elegido, que ya esta activo: un
+    # provider.google sin key haria aparecer a Gemini sin poder usarlo.
+    $ProveedorElegido = $ModeloElegido.Split("/")[0]
+    $proveedores = $null
+    if (($oc.PSObject.Properties.Name -contains "provider") -and ($oc.provider -is [PSCustomObject])) {
+        $proveedores = $oc.provider
+    }
+    if ($null -eq $proveedores) { $proveedores = [PSCustomObject]@{} }
+    $proveedor = $null
+    if (($proveedores.PSObject.Properties.Name -contains $ProveedorElegido) -and ($proveedores.$ProveedorElegido -is [PSCustomObject])) {
+        $proveedor = $proveedores.$ProveedorElegido
+    }
+    if ($null -eq $proveedor) { $proveedor = [PSCustomObject]@{} }
+    $opciones = $null
+    if (($proveedor.PSObject.Properties.Name -contains "options") -and ($proveedor.options -is [PSCustomObject])) {
+        $opciones = $proveedor.options
+    }
+    if ($null -eq $opciones) { $opciones = [PSCustomObject]@{} }
+    $opciones | Add-Member -NotePropertyName "headerTimeout" -NotePropertyValue $TimeoutModeloMs -Force
+    $opciones | Add-Member -NotePropertyName "chunkTimeout" -NotePropertyValue $TimeoutModeloMs -Force
+    $proveedor | Add-Member -NotePropertyName "options" -NotePropertyValue $opciones -Force
+    $proveedores | Add-Member -NotePropertyName $ProveedorElegido -NotePropertyValue $proveedor -Force
+    $oc | Add-Member -NotePropertyName "provider" -NotePropertyValue $proveedores -Force
 
     # instructions: array de rutas que opencode carga en el contexto de cada sesion.
     # Agregamos el perfil si no esta (idempotente, sin duplicar), preservando el resto.
@@ -967,12 +1022,107 @@ if ($PioScripts) {
     }
 }
 
+# HERRAMIENTAS DE LAS PLACAS (ESP32 y Arduino UNO), bajadas AHORA y no en clase.
+# La primera compilacion de cada placa baja su compilador y su framework: para
+# ESP32 son mas de 1 GB, sin progreso visible. En el taller del 2026-10-14, con
+# 30+ maquinas en la misma red, no terminaba en 15 minutos y el bot parecia
+# colgado (log de Windows: dos esperas de 15 min seguidas). `pio pkg install`
+# sobre un proyecto con las versiones fijadas baja lo mismo que la compilacion,
+# sin compilar (verificado en la VM win10: 84 s con buena red).
+#  - Si ya estan, no baja nada.
+#  - Desde /actualizar (TECNIA_DESDE_ACTUALIZAR=1) NO baja: solo avisa.
+#  - Con menos de 3 GB libres no baja: avisa (1,4 GB instalado + los archivos bajados).
+#  - Si falla, avisa y sigue: no es motivo para dejar la instalacion a medias.
+$PaquetesPlacas = @("toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr")
+$IniPlacas = @"
+[env:esp32dev]
+platform = espressif32@6.12.0
+board = esp32dev
+framework = arduino
+
+[env:uno]
+platform = atmelavr@5.2.0
+board = uno
+framework = arduino
+"@
+# LA CARPETA DONDE PlatformIO GUARDA `packages`, con SU regla y no la del pio.exe.
+#
+# Antes salia de la ruta de pio.exe (tres Split-Path), y no es lo mismo: PlatformIO
+# usa <raiz del disco del perfil>\.platformio si esa CARPETA existe, aunque el penv
+# este en el perfil (platformio/project/options.py, get_default_core_dir). Con un
+# C:\.platformio viejo, esto miraba el perfil, decia "faltan", bajaba todo... en
+# C:\.platformio, y media el espacio libre en el disco equivocado.
+#
+# Es la MISMA regla que coreDir() en opencode\tool\platformio.ts (y que
+# Core-PlatformIO en diagnostico.ps1): PLATFORMIO_CORE_DIR; si no,
+# <raiz>\.platformio si es carpeta (-PathType Container: pio usa isdir, un archivo
+# con ese nombre no cuenta); si no, $env:USERPROFILE\.platformio.
+function Core-PlatformIO {
+    if ($env:PLATFORMIO_CORE_DIR) { return $env:PLATFORMIO_CORE_DIR }
+    $raiz = [System.IO.Path]::GetPathRoot($env:USERPROFILE)
+    if ($raiz) {
+        $enRaiz = Join-Path $raiz ".platformio"
+        if (Test-Path -LiteralPath $enRaiz -PathType Container) { return $enRaiz }
+    }
+    return (Join-Path $env:USERPROFILE ".platformio")
+}
+
+function Preparar-Placas($pio) {
+    $core = Core-PlatformIO
+    $faltan = @($PaquetesPlacas | Where-Object { -not (Test-Path (Join-Path $core "packages\$_")) })
+    if ($faltan.Count -eq 0) {
+        Write-Host "  [OK] Herramientas de ESP32 y Arduino UNO ya bajadas (en $core)."
+        return
+    }
+    # El MISMO consejo que mensajeTimeout() en opencode\tool\platformio.ts: el camino
+    # que de verdad las baja es el instalador completo ("Reparar Tecnia Bot" o el
+    # .exe). /actualizar NO: llega aca con TECNIA_DESDE_ACTUALIZAR=1 y solo avisa.
+    # Y el pendrive dice la carpeta REAL de destino, no "la del usuario".
+    $comoConseguirlas = "Bajalas con buena red corriendo 'Reparar Tecnia Bot' del menu inicio o volviendo a correr el instalador (Instalar-Tecnia-Bot.exe); /actualizar NO las baja. O copia las carpetas packages y platforms de la carpeta .platformio de una computadora que ya compilo adentro de $core."
+    if ($env:TECNIA_DESDE_ACTUALIZAR -eq "1") {
+        Write-Host "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion va a intentar bajarlas (mas de 1 GB) y, sin buena red, se corta a los 3 minutos."
+        Write-Host "          $comoConseguirlas"
+        return
+    }
+    try {
+        # El disco del CORE, que es donde se escribe el GB y pico (puede no ser el del pio.exe).
+        # Con un core UNC (\\servidor\...) no hay letra de unidad: Split-Path tira, se
+        # sigue sin el dato y se intenta igual, como antes.
+        $libreGB = [math]::Round((Get-PSDrive (Split-Path $core -Qualifier).TrimEnd(":")).Free / 1GB, 1)
+    } catch {
+        $libreGB = $null
+    }
+    if ($null -ne $libreGB -and $libreGB -lt 3) {
+        Write-Host "  [AVISO] Hay $libreGB GB libres: no bajo las herramientas de las placas (necesitan unos 3 GB mientras se instalan)."
+        Write-Host "          Libera espacio y $comoConseguirlas"
+        return
+    }
+    Write-Host "  [..] Bajando las herramientas de ESP32 y Arduino UNO (mas de 1 GB, una sola vez). Puede tardar varios minutos..."
+    $proj = Join-Path $env:TEMP "tecnia-placas"
+    try {
+        New-Item -ItemType Directory -Force $proj | Out-Null
+        Set-Content -Path (Join-Path $proj "platformio.ini") -Value $IniPlacas -Encoding ASCII
+        & $pio pkg install -d $proj
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [OK] Herramientas de ESP32 y Arduino UNO bajadas: compilar no va a descargar nada."
+        } else {
+            Write-Host "  [AVISO] No se pudieron bajar todas las herramientas de las placas (codigo $LASTEXITCODE)."
+            Write-Host "          La primera compilacion lo intenta de nuevo, pero sin buena red se corta a los 3 minutos. $comoConseguirlas"
+        }
+    } catch {
+        Write-Host "  [AVISO] No se pudieron bajar las herramientas de las placas ($($_.Exception.GetType().Name)). $comoConseguirlas"
+    } finally {
+        Remove-Item $proj -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
 # Se dice la ruta real: si PlatformIO se relocalizo a la raiz del disco, decir solo
 # "instalado" manda a mirar una carpeta que no existe.
 $pioPath = Buscar-Pio
 if ($pioPath) {
     Write-Host "  [OK] PlatformIO instalado en $pioPath (Tecnia Bot lo encuentra aunque no este en PATH)"
+    Preparar-Placas $pioPath
 } else {
     Write-Host "  [FALTA] PlatformIO no esta instalado. Ver docs/instalacion-windows.md"
 }
@@ -980,3 +1130,16 @@ if ($pioPath) {
 Write-Host ""
 Write-Host "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
 Write-Host "apreta Tab y elegi 'tecnia-bot'."
+
+} catch {
+    # El error se escribe ACA, con el transcript todavia abierto: si se dejara
+    # subir solo, PowerShell lo imprimiria despues del finally y el log -justo el
+    # de la corrida que fallo- no lo tendria. El exit 1 de abajo es el mismo codigo
+    # que daba un error sin atrapar, y es lo que mira bootstrap.ps1.
+    $FalloInstalacion = $true
+    Write-Host ""
+    Write-Host ("  [X] La instalacion se corto: " + ($_ | Out-String).Trim()) -ForegroundColor Red
+} finally {
+    if ($TranscriptPropio) { try { Stop-Transcript | Out-Null } catch { } }
+}
+if ($FalloInstalacion) { exit 1 }

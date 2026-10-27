@@ -66,7 +66,8 @@ try {
     Get-ChildItem $RepoDir -Filter "instalacion-*.log" | Sort-Object LastWriteTime -Descending |
         Select-Object -Skip 5 | Remove-Item -Force -ErrorAction SilentlyContinue
 } catch { }
-try { Start-Transcript -Path $LogInstalacion -Force | Out-Null } catch { }
+$HayTranscript = $false
+try { Start-Transcript -Path $LogInstalacion -Force | Out-Null; $HayTranscript = $true } catch { }
 
 # ---- LA VERSION DE OPENCODE ESTA FIJADA, Y EN UN SOLO LUGAR -------------------
 #
@@ -229,10 +230,24 @@ $ShimOpenCode = Join-Path $env:USERPROFILE "scoop\shims\opencode.exe"
 # Scoop actualice o resetee, ese "shim" seguira ejecutando la version vieja para
 # siempre. Un OpenCode fantasma, fuera de todo control de version.
 #
-# Scoop registra lo que instalo en apps\opencode\current\manifest.json: si eso no
-# esta, para Scoop OpenCode no existe, corra lo que corra.
+# Scoop registra lo que instalo en apps\opencode\current\: el manifiesto y el
+# install (donde va el "hold"). Scoop 0.6.0 (2026-09-30) los RENOMBRO:
+# manifest.json -> scoop-manifest.json e install.json -> scoop-install.json.
+# Buscar solo el nombre viejo daba "OPENCODE NO ARRANCA" con un OpenCode que
+# contestaba su version (CI Windows del 2026-10-14, issue #42; reproducido en la
+# VM win10 con Scoop 0.6.0). Se busca el nuevo y, si no esta, el viejo: las
+# instalaciones hechas con Scoop 0.5 siguen con los nombres de antes.
+function Get-ArchivoScoop([string]$dirApp, [string]$nombre) {
+    foreach ($n in @("scoop-$nombre.json", "$nombre.json")) {
+        $p = Join-Path $dirApp $n
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
+# Si no hay manifiesto, para Scoop OpenCode no existe, corra lo que corra.
 function Test-OpenCodeScoop {
-    return (Test-Path (Join-Path $OpenCodeAppDir "current\manifest.json"))
+    return [bool](Get-ArchivoScoop (Join-Path $OpenCodeAppDir "current") "manifest")
 }
 
 # Repara el shim cuando el programa ESTA pero le falta su lanzador de 20 KB.
@@ -388,7 +403,7 @@ function Test-OpenCode {
         $exeReal = Join-Path $dirReal "opencode.exe"
         $global:LASTEXITCODE = 1
         $vReal = try { (& $exeReal --version 2>&1 | Out-String).Trim() } catch { "excepcion: " + $_.Exception.Message }
-        Write-Host ("      DISCRIMINA: File.Exists(real exe)=" + [System.IO.File]::Exists($exeReal) + " | File.Exists(current\manifest.json)=" + [System.IO.File]::Exists((Join-Path $dirCurrent "manifest.json")) + " | real exe --version exit=" + $LASTEXITCODE + " salida=" + ($vReal -replace "\s+", " ").Substring(0, [Math]::Min(60, ($vReal -replace "\s+", " ").Length)))
+        Write-Host ("      DISCRIMINA: File.Exists(real exe)=" + [System.IO.File]::Exists($exeReal) + " | manifiesto Scoop en current=" + [bool](Get-ArchivoScoop $dirCurrent "manifest") + " | real exe --version exit=" + $LASTEXITCODE + " salida=" + ($vReal -replace "\s+", " ").Substring(0, [Math]::Min(60, ($vReal -replace "\s+", " ").Length)))
         return $false
     } catch {
         $script:SalidaOpenCode = $_.Exception.Message
@@ -544,12 +559,13 @@ function Test-OpenCodeInstalado {
     return ((Test-OpenCodeScoop) -and (Test-OpenCode))
 }
 
-# La version que Scoop tiene ACTIVA, leida de su manifest.json. Es la que
-# importa para hold/reset, mas alla de lo que conteste el binario.
+# La version que Scoop tiene ACTIVA, leida de su manifiesto (scoop-manifest.json
+# desde Scoop 0.6.0, manifest.json antes). Es la que importa para hold/reset,
+# mas alla de lo que conteste el binario.
 function Get-OpenCodeVersionInstalada {
-    $mf = Join-Path $OpenCodeAppDir "current\manifest.json"
+    $mf = Get-ArchivoScoop (Join-Path $OpenCodeAppDir "current") "manifest"
     try {
-        if (Test-Path $mf) { return ("" + (Get-Content $mf -Raw | ConvertFrom-Json).version).Trim() }
+        if ($mf) { return ("" + (Get-Content $mf -Raw | ConvertFrom-Json).version).Trim() }
     } catch { }
     if ($script:SalidaOpenCode -match '(\d+\.\d+\.\d+)') { return $Matches[1] }
     return ""
@@ -1288,7 +1304,37 @@ Write-Host "  [..] Instalando la capa de Tecnia Bot..."
 # cae al nombre, como antes.
 $PsExe = Join-Path $PSHOME "powershell.exe"
 if (-not (Test-Path $PsExe)) { $PsExe = "powershell" }
+# EL LOG SE PASA DE MANO ("transcript encadenado"), y no por un pipe.
+#
+# Start-Transcript no graba lo que un proceso hijo escribe directo a la consola: en
+# una notebook real el log saltaba de "Instalando la capa" a "LISTO!" sin nada en
+# el medio, y ahi adentro estan los timeouts del modelo y la descarga de las
+# herramientas de las placas. El primer arreglo fue "| Out-Host", y tenia dos
+# problemas: `pio pkg install` (que lanza install.ps1) veia un pipe en
+# vez de una consola y escondia la barra de progreso -la docente veia todo quieto
+# durante una descarga de mas de 1 GB-, y stderr y los errores terminantes de
+# install.ps1 igual no quedaban en el log.
+#
+# Ahora: se cierra el transcript de aca, install.ps1 abre el SUYO sobre el mismo
+# archivo (-Append, porque recibe la ruta en TECNIA_LOG_INSTALACION) y lo cierra al
+# terminar, aunque se corte; despues se reabre aca, tambien con -Append. El hijo
+# corre con la consola de verdad, sin pipe. Lo que pio escribe directo a la
+# consola (la barra) sigue sin quedar en el log, igual que antes con cualquier
+# programa: lo que queda son los [OK]/[AVISO] de install.ps1, con el codigo de pio.
+#
+# Si el transcript de aca no arranco, no se le pasa nada al hijo: sin la variable,
+# install.ps1 no graba (que es tambien como lo corre update.ps1).
+if ($HayTranscript) {
+    $env:TECNIA_LOG_INSTALACION = $LogInstalacion
+    try { Stop-Transcript | Out-Null } catch { }
+}
 & $PsExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoDir "install\install.ps1")
+# Se guarda YA: es el codigo de install.ps1 y lo que sigue no lo tiene que pisar.
+$CodigoInstall = $LASTEXITCODE
+if ($HayTranscript) {
+    Remove-Item Env:TECNIA_LOG_INSTALACION -ErrorAction SilentlyContinue
+    try { Start-Transcript -Path $LogInstalacion -Append | Out-Null } catch { }
+}
 
 # SE VERIFICA QUE LA CAPA HAYA QUEDADO, y por dos vias.
 #
@@ -1299,9 +1345,9 @@ if (-not (Test-Path $PsExe)) { $PsExe = "powershell" }
 #
 # Faltaba tambien -NoProfile, que el .iss si usa: un perfil de PowerShell
 # corporativo roto reventaba este paso y nadie se enteraba.
-if ($LASTEXITCODE -ne 0) {
+if ($CodigoInstall -ne 0) {
     Write-Host ""
-    Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $LASTEXITCODE)." -ForegroundColor Red
+    Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $CodigoInstall)." -ForegroundColor Red
     Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }

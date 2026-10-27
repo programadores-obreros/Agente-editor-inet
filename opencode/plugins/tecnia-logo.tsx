@@ -193,6 +193,13 @@ function TipLine(props: { api: TuiPluginApi; tip: string; label?: string }) {
 // ----------------------------------------------------------------------------
 // LIMITACIÓN CONOCIDA: no se puede traducir el diálogo de permisos ni /help.
 //
+// LA SALIDA QUE SÍ HAY (0.4.8): el tool platformio usa ese mismo diálogo como el
+// cartel del checklist de seguridad. La PREGUNTA sí es nuestra (va en español,
+// empieza con PREGUNTA_CHECKLIST); los botones siguen en inglés. Para que el
+// docente sepa qué apretar, la leyenda de abajo se muestra en el slot
+// `app_bottom` —que queda justo debajo del cartel; probado en la VM con 1.18.18—
+// solo mientras haya un permiso pendiente que empiece con esa pregunta.
+//
 // El truco de más abajo (`plugins.deactivate("internal:home-tips")` + slots
 // `home_logo`/`home_bottom`) funciona porque OpenCode expone esos dos ganchos
 // A PROPÓSITO para branding de la pantalla de inicio. NO generaliza: la lista
@@ -210,6 +217,34 @@ function TipLine(props: { api: TuiPluginApi; tip: string; label?: string }) {
 // programadores-obreros/Agente-editor-inet#1. Antes de reintentar esto, leer
 // ese hilo para no reinvestigar lo mismo.
 // ----------------------------------------------------------------------------
+
+// El mismo prefijo que `PREGUNTA_CHECKLIST` de opencode/tool/platformio.ts (los
+// plugins y las tools no se importan entre sí: un test compara los dos textos).
+const PREGUNTA_CHECKLIST = "¿Revisaste el circuito?"
+// Igual que `MARCA_SIEMPRE_PREGUNTA` del tool: la pregunta termina asi cuando
+// "Allow always" no se puede guardar (analisis incompleto, placa sin identificar).
+const MARCA_SIEMPRE_PREGUNTA = " · se pregunta cada vez"
+const LEYENDA_CHECKLIST =
+  "Checklist: Allow once = Sí, lo revisé, cargá · Reject = Todavía no, no cargues · Allow always = no volver a preguntar por este cambio en esta placa"
+const LEYENDA_SIEMPRE =
+  "Checklist: Allow once = Sí, lo revisé, cargá · Reject = Todavía no, no cargues · Allow always = igual vuelve a preguntar la próxima vez"
+
+// ¿Hay un cartel del checklist abierto en la sesión que se está viendo? Devuelve
+// la leyenda que corresponde, o null. Defensivo: cualquier cambio de API entre
+// versiones da "no hay", nunca un error.
+function leyendaDelCartel(api: TuiPluginApi): string | null {
+  try {
+    const ruta = (api as unknown as { route?: { current?: { name?: string; params?: { sessionID?: string } } } }).route?.current
+    if (ruta?.name !== "session" || !ruta.params?.sessionID) return null
+    const estado = (api as unknown as { state?: { session?: { permission?: (id: string) => Array<{ permission?: string }> } } }).state
+    const pendientes = estado?.session?.permission?.(ruta.params.sessionID) ?? []
+    const cartel = pendientes.find((p) => typeof p?.permission === "string" && p.permission.startsWith(PREGUNTA_CHECKLIST))
+    if (!cartel?.permission) return null
+    return cartel.permission.endsWith(MARCA_SIEMPRE_PREGUNTA) ? LEYENDA_SIEMPRE : LEYENDA_CHECKLIST
+  } catch {
+    return null
+  }
+}
 
 const tui: TuiPlugin = async (api) => {
   // Desactivamos el tip por defecto de OpenCode (`internal:home-tips`): con el
@@ -253,6 +288,35 @@ const tui: TuiPlugin = async (api) => {
       },
     },
   })
+
+  // La leyenda del cartel del checklist, aparte: si una versión no tiene el slot
+  // `app_bottom`, se pierde la leyenda y no el logo.
+  try {
+    api.slots.register({
+      order: 100,
+      slots: {
+        app_bottom() {
+          // Una condicion en el JSX y no `<Show>`: el compilador de Solid la vuelve
+          // reactiva igual, y asi el plugin no importa solid-js (ver el comentario
+          // de `hayVersionNueva` sobre solid-js en un plugin externo). La prueba de
+          // la VM se hizo con `<Show>`: esta forma queda por verificar ahi.
+          return (
+            <>
+              {leyendaDelCartel(api) ? (
+                <box paddingLeft={2} paddingRight={2}>
+                  <text fg={pick(api, "warning", FALLBACK_GOLD)} wrapMode="word" selectable={false}>
+                    {leyendaDelCartel(api)}
+                  </text>
+                </box>
+              ) : null}
+            </>
+          )
+        },
+      },
+    } as Parameters<TuiPluginApi["slots"]["register"]>[0])
+  } catch {
+    // sin leyenda: el cartel igual aparece, y el bot ya avisó qué botón es cuál
+  }
 }
 
 export default {

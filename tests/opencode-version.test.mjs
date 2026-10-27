@@ -107,8 +107,10 @@ function cuerpo(nombre) {
   return ps1.slice(ini, fin + 2)
 }
 
-test("OpenCode cuenta como instalado sólo si Scoop lo registró (current\\manifest.json) Y arranca", () => {
-  assert.match(cuerpo("Test-OpenCodeScoop"), /current\\manifest\.json/, "Test-OpenCodeScoop no mira current\\manifest.json")
+test("OpenCode cuenta como instalado sólo si Scoop lo registró (su manifiesto en current) Y arranca", () => {
+  // El manifiesto se llama scoop-manifest.json desde Scoop 0.6.0 y manifest.json antes (issue #42):
+  // Get-ArchivoScoop prueba los dos (tests/scoop-archivos.test.mjs).
+  assert.match(cuerpo("Test-OpenCodeScoop"), /Get-ArchivoScoop \(Join-Path \$OpenCodeAppDir "current"\) "manifest"/, "Test-OpenCodeScoop no mira el manifiesto de Scoop en current")
   const instalado = cuerpo("Test-OpenCodeInstalado")
   assert.match(instalado, /Test-OpenCodeScoop/, "Test-OpenCodeInstalado no consulta a Scoop")
   assert.match(instalado, /\(Test-OpenCode\)/, "Test-OpenCodeInstalado no verifica que arranque")

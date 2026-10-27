@@ -92,7 +92,7 @@ servo, DHT22 y OLED:
 
 ```ini
 [env:esp32dev]
-platform = espressif32
+platform = espressif32@6.12.0
 board = esp32dev
 framework = arduino
 monitor_speed = 115200
@@ -109,7 +109,7 @@ baudios y la librería del servo (`arduino-libraries/Servo` en vez de `ESP32Serv
 
 ```ini
 [env:uno]
-platform = atmelavr
+platform = atmelavr@5.2.0
 board = uno
 framework = arduino
 monitor_speed = 9600

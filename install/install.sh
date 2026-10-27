@@ -40,7 +40,12 @@ cp -r "$SRC/conocimiento/." "$CONFIG_DIR/conocimiento/"
 # (lo importa tool/programa.ts con `../codegen/...`).
 cp -r "$SRC/codegen/." "$CONFIG_DIR/codegen/"
 
-# Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
+# Plugins + theme violeta. plugins/ trae dos cosas distintas:
+# - tecnia-logo.tsx: plugin de TUI (logo del splash), se declara en tui.json más abajo.
+# - tecnia-idioma.ts (+ idioma/): plugin de servidor que saca la planificación en
+#   inglés que el modelo a veces escribe como texto visible. OpenCode lo carga solo
+#   (escanea plugins/*.ts del config): no se declara en ningún json. cp -r copia
+#   la subcarpeta idioma/, y el manifest de abajo la lista sola.
 cp -r "$SRC/plugins/." "$CONFIG_DIR/plugins/"
 cp -r "$SRC/themes/."  "$CONFIG_DIR/themes/"
 
@@ -58,7 +63,7 @@ NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins them
 if [ -f "$MANIFEST" ]; then
   while IFS= read -r rel; do
     case "$rel" in ""|"#"*|version=*|repo_dir=*) continue ;; esac
-    printf '%s\n' "$NUEVOS" | grep -qxF "$rel" || rm -f "$CONFIG_DIR/$rel"
+    grep -qxF -- "$rel" <<< "$NUEVOS" || rm -f "$CONFIG_DIR/$rel"
   done < "$MANIFEST"
 fi
 
@@ -205,16 +210,16 @@ clasificar_respuesta_google() {
   local codigo="${1:-0}" cuerpo="${2:-}"
   case "$codigo" in ''|*[!0-9]*) codigo=0 ;; esac
   if [ "$codigo" -ge 200 ] && [ "$codigo" -lt 300 ]; then printf 'anda|\n'; return 0; fi
-  if [ "$codigo" = "429" ] || printf '%s' "$cuerpo" | grep -q '"RESOURCE_EXHAUSTED"'; then
+  if [ "$codigo" = "429" ] || grep -q '"RESOURCE_EXHAUSTED"' <<< "$cuerpo"; then
     printf 'cuota|\n'; return 0
   fi
   if [ "$codigo" = "400" ] || [ "$codigo" = "403" ] \
-    || printf '%s' "$cuerpo" | grep -qE '"(INVALID_ARGUMENT|PERMISSION_DENIED|UNAUTHENTICATED)"' \
-    || printf '%s' "$cuerpo" | grep -q '"API_KEY_INVALID"'; then
+    || grep -qE '"(INVALID_ARGUMENT|PERMISSION_DENIED|UNAUTHENTICATED)"' <<< "$cuerpo" \
+    || grep -q '"API_KEY_INVALID"' <<< "$cuerpo"; then
     printf 'invalida|\n'; return 0
   fi
   # El modelo, no la key. Va ANTES del cajon de sinProbar a proposito.
-  if [ "$codigo" = "404" ] || printf '%s' "$cuerpo" | grep -q '"NOT_FOUND"'; then
+  if [ "$codigo" = "404" ] || grep -q '"NOT_FOUND"' <<< "$cuerpo"; then
     printf 'modeloIdo|\n'; return 0
   fi
   printf 'sinProbar|Google contesto HTTP %s\n' "$codigo"
@@ -619,6 +624,9 @@ TECNIA_THEME="tecnia-violet"
 TECNIA_AGENT="tecnia-bot"
 TUI_SCHEMA="https://opencode.ai/tui.json"
 OPENCODE_SCHEMA="https://opencode.ai/config.json"
+# Limite de espera del pedido al modelo (ms), para headerTimeout y chunkTimeout del
+# proveedor. Un pedido sano de Tecnia Bot contesta en 2-10 s; 60 s deja margen.
+TIMEOUT_MODELO_MS=60000
 
 # Resuelve el archivo de config a usar: .json si existe, si no .jsonc, si no .json.
 resolve_config_file() {
@@ -652,10 +660,11 @@ echo "==> Configurando OpenCode (theme + logo + agente por defecto + modelo)..."
 # Si un archivo existe pero NO se puede parsear, lo deja intacto y avisa (nunca
 # pisa la config del usuario). Idempotente.
 merge_via_python() {
-  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" "$MEMORIA_FILE" "$MODELO_ELEGIDO" <<'PYEOF'
+  python3 - "$TUI_JSON" "$OPENCODE_JSON" "$TECNIA_THEME" "$TECNIA_PLUGIN" "$TECNIA_AGENT" "$TUI_SCHEMA" "$OPENCODE_SCHEMA" "$PERFIL_FILE" "$MEMORIA_FILE" "$MODELO_ELEGIDO" "$TIMEOUT_MODELO_MS" <<'PYEOF'
 import json, sys
 
-tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path, memoria_path, modelo = sys.argv[1:11]
+tui_path, oc_path, theme, plugin, agent, tui_schema, oc_schema, perfil_path, memoria_path, modelo, timeout_ms = sys.argv[1:12]
+timeout_ms = int(timeout_ms)
 
 def strip_jsonc(text):
     out = []
@@ -751,6 +760,33 @@ if ok:
     agente_tecnia["model"] = modelo
     agentes[agent] = agente_tecnia
     oc["agent"] = agentes
+    # small_model: el modelo de las tareas chicas (el titulo de la charla). Si no se fija,
+    # OpenCode elige uno por su cuenta (provider.ts getSmallModel) y con la key de Google
+    # cae en otro Gemini que puede estar saturado o sin cuota: el docente ve un error que
+    # no viene de su modelo. Visto el 2026-10-14 ("is way too hot right now"). Va el mismo.
+    oc["small_model"] = modelo
+    # provider.<proveedor>.options.headerTimeout/chunkTimeout: sin esto, un pedido al
+    # modelo que se queda sin respuesta (red del aula que corta, Gemini saturado,
+    # notebook que se suspende) espera para siempre y el docente ve el bot trabado.
+    # Visto el 2026-10-14 en el taller: ~26 pedidos colgados de 1 a 17 minutos, sin
+    # error. Con el limite, OpenCode corta el pedido (error reintentable) y reintenta
+    # solo. Va solo en el proveedor del modelo elegido, que ya esta activo: un
+    # provider.google sin key haria aparecer a Gemini sin poder usarlo.
+    proveedor_id = modelo.split("/", 1)[0]
+    proveedores = oc.get("provider")
+    if not isinstance(proveedores, dict):
+        proveedores = {}
+    proveedor = proveedores.get(proveedor_id)
+    if not isinstance(proveedor, dict):
+        proveedor = {}
+    opciones = proveedor.get("options")
+    if not isinstance(opciones, dict):
+        opciones = {}
+    opciones["headerTimeout"] = timeout_ms
+    opciones["chunkTimeout"] = timeout_ms
+    proveedor["options"] = opciones
+    proveedores[proveedor_id] = proveedor
+    oc["provider"] = proveedores
     instrucciones = oc.get("instructions")
     if not isinstance(instrucciones, list):
         instrucciones = []
@@ -785,11 +821,14 @@ merge_tui_jq() {
 merge_opencode_jq() {
   [ -s "$OPENCODE_JSON" ] || printf '{}\n' > "$OPENCODE_JSON"
   local tmp; tmp="$(mktemp)"
-  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" --arg modelo "$MODELO_ELEGIDO" '
+  if jq --arg agent "$TECNIA_AGENT" --arg schema "$OPENCODE_SCHEMA" --arg perfil "$PERFIL_FILE" --arg memoria "$MEMORIA_FILE" --arg modelo "$MODELO_ELEGIDO" --argjson timeout "$TIMEOUT_MODELO_MS" '
           .["$schema"] = (.["$schema"] // $schema)
         | .default_agent = $agent
         | .autoupdate = false
         | .agent = ((.agent // {}) | .[$agent] = ((.[$agent] // {}) | .model = $modelo))
+        | .small_model = $modelo
+        | ($modelo | split("/")[0]) as $prov
+        | .provider = ((.provider // {}) | .[$prov] = ((.[$prov] // {}) | .options = ((.options // {}) | .headerTimeout = $timeout | .chunkTimeout = $timeout)))
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
         | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
@@ -843,6 +882,8 @@ EOF
   "\$schema": "$OPENCODE_SCHEMA",
   "default_agent": "$TECNIA_AGENT",
   "agent": { "$TECNIA_AGENT": { "model": "$MODELO_ELEGIDO" } },
+  "small_model": "$MODELO_ELEGIDO",
+  "provider": { "${MODELO_ELEGIDO%%/*}": { "options": { "headerTimeout": $TIMEOUT_MODELO_MS, "chunkTimeout": $TIMEOUT_MODELO_MS } } },
   "instructions": ["$PERFIL_FILE", "$MEMORIA_FILE"]
 }
 EOF
@@ -917,7 +958,7 @@ buscar_pio() {
     for nombre in pio platformio; do
       ruta="$dir/penv/bin/$nombre"
       [ -x "$ruta" ] || continue
-      if salida="$("$ruta" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+      if salida="$("$ruta" --version 2>&1)" && grep -qi platformio <<< "$salida"; then
         printf '%s\n' "$ruta"
         return 0
       fi
@@ -925,7 +966,7 @@ buscar_pio() {
   done < <(pio_core_dirs)
   for nombre in pio platformio; do
     command -v "$nombre" >/dev/null 2>&1 || continue
-    if salida="$("$nombre" --version 2>&1)" && printf '%s' "$salida" | grep -qi platformio; then
+    if salida="$("$nombre" --version 2>&1)" && grep -qi platformio <<< "$salida"; then
       command -v "$nombre"
       return 0
     fi
@@ -966,9 +1007,68 @@ fi
 # Chequear PlatformIO (en cualquiera de las rutas conocidas o en el PATH).
 # Se dice la ruta real: "instalado" a secas manda a mirar la carpeta de siempre,
 # que puede no ser donde quedo.
+# HERRAMIENTAS DE LAS PLACAS (ESP32 y Arduino UNO), bajadas AHORA y no en clase.
+# Mismo criterio que install.ps1 (ver el comentario largo ahi): la primera
+# compilacion de ESP32 baja mas de 1 GB sin progreso visible y en el taller del
+# 2026-10-14 no terminaba en 15 minutos. `pio pkg install` sobre un proyecto con
+# las versiones fijadas baja lo mismo sin compilar. Si ya estan, nada; desde
+# /actualizar (TECNIA_DESDE_ACTUALIZAR=1) solo avisa; con menos de 3 GB libres
+# avisa; si falla, avisa y sigue.
+preparar_placas() {
+  local pio="$1" core faltan="" p libre_kb proj
+  # La carpeta donde PlatformIO guarda packages, con SU regla y no la del pio: la
+  # misma que coreDir() en opencode/tool/platformio.ts. En Linux no hay mudanza a
+  # la raiz del disco: PLATFORMIO_CORE_DIR (vacia cuenta como no puesta) o
+  # ~/.platformio, aunque el penv este en otro lado.
+  core="${PLATFORMIO_CORE_DIR:-$HOME/.platformio}"
+  for p in toolchain-xtensa-esp32 framework-arduinoespressif32 toolchain-atmelavr framework-arduino-avr; do
+    [ -d "$core/packages/$p" ] || faltan="$faltan $p"
+  done
+  if [ -z "$faltan" ]; then
+    echo "  [OK] Herramientas de ESP32 y Arduino UNO ya bajadas."
+    return 0
+  fi
+  # El mismo consejo que mensajeTimeout() en platformio.ts: /actualizar NO las baja
+  # (llega aca con TECNIA_DESDE_ACTUALIZAR=1), y el pendrive dice la carpeta real.
+  local como="Bajalas con buena red volviendo a correr el instalador (bash install/install.sh); /actualizar NO las baja. O copia las carpetas packages y platforms de la carpeta .platformio de una computadora con Linux que ya compilo adentro de $core."
+  if [ "${TECNIA_DESDE_ACTUALIZAR:-}" = "1" ]; then
+    echo "  [AVISO] Faltan las herramientas de las placas (ESP32/UNO): la primera compilacion va a intentar bajarlas (mas de 1 GB) y, sin buena red, se corta a los 3 minutos."
+    echo "          $como"
+    return 0
+  fi
+  mkdir -p "$core"
+  libre_kb="$(df -Pk "$core" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$libre_kb" ] && [ "$libre_kb" -lt 3145728 ]; then
+    echo "  [AVISO] Hay $((libre_kb / 1048576)) GB libres: no bajo las herramientas de las placas (necesitan unos 3 GB mientras se instalan)."
+    echo "          Libera espacio y $como"
+    return 0
+  fi
+  echo "  [..] Bajando las herramientas de ESP32 y Arduino UNO (mas de 1 GB, una sola vez). Puede tardar varios minutos..."
+  proj="$(mktemp -d)"
+  cat > "$proj/platformio.ini" <<'INIEOF'
+[env:esp32dev]
+platform = espressif32@6.12.0
+board = esp32dev
+framework = arduino
+
+[env:uno]
+platform = atmelavr@5.2.0
+board = uno
+framework = arduino
+INIEOF
+  if "$pio" pkg install -d "$proj"; then
+    echo "  [OK] Herramientas de ESP32 y Arduino UNO bajadas: compilar no va a descargar nada."
+  else
+    echo "  [AVISO] No se pudieron bajar todas las herramientas de las placas."
+    echo "          La primera compilacion lo intenta de nuevo, pero sin buena red se corta a los 3 minutos. $como"
+  fi
+  rm -rf "$proj"
+}
+
 PIO_BIN="$(buscar_pio || true)"
 if [ -n "$PIO_BIN" ]; then
   echo "  [OK] PlatformIO: $("$PIO_BIN" --version 2>/dev/null) ($PIO_BIN)"
+  preparar_placas "$PIO_BIN"
 else
   echo "  [FALTA] PlatformIO no esta instalado."
   echo "          Instalalo con: python3 <(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"
