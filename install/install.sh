@@ -23,7 +23,12 @@ cp -r "$SRC/tool/."    "$CONFIG_DIR/tool/"
 cp -r "$SRC/skills/."  "$CONFIG_DIR/skills/"
 cp -r "$SRC/command/." "$CONFIG_DIR/command/"
 
-# Branding de Tecnia Bot: plugin de TUI (logo del splash) + theme violeta.
+# Plugins + theme violeta. plugins/ trae dos cosas distintas:
+# - tecnia-logo.tsx: plugin de TUI (logo del splash), se declara en tui.json más abajo.
+# - tecnia-idioma.ts (+ idioma/): plugin de servidor que saca la planificación en
+#   inglés que el modelo a veces escribe como texto visible. OpenCode lo carga solo
+#   (escanea plugins/*.ts del config): no se declara en ningún json. cp -r copia
+#   la subcarpeta idioma/, y el manifest de abajo la lista sola.
 cp -r "$SRC/plugins/." "$CONFIG_DIR/plugins/"
 cp -r "$SRC/themes/."  "$CONFIG_DIR/themes/"
 
