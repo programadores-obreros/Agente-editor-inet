@@ -13,12 +13,13 @@
 // centinelas por stdin/stdout: no hay ninguna espera a ciegas.
 //
 // MUTACIONES que ponen esto rojo (verificadas a mano, ver el informe de la etapa):
-// devolver `ok` sin tomar el candado; tratar un candado ilegible como libre; liberar
-// sin comparar el contenido; dejar que un fallo de E/S siga de largo.
+// devolver `ok` sin tomar el candado (se cae en segundos, por aserción: nunca cuelga);
+// tratar un candado ilegible como libre; liberar sin comparar el contenido; dejar que un
+// fallo de E/S siga de largo; no soltar el candado si algo falla después de tomarlo.
 
-import { test, before, beforeEach, after } from "node:test"
+import { test, before, beforeEach, afterEach, after } from "node:test"
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { hostname } from "node:os"
 import { dirname, join } from "node:path"
@@ -32,6 +33,8 @@ const TMP = mkdtempSync(join(os.tmpdir(), "tecniabot-carga-puertos-"))
 const XDG = join(TMP, "config")
 const CARPETA = join(XDG, "opencode", "tecnia-candados")
 const XDG_ORIGINAL = process.env.XDG_CONFIG_HOME
+/** Cuánto se espera, como mucho, a un proceso hijo. Segundos, no minutos: ver "Dos PROCESOS de verdad". */
+const PLAZO_MS = 10_000
 
 // ANTES de importar nada de carga/: ningún test puede escribir en ~/.config.
 process.env.XDG_CONFIG_HOME = XDG
@@ -300,13 +303,111 @@ test("algo que no tiene forma de puerto serie no se reserva: PUERTO_OCUPADO y ni
 })
 
 // ═════════════════════════════════════════════════════════════════════════════════════
+// Si algo falla DESPUÉS de tomar el candado, no queda tomado (no se hereda H-01)
+// ═════════════════════════════════════════════════════════════════════════════════════
+
+test("uso con finally: si la carga falla después de reservar, liberar() en finally deja el puerto libre para la siguiente", () => {
+  const puerto = nuevoPuerto()
+  assert.throws(() => {
+    const r = puertos.reservarPuerto(puerto, "carga-que-falla")
+    assert.equal(r.ok, true)
+    try {
+      throw new Error("falló la carga después de reservar")
+    } finally {
+      r.liberar()
+    }
+  }, /falló la carga después de reservar/)
+  assert.equal(existsSync(puertos.rutaCandado(puerto)), false)
+  const siguiente = puertos.reservarPuerto(puerto, "la-siguiente")
+  assert.equal(siguiente.ok, true, "el puerto quedó tomado por una carga que ya terminó")
+  siguiente.liberar()
+})
+
+test("fallo ADENTRO de reservarPuerto, con el candado ya tomado en disco: lo suelta, contesta PUERTO_OCUPADO y la reserva siguiente funciona", () => {
+  // En un proceso aparte, porque hay que romper process.on ANTES de la primera reserva
+  // (ahí se registra la limpieza de salida): es el único paso que puede fallar entre
+  // tomar el candado y entregar liberar().
+  const puerto = nuevoPuerto()
+  const guion = `
+    import { existsSync } from "node:fs"
+    const { reservarPuerto, rutaCandado } = await import(${JSON.stringify(join(REPO, "opencode/carga/puertos.ts"))})
+    const puerto = ${JSON.stringify(puerto)}
+    const onReal = process.on
+    process.on = () => { throw new Error("no se pudo registrar la limpieza") }
+    let primera
+    try { primera = reservarPuerto(puerto, "falla-adentro") } catch (error) { primera = { tiro: String(error) } }
+    process.on = onReal
+    const quedoArchivo = existsSync(rutaCandado(puerto))
+    const segunda = reservarPuerto(puerto, "la-siguiente")
+    const quedoDeLaSegunda = existsSync(rutaCandado(puerto))
+    if (segunda.ok) segunda.liberar()
+    console.log(JSON.stringify({ primera: { ok: primera.ok, codigo: primera.codigo, detalle: primera.detalle, tiro: primera.tiro }, quedoArchivo, segundaOk: segunda.ok, segundaDetalle: segunda.detalle, quedoDeLaSegunda }))
+  `
+  const hijo = spawnSync(process.execPath, ["--input-type=module", "-e", guion], { env: { ...process.env, XDG_CONFIG_HOME: XDG }, encoding: "utf8", timeout: PLAZO_MS })
+  assert.equal(hijo.status, 0, `el hijo falló o no terminó en ${PLAZO_MS} ms: ${hijo.stderr}`)
+  const r = JSON.parse(hijo.stdout.trim().split("\n").pop())
+  assert.equal(r.primera.tiro, undefined, "reservarPuerto no puede tirar")
+  assert.equal(r.primera.ok, false)
+  assert.equal(r.primera.codigo, "PUERTO_OCUPADO")
+  assert.match(r.primera.detalle, /lo solté/)
+  assert.equal(r.quedoArchivo, false, "falló después de tomar el candado y lo dejó tomado en disco")
+  assert.equal(r.segundaOk, true, `el puerto quedó tomado para siempre en este proceso: ${r.segundaDetalle}`)
+  assert.equal(r.quedoDeLaSegunda, true)
+})
+
+test("dos reservas en el MISMO milisegundo: la liberación tardía de la primera no borra el candado de la segunda", (t) => {
+  // Con el reloj congelado las dos reservas escriben un candado IDÉNTICO ({pid, hostname,
+  // creado}): comparar el contenido no alcanza para saber de cuál es, y lo único que
+  // impide que la reserva vieja borre el candado de la nueva es su marca de "ya liberada".
+  t.mock.timers.enable({ apis: ["Date"], now: new Date("2026-03-03T03:03:03.000Z") })
+  const puerto = nuevoPuerto()
+  const vieja = puertos.reservarPuerto(puerto, "vieja")
+  assert.equal(vieja.ok, true)
+  puertos.liberarTodosLosPuertos()
+  const nueva = puertos.reservarPuerto(puerto, "nueva")
+  assert.equal(nueva.ok, true)
+  assert.equal(JSON.parse(readFileSync(puertos.rutaCandado(puerto), "utf8")).creado, "2026-03-03T03:03:03.000Z", "fixture: el reloj tiene que estar congelado")
+  vieja.liberar()
+  assert.equal(existsSync(puertos.rutaCandado(puerto)), true, "la liberación tardía de una reserva ya liberada borró el candado de otra")
+  nueva.liberar()
+  const tercera = puertos.reservarPuerto(puerto, "tercera")
+  assert.equal(tercera.ok, true)
+  nueva.liberar() // tardía otra vez, ahora sobre la tercera
+  assert.equal(existsSync(puertos.rutaCandado(puerto)), true, "una segunda llamada a liberar() borró el candado de otra reserva")
+  tercera.liberar()
+})
+
+// ═════════════════════════════════════════════════════════════════════════════════════
 // Dos PROCESOS de verdad
 // ═════════════════════════════════════════════════════════════════════════════════════
+//
+// Plazo corto y propio: un hijo de node importa el módulo y contesta en bastante menos
+// de un segundo; PLAZO_MS es holgado para una máquina cargada y aun así son segundos. Si
+// un hijo no contesta a tiempo el test FALLA POR ASERCIÓN (no se queda esperando), y en
+// todos los casos `afterEach` mata, por PID, a los hijos que lanzó este archivo.
+
+const hijosVivos = new Set()
+afterEach(() => {
+  for (const proc of hijosVivos) {
+    if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL")
+  }
+  hijosVivos.clear()
+})
+
+/** Espera `promesa` a lo sumo PLAZO_MS; si no llega, falla por aserción diciendo qué se esperaba. */
+function enPlazo(promesa, que) {
+  let reloj
+  const vencido = new Promise((_, reject) => {
+    reloj = setTimeout(() => reject(new assert.AssertionError({ message: `no llegó en ${PLAZO_MS} ms: ${que}` })), PLAZO_MS)
+  })
+  return Promise.race([promesa, vencido]).finally(() => clearTimeout(reloj))
+}
 
 /** Lanza un hijo y lo lleva hasta "LISTO" (módulo ya importado). `resultado` resuelve con su línea JSON. */
 function lanzarHijo(puerto, etiqueta) {
-  return new Promise((resolveListo, reject) => {
+  const listo = new Promise((resolveListo, reject) => {
     const proc = spawn(process.execPath, [HIJO, puerto, etiqueta], { env: { ...process.env, REPO_OBJ: REPO, XDG_CONFIG_HOME: XDG }, stdio: ["pipe", "pipe", "inherit"] })
+    hijosVivos.add(proc)
     let buffer = ""
     let lineas = 0
     let resolverResultado
@@ -322,7 +423,7 @@ function lanzarHijo(puerto, etiqueta) {
         lineas += 1
         if (lineas === 1) {
           if (linea !== "LISTO") reject(new Error(`el hijo ${etiqueta} no dijo LISTO: ${linea}`))
-          else resolveListo({ proc, resultado, cerrado })
+          else resolveListo({ proc, etiqueta, resultado, cerrado })
         } else if (lineas === 2) resolverResultado(JSON.parse(linea))
       }
     })
@@ -331,24 +432,27 @@ function lanzarHijo(puerto, etiqueta) {
       if (lineas === 0) reject(new Error(`el hijo ${etiqueta} terminó (código ${codigo}) antes de decir LISTO`))
     })
   })
+  return enPlazo(listo, `el LISTO del hijo ${etiqueta}`)
 }
 const ordenar = (hijo, orden) => hijo.proc.stdin.write(`${orden}\n`)
 
-test("N-35: dos PROCESOS compiten por el mismo puerto — gana exactamente uno, el otro recibe PUERTO_OCUPADO con el pid del dueño", async () => {
+test("N-35: dos PROCESOS NO pueden tener a la vez el mismo puerto — gana exactamente uno, el otro recibe PUERTO_OCUPADO con el pid del dueño", async () => {
   const puerto = nuevoPuerto()
   // Los dos importan el módulo ANTES de anunciar LISTO: la carrera empieza recién con la orden.
   const [a, b] = await Promise.all([lanzarHijo(puerto, "A"), lanzarHijo(puerto, "B")])
   ordenar(a, "RESERVAR")
   ordenar(b, "RESERVAR")
-  const [ra, rb] = await Promise.all([a.resultado, b.resultado])
+  const [ra, rb] = await enPlazo(Promise.all([a.resultado, b.resultado]), "la respuesta de los dos hijos a RESERVAR")
 
+  // LA PROPIEDAD: nunca los dos. Va primera y sola, para que si se rompe sea esto lo que se lea.
+  assert.ok(!(ra.ok && rb.ok), `DOS procesos quedaron dueños del mismo puerto a la vez: ${JSON.stringify([ra, rb])}`)
   const ganadores = [ra, rb].filter((r) => r.ok)
   const perdedores = [ra, rb].filter((r) => !r.ok)
   assert.equal(ganadores.length, 1, `tenía que ganar exactamente uno: ${JSON.stringify([ra, rb])}`)
   assert.equal(perdedores.length, 1)
   assert.equal(perdedores[0].codigo, "PUERTO_OCUPADO")
   assert.match(perdedores[0].detalle, new RegExp(`pid ${ganadores[0].pid}\\b`), "el que pierde tiene que nombrar al dueño real")
-  assert.equal(puertos.duenoDelPuerto(puerto).pid, ganadores[0].pid, "el candado en disco es el del ganador")
+  assert.equal(puertos.duenoDelPuerto(puerto)?.pid, ganadores[0].pid, "el candado en disco es el del ganador")
 
   // Este proceso (un tercero) tampoco puede, mientras el ganador siga vivo y dueño.
   ocupado(puertos.reservarPuerto(puerto, "tercero"))
@@ -356,8 +460,8 @@ test("N-35: dos PROCESOS compiten por el mismo puerto — gana exactamente uno, 
   const ganador = ra.ok ? a : b
   const perdedor = ra.ok ? b : a
   ordenar(ganador, "LIBERAR")
-  assert.deepEqual(await ganador.cerrado, { codigo: 0, senal: null })
-  assert.deepEqual(await perdedor.cerrado, { codigo: 0, senal: null })
+  assert.deepEqual(await enPlazo(ganador.cerrado, "que el ganador termine tras LIBERAR"), { codigo: 0, senal: null })
+  assert.deepEqual(await enPlazo(perdedor.cerrado, "que el perdedor termine solo"), { codigo: 0, senal: null })
 
   // Liberado por su dueño: ya no hay candado y cualquiera puede reservar.
   assert.equal(existsSync(puertos.rutaCandado(puerto)), false)
@@ -370,13 +474,13 @@ test("N-53 con un proceso real: el dueño se cae sin liberar (SIGKILL), el canda
   const puerto = nuevoPuerto()
   const hijo = await lanzarHijo(puerto, "se-va-a-caer")
   ordenar(hijo, "RESERVAR")
-  const r = await hijo.resultado
+  const r = await enPlazo(hijo.resultado, "la respuesta del hijo a RESERVAR")
   assert.equal(r.ok, true)
   // Con el dueño vivo, ocupado.
   ocupado(puertos.reservarPuerto(puerto, "yo"))
 
   ordenar(hijo, "MORIR")
-  const fin = await hijo.cerrado
+  const fin = await enPlazo(hijo.cerrado, "que el hijo muera tras MORIR")
   assert.equal(fin.senal, "SIGKILL", `fixture: el hijo tenía que morir por SIGKILL, terminó con ${JSON.stringify(fin)}`)
   assert.equal(puertos.duenoDelPuerto(puerto)?.pid, r.pid, "fixture: el candado del proceso caído tiene que seguir en disco")
 
@@ -386,7 +490,7 @@ test("N-53 con un proceso real: el dueño se cae sin liberar (SIGKILL), el canda
   recuperada.liberar()
 })
 
-test("al salir el proceso con normalidad, sus candados se liberan solos (process.on exit)", async () => {
+test("al salir el proceso con normalidad, sus candados se liberan solos (process.on exit)", () => {
   const puerto = nuevoPuerto()
   // Un hijo que reserva y termina SIN llamar a liberar(): sale por process.exit(0).
   const guion = `
@@ -395,13 +499,8 @@ test("al salir el proceso con normalidad, sus candados se liberan solos (process
     console.log(JSON.stringify({ ok: r.ok }))
     process.exit(0)
   `
-  const salida = await new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, ["--input-type=module", "-e", guion], { env: { ...process.env, XDG_CONFIG_HOME: XDG }, stdio: ["ignore", "pipe", "inherit"] })
-    let texto = ""
-    proc.stdout.on("data", (d) => (texto += d))
-    proc.on("close", (codigo) => (codigo === 0 ? resolve(texto) : reject(new Error(`el hijo terminó con ${codigo}: ${texto}`))))
-    proc.on("error", reject)
-  })
-  assert.deepEqual(JSON.parse(salida.trim()), { ok: true })
+  const hijo = spawnSync(process.execPath, ["--input-type=module", "-e", guion], { env: { ...process.env, XDG_CONFIG_HOME: XDG }, encoding: "utf8", timeout: PLAZO_MS })
+  assert.equal(hijo.status, 0, `el hijo falló o no terminó en ${PLAZO_MS} ms: ${hijo.stderr}`)
+  assert.deepEqual(JSON.parse(hijo.stdout.trim()), { ok: true })
   assert.equal(existsSync(puertos.rutaCandado(puerto)), false, "el proceso salió y dejó el candado tomado")
 })

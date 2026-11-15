@@ -69,9 +69,10 @@ const propios = new Map<string, ReservaPropia>()
 let limpiezaAlSalirRegistrada = false
 function asegurarLimpiezaAlSalir(): void {
   if (limpiezaAlSalirRegistrada) return
-  limpiezaAlSalirRegistrada = true
-  // `process.on("exit")` sólo corre código síncrono: liberar lo es.
+  // `process.on("exit")` sólo corre código síncrono: liberar lo es. La marca se pone
+  // DESPUÉS de registrar: si registrar falla, la próxima reserva lo vuelve a intentar.
   process.on("exit", liberarTodosLosPuertos)
+  limpiezaAlSalirRegistrada = true
 }
 
 type Reserva = { ok: true; liberar: () => void } | { ok: false; codigo: "PUERTO_OCUPADO"; detalle: string }
@@ -121,8 +122,21 @@ export function reservarPuerto(puerto: string, dueno: string): Reserva {
   }
 
   const reserva: ReservaPropia = { contenido: resultado.contenido, dueno, liberada: false }
-  propios.set(ruta, reserva)
-  asegurarLimpiezaAlSalir()
+  // DESDE ACÁ EL CANDADO YA ESTÁ TOMADO EN DISCO. Si algo falla antes de entregarle
+  // `liberar()` a quien llama, nadie más podría soltarlo: quedaría tomado hasta que el
+  // proceso termine, y toda carga a ese puerto daría PUERTO_OCUPADO sin que haya ninguna
+  // en curso. (Es el defecto H-01 de `servicio-con-vista.ts`, que toma su candado y
+  // después construye algo que puede lanzar.) Acá se suelta en el acto y no se carga.
+  try {
+    propios.set(ruta, reserva)
+    asegurarLimpiezaAlSalir()
+  } catch (error) {
+    reserva.liberada = true
+    if (propios.get(ruta) === reserva) propios.delete(ruta)
+    liberarCandadoSiPropio(ruta, reserva.contenido)
+    const motivo = error instanceof Error ? error.message : String(error)
+    return ocupado(`tomé el candado de ${puerto} pero no pude dejarlo registrado (${motivo}): lo solté y no cargo`)
+  }
   return {
     ok: true,
     liberar() {
