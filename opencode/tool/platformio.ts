@@ -4,262 +4,49 @@ import { createHash, randomBytes } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve, win32 } from "node:path"
-
-interface RunResult {
-  code: number
-  stdout: string
-  stderr: string
-}
-
-// PlatformIO casi nunca queda en el PATH tras instalarse (ni en Linux ni en Windows).
-// Buscamos el binario en las rutas de instalación conocidas antes de caer al PATH.
-//
-// Solo se cachea una ruta REAL. La primera version cacheaba tambien el fallback
-// "pio": si el tool arrancaba sin PlatformIO, se quedaba con "pio" para siempre y
-// despues de que `reparar` lo instalara seguia sin encontrarlo (y `compile`
-// fallaba hasta reiniciar OpenCode).
-let pioPathCache: string | null = null
-
-/** Saca vacíos y repetidos preservando el orden: el primero que aparece manda. */
-const unicos = (xs: Array<string | undefined>): string[] => [
-  ...new Set(xs.filter((x): x is string => typeof x === "string" && x.trim() !== "")),
-]
-
-/**
- * TRES LUGARES DONDE BUSCAR, NO UNO — la misma lección que el lanzador aprendió
- * buscando OpenCode (`installer/abrir-tecnia-bot.cmd`) y que este comentario, en
- * plural, prometía sobre una lista de UN elemento durante meses.
- *
- * EL CASO REAL (escuela Juana Manso, 2026-09-08). La usuaria de Windows se llama
- * `Dirección310`, con `ó`, que no es ASCII. PlatformIO Core no soporta rutas con
- * caracteres no-ASCII —sus toolchains de gcc se rompen— así que en Windows, y a
- * propósito, RELOCALIZA su core_dir a la raíz del disco. El instalador oficial
- * dejó escrito en pantalla:
- *
- *     Creating a virtual environment at C:\.platformio\penv
- *     The full path to platformio.exe is C:\.platformio\penv\Scripts\platformio.exe
- *
- * Nosotros mirábamos SOLO `$HOME\.platformio` y le dijimos a una docente durante
- * TRES SEMANAS que PlatformIO no estaba instalado. Lo tenía, y andaba: `pio.exe
- * --version` contestaba «PlatformIO Core, version 6.2.0».
- *
- * Por eso esto es una LISTA ORDENADA, no una ruta:
- *   1. `PLATFORMIO_CORE_DIR` si está seteada (lo que el usuario mandó, gana)
- *   2. `$HOME\.platformio` (la instalación normal)
- *   3. la raíz del disco de $HOME (`C:\.platformio`) <- el caso de arriba
- *   4. `C:\.platformio` fijo, por si $HOME vive en otro disco
- *   5. el PATH, que lo resuelve `pioBin()`/`pioDisponible()` al final
- *
- * En cada carpeta se miran `pio.exe` Y `platformio.exe` (en Unix `pio` y
- * `platformio`): los dos suelen existir, pero el mensaje del instalador oficial
- * nombra `platformio.exe`, y no queremos depender de que exista justo el que
- * elegimos nosotros.
- *
- * La relocalización a la raíz del disco es SOLO de Windows: en Linux/macOS las
- * rutas del home no rompen a gcc y PlatformIO no mueve nada. No la inventamos.
- *
- * ACÁ NO SE PREGUNTA `--version`, Y ES A PROPÓSITO. Este código está en el camino
- * caliente del tool y ya cachea: alcanza con quedarse con el primero que EXISTE.
- * Un pio a medio armar se manifiesta igual en el primer comando de verdad, con su
- * error real. Los scripts de instalación y el diagnóstico sí le preguntan
- * `--version` al primer candidato, porque corren una sola vez y ahí ese segundo
- * de más compra la diferencia entre "está" y "anda". Si venís a "arreglar" esta
- * asimetría: es deliberada.
- *
- * Toma home/plataforma/entorno por parámetro para poder probar el caso de
- * `Dirección310` desde Linux; sin argumentos se comporta como siempre.
- */
-export function pioCandidatos(
-  home: string = homedir(),
-  plataforma: string = process.platform,
-  entorno: Record<string, string | undefined> = process.env,
-): string[] {
-  const core = entorno.PLATFORMIO_CORE_DIR
-  if (plataforma === "win32") {
-    // win32.parse("C:\\Users\\Dirección310").root === "C:\\" — y anda también
-    // corriendo bajo Linux, que es como lo prueban los tests.
-    const raiz = win32.parse(home).root
-    const dirs = unicos([core, win32.join(home, ".platformio"), raiz && win32.join(raiz, ".platformio"), "C:\\.platformio"])
-    return dirs.flatMap((d) => ["pio.exe", "platformio.exe"].map((n) => win32.join(d, "penv", "Scripts", n)))
-  }
-  const dirs = unicos([core, join(home, ".platformio")])
-  return dirs.flatMap((d) => ["pio", "platformio"].map((n) => join(d, "penv", "bin", n)))
-}
-
-export function resetPioCache(): void {
-  pioPathCache = null
-}
-
-export function pioBin(): string {
-  if (pioPathCache) return pioPathCache
-  for (const candidate of pioCandidatos()) {
-    if (existsSync(candidate)) {
-      pioPathCache = candidate
-      return candidate
-    }
-  }
-  return "pio" // fallback: confiar en el PATH del sistema (sin cachear)
-}
-
-// Resuelve de nuevo, sin cache: hay binario en las rutas conocidas o en el PATH.
-// Nunca hace existsSync("pio"): eso mira un archivo relativo al cwd, no el PATH.
-export function pioDisponible(): boolean {
-  resetPioCache()
-  // El PATH se prueba con los DOS nombres: el instalador oficial deja los dos y
-  // hubo maquinas donde el shim del PATH era `platformio` y no `pio`.
-  return (
-    pioCandidatos().some((c) => existsSync(c)) || Bun.which("pio") !== null || Bun.which("platformio") !== null
-  )
-}
+import { argvDeCargaHeredada, lanzarCarga } from "../carga/ejecutar.ts"
+import { identificar, PUERTO_WINDOWS, puertoValido } from "../carga/identidad.ts"
+import {
+  CODIGO_CANCELADO,
+  CODIGO_TIMEOUT,
+  describirDuracion,
+  pioBin,
+  pioDisponible,
+  recortarSalida,
+  run,
+  timeoutCompilarMs,
+  timeoutLargoMs,
+  traducirError,
+  type RunResult,
+} from "../carga/proceso.ts"
 
 /*
- * CUANTO SE ESPERA A CADA COMANDO, y por que dos numeros distintos.
+ * LO QUE SE MUDÓ A `opencode/carga/` (Slice 2, gate único de carga).
  *
- * La primera vez que se compila para una placa nueva, `pio run` baja el
- * toolchain entero (cientos de MB) con una barra de progreso que por el pipe no
- * se ve: minutos de silencio total. En el aula eso se leia como "se colgo", y
- * sin timeout la unica salida era cerrar OpenCode. Con 15 minutos alcanza para
- * cualquier red que anda; si no termina, se lo decimos en vez de esperar para
- * siempre. Lo mismo vale para la carga: `tool-avrdude`/`esptool` se bajan en
- * el PRIMER upload, no en el compile.
+ * El runner de procesos (`run`, los timeouts, dónde está `pio`, `traducirError`,
+ * `recortarSalida`) vive ahora en `carga/proceso.ts`, y la identificación de placas
+ * (`identificar`, `CHIPS_USB`, `puertoValido`) en `carga/identidad.ts`. Se re-exportan
+ * acá con los MISMOS nombres porque los importan `tool/programa.ts` y los tests que
+ * copian este archivo a un temporal: quien importaba de `platformio.ts` no se entera.
  *
- * Los comandos de consulta (`pio --version`, `pio device list`, PowerShell)
- * tardan segundos: si a los 60 s no contestaron, algo esta roto.
- *
- * Se puede cambiar por variable de entorno, `TECNIA_PIO_TIMEOUT_MS`: la usan los
- * tests para probar el camino del timeout sin esperar 15 minutos, y una escuela
- * con red lenta la puede subir. Un valor que no es un numero positivo ("abc",
- * "0") se ignora, como si no estuviera.
+ * La dirección de los imports es una sola: tool → carga. Nada de `carga/` importa
+ * este archivo.
  */
-const TIMEOUT_CORTO_MS = 60_000
-const TIMEOUT_LARGO_MS = 15 * 60_000
-/** Los ms que pidio `TECNIA_PIO_TIMEOUT_MS`, o null si no esta o no sirve. */
-function timeoutPedidoMs(): number | null {
-  const n = Math.floor(Number(process.env.TECNIA_PIO_TIMEOUT_MS))
-  // AbortSignal.timeout exige un entero de 32 bits con signo: con decimales o con
-  // mas de 2^31-1 tira ERR_OUT_OF_RANGE (o corta al instante) en vez de esperar.
-  return process.env.TECNIA_PIO_TIMEOUT_MS && Number.isFinite(n) && n > 0 ? Math.min(n, 2 ** 31 - 1) : null
-}
-export function timeoutLargoMs(): number {
-  return timeoutPedidoMs() ?? TIMEOUT_LARGO_MS
-}
-
-/*
- * Si las herramientas de la placa NO estan bajadas, compilar es en realidad bajar
- * mas de 1 GB. Desde 0.4.6 eso lo hace el instalador; si igual faltan, es que la
- * descarga del instalador no llego, y con la red del aula tampoco va a llegar
- * desde el bot: esperar 15 minutos para enterarse es lo que trabo a la docente
- * del taller. Se espera poco y se explica. Con buena red (en casa la descarga
- * entera tardo unos 3 minutos) puede llegar a terminar igual.
- *
- * Si `TECNIA_PIO_TIMEOUT_MS` esta, manda ELLA, tambien hacia arriba. La primera
- * version hacia `Math.min(variable, 3 min)` con faltantes: una escuela con red
- * lenta que la subia a 40 minutos para dejar terminar la descarga se quedaba
- * igual con 3, sin forma de cambiarlo. Quien setea la variable sabe lo que pide.
- * Sin la variable: 3 minutos si faltan herramientas, 15 si no.
- */
-const TIMEOUT_SIN_HERRAMIENTAS_MS = 3 * 60_000
-export function timeoutCompilarMs(faltaban: string[]): number {
-  return timeoutPedidoMs() ?? (faltaban.length > 0 ? TIMEOUT_SIN_HERRAMIENTAS_MS : TIMEOUT_LARGO_MS)
-}
-
-/** Lo que devuelve `run()` cuando el comando no termino a tiempo (mismo codigo que `timeout(1)`). */
-export const CODIGO_TIMEOUT = 124
-/** Lo que devuelve `run()` cuando el usuario corto la accion desde OpenCode (Ctrl+C: 128+SIGINT). */
-export const CODIGO_CANCELADO = 130
-
-/**
- * Una sola senal que se dispara si CUALQUIERA de las dos se dispara. Bun trae
- * `AbortSignal.any` en las versiones nuevas; si no esta, se compone a mano.
- */
-function combinarSignals(...signals: Array<AbortSignal | undefined>): AbortSignal {
-  const lista = signals.filter((s): s is AbortSignal => s !== undefined)
-  const anyFn = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any
-  if (typeof anyFn === "function") return anyFn.call(AbortSignal, lista)
-  const ctrl = new AbortController()
-  for (const s of lista) {
-    if (s.aborted) {
-      ctrl.abort(s.reason)
-      break
-    }
-    s.addEventListener("abort", () => ctrl.abort(s.reason), { once: true })
-  }
-  return ctrl.signal
-}
-
-/**
- * Corre un comando y devuelve codigo + salida, sin colgarse.
- *
- * El ORDEN importa: stdout y stderr se leen ANTES de esperar `exited`. Al reves,
- * el proceso se bloquea al llenar el buffer del pipe y el tool espera a un
- * proceso que espera al tool.
- *
- * El timeout y el `ctx.abort` de OpenCode se combinan en una sola senal: se le
- * pasa a Bun (que mata el proceso) Y se corre una carrera contra la lectura,
- * porque si el proceso ignora la senal —o quedo colgado en una descarga— los
- * pipes no se cierran nunca y `await` no vuelve.
- */
-export async function run(
-  cmd: string[],
-  cwd: string,
-  signal?: AbortSignal,
-  timeoutMs: number = TIMEOUT_CORTO_MS,
-): Promise<RunResult> {
-  // Resolvemos "pio" a la ruta real del binario (PATH-independiente)
-  if (cmd[0] === "pio") cmd = [pioBin(), ...cmd.slice(1)]
-  const porTiempo = AbortSignal.timeout(timeoutMs)
-  const corte = combinarSignals(signal, porTiempo)
-  const resultadoCorte = (): RunResult =>
-    porTiempo.aborted
-      ? {
-          code: CODIGO_TIMEOUT,
-          stdout: "",
-          stderr: `El comando no termino en ${describirDuracion(timeoutMs)} y se corto: ${cmd.join(" ")}`,
-        }
-      : { code: CODIGO_CANCELADO, stdout: "", stderr: "Cancelado por el usuario." }
-
-  if (corte.aborted) return resultadoCorte()
-
-  const lanzar = () => Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", signal: corte })
-  let proc: ReturnType<typeof lanzar>
-  try {
-    proc = lanzar()
-  } catch {
-    return { code: 127, stdout: "", stderr: "command not found" }
-  }
-
-  const lectura = (async (): Promise<RunResult> => {
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ])
-    const code = await proc.exited
-    return { code, stdout, stderr }
-  })()
-  // Nunca rechaza: si gana la carrera, el resultado se arma abajo.
-  const cortado = new Promise<"cortado">((resolve) => corte.addEventListener("abort", () => resolve("cortado"), { once: true }))
-
-  const ganador = await Promise.race([lectura, cortado])
-  if (ganador !== "cortado") return ganador
-
-  // Por si Bun no lo mato solo (o el mock de los tests no lo hace).
-  try {
-    proc.kill()
-  } catch {
-    /* ya estaba muerto */
-  }
-  // Que la lectura pendiente no quede como rechazo sin atender si el pipe revienta al matarlo.
-  lectura.catch(() => {})
-  return resultadoCorte()
-}
-
-function describirDuracion(ms: number): string {
-  if (ms >= 60_000) {
-    const min = Math.round(ms / 60_000)
-    return `${min} minuto${min === 1 ? "" : "s"}`
-  }
-  return `${Math.max(1, Math.round(ms / 1000))} segundo${ms >= 1500 ? "s" : ""}`
-}
+export {
+  CODIGO_CANCELADO,
+  CODIGO_NO_LANZADO,
+  CODIGO_TIMEOUT,
+  pioBin,
+  pioCandidatos,
+  pioDisponible,
+  recortarSalida,
+  resetPioCache,
+  run,
+  timeoutCompilarMs,
+  timeoutLargoMs,
+  traducirError,
+} from "../carga/proceso.ts"
+export { CHIPS_USB, identificar, puertoValido } from "../carga/identidad.ts"
 
 /**
  * Como se consiguen las herramientas de la placa: el camino que de verdad las BAJA.
@@ -452,87 +239,10 @@ export function herramientasFaltantes(
   }).map((h) => h.nombre)
 }
 
-/**
- * Recorta una salida larga para que llegue al modelo lo que sirve.
- *
- * POR QUE. Un `pio run` con warnings tira 3000 lineas por stderr. Todo eso iba
- * al chat, y `traducirError()` solo mira la primera linea con `error:`. El
- * modelo recibia una pared de texto para encontrar una linea.
- *
- * Que se conserva: las 15 lineas antes y despues del PRIMER `error:` (o
- * `Error`), que es donde esta el contexto del error de compilacion, y las
- * ultimas 10, que es donde PlatformIO dice como termino (`*** [upload] Error 1`,
- * `[FAILED] Took 3.21 seconds`). Lo demas se marca como omitido, con el numero,
- * para que se sepa que falta algo y cuanto.
- *
- * Es una funcion pura para poder probarla sin compilar nada. Y hay que llamar a
- * `traducirError()` con el texto COMPLETO, antes de recortar.
- */
-export function recortarSalida(texto: string, maxLineas = 40): string {
-  const lineas = texto.replace(/\r\n?/g, "\n").trimEnd().split("\n")
-  if (lineas.length <= maxLineas) return lineas.join("\n")
-
-  const CONTEXTO = 15
-  const COLA = 10
-  const n = lineas.length
-  const marcar = (omitidas: number) => `… (${omitidas} línea${omitidas === 1 ? "" : "s"} omitida${omitidas === 1 ? "" : "s"})`
-
-  const iError = lineas.findIndex((l) => /error:|Error/.test(l))
-  // Rangos [desde, hasta) a conservar, en orden, sin solaparse.
-  const rangos: Array<[number, number]> = []
-  if (iError >= 0) rangos.push([Math.max(0, iError - CONTEXTO), Math.min(n, iError + CONTEXTO + 1)])
-  else rangos.push([0, CONTEXTO])
-  const cola: [number, number] = [Math.max(0, n - COLA), n]
-  const ultimo = rangos[rangos.length - 1]!
-  if (cola[0] <= ultimo[1]) ultimo[1] = n
-  else rangos.push(cola)
-
-  const salida: string[] = []
-  let cursor = 0
-  for (const [desde, hasta] of rangos) {
-    if (desde > cursor) salida.push(marcar(desde - cursor))
-    salida.push(...lineas.slice(desde, hasta))
-    cursor = hasta
-  }
-  if (cursor < n) salida.push(marcar(n - cursor))
-  return salida.join("\n")
-}
-
 // Envuelve un valor entre comillas dobles solo si contiene espacios (o esta vacio).
 // Sirve tanto para cmd de Windows como para shells POSIX en rutas normales.
 function quoteIfNeeded(value: string): string {
   return value === "" || /\s/.test(value) ? `"${value}"` : value
-}
-
-/**
- * WHITELIST de formas REALES de puerto serie, una por plataforma — falla
- * cerrada: si `puerto` no matchea NINGUNA, se rechaza. No hay un tercer caso
- * que acepte "lo que sea".
- *
- * De donde sale cada forma (no se inventan, se leen del propio repo):
- *   - Windows `COM<n>`: es el patron que ya usa `detectPort()` para leer la
- *     salida cruda de `pio device list` cuando el JSON no parsea (mas abajo,
- *     `/COM\d+/g`), y el ejemplo que da la propia descripcion del tool
- *     ("ej: COM3").
- *   - Unix `/dev/tty(USB|ACM)<n>`: el mismo fallback, rama Linux
- *     (`/\/dev\/tty(?:USB|ACM)\d+/g`).
- *   - Unix `/dev/cu.*` y `/dev/tty.*` con sufijo de nombre de chip: lo que
- *     pyserial (la libreria que usa `pio device list`) devuelve en macOS —
- *     `cu.usbserial-14140`, `cu.SLAB_USBtoUART`, `cu.Bluetooth-Incoming-Port` —
- *     por eso el sufijo permite letras, digitos, punto, guion y guion bajo (el
- *     alfabeto real de esos nombres) y nada mas: ni `$`, ni backtick, ni `;`,
- *     ni espacio, ni comillas.
- *
- * Se aplica en las dos ramas de `monitor` donde el puerto llega a un shell
- * (mas abajo, adentro de `execute()`): macOS usa `puertoValido()` (AppleScript
- * -> shell POSIX) y Windows usa sólo `PUERTO_WINDOWS` (`cmd /c start ... cmd
- * /k`, y cmd.exe re-parsea su linea). Linux no valida: ahi el puerto va como
- * argv a la terminal, sin shell intermedio.
- */
-const PUERTO_WINDOWS = /^COM\d+$/i
-const PUERTO_UNIX = /^\/dev\/(?:tty|cu)[A-Za-z0-9._-]+$/
-export function puertoValido(puerto: string): boolean {
-  return PUERTO_WINDOWS.test(puerto) || PUERTO_UNIX.test(puerto)
 }
 
 // Lanza un proceso de forma "detached": no esperamos su salida ni bloqueamos la tool.
@@ -552,228 +262,10 @@ function launchDetached(cmd: string[], cwd: string): boolean {
   }
 }
 
-export function traducirError(stderr: string, stdout: string): string {
-  const texto = stderr + "\n" + stdout
-  type Patron = [RegExp, string | ((m: RegExpMatchArray) => string)]
-  const patrones: Patron[] = [
-    [
-      /'(.+?)' was not declared in this scope/,
-      (m) =>
-        `Usaste la variable o funcion '${m[1]}' pero no la declaraste antes. Revisa si esta bien escrita o si le falta declarar el tipo (ej: 'int ${m[1]}').`,
-    ],
-    [/expected ';' before/, "Falta un punto y coma `;` antes de esa linea. En Arduino/C++ cada instruccion termina con `;`."],
-    [
-      /fatal error:.*\.h: No such file or directory/,
-      "No se encontro el archivo de la libreria. En `platformio.ini` agregala en `lib_deps`.",
-    ],
-    [
-      /Please specify upload_port|Could not find serial port/,
-      "No pude detectar el puerto del Arduino/ESP32. Desconectalo y volvelo a conectar, o ejecuta `/diagnostico` para ver los puertos disponibles.",
-    ],
-    [
-      /command not found|is not recognized as an internal|exit code 127/,
-      "PlatformIO no esta instalado o no esta en el PATH. Ejecuta `/diagnostico` para mas informacion.",
-    ],
-    [
-      /Permission denied:.*\/dev\/tty/,
-      "Sin permiso para usar el puerto serial. En Linux agregate al grupo del puerto (el nombre cambia segun la distro): en Debian/Ubuntu `sudo usermod -a -G dialout $USER`, en Arch/Manjaro `sudo usermod -a -G uucp $USER`. Despues cerra sesion y volve a entrar.",
-    ],
-    [
-      /avrdude|not in sync|programmer is not responding/,
-      "Problema al subir el codigo al Arduino. Verifica que el cable USB este bien conectado y que no haya otro programa usando el puerto.",
-    ],
-    [
-      /Failed to connect to ESP32|Timed out waiting for packet header/,
-      "El ESP32 no respondio. Apreta el boton BOOT mientras empieza la carga, soltalo cuando aparezca 'Connecting...'.",
-    ],
-    [
-      /expected '}'|expected unqualified-id/,
-      "Falta cerrar una llave `}` o hay un bloque mal cerrado. Revisa que cada `{` tenga su `}` correspondiente.",
-    ],
-    [
-      /invalid conversion from|undefined reference to/,
-      "Problema de tipos o funcion no definida. Verifica los tipos de tus variables y que todas las funciones esten implementadas.",
-    ],
-
-    /*
-     * EL PRIMERO QUE SE CHOCA CUALQUIERA, y no estaba traducido.
-     *
-     * PlatformIO no compila un archivo suelto: quiere una carpeta con
-     * `platformio.ini` y el codigo en `src/main.cpp`. Si el docente abrio
-     * OpenCode en su escritorio y pidio codigo, `pio run` corta con este error
-     * en ingles y nadie le explica que falta armar el proyecto.
-     */
-    [
-      /Not a PlatformIO project|NotPlatformIOProjectError|platformio\.ini.*has not been found/i,
-      "**Todavia no hay un proyecto de PlatformIO en esta carpeta.** PlatformIO no compila un " +
-        "archivo suelto: necesita un `platformio.ini` que diga que placa es, y el codigo en " +
-        "`src/main.cpp`. Se arman los dos y se compila de nuevo — el `platformio.ini` cambia " +
-        "segun la placa (`board = uno` para Arduino UNO, `board = esp32dev` para ESP32).",
-    ],
-    /*
-     * LOS TRES DEL ESP32 QUE NO SON ERRORES DE COMPILACION.
-     *
-     * Salen por el monitor serial DESPUES de cargar, cuando el programa ya
-     * corre, y son los que un docente pega en el chat sin saber que significan.
-     * Ninguno de los tres estaba reconocido: el bot recibia el texto crudo y
-     * tenia que improvisar.
-     *
-     * El del brownout es el mas importante de todos: es lo que escupe la placa
-     * la primera vez que alguien le conecta un servo, o sea la semana dos o tres
-     * de cualquier curso.
-     */
-    [
-      /Brownout detector was triggered/,
-      "**Le falta corriente a la placa.** El ESP32 se apaga solo cuando la tension le baja, " +
-        "y eso pasa casi siempre al conectar un servo, un motor o un rele: el USB no da abasto. " +
-        "No es un problema del codigo. Solucion: fuente externa de 5V para el componente que " +
-        "consume, con el GND unido al de la placa. Si es un servo, calcula con el consumo de " +
-        "BLOQUEO (unos 700 mA en un SG90), no con el de movimiento libre.",
-    ],
-    [
-      /rst:0x[0-9a-f]+.*boot:0x/i,
-      "**La placa se esta reiniciando en bucle.** Ese `rst:0x...` es el motivo del reinicio que " +
-        "imprime el ESP32 al arrancar. Las dos causas mas comunes en el aula: (1) le falta " +
-        "corriente — ver si tambien aparece 'Brownout'; (2) hay algo conectado a un pin de " +
-        "arranque (GPIO0, GPIO2, GPIO12 o GPIO15) que lo deja en el nivel equivocado al " +
-        "encender. Probá desconectando todo del circuito y encendiendo la placa sola: si asi " +
-        "arranca bien, es el cableado y no el programa.",
-    ],
-    [
-      /Guru Meditation Error/,
-      "**El programa se cayo mientras corria** (no es un error de compilacion). Las causas " +
-        "tipicas: usar un puntero o un objeto que todavia no se inicializo, leer de una " +
-        "libreria que fallo en `begin()` sin chequear el resultado, o escribir fuera de un " +
-        "arreglo. Miralo asi: el mensaje aparece DESPUES de que el programa arranco, " +
-        "asi que fijate que hizo justo antes de caerse — un `Serial.print` antes de cada paso " +
-        "te dice hasta donde llego.",
-    ],
-  ]
-
-  for (const [patron, mensaje] of patrones) {
-    const match = texto.match(patron)
-    if (match) return typeof mensaje === "function" ? mensaje(match) : mensaje
-  }
-
-  const primeraLinea = texto.split("\n").find((l) => l.includes("error:")) ?? stderr.split("\n")[0] ?? ""
-  return `Error de compilacion: ${primeraLinea}\n\nConsulta el skill 'errores-comunes' para mas ayuda.`
-}
-
 interface Device {
   port: string
   hwid?: string
   description?: string
-}
-
-/**
- * Qué chip USB-serial hay del otro lado del cable, según su VID:PID.
- *
- * POR QUÉ IMPORTA ESTO EN UN AULA. Un docente conecta la placa y no pasa nada.
- * El problema casi nunca es la placa: es que Windows no trae el driver del chip
- * USB-serial que usan los clones baratos —el CH340— y sin driver no aparece
- * ningún puerto. Decirle "no encuentro tu Arduino" no lo ayuda; decirle "es un
- * CH340 y le falta el driver, bajalo de acá" lo desbloquea en dos minutos.
- *
- * Y HAY UN SEGUNDO PROBLEMA, más silencioso: `pio device list` devuelve TODOS
- * los puertos serie, no sólo las placas. En una máquina virtual aparece un COM1
- * emulado (`ACPI\PNP0501`) que no es nada — y el diagnóstico anterior lo contaba
- * como "dispositivo conectado". El docente veía todo en verde y la carga fallaba.
- *
- * Lo que NO se puede saber por el VID:PID es QUÉ PLACA es: un CH340 puede ser un
- * Arduino clon, un ESP32 o un ESP8266 — el chip serial es el mismo. Por eso
- * `placa` dice lo que se sabe y nada más, sin adivinar.
- */
-const CHIPS_USB: Array<{
-  vid: string
-  pid?: string
-  chip: string
-  placa: string
-  driverWindows?: string
-}> = [
-  {
-    vid: "1A86",
-    chip: "CH340 / CH341",
-    placa: "clon de Arduino, o un ESP32/ESP8266",
-    driverWindows: "https://www.wch-ic.com/downloads/CH341SER_EXE.html",
-  },
-  {
-    vid: "10C4",
-    pid: "EA60",
-    chip: "CP2102 (Silicon Labs)",
-    placa: "muy común en placas ESP32 DevKit",
-    driverWindows: "https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers",
-  },
-  {
-    vid: "0403",
-    chip: "FTDI",
-    placa: "Arduino Nano viejo, o una placa con FTDI",
-    driverWindows: "https://ftdichip.com/drivers/vcp-drivers/",
-  },
-  { vid: "2341", chip: "el propio de Arduino", placa: "Arduino oficial" },
-  { vid: "2A03", chip: "el propio de Arduino", placa: "Arduino (arduino.org)" },
-  { vid: "303A", chip: "USB nativo de Espressif", placa: "ESP32-S2, S3 o C3" },
-]
-
-/** Los puertos serie que NO son una placa: los trae la máquina, no el cable. */
-const NO_ES_PLACA = /ACPI\\PNP|BTHENUM|\\VIRTUAL/i
-
-/**
- * Lee el `hwid` que devuelve PlatformIO y dice qué es.
- *
- * Exportada para poder probarla con hwids reales sin tener la placa enchufada.
- */
-export function identificar(
-  hwid?: string,
-  descripcion?: string,
-): { esPlaca: boolean; chip?: string; placa?: string; driverWindows?: string; motivo?: string } {
-  const id = (hwid ?? "").toUpperCase()
-
-  if (!id) return { esPlaca: false, motivo: "el sistema no informa qué es" }
-
-  if (NO_ES_PLACA.test(id)) {
-    return {
-      esPlaca: false,
-      motivo: "es un puerto serie de la propia máquina, no una placa conectada",
-    }
-  }
-
-  /*
-   * DOS FORMATOS, y hay que aceptar los dos.
-   *
-   *   Linux / pyserial   USB VID:PID=1A86:7523 LOCATION=1-1
-   *   Windows crudo      USB\VID_1A86&PID_7523\5&1D2A3B4C&0&2
-   *
-   * El primero pone los dos números juntos después del `=`; el segundo, cada uno
-   * detrás de su etiqueta. Una regex sola no cubre los dos, y quedarse con la de
-   * Windows —que fue lo que hice primero— deja ciega a la mitad de las máquinas.
-   */
-  const junto = id.match(/VID:PID=([0-9A-F]{4}):([0-9A-F]{4})/)
-  const vid = junto?.[1] ?? id.match(/VID_([0-9A-F]{4})/)?.[1]
-  const pid = junto?.[2] ?? id.match(/PID_([0-9A-F]{4})/)?.[1]
-
-  if (!vid) {
-    return {
-      esPlaca: false,
-      motivo: "no tiene identificador USB, así que no llegó por un cable USB",
-    }
-  }
-
-  const conocido = CHIPS_USB.find((c) => c.vid === vid && (!c.pid || c.pid === pid))
-  if (conocido) {
-    return {
-      esPlaca: true,
-      chip: conocido.chip,
-      placa: conocido.placa,
-      driverWindows: conocido.driverWindows,
-    }
-  }
-
-  // USB pero de un fabricante que no está en la tabla: probablemente sirve igual.
-  return {
-    esPlaca: true,
-    chip: `USB ${vid}${pid ? ":" + pid : ""}`,
-    placa: descripcion || "no está en mi lista, pero es un dispositivo USB",
-  }
 }
 
 /**
@@ -3529,9 +3021,13 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
      */
     let compiloAntes = false
     const timeoutCarga = () => (compiloAntes ? timeoutLargoMs() : timeoutCompilarMs(faltaban))
+    // La carga NO se lanza con `run()` a secas: `run()` rechaza todo argv de carga que no
+    // traiga la capacidad privada, y el único que la tiene es `carga/ejecutar.ts`
+    // (`carga/proceso.ts`, "LA GUARDIA EN RUNTIME"). El argv es el mismo de siempre; lo
+    // arma `argvDeCargaHeredada` porque el único archivo que escribe un argv de carga es ése.
     const cargar = (puerto: string) => {
       if (!compiloAntes) avisarDescarga()
-      return run(["pio", "run", "--target", "upload", "--upload-port", puerto, ...envFlag], cwd, signal, timeoutCarga())
+      return lanzarCarga(run, argvDeCargaHeredada({ puerto, environment: args.environment }), cwd, signal, timeoutCarga())
     }
 
     /*

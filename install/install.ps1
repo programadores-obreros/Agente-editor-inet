@@ -34,7 +34,7 @@ $Src = Join-Path $RepoDir "opencode"
 
 Write-Host "==> Instalando Tecnia Bot en: $ConfigDir"
 
-foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento", "codegen")) {
+foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "carga", "conocimiento", "codegen")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir $sub) | Out-Null
 }
 
@@ -64,6 +64,11 @@ Copy-Item (Join-Path $Src "conocimiento\*") (Join-Path $ConfigDir "conocimiento\
 # Codegen MVP: backend determinista IR -> C++ (proyeccion pura), hermano de nucleo\
 # (lo importa tool\programa.ts con rutas ..\codegen\...).
 Copy-Item (Join-Path $Src "codegen\*") (Join-Path $ConfigDir "codegen\") -Recurse -Force
+# Gate de carga (Slice 2): el runner de PlatformIO, la identidad de la placa y los
+# candados en disco, hermano de nucleo\. Lo importan tool\platformio.ts (rutas
+# ..\carga\..., import ESTATICO: sin esta carpeta la tool no carga y el registry de
+# OpenCode se cae entero) y servidor\servicio-con-vista.ts (el candado del proyecto).
+Copy-Item (Join-Path $Src "carga\*") (Join-Path $ConfigDir "carga\") -Recurse -Force
 
 # Plugins + theme violeta. plugins\ trae dos cosas distintas:
 # - tecnia-logo.tsx: plugin de TUI (logo del splash), se declara en tui.json mas abajo.
@@ -88,7 +93,7 @@ $Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else {
 
 # Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
 # coincidan con las que escribe el instalador de Linux).
-$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento", "codegen")) {
+$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "carga", "conocimiento", "codegen")) {
     Get-ChildItem -Path (Join-Path $Src $sub) -Recurse -File | ForEach-Object {
         $rel = $_.FullName.Substring($Src.Length + 1) -replace '\\', '/'
         $rel

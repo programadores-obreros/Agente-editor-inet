@@ -18,7 +18,7 @@ import { test, before, after } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, chmodSync } from "node:fs"
 import { join, dirname } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import os from "node:os"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -58,6 +58,9 @@ before(async () => {
   const src = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
     .replace('/// <reference path="../env.d.ts" />', "")
     .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
+    // Slice 2 (gate de carga): platformio.ts importa de `../carga/`, que desde la copia en
+    // el temporal no existe. Se apunta al módulo REAL del repo: no se copia `carga/`.
+    .replaceAll('from "../carga/', `from "${pathToFileURL(join(REPO, "opencode/carga")).href}/`)
   writeFileSync(join(OUT, "platformio.ts"), src)
   mod = await import(join(OUT, "platformio.ts"))
 })
@@ -272,6 +275,10 @@ const LOS_SEIS = [
   ["install/bootstrap.sh", "el mismo chequeo, en Linux/macOS"],
   ["install/install.sh", "la misma puesta en el PATH, en Linux/macOS"],
   ["opencode/tool/platformio.ts", "es el que compila y carga de verdad"],
+  // La séptima (Slice 2, gate de carga): la búsqueda del binario (`pioCandidatos`,
+  // `pioBin`) se mudó de platformio.ts a carga/proceso.ts. La fila de arriba sigue
+  // valiendo por `coreDir()`, que se quedó en la tool; ésta cuida la búsqueda.
+  ["opencode/carga/proceso.ts", "es donde se busca el binario de pio para compilar y cargar"],
 ]
 
 for (const [archivo, para] of LOS_SEIS) {
@@ -311,7 +318,11 @@ for (const archivo of ["install/bootstrap.ps1", "install/diagnostico.ps1", "inst
 }
 
 test("opencode/tool/platformio.ts contempla la relocalización a la raíz del disco", () => {
-  const codigo = sinComentariosTs(leerRepo("opencode/tool/platformio.ts"))
+  // Slice 2 (gate de carga): `pioCandidatos` —la lista que trae el fallback fijo— se mudó a
+  // carga/proceso.ts y la tool la re-exporta. Se lee el tool MÁS el módulo adonde se mudó:
+  // las dos aserciones son las de siempre. (Mirando sólo platformio.ts esto se ponía rojo
+  // sin que nada estuviera mal: el texto se fue de archivo, no del producto.)
+  const codigo = sinComentariosTs(leerRepo("opencode/tool/platformio.ts")) + sinComentariosTs(leerRepo("opencode/carga/proceso.ts"))
   assert.match(codigo, /win32\.parse\(/, "el tool no calcula la raíz del disco del home en Windows")
   assert.match(codigo, /C:\\\\\.platformio/, "el tool no tiene el fallback fijo C:\\.platformio")
 })

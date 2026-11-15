@@ -31,7 +31,7 @@ import assert from "node:assert/strict"
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync, mkdtempSync, symlinkSync, chmodSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { join, dirname } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import os from "node:os"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
@@ -101,6 +101,9 @@ before(async () => {
   const src = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
     .replace('/// <reference path="../env.d.ts" />', "")
     .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
+    // Slice 2 (gate de carga): platformio.ts importa de `../carga/`, que desde la copia en
+    // el temporal no existe. Se apunta al módulo REAL del repo: no se copia `carga/`.
+    .replaceAll('from "../carga/', `from "${pathToFileURL(join(REPO, "opencode/carga")).href}/`)
   writeFileSync(join(OUT, "platformio.ts"), src)
   mod = await import(join(OUT, "platformio.ts"))
   // `agent`: flash y both cargan solo con el agente Tecnia Bot.

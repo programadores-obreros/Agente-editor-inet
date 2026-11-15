@@ -20,13 +20,13 @@ import { test, before, after, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs"
 import { join, dirname, isAbsolute } from "node:path"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import os from "node:os"
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = join(os.tmpdir(), "tecniabot-platformio-execute-test")
 const HOME_FALSO = join(OUT, "home")
-const HOME_ORIGINAL = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
+const HOME_ORIGINAL = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME }
 
 // ── Bun falso ────────────────────────────────────────────────────────────────
 //
@@ -95,6 +95,10 @@ before(async () => {
   mkdirSync(HOME_FALSO, { recursive: true })
   process.env.HOME = HOME_FALSO
   process.env.USERPROFILE = HOME_FALSO
+  // Higiene (Slice 2, ADR-001 §6): el registro de cargas prioriza XDG_CONFIG_HOME sobre
+  // HOME. Con esa variable puesta en la sesión de quien corre los tests, los `flash` de
+  // acá escribían el `tecnia-cargas.json` REAL. Se fija al temporal, como pines-codigo.
+  process.env.XDG_CONFIG_HOME = join(HOME_FALSO, ".config")
   writeFileSync(
     join(OUT, "mock-plugin.ts"),
     "const chain=new Proxy(function(){return chain},{get:()=>chain,apply:()=>chain});export const tool=(c)=>c;tool.schema=chain;",
@@ -102,6 +106,9 @@ before(async () => {
   const src = readFileSync(join(REPO, "opencode/tool/platformio.ts"), "utf8")
     .replace('/// <reference path="../env.d.ts" />', "")
     .replace('import { tool } from "@opencode-ai/plugin"', 'import { tool } from "./mock-plugin.ts"')
+    // Slice 2 (gate de carga): platformio.ts importa de `../carga/`, que desde la copia en
+    // el temporal no existe. Se apunta al módulo REAL del repo: no se copia `carga/`.
+    .replaceAll('from "../carga/', `from "${pathToFileURL(join(REPO, "opencode/carga")).href}/`)
   writeFileSync(join(OUT, "platformio.ts"), src)
   mod = await import(join(OUT, "platformio.ts"))
   // `agent`: flash y both cargan solo con el agente Tecnia Bot (0.4.8).
@@ -117,6 +124,8 @@ beforeEach(() => {
 after(() => {
   process.env.HOME = HOME_ORIGINAL.HOME
   process.env.USERPROFILE = HOME_ORIGINAL.USERPROFILE
+  if (HOME_ORIGINAL.XDG_CONFIG_HOME === undefined) delete process.env.XDG_CONFIG_HOME
+  else process.env.XDG_CONFIG_HOME = HOME_ORIGINAL.XDG_CONFIG_HOME
 })
 
 // ── compile ──────────────────────────────────────────────────────────────────
