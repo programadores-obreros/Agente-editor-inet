@@ -64,7 +64,7 @@ function listarArchivos(dir) {
  * scratchpad, docs ni tests". Devuelve la lista de infracciones (vacía si todo OK). */
 function verificarAllowlist(configDir) {
   const infracciones = []
-  for (const carpeta of ["nucleo", "servidor", "conocimiento", "codegen"]) {
+  for (const carpeta of ["nucleo", "servidor", "conocimiento", "codegen", "carga"]) {
     const base = join(configDir, carpeta)
     for (const archivo of listarArchivos(base)) {
       const rel = relative(base, archivo)
@@ -211,6 +211,14 @@ if (process.platform === "win32") {
       }
       assert.ok(existsSync(join(configDir, "tool", "programa.ts")), "falta la tool programa instalada")
       assert.ok(!existsSync(join(configDir, "tool", "codegen")), "codegen/ terminó DENTRO de tool/")
+      // Gate de carga (Slice 2): el runner, la identidad y el candado en disco viajan con la
+      // instalación, hermanos de nucleo/. tool/platformio.ts los importa de forma ESTÁTICA y
+      // servidor/servicio-con-vista.ts toma de ahí el candado del proyecto (el ciclo de vida y
+      // el candado de más abajo ya corren sobre esa copia instalada).
+      for (const modulo of ["proceso.ts", "identidad.ts", "ejecutar.ts", "candado.ts"]) {
+        assert.ok(existsSync(join(configDir, "carga", modulo)), `falta carga/${modulo} instalado`)
+      }
+      assert.ok(!existsSync(join(configDir, "tool", "carga")), "carga/ terminó DENTRO de tool/")
 
       const agenteMd = readFileSync(join(configDir, "agent", "tecnia-bot.md"), "utf8")
       assert.match(agenteMd, /vista-fisica:\s*"allow"/, 'falta el permiso vista-fisica: "allow" en el agente instalado')
@@ -366,6 +374,7 @@ if (process.platform === "win32") {
       assert.ok(!existsSync(join(configDir, "vista-fisica")), "uninstall.sh dejó vista-fisica/ instalado")
       assert.ok(!existsSync(join(configDir, "conocimiento")), "uninstall.sh dejó conocimiento/ instalado")
       assert.ok(!existsSync(join(configDir, "codegen")), "uninstall.sh dejó codegen/ instalado")
+      assert.ok(!existsSync(join(configDir, "carga")), "uninstall.sh dejó carga/ instalado")
     } finally {
       // Nunca deja el chmod 000 pisado: sin esto, rmSync de abajo no podría ni
       // listar fuenteDir/ para borrarlo.
