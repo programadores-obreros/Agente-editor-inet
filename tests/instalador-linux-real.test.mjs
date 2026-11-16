@@ -450,3 +450,58 @@ test("puerto serie: un usuario que NO está en el grupo → [FALTA] y el comando
     // Sin sudo de verdad: el instalador lo MUESTRA, no lo corre.
     assert.doesNotMatch(bloque, /\[OK\]/, bloque)
   })
+
+// ── Una key que no se pudo probar NO pisa a la que estaba guardada ───────────
+//
+// POR QUÉ EXISTE. install.sh guardaba cualquier key que Google no rechazara
+// explícitamente, incluida una que NO SE PUDO PROBAR, aunque ya hubiera una
+// guardada; no dejaba copia de la anterior, y el cierre decía «la key quedo donde
+// estaba: no se toco nada». Escenario real: escuela con la red filtrada, docente
+// con una key que anda, corre el instalador y pega una key cortada. La buena se
+// pierde y el cartel dice que no se tocó nada. install.ps1 ya lo había arreglado;
+// en Linux lo encontró quien escribía la documentación, leyendo el script para
+// contar qué hacía.
+//
+// Se ejecuta el install.sh real, con la red cortada por un proxy que rechaza la
+// conexión (la prueba termina en «no pude probarla» sin que salga un paquete), y
+// se mira auth.json en el disco, byte a byte.
+//
+// MUTACIONES que lo ponen rojo (verificadas):
+//   - `[ "$NUEVA_SIN_PROBAR" = "1" ] && [ "$TIENE_GOOGLE" = "1" ]` → `false`
+//       (vuelve a pisar la key guardada)                          → rojo el primero;
+//   - `"${KEY_NUEVA_GUARDADA_SIN_PROBAR:-0}" = "1"` → `"0" = "1"`
+//       (vuelve a decir «no se toco nada» tras guardar)           → rojo el segundo.
+const KEY_QUE_YA_ESTABA = "AIza" + "SyTEST-la-que-ya-estaba-guardada_987654321"
+
+for (const [camino, herramienta, real] of [["python3", "python3", python3], ["jq", "jq", jq]]) {
+  test(`con una key YA guardada, pegar otra sin poder probarla (camino ${camino}) NO la reemplaza`, { skip: !puedeCorrer || !real }, () => {
+    const h = nuevoHome()
+    try {
+      const { bin } = binQueAnotaArgv(h, herramienta)
+      mkdirSync(h.dataDir, { recursive: true })
+      const antes = JSON.stringify({ google: { type: "api", key: KEY_QUE_YA_ESTABA }, anthropic: { type: "api", key: "OTRA" } })
+      writeFileSync(h.authFile, antes)
+      const r = correr(INSTALL, h, { path: bin, env: SIN_RED, input: `${KEY_PEGADA}\n` })
+      assert.equal(readFileSync(h.authFile, "utf8"), antes, `auth.json cambió: la key que estaba guardada se pisó\n${r.salida}`)
+      assert.match(r.salida, /NO la reemplace/, `no avisa que no la reemplazó:\n${r.salida}`)
+      assert.doesNotMatch(r.salida, /\[OK\] Key guardada/, "dice que guardó una key que no guardó")
+      assert.doesNotMatch(r.salida, new RegExp(KEY_PEGADA), "el instalador IMPRIMIÓ la key pegada")
+      assert.doesNotMatch(r.salida, new RegExp(KEY_QUE_YA_ESTABA), "el instalador IMPRIMIÓ la key guardada")
+    } finally {
+      rmSync(h.base, { recursive: true, force: true })
+    }
+  })
+
+  test(`sin ninguna key guardada, pegar una sin poder probarla (camino ${camino}) la guarda Y LO DICE, no «no se toco nada»`, { skip: !puedeCorrer || !real }, () => {
+    const h = nuevoHome()
+    try {
+      const { bin } = binQueAnotaArgv(h, herramienta)
+      const r = correr(INSTALL, h, { path: bin, env: SIN_RED, input: `${KEY_PEGADA}\n` })
+      assert.equal(leerJson(h.authFile).google.key, KEY_PEGADA, `no quedó guardada:\n${r.salida}`)
+      assert.match(r.salida, /QUEDO GUARDADA igual, sin probar/, `no dice que la guardó sin probar:\n${r.salida}`)
+      assert.doesNotMatch(r.salida, /no se toco nada/, "dice «no se toco nada» justo después de guardar una key")
+    } finally {
+      rmSync(h.base, { recursive: true, force: true })
+    }
+  })
+}

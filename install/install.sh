@@ -641,11 +641,21 @@ elif [ -n "$GEMINI_KEY" ]; then
   # larguisimas -- y pisar con eso la key que ya estaba seria cambiarle un problema
   # por otro peor.
   #
-  # Todo lo demas SE GUARDA y se informa. "No pude probarla" NO es motivo para
-  # rechazar nada: si la red de la escuela no llega a Google, no sabemos NADA de la
-  # key, y una instalacion no puede quedarse a medias porque el proxy filtra. Y una
-  # cuota agotada es una key REAL del docente: guardarla no lo deja peor que antes,
-  # y el mensaje del final le dice exactamente que hacer.
+  # Todo lo demas SE GUARDA y se informa, con UNA excepcion (ver abajo). "No pude
+  # probarla" NO es motivo para rechazar una key cuando no habia ninguna: si la red
+  # de la escuela no llega a Google, no sabemos NADA de la key, y una instalacion no
+  # puede quedarse a medias porque el proxy filtra. Y una cuota agotada es una key
+  # REAL del docente: guardarla no lo deja peor que antes, y el mensaje del final le
+  # dice exactamente que hacer.
+  #
+  # LA EXCEPCION: SI YA HABIA UNA KEY GUARDADA Y LA NUEVA NO SE PUDO PROBAR, NO SE
+  # REEMPLAZA. Antes se reemplazaba, sin copia de la anterior, y encima el mensaje
+  # del final decia "la key quedo donde estaba: no se toco nada". Escenario real:
+  # escuela con la red filtrada, docente con una key que anda corre el instalador y
+  # pega una key cortada; no se puede probar, pisa a la buena, y el bot deja de
+  # andar con un cartel que dice que no se toco nada. De la key guardada tampoco
+  # sabemos si anda, pero es la que estaba en uso: cambiar algo que quiza funciona
+  # por algo de lo que no sabemos nada no es una mejora. install.ps1 hace lo mismo.
   #
   # (Aca esta la unica diferencia deliberada con probarClave() de clave.ts: alla la
   # prueba ademas DECIDE si guardar, porque alla hay una conversacion donde ofrecer
@@ -653,7 +663,15 @@ elif [ -n "$GEMINI_KEY" ]; then
   # CLASIFICACION es identica; lo que cambia es que se hace con ella.)
   echo "  [i] Probando la key contra Google (hasta ${TIMEOUT_PRUEBA_KEY}s)..."
   PRUEBA_NUEVA="$(probar_key_google "$GEMINI_KEY" | head -n 1 || true)"
-  if [ "${PRUEBA_NUEVA%%|*}" = "invalida" ]; then
+  # "No se pudo probar" es todo lo que NO es uno de los cuatro veredictos de Google.
+  NUEVA_SIN_PROBAR=1
+  case "${PRUEBA_NUEVA%%|*}" in anda|cuota|invalida|modeloIdo) NUEVA_SIN_PROBAR=0 ;; esac
+  if [ "$NUEVA_SIN_PROBAR" = "1" ] && [ "$TIENE_GOOGLE" = "1" ]; then
+    echo "  [!] No pude probar esa key contra Google (${PRUEBA_NUEVA#*|})."
+    echo "      Como ya habia una key guardada, NO la reemplace: quedo la que estaba, sin tocar."
+    echo "      Suele ser la red (sin internet, o el filtro de la escuela bloqueando a Google)."
+    echo "      Cuando haya conexion, volve a correr este instalador y pegala de nuevo."
+  elif [ "${PRUEBA_NUEVA%%|*}" = "invalida" ]; then
     echo "  [X] Probe esa key contra Google y la RECHAZO: no es una key valida, asi que no la guarde."
     echo "      Fijate de copiarla entera (son largas y a veces se corta al copiar), o saca una nueva"
     echo "      en https://aistudio.google.com/apikey y volve a correr este instalador."
@@ -672,6 +690,7 @@ elif [ -n "$GEMINI_KEY" ]; then
         # key que no quedo en la compu, y contarla como la de la key guardada seria
         # informar el resultado de otra credencial.
         PRUEBA_KEY="$PRUEBA_NUEVA"
+        [ "$NUEVA_SIN_PROBAR" = "1" ] && KEY_NUEVA_GUARDADA_SIN_PROBAR=1
         echo "  [OK] Key guardada en esta compu (la relei de $AUTH_FILE)."
         ;;
       5)
@@ -762,8 +781,16 @@ if [ "$TIENE_GOOGLE" = "1" ]; then
     *)
       echo "    NO pude probar la key contra Google ($DETALLE_KEY), asi que NO se si anda."
       echo "    Suele ser la red: sin internet, o el filtro de la escuela bloqueando a Google."
-      echo "    La instalacion siguio igual y la key quedo donde estaba: no se toco nada."
-      echo "    Si al primer mensaje ves un error, escribi /clave adentro de Tecnia Bot para probarla de nuevo."
+      # Este cierre decia siempre "la key quedo donde estaba: no se toco nada",
+      # tambien cuando la key se acababa de guardar en esta misma corrida. Se dice lo
+      # que paso de verdad.
+      if [ "${KEY_NUEVA_GUARDADA_SIN_PROBAR:-0}" = "1" ]; then
+        echo "    Como no habia ninguna key guardada, la que pegaste QUEDO GUARDADA igual, sin probar."
+      else
+        echo "    La instalacion siguio igual y la key guardada quedo donde estaba: no se toco nada."
+      fi
+      echo "    Si al primer mensaje ves un error, volve a correr este instalador cuando haya conexion"
+      echo "    (o escribi /clave adentro de Tecnia Bot, si el bot llega a contestar)."
       ;;
   esac
 else
