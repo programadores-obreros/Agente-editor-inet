@@ -167,3 +167,67 @@ test("actualizar: lee la salida ANTES de esperar que termine (si no, se traba co
     globalThis.Bun.spawn = SPAWN_ORIGINAL
   }
 })
+
+// ── «Actualizado CON AVISOS»: ni éxito ni fracaso ────────────────────────────
+//
+// install/update.sh sale con 3 cuando la capa se copió pero install.sh no pudo
+// dejar escrita la config de OpenCode (tests/instalador-linux-real.test.mjs mide
+// eso con el script real). Antes ese caso llegaba acá con código 0: la tool decía
+// «¡Actualizado!» y mostraba los últimos 400 caracteres, donde el aviso ya no
+// estaba. Acá se mira lo que la tool HACE con ese código; el proceso es el doble
+// de siempre de este archivo.
+//
+// MUTACIÓN que lo pone rojo: borrar la rama `if (code === CODIGO_CON_AVISOS)`
+// de actualizar.ts (contesta «No pude actualizar (código 3)»).
+test("actualizar: con el código 3 dice CON AVISOS y muestra la lista entera, no «Actualizado» ni «no pude»", { skip: process.platform === "win32" }, async () => {
+  setInstaladaConRepo("0.1.0")
+  const relleno = "linea de la instalacion que no importa\n".repeat(40) // más de 400 caracteres antes del aviso
+  const lista = "==> Tecnia Bot v0.1.0 instalado CON AVISOS. Falta:\n    - /home/docente/.config/opencode/opencode.json quedo SIN el agente por defecto\n"
+  const cola = "\n==> Tecnia Bot actualizado CON AVISOS: los archivos nuevos se copiaron, pero el\n" + "x".repeat(380) + "\n"
+  const flujo = (texto) => new ReadableStream({ start(c) { c.enqueue(enc.encode(texto)); c.close() } })
+  globalThis.Bun.spawn = () => ({ exited: Promise.resolve(3), stdout: flujo(relleno + lista + cola), stderr: flujo("  [AVISO] No pude parsear opencode.json: lo dejo intacto.\n") })
+  try {
+    const r = await mod.execute({ verificar: false }, {})
+    assert.match(r, /CON AVISOS/, "no dice que terminó con avisos")
+    assert.ok(r.includes("opencode.json quedo SIN el agente por defecto"), `la lista de lo que falta se perdió por el camino:\n${r}`)
+    assert.match(r, /No pude parsear opencode\.json/, "lo que el instalador dijo por stderr se perdió")
+    assert.doesNotMatch(r, /¡Actualizado!|Ya estabas al día/, "lo cuenta como un éxito limpio")
+    assert.doesNotMatch(r, /No pude actualizar/, "lo cuenta como un fracaso: la versión SÍ cambió")
+    assert.match(r, /SOLO la version de Tecnia Bot/, "perdió el aviso de alcance")
+  } finally {
+    globalThis.Bun.spawn = SPAWN_ORIGINAL
+  }
+})
+
+// ── El mismo contrato en Windows ─────────────────────────────────────────────
+//
+// install.ps1 y update.ps1 pasaron a salir con 3 en el mismo caso que los .sh.
+// La rama de arriba nació con `&& !win` porque en ese momento sólo Linux tenía el
+// contrato; integradas las dos plataformas, dejarlo así hacía que un 3 de
+// update.ps1 se contara como «No pude actualizar (código 3)» con la versión ya
+// cambiada. Acá se mira la tool con `process.platform` puesto en win32: lo único
+// que cambia es el comando que arma, y el proceso es el doble de siempre.
+//
+// MUTACIÓN que lo pone rojo: volver a poner `&& !win` en esa rama.
+test("actualizar: el código 3 de update.ps1 también es CON AVISOS (Windows)", async () => {
+  setInstaladaConRepo("0.1.0")
+  const flujo = (texto) => new ReadableStream({ start(c) { c.enqueue(enc.encode(texto)); c.close() } })
+  const original = Object.getOwnPropertyDescriptor(process, "platform")
+  let comando = null
+  Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+  globalThis.Bun.spawn = (cmd) => {
+    comando = cmd
+    return { exited: Promise.resolve(3), stdout: flujo("==> Tecnia Bot v0.1.0 instalado CON AVISOS. Falta:\n    - opencode.json quedo SIN el agente por defecto\n"), stderr: flujo("") }
+  }
+  try {
+    const r = await mod.execute({ verificar: false }, {})
+    assert.ok(comando && comando.join(" ").includes("update.ps1"), `no armó el comando de Windows: ${comando}`)
+    assert.match(r, /CON AVISOS/, "en Windows no dice que terminó con avisos")
+    assert.ok(r.includes("opencode.json quedo SIN el agente por defecto"), `la lista de lo que falta se perdió:\n${r}`)
+    assert.doesNotMatch(r, /No pude actualizar/, "lo cuenta como un fracaso: la versión SÍ cambió")
+    assert.doesNotMatch(r, /¡Actualizado!|Ya estabas al día/, "lo cuenta como un éxito limpio")
+  } finally {
+    globalThis.Bun.spawn = SPAWN_ORIGINAL
+    Object.defineProperty(process, "platform", original)
+  }
+})

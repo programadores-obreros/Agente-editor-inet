@@ -4,6 +4,53 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.9] — 2026-11-16
+
+**El instalador ya no dice "listo" si no lo comprobó — en Windows y en Linux. Se probó en una máquina virtual y en las pruebas automáticas; todavía no en un aula: qué sí y qué no está dicho abajo, con el mismo tamaño de letra.**
+
+### Corregido
+
+- **Windows: la última pantalla del instalador dice cómo quedó de verdad.** Antes decía "¡Tecnia Bot quedó instalado!" siempre, aunque por detrás no se hubiera instalado nada: en una notebook real la instalación murió a los 2,4 segundos y la pantalla salió en verde igual. Ahora hay tres finales: **quedó instalado**, **quedó instalado pero incompleto** (el bot abre y falta algo: PlatformIO, Node, la versión probada de OpenCode o parte de la configuración) y **NO quedó instalado**. En los dos últimos la salida es la misma y no hace falta volver a bajar nada: menú inicio → **"Reparar Tecnia Bot"**. Si la instalación falló, ya no ofrece la casilla "Abrir Tecnia Bot ahora".
+- **Windows: si una descarga está bloqueada, la instalación sigue con el resto.** Antes una descarga que fallaba podía cortar todo antes de llegar a Tecnia Bot. Ahora instala lo que puede (la única sin la que no puede seguir es Scoop, y lo dice) y cierra con un resumen, una línea por cosa (OpenCode, PlatformIO, Node, Tecnia Bot), que dice qué **comprobó** que anda.
+- **Windows: "Reparar Tecnia Bot" es la salida ante casi todo, y los carteles lo dicen.** Los avisos de que falta algo, de una instalación que se cortó a la mitad o de una key de Google que no sirve mandaban a "volver a correr el instalador" o a escribir `/clave` adentro del bot — y con la key muerta el bot no contesta, así que `/clave` tampoco. Ahora todos mandan a Reparar.
+- **Windows: una key que no se pudo probar ya no pisa a la que estaba guardada.** Con la red de la escuela filtrada, pegar mal una key nueva borraba la que andaba, y encima el instalador decía "no se tocó nada". Ahora, si no puede llegar a Google y ya había una key, deja la que estaba y lo dice.
+- **Windows: usuarios con tilde o ñ.** En una cuenta llamada `Dirección` o `Muñoz`, cada "Reparar" agregaba a la configuración una copia rota de dos rutas. Ahora lee la configuración bien y saca las copias que dejaron las versiones anteriores.
+- **Windows: el desinstalador avisa si no pudo borrar, y dice todo lo que deja.** Si elegías borrar los datos personales (perfil, memoria del aula, key) y el borrado fallaba —lo típico: Tecnia Bot abierto—, no avisaba: te ibas convencido de que los datos de los alumnos ya no estaban. Ahora vuelve a mirar el disco y, si algo quedó, un cartel dice **qué archivos siguen en la compu y dónde**. Borra los datos personales aunque la instalación estuviera a medias. Y ya no borra a ciegas la carpeta del programa: saca lo suyo, y si adentro hay algo que no puso el instalador (un proyecto guardado ahí por error) no lo toca y te avisa.
+- **Windows: los proyectos se guardan en tu carpeta Documentos de verdad.** Si Windows la tiene en OneDrive, ahí. Antes podía crear una carpeta "Documents" suelta, y el docente abría Documentos y sus proyectos no estaban. Si Tecnia Bot no puede entrar a la carpeta de proyectos, no abre y lo explica, para que nada termine adentro de la carpeta del programa.
+- **Windows y Linux: `/actualizar` reemplaza la copia en vez de copiar encima.** Antes los archivos que una versión nueva eliminaba quedaban en la compu para siempre. Ahora la copia queda igual a la versión publicada, y si algo falla a la mitad vuelve atrás y te dice si quedó como estaba. Si actualizó pero no pudo escribir parte de la configuración, dice **"actualizado CON AVISOS"** en vez de "actualizado".
+- **Linux: el instalador instala Tecnia Bot aunque falle una dependencia.** Sin `curl` o sin `python3` cortaba antes de llegar a Tecnia Bot, y en otros casos terminaba con "¡Todo listo!" sin OpenCode instalado. Ahora instala lo que puede y cierra con el mismo tipo de resumen que Windows; "¡Todo listo!" sale sólo si comprobó las tres cosas.
+- **Linux: no dice "instalado" si no pudo escribir la configuración.** Dice **"instalado CON AVISOS"** y lista qué falta, al final, que es lo que queda a la vista.
+- **Linux: no se instala con `sudo`.** Corrido con `sudo` (lo que sale por reflejo) instalaba para otro usuario o dejaba archivos que después no se podían actualizar ni borrar. Ahora se niega, explica por qué y no toca nada.
+- **Linux: la key de Google queda mejor guardada.** Ya no pasa por la línea de comandos, donde otro usuario de la misma compu podía verla, y los archivos con el perfil, la memoria y la key nacen legibles sólo por su dueño.
+- **El reporte de "Diagnostico de Tecnia Bot" tapa las credenciales y avisa qué datos lleva** (tu usuario de Windows, el nombre de la compu, rutas de carpetas), para que lo leas antes de mandarlo. No lleva tu API key.
+
+### Agregado
+
+- **Linux: el instalador mira el permiso del puerto de la placa.** Sin ese permiso, cargar el programa falla con "Permission denied" en plena clase. Antes había que averiguar a mano a qué grupo sumarse; ahora el instalador lo revisa y escribe **el comando exacto para tu compu** (no lo corre: hace falta tu contraseña).
+- **Linux: actualizar en una red que bloquea GitHub.** `install/update.sh` puede tomar la versión nueva de un servidor de la escuela o de un pendrive (`TECNIA_UPDATE_ESPEJO`), con las mismas verificaciones.
+- **Para quien instala en muchas máquinas: códigos de salida.** El `.exe` en modo silencioso termina con `0` (bien), `21` (instalado pero incompleto) o `20` (no quedó usable); antes devolvía `0` siempre. Los de cada script están en [`docs/codigos-de-salida-instalador.md`](docs/codigos-de-salida-instalador.md).
+- **Guía de macOS, que dice la verdad** ([`docs/instalacion-macos.md`](docs/instalacion-macos.md)): qué hace falta, cómo instalar y, sobre todo, qué no está probado.
+
+### Documentación
+
+- **macOS deja de figurar como plataforma probada.** El README lo listaba a la par de Windows y Linux, y Tecnia Bot nunca se instaló en una Mac. Ahora dice "sin probar".
+- Las guías de [Windows](docs/instalacion-windows.md) y [Linux](docs/instalacion-linux.md) cuentan el instalador que hay: qué instala de verdad (también Python y Node, que no figuraban), cuándo pide la key (cada vez que se corre a mano, no "una sola vez"), y cómo desinstalar y qué queda en la compu.
+- La guía de Chromebook mandaba a correr un script que no instala OpenCode ni PlatformIO. Corregido.
+
+### Lo que NO se probó
+
+Esto va con la misma claridad que lo de arriba, porque un "arreglado" que nadie vio andar es una promesa, no un hecho:
+
+- **En Windows se probó en la máquina virtual, no en un aula.** El 15 de noviembre de 2026, en Windows 10 Pro 22H2 con un usuario sin permisos de administrador y el `.exe` compilado ahí: actualizar encima de la 0.4.7, las tres pantallas finales (bien, incompleto y "NO quedó instalado"), una instalación con la descarga de PlatformIO bloqueada, desinstalar eligiendo "No" y eligiendo "Sí" (con "Sí" se fueron la carpeta del programa, el perfil, la memoria y la key), reinstalar, el lanzador con una instalación cortada y con Documentos en una carpeta de red, el actualizador contra el release publicado (un archivo que el release no trae desapareció de la copia y de la configuración), el guardado de la key con Google inalcanzable, y la configuración en una carpeta con tilde. **No se probó:** una notebook de aula con la red de una escuela, `/actualizar` escrito adentro del bot (se probó el script que lanza), un procesador sin AVX2, ni cargar código a una placa. Antes de recomendarla en un aula hay que correr [`docs/prueba-rc.md`](docs/prueba-rc.md) en una notebook real.
+- **En Linux se probó en las pruebas automáticas, no a mano.** En un Ubuntu de GitHub, el instalador bajó e instaló OpenCode y PlatformIO de verdad y se verificó en el disco lo que dejó; y sin `curl` ni `wget`, instaló Tecnia Bot igual y lo avisó. **No se probó:** una instalación hecha por una persona en su computadora, otra distribución (Debian, Mint, Fedora, Manjaro), con `sudo` real, ni el chequeo del puerto **con una placa conectada**.
+- **macOS: sólo la prueba automática.** El 16 de noviembre de 2026 el instalador corrió por primera vez en una Mac (la de GitHub: macOS 26.7.2, procesador Apple, con Xcode y Python ya instalados) y pasó: instalar la capa, bajar OpenCode y PlatformIO, desinstalar. Ninguna persona lo instaló en una Mac real, ni en una sin herramientas de desarrollo, ni con procesador Intel; tampoco se abrió el bot ni se cargó a una placa.
+- **Chromebook: nada**, igual que antes.
+
+### Interno
+
+- `.gitattributes` nuevo: fija los finales de línea, y el lanzador de Windows viaja en CRLF lo compile quien lo compile. Antes dependía de la máquina que armaba el `.exe`.
+- Documentos de operación puestos al día con el código: `prueba-rc.md`, `prueba-desinstalador-vm.md`, `rollback.md`, `publicar-release.md`, `decisiones.md` (D-03), `key-de-google.md`.
+
 ## [0.4.8] — 2026-10-24
 
 **Antes de cargar un circuito nuevo, el docente confirma el checklist en un cartel, y el bot revisa los pines del código.**

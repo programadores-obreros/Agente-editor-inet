@@ -60,7 +60,11 @@ test("verifican el VERSION descargado contra el tag ANTES de copiar", () => {
   // llamada), y la llamada viene antes de la copia sobre la instalación.
   const casos = [
     ["install/update.ps1", "Verificar-Version", /Copy-Item[^\n]*\$RepoDir/],
-    ["install/update.sh", "verificar_version", /cp -rf[^\n]*\$REPO_DIR/],
+    // update.sh ya no copia encima con `cp -rf` (no borraba lo que el release
+    // eliminó): reemplaza con reemplazar_copia_maestra. Lo que se custodia es lo
+    // mismo: la verificación va ANTES de tocar la copia instalada. Se busca la
+    // LLAMADA (con su argumento), no la definición de la función.
+    ["install/update.sh", "verificar_version", /reemplazar_copia_maestra "\$extracted"/],
   ]
   for (const [r, marca, copia] of casos) {
     const codigo = SCRIPTS[r]

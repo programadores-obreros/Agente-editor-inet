@@ -768,14 +768,33 @@ test("en modo silencioso el instalador no espera 60s a nadie", () => {
     return hasta === -1 ? resto : resto.slice(0, hasta)
   }
 
+  // ESTA PARTE MIRABA LA FORMA VIEJA, y se actualizo cuando el bootstrap se mudo.
+  // Buscaba en [Run] una linea con `bootstrap.ps1` y `{code:BanderaSilencio}`. Esa
+  // entrada ya no existe: una entrada de [Run] espera al proceso pero no mira su
+  // codigo de salida, y el instalador mostraba "quedo instalado" aunque el
+  // bootstrap hubiera fallado. Ahora lo lanza [Code] con Exec (CorrerElBootstrap).
+  // Lo que se quiere medir es lo mismo: que LA linea que lanza el bootstrap lleve
+  // la bandera. Y se agrega lo que la mudanza volvio posible romper: que el
+  // bootstrap no quede lanzado desde los DOS lados (correria dos veces).
   const enRun = seccion("Run")
     .split("\n")
-    .filter((l) => l.includes("bootstrap.ps1") && l.includes("Parameters:"))
-  assert.equal(enRun.length, 1, "esperaba exactamente una linea en [Run] que lance bootstrap.ps1")
+    .filter((l) => !/^\s*;/.test(l) && l.includes("bootstrap.ps1"))
+  assert.deepEqual(enRun, [], "[Run] volvio a lanzar bootstrap.ps1: ahora lo lanza [Code], correria dos veces")
+
+  // [Code] sin sus comentarios Pascal: explican la mudanza nombrando el script.
+  // Se recorta desde el ENCABEZADO real (a principio de linea): `seccion("Code")`
+  // usa indexOf y encuentra antes un "[Code]" citado en un comentario de otra
+  // seccion. Y se busca la RUTA del script: los Log() del .iss tambien lo nombran.
+  const enCode = iss
+    .slice(iss.search(/^\[Code\]\s*$/m))
+    .replace(/\{[^}]*\}/g, "")
+    .split("\n")
+    .filter((l) => l.includes("\\install\\bootstrap.ps1"))
+  assert.equal(enCode.length, 1, "esperaba exactamente una linea de [Code] que arme el lanzamiento de bootstrap.ps1")
   assert.match(
-    enRun[0],
-    /\{code:BanderaSilencio\}/,
-    "la linea de [Run] que lanza bootstrap.ps1 no usa {code:BanderaSilencio}: la funcion existe y no la llama nadie",
+    enCode[0],
+    /bootstrap\.ps1'\)\s*\+\s*'"'\s*\+\s*BanderaSilencio\(''\)/,
+    "la linea de [Code] que lanza bootstrap.ps1 no le pega BanderaSilencio: la funcion existe y no la llama nadie",
   )
 
   const enIcons = seccion("Icons")
@@ -936,13 +955,19 @@ test("en la máquina SIN key (Big Pickle) el chequeo no toca la red: cuesta cero
   }
 })
 
-test("«no se pudo probar» NO genera aviso: sólo hay tres bloques que imprimen", () => {
+test("«no se pudo probar» NO genera aviso: sólo hay cuatro bloques que imprimen", () => {
+  // ERAN TRES, Y ESTE TEST LO DECÍA A FUEGO (`rangos.length === 3`). Se sumó el
+  // cuarto a propósito: «el agente está en Gemini y no hay NINGUNA key guardada».
+  // Es el único caso en que se sabe SIN TOCAR LA RED que el primer mensaje va a
+  // fallar, y antes se callaba. No contradice la regla de abajo: «no se pudo
+  // probar» sigue sin imprimir nada, y con un auth.json ilegible (no se sabe si
+  // hay key) tampoco se dice nada. Lo custodia tests/aviso-key-muerta.test.mjs.
   // Sin red, con timeout o con el filtro de la escuela cortando, no sabemos si la
   // key sirve. Molestar con un aviso inútil en CADA arranque de una máquina sin
   // internet es peor que callarse — y decir «anda» sería peor todavía.
   //
   // Se verifica por POSICIÓN y sobre el TOTAL: cada Write-Host del archivo tiene
-  // que caer adentro de uno de los tres bloques de aviso. Si alguien agrega un
+  // que caer adentro de uno de los cuatro bloques de aviso. Si alguien agrega un
   // `if ($resultado -eq "sinProbar") { Write-Host ... }`, o un Write-Host suelto
   // de depuración, este test se pone rojo. Contar los bloques y nada más dejaría
   // pasar exactamente eso.
@@ -950,15 +975,16 @@ test("«no se pudo probar» NO genera aviso: sólo hay tres bloques que imprimen
     rangoChequeo('if ($resultado -eq "cuota") {'),
     rangoChequeo('if ($resultado -eq "invalida") {'),
     rangoChequeo('if ($resultado -eq "modeloIdo") {'),
+    rangoChequeo('if ($resultado -eq "sinKey") {'),
   ]
-  assert.equal(rangos.length, 3, "cambió la cantidad de bloques que avisan")
+  assert.equal(rangos.length, 4, "cambió la cantidad de bloques que avisan")
 
   const salidas = [...chequeoCodigo.matchAll(/^[ \t]*Write-Host\b.*$/gm)]
   assert.ok(salidas.length > 20, `esperaba muchos Write-Host en chequear-clave.ps1 y encontré ${salidas.length}: ¿cambió el estilo?`)
   const huerfanos = salidas
     .filter((m) => !rangos.some(([d, h]) => m.index >= d && m.index < h))
     .map((m) => m[0].trim())
-  assert.deepEqual(huerfanos, [], "hay Write-Host fuera de los tres bloques de aviso:\n" + huerfanos.join("\n"))
+  assert.deepEqual(huerfanos, [], "hay Write-Host fuera de los cuatro bloques de aviso:\n" + huerfanos.join("\n"))
 
   // Y que no aparezca un bloque para el cajón: es lo que hay que NO hacer.
   assert.doesNotMatch(chequeoCodigo, /\$resultado -eq "sinProbar"/, "hay una rama que reacciona a «no pude probarla»: eso es un aviso inútil en cada arranque sin internet")

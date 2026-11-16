@@ -1,0 +1,37 @@
+# Finales de linea: los mismos bytes en cualquier maquina que compile.
+#
+# POR QUE EXISTE. Sin este archivo, lo que viajaba adentro del .exe dependia del
+# `core.autocrlf` de quien compilaba. Medido el 2026-11-15 en la VM win10:
+#   - el .exe publicado v0.4.8 (compilado en el runner de GitHub) trae
+#     abrir-tecnia-bot.cmd con CR=309 LF=309 y bootstrap.ps1 en CRLF;
+#   - el mismo lanzador instalado en la VM (compilado desde la carpeta compartida
+#     de Linux) tenia CR=0.
+# O sea: cada validacion en la VM se hizo sobre un archivo distinto al que
+# recibian los docentes. No rompio nada que se sepa, y por eso nadie lo vio.
+#
+# Regla: todo texto se guarda y se saca en LF, salvo lo que ejecuta Windows.
+* text=auto eol=lf
+
+# cmd.exe tiene defectos conocidos con archivos en LF: `goto` y `call :etiqueta`
+# pueden no encontrar la etiqueta segun como caiga en sus bloques de lectura.
+# CRLF es ademas lo que se publico siempre. Es el unico tipo de archivo donde el
+# fin de linea cambia el comportamiento.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Los .ps1 van en LF, que es lo que se valido siempre en la VM. A PowerShell le da
+# lo mismo; a los tests de este repo no: leen estos scripts como texto y sus
+# expresiones cuentan con "\n". (Se probo ponerlos en CRLF: 16 tests rojos, ninguno
+# por un defecto del producto.) Lo publicado hasta la 0.4.8 los llevaba en CRLF
+# porque el runner de GitHub convertia todo; desde aca viajan como se prueban.
+*.ps1 text eol=lf
+
+# bash no perdona un CR.
+*.sh text eol=lf
+
+# Las fichas se verifican contra MANIFEST.sha256: un cambio de fin de linea les
+# cambia el hash. LF fijo, igual que estan guardadas.
+opencode/skills/fichas/hojas/*.html text eol=lf
+
+# Licencia de terceros guardada tal cual vino (con CRLF): no se toca.
+opencode/tecniabot-web/LICENSE-wokwi-elements -text

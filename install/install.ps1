@@ -4,6 +4,20 @@
 #
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
+#
+# CODIGOS DE SALIDA. Es un contrato: lo leen install\bootstrap.ps1,
+# install\update.ps1 y, a traves de ese, opencode\tool\actualizar.ts.
+#   0  la capa quedo instalada y la config de OpenCode quedo escrita
+#   1  la instalacion se corto por un error (la capa puede haber quedado a medias)
+#   3  instalado CON AVISOS: los archivos de la capa se copiaron, pero algo de la
+#      configuracion NO se pudo dejar como corresponde (tui.json u opencode.json
+#      que no se pudieron leer y se dejaron intactos, el archivo de credenciales
+#      ilegible, una key que no se pudo guardar). El cierre lista que falta.
+# Antes el caso 3 salia por 0 con un "Listo! Tecnia Bot instalado": con
+# opencode.json roto el agente por defecto y el modelo NO quedaban escritos, y
+# nadie se enteraba. El 3 es el mismo numero que usa uninstall.ps1 para "termino,
+# pero parcial". NO cubre las dependencias (OpenCode, PlatformIO): esas las
+# verifica bootstrap.ps1, y un "[FALTA]" de mas abajo no cambia este codigo.
 
 $ErrorActionPreference = "Stop"
 
@@ -19,6 +33,8 @@ if ($env:TECNIA_LOG_INSTALACION) {
     try { Start-Transcript -Path $env:TECNIA_LOG_INSTALACION -Append | Out-Null; $TranscriptPropio = $true } catch { }
 }
 $FalloInstalacion = $false
+# Lo que la instalacion quiso hacer y no pudo dejar comprobado (codigo 3).
+$AvisosInstalacion = New-Object System.Collections.ArrayList
 try {
 
 # Directorio de config global de OpenCode en Windows (respeta XDG si esta seteado)
@@ -64,7 +80,7 @@ Copy-Item (Join-Path $Src "tecniabot-web\*") $WebDir -Recurse -Force
 # Habilita actualizar limpio (borra huerfanos) y desinstalar sin tocar lo del usuario.
 $Manifest = Join-Path $ConfigDir "tecnia-bot.manifest"
 $VerFile = Join-Path $RepoDir "VERSION"
-$Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else { "0.0.0" }
+$Version = if (Test-Path $VerFile) { ("" + (Get-Content $VerFile -Raw)).Trim() } else { "0.0.0" }
 
 # Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
 # coincidan con las que escribe el instalador de Linux).
@@ -78,7 +94,15 @@ $Nuevos = $Nuevos | Sort-Object
 
 # Borrar huerfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
 if (Test-Path $Manifest) {
-    $NuevosSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$Nuevos)
+    # SIN DISTINGUIR MAYUSCULAS, como NTFS. Con el conjunto sensible a mayusculas
+    # que habia, un archivo renombrado SOLO de mayusculas entre dos versiones
+    # (tool\Foo.ts -> tool\foo.ts) no "estaba" en lo nuevo: se lo tomaba por huerfano
+    # y el Remove-Item de abajo borraba el archivo RECIEN COPIADO, porque en Windows
+    # los dos nombres son el mismo archivo. Se arma vacio con el comparador y se
+    # llena a mano: asi el constructor que se elige no depende de como PowerShell
+    # resuelva una sobrecarga.
+    $NuevosSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($nuevo in @($Nuevos)) { [void]$NuevosSet.Add([string]$nuevo) }
     Get-Content $Manifest | ForEach-Object {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith("#") -and -not $line.StartsWith("version=") -and -not $line.StartsWith("repo_dir=")) {
@@ -184,6 +208,48 @@ function Test-KeyVieja($k) {
     return ((Get-Sha256Hex ([string]$k)) -eq $HashKeyVieja)
 }
 
+# ---- Leer un archivo de texto como UTF-8, SIEMPRE ----------------------------
+#
+# EL CASO REAL: la usuaria `Direccion310`, con `o` acentuada (el mismo perfil que
+# mudo a PlatformIO a la raiz del disco, ver mas abajo). Este script ESCRIBE sus
+# JSON en UTF-8 sin BOM, y adentro de opencode.json mete rutas absolutas del perfil
+# (las dos de "instructions"). Pero los LEIA con `Get-Content -Raw` sin -Encoding, y
+# Windows PowerShell 5.1 lee un archivo sin BOM con la codepage ANSI de la maquina,
+# no como UTF-8: la `o` acentuada (dos bytes) volvia como dos letras raras.
+#
+# Entonces, en la SEGUNDA corrida (Reparar, /actualizar): la ruta leida ya no era
+# igual a $PerfilFile, `-notcontains` daba verdadero, se agregaba la ruta OTRA VEZ,
+# y la rota se reescribia en UTF-8 -doblemente codificada-. Cada corrida sumaba dos
+# rutas a archivos que no existen y le rompia al docente cualquier otro texto con
+# tilde que tuviera en su config. En una maquina con usuario ASCII no pasaba nada,
+# y por eso no se vio en la VM.
+#
+# Se lee con la MISMA codificacion con la que se escribe. ReadAllText con una
+# codificacion explicita ademas saca el BOM si lo hay, igual que hacia Get-Content.
+# TIRA si no puede leer (archivo tomado, sin permiso): quien llama decide que
+# significa eso, y nunca significa "el archivo esta vacio".
+function Leer-TextoUtf8($ruta) {
+    return [System.IO.File]::ReadAllText($ruta, (New-Object System.Text.UTF8Encoding $false))
+}
+
+# Las formas en que el bug de arriba dejo escrita una ruta: la ruta pasada N veces
+# por "escribir en UTF-8 y leer como ANSI". Sirve para reconocer SOLO la basura que
+# este mismo script genero a partir de SUS dos rutas -- no para adivinar que otra
+# cosa del docente esta mal codificada. Una ruta ASCII no tiene variantes.
+function Get-VariantesMalLeidas($ruta) {
+    $variantes = @()
+    $ansi = [System.Text.Encoding]::Default
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $actual = [string]$ruta
+    for ($vuelta = 0; $vuelta -lt 8; $vuelta++) {
+        $siguiente = $ansi.GetString($utf8.GetBytes($actual))
+        if ($siguiente -ceq $actual) { break }
+        $variantes += $siguiente
+        $actual = $siguiente
+    }
+    return $variantes
+}
+
 # ---- Leer una key del teclado, con timeout -----------------------------------
 #
 # Esta mecanica ya estaba resuelta y esta puesta en una funcion para que la usen
@@ -216,7 +282,12 @@ function Leer-KeyConTimeout($segundos) {
                 elseif ($charInfo.Key -eq "Backspace") {
                     if ($key.Length -gt 0) { $key = $key.Substring(0, $key.Length - 1) }
                 } else {
-                    $key += $charInfo.KeyChar
+                    # SOLO lo que se puede tipear. Las flechas, Inicio, Fin, Supr y
+                    # F1..F12 tambien llegan por ReadKey, con KeyChar en el caracter
+                    # nulo: antes se pegaban a la key tal cual. Una flecha apretada
+                    # por error mientras se pegaba dejaba una key con un nulo
+                    # adentro, que no se ve en ningun lado y que Google rechaza.
+                    if (-not [char]::IsControl($charInfo.KeyChar)) { $key += $charInfo.KeyChar }
                 }
             } else {
                 Start-Sleep -Milliseconds 100
@@ -228,9 +299,31 @@ function Leer-KeyConTimeout($segundos) {
         if (-not $key) { $key = "" }
         $recibioAlgo = $true
     }
+    # Lo mismo para lo que llega por un pipe: se sacan los caracteres de control
+    # (un \r suelto de un archivo de Windows, un tab) antes de sacar los blancos.
     $limpia = ""
-    if ($key) { $limpia = ([string]$key).Trim() }
+    if ($key) { $limpia = ([regex]::Replace([string]$key, '[\x00-\x1F\x7F]', '')).Trim() }
     return @{ key = $limpia; respondio = [bool]$recibioAlgo }
+}
+
+# ---- La forma minima de una key, ANTES de gastar una prueba en ella -----------
+#
+# NO es un formato de Google: clave.ts no valida ninguno (le saca los blancos de
+# las puntas, exige que no quede vacia y se la manda a Google, que es el unico que
+# sabe). Aca se mira lo unico que se puede afirmar sin inventar nada: la key viaja
+# en el header x-goog-api-key, y por ahi solo pasan caracteres ASCII visibles. Algo
+# con un espacio en el medio (dos cosas pegadas juntas) o con una letra con tilde
+# (se pego un renglon de un apunte, no la key) no puede ser una key.
+#
+# Hace falta ACA y no en clave.ts por una diferencia de conducta: con un caracter
+# que no entra en un header el pedido ni sale, eso se clasifica "no pude probarla",
+# y este script -a diferencia de clave.ts- a veces GUARDA lo que no pudo probar.
+# Sin este chequeo, un renglon cualquiera pegado por error quedaba guardado como
+# key. Con el, lo que no puede viajar en el header no se prueba ni se guarda: el
+# mismo final que en clave.ts.
+function Test-FormaDeKey($k) {
+    if (-not $k) { return $false }
+    return ([string]$k -cmatch '^[\x21-\x7E]+$')
 }
 
 # ---- Probar la key CONTRA GOOGLE ---------------------------------------------
@@ -405,22 +498,100 @@ if (Test-Path $AuthFile) {
     }
 }
 
-$authData = $null
-if (Test-Path $AuthFile) {
-    try { $authData = Get-Content $AuthFile -Raw | ConvertFrom-Json } catch { $authData = $null }
+# ---- Leer, escribir y RELEER el archivo de credenciales ----------------------
+#
+# Tres cosas que opencode\tool\clave.ts ya hacia y este script no. Aca se alinean:
+#
+# 1. "NO SE PUDO LEER" NO ES "ESTA VACIO". Antes un auth.json que no parseaba se
+#    trataba como un objeto vacio, y al guardar la key de Google se escribia ESE
+#    objeto: las credenciales de los otros servicios que el docente hubiera
+#    conectado con /connect desaparecian sin aviso. Ahora hay tres estados
+#    (no-existe / ilegible / ok, los mismos de leerJson() en clave.ts) y con
+#    "ilegible" el archivo NO SE TOCA.
+#
+# 2. ESCRITURA ATOMICA. WriteAllText directo sobre el archivo lo trunca y lo va
+#    llenando: si la notebook se apaga en el medio queda a medias, y NINGUNA
+#    credencial funciona. Se escribe en un temporal EN LA MISMA CARPETA (un rename
+#    entre discos distintos no es atomico) y se reemplaza de una.
+#
+# 3. RELEER ANTES DE DECIR "[OK]". Un disco lleno, un permiso denegado o un
+#    antivirus que revierte el archivo son cosas que pasan en las compus de
+#    escuela. El "[OK] Key guardada" sale solo si, al volver a leer el archivo, la
+#    key que hay adentro es la que se quiso guardar.
+function Leer-AuthJson($ruta) {
+    if (-not (Test-Path -LiteralPath $ruta)) { return @{ estado = "no-existe"; datos = $null } }
+    $texto = $null
+    try { $texto = Leer-TextoUtf8 $ruta } catch { return @{ estado = "ilegible"; datos = $null } }
+    if (-not $texto -or -not $texto.Trim()) { return @{ estado = "no-existe"; datos = $null } }
+    $objeto = $null
+    try { $objeto = $texto | ConvertFrom-Json } catch { return @{ estado = "ilegible"; datos = $null } }
+    # Un JSON valido que no es un objeto (una lista, un texto, null) tampoco sirve.
+    if (-not ($objeto -is [PSCustomObject])) { return @{ estado = "ilegible"; datos = $null } }
+    return @{ estado = "ok"; datos = $objeto }
 }
-if (-not $authData) { $authData = [PSCustomObject]@{} }
 
-$tieneGoogle = [bool](($authData.PSObject.Properties.Name -contains "google") -and $authData.google.key)
+# La key de Google de un auth.json ya leido, o "" si no hay. NUNCA se imprime.
+function Get-KeyDeAuth($datos) {
+    if ($null -eq $datos) { return "" }
+    if (($datos.PSObject.Properties.Name -contains "google") -and $datos.google -and $datos.google.key) {
+        return [string]$datos.google.key
+    }
+    return ""
+}
+
+# Escribe texto en UTF-8 SIN BOM (OpenCode lee con JSON.parse, que revienta con
+# BOM) y de forma atomica. TIRA si no pudo; el temporal no queda tirado.
+# [NullString]::Value y no $null: PowerShell convierte $null en "" al pasarlo a un
+# parametro string de .NET, y File.Replace con "" como archivo de respaldo falla.
+function Escribir-TextoAtomico($ruta, $texto) {
+    $temporal = $ruta + "." + $PID + ".tmp"
+    try {
+        [System.IO.File]::WriteAllText($temporal, $texto, (New-Object System.Text.UTF8Encoding $false))
+        if (Test-Path -LiteralPath $ruta) {
+            [System.IO.File]::Replace($temporal, $ruta, [NullString]::Value)
+        } else {
+            [System.IO.File]::Move($temporal, $ruta)
+        }
+    } catch {
+        try { if (Test-Path -LiteralPath $temporal) { Remove-Item -LiteralPath $temporal -Force -ErrorAction SilentlyContinue } } catch { }
+        throw
+    }
+}
+
+$lecturaAuth = Leer-AuthJson $AuthFile
+$AuthIlegible = ($lecturaAuth.estado -eq "ilegible")
+$authData = $lecturaAuth.datos
+if (-not $authData) { $authData = [PSCustomObject]@{} }
+if ($AuthIlegible) {
+    Write-Host ""
+    Write-Host "  [AVISO] No pude leer el archivo de credenciales ($AuthFile): no es un JSON valido, o esta tomado."
+    Write-Host "          NO LO TOCO, para no pisar lo que tengas guardado ahi de otros servicios."
+    Write-Host "          Por eso en esta corrida no se puede guardar ni cambiar la key de Google."
+    Write-Host "          Corre 'Diagnostico de Tecnia Bot' desde el menu inicio: dice si tiene BOM o por que"
+    Write-Host "          no parsea, sin mostrar ninguna clave."
+}
+
+$tieneGoogle = [bool](Get-KeyDeAuth $authData)
 
 # Purga de la key compartida vieja (ver arriba): auth.json y variable de usuario.
 $purgada = $false
+$PurgaFallida = $false
 if ($tieneGoogle -and (Test-KeyVieja $authData.google.key)) {
     $authData.PSObject.Properties.Remove("google")
-    # Se reescribe SIN BOM y preservando los otros providers que tenga el archivo.
-    [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+    # Se reescribe SIN BOM, atomico y preservando los otros providers que tenga el
+    # archivo. Y se RELEE: "se quito" se dice solo si al releer ya no esta.
+    try { Escribir-TextoAtomico $AuthFile ($authData | ConvertTo-Json -Depth 10) } catch { }
+    $trasPurga = Leer-AuthJson $AuthFile
+    # Esa key esta muerta en todas las maquinas: quede o no en el archivo, NO cuenta
+    # como "hay key" para elegir el modelo.
     $tieneGoogle = $false
-    $purgada = $true
+    if (($trasPurga.estado -ne "ilegible") -and -not (Test-KeyVieja (Get-KeyDeAuth $trasPurga.datos))) {
+        $purgada = $true
+    } else {
+        $PurgaFallida = $true
+        Write-Host "  [AVISO] En $AuthFile esta la key de respaldo compartida de versiones anteriores (ya no es valida)"
+        Write-Host "          y NO pude sacarla: la relei y sigue ahi. Tecnia Bot queda en el modelo gratuito."
+    }
 }
 $envKeyActual = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
 if (Test-KeyVieja $envKeyActual) {
@@ -465,6 +636,17 @@ if ($purgada) {
 $keyFinal = ""
 $pruebaKey = $null
 $preguntar = $true
+# $true SOLO si en esta corrida se guardo una key nueva sin haber podido probarla.
+$GuardadaSinProbar = $false
+# Lo que se quiso hacer con la key y no se pudo comprobar.
+$KeyNoGuardada = $false
+$VariableDesfasada = $false
+
+if ($AuthIlegible) {
+    # Sin poder leer auth.json no hay donde guardar la key sin arriesgar las otras
+    # credenciales: preguntarla seria pedir algo que despues no se puede cumplir.
+    $preguntar = $false
+}
 
 if ($env:TECNIA_SIN_PROMPT) {
     # TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para
@@ -525,55 +707,137 @@ if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
         Write-Host "      (seguimos sin key por ahora)."
     }
 } elseif ($keyFinal) {
-    # PROBAR ANTES DE GUARDAR, y guardar igual salvo un caso.
+    # PROBAR ANTES DE GUARDAR. Y DOS CASOS EN LOS QUE NO SE GUARDA.
     #
-    # Lo UNICO que impide guardar es que Google la RECHACE explicitamente (400/403
-    # / API_KEY_INVALID): eso casi siempre es una key cortada al copiar -- son
-    # larguisimas -- y pisar con eso la key que ya estaba seria cambiarle un
-    # problema por otro peor.
+    # 1. Google la RECHAZA explicitamente (400/403 / API_KEY_INVALID): casi siempre
+    #    es una key cortada al copiar -- son larguisimas -- y pisar con eso la key
+    #    que ya estaba seria cambiarle un problema por otro peor.
     #
-    # Todo lo demas SE GUARDA y se informa. "No pude probarla" NO es motivo para
-    # rechazar nada: si la red de la escuela no llega a Google, no sabemos NADA de
-    # la key, y una instalacion no puede quedarse a medias porque el proxy filtra.
-    # Y una cuota agotada es una key REAL de la docente: guardarla no la deja peor
-    # que antes, y el mensaje de abajo le dice exactamente que hacer.
+    # 2. NO SE PUDO PROBAR y YA HABIA UNA KEY GUARDADA. Este caso faltaba, y era un
+    #    agujero: antes "no pude probarla" se guardaba SIEMPRE. En una escuela con
+    #    la red filtrada, una key mal pegada pisaba -sin copia- la key que andaba, y
+    #    mas abajo se imprimia "la key quedo donde estaba: no se toco nada", que era
+    #    falso. Si no llegamos a Google no sabemos nada de la key NUEVA; de la VIEJA
+    #    por lo menos sabemos que alguna vez sirvio. No se cambia lo conocido por lo
+    #    desconocido. Es lo que hace clave.ts: sin poder probar, no toca nada.
     #
-    # (Aca esta la unica diferencia deliberada con probarClave() de clave.ts: alla
-    # la prueba ademas DECIDE si guardar, porque alla hay una conversacion donde
-    # ofrecer Big Pickle y volver a pedir la key. Aca, muchas veces, no hay nadie.
-    # La CLASIFICACION es identica; lo que cambia es que con ella se hace.)
-    Write-Host "  [i] Probando la key contra Google (hasta $TimeoutPruebaKey s)..."
-    $pruebaNueva = Probar-KeyGoogle $keyFinal
-    $rechazada = ($pruebaNueva.resultado -eq "invalida")
-    if ($rechazada) {
-        Write-Host "  [X] Probe esa key contra Google y la RECHAZO: no es una key valida, asi que no la guarde."
-        Write-Host "      Fijate de copiarla entera (son largas y a veces se corta al copiar), o saca una nueva"
-        Write-Host "      en https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+    # Y UN CASO EN EL QUE SE GUARDA SIN HABER PODIDO PROBAR: cuando NO habia
+    # ninguna key. Ahi no hay nada que perder (lo peor que pasa es lo mismo que sin
+    # key: hay que pegar otra), y una instalacion no puede dejar sin Gemini a un
+    # aula entera porque el proxy filtra justo en ese momento. Es lo mismo que hace
+    # install.sh, y es la unica diferencia deliberada con clave.ts: alla hay una
+    # conversacion donde volver a pedir la key; aca, muchas veces, no hay nadie.
+    # Pero se DICE que quedo guardada sin probar -- ver el cajon de mas abajo.
+    #
+    # Una cuota agotada o un modelo retirado NO frenan el guardado: en los dos casos
+    # Google contesto, la key es real, y el mensaje de abajo dice que hacer.
+    #
+    # (La CLASIFICACION es identica a probarClave() de clave.ts; lo que cambia es
+    # que se hace con ella.)
+    $formaValida = Test-FormaDeKey $keyFinal
+    if (-not $formaValida) {
+        Write-Host "  [X] Eso que pegaste no tiene forma de key: trae espacios en el medio, o letras con tilde u otros"
+        Write-Host "      caracteres que una key no lleva. No la probe ni la guarde."
+        Write-Host "      Copiala de nuevo, entera y sola, desde https://aistudio.google.com/apikey"
+        Write-Host "      y volve a correr 'Reparar Tecnia Bot'."
         if ($tieneGoogle) {
             Write-Host "      Quedo la key que ya estaba guardada: no se piso nada."
         }
+        if (-not $tieneGoogle) {
+            Write-Host "      (seguimos sin key por ahora)."
+        }
     }
-    if (-not $rechazada) {
-        $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
-        # SIN BOM, y esto es un bloqueante que estuvo silencioso.
-        #
-        # `Set-Content -Encoding UTF8` en PowerShell 5.1 -- el que trae Windows 10 --
-        # escribe UTF-8 CON BOM. OpenCode lee este archivo con JSON.parse, que revienta
-        # con BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
-        #
-        # El docente ve la instalacion perfecta, el bot abre con su logo y su agente, y
-        # al primer mensaje: error de proveedor. Cero pistas.
-        #
-        # Este archivo era el unico que quedaba mal: las otras cuatro escrituras de
-        # este script ya usan WriteAllText por exactamente esta razon, y lo dicen en
-        # sus comentarios. Se sabia, y justo el de las credenciales quedo afuera.
-        [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
-        [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
-        $tieneGoogle = $true
-        # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
-        # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
-        $pruebaKey = $pruebaNueva
-        Write-Host "  [OK] Key guardada en esta compu."
+    if ($formaValida) {
+        Write-Host "  [i] Probando la key contra Google (hasta $TimeoutPruebaKey s)..."
+        $pruebaNueva = Probar-KeyGoogle $keyFinal
+        $rechazada = ($pruebaNueva.resultado -eq "invalida")
+        # Se calcula ACA, con el $tieneGoogle de ANTES de guardar nada.
+        $sinProbarConOtraGuardada = ($tieneGoogle -and ($pruebaNueva.resultado -eq "sinProbar"))
+        if ($rechazada) {
+            Write-Host "  [X] Probe esa key contra Google y la RECHAZO: no es una key valida, asi que no la guarde."
+            Write-Host "      Fijate de copiarla entera (son largas y a veces se corta al copiar), o saca una nueva"
+            Write-Host "      en https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+            if ($tieneGoogle) {
+                Write-Host "      Quedo la key que ya estaba guardada: no se piso nada."
+            }
+        }
+        if ($sinProbarConOtraGuardada) {
+            $porQueNoSePudo = [string]$pruebaNueva.detalle
+            Write-Host "  [!] NO pude probar contra Google la key que pegaste ($porQueNoSePudo), asi que NO se si anda."
+            Write-Host "      Como ya habia una key guardada, NO la reemplace: quedo la que estaba, sin tocar."
+            Write-Host "      (Si la nueva estuviera mal copiada, pisar la otra te dejaba sin ninguna que ande.)"
+            Write-Host "      Suele ser la red: sin internet, o el filtro de la escuela bloqueando a Google."
+            Write-Host "      Cuando haya red, volve a correr 'Reparar Tecnia Bot' y pegala de nuevo."
+        }
+        if (-not $rechazada -and -not $sinProbarConOtraGuardada) {
+            # ESCRIBIR, RELEER, Y RECIEN DESPUES DECIR "[OK]" (ver Leer-AuthJson).
+            #
+            # Se parte de lo que hay AHORA en el disco, no de lo que se leyo al
+            # arrancar: entre una cosa y la otra pasaron hasta 60 s de espera y una
+            # prueba contra Google. Y se arma en un objeto aparte ($candidato):
+            # $authData -que mas abajo decide el modelo- no cambia hasta que la
+            # relectura confirme que la key quedo.
+            $guardadaVerificada = $false
+            $porQueNoGuardo = ""
+            $enDisco = Leer-AuthJson $AuthFile
+            if ($enDisco.estado -eq "ilegible") {
+                $porQueNoGuardo = "el archivo de credenciales no se puede leer (no es un JSON valido, o esta tomado) y no lo piso"
+            }
+            if ($enDisco.estado -ne "ilegible") {
+                $candidato = $enDisco.datos
+                if (-not $candidato) { $candidato = [PSCustomObject]@{} }
+                $candidato | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
+                # SIN BOM: `Set-Content -Encoding UTF8` en PowerShell 5.1 escribe UTF-8
+                # CON BOM, OpenCode lee este archivo con JSON.parse, que revienta con
+                # BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
+                # Escribir-TextoAtomico escribe sin BOM, igual que el WriteAllText de
+                # las otras escrituras de este script.
+                try {
+                    Escribir-TextoAtomico $AuthFile ($candidato | ConvertTo-Json -Depth 10)
+                } catch {
+                    $porQueNoGuardo = "no pude escribir el archivo de credenciales (" + $_.Exception.GetType().Name + ")"
+                }
+                $releido = Leer-AuthJson $AuthFile
+                if (($releido.estado -eq "ok") -and ((Get-KeyDeAuth $releido.datos) -ceq $keyFinal)) {
+                    $guardadaVerificada = $true
+                    $authData = $releido.datos
+                }
+                if (-not $guardadaVerificada -and -not $porQueNoGuardo) {
+                    $porQueNoGuardo = "escribi el archivo de credenciales pero al releerlo la key no estaba"
+                }
+            }
+            if ($guardadaVerificada) {
+                # La variable de usuario LE GANA a auth.json: si queda con una key
+                # vieja, la nueva no se usa. Tambien se relee.
+                try { [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User") } catch { }
+                $enVariable = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
+                $tieneGoogle = $true
+                # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
+                # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
+                $pruebaKey = $pruebaNueva
+                # Si se guardo SIN haber podido probarla (no habia otra), el cajon de
+                # "no pude probarla" de mas abajo tiene que decir eso, y no "no se toco nada".
+                if ($pruebaNueva.resultado -eq "sinProbar") { $GuardadaSinProbar = $true }
+                Write-Host "  [OK] Key guardada en esta compu (relei el archivo y esta)."
+                if ([string]$enVariable -cne [string]$keyFinal) {
+                    $VariableDesfasada = $true
+                    Write-Host "  [AVISO] No pude actualizar la variable de usuario GOOGLE_GENERATIVE_AI_API_KEY."
+                    Write-Host "          Si adentro quedo una key anterior, esa LE GANA a la que acabo de guardar."
+                    Write-Host "          Revisala en Panel de control > Sistema > Variables de entorno."
+                }
+            }
+            if (-not $guardadaVerificada) {
+                $KeyNoGuardada = $true
+                Write-Host "  [X] NO pude guardar la key: $porQueNoGuardo."
+                Write-Host "      No des por hecho que quedo guardada: no quedo."
+                if ($tieneGoogle) {
+                    Write-Host "      Sigue la key que ya estaba."
+                }
+                if (-not $tieneGoogle) {
+                    Write-Host "      Seguimos sin key de Google."
+                }
+            }
+        }
     }
 } else {
     # Enter, timeout, consola sin nadie, o TECNIA_SIN_PROMPT. NO SE TOCA NADA: ni
@@ -596,7 +860,7 @@ if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
 # la que se quedo sin cuota el 8 de septiembre. Sin esto, Reparar seguiria
 # terminando con un "quedo todo bien" sobre una credencial muerta.
 $keyEfectiva = ""
-if ($tieneGoogle) { $keyEfectiva = [string]$authData.google.key }
+if ($tieneGoogle) { $keyEfectiva = Get-KeyDeAuth $authData }
 if ($tieneGoogle -and $null -eq $pruebaKey) {
     Write-Host "  [i] Probando la key guardada contra Google (hasta $TimeoutPruebaKey s)..."
     $pruebaKey = Probar-KeyGoogle $keyEfectiva
@@ -628,25 +892,44 @@ if ($tieneGoogle) {
         Write-Host "    Tecnia Bot va a fallar al primer mensaje. Lo que mas confunde: la cuota gratuita de Google"
         Write-Host "    es por PROYECTO, no por key -- una key nueva del MISMO proyecto da el mismo error."
         Write-Host "    Saca una de OTRO proyecto (o de otra cuenta) en https://aistudio.google.com/apikey"
-        Write-Host "    y pegala con /clave adentro de Tecnia Bot, o volve a correr 'Reparar Tecnia Bot'."
-        Write-Host "    Si necesitas seguir trabajando ya mismo, /clave tambien te pasa al modelo gratuito Big Pickle."
+        Write-Host "    y volve a correr 'Reparar Tecnia Bot' desde el menu inicio: te la pide y la prueba."
+        Write-Host "    /clave adentro de Tecnia Bot tambien la cambia, y te deja pasar al modelo gratuito Big Pickle,"
+        Write-Host "    PERO lo atiende el mismo modelo que se quedo sin cuota: mientras el bot no conteste, usa Reparar."
     }
     if ($resultadoKey -eq "invalida") {
         Write-Host "    OJO: probe la key guardada y Google la RECHAZO: no sirve."
-        Write-Host "    Escribi /clave adentro de Tecnia Bot para pegar una nueva, o saca una en"
-        Write-Host "    https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+        Write-Host "    Saca una nueva en https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'"
+        Write-Host "    desde el menu inicio: te la pide y la prueba."
+        Write-Host "    /clave adentro de Tecnia Bot hace lo mismo, PERO lo atiende el modelo que usa esta misma key:"
+        Write-Host "    mientras la key no sirva el bot no contesta, asi que usa Reparar."
     }
+    # El actualizador vive al lado de este script; se nombra en el aviso de abajo.
+    $ActualizadorManual = Join-Path $PSScriptRoot "update.ps1"
     if ($resultadoKey -eq "modeloIdo") {
         Write-Host "    OJO: la key esta bien -- el que no esta es el MODELO. Google dice que $ModeloApi ya no"
         Write-Host "    esta disponible; pasa cuando retiran o renombran un modelo."
         Write-Host "    NO es tu computadora, NO es tu key y NO es la red: no hay key nueva que lo arregle."
-        Write-Host "    Hace falta una version de Tecnia Bot que apunte a un modelo vigente: escribi /actualizar."
+        Write-Host "    Hace falta una version de Tecnia Bot que apunte a un modelo vigente."
+        Write-Host "    /actualizar adentro del bot es lo que la trae, PERO lo atiende ese mismo modelo: si el bot no"
+        Write-Host "    contesta, /actualizar tampoco. Y 'Reparar Tecnia Bot' NO alcanza: reinstala la version que ya"
+        Write-Host "    tenes. Sin depender del bot: baja el instalador nuevo y correlo encima, o corre a mano"
+        Write-Host "    powershell -NoProfile -ExecutionPolicy Bypass -File `"$ActualizadorManual`""
     }
     if ($resultadoKey -ne "anda" -and $resultadoKey -ne "cuota" -and $resultadoKey -ne "invalida" -and $resultadoKey -ne "modeloIdo") {
         Write-Host "    NO pude probar la key contra Google ($detalleKey), asi que NO se si anda."
         Write-Host "    Suele ser la red: sin internet, o el filtro de la escuela bloqueando a Google."
-        Write-Host "    La instalacion siguio igual y la key quedo donde estaba: no se toco nada."
-        Write-Host "    Si al primer mensaje ves un error, escribi /clave adentro de Tecnia Bot para probarla de nuevo."
+        # LO QUE PASO CON LA KEY, dicho segun lo que de verdad paso. Antes aca decia
+        # siempre "la key quedo donde estaba: no se toco nada", tambien cuando unas
+        # lineas mas arriba se acababa de GUARDAR una key nueva sin poder probarla.
+        if ($GuardadaSinProbar) {
+            Write-Host "    Como no habia ninguna key guardada, la que pegaste QUEDO GUARDADA igual, sin probar."
+            Write-Host "    Si estaba bien copiada va a andar en cuanto haya red; si no, Tecnia Bot va a fallar al"
+            Write-Host "    primer mensaje: ahi volve a correr 'Reparar Tecnia Bot' y pegala de nuevo."
+        }
+        if (-not $GuardadaSinProbar) {
+            Write-Host "    La instalacion siguio igual y la key guardada quedo donde estaba: no se toco nada."
+            Write-Host "    Si al primer mensaje ves un error, volve a correr 'Reparar Tecnia Bot' cuando haya red."
+        }
     }
 } else {
     $ModeloElegido = $ModeloSinKey
@@ -721,9 +1004,11 @@ function Remove-JsonComments($text) {
 }
 
 # Lee un JSON/JSONC existente como PSCustomObject. Devuelve $null si no se pudo.
+# Como UTF-8, no con Get-Content: ver Leer-TextoUtf8 mas arriba.
 function Read-JsonObject($path) {
     if (-not (Test-Path $path)) { return $null }
-    $raw = Get-Content $path -Raw -ErrorAction SilentlyContinue
+    $raw = $null
+    try { $raw = Leer-TextoUtf8 $path } catch { return $null }
     if (-not $raw -or -not $raw.Trim()) { return $null }
     try { return ($raw | ConvertFrom-Json) } catch { }
     try { return ((Remove-JsonComments $raw) | ConvertFrom-Json) } catch { return $null }
@@ -731,9 +1016,13 @@ function Read-JsonObject($path) {
 
 # True si el archivo existe y tiene contenido (para distinguir "vacio/ausente" de
 # "existe pero no se pudo parsear" y NO pisar la config del usuario en ese caso).
+# Un archivo que existe y NO SE PUDO LEER (tomado, sin permiso) cuenta como "tiene
+# contenido": antes ese error se tragaba, el archivo pasaba por vacio y se lo
+# reescribia desde cero, pisando la config del docente sin haberla visto.
 function Test-HasContent($path) {
     if (-not (Test-Path $path)) { return $false }
-    $raw = Get-Content $path -Raw -ErrorAction SilentlyContinue
+    $raw = $null
+    try { $raw = Leer-TextoUtf8 $path } catch { return $true }
     return [bool]($raw -and $raw.Trim())
 }
 
@@ -741,7 +1030,8 @@ function Test-HasContent($path) {
 $tuiHasContent = Test-HasContent $TuiJson
 $tui = Read-JsonObject $TuiJson
 if ($tuiHasContent -and $null -eq $tui) {
-    Write-Host "  [AVISO] No pude parsear ${TuiJson}: lo dejo intacto."
+    [void]$AvisosInstalacion.Add("el theme y el logo de Tecnia Bot: no pude leer $TuiJson como JSON y lo deje intacto")
+    Write-Host "  [AVISO] No pude leer ${TuiJson} como JSON: lo dejo intacto."
     Write-Host "          Agregale a mano `"theme`": `"$TecniaTheme`" y el plugin `"$TecniaPlugin`"."
 } else {
     if (-not $tui) { $tui = [PSCustomObject]@{} }
@@ -773,7 +1063,8 @@ if ($tuiHasContent -and $null -eq $tui) {
 $ocHasContent = Test-HasContent $OpencodeJson
 $oc = Read-JsonObject $OpencodeJson
 if ($ocHasContent -and $null -eq $oc) {
-    Write-Host "  [AVISO] No pude parsear ${OpencodeJson}: lo dejo intacto."
+    [void]$AvisosInstalacion.Add("el agente por defecto y el modelo ($ModeloElegido): no pude leer $OpencodeJson como JSON y lo deje intacto")
+    Write-Host "  [AVISO] No pude leer ${OpencodeJson} como JSON: lo dejo intacto."
     Write-Host "          Agregale a mano `"default_agent`": `"$TecniaAgent`", `"autoupdate`": false y el modelo del agente:"
     Write-Host "          `"agent`": { `"$TecniaAgent`": { `"model`": `"$ModeloElegido`" } }"
 } else {
@@ -849,6 +1140,29 @@ if ($ocHasContent -and $null -eq $oc) {
     if (($oc.PSObject.Properties.Name -contains "instructions") -and $null -ne $oc.instructions) {
         $instrucciones = @($oc.instructions)
     }
+    # CURAR LO QUE DEJO EL BUG DE LA CODIFICACION (ver Leer-TextoUtf8): las copias
+    # mal codificadas de NUESTRAS dos rutas que las corridas anteriores fueron
+    # sumando. Se saca una entrada SOLO si se cumplen las dos cosas: es
+    # exactamente una de las formas rotas de la ruta del perfil o de la memoria, y
+    # no existe ningun archivo con ese nombre. Cualquier otra entrada del docente
+    # -aunque este mal codificada- no se toca: no hay forma segura de saber cual
+    # era el texto original, y borrar una instruccion suya es peor que dejarla.
+    $rotas = @(Get-VariantesMalLeidas $PerfilFile) + @(Get-VariantesMalLeidas $MemoriaFile)
+    if ($rotas.Count -gt 0 -and $instrucciones.Count -gt 0) {
+        $sanas = @()
+        $sacadas = 0
+        foreach ($entrada in $instrucciones) {
+            if (($entrada -is [string]) -and ($rotas -ccontains $entrada) -and -not (Test-Path -LiteralPath $entrada)) {
+                $sacadas++
+                continue
+            }
+            $sanas += $entrada
+        }
+        if ($sacadas -gt 0) {
+            $instrucciones = $sanas
+            Write-Host "  [i] Saque $sacadas ruta(s) repetida(s) y mal codificada(s) de `"instructions`": las habia sumado un error de versiones anteriores."
+        }
+    }
     if ($instrucciones -notcontains $PerfilFile) {
         $instrucciones += $PerfilFile
     }
@@ -866,7 +1180,29 @@ if ($ocHasContent -and $null -eq $oc) {
     Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto + modelo $ModeloElegido + perfil + memoria)."
 }
 
-Write-Host "==> Listo! Tecnia Bot v$Version instalado."
+# ---- EL CIERRE DICE LO QUE PASO, no lo que se esperaba que pasara -------------
+#
+# Antes aca decia siempre "Listo! Tecnia Bot v... instalado", tambien un renglon
+# despues de "[AVISO] No pude parsear opencode.json: lo dejo intacto". Con ese
+# archivo sin tocar, el agente por defecto y el modelo NO quedaron escritos: el
+# bot abre como un OpenCode pelado, o con el modelo de la corrida anterior.
+# Los avisos de la key se juntan aca; los de la config se anotaron al ocurrir.
+if ($AuthIlegible) { [void]$AvisosInstalacion.Add("la key de Google: no pude leer el archivo de credenciales $AuthFile y no lo toque") }
+if ($PurgaFallida) { [void]$AvisosInstalacion.Add("la key de respaldo vieja sigue en ${AuthFile}: no pude sacarla") }
+if ($KeyNoGuardada) { [void]$AvisosInstalacion.Add("la key de Google que pegaste NO quedo guardada") }
+if ($VariableDesfasada) { [void]$AvisosInstalacion.Add("la variable de usuario GOOGLE_GENERATIVE_AI_API_KEY no quedo igual a la key guardada (y le gana)") }
+
+function Mostrar-AvisosInstalacion {
+    Write-Host "==> Tecnia Bot v$Version quedo instalado CON AVISOS. Los archivos del programa se copiaron, pero falta:"
+    foreach ($av in $AvisosInstalacion) { Write-Host "    - $av" }
+    Write-Host "    Mas arriba esta el detalle de cada uno. Arreglalo y volve a correr 'Reparar Tecnia Bot'."
+}
+if ($AvisosInstalacion.Count -eq 0) {
+    Write-Host "==> Listo! Tecnia Bot v$Version instalado."
+}
+if ($AvisosInstalacion.Count -gt 0) {
+    Mostrar-AvisosInstalacion
+}
 Write-Host ""
 
 Write-Host "Verificando dependencias:"
@@ -1108,8 +1444,15 @@ if ($pioPath) {
 }
 
 Write-Host ""
-Write-Host "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
-Write-Host "apreta Tab y elegi 'tecnia-bot'."
+if ($AvisosInstalacion.Count -eq 0) {
+    Write-Host "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
+    Write-Host "apreta Tab y elegi 'tecnia-bot'."
+}
+if ($AvisosInstalacion.Count -gt 0) {
+    # Se repite AL FINAL, que es lo ultimo que queda en pantalla y lo que se lee:
+    # entre el cierre de arriba y aca puede haber una descarga de mas de 1 GB.
+    Mostrar-AvisosInstalacion
+}
 
 } catch {
     # El error se escribe ACA, con el transcript todavia abierto: si se dejara
@@ -1122,4 +1465,6 @@ Write-Host "apreta Tab y elegi 'tecnia-bot'."
 } finally {
     if ($TranscriptPropio) { try { Stop-Transcript | Out-Null } catch { } }
 }
+# El orden importa: un corte (1) le gana a "con avisos" (3). Ver el encabezado.
+if (-not $FalloInstalacion -and $AvisosInstalacion.Count -gt 0) { exit 3 }
 if ($FalloInstalacion) { exit 1 }

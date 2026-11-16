@@ -49,6 +49,18 @@
 #   0  no hay nada que decir (no aplica / la key anda / no se pudo probar)
 #   9  se imprimio un aviso; el lanzador da unos segundos para leerlo
 #
+# HAY UN CUARTO AVISO, QUE NO TOCA LA RED: el agente en Gemini y NINGUNA key
+# guardada. Es el unico caso en que se sabe, sin preguntarle nada a Google, que el
+# primer mensaje va a fallar. Antes se callaba ("el diagnostico de esa maquina es
+# /clave"), y /clave es justo lo que ahi no puede andar: lo atiende ese modelo.
+#
+# Y LA SALIDA QUE SE OFRECE ES "Reparar Tecnia Bot", NO /clave. Los avisos mandaban
+# a escribir /clave adentro del bot, pero a /clave lo ejecuta el MISMO modelo cuya
+# key esta muerta: era mandar a la docente a pedirle ayuda al que no contesta, que
+# es exactamente el defecto que este archivo vino a sacar del medio. "Reparar
+# Tecnia Bot" es un acceso del menu inicio (installer\tecnia-bot.iss) que corre el
+# instalador: pide la key, la prueba y la guarda, sin modelo de por medio.
+#
 # La clasificacion de los cinco resultados esta REPETIDA a proposito, igual que
 # en install\install.ps1, install\install.sh y opencode\tool\clave.ts: ninguno de
 # los cuatro hace dot-sourcing de otro, cada uno se copia y corre solo (el .exe
@@ -121,19 +133,29 @@ function Get-RutaConfigOpencode($cfgDir) {
 # medio segundo antes de que el bot abra y no es momento de reescribirle
 # credenciales a nadie. Si el archivo no se puede leer, no se dice nada -- que es
 # exactamente lo que corresponde: no sabemos.
+#
+# Devuelve @{ estado; datos }. Los TRES estados son los de leerJson() en clave.ts:
+#   no-existe  el archivo no esta, o esta vacio
+#   ilegible   esta y no se pudo leer o no parsea  <- NO es lo mismo que "no hay"
+#   ok         se leyo; `datos` es el objeto
+# La diferencia entre los dos primeros es la que habilita el aviso de "no hay
+# ninguna key": con un auth.json que no se pudo leer NO SABEMOS si hay key, y de lo
+# que no se sabe aca no se dice nada.
 function Read-JsonSinBom($ruta) {
-    if (-not (Test-Path $ruta)) { return $null }
+    if (-not (Test-Path $ruta)) { return @{ estado = "no-existe"; datos = $null } }
     try {
         $bytes = [System.IO.File]::ReadAllBytes($ruta)
-        if ($bytes.Length -eq 0) { return $null }
+        if ($bytes.Length -eq 0) { return @{ estado = "no-existe"; datos = $null } }
         $desde = 0
         if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $desde = 3 }
         $texto = [System.Text.Encoding]::UTF8.GetString($bytes, $desde, $bytes.Length - $desde)
-        if (-not $texto.Trim()) { return $null }
-        return ($texto | ConvertFrom-Json)
+        if (-not $texto.Trim()) { return @{ estado = "no-existe"; datos = $null } }
+        $objeto = $texto | ConvertFrom-Json
+        if ($null -eq $objeto) { return @{ estado = "ilegible"; datos = $null } }
+        return @{ estado = "ok"; datos = $objeto }
     } catch {
         # Un .jsonc con comentarios cae aca, y esta bien: no los sacamos nosotros.
-        return $null
+        return @{ estado = "ilegible"; datos = $null }
     }
 }
 
@@ -142,7 +164,7 @@ function Read-JsonSinBom($ruta) {
 # proposito (OpenCode mezcla los .md ENCIMA de opencode.json y pisaria el
 # override).
 function Get-ModeloDelAgente($cfgDir) {
-    $oc = Read-JsonSinBom (Get-RutaConfigOpencode $cfgDir)
+    $oc = (Read-JsonSinBom (Get-RutaConfigOpencode $cfgDir)).datos
     if ($null -eq $oc) { return "" }
     try {
         if ($oc.agent -and $oc.agent.$AgenteTecnia -and $oc.agent.$AgenteTecnia.model) {
@@ -158,14 +180,22 @@ function Get-ModeloDelAgente($cfgDir) {
 # documenta clave.ts, y el instalador escribe las dos justamente para que no se
 # separen). Probar auth.json cuando la que manda es la variable seria clasificar
 # una key que no corre.
+#
+# Devuelve @{ hay; valor }, con `hay` en tres estados:
+#   si     hay una key (en la variable o en auth.json); `valor` la trae
+#   no     se miraron los dos lugares y NO hay ninguna
+#   no-se  auth.json esta pero no se pudo leer: puede haber una adentro
 function Get-KeyDeGoogle($datosDir) {
-    if ($env:GOOGLE_GENERATIVE_AI_API_KEY) { return [string]$env:GOOGLE_GENERATIVE_AI_API_KEY }
-    $auth = Read-JsonSinBom (Join-Path $datosDir "auth.json")
-    if ($null -eq $auth) { return "" }
+    if ($env:GOOGLE_GENERATIVE_AI_API_KEY) { return @{ hay = "si"; valor = [string]$env:GOOGLE_GENERATIVE_AI_API_KEY } }
+    $leido = Read-JsonSinBom (Join-Path $datosDir "auth.json")
+    if ($leido.estado -eq "ilegible") { return @{ hay = "no-se"; valor = "" } }
+    if ($leido.estado -eq "no-existe") { return @{ hay = "no"; valor = "" } }
     try {
-        if ($auth.google -and $auth.google.key) { return [string]$auth.google.key }
-    } catch { }
-    return ""
+        if ($leido.datos.google -and $leido.datos.google.key) { return @{ hay = "si"; valor = [string]$leido.datos.google.key } }
+    } catch {
+        return @{ hay = "no-se"; valor = "" }
+    }
+    return @{ hay = "no"; valor = "" }
 }
 
 # ---- Probar la key CONTRA GOOGLE ---------------------------------------------
@@ -285,10 +315,16 @@ try {
     # probar y no hay nada que avisar: se sale sin tocar la red. Es la mayoria de
     # las maquinas de escuela, y no van a pagar ni un milisegundo por esto.
     if ($modeloActual -eq $ModeloConKey) {
-        # Si el agente esta en Gemini pero no hay key en ningun lado, tampoco se
-        # dice nada: no hay nada que preguntarle a Google, y el diagnostico de esa
-        # maquina es /clave, no un cartel en el arranque.
-        $resultado = Probar-KeyGoogle (Get-KeyDeGoogle (Get-DirDatosOpencode))
+        $guardada = Get-KeyDeGoogle (Get-DirDatosOpencode)
+        if ($guardada.hay -eq "si") {
+            $resultado = Probar-KeyGoogle $guardada.valor
+        }
+        # El agente en Gemini y NINGUNA key, ni en la variable ni en auth.json: se
+        # sabe sin tocar la red que el primer mensaje va a fallar, y se avisa.
+        # Con "no-se" (auth.json ilegible) no se dice nada: no sabemos.
+        if ($guardada.hay -eq "no") {
+            $resultado = "sinKey"
+        }
     }
 } catch {
     $resultado = ""
@@ -298,15 +334,17 @@ try {
 # LOS AVISOS PARA LA DOCENTE
 # ---------------------------------------------------------------------------
 #
-# Los textos son los MISMOS que ya usan install\install.ps1 y
+# La explicacion de cada caso es la MISMA que dan install\install.ps1 y
 # opencode\tool\clave.ts. No hay una tercera verdad: si el lanzador explicara la
 # cuota distinto del instalador y del bot, la docente probaria dos veces lo
 # mismo. Sobre todo lo que mas confunde y lo que hizo perder una tarde entera en
 # la escuela: LA CUOTA GRATUITA DE GOOGLE ES POR PROYECTO, NO POR KEY.
 #
-# Y siempre se manda a /clave, que es lo que ya sabe cambiarla desde adentro del
-# bot -- sin PowerShell, sin menu inicio, en la ventana que la docente ya tiene
-# abierta.
+# LO QUE CAMBIA ES ADONDE SE MANDA. Antes cada aviso terminaba en "escribi /clave
+# adentro del bot". Pero estos avisos salen justamente cuando el modelo NO va a
+# contestar, y a /clave lo atiende ese modelo. Ahora la salida es "Reparar Tecnia
+# Bot" (menu inicio), que no depende de ningun modelo; /clave se nombra, y se dice
+# cuando sirve y cuando no.
 #
 # "anda" y "sinProbar" no tienen bloque: no se imprime nada. Que no aparezca uno.
 $aviso = $false
@@ -320,15 +358,19 @@ if ($resultado -eq "cuota") {
     Write-Host "   regala una cantidad de mensajes por dia y esa cantidad se termino. El bot abre"
     Write-Host "   igual, pero va a fallar al primer mensaje hasta que se renueve."
     Write-Host ""
-    Write-Host "   Tenes tres salidas:"
+    Write-Host "   Lo que podes hacer ahora, sin depender del bot:"
     Write-Host "     1. Esperar: el limite gratuito se renueva solo, manana volves a tener cupo."
-    Write-Host "     2. Usar una key de OTRO PROYECTO de Google. Ojo con esto, que es lo que mas"
-    Write-Host "        confunde: la cuota gratuita es por PROYECTO, no por key. Una key nueva del"
-    Write-Host "        MISMO proyecto comparte el limite y da exactamente el mismo error. Sacate"
-    Write-Host "        una de otro proyecto (o de otra cuenta) en"
-    Write-Host "        https://aistudio.google.com/apikey y pegala con /clave adentro del bot."
-    Write-Host "     3. Seguir sin key, con Big Pickle, el modelo gratuito de OpenCode: escribi"
-    Write-Host "        /clave y pedile 'quiero seguir sin key'."
+    Write-Host "     2. Poner una key de OTRO PROYECTO de Google: cerra esta ventana y abri"
+    Write-Host "        'Reparar Tecnia Bot' desde el menu inicio, que te la pide y la prueba."
+    Write-Host "        Ojo, que es lo que mas confunde: la cuota gratuita es por PROYECTO, no por key."
+    Write-Host "        Una key nueva del MISMO proyecto comparte el limite y da exactamente el mismo"
+    Write-Host "        error. Sacate una de otro proyecto (o de otra cuenta) en"
+    Write-Host "        https://aistudio.google.com/apikey"
+    Write-Host ""
+    Write-Host "   /clave, adentro del bot, tambien cambia la key y te deja seguir sin key con"
+    Write-Host "   Big Pickle, el modelo gratuito de OpenCode. PERO lo atiende el mismo modelo que"
+    Write-Host "   se quedo sin cuota: mientras el bot no conteste, /clave tampoco."
+    Write-Host "   Por eso la salida segura es 'Reparar Tecnia Bot'."
     Write-Host ""
 }
 
@@ -340,16 +382,20 @@ if ($resultado -eq "invalida") {
     Write-Host "   El bot abre igual, pero va a fallar al primer mensaje. Puede estar borrada,"
     Write-Host "   vencida o mal copiada (son largas y a veces se cortan al copiar)."
     Write-Host ""
-    Write-Host "   Escribi /clave adentro de Tecnia Bot y pegame una nueva: la pruebo contra"
-    Write-Host "   Google y recien si responde bien la guardo. Sacala en"
-    Write-Host "   https://aistudio.google.com/apikey (es gratis, con cualquier cuenta de Google"
-    Write-Host "   y sin tarjeta). Si necesitas trabajar ya mismo, /clave tambien te pasa a Big"
-    Write-Host "   Pickle, el modelo gratuito de OpenCode."
+    Write-Host "   Para cambiarla: cerra esta ventana y abri 'Reparar Tecnia Bot' desde el menu inicio."
+    Write-Host "   Te pide la key nueva y la prueba contra Google antes de guardarla."
+    Write-Host "   Sacala en https://aistudio.google.com/apikey (es gratis, con cualquier cuenta"
+    Write-Host "   de Google y sin tarjeta)"
+    Write-Host ""
+    Write-Host "   /clave, adentro del bot, hace lo mismo. PERO lo atiende el modelo que usa esta"
+    Write-Host "   misma key: mientras la key no sirva, /clave no va a contestar."
     Write-Host ""
 }
 
 if ($resultado -eq "modeloIdo") {
     $aviso = $true
+    # El actualizador que esta al lado de este archivo: se nombra SOLO si esta.
+    $Actualizador = Join-Path $PSScriptRoot "update.ps1"
     Write-Host ""
     Write-Host "   OJO: la key esta bien -- el que no esta es el MODELO."
     Write-Host ""
@@ -358,12 +404,34 @@ if ($resultado -eq "modeloIdo") {
     Write-Host ""
     Write-Host "   NO es tu computadora, NO es tu key y NO es la red: no hay key nueva que lo"
     Write-Host "   arregle. Hace falta una version de Tecnia Bot que apunte a un modelo vigente."
-    Write-Host "   Escribi /actualizar adentro del bot; si despues de eso sigue igual, avisale al"
-    Write-Host "   referente tecnico que hay que reportarlo."
     Write-Host ""
-    Write-Host "   Mientras tanto podes seguir trabajando: escribi /clave y pedile 'quiero seguir"
-    Write-Host "   sin key', que te deja Big Pickle, el modelo gratuito de OpenCode, que no"
-    Write-Host "   depende de Google."
+    Write-Host "   /actualizar adentro del bot es lo que la trae, PERO lo atiende ese mismo modelo:"
+    Write-Host "   si el bot no contesta, /actualizar tampoco. Y 'Reparar Tecnia Bot' NO alcanza:"
+    Write-Host "   reinstala la version que ya tenes. Lo que sirve sin depender del bot:"
+    Write-Host "     - bajar el instalador nuevo de la pagina de Tecnia Bot (la direccion esta"
+    Write-Host "       mas arriba en esta ventana) y correrlo encima, o"
+    if (Test-Path $Actualizador) {
+        Write-Host "     - correr el actualizador a mano: tecla Windows + R, y pega esto:"
+        Write-Host "         powershell -NoProfile -ExecutionPolicy Bypass -File `"$Actualizador`""
+    }
+    Write-Host "   Si despues de actualizar sigue igual, avisale al referente tecnico que hay que"
+    Write-Host "   reportarlo."
+    Write-Host ""
+}
+
+if ($resultado -eq "sinKey") {
+    $aviso = $true
+    Write-Host ""
+    Write-Host "   OJO: Tecnia Bot esta configurado para usar Gemini y en esta compu NO hay"
+    Write-Host "   ninguna key de Google guardada."
+    Write-Host ""
+    Write-Host "   El bot abre igual, pero va a fallar al primer mensaje: Gemini no anda sin key."
+    Write-Host ""
+    Write-Host "   Cerra esta ventana y abri 'Reparar Tecnia Bot' desde el menu inicio. Si pegas"
+    Write-Host "   una key, la prueba y la guarda; si apretas Enter sin pegar nada, deja a Tecnia"
+    Write-Host "   Bot en Big Pickle, el modelo gratuito de OpenCode, que no necesita key."
+    Write-Host ""
+    Write-Host "   /clave adentro del bot no sirve para esto: sin key, el bot no puede contestar."
     Write-Host ""
 }
 
