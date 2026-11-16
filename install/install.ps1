@@ -94,7 +94,15 @@ $Nuevos = $Nuevos | Sort-Object
 
 # Borrar huerfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
 if (Test-Path $Manifest) {
-    $NuevosSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$Nuevos)
+    # SIN DISTINGUIR MAYUSCULAS, como NTFS. Con el conjunto sensible a mayusculas
+    # que habia, un archivo renombrado SOLO de mayusculas entre dos versiones
+    # (tool\Foo.ts -> tool\foo.ts) no "estaba" en lo nuevo: se lo tomaba por huerfano
+    # y el Remove-Item de abajo borraba el archivo RECIEN COPIADO, porque en Windows
+    # los dos nombres son el mismo archivo. Se arma vacio con el comparador y se
+    # llena a mano: asi el constructor que se elige no depende de como PowerShell
+    # resuelva una sobrecarga.
+    $NuevosSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($nuevo in @($Nuevos)) { [void]$NuevosSet.Add([string]$nuevo) }
     Get-Content $Manifest | ForEach-Object {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith("#") -and -not $line.StartsWith("version=") -and -not $line.StartsWith("repo_dir=")) {
