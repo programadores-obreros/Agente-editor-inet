@@ -125,6 +125,30 @@ Name: "es"; MessagesFile: "compiler:Languages\Spanish.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"
 
+[InstallDelete]
+; Borra {app}\opencode ENTERO antes de recopiarlo desde la sección de archivos,
+; en cada instalación (nueva o encima de una existente).
+;
+; POR QUÉ. {app}\opencode es sólo la copia MAESTRA del fuente, de la que
+; install\install.ps1 publica la capa educativa a la config real de OpenCode
+; (%USERPROFILE%\.config\opencode). Nunca es donde vive el trabajo del docente:
+; el perfil, la memoria del aula y la key de Google quedan en esa OTRA carpeta,
+; fuera de {app} por completo. Sin este borrado, instalar un .exe encima de otro
+; sólo agrega y pisa: un archivo que la versión nueva eliminó o renombró queda
+; en la copia maestra, install.ps1 lo vuelve a publicar, y el bot termina con
+; piezas de dos versiones (OpenCode levanta cualquier .ts que encuentre bajo
+; tool\). Con este borrado, cada instalación deja {app}\opencode como una foto
+; exacta del .exe que se corrió.
+;
+; Este mecanismo se diseñó en la línea de desarrollo siguiente y se trae acá
+; porque el defecto que cierra no depende de ella. install\update.ps1 hace lo
+; mismo por su lado cuando la actualización llega por /actualizar.
+;
+; Límite conocido: sólo protege instalaciones hechas CON un .exe que ya trae
+; esta línea. Volver a un .exe VIEJO corre las secciones de ESE .exe, que no la
+; tiene: para bajar de versión, desinstalar primero (ver docs\rollback.md).
+Type: filesandordirs; Name: "{app}\opencode"
+
 [Files]
 ; La capa educativa (agentes, skills, herramientas, web): el corazón del bot.
 ;
