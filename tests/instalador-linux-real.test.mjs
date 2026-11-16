@@ -277,7 +277,7 @@ test("el código de «instalado CON AVISOS» es el mismo en install.sh, update.s
   assert.match(sinComentarios(fuente), new RegExp(`\\n  exit ${CODIGO_CON_AVISOS}\\nfi\\n`), "install.sh ya no sale con ese código")
   assert.match(fuente, new RegExp(`^#   ${CODIGO_CON_AVISOS}  instalado CON AVISOS`, "m"), "el encabezado de install.sh no documenta el código")
   const update = sinComentarios(readFileSync(join(REPO, "install", "update.sh"), "utf8"))
-  assert.match(update, new RegExp(`\\n  ${CODIGO_CON_AVISOS}\\)[\\s\\S]*?CON AVISOS[\\s\\S]*?exit ${CODIGO_CON_AVISOS}\\n`), "update.sh no pasa el código tal cual")
+  assert.match(update, new RegExp(`\\n\\s+${CODIGO_CON_AVISOS}\\)[\\s\\S]*?CON AVISOS[\\s\\S]*?exit ${CODIGO_CON_AVISOS}\\n`), "update.sh no pasa el código tal cual")
   const tool = readFileSync(join(REPO, "opencode", "tool", "actualizar.ts"), "utf8")
   assert.match(tool, new RegExp(`const CODIGO_CON_AVISOS = ${CODIGO_CON_AVISOS}\\b`), "actualizar.ts espera otro código")
 })
