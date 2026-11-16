@@ -38,6 +38,30 @@ CARGAS_FILE="$CONFIG_DIR/tecnia-cargas.json"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
 AUTH_FILE="$DATA_DIR/auth.json"
 
+# ---- python3 que ANDA, no python3 que EXISTE --------------------------------
+# En una Mac sin las Command Line Tools, /usr/bin/python3 es un stub: existe,
+# `command -v python3` da verdadero, y al ejecutarlo falla. Preguntar sólo si
+# EXISTE mandaba a este script por el camino de python3 con un python3 que no
+# corre. Así que se lo EJECUTA de verdad, una vez, y el resultado se guarda en
+# PYTHON3_ANDA: la llamada de más abajo deja la respuesta lista antes de que
+# alguien pregunte desde un $(...), que es otro proceso y no podría guardarla.
+#
+# Esta función está repetida en bootstrap.sh, install.sh, update.sh y
+# uninstall.sh A PROPÓSITO: ningún script hace dot-sourcing de otro, cada uno se
+# copia y corre SOLO. Las mantiene iguales tests/python3-que-anda.test.mjs.
+PYTHON3_ANDA=""
+python3_anda() {
+  if [ -z "$PYTHON3_ANDA" ]; then
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
+      PYTHON3_ANDA="si"
+    else
+      PYTHON3_ANDA="no"
+    fi
+  fi
+  [ "$PYTHON3_ANDA" = "si" ]
+}
+python3_anda || true
+
 if [ ! -f "$MANIFEST" ]; then
   echo "No encontré Tecnia Bot instalado (no hay manifest en $CONFIG_DIR)."
   exit 0
@@ -116,7 +140,7 @@ OPENCODE_JSON="$(resolve_existing_config "$CONFIG_DIR/opencode")"
 JSON_TOOL=""
 if command -v jq >/dev/null 2>&1; then
   JSON_TOOL="jq"
-elif command -v python3 >/dev/null 2>&1; then
+elif python3_anda; then
   JSON_TOOL="python3"
 fi
 
@@ -161,7 +185,16 @@ def strip_jsonc(text):
         out.append(c); i += 1
     return "".join(out)
 
+# Lo que NO se pudo limpiar viaja en el codigo de salida: 10 = tui, 20 = opencode,
+# 30 = los dos. Antes un archivo que no parseaba se salteaba EN SILENCIO (quedaban
+# adentro el agente por defecto y las rutas de instructions de Tecnia Bot, y el
+# resumen decia "desinstalado"), y uno de solo lectura tiraba una traza de Python
+# que con `set -e` cortaba el desinstalador ANTES de las preguntas por los datos
+# personales: la docente nunca llegaba a que le ofrecieran quitar su key.
+ILEGIBLE = object()
+
 def load(path):
+    # None = no hay nada que limpiar. ILEGIBLE = hay un archivo y no se pudo leer.
     if not path:
         return None
     try:
@@ -169,6 +202,8 @@ def load(path):
             txt = f.read()
     except FileNotFoundError:
         return None
+    except (OSError, ValueError):
+        return ILEGIBLE
     txt = txt.strip()
     if not txt:
         return None
@@ -177,30 +212,42 @@ def load(path):
             data = json.loads(candidate)
         except ValueError:
             continue
-        return data if isinstance(data, dict) else None
-    return None
+        return data if isinstance(data, dict) else ILEGIBLE
+    return ILEGIBLE
 
 def finish(path, data):
-    # Si solo queda "$schema" (el archivo era nuestro), lo borramos entero.
-    if [k for k in data.keys() if k != "$schema"]:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-    elif os.path.exists(path):
-        os.remove(path)
+    # True si quedo hecho. Si solo queda "$schema" (el archivo era nuestro), lo
+    # borramos entero.
+    try:
+        if [k for k in data.keys() if k != "$schema"]:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        elif os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        return False
+    return True
+
+sin_limpiar = 0
 
 tui = load(tui_path)
-if tui is not None:
+if tui is ILEGIBLE:
+    sin_limpiar += 10
+elif tui is not None:
     if isinstance(tui.get("plugin"), list):
         tui["plugin"] = [p for p in tui["plugin"] if p != plugin]
         if not tui["plugin"]:
             del tui["plugin"]
     if tui.get("theme") == theme:
         del tui["theme"]
-    finish(tui_path, tui)
+    if not finish(tui_path, tui):
+        sin_limpiar += 10
 
 oc = load(oc_path)
-if oc is not None:
+if oc is ILEGIBLE:
+    sin_limpiar += 20
+elif oc is not None:
     if oc.get("default_agent") == agent:
         del oc["default_agent"]
     agentes = oc.get("agent")
@@ -215,8 +262,38 @@ if oc is not None:
             oc["instructions"] = instrucciones
         else:
             del oc["instructions"]
-    finish(oc_path, oc)
+    if not finish(oc_path, oc):
+        sin_limpiar += 20
+
+sys.exit(sin_limpiar)
 PYEOF
+}
+
+# Corre el unmerge de python3 SIN dejar que corte el desinstalador, y anota como
+# pendiente lo que no se pudo limpiar. Un codigo que no es 0/10/20/30 es que
+# python3 revento a mitad de camino: no se sabe que alcanzo a hacer, asi que se
+# dan los dos archivos por pendientes.
+unmerge_python_y_anotar() {
+  local rc=0
+  unmerge_via_python || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    10) anotar_config_sin_limpiar "$TUI_JSON" ;;
+    20) anotar_config_sin_limpiar "$OPENCODE_JSON" ;;
+    *)
+      if [ "$rc" != "30" ]; then
+        echo "  [AVISO] python3 fallo (codigo $rc) mientras limpiaba la config de OpenCode."
+      fi
+      anotar_config_sin_limpiar "$TUI_JSON"
+      anotar_config_sin_limpiar "$OPENCODE_JSON"
+      ;;
+  esac
+}
+anotar_config_sin_limpiar() {
+  # $1 = el archivo. Vacio = ese archivo no existia: no hay nada pendiente.
+  [ -n "$1" ] || return 0
+  echo "  [AVISO] No pude sacar lo de Tecnia Bot de $1 (no se puede leer o escribir): lo deje como estaba."
+  anotar_pendiente "lo de Tecnia Bot adentro de $1 (theme, plugin, agente por defecto o rutas de instructions): sacalo a mano"
 }
 
 # jq (solo JSON puro). Devuelve 1 si no pudo parsear (para caer a python).
@@ -265,16 +342,20 @@ if [ "$JSON_TOOL" = "jq" ]; then
   JQ_OK=1
   unmerge_tui_jq || JQ_OK=0
   unmerge_opencode_jq || JQ_OK=0
-  if [ "$JQ_OK" != "1" ] && command -v python3 >/dev/null 2>&1; then
+  if [ "$JQ_OK" != "1" ] && python3_anda; then
     # jq no pudo (probablemente comentarios en un .jsonc); reintentar con python.
-    unmerge_via_python
+    unmerge_python_y_anotar
   elif [ "$JQ_OK" != "1" ]; then
     echo "  [AVISO] jq no pudo parsear la config (¿.jsonc con comentarios?) y no hay python3."
     echo "          Sacá a mano el theme/plugin/default_agent de Tecnia Bot si querés limpiarlos."
+    anotar_pendiente "lo de Tecnia Bot adentro de la config de OpenCode en $CONFIG_DIR (jq no la pudo leer y no hay python3): sacalo a mano"
   fi
 elif [ "$JSON_TOOL" = "python3" ]; then
-  unmerge_via_python
+  unmerge_python_y_anotar
 else
+  if [ -n "$TUI_JSON" ] || [ -n "$OPENCODE_JSON" ]; then
+    anotar_pendiente "lo de Tecnia Bot adentro de la config de OpenCode en $CONFIG_DIR (no hay jq ni python3 para limpiarla): sacalo a mano"
+  fi
   echo "  [AVISO] No hay jq ni python3: no toco la config de OpenCode."
   echo "          Sacá a mano \"theme\": \"$TECNIA_THEME\", el plugin \"$TECNIA_PLUGIN\","
   echo "          \"default_agent\": \"$TECNIA_AGENT\", \"agent\" -> \"$TECNIA_AGENT\" y las dos"
@@ -343,7 +424,7 @@ fi
 # que nunca habia pasado.
 auth_estado_google() {
   [ -f "$AUTH_FILE" ] || { printf 'no\n'; return 0; }
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     # utf-8-sig y no utf-8 pelado: si auth.json tiene BOM (lo escribio un editor
     # de Windows), json.load revienta con "Unexpected UTF-8 BOM". Es el mismo BOM
     # que install.ps1 y uninstall.ps1 ya manejan del lado Windows; aca faltaba.
@@ -384,7 +465,7 @@ PYEOF
 # install.sh (el "[AVISO] No pude escribir $AUTH_FILE"): faltaba justo en el
 # BORRADO, que es el unico de los dos con consecuencia de privacidad.
 auth_quitar_google() {
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     python3 - "$AUTH_FILE" 2>/dev/null <<'PYEOF' || return 1
 import json, sys
 path = sys.argv[1]

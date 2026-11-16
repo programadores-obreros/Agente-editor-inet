@@ -33,7 +33,7 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, symlinkSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, symlinkSync, existsSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
@@ -288,9 +288,9 @@ function armarEscuela({ auth, bom = false, herramientas = [] }) {
   return base
 }
 
-function desinstalar(base) {
+function desinstalar(base, modo = "--borrar") {
   try {
-    return execFileSync(bash, [join(REPO, "install", "uninstall.sh"), "--borrar"], {
+    return execFileSync(bash, [join(REPO, "install", "uninstall.sh"), modo], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -461,3 +461,139 @@ test(
     }
   },
 )
+
+// ── 8. La limpieza de la config no puede cortar el desinstalador ─────────────
+//
+// `unmerge_via_python` corría pelado bajo `set -e`. Con un opencode.json de sólo
+// lectura python3 tiraba una traza, el script moría AHÍ —antes de las preguntas
+// por los datos personales— y la docente nunca llegaba a que le ofrecieran quitar
+// su key ni el perfil del aula. Y con un opencode.json que no parsea pasaba lo
+// contrario y era igual de malo: se lo salteaba EN SILENCIO y el cierre decía
+// «Listo. Tecnia Bot desinstalado.» con el agente por defecto y las rutas de
+// instructions todavía adentro.
+//
+// Los dos se prueban corriendo uninstall.sh de verdad, con el archivo en ese
+// estado en el disco.
+//
+// MUTACIONES que ponen rojo este archivo (exit code 1):
+//   - en la rama `JSON_TOOL = python3`, `unmerge_python_y_anotar` →
+//     `unmerge_via_python` (pelado, como antes)   → rojo el de sólo lectura
+//   - borrar `if oc is ILEGIBLE:` + `sin_limpiar += 20` (dejando `if oc is not None`)
+//                                                 → rojo el del JSON roto
+//   - en decidir(), `conservar) return 1` → `conservar) return 0`
+//                                                 → rojos los dos de --conservar
+
+/** Una escuela con la config de OpenCode mergeada y los datos personales en disco. */
+function armarEscuelaCompleta(herramientas, opencodeJson) {
+  const base = armarEscuela({
+    auth: '{"google":{"type":"api","key":"AIzaSECRETO"},"anthropic":{"type":"api","key":"OTRA"}}',
+    herramientas,
+  })
+  const cfg = join(base, "cfg", "opencode")
+  const rutas = {
+    opencode: join(cfg, "opencode.json"),
+    perfil: join(cfg, "tecnia-perfil.md"),
+    memoria: join(cfg, "tecnia-memoria.md"),
+    cargas: join(cfg, "tecnia-cargas.json"),
+    agente: join(cfg, "agent", "tecnia-bot.md"),
+  }
+  writeFileSync(rutas.perfil, "- Nombre: una docente\n")
+  writeFileSync(rutas.memoria, "- Nivel: inicial\n")
+  writeFileSync(rutas.cargas, '{"sal":"00","placas":{}}')
+  writeFileSync(rutas.opencode, opencodeJson ?? JSON.stringify({
+    default_agent: "tecnia-bot",
+    model: "anthropic/claude", // lo del docente: por esto el archivo NO se borra entero
+    agent: { "tecnia-bot": { model: "opencode/big-pickle" } },
+    instructions: [rutas.perfil, rutas.memoria],
+  }))
+  return { base, ...rutas }
+}
+
+test(
+  "FUNCIONAL: opencode.json de sólo lectura → el desinstalador NO se corta: igual quita la key y los datos, y dice que la config quedó pendiente",
+  { skip: !puedeCorrer || !python3 || esRoot },
+  () => {
+    const e = armarEscuelaCompleta(["python3"])
+    const original = readFileSync(e.opencode, "utf8")
+    chmodSync(e.opencode, 0o444)
+    try {
+      const salida = desinstalar(e.base)
+      assert.doesNotMatch(salida, /el script salió con código/, `el desinstalador se cortó a la mitad:\n${salida}`)
+      assert.doesNotMatch(salida, /Traceback/, `le tira una traza de Python a la docente:\n${salida}`)
+      // Lo que venía DESPUÉS del punto donde antes se moría:
+      assert.equal(existsSync(e.perfil), false, `no llegó a borrar el perfil del aula:\n${salida}`)
+      assert.equal(existsSync(e.memoria), false, "no llegó a borrar la memoria del aula")
+      assert.doesNotMatch(authDe(e.base), /AIzaSECRETO/, `no llegó a quitar la key de Google:\n${salida}`)
+      assert.match(authDe(e.base), /OTRA/, "se llevó puesta otra credencial")
+      // Y lo que no pudo hacer, dicho:
+      assert.equal(readFileSync(e.opencode, "utf8"), original, "el archivo era de sólo lectura y cambió: revisar el test")
+      assert.match(salida, /PARCIALMENTE/, `dijo «Listo» con la config sin limpiar:\n${salida}`)
+      assert.ok(salida.slice(salida.indexOf("PARCIALMENTE")).includes(e.opencode), `el resumen no dice qué archivo quedó sin limpiar:\n${salida}`)
+    } finally {
+      chmodSync(e.opencode, 0o644)
+      rmSync(e.base, { recursive: true, force: true })
+    }
+  },
+)
+
+test(
+  "FUNCIONAL: opencode.json que no parsea → no se saltea en silencio: queda como pendiente en el resumen",
+  { skip: !puedeCorrer || !python3 },
+  () => {
+    const roto = '{ "default_agent": "tecnia-bot", esto no es JSON\n'
+    const e = armarEscuelaCompleta(["python3"], roto)
+    try {
+      const salida = desinstalar(e.base)
+      assert.doesNotMatch(salida, /el script salió con código/, salida)
+      assert.equal(readFileSync(e.opencode, "utf8"), roto, "pisó una config que no pudo leer")
+      assert.doesNotMatch(salida, /==> Listo\. Tecnia Bot desinstalado\./, `dijo «Listo» y adentro de opencode.json sigue default_agent: tecnia-bot:\n${salida}`)
+      assert.match(salida, /PARCIALMENTE/, salida)
+      assert.ok(salida.slice(salida.indexOf("PARCIALMENTE")).includes(e.opencode), `el resumen no nombra el archivo:\n${salida}`)
+    } finally {
+      rmSync(e.base, { recursive: true, force: true })
+    }
+  },
+)
+
+// ── 9. --conservar CONSERVA ──────────────────────────────────────────────────
+//
+// Todos los funcionales de arriba usan --borrar. La otra mitad de la promesa
+// —`--conservar` (y el silencio: sin terminal nadie contesta) deja el perfil, la
+// memoria, el registro de cargas y la key— no tenía una sola ejecución: cambiando
+// `conservar) return 1` por `return 0` en decidir(), la suite entera seguía verde
+// con un desinstalador que borraba los datos de un aula sin que nadie lo pidiera.
+for (const [herramienta, real] of [["python3", python3], ["jq", jq]]) {
+  test(
+    `FUNCIONAL: uninstall.sh --conservar (con ${herramienta}) deja perfil, memoria, registro de cargas y la key, byte a byte`,
+    { skip: !puedeCorrer || !real },
+    () => {
+      const e = armarEscuelaCompleta([herramienta])
+      const antes = {
+        perfil: readFileSync(e.perfil),
+        memoria: readFileSync(e.memoria),
+        cargas: readFileSync(e.cargas),
+        auth: readFileSync(join(e.base, "data", "opencode", "auth.json")),
+      }
+      try {
+        const salida = desinstalar(e.base, "--conservar")
+        assert.doesNotMatch(salida, /el script salió con código/, salida)
+        for (const [nombre, ruta] of [["perfil", e.perfil], ["memoria", e.memoria], ["cargas", e.cargas]]) {
+          assert.ok(existsSync(ruta), `--conservar BORRÓ ${nombre}:\n${salida}`)
+          assert.ok(readFileSync(ruta).equals(antes[nombre]), `--conservar cambió ${nombre}`)
+        }
+        assert.ok(readFileSync(join(e.base, "data", "opencode", "auth.json")).equals(antes.auth), `--conservar tocó auth.json:\n${salida}`)
+        assert.match(salida, /La key de Google se conserva/, salida)
+        assert.match(salida, /Se conservan en /, salida)
+        assert.doesNotMatch(salida, /borrados|Key de Google quitada/, `afirma un borrado con --conservar:\n${salida}`)
+        // Y lo que SÍ es del programa se fue: conservar los datos no es no desinstalar.
+        assert.equal(existsSync(e.agente), false, "no desinstaló la capa")
+        const oc = JSON.parse(readFileSync(e.opencode, "utf8"))
+        assert.equal(oc.default_agent, undefined, "dejó a tecnia-bot como agente por defecto")
+        assert.equal(oc.model, "anthropic/claude", "se llevó puesta la config del docente")
+        assert.match(salida, /==> Listo\. Tecnia Bot desinstalado\./, salida)
+      } finally {
+        rmSync(e.base, { recursive: true, force: true })
+      }
+    },
+  )
+}

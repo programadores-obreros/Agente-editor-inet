@@ -2,8 +2,59 @@
 # Instalador de Tecnia Bot para Linux y macOS.
 # Copia la capa educativa a la config global de OpenCode (~/.config/opencode),
 # para que Tecnia Bot este disponible en CUALQUIER carpeta donde abras opencode.
+#
+# CODIGOS DE SALIDA (los leen bootstrap.sh, update.sh y opencode/tool/actualizar.ts):
+#   0  instalado.
+#   1  error: el script corto a la mitad (lo que haya dicho arriba es el motivo).
+#   3  instalado CON AVISOS: los archivos de Tecnia Bot se copiaron, pero algo de lo
+#      que habia que dejar escrito no quedo (lo tipico: opencode.json o tui.json que
+#      no se pueden leer o escribir). El detalle sale en las ULTIMAS lineas.
+#   4  se nego a correr: lo lanzaron con sudo o como root prestado. No toco nada.
 
 set -euo pipefail
+
+# ---- No con sudo: el instalador es del USUARIO -------------------------------
+# `sudo bash install/bootstrap.sh` (lo que sale por reflejo) instala para root: o
+# todo termina en /root y el usuario abre opencode y no encuentra nada, o —si sudo
+# conserva HOME— quedan archivos de root en la carpeta del usuario, que después no
+# puede actualizar ni desinstalar. Nada de lo que hace este script necesita root.
+#
+# El caso legítimo es una sesión que ES root de verdad (un contenedor de CI, una
+# imagen mínima sin otra cuenta): ahí no hay un usuario al que pisarle nada, y se
+# instala para root avisándolo. Los dos casos se distinguen MIRANDO, no con una
+# variable de escape: si alguien se elevó desde otra cuenta (sudo, doas y pkexec
+# dejan su marca) o si la carpeta personal no es de root, se corta sin tocar nada.
+# Lo que NO se detecta: un `su` a secas, que no deja marca y cambia HOME a /root.
+#
+# Repetida en bootstrap.sh e install.sh a propósito (cada uno corre solo); las
+# mantiene iguales tests/instalador-root.test.mjs.
+cortar_si_es_root_prestado() {
+  [ "$(id -u)" = "0" ] || return 0
+  local desde=""
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER:-}" != "root" ]; then
+    desde="sudo, desde la cuenta $SUDO_USER"
+  elif [ -n "${DOAS_USER:-}" ] && [ "${DOAS_USER:-}" != "root" ]; then
+    desde="doas, desde la cuenta $DOAS_USER"
+  elif [ -n "${PKEXEC_UID:-}" ] && [ "${PKEXEC_UID:-}" != "0" ]; then
+    desde="pkexec"
+  elif [ -d "${HOME:-}" ] && [ ! -O "${HOME:-}" ]; then
+    desde="root, pero con una carpeta personal que no es de root ($HOME)"
+  fi
+  if [ -z "$desde" ]; then
+    echo "  [i] Esta sesión es root: Tecnia Bot se instala para root, en ${HOME:-/root}."
+    return 0
+  fi
+  echo "" >&2
+  echo "  [✗] No corras este instalador con sudo ni como administrador." >&2
+  echo "      Lo lanzaste con $desde." >&2
+  echo "      Tecnia Bot se instala en la carpeta personal de quien lo usa y no necesita" >&2
+  echo "      permisos de administrador. Como root quedaría instalado para root, o dejaría" >&2
+  echo "      archivos de root en tu carpeta, que después no podés actualizar ni borrar." >&2
+  echo "      Volvé a correrlo igual que antes pero SIN sudo." >&2
+  echo "      No instalé ni toqué nada." >&2
+  exit 4
+}
+cortar_si_es_root_prestado
 
 # Directorio de config global de OpenCode (respeta XDG)
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
@@ -12,7 +63,55 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO_DIR/opencode"
 
+# ---- python3 que ANDA, no python3 que EXISTE --------------------------------
+# En una Mac sin las Command Line Tools, /usr/bin/python3 es un stub: existe,
+# `command -v python3` da verdadero, y al ejecutarlo falla. Preguntar sólo si
+# EXISTE mandaba a este script por el camino de python3 con un python3 que no
+# corre. Así que se lo EJECUTA de verdad, una vez, y el resultado se guarda en
+# PYTHON3_ANDA: la llamada de más abajo deja la respuesta lista antes de que
+# alguien pregunte desde un $(...), que es otro proceso y no podría guardarla.
+#
+# Esta función está repetida en bootstrap.sh, install.sh, update.sh y
+# uninstall.sh A PROPÓSITO: ningún script hace dot-sourcing de otro, cada uno se
+# copia y corre SOLO. Las mantiene iguales tests/python3-que-anda.test.mjs.
+PYTHON3_ANDA=""
+python3_anda() {
+  if [ -z "$PYTHON3_ANDA" ]; then
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
+      PYTHON3_ANDA="si"
+    else
+      PYTHON3_ANDA="no"
+    fi
+  fi
+  [ "$PYTHON3_ANDA" = "si" ]
+}
+python3_anda || true
+
+# ---- Lo que NO quedo hecho se junta aca y sale AL FINAL ----------------------
+# Antes este script avisaba por stderr que no habia podido tocar opencode.json y
+# tres lineas despues imprimia "[OK] ... actualizados" y "==> Listo! instalado."
+# con codigo 0: el aviso quedaba enterrado arriba de 60 lineas y la ultima
+# palabra era un OK falso. Ahora cada cosa que no se pudo dejar escrita se anota,
+# el cierre dice "instalado CON AVISOS" con la lista, y el script sale con 3.
+# Cadena y no array: macOS trae bash 3.2 y ahi un array vacio con `set -u` aborta.
+AVISOS=""
+anotar_aviso() { AVISOS="${AVISOS}    - $1"$'\n'; }
+
 echo "==> Instalando Tecnia Bot en: $CONFIG_DIR"
+
+# Un python3 que está y no anda se dice UNA vez, y se sigue por jq o curl.
+# Callarlo deja a la docente sin saber por qué el instalador «no usa» algo que
+# ella ve instalado. En macOS el arreglo tiene nombre propio.
+if [ "$PYTHON3_ANDA" = "no" ] && command -v python3 >/dev/null 2>&1; then
+  echo "  [AVISO] Hay un python3 en esta compu ($(command -v python3)) pero no anda: lo ejecuté y falló."
+  echo "          Sigo sin él (uso jq o curl donde haga falta). Para arreglarlo:"
+  if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+    echo "          macOS: xcode-select --install   (instala las Command Line Tools, que traen python3)"
+  else
+    echo "          Debian/Ubuntu: sudo apt install python3"
+    echo "          Arch/Manjaro:  sudo pacman -S python"
+  fi
+fi
 
 mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,nucleo,servidor,vista-fisica,conocimiento,codegen}
 
@@ -81,7 +180,11 @@ fi
 # contexto de CADA sesion: asi el bot recuerda el nombre sin volver a preguntar.
 PERFIL_FILE="$CONFIG_DIR/tecnia-perfil.md"
 if [ ! -f "$PERFIL_FILE" ]; then
-  cat > "$PERFIL_FILE" <<'EOF'
+  # Nace 0600. Con el umask de fabrica (022) quedaba 0644: en una compu con varias
+  # cuentas, cualquiera podia leer el nombre y el rol de quien usa esta. El umask
+  # va en un subshell para no cambiarselo al resto del instalador. Si el archivo ya
+  # existe no se le toca el modo: es del usuario.
+  ( umask 077; cat > "$PERFIL_FILE" ) <<'EOF'
 # Perfil del usuario de Tecnia Bot
 <!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos.
      Modo "aula" = compu compartida por muchos: el Nombre NO se guarda (privacidad de menores).
@@ -103,7 +206,8 @@ fi
 # cargarla en cada sesion: asi el bot recuerda el progreso sin volver a preguntar.
 MEMORIA_FILE="$CONFIG_DIR/tecnia-memoria.md"
 if [ ! -f "$MEMORIA_FILE" ]; then
-  cat > "$MEMORIA_FILE" <<'EOF'
+  # 0600 al nacer, por lo mismo que el perfil.
+  ( umask 077; cat > "$MEMORIA_FILE" ) <<'EOF'
 # Memoria de ESTA compu (no de una persona)
 <!-- Progreso pedagogico de esta maquina/grupo. Lo mantiene Tecnia Bot.
      NO guarda datos personales de ningun alumno (ni nombre ni nada que identifique
@@ -242,7 +346,7 @@ probar_key_google() {
   # comandos: /proc/<pid>/cmdline lo lee cualquier proceso del mismo usuario y un
   # `ps` de otra terminal mostraria la key entera. Es la misma razon por la que
   # clave.ts se la pasa a PowerShell por el entorno.
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     TECNIA_KEY_A_PROBAR="$1" python3 - "$URL_PRUEBA_KEY" "$TIMEOUT_PRUEBA_KEY" <<'PYEOF' 2>/dev/null || printf 'sinProbar|no pude correr la prueba (python3)\n'
 import json, os, sys, urllib.request, urllib.error
 
@@ -338,7 +442,7 @@ AUTH_FILE="$DATA_DIR/auth.json"
 # ninguno de los dos no se puede leer el JSON y se asume que no hay.
 auth_leer_key_google() {
   [ -f "$AUTH_FILE" ] || return 0
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     python3 - "$AUTH_FILE" <<'PYEOF' 2>/dev/null || true
 import json, sys
 try:
@@ -355,7 +459,7 @@ PYEOF
 
 # Quita la entrada "google" de auth.json preservando los otros providers.
 auth_quitar_google() {
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     python3 - "$AUTH_FILE" <<'PYEOF'
 import json, sys
 path = sys.argv[1]
@@ -370,6 +474,89 @@ PYEOF
     local tmp; tmp="$(mktemp)"
     if jq 'del(.google)' "$AUTH_FILE" > "$tmp" 2>/dev/null; then mv "$tmp" "$AUTH_FILE"; else rm -f "$tmp"; fi
   fi
+}
+
+# Guarda en auth.json la key que el docente pego ($GEMINI_KEY), preservando las
+# otras credenciales. Devuelve:
+#   0  guardada, Y RELEIDA: se volvio a abrir el archivo y la key que hay es esa.
+#   5  auth.json existe y NO es un JSON valido: NO SE TOCO.
+#   6  no hay python3 ni jq con que escribirlo.
+#   7  no se pudo escribir (permisos, disco), o al releer la key no era la pegada.
+#
+# TRES COSAS QUE ESTABAN MAL ACA, las tres en el camino de python3:
+#
+# 1. LA KEY VIAJABA POR LA LINEA DE COMANDOS (`python3 - "$AUTH_FILE" "$GEMINI_KEY"`,
+#    y `jq --arg k "$GEMINI_KEY"` en el otro camino). /proc/<pid>/cmdline lo lee
+#    cualquier proceso del mismo usuario y un `ps` de otra terminal la mostraba
+#    entera. Es exactamente lo que probar_key_google ya evitaba, a 250 lineas de
+#    distancia. Ahora va por el ENTORNO del proceso hijo en los dos caminos.
+#
+# 2. EL ARCHIVO NACIA 0644 con el umask de fabrica: una credencial legible por
+#    todas las cuentas de la compu. Ahora nace 0600. Si ya existia, python3 lo
+#    escribe en el lugar y le respeta el modo; jq lo reemplaza por un temporal,
+#    que es 0600 (mas cerrado, nunca mas abierto).
+#
+# 3. SI auth.json NO PARSEABA, SE PISABA: `except Exception: d = {}` y a escribir.
+#    Un archivo con una coma de mas se llevaba puestas TODAS las otras
+#    credenciales del docente (Anthropic, OpenAI, lo que tuviera de /connect). El
+#    camino de jq ya se negaba; ahora se niegan los dos, igual. Un archivo vacio
+#    no es un archivo roto: ese si se escribe.
+guardar_key_google() {
+  if python3_anda; then
+    TECNIA_KEY_A_GUARDAR="$GEMINI_KEY" python3 - "$AUTH_FILE" <<'PYEOF' || return $?
+import json, os, sys
+path = sys.argv[1]
+key = os.environ.get("TECNIA_KEY_A_GUARDAR", "")
+if not key:
+    sys.exit(7)
+try:
+    # utf-8-sig: un auth.json con BOM (lo guardo un editor de Windows) es valido.
+    with open(path, "r", encoding="utf-8-sig") as f:
+        txt = f.read()
+except FileNotFoundError:
+    txt = ""
+except ValueError:
+    sys.exit(5)
+except OSError:
+    sys.exit(7)
+d = {}
+if txt.strip():
+    try:
+        d = json.loads(txt)
+    except ValueError:
+        sys.exit(5)
+    if not isinstance(d, dict):
+        sys.exit(5)
+d["google"] = {"type": "api", "key": key}
+try:
+    # El 0o600 vale solo si el archivo se CREA aca; si ya existia conserva su modo.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2)
+except OSError:
+    sys.exit(7)
+PYEOF
+  elif command -v jq >/dev/null 2>&1; then
+    local tmp
+    # El temporal va AL LADO de auth.json: mktemp lo crea 0600 y el mv es un rename
+    # dentro de la misma carpeta, no una copia entre discos.
+    tmp="$(mktemp "$AUTH_FILE.XXXXXX" 2>/dev/null)" || return 7
+    if [ -s "$AUTH_FILE" ]; then
+      # Si jq no lo puede leer (JSON roto, o no es un objeto) NO se escribe nada.
+      if ! TECNIA_KEY_A_GUARDAR="$GEMINI_KEY" jq '.google = {type: "api", key: env.TECNIA_KEY_A_GUARDAR}' "$AUTH_FILE" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"; return 5
+      fi
+    else
+      if ! TECNIA_KEY_A_GUARDAR="$GEMINI_KEY" jq -n '{google: {type: "api", key: env.TECNIA_KEY_A_GUARDAR}}' > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"; return 7
+      fi
+    fi
+    if ! mv -f "$tmp" "$AUTH_FILE" 2>/dev/null; then rm -f "$tmp"; return 7; fi
+  else
+    return 6
+  fi
+  # RELEER. Que la escritura no haya tirado error no alcanza para decir "guardada".
+  [ "$(auth_leer_key_google)" = "$GEMINI_KEY" ] || return 7
 }
 
 GOOGLE_KEY_ACTUAL="$(auth_leer_key_google)"
@@ -491,39 +678,38 @@ elif [ -n "$GEMINI_KEY" ]; then
       echo "      Quedo la key que ya estaba guardada: no se piso nada."
     fi
   else
-    # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
-    # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
-    PRUEBA_KEY="$PRUEBA_NUEVA"
-    if command -v python3 >/dev/null 2>&1; then
-      python3 - "$AUTH_FILE" "$GEMINI_KEY" <<'PYEOF'
-import json, sys
-path, key = sys.argv[1], sys.argv[2]
-try:
-    d = json.load(open(path))
-except Exception:
-    d = {}
-d["google"] = {"type": "api", "key": key}
-json.dump(d, open(path, "w"), indent=2)
-PYEOF
-      TIENE_GOOGLE=1
-      echo "  [OK] Key guardada en esta compu."
-    elif command -v jq >/dev/null 2>&1; then
-      [ -s "$AUTH_FILE" ] || printf '{}\n' > "$AUTH_FILE"
-      tmp_auth="$(mktemp)"
-      if jq --arg k "$GEMINI_KEY" '.google = {type: "api", key: $k}' "$AUTH_FILE" > "$tmp_auth" 2>/dev/null; then
-        mv "$tmp_auth" "$AUTH_FILE"
+    RC_GUARDAR=0
+    guardar_key_google || RC_GUARDAR=$?
+    case "$RC_GUARDAR" in
+      0)
         TIENE_GOOGLE=1
-        echo "  [OK] Key guardada en esta compu."
-      else
-        rm -f "$tmp_auth"
-        echo "  [AVISO] No pude escribir $AUTH_FILE (no parsea como JSON). Agregala a mano:"
-        echo "          {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}} y volve a correr este instalador."
-      fi
-    else
-      echo "  [AVISO] No hay python3 ni jq para guardar la key automaticamente."
-      echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
-      echo "          y volve a correr este instalador para que el agente pase a Gemini."
-    fi
+        # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
+        # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
+        # Va ACA y no antes de guardar: si no se pudo guardar, esa prueba es de una
+        # key que no quedo en la compu, y contarla como la de la key guardada seria
+        # informar el resultado de otra credencial.
+        PRUEBA_KEY="$PRUEBA_NUEVA"
+        echo "  [OK] Key guardada en esta compu (la relei de $AUTH_FILE)."
+        ;;
+      5)
+        echo "  [AVISO] NO guarde la key: $AUTH_FILE existe y no es un JSON valido."
+        echo "          Adentro puede haber otras credenciales tuyas, asi que NO lo toque."
+        echo "          Abrilo con un editor de texto y arreglalo (o movelo a otro lado si no lo"
+        echo "          necesitas) y volve a correr este instalador."
+        anotar_aviso "la key de Google que pegaste NO se guardo: $AUTH_FILE no es un JSON valido y no lo toque."
+        ;;
+      6)
+        echo "  [AVISO] No hay python3 ni jq para guardar la key automaticamente."
+        echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
+        echo "          y volve a correr este instalador para que el agente pase a Gemini."
+        anotar_aviso "la key de Google que pegaste NO se guardo: no hay python3 ni jq en esta compu."
+        ;;
+      *)
+        echo "  [AVISO] NO pude guardar la key en $AUTH_FILE (no se puede escribir, o al releerlo la key no estaba)."
+        echo "          Revisa los permisos de ese archivo y de su carpeta, y volve a correr este instalador."
+        anotar_aviso "la key de Google que pegaste NO se guardo: no pude escribir $AUTH_FILE."
+        ;;
+    esac
   fi
 else
   # Enter, timeout, consola sin nadie, o TECNIA_SIN_PROMPT. NO SE TOCA NADA: ni
@@ -648,7 +834,7 @@ OPENCODE_JSON="$(resolve_config_file "$CONFIG_DIR/opencode")"
 JSON_TOOL=""
 if command -v jq >/dev/null 2>&1; then
   JSON_TOOL="jq"
-elif command -v python3 >/dev/null 2>&1; then
+elif python3_anda; then
   JSON_TOOL="python3"
 fi
 
@@ -718,9 +904,20 @@ def load(path):
     return None, False
 
 def dump(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    # True si quedo escrito. Un archivo de solo lectura no puede tirar una traza de
+    # Python a la cara del docente ni cortar el instalador: se avisa y se informa.
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except OSError as e:
+        sys.stderr.write("  [AVISO] No pude escribir %s (%s): quedo como estaba.\n" % (path, type(e).__name__))
+        return False
+    return True
+
+# Lo que quedo SIN tocar viaja en el codigo de salida, para que el script no tenga
+# que adivinarlo: 10 = tui, 20 = opencode, 30 = los dos. 0 = se escribieron los dos.
+sin_tocar = 0
 
 # tui: theme + plugin (idempotente, preserva el resto).
 tui, ok = load(tui_path)
@@ -733,8 +930,10 @@ if ok:
     if plugin not in plugins:
         plugins.append(plugin)
     tui["plugin"] = plugins
-    dump(tui_path, tui)
+    if not dump(tui_path, tui):
+        sin_tocar += 10
 else:
+    sin_tocar += 10
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % tui_path)
     sys.stderr.write("          Agregale a mano \"theme\": \"%s\" y el plugin \"%s\".\n" % (theme, plugin))
 
@@ -795,12 +994,37 @@ if ok:
     if memoria_path not in instrucciones:
         instrucciones.append(memoria_path)
     oc["instructions"] = instrucciones
-    dump(oc_path, oc)
+    if not dump(oc_path, oc):
+        sin_tocar += 20
 else:
+    sin_tocar += 20
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % oc_path)
     sys.stderr.write("          Agregale a mano \"default_agent\": \"%s\" y el modelo del agente:\n" % agent)
     sys.stderr.write("          \"agent\": { \"%s\": { \"model\": \"%s\" } }\n" % (agent, modelo))
+
+sys.exit(sin_tocar)
 PYEOF
+}
+
+# Corre el merge de python3 y deja en TUI_SIN_TOCAR / OC_SIN_TOCAR lo que NO quedo
+# escrito, leyendo el codigo de merge_via_python. Cualquier otro codigo es que
+# python3 revento a mitad de camino: no se sabe que alcanzo a escribir, asi que se
+# dan los dos por pendientes -- afirmar de menos, nunca de mas.
+merge_python_y_anotar() {
+  local rc=0
+  merge_via_python || rc=$?
+  TUI_SIN_TOCAR=0
+  OC_SIN_TOCAR=0
+  case "$rc" in
+    0) ;;
+    10) TUI_SIN_TOCAR=1 ;;
+    20) OC_SIN_TOCAR=1 ;;
+    30) TUI_SIN_TOCAR=1; OC_SIN_TOCAR=1 ;;
+    *)
+      TUI_SIN_TOCAR=1; OC_SIN_TOCAR=1
+      echo "  [AVISO] python3 fallo (codigo $rc) mientras escribia la config de OpenCode."
+      ;;
+  esac
 }
 
 # Merge con jq (solo JSON puro; jq NO soporta comentarios). Devuelve 0 si mergeo,
@@ -813,7 +1037,9 @@ merge_tui_jq() {
         | .theme = $theme
         | .plugin = ((.plugin // []) | if any(. == $plugin) then . else . + [$plugin] end)
       ' "$TUI_JSON" > "$tmp" 2>/dev/null; then
-    mv "$tmp" "$TUI_JSON"; return 0
+    # `mv -f` y mirando su resultado: antes era `mv ...; return 0`, que devolvia
+    # exito aunque el mv no hubiera podido.
+    if mv -f "$tmp" "$TUI_JSON" 2>/dev/null; then return 0; fi
   fi
   rm -f "$tmp"; return 1
 }
@@ -832,21 +1058,26 @@ merge_opencode_jq() {
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
         | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
-    mv "$tmp" "$OPENCODE_JSON"; return 0
+    if mv -f "$tmp" "$OPENCODE_JSON" 2>/dev/null; then return 0; fi
   fi
   rm -f "$tmp"; return 1
 }
 
+# TUI_SIN_TOCAR / OC_SIN_TOCAR: 1 = ese archivo NO quedo con lo de Tecnia Bot.
+# El "[OK]" sale SOLO si los dos quedaron escritos; lo que no, va a AVISOS.
+TUI_SIN_TOCAR=0
+OC_SIN_TOCAR=0
 if [ "$JSON_TOOL" = "jq" ]; then
-  JQ_OK=1
-  merge_tui_jq || JQ_OK=0
-  merge_opencode_jq || JQ_OK=0
-  if [ "$JQ_OK" = "1" ]; then
+  merge_tui_jq || TUI_SIN_TOCAR=1
+  merge_opencode_jq || OC_SIN_TOCAR=1
+  if [ "$TUI_SIN_TOCAR" = "0" ] && [ "$OC_SIN_TOCAR" = "0" ]; then
     echo "  [OK] $(basename "$TUI_JSON") y $(basename "$OPENCODE_JSON") actualizados (via jq)."
-  elif command -v python3 >/dev/null 2>&1; then
+  elif python3_anda; then
     # jq no pudo (probablemente comentarios en un .jsonc); reintentar con python.
-    merge_via_python
-    echo "  [OK] Config actualizada (jq no pudo con comentarios; usé python3)."
+    merge_python_y_anotar
+    if [ "$TUI_SIN_TOCAR" = "0" ] && [ "$OC_SIN_TOCAR" = "0" ]; then
+      echo "  [OK] Config actualizada (jq no pudo con comentarios; usé python3)."
+    fi
   else
     echo "  [AVISO] jq no pudo parsear la config (¿.jsonc con comentarios?) y no hay python3."
     echo "          Revisá y agregá a mano lo que falte:"
@@ -855,8 +1086,10 @@ if [ "$JSON_TOOL" = "jq" ]; then
     echo "            $(basename "$OPENCODE_JSON"): \"agent\": { \"$TECNIA_AGENT\": { \"model\": \"$MODELO_ELEGIDO\" } }"
   fi
 elif [ "$JSON_TOOL" = "python3" ]; then
-  merge_via_python
-  echo "  [OK] $(basename "$TUI_JSON") y $(basename "$OPENCODE_JSON") actualizados (via python3)."
+  merge_python_y_anotar
+  if [ "$TUI_SIN_TOCAR" = "0" ] && [ "$OC_SIN_TOCAR" = "0" ]; then
+    echo "  [OK] $(basename "$TUI_JSON") y $(basename "$OPENCODE_JSON") actualizados (via python3)."
+  fi
 else
   # Sin jq ni python3: si el archivo no existe lo creamos con nuestro default;
   # si existe NO lo tocamos (evitamos un merge fragil) y avisamos que agregue las
@@ -871,6 +1104,7 @@ else
 EOF
     echo "  [OK] $(basename "$TUI_JSON") creado."
   else
+    TUI_SIN_TOCAR=1
     echo "  [AVISO] No hay jq ni python3 y $TUI_JSON ya existe: no lo toco."
     echo "          Agregale a mano estas claves (sin borrar lo tuyo):"
     echo "            \"theme\": \"$TECNIA_THEME\""
@@ -889,6 +1123,7 @@ EOF
 EOF
     echo "  [OK] $(basename "$OPENCODE_JSON") creado."
   else
+    OC_SIN_TOCAR=1
     echo "  [AVISO] No hay jq ni python3 y $OPENCODE_JSON ya existe: no lo toco."
     echo "          Agregale a mano: \"default_agent\": \"$TECNIA_AGENT\","
     echo "          el modelo: \"agent\": { \"$TECNIA_AGENT\": { \"model\": \"$MODELO_ELEGIDO\" } }"
@@ -896,7 +1131,19 @@ EOF
   fi
 fi
 
-echo "==> Listo! Tecnia Bot v$VERSION instalado."
+if [ "$TUI_SIN_TOCAR" = "1" ]; then
+  anotar_aviso "$TUI_JSON quedo SIN el theme y el logo de Tecnia Bot: no lo pude leer o escribir. Agregale a mano \"theme\": \"$TECNIA_THEME\" y el plugin \"$TECNIA_PLUGIN\"."
+fi
+if [ "$OC_SIN_TOCAR" = "1" ]; then
+  anotar_aviso "$OPENCODE_JSON quedo SIN el agente por defecto ni el modelo de Tecnia Bot: no lo pude leer o escribir. Al abrir opencode NO va a arrancar en tecnia-bot. Revisa que sea un JSON valido y que se pueda escribir."
+fi
+
+# El cierre dice lo que paso. "Listo!" solo si no quedo nada anotado.
+if [ -z "$AVISOS" ]; then
+  echo "==> Listo! Tecnia Bot v$VERSION instalado."
+else
+  echo "==> Tecnia Bot v$VERSION instalado CON AVISOS (el detalle va al final)."
+fi
 echo ""
 
 echo "Verificando dependencias:"
@@ -1074,6 +1321,116 @@ else
   echo "          Instalalo con: python3 <(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"
 fi
 
+# ---- Permiso del puerto serie (SOLO Linux) -----------------------------------
+# En Linux el puerto de la placa (/dev/ttyUSB0, /dev/ttyACM0) es de un grupo, y
+# quien no esta en ese grupo no puede cargar: PlatformIO falla con "Permission
+# denied" en plena clase, despues de compilar todo. El grupo cambia con la distro
+# (dialout en Debian/Ubuntu, uucp en Arch/Manjaro) y docs/instalacion-linux.md le
+# pedia a la docente que lo averiguara sola. Este instalador no lo arregla --hace
+# falta la contrasena de administrador y aca no se usa sudo-- pero si lo MIRA y
+# dice el comando exacto para esta compu.
+#
+# Que se mira, en orden, y nada se supone:
+#   1. Si hay una placa conectada: se intenta leer y escribir el dispositivo. Si
+#      se puede, listo. Si no, el grupo es el DUENO REAL de ese dispositivo.
+#   2. Si no hay ninguna: el grupo es dialout o uucp, el que EXISTA en el sistema.
+#   3. La pertenencia se mira dos veces: en esta sesion (`id -Gn`) y en la base de
+#      usuarios (`id -Gn usuario`). Estar en la base y no en la sesion es el caso
+#      de quien ya corrio el usermod y todavia no volvio a entrar.
+# En macOS no aplica (el puerto es del usuario) y root no necesita grupo.
+# `stat -c` es de GNU/busybox y no existe en BSD: esta bien, de aca no pasa nadie
+# que no sea Linux.
+grupo_existe() {
+  if command -v getent >/dev/null 2>&1; then
+    getent group "$1" >/dev/null 2>&1
+  else
+    grep -q "^$1:" /etc/group 2>/dev/null
+  fi
+}
+# $1 = lista de grupos separada por espacios (lo que imprime `id -Gn`), $2 = grupo.
+esta_en_la_lista() {
+  case " $1 " in *" $2 "*) return 0 ;; esac
+  return 1
+}
+aviso_puerto_serie() {
+  [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || return 0
+  [ "$(id -u)" != "0" ] || return 0
+  local usuario grupo="" origen="" dev g comando
+  usuario="$(id -un 2>/dev/null || true)"
+  [ -n "$usuario" ] || return 0
+
+  for dev in /dev/ttyUSB* /dev/ttyACM*; do
+    [ -e "$dev" ] || continue
+    if [ -r "$dev" ] && [ -w "$dev" ]; then
+      echo "  [OK] Puerto serie: tu usuario puede leer y escribir $dev (la placa conectada ahora)."
+      return 0
+    fi
+    g="$(stat -c '%G' "$dev" 2>/dev/null || true)"
+    case "$g" in ""|root|UNKNOWN) continue ;; esac
+    grupo="$g"
+    origen="es el grupo dueno de $dev, la placa conectada ahora"
+    break
+  done
+  if [ -z "$grupo" ]; then
+    for g in dialout uucp; do
+      if grupo_existe "$g"; then
+        grupo="$g"
+        origen="no hay ninguna placa conectada ahora; '$g' es el grupo de puertos serie que existe en este sistema"
+        break
+      fi
+    done
+  fi
+  if [ -z "$grupo" ]; then
+    echo "  [AVISO] Puerto serie: no pude comprobar el permiso para cargar a la placa."
+    echo "          No hay ninguna placa conectada y en este sistema no existe ni el grupo dialout ni uucp."
+    echo "          Conecta la placa y volve a correr este instalador para que lo mire."
+    return 0
+  fi
+
+  if esta_en_la_lista "$(id -Gn 2>/dev/null || true)" "$grupo"; then
+    echo "  [OK] Puerto serie: tu usuario ($usuario) esta en el grupo $grupo ($origen)."
+    return 0
+  fi
+  if esta_en_la_lista "$(id -Gn "$usuario" 2>/dev/null || true)" "$grupo"; then
+    echo "  [AVISO] Puerto serie: tu usuario ($usuario) ya figura en el grupo $grupo, pero esta sesion todavia no lo tomo."
+    echo "          Cerra la sesion y volve a entrar (o reinicia la compu) antes de cargar a la placa."
+    return 0
+  fi
+  # El comando, con el grupo y el usuario de ESTA compu ya puestos. usermod vive en
+  # /usr/sbin, que muchas distros no ponen en el PATH de un usuario comun.
+  if command -v usermod >/dev/null 2>&1 || [ -x /usr/sbin/usermod ] || [ -x /sbin/usermod ]; then
+    comando="sudo usermod -a -G $grupo $usuario"
+  elif command -v gpasswd >/dev/null 2>&1; then
+    comando="sudo gpasswd -a $usuario $grupo"
+  elif command -v addgroup >/dev/null 2>&1; then
+    comando="sudo addgroup $usuario $grupo"
+  else
+    comando=""
+  fi
+  echo "  [FALTA] Puerto serie: tu usuario ($usuario) NO esta en el grupo $grupo ($origen)."
+  echo "          Sin ese permiso lo mas probable es que cargar a la placa falle con \"Permission denied\"."
+  if [ -n "$comando" ]; then
+    echo "          Corre esto (te va a pedir tu contrasena):"
+    echo "            $comando"
+  else
+    echo "          Agrega tu usuario a ese grupo con la herramienta de usuarios de tu sistema."
+  fi
+  echo "          Despues cerra la sesion y volve a entrar para que tome efecto."
+}
+aviso_puerto_serie
+
 echo ""
 echo "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
 echo "apreta Tab y elegi 'tecnia-bot'."
+
+# LO ULTIMO QUE SE LEE. Va aca, despues de todo, y no arriba: /actualizar le
+# muestra al docente solo la COLA de esta salida (opencode/tool/actualizar.ts), y
+# en una terminal lo que queda a la vista es el final. El codigo 3 es el contrato
+# con bootstrap.sh, update.sh y actualizar.ts: ver el encabezado.
+if [ -n "$AVISOS" ]; then
+  echo ""
+  echo "==> Tecnia Bot v$VERSION instalado CON AVISOS. Falta:"
+  printf '%s' "$AVISOS"
+  echo "    Cuando lo arregles, volve a correr este instalador (bash install/install.sh)."
+  exit 3
+fi

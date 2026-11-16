@@ -32,6 +32,8 @@ sudo usermod -a -G dialout $USER
 sudo usermod -a -G uucp $USER
 ```
 
+> Desde la 0.5 `install/install.sh` lo mira por vos: al final dice si tu usuario ya está en el grupo o, si falta, el comando exacto para tu compu (no lo corre: hace falta tu contraseña).
+>
 > ¿No sabés cuál usar? Corré `getent group dialout` y `getent group uucp`: usá el que exista en tu sistema. Si te da "el grupo no existe", es el otro.
 
 **Cerrá sesión y volvé a entrar** para que tome efecto. Verificá con `groups` que aparezca el grupo.
@@ -76,3 +78,20 @@ Si preferís instalar cada cosa por separado (o el bootstrap falló), estos son 
    bash install/install.sh
    ```
 4. El permiso del puerto serial (paso 3 de arriba).
+
+---
+
+## Actualizar en una red que bloquea GitHub (espejo)
+
+`/actualizar` y `bash install/update.sh` bajan el último release de GitHub. Si la red de la escuela lo bloquea, `update.sh` puede tomarlo de un **espejo** —un servidor de la escuela o un pendrive— con la variable `TECNIA_UPDATE_ESPEJO`:
+
+```bash
+TECNIA_UPDATE_ESPEJO=file:///media/pendrive/tecnia bash install/update.sh
+```
+
+El espejo tiene que tener dos cosas, con estos nombres:
+
+- `releases/latest`: un JSON con `"tag_name": "vX.Y.Z"`.
+- `archive/refs/tags/vX.Y.Z.tar.gz`: el fuente de ese release, tal como se baja de GitHub (*Source code (tar.gz)*).
+
+Sólo acepta `https://` y `file:///`, lo dice en la salida cuando lo usa, y lo bajado pasa por las mismas verificaciones que si viniera de GitHub. `file:///` necesita `curl`. El detalle está en el encabezado de `install/update.sh`.
