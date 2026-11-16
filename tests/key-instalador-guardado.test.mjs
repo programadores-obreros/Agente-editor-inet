@@ -149,3 +149,99 @@ test("lo que no tiene forma de key no se prueba ni se guarda", () => {
   assert.match(sinForma, /No la probe ni la guarde/, "cuando lo pegado no tiene forma de key no dice que no lo guardó")
   assert.doesNotMatch(sinForma, /WriteAllText|SetEnvironmentVariable|Add-Member|Probar-KeyGoogle/, "la rama «no tiene forma» prueba o escribe algo")
 })
+
+// ---------------------------------------------------------------------------
+// GUARDAR la key como la guarda clave.ts: atómico, con relectura, y sin pisar un
+// auth.json que no se pudo leer.
+//
+// `[OK] Key guardada en esta compu.` se imprimía sin volver a mirar el archivo, la
+// escritura era un WriteAllText directo (si la notebook se apaga en el medio queda
+// a medias y NINGUNA credencial funciona), y un auth.json que no parseaba se
+// trataba como vacío: al guardar se escribía ese vacío más la key, y las
+// credenciales de los otros servicios del docente desaparecían sin aviso.
+// ---------------------------------------------------------------------------
+
+/** Cuerpo de una función de primer nivel. */
+function cuerpoFn(nombre) {
+  const i = PS.indexOf(`function ${nombre}`)
+  assert.ok(i >= 0, `install.ps1 no tiene la función ${nombre}`)
+  const j = PS.indexOf("\n}\n", i)
+  assert.ok(j > i, `la función ${nombre} no cierra`)
+  return PS.slice(i, j)
+}
+
+// Mutaciones que lo pusieron rojo: sacar la condición y dejar
+// `$guardadaVerificada = $true` suelto → exit code 1; mover el Write-Host del
+// "[OK]" arriba de `if ($guardadaVerificada) {` → exit code 1.
+test("«[OK] Key guardada» sale SÓLO si al releer auth.json la key que hay es la que se quiso guardar", () => {
+  const { texto } = ramaPegoKey()
+  const oks = [...PS.matchAll(/^.*\[OK\] Key guardada.*$/gm)]
+  assert.equal(oks.length, 1, `esperaba UNA afirmación de «[OK] Key guardada» y hay ${oks.length}`)
+  const verificado = bloque(texto, "if ($guardadaVerificada) {", 12)
+  assert.match(verificado, /\[OK\] Key guardada/, "el «[OK] Key guardada» no cuelga de la relectura")
+  // La bandera se prende en UN lugar, y ese lugar es la comparación de lo releído.
+  const prendidas = [...texto.matchAll(/\$guardadaVerificada = \$true/g)]
+  assert.equal(prendidas.length, 1, `$guardadaVerificada se prende ${prendidas.length} veces`)
+  const relectura = bloque(texto, 'if (($releido.estado -eq "ok") -and ((Get-KeyDeAuth $releido.datos) -ceq $keyFinal)) {', 16)
+  assert.match(relectura, /\$guardadaVerificada = \$true/, "la bandera no se prende adentro de la comparación de lo releído")
+  // Orden: escribir → releer → comparar. Y arranca en falso.
+  const iEscribe = texto.indexOf("Escribir-TextoAtomico $AuthFile ($candidato")
+  const iRelee = texto.indexOf("$releido = Leer-AuthJson $AuthFile")
+  assert.ok(iEscribe > 0 && iRelee > iEscribe, "auth.json no se relee DESPUÉS de escribirlo")
+  assert.ok(texto.indexOf("$guardadaVerificada = $false") < iEscribe, "la bandera no arranca en falso antes de escribir")
+  // Lo que depende de que la key haya quedado, cuelga de la misma bandera.
+  for (const dep of ['SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal', "$tieneGoogle = $true", "$pruebaKey = $pruebaNueva"]) {
+    assert.ok(verificado.includes(dep), `«${dep}» corre aunque la key no haya quedado guardada`)
+  }
+  // Y la rama de fracaso lo dice sin vueltas.
+  const fracaso = bloque(texto, "if (-not $guardadaVerificada) {", 12)
+  assert.match(fracaso, /NO pude guardar la key/, "si no quedó guardada no lo dice")
+  assert.match(fracaso, /no quedo/, "no aclara que NO quedó guardada")
+  assert.doesNotMatch(fracaso, /\[OK\]/, "la rama de fracaso imprime un OK")
+})
+
+// Mutación que lo puso rojo: reemplazar la llamada del guardado por
+// `[System.IO.File]::WriteAllText($AuthFile, ($candidato | ConvertTo-Json -Depth 10), ...)` → exit code 1.
+test("la key se escribe de forma ATÓMICA: temporal en la misma carpeta y reemplazo", () => {
+  const fn = cuerpoFn("Escribir-TextoAtomico")
+  // El temporal se arma PEGADO a la ruta de destino: misma carpeta, mismo disco.
+  assert.match(fn, /\$temporal = \$ruta \+ "\." \+ \$PID \+ "\.tmp"/, "el temporal no vive al lado del destino (un rename entre discos no es atómico)")
+  assert.doesNotMatch(fn, /\$env:TEMP|GetTempPath|GetTempFileName/, "el temporal se fue a la carpeta TEMP: puede ser otro disco")
+  assert.match(fn, /WriteAllText\(\$temporal, \$texto, \(New-Object System\.Text\.UTF8Encoding \$false\)\)/, "el temporal no se escribe en UTF-8 sin BOM")
+  assert.match(fn, /\[System\.IO\.File\]::Replace\(\$temporal, \$ruta, \[NullString\]::Value\)/, "no reemplaza el destino con File.Replace")
+  assert.match(fn, /\[System\.IO\.File\]::Move\(\$temporal, \$ruta\)/, "sin destino previo no mueve el temporal")
+  assert.doesNotMatch(fn, /WriteAllText\(\$ruta/, "escribe directo sobre el destino")
+  assert.match(fn, /catch \{[\s\S]*Remove-Item -LiteralPath \$temporal[\s\S]*throw/, "si falla, deja el temporal tirado o se traga el error")
+  // Sobre auth.json queda UNA sola escritura directa: la cura del BOM, que es
+  // anterior a todo esto y reescribe el mismo contenido. Las que cambian
+  // credenciales (guardar la key, purgar la vieja) van por la atómica.
+  const directas = [...PS.matchAll(/WriteAllText\(\$AuthFile/g)]
+  assert.equal(directas.length, 1, `hay ${directas.length} escrituras directas sobre auth.json; tiene que quedar sólo la cura del BOM`)
+  assert.ok(directas[0].index < PS.indexOf("function Leer-AuthJson"), "la escritura directa que queda no es la cura del BOM")
+  const atomicas = [...PS.matchAll(/Escribir-TextoAtomico \$AuthFile /g)]
+  assert.equal(atomicas.length, 2, `esperaba dos escrituras atómicas de auth.json (purga y guardado) y hay ${atomicas.length}`)
+})
+
+// Mutaciones que lo pusieron rojo: en Leer-AuthJson, que el catch de
+// ConvertFrom-Json devuelva `estado = "no-existe"` → exit code 1; sacar el
+// `if ($enDisco.estado -ne "ilegible") {` (dejar `if ($true) {`) → exit code 1.
+test("un auth.json que NO SE PUDO LEER no se trata como vacío y no se pisa", () => {
+  const fn = cuerpoFn("Leer-AuthJson")
+  assert.match(fn, /try \{ \$texto = Leer-TextoUtf8 \$ruta \} catch \{ return @\{ estado = "ilegible"/, "un archivo que no se pudo abrir no devuelve «ilegible»")
+  assert.match(fn, /try \{ \$objeto = \$texto \| ConvertFrom-Json \} catch \{ return @\{ estado = "ilegible"/, "un JSON roto no devuelve «ilegible»")
+  assert.match(fn, /if \(-not \(\$objeto -is \[PSCustomObject\]\)\) \{ return @\{ estado = "ilegible"/, "un JSON que no es un objeto no devuelve «ilegible»")
+  // Con ilegible: se avisa, no se pregunta la key, y no se escribe.
+  assert.match(PS, /\$AuthIlegible = \(\$lecturaAuth\.estado -eq "ilegible"\)/, "ya no se calcula $AuthIlegible")
+  assert.match(PS, /if \(\$AuthIlegible\) \{\s*\n\s*\$preguntar = \$false\s*\n\}/, "con auth.json ilegible igual se pregunta la key (que después no se puede guardar)")
+  assert.match(PS, /if \(\$AuthIlegible\) \{[\s\S]{0,200}NO LO TOCO/, "con auth.json ilegible no avisa que no lo toca")
+  // Y en el guardado, por si el archivo se rompió mientras se esperaba la respuesta:
+  // la escritura vive adentro de la guarda que mira lo que hay AHORA en el disco.
+  const { texto } = ramaPegoKey()
+  const legible = bloque(texto, 'if ($enDisco.estado -ne "ilegible") {', 12)
+  const iLegible = texto.indexOf(legible)
+  for (const m of texto.matchAll(/Escribir-TextoAtomico \$AuthFile|Add-Member -NotePropertyName "google"/g)) {
+    assert.ok(m.index > iLegible && m.index < iLegible + legible.length, `«${m[0]}» corre aunque auth.json esté ilegible: pisa las otras credenciales`)
+  }
+  // El objeto que se escribe sale de lo releído del disco, no de un vacío a ciegas.
+  assert.match(legible, /\$candidato = \$enDisco\.datos/, "lo que se escribe no parte de lo que hay en el disco")
+})
