@@ -274,7 +274,14 @@ test("abort antes de responder → no se lanza; un «sí» que llega después ta
     return new Promise((resolve) => (soltarSi = resolve)) // OpenCode colgado
   }
   const lanza = lanzador()
-  const { r } = await cargar(dir, { pregunta, lanza, abort: ctrl.signal })
+  // Si la carga no corre el cartel en carrera contra el abort, se queda colgada para siempre
+  // esperando a OpenCode: eso se afirma acá (con un tope), no se deja al timeout del runner.
+  let tope
+  const colgada = new Promise((resolve) => (tope = setTimeout(() => resolve("colgada"), 5000)))
+  const corrida = await Promise.race([cargar(dir, { pregunta, lanza, abort: ctrl.signal }), colgada])
+  clearTimeout(tope)
+  assert.notEqual(corrida, "colgada", "después del abort la carga siguió esperando al cartel")
+  const { r } = corrida
   assert.equal(r.codigo, "CANCELADO")
   assert.match(r.resultado, /no se lanzó nada/)
   soltarSi() // el "sí" tardío
