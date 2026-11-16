@@ -1,4 +1,18 @@
-# La key de Google: por qué no se puede cambiar, y qué hacer
+# La key de Google: por qué no se podía cambiar, y qué se hizo
+
+> **Estado: resuelto.** Este documento cuenta un incidente del 8 de septiembre de
+> 2026 y lo que se decidió a partir de él. Hasta hace poco seguía diciendo que el
+> arreglo estaba "propuesto" y que `/clave` no existía; las cinco cosas que
+> propone están implementadas, y cada una dice abajo dónde. **Si lo que necesitás
+> es cambiar una key hoy, no hace falta leer la historia:**
+>
+> - **Windows:** menú inicio → **"Reparar Tecnia Bot"**. Si ya hay una key
+>   guardada te ofrece cambiarla, y prueba la nueva contra Google antes de guardarla.
+> - **Linux:** `bash install/install.sh`. Hace lo mismo.
+> - **Con el bot andando:** `/clave`. Si el bot no contesta —que es lo que pasa
+>   con una key muerta o sin cuota—, `/clave` tampoco: usá Reparar.
+>
+> La guía para docentes es [`api-key-google.md`](api-key-google.md).
 
 Este documento existe porque el 8 de septiembre de 2026, en una escuela, varias
 docentes intentaron cambiar su key de Google —incluso con keys de otras cuentas—
@@ -20,7 +34,10 @@ mismo error.
 
 ## La causa
 
-`install/install.ps1` decide así si tiene que preguntar por la key:
+*(Lo que sigue describe el instalador **hasta la v0.3.78**. Hoy la pregunta ya no
+vive sólo en esa rama.)*
+
+`install/install.ps1` decidía así si tenía que preguntar por la key:
 
 ```powershell
 $tieneGoogle = [bool](($authData.PSObject.Properties.Name -contains "google") -and $authData.google.key)
@@ -96,16 +113,20 @@ Verificado sobre el binario de **OpenCode 1.18.18**, que es la versión que fija
 |---|---|---|
 | `/connect` | **Sí** | El comando de OpenCode para credenciales de proveedores. Aparece en el binario como la vía para configurar tokens ("Bearer token (AWS_BEARER_TOKEN_BEDROCK or /connect)") |
 | `/auth` | **No** | Las apariciones de esa cadena en el binario son un MIME type (`application/auth-policy+xml`) y URLs de OAuth de Google. No es un comando |
-| `/clave` | **No** | Propuesto en este documento. Sería nuestro |
+| `/clave` | **Sí** (es nuestro) | Se propuso en este documento y hoy existe: `opencode/command/clave.md`, que usa el tool `opencode/tool/clave.ts`. Muestra el estado de la key, la prueba contra Google, la cambia o la quita. No es un comando de OpenCode: es de Tecnia Bot |
 
 Los comandos propios de Tecnia Bot son archivos `.md` en `opencode/command/`, y
-hoy son cuatro: `actualizar`, `ayuda`, `diagnostico`, `reparar`. **Todos en
+hoy son cinco: `actualizar`, `ayuda`, `clave`, `diagnostico`, `reparar`. **Todos en
 español**: un comando nuevo tiene que seguir esa convención.
 
-## Cómo cambiar la key hoy (workaround, sin versión nueva)
+## Cómo se cambiaba la key con la v0.3.78 o anterior (workaround)
 
-Hay que dejar `auth.json` sin el bloque `google` **antes** de reparar, para que
-la rama que pregunta se ejecute.
+**Con una versión actual esto no hace falta**: "Reparar Tecnia Bot" ofrece
+cambiar la key aunque ya haya una. Queda escrito para quien todavía tenga una
+versión vieja instalada y no pueda actualizar.
+
+Había que dejar `auth.json` sin el bloque `google` **antes** de reparar, para que
+la rama que pregunta se ejecutara.
 
 En PowerShell, en la compu del docente:
 
@@ -118,7 +139,7 @@ $d.PSObject.Properties.Remove("google")
 (Get-Item $f).LastWriteTime
 ```
 
-Después: "Reparar Tecnia Bot" (ahora sí pregunta), pegar la key nueva, y **cerrar
+Después: "Reparar Tecnia Bot" (así sí preguntaba), pegar la key nueva, y **cerrar
 y volver a abrir** Tecnia Bot.
 
 El `UTF8Encoding $false` no es decorativo. `Set-Content -Encoding UTF8` en
@@ -150,19 +171,27 @@ En la máquina de la escuela ese no fue el caso: la fecha de `auth.json` sin
 cambios después de correr el instalador prueba que la purga no se disparó, así
 que la key guardada es una key real de la docente, con su cuota agotada.
 
-## El arreglo que corresponde
+## El arreglo que correspondía, y dónde quedó
 
-Nada de esto está implementado todavía.
+Acá decía "nada de esto está implementado todavía". **Las cinco cosas están
+implementadas**; debajo de cada una va dónde mirarla.
 
-1. **Que se pueda cambiar la key aunque ya haya una.** Sin volver a la fricción
-   de preguntar siempre:
+1. **Que se pueda cambiar la key aunque ya haya una.** *Hecho*: es el tercer
+   camino de la pregunta en `install/install.ps1` e `install/install.sh` ("Ya hay
+   una key de Google guardada en esta compu"). Enter, 60 segundos sin contestar o
+   una consola sin nadie dejan la que estaba. El texto propuesto era:
 
    ```
    ==> Ya hay una key de Google guardada en esta compu.
        Enter para dejarla como está, o pegá una nueva para reemplazarla [60s]:
    ```
 
-2. **Un comando `/clave` adentro del bot.** El docente que se queda sin cuota
+2. **Un comando `/clave` adentro del bot.** *Hecho*
+   (`opencode/command/clave.md`, `opencode/tool/clave.ts`), con un límite que se
+   descubrió después: a `/clave` lo atiende el mismo modelo cuya key puede estar
+   muerta, así que para una key rechazada o sin cuota la salida que se ofrece es
+   "Reparar Tecnia Bot" (ver [`donde-avisa-cada-cosa.md`](donde-avisa-cada-cosa.md)).
+   La idea original: el docente que se queda sin cuota
    está hablando con el bot en ese momento: que pueda pegar la key ahí, sin
    PowerShell ni menú inicio. Es la misma lección que dio origen a la acción
    `reparar` del tool `platformio`, cuando una docente contestó *"vos tenés
@@ -175,14 +204,22 @@ Nada de esto está implementado todavía.
    > para quien corre el `.exe` o el acceso directo del menú inicio; para el
    > docente que está adentro del bot hace falta el punto 2.
 
-3. **Validar la key antes de afirmar que quedó configurada.** Una llamada, dos
-   segundos. Si no responde, decirlo.
+3. **Validar la key antes de afirmar que quedó configurada.** *Hecho*: el
+   instalador prueba contra Google la key que queda (la nueva o la de siempre) y
+   distingue cinco resultados —anda, cuota agotada, rechazada, modelo retirado,
+   no se pudo probar—, los mismos en `install.ps1`, `install.sh`,
+   `chequear-clave.ps1` y `clave.ts`. "No pude probarla" nunca se cuenta como "anda".
 
-4. **Que el bot traduzca el error de cuota.** Hoy `Resource has been exhausted`
-   no aparece en ningún lado del repo: ni en los tools, ni en los comandos, ni en
-   las skills. El docente ve el error crudo en inglés y no sabe si es culpa suya,
+4. **Que el bot traduzca el error de cuota.** *Hecho, pero no donde se pensaba*:
+   el bot no puede explicar que su propio modelo no contesta. El aviso lo da el
+   lanzador de Windows antes de abrir (`install/chequear-clave.ps1`) y el
+   instalador al terminar. En Linux no hay lanzador: el aviso lo da sólo el
+   instalador. Cuando se escribió esto, `Resource has been exhausted` no aparecía
+   en ningún lado del repo y el docente veía el error crudo en inglés y no sabe si es culpa suya,
    si se arregla solo, ni qué hacer. Hay una salida que nadie le ofrece: sin key
    de Google, Tecnia Bot funciona con Big Pickle, el modelo gratuito de OpenCode.
 
 5. **Verificar la escritura releyendo el archivo**, en vez de imprimir
-   `[OK] Key guardada en esta compu.` y confiar.
+   `[OK] Key guardada en esta compu.` y confiar. *Hecho*: los dos instaladores
+   releen `auth.json` antes de decir que la guardaron, y si no la encuentran lo
+   dicen y terminan "CON AVISOS".
