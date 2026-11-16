@@ -61,7 +61,7 @@ El instalador **re-evalúa la decisión cada vez que corre** (instalación, "Rep
 
 - **Pasar de Big Pickle a Gemini**: conseguí la key y
   - **Windows**: Menú inicio → **"Reparar Tecnia Bot"**. Te la pide y la aplica en el acto.
-  - **Linux/macOS**: `bash install/install.sh` (o `bash install/bootstrap.sh`).
+  - **Linux** (y macOS, que no está probado): `bash install/install.sh` (o `bash install/bootstrap.sh`).
   - Con el bot andando: **`/clave`**. Te pide la key, la prueba contra Google y, sólo si anda, la guarda y pasa el agente a Gemini.
   - También podés pegarla con `/connect` dentro de OpenCode (elegí **Google**). `/connect` sólo **guarda** la key: el cambio de modelo se aplica en la próxima corrida del instalador (`/actualizar` o Reparar).
 - **Cambiar una key por otra** (la típica: se quedó sin cuota): lo mismo. "Reparar Tecnia Bot" o `bash install/install.sh` te muestran *"Ya hay una key de Google guardada en esta compu"* y te dejan pegar la nueva.
