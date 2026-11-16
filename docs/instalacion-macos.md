@@ -1,10 +1,19 @@
 # Instalación en macOS — sin probar en una Mac real
 
 > ⚠️ **Nadie instaló Tecnia Bot en una Mac todavía — ni nosotros.** No hay una
-> prueba hecha a mano, ni una corrida automática, ni una bitácora que respalde
-> esta guía. Los scripts de instalación (`install/*.sh`) son los mismos de Linux
-> y están escritos teniendo en cuenta a macOS, pero **"está escrito para andar"
-> no es "anda"**. Si lo probás, sos la primera persona: abajo dice cómo avisarnos.
+> prueba hecha a mano ni una bitácora que respalde esta guía. Los scripts de
+> instalación (`install/*.sh`) son los mismos de Linux y están escritos teniendo
+> en cuenta a macOS, pero **"está escrito para andar" no es "anda"**. Si lo
+> probás, sos la primera persona: abajo dice cómo avisarnos.
+>
+> Lo que sí existe desde noviembre de 2026 es una prueba automática: el job
+> **"Instalador real (macOS, bash 3.2 del sistema)"** de `.github/workflows/ci.yml`
+> corre `install.sh`, `bootstrap.sh` y `uninstall.sh` en una Mac de GitHub. **Al
+> escribir esta guía ese job todavía no había corrido ni una vez**, así que no
+> cambia nada de lo de arriba. Cuando corra, su resultado (verde o rojo) es la
+> primera evidencia real que va a tener el proyecto, y esta nota se actualiza con
+> lo que haya dicho. Una Mac de GitHub trae herramientas de desarrollo que una
+> Mac de escuela puede no tener: aunque dé verde, no reemplaza probarlo a mano.
 
 Si necesitás algo que ande seguro para la clase de mañana, usá
 [Windows](instalacion-windows.md) o [Linux](instalacion-linux.md), que sí están

@@ -106,19 +106,26 @@ job, no quedarse con el tilde verde general:
 |---|---|
 | **Typecheck + smoke tests (Linux)** | `tsc` y la suite de `tests/` |
 | **Instalador real (Windows PowerShell 5.1)** | Compila el `.exe` con ISCC y corre `bootstrap.ps1` **de punta a punta** en un Windows de GitHub: Scoop, OpenCode, PlatformIO y la capa. (Esa máquina ya trae programas instalados: no es una notebook de escuela.) Después verifica lo que quedó, compila un ejemplo para Arduino UNO y corre `uninstall.ps1 -Conservar`. Es lo más parecido a una instalación real que hay sin una notebook |
+| **Instalador real (Linux, bootstrap.sh de punta a punta)** | Corre `bootstrap.sh` contra internet de verdad en un Ubuntu de GitHub: baja OpenCode y PlatformIO, y verifica en el disco la versión de OpenCode, `pio`, la capa y el agente por defecto. Después repite en una carpeta de usuario nueva **sin `curl` ni `wget`** y exige que la capa quede igual y el código sea 3. Termina con `uninstall.sh --conservar` |
+| **Instalador real (macOS, bash 3.2 del sistema)** | Lo mismo en una Mac de GitHub, con el `bash` que trae el sistema. Imprime qué máquina es. **Es la única evidencia de macOS que tiene el proyecto**: si está rojo, macOS no anda y el README no se toca |
 | **Frontmatter de las skills (YAML)** | El formato de las skills y el bloque de seguridad de los proyectos |
+
+El job de Windows además corre `install.ps1` dos veces con la configuración en una carpeta con tilde (no tiene que duplicar nada) y `uninstall.ps1` en sus tres casos: borrar, borrar sin manifest y conservar.
 
 Dos cosas que ese cuadro **no** cubre, y hay que saberlas antes de escribir "probado":
 
-- **El `.exe` en sí no se instala con sus dependencias en ningún job.** El job de
-  Windows corre `bootstrap.ps1` directo; el smoke test del tag (más abajo) instala el
-  `.exe` pero con `/skipdeps=1`. El camino "doble clic en el `.exe` → última pantalla"
-  sólo se prueba a mano, con [`prueba-rc.md`](prueba-rc.md). Si en `ci.yml` aparece un
-  job que instale el `.exe` completo, sumalo a esta tabla y tiene que estar en verde.
-- **macOS: al escribir esto, `ci.yml` no tiene ningún job de macOS.** Mientras no
-  exista y dé verde, el README tiene que seguir diciendo que macOS no está probado.
-  El día que exista, es un job más que mirar acá antes de publicar — y recién con ese
-  verde (y sabiendo qué instala y qué no) se puede tocar lo que dice el README.
+- **El `.exe` con sus dependencias no se instala en ningún job de `ci.yml`**: ahí
+  se corre `bootstrap.ps1` directo. Donde sí se instala entero es en el workflow del
+  tag (`build-installer.yml`, más abajo): primero el smoke test con `/skipdeps=1`, y
+  después una **instalación real, sin saltear nada**, con verificación en disco, y una
+  desinstalación con `unins000.exe`. Eso corre recién al taguear (o a mano, desde
+  Actions → "Instalador Windows (.exe)" → Run workflow): conviene correrlo a mano
+  ANTES de crear el tag. El camino "doble clic en el `.exe` → última pantalla" con una
+  persona mirando sigue siendo [`prueba-rc.md`](prueba-rc.md).
+- **macOS: el job existe, pero una Mac de GitHub no es una Mac de escuela.** Trae
+  herramientas de desarrollo instaladas. Mientras ese job no haya dado verde, el
+  README tiene que seguir diciendo que macOS no está probado; y aun en verde, lo que
+  se puede escribir es "pasa la prueba automática", no "probado en una Mac".
 
 > **Si `gh` dice *"No default remote repository has been set"***: `gh repo set-default
 > programadores-obreros/Agente-editor-inet`. Queda guardado en el `.git/config` local.
