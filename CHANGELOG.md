@@ -4,7 +4,9 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
-**El instalador ya no dice "listo" si no lo comprobó — en Windows y en Linux. Y casi nada de esto se probó todavía en una máquina con Windows: está dicho abajo, con el mismo tamaño de letra.**
+## [0.4.9] — 2026-11-16
+
+**El instalador ya no dice "listo" si no lo comprobó — en Windows y en Linux. Se probó en una máquina virtual y en las pruebas automáticas; todavía no en un aula: qué sí y qué no está dicho abajo, con el mismo tamaño de letra.**
 
 ### Corregido
 
@@ -40,7 +42,7 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 Esto va con la misma claridad que lo de arriba, porque un "arreglado" que nadie vio andar es una promesa, no un hecho:
 
 - **En Windows se probó en la máquina virtual, no en un aula.** El 15 de noviembre de 2026, en Windows 10 Pro 22H2 con un usuario sin permisos de administrador y el `.exe` compilado ahí: actualizar encima de la 0.4.7, las tres pantallas finales (bien, incompleto y "NO quedó instalado"), una instalación con la descarga de PlatformIO bloqueada, desinstalar eligiendo "No" y eligiendo "Sí" (con "Sí" se fueron la carpeta del programa, el perfil, la memoria y la key), reinstalar, el lanzador con una instalación cortada y con Documentos en una carpeta de red, el actualizador contra el release publicado (un archivo que el release no trae desapareció de la copia y de la configuración), el guardado de la key con Google inalcanzable, y la configuración en una carpeta con tilde. **No se probó:** una notebook de aula con la red de una escuela, `/actualizar` escrito adentro del bot (se probó el script que lanza), un procesador sin AVX2, ni cargar código a una placa. Antes de recomendarla en un aula hay que correr [`docs/prueba-rc.md`](docs/prueba-rc.md) en una notebook real.
-- **En Linux no se hizo una instalación real de punta a punta con esta versión.** Las pruebas automáticas corren los scripts con programas de mentira en lugar de OpenCode y PlatformIO; no bajan nada de internet. No se probó con `sudo` real, ni el chequeo del puerto **con una placa conectada**.
+- **En Linux se probó en las pruebas automáticas, no a mano.** En un Ubuntu de GitHub, el instalador bajó e instaló OpenCode y PlatformIO de verdad y se verificó en el disco lo que dejó; y sin `curl` ni `wget`, instaló Tecnia Bot igual y lo avisó. **No se probó:** una instalación hecha por una persona en su computadora, otra distribución (Debian, Mint, Fedora, Manjaro), con `sudo` real, ni el chequeo del puerto **con una placa conectada**.
 - **macOS: sólo la prueba automática.** El 16 de noviembre de 2026 el instalador corrió por primera vez en una Mac (la de GitHub: macOS 26.7.2, procesador Apple, con Xcode y Python ya instalados) y pasó: instalar la capa, bajar OpenCode y PlatformIO, desinstalar. Ninguna persona lo instaló en una Mac real, ni en una sin herramientas de desarrollo, ni con procesador Intel; tampoco se abrió el bot ni se cargó a una placa.
 - **Chromebook: nada**, igual que antes.
 
