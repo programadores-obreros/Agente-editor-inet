@@ -4,6 +4,20 @@
 #
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install.ps1
+#
+# CODIGOS DE SALIDA. Es un contrato: lo leen install\bootstrap.ps1,
+# install\update.ps1 y, a traves de ese, opencode\tool\actualizar.ts.
+#   0  la capa quedo instalada y la config de OpenCode quedo escrita
+#   1  la instalacion se corto por un error (la capa puede haber quedado a medias)
+#   3  instalado CON AVISOS: los archivos de la capa se copiaron, pero algo de la
+#      configuracion NO se pudo dejar como corresponde (tui.json u opencode.json
+#      que no se pudieron leer y se dejaron intactos, el archivo de credenciales
+#      ilegible, una key que no se pudo guardar). El cierre lista que falta.
+# Antes el caso 3 salia por 0 con un "Listo! Tecnia Bot instalado": con
+# opencode.json roto el agente por defecto y el modelo NO quedaban escritos, y
+# nadie se enteraba. El 3 es el mismo numero que usa uninstall.ps1 para "termino,
+# pero parcial". NO cubre las dependencias (OpenCode, PlatformIO): esas las
+# verifica bootstrap.ps1, y un "[FALTA]" de mas abajo no cambia este codigo.
 
 $ErrorActionPreference = "Stop"
 
@@ -19,6 +33,8 @@ if ($env:TECNIA_LOG_INSTALACION) {
     try { Start-Transcript -Path $env:TECNIA_LOG_INSTALACION -Append | Out-Null; $TranscriptPropio = $true } catch { }
 }
 $FalloInstalacion = $false
+# Lo que la instalacion quiso hacer y no pudo dejar comprobado (codigo 3).
+$AvisosInstalacion = New-Object System.Collections.ArrayList
 try {
 
 # Directorio de config global de OpenCode en Windows (respeta XDG si esta seteado)
@@ -1017,6 +1033,7 @@ function Test-HasContent($path) {
 $tuiHasContent = Test-HasContent $TuiJson
 $tui = Read-JsonObject $TuiJson
 if ($tuiHasContent -and $null -eq $tui) {
+    [void]$AvisosInstalacion.Add("el theme y el logo de Tecnia Bot: no pude leer $TuiJson como JSON y lo deje intacto")
     Write-Host "  [AVISO] No pude leer ${TuiJson} como JSON: lo dejo intacto."
     Write-Host "          Agregale a mano `"theme`": `"$TecniaTheme`" y el plugin `"$TecniaPlugin`"."
 } else {
@@ -1049,6 +1066,7 @@ if ($tuiHasContent -and $null -eq $tui) {
 $ocHasContent = Test-HasContent $OpencodeJson
 $oc = Read-JsonObject $OpencodeJson
 if ($ocHasContent -and $null -eq $oc) {
+    [void]$AvisosInstalacion.Add("el agente por defecto y el modelo ($ModeloElegido): no pude leer $OpencodeJson como JSON y lo deje intacto")
     Write-Host "  [AVISO] No pude leer ${OpencodeJson} como JSON: lo dejo intacto."
     Write-Host "          Agregale a mano `"default_agent`": `"$TecniaAgent`", `"autoupdate`": false y el modelo del agente:"
     Write-Host "          `"agent`": { `"$TecniaAgent`": { `"model`": `"$ModeloElegido`" } }"
@@ -1165,7 +1183,29 @@ if ($ocHasContent -and $null -eq $oc) {
     Write-Host "  [OK] $(Split-Path $OpencodeJson -Leaf) actualizado (agente por defecto + modelo $ModeloElegido + perfil + memoria)."
 }
 
-Write-Host "==> Listo! Tecnia Bot v$Version instalado."
+# ---- EL CIERRE DICE LO QUE PASO, no lo que se esperaba que pasara -------------
+#
+# Antes aca decia siempre "Listo! Tecnia Bot v... instalado", tambien un renglon
+# despues de "[AVISO] No pude parsear opencode.json: lo dejo intacto". Con ese
+# archivo sin tocar, el agente por defecto y el modelo NO quedaron escritos: el
+# bot abre como un OpenCode pelado, o con el modelo de la corrida anterior.
+# Los avisos de la key se juntan aca; los de la config se anotaron al ocurrir.
+if ($AuthIlegible) { [void]$AvisosInstalacion.Add("la key de Google: no pude leer el archivo de credenciales $AuthFile y no lo toque") }
+if ($PurgaFallida) { [void]$AvisosInstalacion.Add("la key de respaldo vieja sigue en ${AuthFile}: no pude sacarla") }
+if ($KeyNoGuardada) { [void]$AvisosInstalacion.Add("la key de Google que pegaste NO quedo guardada") }
+if ($VariableDesfasada) { [void]$AvisosInstalacion.Add("la variable de usuario GOOGLE_GENERATIVE_AI_API_KEY no quedo igual a la key guardada (y le gana)") }
+
+function Mostrar-AvisosInstalacion {
+    Write-Host "==> Tecnia Bot v$Version quedo instalado CON AVISOS. Los archivos del programa se copiaron, pero falta:"
+    foreach ($av in $AvisosInstalacion) { Write-Host "    - $av" }
+    Write-Host "    Mas arriba esta el detalle de cada uno. Arreglalo y volve a correr 'Reparar Tecnia Bot'."
+}
+if ($AvisosInstalacion.Count -eq 0) {
+    Write-Host "==> Listo! Tecnia Bot v$Version instalado."
+}
+if ($AvisosInstalacion.Count -gt 0) {
+    Mostrar-AvisosInstalacion
+}
 Write-Host ""
 
 Write-Host "Verificando dependencias:"
@@ -1407,8 +1447,15 @@ if ($pioPath) {
 }
 
 Write-Host ""
-Write-Host "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
-Write-Host "apreta Tab y elegi 'tecnia-bot'."
+if ($AvisosInstalacion.Count -eq 0) {
+    Write-Host "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
+    Write-Host "apreta Tab y elegi 'tecnia-bot'."
+}
+if ($AvisosInstalacion.Count -gt 0) {
+    # Se repite AL FINAL, que es lo ultimo que queda en pantalla y lo que se lee:
+    # entre el cierre de arriba y aca puede haber una descarga de mas de 1 GB.
+    Mostrar-AvisosInstalacion
+}
 
 } catch {
     # El error se escribe ACA, con el transcript todavia abierto: si se dejara
@@ -1421,4 +1468,6 @@ Write-Host "apreta Tab y elegi 'tecnia-bot'."
 } finally {
     if ($TranscriptPropio) { try { Stop-Transcript | Out-Null } catch { } }
 }
+# El orden importa: un corte (1) le gana a "con avisos" (3). Ver el encabezado.
+if (-not $FalloInstalacion -and $AvisosInstalacion.Count -gt 0) { exit 3 }
 if ($FalloInstalacion) { exit 1 }
