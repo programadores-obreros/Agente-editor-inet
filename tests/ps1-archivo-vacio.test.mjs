@@ -13,12 +13,30 @@
 // con la línea y la columna del script. El mensaje bueno estaba a diez líneas y
 // no se podía alcanzar nunca por el camino del archivo vacío.
 //
-// El arreglo es `([string](Get-Content $archivo -Raw)).Trim()`: `[string]$null`
-// es "". Esta guarda mira el CÓDIGO sin comentarios: el comentario que explica el
-// bug cita la forma mala y un test sobre el archivo crudo la encontraría ahí.
+// El arreglo es `("" + (Get-Content $archivo -Raw)).Trim()`.
 //
-// MUTACIÓN que lo pone rojo (verificada): sacar el `[string]` de la lectura de
-// OPENCODE_VERSION en install/bootstrap.ps1.
+// ESTE TEST YA FUE HUECO UNA VEZ, y conviene saber cómo. El primer arreglo fue
+// `([string](Get-Content $archivo -Raw)).Trim()`, que "obviamente" da "" con $null.
+// Este archivo exigía esa forma, pasó en verde, se verificó por mutación, y el
+// commit salió. Y NO ARREGLABA NADA: en PowerShell 5.1 convertir a [string] lo que
+// devuelve `Get-Content -Raw` de un archivo vacío sigue dando $null. Se vio recién
+// al repetir la instalación en la VM: la misma traza, en la línea "arreglada".
+// Medido ahí (5.1.19041), con un archivo de 0 bytes:
+//     (Get-Content $f -Raw).Trim()                -> excepción
+//     ([string](Get-Content $f -Raw)).Trim()      -> excepción
+//     [string]$y = Get-Content $f -Raw; $y.Trim() -> excepción
+//     ("" + (Get-Content $f -Raw)).Trim()         -> ""
+//     ([IO.File]::ReadAllText($f)).Trim()         -> ""
+// La lección: una guarda de texto custodia que la forma esté; no puede saber si la
+// forma FUNCIONA. Eso lo dice sólo la ejecución. Por eso acá quedan prohibidas las
+// TRES formas que se midieron malas, no "cualquier cosa distinta de la buena".
+//
+// Esta guarda mira el CÓDIGO sin comentarios: el comentario que explica el bug
+// cita las formas malas y un test sobre el archivo crudo las encontraría ahí.
+//
+// MUTACIONES que lo ponen rojo (verificadas): en la lectura de OPENCODE_VERSION de
+// install/bootstrap.ps1, volver a `(Get-Content ... -Raw).Trim()`; y volver a
+// `([string](Get-Content ... -Raw)).Trim()`.
 // No ejecuta PowerShell (acá no hay): que el mensaje bueno aparezca se ve en la VM.
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -66,21 +84,24 @@ test("el quita-comentarios no se come el código ni deja pasar el comentario (el
   assert.ok(limpio.includes('"#no"'), "cortó un # que estaba adentro de una cadena")
 })
 
-test("ningún .ps1 llama a .Trim() directo sobre Get-Content -Raw: con el archivo vacío es $null y revienta", () => {
+test("ningún .ps1 llama a .Trim() sobre Get-Content -Raw en una forma que se midió mala", () => {
   const malos = []
   for (const s of SCRIPTS) {
     const lineas = sinComentarios(readFileSync(join(RAIZ, s), "utf8")).split("\n")
     lineas.forEach((l, i) => {
-      // forma mala: `(Get-Content ... -Raw).Trim()` SIN un `[string]` pegado adelante
-      if (/(?<!\[string\])\(Get-Content [^()\n]+ -Raw\)\.Trim\(\)/.test(l)) malos.push(`${s}:${i + 1}: ${l.trim()}`)
+      // mala 1 y 2: `(Get-Content ... -Raw).Trim()` pelado, o envuelto en [string](...)
+      const pelada = /\(Get-Content [^()\n]+ -Raw\)\)?\.Trim\(\)/.test(l) && !/\(""\s*\+\s*\(Get-Content [^()\n]+ -Raw\)\)\.Trim\(\)/.test(l)
+      // mala 3: variable tipada `[string]$x = Get-Content ... -Raw`
+      const tipada = /\[string\]\s*\$\w+\s*=\s*Get-Content [^\n]+ -Raw/.test(l)
+      if (pelada || tipada) malos.push(`${s}:${i + 1}: ${l.trim()}`)
     })
   }
   assert.deepEqual(malos, [], `estas lecturas mueren con un archivo vacío:\n${malos.join("\n")}`)
 })
 
-test("las tres versiones fijadas del bootstrap se leen con el [string] puesto", () => {
+test("las tres versiones fijadas del bootstrap se leen con la forma que anda", () => {
   const codigo = sinComentarios(readFileSync(join(RAIZ, "install", "bootstrap.ps1"), "utf8"))
   for (const v of ["$ArchivoVersionOpenCode", "$ArchivoVersionPython", "$ArchivoVersionNode"]) {
-    assert.ok(codigo.includes(`([string](Get-Content ${v} -Raw)).Trim()`), `la lectura de ${v} no lleva el [string]`)
+    assert.ok(codigo.includes(`("" + (Get-Content ${v} -Raw)).Trim()`), `la lectura de ${v} no usa ("" + ...).Trim()`)
   }
 })

@@ -123,15 +123,25 @@ try { Start-Transcript -Path $LogInstalacion -Force | Out-Null; $HayTranscript =
 $ArchivoVersionOpenCode = Join-Path $PSScriptRoot "OPENCODE_VERSION"
 $OpenCodeVersion = ""
 if (Test-Path $ArchivoVersionOpenCode) {
-    # El [string] NO es adorno. Con el archivo VACIO, `Get-Content -Raw` devuelve
-    # $null, y `$null.Trim()` no da "": tira "No se puede llamar a un metodo en una
-    # expresion con valor NULL" y con ErrorActionPreference=Stop el script moria
-    # ahi, con esa traza cruda, sin llegar al mensaje de abajo que dice justamente
-    # "El archivo falta o esta vacio". Visto en la VM win10 el 2026-11-15 instalando
-    # un .exe compilado con OPENCODE_VERSION vacio. Lo mismo vale para cada lectura
-    # de un archivo de una linea en estos scripts (VERSION, PYTHON_VERSION,
-    # NODE_VERSION): todas llevan el [string].
-    $OpenCodeVersion = ([string](Get-Content $ArchivoVersionOpenCode -Raw)).Trim()
+    # El `"" + ` NO es adorno. Con el archivo VACIO, `Get-Content -Raw` no devuelve
+    # nada, y llamar a .Trim() sobre eso tira "No se puede llamar a un metodo en una
+    # expresion con valor NULL". Con ErrorActionPreference=Stop el script moria ahi,
+    # con esa traza cruda, sin llegar al mensaje de abajo que dice justamente "El
+    # archivo falta o esta vacio". Visto en la VM win10 el 2026-11-15 instalando un
+    # .exe compilado con OPENCODE_VERSION vacio.
+    #
+    # OJO CON EL ARREGLO "OBVIO", que fue el primero que se commiteo y NO ARREGLABA
+    # NADA: `([string](Get-Content $f -Raw)).Trim()`. En PowerShell 5.1 convertir a
+    # [string] ese "nada" sigue dando $null, y revienta igual. Medido en la misma VM
+    # (5.1.19041), forma por forma, con un archivo de 0 bytes:
+    #     (Get-Content $f -Raw).Trim()               -> excepcion
+    #     ([string](Get-Content $f -Raw)).Trim()     -> excepcion
+    #     [string]$y = Get-Content $f -Raw; $y.Trim()-> excepcion
+    #     ("" + (Get-Content $f -Raw)).Trim()        -> ""   (esta)
+    #     ([IO.File]::ReadAllText($f)).Trim()        -> ""
+    # Todas las lecturas de un archivo de una linea en estos scripts (VERSION,
+    # PYTHON_VERSION, NODE_VERSION) usan la forma que anda.
+    $OpenCodeVersion = ("" + (Get-Content $ArchivoVersionOpenCode -Raw)).Trim()
 }
 if ($OpenCodeVersion -notmatch '^\d+\.\d+\.\d+$') {
     Write-Host ""
@@ -169,7 +179,7 @@ if ($OpenCodeVersion -notmatch '^\d+\.\d+\.\d+$') {
 $ArchivoVersionPython = Join-Path $PSScriptRoot "PYTHON_VERSION"
 $PythonVersion = ""
 if (Test-Path $ArchivoVersionPython) {
-    $PythonVersion = ([string](Get-Content $ArchivoVersionPython -Raw)).Trim()
+    $PythonVersion = ("" + (Get-Content $ArchivoVersionPython -Raw)).Trim()
 }
 if ($PythonVersion -notmatch '^\d+\.\d+\.\d+$') {
     Write-Host "  [!] No se pudo leer la version de Python a instalar ($ArchivoVersionPython)." -ForegroundColor Yellow
@@ -202,7 +212,7 @@ if ($PythonVersion -notmatch '^\d+\.\d+\.\d+$') {
 $ArchivoVersionNode = Join-Path $PSScriptRoot "NODE_VERSION"
 $NodeVersion = ""
 if (Test-Path $ArchivoVersionNode) {
-    $NodeVersion = ([string](Get-Content $ArchivoVersionNode -Raw)).Trim()
+    $NodeVersion = ("" + (Get-Content $ArchivoVersionNode -Raw)).Trim()
 }
 if ($NodeVersion -notmatch '^\d+\.\d+\.\d+$') {
     Write-Host "  [!] No se pudo leer la version de Node a instalar ($ArchivoVersionNode)." -ForegroundColor Yellow
