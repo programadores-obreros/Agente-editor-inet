@@ -71,6 +71,65 @@ try { Start-Transcript -Path $Reporte -Force | Out-Null; $GuardaOK = $true } cat
 function Titulo($t) { Write-Host ""; Write-Host "  == $t ==" -ForegroundColor Cyan }
 function Dato($k, $v) { Write-Host ("     {0,-22} {1}" -f $k, $v) }
 
+# Los datos de OpenCode (auth.json, los logs): honra XDG_DATA_HOME, igual que
+# install.ps1, chequear-clave.ps1 y clave.ts. La ruta de auth.json estaba fija a
+# %USERPROFILE%\.local\share: en una maquina con la variable puesta este reporte
+# decia "auth.json: NO ESTA" mirando un archivo que OpenCode no usa.
+$dataDir = "$U\.local\share\opencode"
+if ($env:XDG_DATA_HOME) { $dataDir = "$env:XDG_DATA_HOME\opencode" }
+
+# ---- TAPAR CREDENCIALES: UNA funcion, para TODA linea de log ------------------
+#
+# Este reporte se manda por WhatsApp. Un proxy de escuela se configura como
+# http://usuario:clave@proxy:8080, y esa URL aparece en el valor del proxy, en lo
+# que escribe pip, en un error de red de OpenCode, en el log del instalador.
+#
+# Antes el tapado era una expresion (`//[^/@]+@`) escrita DOS veces -el proxy y el
+# bloque crudo del bootstrap- y las otras colas de log (PlatformIO, el resumen del
+# bootstrap, Inno, OpenCode) se imprimian sin tapar. Y exigia el `//`: un proxy
+# guardado como `usuario:clave@proxy:8080`, sin esquema -que es como lo acepta el
+# cuadro de Windows-, pasaba entero.
+#
+# Dos reglas, en orden:
+#   1. con esquema:  algo://LO-QUE-SEA@host   -> algo://USUARIO:CLAVE@host
+#   2. sin esquema:  usuario:clave@host       -> USUARIO:CLAVE@host
+#      (al principio de la linea o despues de un espacio, `=`, `;`, `,`, comillas
+#      o parentesis; asi cubre tambien `http=usuario:clave@proxy:8080`)
+# Las dos llegan hasta el ULTIMO `@` antes del host (el `@` despues del cual ya no
+# hay otro hasta el proximo espacio, barra, coma o punto y coma): una clave puede
+# tener un `@` adentro, y cortar en el primero dejaba la mitad a la vista. Y no
+# siguen de largo: en `http=u:c@proxy:80;https=u:c@proxy:443` se tapan las dos, sin
+# comerse el host de la primera.
+# Prefiere tapar de mas: una direccion de mail despues de dos puntos tambien cae en
+# la regla 2, y esta bien -- de un reporte no se pierde nada por eso.
+function Tapar-Credenciales($texto) {
+    $t = "" + $texto
+    $t = [regex]::Replace($t, '//[^/\s]+?@(?=[^\s/@;,''"]*(?:[\s/;,''"]|$))', '//USUARIO:CLAVE@')
+    $t = [regex]::Replace($t, '(^|[\s=;,''"(])[^\s/@:=;,''"()]+:[^\s/''"]+?@(?=[^\s/@;,''"]*(?:[\s/;,''"]|$))', '$1USUARIO:CLAVE@')
+    return $t
+}
+
+# Imprime una linea de un log: tapada y cortada a 300 caracteres (un stack largo
+# tapa el resto del reporte). TODO volcado de un log pasa por aca.
+function Linea-DeLog($texto) {
+    $l = (Tapar-Credenciales $texto).Trim()
+    if ($l.Length -gt 300) { $l = $l.Substring(0, 300) + " ..." }
+    Write-Host ("     " + $l)
+}
+
+# ---- QUE DATOS LLEVA ESTE REPORTE ---------------------------------------------
+# Se dice AL PRINCIPIO y AL FINAL, antes de que la docente lo mande: el archivo
+# lleva su nombre de usuario y el de la maquina, y eso tiene que saberlo ella, no
+# descubrirlo quien lo recibe.
+function Aviso-DatosDelReporte {
+    Write-Host "  QUE LLEVA ESTE REPORTE (leelo antes de mandarlo):" -ForegroundColor Yellow
+    Write-Host "    - tu nombre de usuario de Windows y el nombre de esta compu (en las rutas y en el nombre del archivo)"
+    Write-Host "    - rutas de carpetas de tu usuario, versiones de programas y la configuracion de Tecnia Bot"
+    Write-Host "    - el proxy de la red si hay uno (sin usuario ni clave) y las ultimas lineas de los logs"
+    Write-Host "    - las detecciones del antivirus que nombran a Tecnia Bot o sus programas (no las demas)"
+    Write-Host "  NO lleva tu API key ni nada del contenido del archivo de credenciales."
+}
+
 # ----------------------------------------------------------------------------
 # DONDE VIVE PlatformIO: TRES LUGARES DONDE BUSCAR, no uno.
 #
@@ -197,6 +256,8 @@ $PioCore  = Buscar-PioCore
 Write-Host ""
 Write-Host "  DIAGNOSTICO DE TECNIA BOT" -ForegroundColor White
 Write-Host "  -------------------------"
+Aviso-DatosDelReporte
+Write-Host ""
 $ver = "?"
 if (Test-Path "$env:LOCALAPPDATA\TecniaBot\VERSION") { $ver = (Get-Content "$env:LOCALAPPDATA\TecniaBot\VERSION" -Raw).Trim() }
 Dato "Version instalada" $ver
@@ -214,7 +275,63 @@ Dato "shim de OpenCode" $(if (-not (Test-Path $shim)) { "FALTA" } elseif ((Get-I
 # disco, saber donde quedo es la mitad del diagnostico. Y "esta pero no contesta"
 # es una tercera respuesta, distinta de las otras dos: ahi el venv quedo a medias.
 Dato "PlatformIO" $(if ($PioExe) { "OK - $PioExe" } elseif ($PioDisco) { "el ejecutable esta ($PioDisco) pero NO contesta --version" } else { "FALTA" })
-Dato "capa Tecnia Bot" $(if (Test-Path "$ocDir\agent\tecnia-bot.md") { "OK" } else { "FALTA" })
+# LA CAPA SE VALIDA CONTRA SU REGISTRO, no mirando un archivo.
+#
+# Antes este renglon decia "capa Tecnia Bot: OK" si existia agent\tecnia-bot.md.
+# Un solo archivo de varios cientos: una instalacion cortada a mitad -el antivirus
+# que bloquea un tool, el disco lleno- daba "OK" con el bot roto, justo en el
+# reporte que se corre para averiguar por que esta roto.
+#
+# install.ps1 deja escrito que instalo en tecnia-bot.manifest (un archivo por
+# renglon, mas version= y repo_dir=). Se cuenta cuantos de esos estan, se nombran
+# los que faltan, y se compara la version del registro con el VERSION de la copia
+# del programa (la carpeta de arriba de este script).
+$capaManifest = Join-Path $ocDir "tecnia-bot.manifest"
+$capaVersion = ""
+$capaEstado = ""
+if (Test-Path $capaManifest) {
+  $capaLineas = @()
+  try { $capaLineas = @(Get-Content $capaManifest -EA Stop) } catch { $capaEstado = "no se pudo leer el registro ($capaManifest)" }
+  if (-not $capaEstado) {
+    $capaArchivos = @()
+    foreach ($renglon in $capaLineas) {
+      $r = ("" + $renglon).Trim()
+      if (-not $r -or $r.StartsWith("#") -or $r.StartsWith("repo_dir=")) { continue }
+      if ($r.StartsWith("version=")) { $capaVersion = $r.Substring(8).Trim(); continue }
+      $capaArchivos += $r
+    }
+    $capaFaltan = @($capaArchivos | Where-Object { -not (Test-Path -LiteralPath (Join-Path $ocDir $_)) })
+    $capaEstan = $capaArchivos.Count - $capaFaltan.Count
+    if ($capaArchivos.Count -eq 0) {
+      $capaEstado = "el registro esta vacio ($capaManifest): no se que tendria que haber"
+    } elseif ($capaFaltan.Count -eq 0) {
+      $capaEstado = "OK - " + $capaEstan + " de " + $capaArchivos.Count + " archivos"
+    } else {
+      # Se nombran hasta 8 y se DICE cuantos mas faltan: cortar en silencio es mentir.
+      $capaMuestra = @($capaFaltan | Select-Object -First 8) -join ", "
+      $capaResto = $capaFaltan.Count - 8
+      $capaEstado = "INCOMPLETA - " + $capaEstan + " de " + $capaArchivos.Count + " archivos; faltan: " + $capaMuestra
+      if ($capaResto -gt 0) { $capaEstado = $capaEstado + " (y " + $capaResto + " mas)" }
+    }
+  }
+} elseif (Test-Path "$ocDir\agent\tecnia-bot.md") {
+  $capaEstado = "INCOMPLETA - esta el agente pero falta el registro (tecnia-bot.manifest): no se puede saber que mas falta"
+} else {
+  $capaEstado = "FALTA"
+}
+Dato "capa Tecnia Bot" $capaEstado
+if ($capaEstado -like "INCOMPLETA*") {
+  Write-Host "     >> La capa no esta entera. Cerra Tecnia Bot y corre 'Reparar Tecnia Bot' (menu inicio)." -ForegroundColor Red
+}
+$capaVersionPrograma = ""
+$capaVersionArchivo = Join-Path (Split-Path -Parent $PSScriptRoot) "VERSION"
+if (Test-Path $capaVersionArchivo) { $capaVersionPrograma = ("" + (Get-Content $capaVersionArchivo -Raw)).Trim() }
+Dato "version de la capa" $(if ($capaVersion) { $capaVersion } else { "no se pudo leer del registro" })
+Dato "version del programa" $(if ($capaVersionPrograma) { $capaVersionPrograma + "  (" + $capaVersionArchivo + ")" } else { "no encontre $capaVersionArchivo" })
+if ($capaVersion -and $capaVersionPrograma -and ($capaVersion -ne $capaVersionPrograma)) {
+  Write-Host "     >> NO COINCIDEN: la capa publicada es la $capaVersion y la copia del programa es la $capaVersionPrograma." -ForegroundColor Yellow
+  Write-Host "        Una actualizacion quedo a medias. Corre 'Reparar Tecnia Bot' (menu inicio) para publicar la del programa." -ForegroundColor Yellow
+}
 
 Titulo "OpenCode: la version que HAY vs la que se PROBO"
 # El instalador fija la version de OpenCode (install\OPENCODE_VERSION, un solo
@@ -281,12 +398,28 @@ Titulo "Antivirus: la causa mas comun de 'isn't installed correctly'"
 # OpenCode es un binario sin firmar. Defender lo pone en cuarentena bastante
 # seguido, y Scoop reporta "isn't installed correctly" sin decir por que.
 try {
-  $amenazas = Get-MpThreatDetection -EA Stop | Sort-Object InitialDetectionTime -Descending | Select-Object -First 5
-  if ($amenazas) {
-    foreach ($a in $amenazas) { Dato "deteccion" ($a.InitialDetectionTime.ToString("dd/MM HH:mm") + "  " + ($a.Resources -join ",")) }
-  } else { Dato "detecciones" "ninguna" }
+  # SOLO LAS QUE TIENEN QUE VER CON TECNIA BOT. Antes se volcaban las ultimas cinco
+  # detecciones de la maquina, las que fueran, con la ruta completa del archivo:
+  # el nombre de un documento personal de la docente, o de un alumno, terminaba en
+  # un reporte que se manda por WhatsApp. De las demas se dice CUANTAS son y nada
+  # mas (saber que el antivirus esta activo sirve; que archivo marco, no).
+  $filtroNuestro = "opencode|scoop|platformio|TecniaBot|tecnia-bot"
+  $todasAmenazas = @(Get-MpThreatDetection -EA Stop | Sort-Object InitialDetectionTime -Descending)
+  $amenazas = @($todasAmenazas | Where-Object { ("" + ($_.Resources -join ",")) -match $filtroNuestro } | Select-Object -First 5)
+  if ($amenazas.Count -gt 0) {
+    foreach ($a in $amenazas) {
+      $recursos = @($a.Resources | Where-Object { ("" + $_) -match $filtroNuestro })
+      Dato "deteccion" ($a.InitialDetectionTime.ToString("dd/MM HH:mm") + "  " + ($recursos -join ","))
+    }
+  } else { Dato "detecciones" "ninguna que nombre a OpenCode, Scoop, PlatformIO o Tecnia Bot" }
+  $otrasAmenazas = $todasAmenazas.Count - @($todasAmenazas | Where-Object { ("" + ($_.Resources -join ",")) -match $filtroNuestro }).Count
+  if ($otrasAmenazas -gt 0) { Dato "otras detecciones" ("" + $otrasAmenazas + " de otros archivos (no se listan: no son de Tecnia Bot)") }
   $pref = Get-MpPreference -EA Stop
-  Dato "exclusiones de ruta" $(if ($pref.ExclusionPath) { $pref.ExclusionPath -join " | " } else { "ninguna" })
+  # Las exclusiones, con el mismo criterio: las nuestras con su ruta, las demas contadas.
+  $exclusiones = @($pref.ExclusionPath | Where-Object { $_ })
+  $exclusionesNuestras = @($exclusiones | Where-Object { ("" + $_) -match $filtroNuestro })
+  Dato "exclusiones de ruta" $(if ($exclusionesNuestras.Count) { $exclusionesNuestras -join " | " } else { "ninguna para OpenCode, Scoop, PlatformIO o Tecnia Bot" })
+  if ($exclusiones.Count -gt $exclusionesNuestras.Count) { Dato "otras exclusiones" ("" + ($exclusiones.Count - $exclusionesNuestras.Count) + " (no se listan)") }
 } catch {
   Dato "Defender" "no se pudo consultar (puede haber otro antivirus)"
 }
@@ -377,13 +510,13 @@ if (-not $proxy) { $proxy = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\
 # Se tapa el usuario:clave si el proxy lo trae embebido. Saber que HAY proxy y
 # a que host apunta es lo que sirve para diagnosticar; la credencial no agrega
 # nada y no puede viajar.
-if ($proxy) { $proxy = [regex]::Replace($proxy, "//[^/@]+@", "//USUARIO:CLAVE@") }
+if ($proxy) { $proxy = Tapar-Credenciales $proxy }
 Dato "proxy configurado" $(if ($proxy) { $proxy } else { "ninguno" })
 # El log de PlatformIO, que dice la causa con todas las letras.
 $plog = Get-ChildItem "$P" -Filter "*.log" -EA SilentlyContinue | Sort-Object LastWriteTime -Desc | Select-Object -First 1
 if ($plog) {
   Dato "log de PlatformIO" $plog.FullName
-  Get-Content $plog.FullName -EA SilentlyContinue | Select-Object -Last 8 | ForEach-Object { Write-Host ("     " + $_.Trim()) }
+  Get-Content $plog.FullName -EA SilentlyContinue | Select-Object -Last 8 | ForEach-Object { Linea-DeLog $_ }
 }
 
 Titulo "Node -- solo lo necesita el skill de diagramas de arquitectura"
@@ -442,8 +575,8 @@ Titulo "Las credenciales -- el bug del BOM"
 # Este reporte se manda por mail o por WhatsApp, y auth.json tiene la clave de la
 # API adentro. Lo que se informa son hechos SOBRE el archivo -esta, tiene BOM,
 # parsea- que es todo lo que hace falta para diagnosticar.
-$auth = "$U\.local\share\opencode\auth.json"
-Dato "auth.json" $(if (Test-Path $auth) { "OK" } else { "NO ESTA" })
+$auth = "$dataDir\auth.json"
+Dato "auth.json" $(if (Test-Path $auth) { "OK - $auth" } else { "NO ESTA en $dataDir" })
 if (Test-Path $auth) {
   $b = [System.IO.File]::ReadAllBytes($auth)
   $bom = ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
@@ -477,13 +610,20 @@ if ($ocCfg) {
   # Sin sacar comentarios: si es un .jsonc comentado no va a parsear y se informa
   # eso, que ya es un dato (el instalador si los tolera).
   try {
-    $cfg = Get-Content $ocCfg -Raw -EA Stop | ConvertFrom-Json -EA Stop
+    # Como UTF-8, que es como la escribe el instalador: Get-Content sin -Encoding la
+    # leeria con la codepage ANSI de la maquina (ver Leer-TextoUtf8 en install.ps1).
+    $cfg = [System.IO.File]::ReadAllText($ocCfg, (New-Object System.Text.UTF8Encoding $false)) | ConvertFrom-Json -EA Stop
     $cfgParsea = $true
     if ($cfg.agent -and $cfg.agent.'tecnia-bot' -and $cfg.agent.'tecnia-bot'.model) { $modelo = [string]$cfg.agent.'tecnia-bot'.model }
   } catch { }
   if (-not $cfgParsea) { Dato "modelo de tecnia-bot" "no se pudo leer la config (no parsea como JSON)" }
   elseif ($modelo) { Dato "modelo de tecnia-bot" $modelo }
-  else { Dato "modelo de tecnia-bot" "sin override en la config: usa el del archivo del agente (Gemini)" }
+  # EL MENSAJE QUE HABIA ACA ERA FALSO: "sin override en la config: usa el del
+  # archivo del agente (Gemini)". El archivo del agente NO declara ningun modelo,
+  # a proposito (OpenCode mezcla los .md ENCIMA de opencode.json: un `model:` ahi
+  # pisaria este override). Sin el override, tecnia-bot corre con el modelo por
+  # defecto de OpenCode, que no es ninguno de los dos que elige el instalador.
+  else { Dato "modelo de tecnia-bot" "SIN MODELO escrito en la config: usa el modelo por defecto de OpenCode, no el de Tecnia Bot" }
 } else {
   Dato "config de OpenCode" "NO ESTA (ni opencode.json ni opencode.jsonc)"
 }
@@ -514,8 +654,15 @@ if ($keyVieja) {
 if ($hayKey -and $modelo -eq "opencode/big-pickle") {
   Write-Host "     >> Hay key de Google pero el agente sigue en Big Pickle: corre 'Reparar Tecnia Bot' (menu inicio) y pasa a Gemini" -ForegroundColor Yellow
 }
-if (-not $hayKey -and ($modelo -like "google/*" -or ($cfgParsea -and -not $modelo))) {
+# La alarma de "Gemini sin key" salta SOLO si el modelo escrito es de Google. Antes
+# tambien saltaba con "no hay modelo escrito", dando por hecho que eso era Gemini
+# (ver el comentario de mas arriba): afirmaba una falla que no habia mirado.
+# La key cuenta este en auth.json o en la variable de usuario, que es la que manda.
+if (-not $hayKey -and -not $envKey -and ($modelo -like "google/*")) {
   Write-Host "     >> El agente apunta a Gemini y NO hay key de Google: falla al primer mensaje. Corre 'Reparar Tecnia Bot' (menu inicio)" -ForegroundColor Red
+}
+if ($cfgParsea -and -not $modelo) {
+  Write-Host "     >> La config no dice que modelo usa tecnia-bot. Corre 'Reparar Tecnia Bot' (menu inicio): lo escribe." -ForegroundColor Yellow
 }
 Write-Host "     Para cambiar: pega una key de Google (en Reparar, o con /connect y despues Reparar) y usa Gemini;"
 Write-Host "     sin key usa Big Pickle (gratis por tiempo limitado; OpenCode puede usar el chat para mejorar el modelo)."
@@ -538,8 +685,7 @@ Titulo "El log de OpenCode -- por que fallo un mensaje"
 #
 # Se probo cambiar la API key y dio lo mismo, o sea que no era la key. Sin este
 # bloque, el paso siguiente era adivinar.
-$oclog = "$U\.local\share\opencode\log\opencode.log"
-if ($env:XDG_DATA_HOME) { $oclog = "$env:XDG_DATA_HOME\opencode\log\opencode.log" }
+$oclog = "$dataDir\log\opencode.log"
 if (Test-Path $oclog) {
   $f = Get-Item $oclog
   Dato "archivo" $f.FullName
@@ -551,13 +697,9 @@ if (Test-Path $oclog) {
     Where-Object { $_ -match "level=(ERROR|WARN)" } |
     Select-Object -Last 12
   if ($malas) {
-    # Las lineas traen la sesion y el modelo, no credenciales. Aun asi se corta a
-    # 300 caracteres: un stack largo tapa el resto del reporte.
-    $malas | ForEach-Object {
-      $l = $_.Trim()
-      if ($l.Length -gt 300) { $l = $l.Substring(0, 300) + " ..." }
-      Write-Host ("     " + $l)
-    }
+    # Las lineas traen la sesion y el modelo; un error de red puede traer ademas la
+    # URL del proxy. Linea-DeLog tapa y corta a 300 caracteres.
+    $malas | ForEach-Object { Linea-DeLog $_ }
   } else {
     Write-Host "     (ningun ERROR ni WARN registrado)"
   }
@@ -576,7 +718,7 @@ if (Test-Path $bl) {
   Dato "corridas anteriores" $(if ($blViejos.Count) { "" + $blViejos.Count + " (instalacion-<fecha>.log, en la misma carpeta)" } else { "ninguna" })
   Write-Host "     --- ultimas lineas ---"
   Get-Content $bl | Where-Object { $_ -match '\[OK\]|\[X\]|\[!\]|\[\.\.\]|ERROR|WARN|Exception' } |
-    Select-Object -Last 14 | ForEach-Object { Write-Host ("     " + $_.Trim()) }
+    Select-Object -Last 14 | ForEach-Object { Linea-DeLog $_ }
 
   # -- EL FILTRO DE ARRIBA SE COMIO LA CAUSA, Y ESTE BLOQUE LA RESCATA --------
   #
@@ -620,17 +762,14 @@ if (Test-Path $bl) {
       $crudo = @($crudo[($crudo.Count - 40)..($crudo.Count - 1)])
     }
     foreach ($linea in $crudo) {
-      $t = ("" + $linea).Trim()
       # SE TAPA ANTES DE IMPRIMIR, igual que con el proxy de mas arriba y por el
       # mismo motivo: este reporte se manda por WhatsApp. Si la escuela usa un
       # indice de paquetes interno, pip escribe la URL entera -y esas URLs se
       # configuran como https://usuario:clave@host/simple-. Mismo criterio, misma
-      # expresion: lo que sirve para diagnosticar es el host, no la credencial.
-      $t = [regex]::Replace($t, "//[^/@]+@", "//USUARIO:CLAVE@")
-      # 300 caracteres, igual que en el log de OpenCode: un traceback largo tapa el
-      # resto del reporte.
-      if ($t.Length -gt 300) { $t = $t.Substring(0, 300) + " ..." }
-      Write-Host ("     " + $t)
+      # funcion: lo que sirve para diagnosticar es el host, no la credencial.
+      # Linea-DeLog tapa y corta las lineas largas, igual que en el log de OpenCode:
+      # un traceback largo tapa el resto del reporte.
+      Linea-DeLog $linea
     }
   }
 } else {
@@ -641,7 +780,7 @@ Titulo "Ultimo log del instalador (Inno)"
 $log = Get-ChildItem $env:TEMP -Filter "Setup Log*.txt" -EA SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($log) {
   Dato "archivo" $log.FullName
-  Get-Content $log.FullName | Select-String -Pattern "Process exit code|Exception|error" | Select-Object -Last 6 | ForEach-Object { Write-Host ("     " + $_.Line.Trim()) }
+  Get-Content $log.FullName | Select-String -Pattern "Process exit code|Exception|error" | Select-Object -Last 6 | ForEach-Object { Linea-DeLog $_.Line }
 } else { Dato "archivo" "no se encontro" }
 
 Write-Host ""
@@ -650,8 +789,14 @@ if ($GuardaOK) {
   Write-Host "  Listo. El reporte quedo en:" -ForegroundColor Yellow
   Write-Host ("    " + $Reporte) -ForegroundColor White
   Write-Host "  Mandanos ESE archivo. No hace falta copiar nada de esta pantalla."
+  Write-Host ""
+  # Va DESPUES de cerrar el transcript: es para quien esta por mandarlo, no para
+  # el archivo (que ya lo trae arriba de todo).
+  Aviso-DatosDelReporte
 } else {
   Write-Host "  No se pudo guardar el reporte en un archivo." -ForegroundColor Yellow
   Write-Host "  Copia TODO esto y mandalo. Con esto alcanza para saber que paso."
+  Write-Host ""
+  Aviso-DatosDelReporte
 }
 Write-Host ""
