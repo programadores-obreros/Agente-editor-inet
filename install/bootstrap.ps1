@@ -663,7 +663,15 @@ function Fijar-OpenCode {
             return $false
         }
         foreach ($l in $lineas) { Write-Host ("      " + $l) }
-        Write-Host "  [OK] OpenCode fijado en la version $OpenCodeVersion (scoop hold)."
+        # Se nombra la version que QUEDO ACTIVA, leida del manifiesto de Scoop, no
+        # la que se queria: `scoop hold` fija lo que haya. Cuando el cambio a la
+        # version probada no se pudo hacer, este mensaje decia "[OK] fijado en la
+        # <probada>" con otra version activa.
+        $activa = Get-OpenCodeVersionInstalada
+        Write-Host "  [OK] OpenCode fijado en la version $activa (scoop hold)."
+        if ($activa -ne $OpenCodeVersion) {
+            Write-Host "  [!] Esa NO es la $OpenCodeVersion con la que se probo esta version de Tecnia Bot." -ForegroundColor Yellow
+        }
         return $true
     } catch {
         Write-Host "  [X] No se pudo fijar la version: $($_.Exception.Message)" -ForegroundColor Red
@@ -696,8 +704,29 @@ if (Test-OpenCodeInstalado) {
             # abierto: "instances of opencode are still running"). Antes se decia [OK] igual.
             # Lo unico que vale es releer que version quedo activa.
             $quedo = Get-OpenCodeVersionInstalada
-            if ($quedo -eq $OpenCodeVersion) {
-                Write-Host "  [OK] OpenCode vuelve a la version $OpenCodeVersion."
+            # Y RELEER NO ALCANZA: HAY QUE EJECUTARLO. Aca se decia "[OK] OpenCode
+            # vuelve a la version X" con solo leer el manifiesto de Scoop, sin correr
+            # el binario. El manifiesto dice que carpeta esta activa, no que el
+            # programa arranque: una carpeta de la version fijada con el binario que
+            # esa CPU no puede ejecutar (sin AVX2), o a medio escanear por el
+            # antivirus, daba OK igual. Es la misma leccion de Test-OpenCode -"que el
+            # archivo exista no es que el programa corra"- que esta rama no recibio.
+            #
+            # Si no arranca y el binario esta, se intenta el build 'baseline', igual
+            # que la rama de instalacion de mas abajo. Y si sigue sin arrancar SE
+            # MARCA la falla: sin eso el script seguia hasta "LISTO!" con exit 0.
+            $arranca = [bool](Test-OpenCode)
+            if (-not $arranca -and (Test-Path $BinOpenCode)) {
+                Write-Host "  [i] El binario de OpenCode esta pero no arranca. Probando la version para procesadores sin AVX2..."
+                $arranca = [bool](Install-OpenCodeBaseline)
+                $quedo = Get-OpenCodeVersionInstalada
+            }
+            if (($quedo -eq $OpenCodeVersion) -and $arranca) {
+                Write-Host "  [OK] OpenCode vuelve a la version $OpenCodeVersion y arranca."
+            } elseif (-not $arranca) {
+                $script:FalloOpenCode = $true
+                Write-Host "  [X] OpenCode NO ARRANCA despues de activar la version ${OpenCodeVersion} (activa: $quedo)." -ForegroundColor Red
+                Write-Host "      Sigo instalando el resto; el aviso completo va al final."
             } else {
                 Write-Host "  [X] No pude volver a la version ${OpenCodeVersion}: sigue activa la $quedo."
                 if ($salidaReset -match "still running") {
@@ -725,8 +754,27 @@ if (Test-OpenCodeInstalado) {
             $ErrorActionPreference = $prev
             Refresh-Path
             $quedo = Get-OpenCodeVersionInstalada
-            if ($quedo -eq $OpenCodeVersion -and (Test-OpenCode)) {
+            # SI NO ARRANCA, NO ALCANZA CON DECIRLO. Esta rama imprimia "[X] No pude
+            # dejar la version ... andando" y nada mas: no probaba el build 'baseline'
+            # (CPU sin AVX2) como si hace la rama de instalacion de mas abajo, y no
+            # marcaba la falla. Despues Fijar-OpenCode imprimia su [OK] y el script
+            # cerraba con "LISTO!" y exit 0 sobre un OpenCode que no abre.
+            #
+            # Se distinguen los dos casos, que desde afuera se ven igual y no lo son:
+            #   ARRANCA, pero en otra version -> el bot abre; es un aviso.
+            #   NO ARRANCA                    -> es una falla, y se marca.
+            $arranca = [bool](Test-OpenCode)
+            if (-not $arranca -and (Test-Path $BinOpenCode)) {
+                Write-Host "  [i] El binario de OpenCode esta pero no arranca. Probando la version para procesadores sin AVX2..."
+                $arranca = [bool](Install-OpenCodeBaseline)
+                $quedo = Get-OpenCodeVersionInstalada
+            }
+            if (($quedo -eq $OpenCodeVersion) -and $arranca) {
                 Write-Host "  [OK] OpenCode queda en la version $OpenCodeVersion y arranca."
+            } elseif (-not $arranca) {
+                $script:FalloOpenCode = $true
+                Write-Host "  [X] OpenCode NO ARRANCA despues de instalar la version ${OpenCodeVersion} (activa: $quedo)." -ForegroundColor Red
+                Write-Host "      Sigo instalando el resto; el aviso completo va al final."
             } else {
                 Write-Host "  [X] No pude dejar la version ${OpenCodeVersion} andando: activa la $quedo."
                 if ($salidaInst -match "still running") {
