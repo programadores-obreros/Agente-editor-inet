@@ -532,3 +532,95 @@ test("2.1 · el .exe sale con un código propio cuando el bootstrap no salió bi
   assert.match(encabezado, new RegExp(`^;\\s+${fallo}\\s+se copiaron los archivos pero bootstrap\\.ps1 FALLÓ`, "m"), `el encabezado no documenta el ${fallo}`)
   assert.match(encabezado, new RegExp(`^;\\s+${degradado}\\s+quedó instalado pero DEGRADADO`, "m"), `el encabezado no documenta el ${degradado}`)
 })
+
+// ── 2.4 · La desinstalación guardaba un código que nadie leía ─────────────────
+//
+// `CurUninstallStepChanged` corría `uninstall.ps1` con Exec, guardaba el código de
+// salida en `Codigo` y NUNCA lo miraba: sólo avisaba si Exec devolvía False. Si el
+// script corría y no podía borrar (OpenCode abierto), el docente que eligió borrar
+// los datos de sus alumnos se iba convencido de que ya no estaban. Contrato con
+// uninstall.ps1: 0 = todo borrado · 3 = parcial · otro = falla.
+
+test("2.4 · el código de uninstall.ps1 se lee, y cualquier cosa distinta de 0 avisa", () => {
+  const fn = rutina("CurUninstallStepChanged")
+  // El resultado de Exec y el código se guardan los dos.
+  assert.match(fn, /Lanzo := Exec\('powershell\.exe',[\s\S]*?\\install\\uninstall\.ps1'\) \+ '" ' \+ Bandera,[\s\S]*?ewWaitUntilTerminated, Codigo\);/,
+    "el Exec de uninstall.ps1 no guarda si se lanzó y con qué código terminó")
+  assert.match(fn, /if \(not UninstallSilent\(\)\) and \(\(not Lanzo\) or \(Codigo <> 0\) or \(Siguen <> ''\)\) then\s+AvisarDesinstalacionIncompleta\(Lanzo, Codigo, Siguen\);/,
+    "un código distinto de 0 de uninstall.ps1 no produce ningún aviso")
+  // La comprobación en el disco se hace DESPUÉS del script, y sólo si se eligió borrar.
+  const iExec = fn.indexOf("Lanzo := Exec(")
+  const iSiguen = fn.indexOf("Siguen := DatosPersonalesQueSiguen;")
+  assert.ok(iSiguen > iExec, "el disco se mira antes de correr el script: no mide lo que el script dejó")
+  assert.match(fn.slice(iExec, iSiguen), /Siguen := '';\s+if PurgarDatosPersonales then\s+$/, "el disco se mira aunque se haya elegido conservar: ahí que los archivos estén es lo esperado")
+  // La consola de -Borrar se sigue mostrando (uninstall.ps1 explica ahí), pero el resultado no depende de ella.
+  assert.match(fn, /Bandera := '-Borrar';\s+Ventana := SW_SHOWNORMAL;/, "la rama que borra dejó de mostrar la consola")
+})
+
+test("2.4 · el cartel distingue parcial de falla, y lo que afirma sale del disco", () => {
+  assert.equal(constantePascal("CodigoUninstallParcial"), 3, "el código de «desinstalación parcial» acordado con uninstall.ps1 es 3")
+  const fn = rutina("AvisarDesinstalacionIncompleta")
+  assert.match(fn, /else if Codigo = CodigoUninstallParcial then\s+Texto := 'La desinstalación quedó INCOMPLETA/, "el 3 no se dice como «incompleta»")
+  assert.match(fn, /else if Codigo <> 0 then\s+Texto := 'El script que desinstala Tecnia Bot terminó con un error/, "los demás códigos no se dicen como error")
+  // «Siguen en esta computadora» sólo con la lista que salió de FileExists.
+  assert.match(fn, /if Siguen <> '' then\s+Texto := Texto \+ #13#10 \+ #13#10\s+\+ 'Elegiste borrar los datos personales y ESTOS SIGUEN EN ESTA COMPUTADORA/,
+    "se afirma que los datos siguen sin haber mirado el disco")
+  assert.match(fn, /MsgBox\(Texto, mbError, MB_OK\);/, "no muestra el cartel")
+  // Dónde: la carpeta real, que honra XDG igual que uninstall.ps1.
+  assert.match(fn, /CarpetaConfigOpenCode/, "el cartel no dice dónde quedó")
+  assert.match(rutina("CarpetaConfigOpenCode"), /if GetEnv\('XDG_CONFIG_HOME'\) <> '' then\s+Result := AddBackslash\(GetEnv\('XDG_CONFIG_HOME'\)\) \+ 'opencode'/,
+    "la carpeta de config no honra XDG_CONFIG_HOME: con la variable puesta manda a mirar otra carpeta")
+})
+
+test("2.4 · los datos personales que el .iss busca en el disco son los que uninstall.ps1 borra (guard cruzado)", () => {
+  const fn = rutina("DatosPersonalesQueSiguen")
+  const buscados = [...fn.matchAll(/if FileExists\(Carpeta \+ '([^']+)'\) then/g)].map((m) => m[1])
+  assert.ok(buscados.length >= 3, `el .iss sólo busca ${buscados.length} archivo(s) de datos personales`)
+  const uninstall = sinComentariosPs(leer("install", "uninstall.ps1"))
+  for (const nombre of buscados) {
+    assert.ok(uninstall.includes(`Join-Path $ConfigDir "${nombre}"`),
+      `el .iss busca «${nombre}» y uninstall.ps1 no lo arma con Join-Path $ConfigDir: los dos archivos dejaron de hablar de lo mismo`)
+  }
+  // Y al revés: todo `tecnia-*.md|json` personal que uninstall.ps1 borra, el .iss lo busca.
+  const personales = [...uninstall.matchAll(/^\$(?:Perfil|Memoria|Cargas)File\s*=\s*Join-Path \$ConfigDir "([^"]+)"/gm)].map((m) => m[1])
+  assert.ok(personales.length >= 3, "no encontré en uninstall.ps1 los tres archivos de datos personales")
+  for (const nombre of personales) assert.ok(buscados.includes(nombre), `uninstall.ps1 borra «${nombre}» y el .iss no comprueba que se haya ido`)
+})
+
+// ── Los tres caracteres que ISCC lee como estructura (.claude/rules/installer-iss.md) ──
+//
+// Costaron tres compilaciones fallidas, y escribiendo el arreglo 2.4 casi cuesta la
+// cuarta: un `Format(..., [args])` partido en dos renglones dejó uno que empezaba
+// con corchete. Lo cazó un chequeo a mano; esto lo deja escrito. NO reemplaza a
+// ISCC (el job windows de la CI compila el .iss de verdad): sólo evita llegar ahí
+// con un error que se podía ver antes.
+test("ningún renglón del .iss empieza con «#» o «[» fuera de lugar, ni hay llaves adentro de un comentario Pascal", () => {
+  const lineas = issCrudo.split("\n")
+  const malas = []
+  lineas.forEach((l, i) => {
+    const t = l.trimStart()
+    if (t.startsWith("#") && !/^#(ifndef|ifdef|endif|define|error|include|if|else)\b/.test(t)) malas.push(`${i + 1}: empieza con # → ${t.slice(0, 50)}`)
+    if (t.startsWith("[") && !/^\[[A-Za-z]+\]\s*$/.test(l)) malas.push(`${i + 1}: empieza con [ → ${t.slice(0, 50)}`)
+  })
+  assert.deepEqual(malas, [], "ISCC lee estos renglones como directiva o como sección, estén o no comentados")
+
+  // Comentarios Pascal de [Code]: recorriendo como el compilador (cadenas aparte).
+  const code = issCrudo.slice(issCrudo.search(/^\[Code\]\s*$/m))
+  const anidadas = []
+  for (let i = 0; i < code.length; ) {
+    if (code[i] === "'") {
+      let j = i + 1
+      for (;;) { j = code.indexOf("'", j); if (code[j + 1] === "'") { j += 2; continue } break }
+      i = j + 1
+    } else if (code[i] === "{") {
+      const j = code.indexOf("}", i)
+      const cuerpo = code.slice(i + 1, j)
+      if (cuerpo.includes("{")) anidadas.push(cuerpo.slice(cuerpo.indexOf("{"), cuerpo.indexOf("{") + 40).replace(/\s+/g, " "))
+      i = j + 1
+    } else if (code[i] === "}") {
+      anidadas.push("cierre de llave suelto cerca de: " + code.slice(Math.max(0, i - 40), i).replace(/\s+/g, " "))
+      i++
+    } else i++
+  }
+  assert.deepEqual(anidadas, [], "un comentario { } cierra en la PRIMERA llave de cierre: nombrar una constante entre llaves ahí adentro rompe la compilación")
+})

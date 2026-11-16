@@ -539,14 +539,121 @@ end;
   memoria (datos de MENORES, Ley 25.326, ver opencode/tool/perfil.ts) y la key
   de Google quedaban siempre en la máquina. Una notebook que se reasigna o se
   dona por ese camino se iba con eso adentro. }
+const
+  { Contrato con install\uninstall.ps1, acordado con quien lo mantiene:
+      0             todo lo que había que borrar se borró (y lo releyó).
+      3             desinstalación PARCIAL: quedó algo sin borrar.
+      cualquier otro distinto de 0: falló.
+    Acá alcanza con distinguir el 3 para decirlo con las palabras justas; todo
+    lo que no sea 0 se trata como "no puedo afirmar que se haya borrado". }
+  CodigoUninstallParcial = 3;
+
 var
   PurgarDatosPersonales: Boolean;
+
+{ Las dos carpetas de OpenCode, resueltas con el MISMO criterio que
+  install\uninstall.ps1 (XDG_CONFIG_HOME / XDG_DATA_HOME si están puestas, y si no
+  las del perfil). Antes el cartel las nombraba relativas ("de estas dos carpetas
+  de tu usuario"); con la ruta entera el docente no tiene que adivinar cuál es. }
+function CarpetaConfigOpenCode: String;
+begin
+  if GetEnv('XDG_CONFIG_HOME') <> '' then
+    Result := AddBackslash(GetEnv('XDG_CONFIG_HOME')) + 'opencode'
+  else
+    Result := AddBackslash(GetEnv('USERPROFILE')) + '.config\opencode';
+end;
+
+function CarpetaDatosOpenCode: String;
+begin
+  if GetEnv('XDG_DATA_HOME') <> '' then
+    Result := AddBackslash(GetEnv('XDG_DATA_HOME')) + 'opencode'
+  else
+    Result := AddBackslash(GetEnv('USERPROFILE')) + '.local\share\opencode';
+end;
+
+{ Los archivos de datos personales que SIGUEN EN EL DISCO, uno por renglón.
+
+  Es la comprobación propia del desinstalador, y no depende de lo que diga el
+  script: se mira el mundo, no el reporte del mundo. Si el docente eligió borrar
+  y uno de estos tres archivos todavía existe, no se borró, haya salido el script
+  con el código que haya salido.
+
+  La key de Google NO entra acá: auth.json sigue existiendo aunque se haya
+  borrado bien (uninstall.ps1 saca sólo el bloque "google"), así que la
+  existencia del archivo no dice nada. De eso sólo se sabe por el código. }
+function DatosPersonalesQueSiguen: String;
+var
+  Carpeta: String;
+begin
+  Result := '';
+  Carpeta := AddBackslash(CarpetaConfigOpenCode);
+  if FileExists(Carpeta + 'tecnia-perfil.md') then
+    Result := Result + '  ' + Carpeta + 'tecnia-perfil.md' + #13#10;
+  if FileExists(Carpeta + 'tecnia-memoria.md') then
+    Result := Result + '  ' + Carpeta + 'tecnia-memoria.md' + #13#10;
+  if FileExists(Carpeta + 'tecnia-cargas.json') then
+    Result := Result + '  ' + Carpeta + 'tecnia-cargas.json' + #13#10;
+end;
+
+{ El cartel de "la desinstalación no salió entera". Un solo lugar arma el texto
+  para los cuatro casos, y cada frase sale de algo que se comprobó:
+    - Lanzo = False       Windows no pudo iniciar PowerShell (Codigo es su error).
+    - Codigo = parcial    el script dice que quedó algo.
+    - Codigo otro <> 0    el script falló; no se sabe qué borró.
+    - Codigo = 0 pero Siguen <> ''   el script dijo que sí y el disco dice que no. }
+procedure AvisarDesinstalacionIncompleta(Lanzo: Boolean; Codigo: Integer; Siguen: String);
+var
+  Texto: String;
+begin
+  if not Lanzo then
+    Texto := 'No pude iniciar el script que desinstala Tecnia Bot (error '
+      + IntToStr(Codigo) + ' de Windows: ' + SysErrorMessage(Codigo) + ').'
+  else if Codigo = CodigoUninstallParcial then
+    Texto := 'La desinstalación quedó INCOMPLETA: hubo cosas que no se pudieron borrar.'
+  else if Codigo <> 0 then
+    Texto := 'El script que desinstala Tecnia Bot terminó con un error (código '
+      + IntToStr(Codigo) + '). No puedo asegurar qué se borró y qué no.'
+  else
+    Texto := 'El script que desinstala Tecnia Bot dijo que terminó bien, pero en el '
+      + 'disco siguen quedando datos personales.';
+
+  if PurgarDatosPersonales then
+  begin
+    if Siguen <> '' then
+      Texto := Texto + #13#10 + #13#10
+        + 'Elegiste borrar los datos personales y ESTOS SIGUEN EN ESTA COMPUTADORA '
+        + '(lo acabo de mirar en el disco):' + #13#10 + Siguen
+    else if (not Lanzo) or (Codigo <> 0) then
+      Texto := Texto + #13#10 + #13#10
+        + 'Elegiste borrar los datos personales. El perfil, la memoria del aula y el '
+        + 'registro de cargas ya no están en el disco.';
+    if (not Lanzo) or (Codigo <> 0) then
+      Texto := Texto + #13#10
+        + 'La key de Google no la puedo comprobar desde acá. Si cargaste una, se '
+        + 'guarda adentro de este archivo:' + #13#10
+        + '  ' + AddBackslash(CarpetaDatosOpenCode) + 'auth.json';
+  end;
+
+  if (not Lanzo) or (Codigo <> 0) then
+    Texto := Texto + #13#10 + #13#10
+      + 'Lo que haya quedado de Tecnia Bot (agente, skills, herramientas) está en:' + #13#10
+      + '  ' + CarpetaConfigOpenCode;
+
+  Texto := Texto + #13#10 + #13#10
+    + 'Suele pasar cuando Tecnia Bot (OpenCode) está abierto. Cerralo y borrá a mano '
+    + 'lo que figura arriba. Si vas a entregar o reasignar la máquina, no la entregues '
+    + 'sin revisarlo.';
+
+  MsgBox(Texto, mbError, MB_OK);
+end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Bandera: String;
   Ventana: Integer;
   Codigo: Integer;
+  Lanzo: Boolean;
+  Siguen: String;
 begin
   { usUninstall: se dispara al ENTRAR a ese paso, antes de que Inno procese
     las secciones [UninstallDelete] y [UninstallRun] -el porqué está anotado en la
@@ -621,23 +728,43 @@ begin
       Ventana := SW_HIDE;
     end;
 
-    if not Exec('powershell.exe',
-                '-ExecutionPolicy Bypass -NoProfile -File "'
-                  + ExpandConstant('{app}\install\uninstall.ps1') + '" ' + Bandera,
-                ExpandConstant('{app}'), Ventana, ewWaitUntilTerminated, Codigo) then
-    begin
-      { Un fallo silencioso acá es el peor caso posible: el docente eligió
-        borrar, el cartel se cerró, y los datos siguen en la máquina sin que
-        nadie se lo diga. Si no hay nadie mirando no se puede avisar, pero al
-        menos no se afirma nada. }
-      if (not UninstallSilent()) and PurgarDatosPersonales then
-        MsgBox('No pude correr el limpiador de datos personales.' + #13#10 + #13#10 +
-               'El perfil, la memoria del aula y la key de Google SIGUEN EN ESTA '
-               + 'COMPUTADORA. Si vas a entregar o reasignar la máquina, borralos '
-               + 'a mano de estas dos carpetas de tu usuario:' + #13#10 +
-               '  .config\opencode   (tecnia-perfil.md y tecnia-memoria.md)' + #13#10 +
-               '  .local\share\opencode   (auth.json)',
-               mbError, MB_OK);
-    end;
+    { EL CÓDIGO DE SALIDA SE LEE. Antes este Exec guardaba el código en "Codigo"
+      y nadie lo miraba: sólo se avisaba si Exec devolvía False, o sea si Windows
+      no había podido ni lanzar PowerShell. Si el script corría y NO podía borrar
+      -OpenCode abierto, un archivo tomado-, salía con su código de error y acá
+      no pasaba nada: el docente que eligió borrar se iba convencido de que los
+      datos de sus alumnos ya no estaban.
+
+      Y EL RESULTADO SE DICE CON UN CARTEL PROPIO, no con la consola. Con -Borrar
+      la consola se muestra, pero se cierra sola cuando el script termina: el
+      "[X] NO PUDE BORRAR" que imprime uninstall.ps1 dura lo que tarda en cerrarse
+      la ventana. El cartel se queda hasta que alguien lo lee.
+
+      Tres comprobaciones, de la más débil a la más fuerte:
+        1. Lanzo:   si Windows pudo iniciar PowerShell.
+        2. Codigo:  lo que el script dice de sí mismo (ver CodigoUninstallParcial).
+        3. Siguen:  lo que hay en el disco, mirado desde acá después de que el
+                    script terminó. Sólo cuando se eligió borrar: si se eligió
+                    conservar, que los archivos estén es lo esperado. }
+    Lanzo := Exec('powershell.exe',
+                  '-ExecutionPolicy Bypass -NoProfile -File "'
+                    + ExpandConstant('{app}\install\uninstall.ps1') + '" ' + Bandera,
+                  ExpandConstant('{app}'), Ventana, ewWaitUntilTerminated, Codigo);
+
+    Siguen := '';
+    if PurgarDatosPersonales then
+      Siguen := DatosPersonalesQueSiguen;
+
+    { OJO con cómo se parte esta llamada: la lista de argumentos de Format va entre
+      corchetes, y un renglón que EMPIEZA con corchete es para ISCC un encabezado
+      de sección ("Invalid section tag"). Por eso se arma concatenando. }
+    Log('Tecnia Bot: uninstall.ps1 ' + Bandera + ' -> codigo ' + IntToStr(Codigo)
+        + ', datos personales que siguen en el disco: ' + Siguen);
+    if not Lanzo then
+      Log('Tecnia Bot: Windows no pudo lanzar PowerShell para uninstall.ps1.');
+
+    { Si no hay nadie mirando no se puede avisar: al menos no se afirma nada. }
+    if (not UninstallSilent()) and ((not Lanzo) or (Codigo <> 0) or (Siguen <> '')) then
+      AvisarDesinstalacionIncompleta(Lanzo, Codigo, Siguen);
   end;
 end;
