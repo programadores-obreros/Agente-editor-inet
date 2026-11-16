@@ -245,6 +245,8 @@ const CENSO = {
           "Verificar lo que dejo el bootstrap",
           "Compilar ejemplos/_test-librerias para Arduino UNO",
           "Compilar tambien para ESP32 (solo a pedido, Run workflow -> esp32)",
+          "install.ps1 dos veces con la config en una carpeta con tilde no duplica instructions",
+          "uninstall.ps1 borra los datos personales cuando se pide, aun sin manifest, y los conserva cuando no",
           "uninstall.ps1 -Conservar deja opencode.json sin rastro de tecnia-bot",
           "Guardar instalacion.log (transcript del bootstrap)",
         ],
@@ -254,6 +256,30 @@ const CENSO = {
           // Al revés: corre SIEMPRE, también si algo falló antes.
           "Guardar instalacion.log (transcript del bootstrap)": "always()",
         },
+      },
+      // Los dos jobs que ejecutan los .sh contra Internet de verdad. Hasta el
+      // 2026-11-15 bootstrap.sh no corría en ningún test ni CI, y macOS no tenía ni
+      // una ejecución. Ninguno de sus pasos puede llevar `if:`: si el de macOS se
+      // pone rojo, eso es información, no ruido que apagar.
+      "linux-real": {
+        pasos: [
+          "uses: actions/checkout@v4",
+          "bootstrap.sh de punta a punta (OpenCode + PlatformIO + capa)",
+          "Verificar en el disco lo que dejo bootstrap.sh",
+          "bootstrap.sh sin curl ni wget instala la capa igual y sale con 3",
+          "uninstall.sh --conservar saca la capa",
+        ],
+        ifPermitidos: {},
+      },
+      macos: {
+        pasos: [
+          "uses: actions/checkout@v4",
+          "Que maquina es (lo que despues hay que citar como evidencia)",
+          "install.sh con el bash 3.2 del sistema (solo la capa)",
+          "bootstrap.sh de punta a punta en macOS (OpenCode + PlatformIO + capa)",
+          "uninstall.sh --conservar saca la capa en macOS",
+        ],
+        ifPermitidos: {},
       },
       skills: {
         pasos: [
@@ -279,6 +305,8 @@ const CENSO = {
           "Compilar el instalador",
           "Smoke test (instalación silenciosa, sin dependencias)",
           "La copia instalada parsea en PowerShell 5.1 y trae OPENCODE_VERSION + manifiesto",
+          "Instalacion real del .exe (con dependencias) y verificacion en disco",
+          "Desinstalar con unins000.exe y verificar en disco",
           "Calcular SHA256",
           "Subir el .exe como artefacto",
           "Extraer las notas de esta version del CHANGELOG",
