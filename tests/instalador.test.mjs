@@ -306,15 +306,30 @@ test("la marca se borra al terminar, y también si se cancela", () => {
   // Sobre `issCodigo` y no sobre `iss`: los comentarios del .iss citan la marca
   // para explicar por qué existe, y un indexOf sobre el archivo crudo encuentra la
   // CITA. Es la misma trampa que ya mordió en bootstrap.ps1 y en urls.test.mjs.
-  const run = issCodigo.slice(issCodigo.indexOf("[Run]"), issCodigo.indexOf("[UninstallRun]"))
-  const bootstrap = run.indexOf("bootstrap.ps1")
-  const borra = run.indexOf(".instalando")
-  assert.ok(borra > bootstrap, "la marca no se borra después del bootstrap")
-  assert.match(run.slice(borra - 120, borra + 60), /del /, "esa mención no la borra")
+  //
+  // ESTE TEST MIRABA LA FORMA VIEJA, y se reescribió cuando el bootstrap se mudó.
+  // Antes buscaba, dentro de [Run], una entrada con `bootstrap.ps1` seguida de un
+  // `cmd /c del ...\.instalando`. Las dos entradas se fueron de [Run]: el bootstrap
+  // ahora lo lanza [Code] con Exec (para poder LEER su código de salida, que una
+  // entrada con `waituntilterminated` espera pero no mira), y el borrado de la marca
+  // se mudó con él. Lo que se quería medir no cambió —que la marca se borre DESPUÉS
+  // del bootstrap y pase lo que pase—; cambió dónde vive.
+  //
+  // De paso, el recorte viejo terminaba en `indexOf("[UninstallRun]")`, sección que
+  // ya no existe: daba -1 y `slice(i, -1)` devolvía el resto del archivo. Pasaba por
+  // casualidad.
+  const code = issCodigo.slice(issCodigo.indexOf("[Code]"))
+  const hook = code.slice(code.indexOf("procedure CurStepChanged"), code.indexOf("procedure CurPageChanged"))
+  const post = hook.slice(hook.indexOf("CurStep = ssPostInstall"))
+  assert.ok(hook.indexOf("CurStep = ssPostInstall") > 0, "el bootstrap no corre en ssPostInstall")
+  // try / bootstrap / finally / borrar la marca: en ESE orden, y adentro del finally.
+  assert.match(post, /try\s+CorrerElBootstrap;\s+finally\s+if MarcaInstalando <> '' then\s+DeleteFile\(MarcaInstalando\);\s+end;/,
+    "la marca no se borra en un `finally` después del bootstrap: si el bootstrap falla, queda puesta")
+  // Y que la marca que se borra sea la misma que se puso.
+  assert.match(hook, /MarcaInstalando := ExpandConstant\('\\\.instalando'\)/, "MarcaInstalando no apunta a la marca .instalando")
   // Si se cancela a mitad, sin esto la marca queda puesta y el lanzador espera
   // 20 minutos de gusto.
-  const code = issCodigo.slice(issCodigo.indexOf("[Code]"))
-  assert.match(code, /DeinitializeSetup/, "no hay limpieza para el caso de cancelar")
+  assert.match(code, /procedure DeinitializeSetup[\s\S]*?DeleteFile\(MarcaInstalando\)/, "no hay limpieza para el caso de cancelar")
 })
 
 test("el .exe declara su versión en las propiedades del archivo", () => {

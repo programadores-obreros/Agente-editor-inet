@@ -35,19 +35,54 @@ if (Test-Path $iscc) {
 }
 
 # --- 2. Version -------------------------------------------------------------
+#
+# SIN VERSION NO SE COMPILA. Aca habia un "0.0.0" de relleno para cuando faltaba
+# el archivo: salia un .exe rotulado 0.0.0 que no es ninguna version de Tecnia
+# Bot. Es el mismo error que el .iss ya se niega a cometer (no tiene valor por
+# defecto, y su encabezado cuenta por que: un instalador que miente su version es
+# una tarde perdida diagnosticando). Mejor cortar y decir que falta.
 $VerFile = Join-Path $RepoDir "VERSION"
-$Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else { "0.0.0" }
+if (-not (Test-Path $VerFile)) {
+    throw "Falta el archivo VERSION ($VerFile). Sin el no se sabe que version se esta compilando: corre esto desde un clon completo del repo."
+}
+$Version = ("" + (Get-Content $VerFile -Raw)).Trim()
+if (-not $Version) {
+    throw "El archivo VERSION ($VerFile) esta vacio. Sin version no se compila."
+}
 
 # --- 3. Compilar ------------------------------------------------------------
+#
+# EL .exe VIEJO SE BORRA ANTES, Y SE MIRA EL CODIGO DE ISCC. Antes se corria
+# ISCC sin leer $LASTEXITCODE y se decia "LISTO!" con solo encontrar el .exe en
+# dist\. Si la compilacion fallaba, el archivo que estaba ahi era el de la
+# corrida ANTERIOR: se festejaba un instalador viejo y se lo probaba creyendo
+# que tenia el cambio. Es la precondicion que mas veces falto en este repo
+# ("verificar QUE build se esta probando").
+#
+# Con el viejo borrado, que el .exe exista despues significa que lo escribio
+# ESTA compilacion. Las dos comprobaciones van juntas: el codigo de salida dice
+# si ISCC termino bien, y el archivo dice que de verdad dejo algo.
+$Exe = Join-Path $RepoDir "installer\dist\Instalar-Tecnia-Bot.exe"
+if (Test-Path $Exe) {
+    Remove-Item $Exe -Force -ErrorAction SilentlyContinue
+    if (Test-Path $Exe) {
+        throw "No pude borrar el instalador anterior ($Exe). Cerra lo que lo tenga abierto y volve a correr esto."
+    }
+}
+
 Write-Host "  [..] Compilando version $Version..."
 & $iscc "/DMyAppVersion=$Version" (Join-Path $RepoDir "installer\tecnia-bot.iss")
+# Se guarda YA: es el codigo de ISCC y lo que sigue no lo tiene que pisar.
+$CodigoIscc = $LASTEXITCODE
+if ($CodigoIscc -ne 0) {
+    throw "ISCC no pudo compilar el instalador (codigo $CodigoIscc). Revisa los mensajes de arriba: no quedo ningun .exe."
+}
 
-$Exe = Join-Path $RepoDir "installer\dist\Instalar-Tecnia-Bot.exe"
 Write-Host ""
 if (Test-Path $Exe) {
     Write-Host "  LISTO! Instalador en: $Exe"
     Write-Host "  Doble clic para probarlo (Next-Next-Finish)."
 } else {
-    throw "La compilacion no genero el .exe. Revisa los mensajes de arriba."
+    throw "ISCC termino con codigo 0 pero no esta el .exe ($Exe). Revisa los mensajes de arriba."
 }
 Write-Host ""

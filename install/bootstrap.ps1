@@ -9,6 +9,34 @@
 #
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
+#
+# CODIGOS DE SALIDA. Son un CONTRATO: los lee installer\tecnia-bot.iss para
+# decidir que le dice al docente en la ultima pantalla (y con que codigo termina
+# el .exe en modo silencioso), y el job windows de la CI. Salen del RESUMEN
+# FINAL de este script, que se arma con lo que se COMPROBO -ejecutando cada
+# binario y mirando el disco-, no con lo que se intento.
+#
+#   0 = TODO quedo y se comprobo: OpenCode arranca y es la version fijada,
+#       PlatformIO contesta, Node contesta y alcanza, la capa esta publicada.
+#   2 = INSTALADO PERO DEGRADADO: el bot abre (OpenCode arranca y la capa esta
+#       publicada), pero falta algo de lo demas: PlatformIO (no compila ni
+#       carga), Node (no anda el skill de diagramas), OpenCode quedo en una
+#       version que no es la probada, o install.ps1 instalo la capa CON AVISOS
+#       (su codigo 3: la capa se copio pero no pudo escribir la config o
+#       guardar la key). Vive en $CodigoDegradado.
+#   1 = FALLA: el bot NO se puede usar. OpenCode no arranca, la capa no quedo
+#       publicada, no se pudo instalar Scoop, o falta install\OPENCODE_VERSION.
+#       Es tambien lo que devuelve powershell.exe si el script no parsea o muere
+#       con un error sin atajar, asi que "1" nunca significa "anduvo".
+#
+# Antes de este contrato el script salia con 0 y "LISTO!" aunque faltaran
+# PlatformIO y Node: sus avisos quedaban cien lineas mas arriba, y quien miraba
+# el final -una persona o el .exe- se llevaba un OK.
+#
+# Quien mas corre este script y que hace con el codigo (revisado al definirlo):
+#   installer\abrir-tecnia-bot.cmd  no lo mira: vuelve a verificar por su cuenta.
+#   opencode\tool\platformio.ts     solo distingue 127 (no pudo lanzar PowerShell)
+#                                   y despues busca pio.exe en el disco.
 # ============================================================================
 
 # -SinPrompt: NO preguntar nada y NO tocar lo que ya este configurado.
@@ -34,6 +62,14 @@ param([switch]$SinPrompt)
 
 $ErrorActionPreference = "Stop"
 if ($SinPrompt) { $env:TECNIA_SIN_PROMPT = "1" }
+# "Instalado pero degradado": ver CODIGOS DE SALIDA en el encabezado. Tiene que
+# coincidir con CodigoBootstrapDegradado en installer\tecnia-bot.iss; hay un test
+# (tests/instalador-honesto.test.mjs) que compara los dos archivos.
+$CodigoDegradado = 2
+# Lo que devuelve install\install.ps1 cuando la capa quedo "instalada CON AVISOS".
+# Contrato de ESE script (0 = instalado, 3 = instalado con avisos, 1 = se corto),
+# acordado con quien lo mantiene; se usa mas abajo, donde se mira su codigo.
+$CodigoCapaConAvisos = 3
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
 # ---- TODO LO QUE PASA ACA QUEDA ESCRITO -------------------------------------
@@ -164,6 +200,31 @@ if ($NodeVersion -notmatch '^\d+\.\d+\.\d+$') {
     Write-Host "  [!] No se pudo leer la version de Node a instalar ($ArchivoVersionNode)." -ForegroundColor Yellow
     Write-Host "      Se instala la ultima LTS que ofrezca Scoop, sin fijar."
     $NodeVersion = ""
+}
+
+# El Node MINIMO que sirve, leido de quien lo exige y no escrito aca.
+#
+# Buscar-Node aceptaba cualquier cosa que contestara "v" y un digito: un Node 12
+# que el docente tuviera de otro curso daba "[OK] Node ya esta instalado" y el
+# skill de diagramas fallaba despues, adentro del bot, lejos de la causa. El
+# numero lo fija archify en su package.json ("engines": { "node": ">=18" }, el
+# mismo que chequea su doctor en bin\archify.mjs), y ese archivo viaja al lado
+# de este script tanto en el repo como en el .exe (que copia opencode\ entero).
+# Se lee de AHI: si archify sube su minimo, este instalador se entera solo.
+#
+# Si no se puede leer NO se inventa un numero: se avisa y se acepta cualquier
+# Node que conteste, que es lo que se hacia antes.
+$ArchivoMotorNode = Join-Path $RepoDir "opencode\skills\archify\package.json"
+$NodeMinimo = 0
+try {
+    if (Test-Path $ArchivoMotorNode) {
+        $motorNode = "" + (Get-Content $ArchivoMotorNode -Raw | ConvertFrom-Json).engines.node
+        if ($motorNode -match '^\s*>=\s*(\d+)') { $NodeMinimo = [int]$Matches[1] }
+    }
+} catch { $NodeMinimo = 0 }
+if ($NodeMinimo -le 0) {
+    Write-Host "  [!] No se pudo leer que version de Node necesita el skill de diagramas ($ArchivoMotorNode)." -ForegroundColor Yellow
+    Write-Host "      Se acepta cualquier Node que conteste, sin comprobar que alcance."
 }
 
 # TLS 1.2 explicito. Medido en un Windows 10 22H2 con .NET 4.8: el default es
@@ -491,13 +552,64 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     # en PCs de escuela), sin esto falla y OpenCode no instala. Detectamos admin y
     # le pasamos -RunAsAdmin + habilitamos instalar apps como admin.
     $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    $scoopInstaller = Bajar -Url "https://get.scoop.sh"
-    if ($esAdmin) {
-        Write-Host "  [i] Ejecutando como administrador: instalando Scoop en modo admin."
-        & ([scriptblock]::Create($scoopInstaller)) -RunAsAdmin
-    } else {
-        & ([scriptblock]::Create($scoopInstaller))
+    # LA BAJADA DEL INSTALADOR DE SCOOP TIENE RED DE SEGURIDAD. Bajar relanza al
+    # tercer intento y aca no habia nada que lo atajara: con ErrorActionPreference
+    # en Stop, una escuela sin internet -o con get.scoop.sh filtrado- veia morir el
+    # script con una excepcion cruda de Invoke-RestMethod, en ingles, sin una sola
+    # linea que dijera que hacer. Sin Scoop no se puede seguir (OpenCode se instala
+    # con el), asi que se corta igual; lo que cambia es que se corta DICIENDO por
+    # que, y con el transcript cerrado.
+    $scoopInstaller = $null
+    $errorScoop = ""
+    try { $scoopInstaller = Bajar -Url "https://get.scoop.sh" } catch { $errorScoop = $_.Exception.Message }
+    if (-not $scoopInstaller) {
+        Write-Host ""
+        Write-Host "  [X] No pude bajar el instalador de Scoop, y sin Scoop no se puede seguir." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "      O esta maquina no tiene internet en este momento, o la red de la"
+        Write-Host "      escuela bloquea la direccion get.scoop.sh."
+        if ($errorScoop) { Write-Host "      Esto contesto la descarga: $errorScoop" }
+        Write-Host ""
+        Write-Host "      Todavia no se instalo nada. Cuando haya conexion, volve a correr este"
+        Write-Host "      instalador (o 'Reparar Tecnia Bot' en el menu inicio)."
+        Write-Host ""
+        try { Stop-Transcript | Out-Null } catch { }
+        exit 1
     }
+    # Y SU EJECUCION TAMBIEN, POR DOS MOTIVOS DISTINTOS.
+    #
+    # 1. Una excepcion del instalador de Scoop mataba este script igual que la
+    #    descarga. Ahora se captura, se muestra, y decide la verificacion de abajo
+    #    (si `scoop` quedo o no), que es la que mira el resultado.
+    #
+    # 2. El `foreach` de UNA vuelta no es un adorno. El instalador de Scoop, cuando
+    #    no tiene ruta de archivo -y corrido como scriptblock no la tiene-, no sale
+    #    con `exit`: sale con `break`. El `break` esta en su funcion Exit-Install,
+    #    a la que llama Deny-Install, que es la que usa cada rechazo. Leido en
+    #    github.com/ScoopInstaller/Install, install.ps1, rama master, lineas 91 a
+    #    115 el dia que se escribio esto:
+    #        if ((-not $env:CI) -and $IS_EXECUTED_FROM_IEX) { break } else { exit $ErrorCode }
+    #    OJO con el "-not $env:CI": en un runner de CI esa variable esta puesta y
+    #    el instalador de Scoop sale con `exit`, no con `break`. O sea que la CI
+    #    NO ejercita el camino del `break`, que es el que ve una escuela; ese se
+    #    prueba en la VM. Lo hace en cada rechazo: politica de
+    #    ejecucion restrictiva, corriendo como admin sin -RunAsAdmin, o "Scoop is
+    #    already installed" cuando la carpeta scoop existe pero el comando no esta.
+    #    Y un `break` sin un bucle que lo contenga sube por la pila de llamadas y,
+    #    si no encuentra ninguno, TERMINA EL SCRIPT EN SILENCIO (about_Break): este
+    #    instalador se cortaba ahi, sin mensaje y sin llegar al "[X] Scoop NO quedo
+    #    instalado" de abajo. Con el bucle, el `break` termina el bucle y nada mas.
+    #    NO ESTA PROBADO en Windows: sale de leer las dos fuentes, no de verlo andar.
+    $errorScoop = ""
+    foreach ($unaVez in 1) {
+        if ($esAdmin) {
+            Write-Host "  [i] Ejecutando como administrador: instalando Scoop en modo admin."
+            try { & ([scriptblock]::Create($scoopInstaller)) -RunAsAdmin } catch { $errorScoop = $_.Exception.Message }
+        } else {
+            try { & ([scriptblock]::Create($scoopInstaller)) } catch { $errorScoop = $_.Exception.Message }
+        }
+    }
+    if ($errorScoop) { Write-Host "  [i] El instalador de Scoop termino con un error: $errorScoop" }
     Refresh-Path
     # Si Scoop no quedo, NADA de lo que sigue puede funcionar: OpenCode se
     # instala con el. Cortar aca ahorra tres errores en cascada que no dicen
@@ -593,7 +705,15 @@ function Fijar-OpenCode {
             return $false
         }
         foreach ($l in $lineas) { Write-Host ("      " + $l) }
-        Write-Host "  [OK] OpenCode fijado en la version $OpenCodeVersion (scoop hold)."
+        # Se nombra la version que QUEDO ACTIVA, leida del manifiesto de Scoop, no
+        # la que se queria: `scoop hold` fija lo que haya. Cuando el cambio a la
+        # version probada no se pudo hacer, este mensaje decia "[OK] fijado en la
+        # <probada>" con otra version activa.
+        $activa = Get-OpenCodeVersionInstalada
+        Write-Host "  [OK] OpenCode fijado en la version $activa (scoop hold)."
+        if ($activa -ne $OpenCodeVersion) {
+            Write-Host "  [!] Esa NO es la $OpenCodeVersion con la que se probo esta version de Tecnia Bot." -ForegroundColor Yellow
+        }
         return $true
     } catch {
         Write-Host "  [X] No se pudo fijar la version: $($_.Exception.Message)" -ForegroundColor Red
@@ -626,8 +746,29 @@ if (Test-OpenCodeInstalado) {
             # abierto: "instances of opencode are still running"). Antes se decia [OK] igual.
             # Lo unico que vale es releer que version quedo activa.
             $quedo = Get-OpenCodeVersionInstalada
-            if ($quedo -eq $OpenCodeVersion) {
-                Write-Host "  [OK] OpenCode vuelve a la version $OpenCodeVersion."
+            # Y RELEER NO ALCANZA: HAY QUE EJECUTARLO. Aca se decia "[OK] OpenCode
+            # vuelve a la version X" con solo leer el manifiesto de Scoop, sin correr
+            # el binario. El manifiesto dice que carpeta esta activa, no que el
+            # programa arranque: una carpeta de la version fijada con el binario que
+            # esa CPU no puede ejecutar (sin AVX2), o a medio escanear por el
+            # antivirus, daba OK igual. Es la misma leccion de Test-OpenCode -"que el
+            # archivo exista no es que el programa corra"- que esta rama no recibio.
+            #
+            # Si no arranca y el binario esta, se intenta el build 'baseline', igual
+            # que la rama de instalacion de mas abajo. Y si sigue sin arrancar SE
+            # MARCA la falla: sin eso el script seguia hasta "LISTO!" con exit 0.
+            $arranca = [bool](Test-OpenCode)
+            if (-not $arranca -and (Test-Path $BinOpenCode)) {
+                Write-Host "  [i] El binario de OpenCode esta pero no arranca. Probando la version para procesadores sin AVX2..."
+                $arranca = [bool](Install-OpenCodeBaseline)
+                $quedo = Get-OpenCodeVersionInstalada
+            }
+            if (($quedo -eq $OpenCodeVersion) -and $arranca) {
+                Write-Host "  [OK] OpenCode vuelve a la version $OpenCodeVersion y arranca."
+            } elseif (-not $arranca) {
+                $script:FalloOpenCode = $true
+                Write-Host "  [X] OpenCode NO ARRANCA despues de activar la version ${OpenCodeVersion} (activa: $quedo)." -ForegroundColor Red
+                Write-Host "      Sigo instalando el resto; el aviso completo va al final."
             } else {
                 Write-Host "  [X] No pude volver a la version ${OpenCodeVersion}: sigue activa la $quedo."
                 if ($salidaReset -match "still running") {
@@ -655,8 +796,27 @@ if (Test-OpenCodeInstalado) {
             $ErrorActionPreference = $prev
             Refresh-Path
             $quedo = Get-OpenCodeVersionInstalada
-            if ($quedo -eq $OpenCodeVersion -and (Test-OpenCode)) {
+            # SI NO ARRANCA, NO ALCANZA CON DECIRLO. Esta rama imprimia "[X] No pude
+            # dejar la version ... andando" y nada mas: no probaba el build 'baseline'
+            # (CPU sin AVX2) como si hace la rama de instalacion de mas abajo, y no
+            # marcaba la falla. Despues Fijar-OpenCode imprimia su [OK] y el script
+            # cerraba con "LISTO!" y exit 0 sobre un OpenCode que no abre.
+            #
+            # Se distinguen los dos casos, que desde afuera se ven igual y no lo son:
+            #   ARRANCA, pero en otra version -> el bot abre; es un aviso.
+            #   NO ARRANCA                    -> es una falla, y se marca.
+            $arranca = [bool](Test-OpenCode)
+            if (-not $arranca -and (Test-Path $BinOpenCode)) {
+                Write-Host "  [i] El binario de OpenCode esta pero no arranca. Probando la version para procesadores sin AVX2..."
+                $arranca = [bool](Install-OpenCodeBaseline)
+                $quedo = Get-OpenCodeVersionInstalada
+            }
+            if (($quedo -eq $OpenCodeVersion) -and $arranca) {
                 Write-Host "  [OK] OpenCode queda en la version $OpenCodeVersion y arranca."
+            } elseif (-not $arranca) {
+                $script:FalloOpenCode = $true
+                Write-Host "  [X] OpenCode NO ARRANCA despues de instalar la version ${OpenCodeVersion} (activa: $quedo)." -ForegroundColor Red
+                Write-Host "      Sigo instalando el resto; el aviso completo va al final."
             } else {
                 Write-Host "  [X] No pude dejar la version ${OpenCodeVersion} andando: activa la $quedo."
                 if ($salidaInst -match "still running") {
@@ -761,7 +921,17 @@ if (Test-OpenCodeInstalado) {
             }
             if (-not (Test-OpenCodeInstalado)) {
                 Write-Host "  [..] OpenCode no arranca. Reintentando la instalacion..."
-                scoop install opencode@$OpenCodeVersion
+                # Esta era la UNICA llamada a Scoop del archivo sin bajar el
+                # ErrorActionPreference ni capturar: con Stop, un error de Scoop aca
+                # mataba el script ANTES de instalar la capa -justo lo que el
+                # comentario de mas abajo ("NO SE CORTA ACA") dice que no puede pasar-.
+                # Mismo patron que las otras dos: se captura todo, se muestra lo que
+                # no es ruido de descarga, y decide la verificacion que sigue.
+                $ErrorActionPreference = "Continue"
+                $salidaReintento = ""
+                try { $salidaReintento = scoop install opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaReintento = "ERROR " + $_.Exception.Message }
+                $ErrorActionPreference = $prevInst
+                foreach ($l in ($salidaReintento -split "`n")) { if ($l.Trim() -and $l -notmatch "^\s*(Downloading|Extracting|Checking hash|Loading|Linking|Creating shim)") { Write-Host ("      " + $l.Trim()) } }
             }
             Refresh-Path
             # Si despues de reinstalar sigue sin arrancar Y el binario esta, es la
@@ -995,7 +1165,14 @@ function Buscar-Node {
         try {
             $global:LASTEXITCODE = 0
             $v = (& $ruta --version 2>&1 | Out-String)
-            if ($LASTEXITCODE -eq 0 -and $v -match "^v\d") { return $ruta }
+            # Que conteste no alcanza: tiene que ser un Node que a archify le SIRVA.
+            # El mayor sale de lo que el binario dijo ("v24.20.0" -> 24) y el minimo
+            # de $NodeMinimo, que se leyo del package.json de archify alla arriba.
+            if ($LASTEXITCODE -eq 0 -and $v -match "^v(\d+)\.") {
+                $mayorNode = [int]$Matches[1]
+                if ($mayorNode -ge $NodeMinimo) { return $ruta }
+                Write-Host ("  [i] " + $ruta + " es Node " + $v.Trim() + " y el skill de diagramas necesita la " + $NodeMinimo + " o mas nueva: no sirve.")
+            }
         } catch { } finally { $ErrorActionPreference = $prev }
     }
     return $null
@@ -1189,39 +1366,58 @@ if ($PioExe) {
     } else {
         Write-Host "      Python: $PyExe"
         $Tmp = Join-Path $env:TEMP "get-platformio.py"
-        Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null
-        # get-platformio.py (pioinstaller) arma el venv y, ANTES de instalar
-        # PlatformIO, intenta actualizar pip adentro del venv (penv.update_pip).
-        # En Windows eso falla a veces con "[WinError 1921]", y el propio
-        # instalador de PlatformIO lo TRAGA a proposito: update_pip captura la
-        # excepcion, la manda a log.debug, devuelve False y sigue; PlatformIO se
-        # instala igual. Pero pip ya escribio su ERROR en rojo en la consola, y el
-        # docente ve un error gordo seguido de "Listo".
+        # LA DESCARGA DEL INSTALADOR DE PLATFORMIO TIENE RED DE SEGURIDAD.
         #
-        # No hay opcion para saltear ese paso: el CLI de pioinstaller acepta
-        # --verbose, --dev, --ignore-python, --pypi-index-url y
-        # --no-shutdown-piohome, nada sobre pip (verificado decodificando el
-        # script embebido). Asi que se filtra ACA: esas lineas no se muestran y al
-        # final va UN aviso calmo. Lo que decide si PlatformIO quedo es pio.exe en
-        # el disco, que se mira mas abajo, no lo que pip haya dicho.
+        # Estaba pelada: Bajar relanza al tercer intento y, con Stop, el script
+        # moria aca con una excepcion cruda ANTES de instalar la capa. Es lo
+        # contrario de la regla que este mismo archivo escribe veinte lineas mas
+        # abajo -"Tecnia Bot va a arrancar igual"-: una red que filtra
+        # raw.githubusercontent.com dejaba el aula sin PlatformIO Y sin bot.
         #
-        # 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta
-        # en PowerShell 5.1 (misma trampa que en Buscar-Python): se baja a
-        # Continue solo para este paso.
-        $prevEAP = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $avisoPip = $false
-        try {
-            & $PyExe $Tmp 2>&1 | ForEach-Object {
-                $linea = "$_"
-                if ($linea -match "WinError 1921|Could not install packages due to an OSError|pip install --upgrade pip|A new release of pip") {
-                    $avisoPip = $true
-                } else {
-                    Write-Host $linea
+        # Ahora se avisa y se sigue. No se afirma nada desde aca: lo que decide si
+        # PlatformIO quedo es el Buscar-Pio de abajo, que mira el disco.
+        $errorBajadaPio = ""
+        Remove-Item $Tmp -Force -ErrorAction SilentlyContinue
+        try { Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null } catch { $errorBajadaPio = $_.Exception.Message }
+        if ($errorBajadaPio -or -not (Test-Path $Tmp)) {
+            Write-Host "  [!] No pude bajar el instalador de PlatformIO (de raw.githubusercontent.com)." -ForegroundColor Yellow
+            Write-Host "      O no hay internet en este momento, o la red de la escuela bloquea esa direccion."
+            if ($errorBajadaPio) { Write-Host "      Esto contesto la descarga: $errorBajadaPio" }
+            Write-Host "      Sigo con el resto de la instalacion."
+        } else {
+            # get-platformio.py (pioinstaller) arma el venv y, ANTES de instalar
+            # PlatformIO, intenta actualizar pip adentro del venv (penv.update_pip).
+            # En Windows eso falla a veces con "[WinError 1921]", y el propio
+            # instalador de PlatformIO lo TRAGA a proposito: update_pip captura la
+            # excepcion, la manda a log.debug, devuelve False y sigue; PlatformIO se
+            # instala igual. Pero pip ya escribio su ERROR en rojo en la consola, y el
+            # docente ve un error gordo seguido de "Listo".
+            #
+            # No hay opcion para saltear ese paso: el CLI de pioinstaller acepta
+            # --verbose, --dev, --ignore-python, --pypi-index-url y
+            # --no-shutdown-piohome, nada sobre pip (verificado decodificando el
+            # script embebido). Asi que se filtra ACA: esas lineas no se muestran y al
+            # final va UN aviso calmo. Lo que decide si PlatformIO quedo es pio.exe en
+            # el disco, que se mira mas abajo, no lo que pip haya dicho.
+            #
+            # 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta
+            # en PowerShell 5.1 (misma trampa que en Buscar-Python): se baja a
+            # Continue solo para este paso.
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $avisoPip = $false
+            try {
+                & $PyExe $Tmp 2>&1 | ForEach-Object {
+                    $linea = "$_"
+                    if ($linea -match "WinError 1921|Could not install packages due to an OSError|pip install --upgrade pip|A new release of pip") {
+                        $avisoPip = $true
+                    } else {
+                        Write-Host $linea
+                    }
                 }
-            }
-        } finally { $ErrorActionPreference = $prevEAP }
-        if ($avisoPip) { Write-Host "  [i] Aviso de pip (no pudo actualizarse a si mismo): no afecta a PlatformIO." }
+            } finally { $ErrorActionPreference = $prevEAP }
+            if ($avisoPip) { Write-Host "  [i] Aviso de pip (no pudo actualizarse a si mismo): no afecta a PlatformIO." }
+        }
         Remove-Item $Tmp -ErrorAction SilentlyContinue
     }
     # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en su
@@ -1345,31 +1541,117 @@ if ($HayTranscript) {
 #
 # Faltaba tambien -NoProfile, que el .iss si usa: un perfil de PowerShell
 # corporativo roto reventaba este paso y nadie se enteraba.
-if ($CodigoInstall -ne 0) {
-    Write-Host ""
-    Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $CodigoInstall)." -ForegroundColor Red
-    Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
-    Write-Host ""
-    try { Stop-Transcript | Out-Null } catch { }
-    exit 1
-}
+# NO SE CORTA ACA: se anota y se sigue hasta el resumen. Antes cada una de estas
+# dos fallas hacia su propio `exit 1` y el docente se quedaba sin saber como
+# habia quedado el resto (OpenCode, PlatformIO, Node), que ya estaba decidido
+# cien lineas mas arriba.
+#
+# EL 3 DE install.ps1 NO ES UNA FALLA. Su contrato es 0 = instalado, 3 =
+# instalado CON AVISOS (la capa SI se copio, pero no pudo escribir la config o
+# guardar la key, y lo listo en pantalla), 1 = se corto. Aca cualquier codigo
+# distinto de 0 se informaba como "La capa de Tecnia Bot no se instalo", que con
+# el 3 es FALSO: la capa esta. Se trata aparte, y con la misma exigencia que el
+# 0: la capa cuenta como instalada solo si ADEMAS el agente esta en el disco.
+# Un 3 nunca termina en "LISTO!": degrada el resultado.
+$CapaOk = $true
+$CapaConAvisos = $false
 $cfgDir = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $env:USERPROFILE ".config\opencode" }
-if (-not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
+if ($CodigoInstall -ne 0) {
+    if ($CodigoInstall -eq $CodigoCapaConAvisos) {
+        $CapaConAvisos = $true
+    } else {
+        $CapaOk = $false
+        Write-Host ""
+        Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $CodigoInstall)." -ForegroundColor Red
+        Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
+        Write-Host ""
+    }
+}
+if ($CapaOk -and -not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
+    $CapaOk = $false
     Write-Host ""
     Write-Host "  [X] La capa educativa no quedo publicada." -ForegroundColor Red
     Write-Host "      El instalador dijo que termino, pero el agente no esta en:"
     Write-Host "      $cfgDir"
     Write-Host ""
-    try { Stop-Transcript | Out-Null } catch { }
-    exit 1
 }
 
+# ---- RESUMEN FINAL: UNA LINEA POR COMPONENTE, CON LO QUE SE COMPROBO ----------
+#
+# POR QUE EXISTE. Hasta aca solo la falla de OpenCode se repetia al final. Las de
+# PlatformIO y Node quedaban arriba, tapadas por la salida de install.ps1, y el
+# cierre era "LISTO!" con exit 0. En una maquina sin PlatformIO -que para este
+# bot es la mitad de lo que hace- lo ultimo que se leia era que estaba todo bien.
+# Y como el .exe mira el codigo de salida, el instalador mostraba su pantalla de
+# "quedo instalado" encima de eso.
+#
+# CADA LINEA SALE DE UNA COMPROBACION, no de un "se intento":
+#   OpenCode   -> se EJECUTA de nuevo, aca, al final (Test-OpenCode), SIEMPRE.
+#                 La primera version de este resumen se lo salteaba si la falla
+#                 ya estaba marcada mas arriba, e imprimia "NO ARRANCA" sin
+#                 ejecutar nada: una frase sobre el estado final que salia de
+#                 una marca vieja y no de una comprobacion. Lo marco la revision.
+#                 Cuesta unos veinte segundos cuando de verdad no arranca; es el
+#                 precio de que la ultima linea que lee el docente sea cierta.
+#                 La version sale del manifiesto de Scoop.
+#   PlatformIO -> $PioExe, que solo tiene valor si Buscar-Pio lo ejecuto y
+#                 contesto "PlatformIO".
+#   Node       -> $NodeExe, que solo tiene valor si Buscar-Node lo ejecuto y la
+#                 version alcanza.
+#   Capa       -> el codigo de install.ps1 Y el agente en el disco, aca arriba.
+$OpenCodeArranca = [bool](Test-OpenCode)
+if ($script:FalloOpenCode -and $OpenCodeArranca) {
+    Write-Host "  [i] Mas arriba OpenCode no arrancaba y ahora si: vale lo de ahora, que es lo que se acaba de comprobar."
+}
+$OpenCodeActiva = Get-OpenCodeVersionInstalada
+$OpenCodeEsLaFijada = ($OpenCodeActiva -eq $OpenCodeVersion)
+
+$Degradado = @()
 Write-Host ""
-# EL AVISO VA AL FINAL, DONDE SE LEE. Si OpenCode fallo, la capa igual quedo
-# instalada -- y eso importa: el dia que OpenCode se arregle, el bot ya esta ahi.
-# Cortar antes dejaba la maquina con dos problemas en vez de uno.
-if ($script:FalloOpenCode) {
-    Write-Host "  La capa de Tecnia Bot quedo instalada, pero OPENCODE NO ARRANCA." -ForegroundColor Yellow
+Write-Host "  Como quedo (lo que se comprobo, no lo que se intento):"
+Write-Host "  ------------------------------------------------------"
+if (-not $OpenCodeArranca) {
+    Write-Host "  [X]  OpenCode     NO ARRANCA." -ForegroundColor Red
+} elseif (-not $OpenCodeEsLaFijada) {
+    $Degradado += "OpenCode quedo en la version $OpenCodeActiva, no en la $OpenCodeVersion con la que se probo"
+    Write-Host "  [!]  OpenCode     arranca, pero es la version $OpenCodeActiva y se probo con la $OpenCodeVersion." -ForegroundColor Yellow
+} else {
+    Write-Host "  [OK] OpenCode     arranca, version $OpenCodeActiva."
+}
+if ($PioExe) {
+    Write-Host "  [OK] PlatformIO   contesta en $PioExe"
+} else {
+    $Degradado += "falta PlatformIO: el bot no puede compilar ni cargar codigo a la placa"
+    Write-Host "  [!]  PlatformIO   NO esta: el bot no puede compilar ni cargar codigo a la placa." -ForegroundColor Yellow
+}
+if ($NodeExe) {
+    Write-Host "  [OK] Node         contesta en $NodeExe"
+} else {
+    $Degradado += "falta Node: no anda el skill de diagramas de arquitectura"
+    Write-Host "  [!]  Node         NO esta: no anda el skill de diagramas de arquitectura." -ForegroundColor Yellow
+}
+if ($CapaOk -and $CapaConAvisos) {
+    $Degradado += "la capa se instalo CON AVISOS: no se pudo escribir parte de la configuracion o guardar la key (el detalle esta mas arriba)"
+    Write-Host "  [!]  Tecnia Bot   la capa educativa esta publicada en $cfgDir, pero CON AVISOS:" -ForegroundColor Yellow
+    Write-Host "                    el instalador de la capa los listo mas arriba."
+} elseif ($CapaOk) {
+    Write-Host "  [OK] Tecnia Bot   la capa educativa esta publicada en $cfgDir"
+} else {
+    Write-Host "  [X]  Tecnia Bot   la capa educativa NO quedo publicada." -ForegroundColor Red
+}
+Write-Host ""
+
+# --- FALLA: el bot no se puede usar. Codigo 1. -------------------------------
+if (-not $OpenCodeArranca) {
+    # EL AVISO VA AL FINAL, DONDE SE LEE. Si OpenCode fallo, la capa igual se
+    # instala -- y eso importa: el dia que OpenCode se arregle, el bot ya esta ahi.
+    # Cortar antes dejaba la maquina con dos problemas en vez de uno. Que la capa
+    # quedo se dice SOLO si se comprobo ($CapaOk).
+    if ($CapaOk) {
+        Write-Host "  La capa de Tecnia Bot quedo instalada, pero OPENCODE NO ARRANCA." -ForegroundColor Yellow
+    } else {
+        Write-Host "  OPENCODE NO ARRANCA, y la capa de Tecnia Bot tampoco quedo publicada." -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "  Sin OpenCode el bot no se puede abrir todavia. Para saber por que:"
     Write-Host "    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
@@ -1392,7 +1674,31 @@ if ($script:FalloOpenCode) {
     try { Stop-Transcript | Out-Null } catch { }
     exit 1
 }
+if (-not $CapaOk) {
+    Write-Host "  OpenCode arranca, pero SIN la capa de Tecnia Bot: abre un editor pelado," -ForegroundColor Yellow
+    Write-Host "  sin el agente, sin las fichas y sin las herramientas."
+    Write-Host ""
+    Write-Host "  Para reintentar:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
+}
+
+# --- DEGRADADO: el bot abre, pero le falta algo. Codigo $CodigoDegradado. ----
+if ($Degradado.Count -gt 0) {
+    Write-Host "  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:" -ForegroundColor Yellow
+    foreach ($d in $Degradado) { Write-Host ("    - " + $d) }
+    Write-Host ""
+    Write-Host "  Para completar lo que falta:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    Write-Host "  Para ver por que no quedo:    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
+    Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
+    exit $CodigoDegradado
+}
+
+# --- TODO COMPROBADO. Codigo 0. ----------------------------------------------
 Write-Host "  LISTO! Abri una terminal en cualquier carpeta, escribi 'opencode',"
 Write-Host "  apreta Tab y elegi 'tecnia-bot'."
 Write-Host ""
 try { Stop-Transcript | Out-Null } catch { }
+exit 0
