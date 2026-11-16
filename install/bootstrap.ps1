@@ -516,13 +516,58 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     # en PCs de escuela), sin esto falla y OpenCode no instala. Detectamos admin y
     # le pasamos -RunAsAdmin + habilitamos instalar apps como admin.
     $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    $scoopInstaller = Bajar -Url "https://get.scoop.sh"
-    if ($esAdmin) {
-        Write-Host "  [i] Ejecutando como administrador: instalando Scoop en modo admin."
-        & ([scriptblock]::Create($scoopInstaller)) -RunAsAdmin
-    } else {
-        & ([scriptblock]::Create($scoopInstaller))
+    # LA BAJADA DEL INSTALADOR DE SCOOP TIENE RED DE SEGURIDAD. Bajar relanza al
+    # tercer intento y aca no habia nada que lo atajara: con ErrorActionPreference
+    # en Stop, una escuela sin internet -o con get.scoop.sh filtrado- veia morir el
+    # script con una excepcion cruda de Invoke-RestMethod, en ingles, sin una sola
+    # linea que dijera que hacer. Sin Scoop no se puede seguir (OpenCode se instala
+    # con el), asi que se corta igual; lo que cambia es que se corta DICIENDO por
+    # que, y con el transcript cerrado.
+    $scoopInstaller = $null
+    $errorScoop = ""
+    try { $scoopInstaller = Bajar -Url "https://get.scoop.sh" } catch { $errorScoop = $_.Exception.Message }
+    if (-not $scoopInstaller) {
+        Write-Host ""
+        Write-Host "  [X] No pude bajar el instalador de Scoop, y sin Scoop no se puede seguir." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "      O esta maquina no tiene internet en este momento, o la red de la"
+        Write-Host "      escuela bloquea la direccion get.scoop.sh."
+        if ($errorScoop) { Write-Host "      Esto contesto la descarga: $errorScoop" }
+        Write-Host ""
+        Write-Host "      Todavia no se instalo nada. Cuando haya conexion, volve a correr este"
+        Write-Host "      instalador (o 'Reparar Tecnia Bot' en el menu inicio)."
+        Write-Host ""
+        try { Stop-Transcript | Out-Null } catch { }
+        exit 1
     }
+    # Y SU EJECUCION TAMBIEN, POR DOS MOTIVOS DISTINTOS.
+    #
+    # 1. Una excepcion del instalador de Scoop mataba este script igual que la
+    #    descarga. Ahora se captura, se muestra, y decide la verificacion de abajo
+    #    (si `scoop` quedo o no), que es la que mira el resultado.
+    #
+    # 2. El `foreach` de UNA vuelta no es un adorno. El instalador de Scoop, cuando
+    #    no tiene ruta de archivo -y corrido como scriptblock no la tiene-, no sale
+    #    con `exit`: sale con `break` (su funcion Exit-Install, leida en
+    #    github.com/ScoopInstaller/Install, install.ps1: "if ($IS_EXECUTED_FROM_IEX)
+    #    { break } else { exit $ErrorCode }"). Lo hace en cada rechazo: politica de
+    #    ejecucion restrictiva, corriendo como admin sin -RunAsAdmin, o "Scoop is
+    #    already installed" cuando la carpeta scoop existe pero el comando no esta.
+    #    Y un `break` sin un bucle que lo contenga sube por la pila de llamadas y,
+    #    si no encuentra ninguno, TERMINA EL SCRIPT EN SILENCIO (about_Break): este
+    #    instalador se cortaba ahi, sin mensaje y sin llegar al "[X] Scoop NO quedo
+    #    instalado" de abajo. Con el bucle, el `break` termina el bucle y nada mas.
+    #    NO ESTA PROBADO en Windows: sale de leer las dos fuentes, no de verlo andar.
+    $errorScoop = ""
+    foreach ($unaVez in 1) {
+        if ($esAdmin) {
+            Write-Host "  [i] Ejecutando como administrador: instalando Scoop en modo admin."
+            try { & ([scriptblock]::Create($scoopInstaller)) -RunAsAdmin } catch { $errorScoop = $_.Exception.Message }
+        } else {
+            try { & ([scriptblock]::Create($scoopInstaller)) } catch { $errorScoop = $_.Exception.Message }
+        }
+    }
+    if ($errorScoop) { Write-Host "  [i] El instalador de Scoop termino con un error: $errorScoop" }
     Refresh-Path
     # Si Scoop no quedo, NADA de lo que sigue puede funcionar: OpenCode se
     # instala con el. Cortar aca ahorra tres errores en cascada que no dicen
@@ -786,7 +831,17 @@ if (Test-OpenCodeInstalado) {
             }
             if (-not (Test-OpenCodeInstalado)) {
                 Write-Host "  [..] OpenCode no arranca. Reintentando la instalacion..."
-                scoop install opencode@$OpenCodeVersion
+                # Esta era la UNICA llamada a Scoop del archivo sin bajar el
+                # ErrorActionPreference ni capturar: con Stop, un error de Scoop aca
+                # mataba el script ANTES de instalar la capa -justo lo que el
+                # comentario de mas abajo ("NO SE CORTA ACA") dice que no puede pasar-.
+                # Mismo patron que las otras dos: se captura todo, se muestra lo que
+                # no es ruido de descarga, y decide la verificacion que sigue.
+                $ErrorActionPreference = "Continue"
+                $salidaReintento = ""
+                try { $salidaReintento = scoop install opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaReintento = "ERROR " + $_.Exception.Message }
+                $ErrorActionPreference = $prevInst
+                foreach ($l in ($salidaReintento -split "`n")) { if ($l.Trim() -and $l -notmatch "^\s*(Downloading|Extracting|Checking hash|Loading|Linking|Creating shim)") { Write-Host ("      " + $l.Trim()) } }
             }
             Refresh-Path
             # Si despues de reinstalar sigue sin arrancar Y el binario esta, es la
@@ -1221,39 +1276,58 @@ if ($PioExe) {
     } else {
         Write-Host "      Python: $PyExe"
         $Tmp = Join-Path $env:TEMP "get-platformio.py"
-        Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null
-        # get-platformio.py (pioinstaller) arma el venv y, ANTES de instalar
-        # PlatformIO, intenta actualizar pip adentro del venv (penv.update_pip).
-        # En Windows eso falla a veces con "[WinError 1921]", y el propio
-        # instalador de PlatformIO lo TRAGA a proposito: update_pip captura la
-        # excepcion, la manda a log.debug, devuelve False y sigue; PlatformIO se
-        # instala igual. Pero pip ya escribio su ERROR en rojo en la consola, y el
-        # docente ve un error gordo seguido de "Listo".
+        # LA DESCARGA DEL INSTALADOR DE PLATFORMIO TIENE RED DE SEGURIDAD.
         #
-        # No hay opcion para saltear ese paso: el CLI de pioinstaller acepta
-        # --verbose, --dev, --ignore-python, --pypi-index-url y
-        # --no-shutdown-piohome, nada sobre pip (verificado decodificando el
-        # script embebido). Asi que se filtra ACA: esas lineas no se muestran y al
-        # final va UN aviso calmo. Lo que decide si PlatformIO quedo es pio.exe en
-        # el disco, que se mira mas abajo, no lo que pip haya dicho.
+        # Estaba pelada: Bajar relanza al tercer intento y, con Stop, el script
+        # moria aca con una excepcion cruda ANTES de instalar la capa. Es lo
+        # contrario de la regla que este mismo archivo escribe veinte lineas mas
+        # abajo -"Tecnia Bot va a arrancar igual"-: una red que filtra
+        # raw.githubusercontent.com dejaba el aula sin PlatformIO Y sin bot.
         #
-        # 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta
-        # en PowerShell 5.1 (misma trampa que en Buscar-Python): se baja a
-        # Continue solo para este paso.
-        $prevEAP = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $avisoPip = $false
-        try {
-            & $PyExe $Tmp 2>&1 | ForEach-Object {
-                $linea = "$_"
-                if ($linea -match "WinError 1921|Could not install packages due to an OSError|pip install --upgrade pip|A new release of pip") {
-                    $avisoPip = $true
-                } else {
-                    Write-Host $linea
+        # Ahora se avisa y se sigue. No se afirma nada desde aca: lo que decide si
+        # PlatformIO quedo es el Buscar-Pio de abajo, que mira el disco.
+        $errorBajadaPio = ""
+        Remove-Item $Tmp -Force -ErrorAction SilentlyContinue
+        try { Bajar -Url "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" -Destino $Tmp | Out-Null } catch { $errorBajadaPio = $_.Exception.Message }
+        if ($errorBajadaPio -or -not (Test-Path $Tmp)) {
+            Write-Host "  [!] No pude bajar el instalador de PlatformIO (de raw.githubusercontent.com)." -ForegroundColor Yellow
+            Write-Host "      O no hay internet en este momento, o la red de la escuela bloquea esa direccion."
+            if ($errorBajadaPio) { Write-Host "      Esto contesto la descarga: $errorBajadaPio" }
+            Write-Host "      Sigo con el resto de la instalacion."
+        } else {
+            # get-platformio.py (pioinstaller) arma el venv y, ANTES de instalar
+            # PlatformIO, intenta actualizar pip adentro del venv (penv.update_pip).
+            # En Windows eso falla a veces con "[WinError 1921]", y el propio
+            # instalador de PlatformIO lo TRAGA a proposito: update_pip captura la
+            # excepcion, la manda a log.debug, devuelve False y sigue; PlatformIO se
+            # instala igual. Pero pip ya escribio su ERROR en rojo en la consola, y el
+            # docente ve un error gordo seguido de "Listo".
+            #
+            # No hay opcion para saltear ese paso: el CLI de pioinstaller acepta
+            # --verbose, --dev, --ignore-python, --pypi-index-url y
+            # --no-shutdown-piohome, nada sobre pip (verificado decodificando el
+            # script embebido). Asi que se filtra ACA: esas lineas no se muestran y al
+            # final va UN aviso calmo. Lo que decide si PlatformIO quedo es pio.exe en
+            # el disco, que se mira mas abajo, no lo que pip haya dicho.
+            #
+            # 2>&1 de un comando nativo con $ErrorActionPreference = "Stop" revienta
+            # en PowerShell 5.1 (misma trampa que en Buscar-Python): se baja a
+            # Continue solo para este paso.
+            $prevEAP = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $avisoPip = $false
+            try {
+                & $PyExe $Tmp 2>&1 | ForEach-Object {
+                    $linea = "$_"
+                    if ($linea -match "WinError 1921|Could not install packages due to an OSError|pip install --upgrade pip|A new release of pip") {
+                        $avisoPip = $true
+                    } else {
+                        Write-Host $linea
+                    }
                 }
-            }
-        } finally { $ErrorActionPreference = $prevEAP }
-        if ($avisoPip) { Write-Host "  [i] Aviso de pip (no pudo actualizarse a si mismo): no afecta a PlatformIO." }
+            } finally { $ErrorActionPreference = $prevEAP }
+            if ($avisoPip) { Write-Host "  [i] Aviso de pip (no pudo actualizarse a si mismo): no afecta a PlatformIO." }
+        }
         Remove-Item $Tmp -ErrorAction SilentlyContinue
     }
     # Se verifica el ejecutable en disco, no el PATH: PlatformIO se instala en su

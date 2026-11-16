@@ -119,3 +119,85 @@ test("compilar-en-windows.ps1 no inventa una versión cuando falta VERSION", () 
   assert.match(compilar, /if\s*\(\s*-not\s*\(Test-Path\s+\$VerFile\)\s*\)\s*\{\s*\n?\s*throw\b/, "si falta VERSION no corta")
   assert.match(compilar, /if\s*\(\s*-not\s+\$Version\s*\)\s*\{\s*\n?\s*throw\b/, "si VERSION está vacío no corta")
 })
+
+// ── 2.2 · Tres llamadas sin red de seguridad mataban el bootstrap ──────────────
+//
+// `$ErrorActionPreference = "Stop"` es global y la función `Bajar` relanza al
+// tercer intento. Tres llamadas no tenían nada que las atajara, y cualquiera de
+// ellas cortaba el script con una excepción cruda ANTES de instalar la capa —
+// contra la regla que el propio archivo escribe ("sin PlatformIO el bot igual
+// sirve", "NO SE CORTA ACA").
+
+/** El bloque `{ ... }` que abre en la primera llave a partir de `marcador`. */
+function bloqueDesde(codigo, marcador) {
+  const i = codigo.indexOf(marcador)
+  assert.ok(i >= 0, `no encontré «${marcador}»`)
+  let nivel = 0
+  for (let j = codigo.indexOf("{", i); j < codigo.length; j++) {
+    if (codigo[j] === "{") nivel++
+    else if (codigo[j] === "}" && --nivel === 0) return codigo.slice(i, j + 1)
+  }
+  assert.fail(`el bloque de «${marcador}» no cierra`)
+}
+
+/** Las líneas de CÓDIGO (no las que le imprimen algo al docente). */
+const comandos = bootstrap.split("\n").filter((l) => !/Write-Host/.test(l))
+
+test("2.2a · la descarga de get-platformio.py está atajada y no corta antes de la capa", () => {
+  const bajadas = comandos.filter((l) => /Bajar\s[^\n]*get-platformio\.py/.test(l))
+  assert.equal(bajadas.length, 1, "esperaba exactamente una descarga de get-platformio.py")
+  assert.match(bajadas[0], /^\s*try\s*\{\s*Bajar\s[^\n]*\}\s*catch\s*\{/, `la descarga no está dentro de un try/catch: ${bajadas[0].trim()}`)
+  // Entre la descarga y la instalación de la capa no puede haber un `exit`.
+  const desde = bootstrap.indexOf("get-platformio.py")
+  const hasta = bootstrap.indexOf("install\\install.ps1", desde)
+  assert.ok(desde > 0 && hasta > desde, "no encontré la descarga y la capa en orden")
+  assert.doesNotMatch(bootstrap.slice(desde, hasta), /\bexit\b/, "se corta entre la descarga de PlatformIO y la capa")
+  // Y el instalador de PlatformIO sólo se corre si la descarga dejó el archivo.
+  const corre = bootstrap.indexOf("& $PyExe $Tmp")
+  const guarda = bootstrap.lastIndexOf("if ($errorBajadaPio -or -not (Test-Path $Tmp)) {", corre)
+  assert.ok(corre > 0 && guarda > 0, "se corre get-platformio.py sin comprobar que se haya bajado")
+  const rama = bloqueDesde(bootstrap, "if ($errorBajadaPio -or -not (Test-Path $Tmp)) {")
+  assert.doesNotMatch(rama, /& \$PyExe/, "se corre get-platformio.py en la rama donde la descarga falló")
+})
+
+test("2.2b · bajar el instalador de Scoop está atajado, y si falla corta con un mensaje propio", () => {
+  const bajadas = comandos.filter((l) => /Bajar\s[^\n]*get\.scoop\.sh/.test(l))
+  assert.equal(bajadas.length, 1, "esperaba exactamente una descarga de get.scoop.sh")
+  assert.match(bajadas[0], /^\s*try\s*\{\s*\$scoopInstaller\s*=\s*Bajar\s[^\n]*\}\s*catch\s*\{/, `la descarga no está dentro de un try/catch: ${bajadas[0].trim()}`)
+  const corte = bloqueDesde(bootstrap, "if (-not $scoopInstaller) {")
+  assert.match(corte, /exit 1/, "sin el instalador de Scoop no se puede seguir: tiene que cortar")
+  assert.match(corte, /Stop-Transcript/, "corta sin cerrar instalacion.log")
+  const enPantalla = [...corte.matchAll(/Write-Host\s+"([^"]*)"/g)].map((m) => m[1]).join(" ").replace(/\s+/g, " ")
+  assert.match(enPantalla, /no tiene internet/i, "el mensaje no nombra la falta de internet")
+  assert.match(enPantalla, /red de la escuela bloquea/i, "el mensaje no nombra el filtro de la escuela")
+  // El corte está ANTES de intentar ejecutar lo que no se bajó.
+  assert.ok(bootstrap.indexOf("if (-not $scoopInstaller) {") < bootstrap.indexOf("[scriptblock]::Create($scoopInstaller)"),
+    "se intenta ejecutar el instalador de Scoop antes de comprobar que se bajó")
+})
+
+test("2.2b · el instalador de Scoop se ejecuta atajado y dentro de un bucle que contiene su `break`", () => {
+  const ejecuciones = comandos.filter((l) => l.includes("[scriptblock]::Create($scoopInstaller)"))
+  assert.ok(ejecuciones.length >= 1, "no encuentro dónde se ejecuta el instalador de Scoop")
+  for (const l of ejecuciones) {
+    assert.match(l, /^\s*try\s*\{\s*&\s*\(\[scriptblock\]::Create\(\$scoopInstaller\)\)[^\n]*\}\s*catch\s*\{/, `se ejecuta sin try/catch: ${l.trim()}`)
+  }
+  // Todas adentro del bucle de una vuelta (el instalador de Scoop sale con `break`).
+  const bucle = bloqueDesde(bootstrap, "foreach ($unaVez in 1) {")
+  const adentro = bucle.split("\n").filter((l) => l.includes("[scriptblock]::Create($scoopInstaller)")).length
+  assert.equal(adentro, ejecuciones.length, "hay una ejecución del instalador de Scoop fuera del bucle que contiene su `break`")
+})
+
+test("2.2c · TODA instalación de OpenCode con Scoop captura la salida y baja el ErrorActionPreference", () => {
+  const lineas = bootstrap.split("\n")
+  const idx = lineas.map((l, i) => [l, i]).filter(([l]) => /scoop install opencode/.test(l) && !/Write-Host/.test(l))
+  assert.ok(idx.length >= 2, `sólo encontré ${idx.length} instalación(es) de OpenCode`)
+  for (const [l, i] of idx) {
+    assert.match(l, /=\s*scoop install opencode@\$OpenCodeVersion \*>&1 \| Out-String/, `instala sin capturar todos los streams: ${l.trim()}`)
+    // En las 6 líneas de código anteriores se baja a Continue (mismo patrón en las tres ramas).
+    const antes = lineas.slice(Math.max(0, i - 6), i).join("\n")
+    assert.match(antes, /\$ErrorActionPreference\s*=\s*"Continue"/, `se llama a Scoop con ErrorActionPreference en Stop: ${l.trim()}`)
+    // Y la excepción se ataja: en la misma línea, o en el `catch` que le sigue.
+    const alrededor = lineas.slice(Math.max(0, i - 1), i + 3).join("\n")
+    assert.match(alrededor, /try\s*\{[\s\S]*scoop install opencode[\s\S]*\}\s*catch\s*\{/, `una excepción de Scoop corta el script: ${l.trim()}`)
+  }
+})
