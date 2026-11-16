@@ -226,11 +226,27 @@ test("bootstrap.ps1: si Scoop dice 'already installed' al instalar la fijada, la
 // El shim de Scoop fallo dos veces con el binario sano. Antes de declarar "no arranca",
 // Test-OpenCode le pregunta al binario real y, si contesta, repara el shim.
 test("Test-OpenCode prueba el binario real si el shim falla, y repara el shim", () => {
+  // ESTE RECORTE ESTABA ROTO Y NADIE LO VEÍA. El último assert cortaba la función
+  // en `fn.indexOf("return $false")`, pero `fn` era una ventana fija de 3000
+  // caracteres y Test-OpenCode creció: el `return $false` quedó AFUERA de la
+  // ventana, `indexOf` daba -1 y `slice(0, -1)` devolvía la ventana entera menos un
+  // carácter. Medido el 2026-11-15 con una precarga que anota cada `slice` que
+  // recibe -1: `slice(0,-1) len=3000`, en esta línea. No daba un verde falso por
+  // casualidad (la ventana no tenía el `Test-Path`), pero medía «los primeros 3000
+  // caracteres», no «la función». Ahora se toma la función entera, contando llaves.
   const i = ps1.indexOf("function Test-OpenCode {")
-  const fn = ps1.slice(i, i + 3000)
+  assert.ok(i >= 0, "bootstrap.ps1 no define Test-OpenCode")
+  let fin = -1
+  for (let j = ps1.indexOf("{", i), nivel = 0; j < ps1.length; j++) {
+    if (ps1[j] === "{") nivel++
+    else if (ps1[j] === "}" && --nivel === 0) { fin = j + 1; break }
+  }
+  assert.ok(fin > i, "Test-OpenCode no cierra llave")
+  const fn = ps1.slice(i, fin)
   assert.match(fn, /& \$BinOpenCode --version/, "no prueba el binario real")
   assert.match(fn, /Reparar-Shim/, "no repara el shim cuando el binario anda")
-  assert.doesNotMatch(fn.slice(0, fn.indexOf("return $false")), /Test-Path \$BinOpenCode/, "decide por 'el archivo esta' en vez de ejecutarlo")
+  assert.match(fn, /return \$false\s*\n(?:\s*\}\s*(?:finally\s*\{[^}]*\}\s*)?)*$/, "la función no termina devolviendo $false cuando nada contestó")
+  assert.doesNotMatch(fn, /Test-Path \$BinOpenCode/, "decide por 'el archivo esta' en vez de ejecutarlo")
 })
 
 // Inno Setup 6.7.0 activa RedirectionGuard por defecto y la heredan los hijos: el bootstrap

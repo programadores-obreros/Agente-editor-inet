@@ -66,6 +66,65 @@ function hasta(texto, i, corte) {
   return m ? resto.slice(0, m.index + 1) : resto
 }
 
+// ── Recortar por una marca que NO ESTÁ no puede pasar en silencio ─────────────
+//
+// POR QUÉ EXISTEN `desdeMarca` Y `entreMarcas`. `texto.slice(texto.indexOf(X))` no
+// falla cuando X no está: `indexOf` da -1 y `slice` hace OTRA cosa sin avisar.
+//
+//   slice(-1)      → el último carácter del archivo
+//   slice(i, -1)   → desde i hasta el final (menos un carácter): el resto del archivo
+//   slice(0, -1)   → el archivo entero
+//
+// Las tres mordieron acá. Un test recortaba la sección `[Run]` hasta
+// `indexOf("[UninstallRun]")`, sección que ya no existía: medía el resto del
+// archivo y pasaba por casualidad. El de la cura del BOM recortaba hasta
+// `indexOf("$authData = $null")`, texto que tampoco existía: medía install.ps1
+// entero. Y un `doesNotMatch` sobre un recorte así es peor todavía, porque un
+// recorte de un carácter no contiene nada prohibido: pasa siempre.
+//
+// Al revisar el resto del archivo (2026-11-15) quedaban nueve recortes con el
+// `indexOf` metido adentro del `slice`, sin nada que mirara el -1. Hoy las nueve
+// marcas existen (medido con una precarga que anota cada `slice` que recibe -1:
+// en este archivo, cero), así que ninguno estaba midiendo mal; pero el día que una
+// marca se renombre, cada uno iba a seguir de largo. Ahora explotan nombrando la
+// marca. Mutaciones del producto que lo prueban, anotadas arriba de cada test.
+
+/**
+ * Dónde está `marca` (un texto o una expresión regular) en `texto`, buscando desde
+ * `desde`. Si no está, el test explota: nunca devuelve -1.
+ */
+function posicion(texto, marca, desde = 0) {
+  let i
+  if (marca instanceof RegExp) {
+    const rel = texto.slice(desde).search(marca)
+    i = rel < 0 ? -1 : desde + rel
+  } else {
+    i = texto.indexOf(marca, desde)
+  }
+  assert.ok(i >= 0, `no encontré la marca «${marca}»: el test no puede recortar a ciegas (¿se renombró?)`)
+  return i
+}
+
+/**
+ * Una etiqueta de un .cmd, ENTERA y sola en su renglón.
+ *
+ * Buscar el texto ":esperando" encuentra también ":esperandox": lo probó la
+ * mutación que renombra la etiqueta, que con la primera versión de estos helpers
+ * (un `indexOf` del texto) seguía dando exit code 0.
+ */
+const etiqueta = (nombre) => new RegExp(`^:${nombre}[ \\t]*\\r?$`, "m")
+
+/** `texto` desde `marca` hasta el final. */
+function desdeMarca(texto, marca) {
+  return texto.slice(posicion(texto, marca))
+}
+
+/** `texto` desde `inicio` hasta `fin` (sin incluirlo). `fin` se busca DESPUÉS de `inicio`. */
+function entreMarcas(texto, inicio, fin) {
+  const i = posicion(texto, inicio)
+  return texto.slice(i, posicion(texto, fin, i + 1))
+}
+
 function bloqueTrasInstalar(comando) {
   const i = codigo.indexOf(comando)
   assert.ok(i > 0, `no encontré "${comando}" en bootstrap.ps1`)
@@ -295,9 +354,9 @@ test("la marca se pone al EMPEZAR la instalación, no al llegar a [Run]", () => 
   // segundos, y en esa ventana el docente abre el lanzador VIEJO.
   //
   // ssInstall se dispara al apretar "Instalar" y antes de copiar un solo archivo.
-  const code = issCodigo.slice(issCodigo.indexOf("[Code]"))
+  const code = desdeMarca(issCodigo, "[Code]")
   assert.match(code, /CurStepChanged/, "no hay hook de paso de instalación")
-  const hook = code.slice(code.indexOf("procedure CurStepChanged"))
+  const hook = desdeMarca(code, "procedure CurStepChanged")
   assert.match(hook, /CurStep = ssInstall\b/, "la marca no se pone al EMPEZAR la instalación")
   assert.match(hook, /\.instalando/, "el hook no crea la marca")
 })
@@ -318,10 +377,14 @@ test("la marca se borra al terminar, y también si se cancela", () => {
   // De paso, el recorte viejo terminaba en `indexOf("[UninstallRun]")`, sección que
   // ya no existe: daba -1 y `slice(i, -1)` devolvía el resto del archivo. Pasaba por
   // casualidad.
-  const code = issCodigo.slice(issCodigo.indexOf("[Code]"))
-  const hook = code.slice(code.indexOf("procedure CurStepChanged"), code.indexOf("procedure CurPageChanged"))
-  const post = hook.slice(hook.indexOf("CurStep = ssPostInstall"))
-  assert.ok(hook.indexOf("CurStep = ssPostInstall") > 0, "el bootstrap no corre en ssPostInstall")
+  //
+  // Y el recorte nuevo tenía el mismo defecto que el viejo, un renglón más abajo:
+  // terminaba en `code.indexOf("procedure CurPageChanged")` sin mirar el -1. Si esa
+  // rutina se renombra, `slice(i, -1)` vuelve a ser «el resto del archivo».
+  // Mutación: renombrar `procedure CurPageChanged` en el .iss → antes exit 0, ahora 1.
+  const code = desdeMarca(issCodigo, "[Code]")
+  const hook = entreMarcas(code, "procedure CurStepChanged", "procedure CurPageChanged")
+  const post = desdeMarca(hook, "CurStep = ssPostInstall")
   // try / bootstrap / finally / borrar la marca: en ESE orden, y adentro del finally.
   assert.match(post, /try\s+CorrerElBootstrap;\s+finally\s+if MarcaInstalando <> '' then\s+DeleteFile\(MarcaInstalando\);\s+end;/,
     "la marca no se borra en un `finally` después del bootstrap: si el bootstrap falla, queda puesta")
@@ -358,7 +421,7 @@ test("el lanzador muestra la versión, incluso cuando falla", () => {
 
   // La de "no se encontró" no puede mandar a reinstalar sin avisar que quizá el
   // instalador está corriendo justo ahora: ese consejo rompió una máquina real.
-  const sinOpenCode = cmd.slice(cmd.indexOf(":sinopencode"))
+  const sinOpenCode = desdeMarca(cmd, etiqueta("sinopencode"))
   assert.match(sinOpenCode, /esperalo|esta corriendo/i, "sigue empujando a instalar dos veces")
 
   // Y la de "no arranca" tiene que mandar al diagnóstico, que es lo único que
@@ -385,7 +448,18 @@ test("el lanzador NO arranca apenas aparece opencode", () => {
   // OpenCode se instala en el paso 2 de 4. Arrancar ahí da un OpenCode pelado,
   // sin Tecnia Bot — que es exactamente el otro síntoma que ya se reportó.
   // Por eso la espera mira la marca, no la presencia de opencode.
-  const espera = cmd.slice(cmd.indexOf(":esperando"), cmd.indexOf("LSS"))
+  //
+  // ESTE ERA EL RECORTE MÁS PELIGROSO DEL ARCHIVO: un `doesNotMatch` sobre
+  // `cmd.slice(cmd.indexOf(":esperando"), cmd.indexOf("LSS"))`. Si cualquiera de las
+  // dos marcas falta, el recorte queda vacío (o de un carácter), y un texto vacío no
+  // contiene nada prohibido: el test pasa SIEMPRE. Ahora las dos marcas tienen que
+  // estar (la etiqueta, a principio de línea) y el recorte tiene un piso.
+  // Mutación: renombrar la etiqueta `:esperando` a `:esperandox` en el .cmd → antes
+  // exit 0, ahora 1 (y con la primera versión del arreglo, que buscaba el texto de la
+  // etiqueta con `indexOf`, seguía en 0: por eso `etiqueta()` pide el renglón entero).
+  const espera = entreMarcas(cmdCodigo, etiqueta("esperando"), "LSS")
+  // El piso: el bucle de espera tiene que estar entero adentro del recorte.
+  assert.match(espera, /\.instalando|%MARCA%/, "el recorte de la espera no contiene la marca que mira: no es el bucle")
   assert.doesNotMatch(espera, /where opencode/, "sale antes de que termine la capa educativa")
 })
 
@@ -603,7 +677,7 @@ test("el lanzador COMPLETA la instalación si quedó a medias", () => {
   // docente no tiene por qué saber eso ni tipear un comando de PowerShell: el
   // lanzador lo hace solo en el primer doble clic.
   assert.match(cmd, /:reparar/, "no hay camino de reparación")
-  const rep = cmd.slice(cmd.indexOf(":reparar"), cmd.indexOf(":completo"))
+  const rep = entreMarcas(cmd, etiqueta("reparar"), etiqueta("completo"))
   assert.match(rep, /bootstrap\.ps1/, "no completa la instalación")
 
   // UNA vez, no en bucle: reintentar para siempre en la máquina de alguien es
@@ -656,8 +730,10 @@ test("el lanzador NO repara mientras hay una instalación en curso", () => {
   // bootstrap lanzado desde el .cmd.
   //
   // Con 20 máquinas compartiendo la red, pasar el techo no es raro: es lo normal.
-  const rep = cmdCodigo.slice(cmdCodigo.indexOf(":reparar"))
-  const antesDeLanzar = rep.slice(0, rep.indexOf("bootstrap.ps1"))
+  // Mutación: que `:reparar` ya no lance bootstrap.ps1 → antes este recorte era
+  // «toda la sección menos un carácter» y los dos asserts de abajo se cumplían con
+  // texto de cualquier parte; ahora explota nombrando la marca que falta.
+  const antesDeLanzar = entreMarcas(cmdCodigo, etiqueta("reparar"), "bootstrap.ps1")
   assert.match(antesDeLanzar, /if exist "%MARCA%"/,
     "entra a reparar sin mirar si hay una instalación corriendo")
   assert.match(antesDeLanzar, /exit \/b/,
