@@ -9,9 +9,18 @@
 # Uso (desde la carpeta del repo):
 #   bash install/bootstrap.sh
 #
+# UNA DEPENDENCIA QUE FALLA NO IMPIDE INSTALAR LA CAPA. Si OpenCode o PlatformIO
+# no se pueden instalar (sin curl, sin red, python3 roto), se anota, se sigue, y
+# Tecnia Bot se instala igual. El cierre dice lo que se COMPROBÓ de cada cosa.
+#
 # CÓDIGOS DE SALIDA:
-#   0  todo instalado.
-#   1  error: el script cortó (lo que haya dicho arriba es el motivo).
+#   0  todo comprobado: `opencode --version` contesta, un pio contesta --version,
+#      y la capa quedó en disco con install.sh terminando en 0.
+#   1  no se pudo ni empezar (falta install/OPENCODE_VERSION).
+#   2  la capa de Tecnia Bot NO quedó instalada (install.sh falló o el agente no
+#      está en disco). Es el caso grave: no hay Tecnia Bot.
+#   3  la capa quedó instalada, pero falta OpenCode o PlatformIO, o install.sh
+#      terminó CON AVISOS (su código 3). El resumen del final dice cuál.
 #   4  se negó a correr: lo lanzaron con sudo o como root prestado. No tocó nada.
 # ============================================================================
 set -euo pipefail
@@ -117,31 +126,108 @@ if ! [[ "$OPENCODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
+# ---- Lo que hace falta para bajar cosas, mirado UNA vez y temprano ------------
+# curl es el que usa este script y el que usa por dentro el instalador de OpenCode
+# (https://opencode.ai/install llama a curl para bajar el binario): sin curl,
+# OpenCode no se puede instalar desde acá y wget no lo reemplaza. Para PlatformIO
+# sí alcanza con wget: lo único que se baja es get-platformio.py, y el resto lo
+# hace python3.
+DESCARGADOR=""
+if command -v curl >/dev/null 2>&1; then
+  DESCARGADOR="curl"
+elif command -v wget >/dev/null 2>&1; then
+  DESCARGADOR="wget"
+fi
+
+# descargar_a URL DESTINO, con el que haya. Devuelve distinto de 0 si no bajó.
+descargar_a() {
+  case "$DESCARGADOR" in
+    curl) curl -fsSL -o "$2" "$1" ;;
+    wget) wget -q -O "$2" "$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Un solo temporal para todo, y se borra SIEMPRE: también si el script corta a
+# mitad de camino. Antes el `rm -rf` iba después de python3, así que un python3
+# que fallaba dejaba la carpeta tirada en /tmp.
+TMP_BOOT=""
+limpiar_temporal() {
+  if [ -n "$TMP_BOOT" ]; then rm -rf "$TMP_BOOT"; fi
+}
+trap limpiar_temporal EXIT
+# Si mktemp falla no hay dónde bajar nada: las dos instalaciones de abajo lo ven
+# (TMP_BOOT vacío) y lo dicen, sin cortar.
+TMP_BOOT="$(mktemp -d 2>/dev/null || true)"
+
+# OpenCode que CONTESTA. Imprime lo que dice `opencode --version` (la primera
+# línea), o nada y código 1. Antes alcanzaba con que el comando existiera: un
+# binario roto o a medio bajar contaba como «ya está instalado».
+version_de_opencode() {
+  local v salto
+  salto=$'\n'
+  command -v opencode >/dev/null 2>&1 || return 1
+  v="$(opencode --version 2>/dev/null)" || return 1
+  v="${v%%"$salto"*}"
+  [ -n "$v" ] || return 1
+  printf '%s\n' "$v"
+}
+
+# Qué quedó de cada cosa. El cierre se arma SOLO con estas variables, y cada una
+# se llena después de MIRAR (ejecutar el binario, o buscar el archivo en disco).
+# *_FALTA vacío = comprobado que anda; con texto = el motivo, tal como se lee.
+OPENCODE_DICE=""
+OPENCODE_FALTA=""
+PIO_FALTA=""
+
 echo ""
 echo "  🤖⚡  Tecnia Bot — instalación completa"
 echo "  ─────────────────────────────────────"
 echo ""
 
 # --- 1. OpenCode ------------------------------------------------------------
-if command -v opencode >/dev/null 2>&1; then
-  INSTALADA="$(opencode --version 2>/dev/null || echo ok)"
-  echo "  [✓] OpenCode ya está instalado ($INSTALADA)"
+if OPENCODE_DICE="$(version_de_opencode)"; then
+  echo "  [✓] OpenCode ya está instalado ($OPENCODE_DICE)"
   # Se avisa, no se toca: este instalador no desinstala ni reemplaza nada que ande.
-  if [ "$INSTALADA" != "ok" ] && [ "${INSTALADA#*$OPENCODE_VERSION}" = "$INSTALADA" ]; then
+  if [ "${OPENCODE_DICE#*$OPENCODE_VERSION}" = "$OPENCODE_DICE" ]; then
     echo "  [i] Esta versión de Tecnia Bot se probó con OpenCode $OPENCODE_VERSION. Se deja la que hay;"
     echo "      si algo no anda, reinstalá con: curl -fsSL https://opencode.ai/install | bash -s -- --version $OPENCODE_VERSION"
   fi
 else
-  echo "  [↓] Instalando OpenCode v$OPENCODE_VERSION..."
-  curl -fsSL https://opencode.ai/install | bash -s -- --version "$OPENCODE_VERSION"
-  # el instalador agrega OpenCode al PATH del shell, pero esta sesión todavía
-  # no lo ve: lo agregamos a mano para poder seguir.
-  export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
   if command -v opencode >/dev/null 2>&1; then
-    echo "  [✓] OpenCode instalado."
+    echo "  [!] Hay un opencode en esta compu ($(command -v opencode)) pero no contesta --version: lo reinstalo."
+  fi
+  if [ "$DESCARGADOR" != "curl" ]; then
+    OPENCODE_FALTA="no hay curl en esta compu, y el instalador de OpenCode lo necesita"
+    echo "  [✗] No puedo instalar OpenCode: falta curl (su instalador lo usa por dentro; wget no alcanza)."
+    echo "      Debian/Ubuntu: sudo apt install curl      Arch/Manjaro: sudo pacman -S curl"
+  elif [ -z "$TMP_BOOT" ]; then
+    OPENCODE_FALTA="no pude crear una carpeta temporal para bajar su instalador"
+    echo "  [✗] No puedo instalar OpenCode: no pude crear una carpeta temporal."
   else
-    echo "  [!] OpenCode se instaló pero no quedó en el PATH de esta terminal."
-    echo "      Cerrá y abrí la terminal, o agregá su carpeta al PATH, y volvé a correr esto."
+    echo "  [↓] Instalando OpenCode v$OPENCODE_VERSION..."
+    # Primero se BAJA entero y recién después se corre. Con `curl | bash` una
+    # descarga cortada a la mitad le daba a bash medio script, y encima —sin `if`—
+    # `set -e` cortaba este instalador antes de llegar a Tecnia Bot.
+    if ! descargar_a "https://opencode.ai/install" "$TMP_BOOT/instalar-opencode.sh"; then
+      OPENCODE_FALTA="no pude bajar su instalador de https://opencode.ai/install (¿sin internet, o la red lo bloquea?)"
+      echo "  [✗] No pude bajar el instalador de OpenCode."
+    elif ! bash "$TMP_BOOT/instalar-opencode.sh" --version "$OPENCODE_VERSION"; then
+      OPENCODE_FALTA="su instalador falló (lo que dijo está más arriba)"
+      echo "  [✗] El instalador de OpenCode falló."
+    fi
+    # el instalador agrega OpenCode al PATH del shell, pero esta sesión todavía
+    # no lo ve: lo agregamos a mano para poder seguir.
+    export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+    # Se le PREGUNTA, haya dicho lo que haya dicho el instalador.
+    if OPENCODE_DICE="$(version_de_opencode)"; then
+      OPENCODE_FALTA=""
+      echo "  [✓] OpenCode instalado ($OPENCODE_DICE)."
+    elif [ -z "$OPENCODE_FALTA" ]; then
+      OPENCODE_FALTA="su instalador terminó sin error pero \`opencode --version\` no contesta en esta terminal"
+      echo "  [!] OpenCode se instaló pero no quedó en el PATH de esta terminal."
+      echo "      Cerrá y abrí la terminal, o agregá su carpeta al PATH, y volvé a correr esto."
+    fi
   fi
 fi
 
@@ -206,11 +292,16 @@ if [ -n "$PIO_BIN" ]; then
   echo "  [✓] PlatformIO ya está instalado ($PIO_BIN)"
 else
   echo "  [↓] Instalando PlatformIO Core (no necesita admin)..."
+  # No se corta en NINGUNA de estas ramas: sin PlatformIO el bot igual sirve para
+  # explicar, dibujar circuitos y repartir fichas. Sólo no puede compilar ni
+  # cargar a la placa. Antes el comentario decía eso y el código hacía `exit 1`.
   if ! python3_anda; then
     if command -v python3 >/dev/null 2>&1; then
+      PIO_FALTA="el python3 que hay ($(command -v python3)) no anda: lo ejecuté y falló"
       echo "  [✗] Hay un python3 en esta compu ($(command -v python3)) pero no anda: lo ejecuté y falló."
     else
-      echo "  [✗] Falta Python 3. Instalalo y volvé a correr."
+      PIO_FALTA="falta Python 3, que es con lo que se instala"
+      echo "  [✗] Falta Python 3: sin él no puedo instalar PlatformIO."
     fi
     if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
       echo "      macOS: xcode-select --install   (instala las Command Line Tools, que traen python3)"
@@ -218,38 +309,107 @@ else
       echo "      Debian/Ubuntu: sudo apt install python3"
       echo "      Arch/Manjaro:  sudo pacman -S python"
     fi
-    exit 1
-  fi
-  TMP="$(mktemp -d)"
-  curl -fsSL -o "$TMP/get-platformio.py" \
-    https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py
-  python3 "$TMP/get-platformio.py"
-  rm -rf "$TMP"
-  # Se vuelve a BUSCAR: recién ahora sabemos dónde eligió instalarse, y se dice la
-  # ruta REAL. Decir "~/.platformio" cuando quedó en otro lado manda a mirar una
-  # carpeta que no existe — en Windows eso costó tres semanas de una docente.
-  PIO_BIN="$(buscar_pio || true)"
-  if [ -n "$PIO_BIN" ]; then
-    echo "  [✓] PlatformIO instalado en $PIO_BIN (Tecnia Bot lo encuentra solo)."
+  elif [ -z "$DESCARGADOR" ]; then
+    PIO_FALTA="no hay curl ni wget para bajar su instalador"
+    echo "  [✗] No puedo instalar PlatformIO: no hay curl ni wget en esta compu."
+    echo "      Debian/Ubuntu: sudo apt install curl      Arch/Manjaro: sudo pacman -S curl"
+  elif [ -z "$TMP_BOOT" ]; then
+    PIO_FALTA="no pude crear una carpeta temporal para bajar su instalador"
+    echo "  [✗] No puedo instalar PlatformIO: no pude crear una carpeta temporal."
   else
-    # No se corta: sin PlatformIO el bot igual sirve para explicar, dibujar
-    # circuitos y repartir fichas. Sólo no puede compilar ni cargar a la placa.
+    if ! descargar_a "https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py" "$TMP_BOOT/get-platformio.py"; then
+      PIO_FALTA="no pude bajar su instalador (¿sin internet, o la red bloquea GitHub?)"
+      echo "  [✗] No pude bajar el instalador de PlatformIO."
+    elif ! python3 "$TMP_BOOT/get-platformio.py"; then
+      PIO_FALTA="su instalador falló (lo que dijo está más arriba)"
+      echo "  [✗] El instalador de PlatformIO falló."
+    fi
+    # Se vuelve a BUSCAR: recién ahora sabemos dónde eligió instalarse, y se dice la
+    # ruta REAL. Decir "~/.platformio" cuando quedó en otro lado manda a mirar una
+    # carpeta que no existe — en Windows eso costó tres semanas de una docente.
+    PIO_BIN="$(buscar_pio || true)"
+    if [ -n "$PIO_BIN" ]; then
+      PIO_FALTA=""
+      echo "  [✓] PlatformIO instalado en $PIO_BIN (Tecnia Bot lo encuentra solo)."
+    elif [ -z "$PIO_FALTA" ]; then
+      PIO_FALTA="su instalador terminó sin error pero ningún pio contesta --version"
+    fi
+  fi
+  if [ -n "$PIO_FALTA" ]; then
     echo "  [!] PlatformIO no quedó instalado. Tecnia Bot va a arrancar igual, pero"
     echo "      no va a poder compilar ni cargar a la placa hasta que esto se resuelva."
   fi
 fi
 
 # --- 3. Tecnia Bot (capa educativa) ------------------------------------------
+# Corre SIEMPRE, haya pasado lo que haya pasado arriba. Su código se mira (3 es
+# «instalado CON AVISOS», ver el encabezado de install.sh) y además se busca el
+# agente en disco, en la carpeta de config REAL (la misma cuenta que hace
+# install.sh, respetando XDG_CONFIG_HOME): un código 0 sin el archivo no alcanza.
 echo ""
 echo "  [↓] Instalando la capa de Tecnia Bot..."
-bash "$REPO_DIR/install/install.sh"
+RC_CAPA=0
+bash "$REPO_DIR/install/install.sh" || RC_CAPA=$?
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+AGENTE_EN_DISCO="$CONFIG_DIR/agent/tecnia-bot.md"
+CAPA="fallo"
+if [ -s "$AGENTE_EN_DISCO" ]; then
+  case "$RC_CAPA" in
+    0) CAPA="ok" ;;
+    3) CAPA="avisos" ;;
+  esac
+fi
 
+# --- El cierre: lo que se comprobó, y NADA más -------------------------------
+# Acá había un «✅ ¡Todo listo!» sin ninguna condición: salía igual con OpenCode
+# sin instalar, sin PlatformIO o con la capa a medias. Ahora sale sólo si las
+# tres cosas se comprobaron. Si falta algo, el resumen va AL FINAL —es lo que
+# queda a la vista en la terminal— y el script sale distinto de 0.
 echo ""
-echo "  ✅ ¡Todo listo! Abrí una terminal en cualquier carpeta, escribí 'opencode',"
-echo "     apretá Tab y elegí 'tecnia-bot'."
+if [ -z "$OPENCODE_FALTA" ] && [ -z "$PIO_FALTA" ] && [ "$CAPA" = "ok" ]; then
+  echo "  ✅ ¡Todo listo! Abrí una terminal en cualquier carpeta, escribí 'opencode',"
+  echo "     apretá Tab y elegí 'tecnia-bot'."
+  echo ""
+  echo "  🔑 La API key de Google es opcional. Sin key, Tecnia Bot usa Big Pickle, el modelo"
+  echo "     gratuito de OpenCode (gratis por tiempo limitado; OpenCode puede usar el chat"
+  echo "     para mejorar el modelo). Con key usa Gemini: sacala gratis (sin tarjeta) en"
+  echo "     https://aistudio.google.com/apikey y volvé a correr install/install.sh."
+  echo ""
+  exit 0
+fi
+
+echo "  ⚠️  La instalación NO quedó completa. Esto es lo que comprobé:"
 echo ""
-echo "  🔑 La API key de Google es opcional. Sin key, Tecnia Bot usa Big Pickle, el modelo"
-echo "     gratuito de OpenCode (gratis por tiempo limitado; OpenCode puede usar el chat"
-echo "     para mejorar el modelo). Con key usa Gemini: sacala gratis (sin tarjeta) en"
-echo "     https://aistudio.google.com/apikey y volvé a correr install/install.sh."
+if [ -z "$OPENCODE_FALTA" ]; then
+  echo "     [✓] OpenCode: contesta ($OPENCODE_DICE)."
+else
+  echo "     [✗] OpenCode: NO quedó instalado — $OPENCODE_FALTA."
+  echo "         Sin OpenCode no hay dónde abrir Tecnia Bot."
+fi
+if [ -z "$PIO_FALTA" ]; then
+  echo "     [✓] PlatformIO: contesta ($PIO_BIN)."
+else
+  echo "     [✗] PlatformIO: NO quedó instalado — $PIO_FALTA."
+  echo "         Tecnia Bot igual explica, dibuja circuitos y reparte fichas; no compila ni carga a la placa."
+fi
+case "$CAPA" in
+  ok)
+    echo "     [✓] Tecnia Bot: la capa quedó instalada en $CONFIG_DIR."
+    ;;
+  avisos)
+    echo "     [!] Tecnia Bot: la capa quedó en $CONFIG_DIR, pero su instalador terminó CON AVISOS."
+    echo "         La lista de lo que falta está más arriba, donde dice «instalado CON AVISOS»."
+    ;;
+  *)
+    echo "     [✗] Tecnia Bot: la capa NO quedó instalada (su instalador salió con código $RC_CAPA)."
+    if [ ! -s "$AGENTE_EN_DISCO" ]; then
+      echo "         Busqué el agente en $AGENTE_EN_DISCO y no está."
+    fi
+    ;;
+esac
 echo ""
+echo "     Arreglá lo marcado y volvé a correr: bash install/bootstrap.sh"
+echo "     (lo que ya quedó bien no se vuelve a instalar)."
+echo ""
+if [ "$CAPA" = "fallo" ]; then exit 2; fi
+exit 3
