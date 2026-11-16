@@ -4,7 +4,9 @@
 // tool abre el proyecto y genera el programa por el mismo camino que `generar`/`compilar`;
 // desde ahí, todo lo que toca la placa pasa por acá, en este orden, y cada paso falla CERRADO:
 //
-//    1-2. quién pide (sólo el agente Tecnia Bot; nunca con aprobación automática)
+//    1-2. quién pide (sólo el agente Tecnia Bot) y una defensa HEURÍSTICA contra la aprobación
+//         automática: mira la línea de comando del propio proceso; no ve un cliente que se
+//         conecta a este servidor ni otras formas de aprobar todo (Q-03)
 //      4. carpeta privada nueva, fuera del proyecto, con lo generado y nada más
 //      5. análisis de pines sobre lo generado (un pin que deja la placa sin arrancar frena)
 //      6. la placa (`descubrir` + `elegirPuerto`) y el candado del puerto
@@ -264,7 +266,20 @@ const POR_QUE_NO_HAY_PLACA: Record<string, string> = {
   VARIAS_PLACAS: "Hay más de una placa conectada y no voy a elegir yo a cuál grabar. Dejá enchufada sólo la del proyecto y pedí la carga de nuevo.",
 }
 
-type Deteccion = { ok: true; placa: PlacaDetectada } | { ok: false; cancelado: boolean; codigo: string; texto: string }
+/**
+ * Q-05: ¿la placa detectada es SEGURO de otra familia que el programa? Sólo por VID con
+ * certeza: 2341/2A03 son Arduino (nunca un ESP32) y 303A es el USB nativo de Espressif (nunca
+ * una UNO). Los chips USB-serie genéricos (CH340, CP2102, FTDI…) van en las dos familias: ahí
+ * no se opina y se deja seguir. Devuelve qué es la placa, o `null` si no hay certeza de nada.
+ */
+export function familiaQueNoCoincide(familia: "esp32" | "uno", placa: Pick<PlacaDetectada, "vid">): string | null {
+  const vid = placa.vid.toUpperCase()
+  if (familia === "esp32" && (vid === "2341" || vid === "2A03")) return "un Arduino"
+  if (familia === "uno" && vid === "303A") return "un ESP32 con USB nativo"
+  return null
+}
+
+type Deteccion ={ ok: true; placa: PlacaDetectada } | { ok: false; cancelado: boolean; codigo: string; texto: string }
 
 async function detectarPlaca(run: Run, cwd: string, signal?: AbortSignal): Promise<Deteccion> {
   const d = await descubrir(run, cwd, signal)
@@ -329,9 +344,19 @@ async function preguntarConCorte(h: HerramientasDeCarga, ctx: ContextoDeCarga, p
 
 // ── 10. El veredicto ─────────────────────────────────────────────────────────────────────
 
+/** Corte de una carga en el que NO se pudo confirmar que el árbol de procesos terminó. */
 const MEDIO_GRABAR =
-  "La placa pudo haber quedado a medio grabar: con el programa anterior roto o sin programa. Puede que PlatformIO haya dejado algún proceso propio todavía corriendo. " +
-  "Desenchufá la placa, volvé a enchufarla y, para volver a cargar, cerrá y volvé a abrir Tecnia Bot (el puerto queda reservado hasta entonces)."
+  "No pude confirmar que la grabación se haya frenado: puede que siga grabándose. No desconectes la placa todavía: esperá un par de minutos. " +
+  "Después desenchufala y volvé a enchufarla: pudo haber quedado a medio grabar (con el programa anterior roto o sin programa). " +
+  "Para volver a cargar, cerrá y volvé a abrir Tecnia Bot: hasta entonces, `programa cargar` tiene ese puerto reservado."
+
+/** Corte de una carga en el que SÍ se comprobó que no quedó ningún proceso de grabación vivo. */
+const CORTE_CONFIRMADO =
+  "Confirmé que no quedó ningún proceso de la carga corriendo, pero la placa pudo haber quedado a medio grabar (con el programa anterior roto o sin programa): hay que volver a cargarla."
+
+/** Qué decir y si retener el puerto, según si `run()` confirmó que el árbol de la carga terminó (Q-01). */
+const despuesDelCorte = (corrida: RunResult) =>
+  corrida.procesosDeCargaTerminados === true ? { texto: CORTE_CONFIRMADO, retenerPuerto: false } : { texto: MEDIO_GRABAR, retenerPuerto: true }
 
 interface Veredicto {
   ok: boolean
@@ -359,10 +384,12 @@ function firmwareEstaEntreLasRegiones(dir: string, environment: string, regiones
 function veredicto(familia: "esp32" | "uno", corrida: RunResult, dir: string, environment: string, timeoutMs: number): Veredicto {
   const salida = () => recortarSalida(corrida.stderr.trim() ? `${corrida.stdout}\n${corrida.stderr}` : corrida.stdout)
   if (corrida.code === CODIGO_TIMEOUT) {
-    return { ok: false, codigo: "TIEMPO_AGOTADO", resultado: `NO SÉ SI SE CARGÓ — PlatformIO no terminó en ${describirDuracion(timeoutMs)} y lo corté mientras compilaba o grababa. ${MEDIO_GRABAR}`, retenerPuerto: true, extra: { salida: salida() } }
+    const d = despuesDelCorte(corrida)
+    return { ok: false, codigo: "TIEMPO_AGOTADO", resultado: `NO SÉ SI SE CARGÓ — PlatformIO no terminó en ${describirDuracion(timeoutMs)} y lo corté mientras compilaba o grababa. ${d.texto}`, retenerPuerto: d.retenerPuerto, extra: { salida: salida(), procesosDeCargaTerminados: corrida.procesosDeCargaTerminados === true } }
   }
   if (corrida.code === CODIGO_CANCELADO) {
-    return { ok: false, codigo: "CANCELADO_DURANTE_LA_CARGA", resultado: `NO SÉ SI SE CARGÓ — se canceló mientras PlatformIO compilaba o grababa. ${MEDIO_GRABAR}`, retenerPuerto: true, extra: { salida: salida() } }
+    const d = despuesDelCorte(corrida)
+    return { ok: false, codigo: "CANCELADO_DURANTE_LA_CARGA", resultado: `NO SÉ SI SE CARGÓ — se canceló mientras PlatformIO compilaba o grababa. ${d.texto}`, retenerPuerto: d.retenerPuerto, extra: { salida: salida(), procesosDeCargaTerminados: corrida.procesosDeCargaTerminados === true } }
   }
   if (corrida.code === CODIGO_NO_LANZADO) {
     return { ok: false, codigo: "PLATFORMIO_NO_ENCONTRADO", resultado: 'NO SE CARGÓ — no pude lanzar PlatformIO (no está instalado o no lo encuentro): no se grabó nada. Usá la tool `platformio` con action "reparar".', retenerPuerto: false, extra: {} }
@@ -425,6 +452,8 @@ export interface ProgramaParaCargar {
   readonly revision: number
   readonly environment: string
   readonly archivos: Readonly<Record<string, string>>
+  /** La revisión ACTUAL del proyecto (sincrónica). Se compara con `revision` justo antes de lanzar (Q-04). */
+  readonly revisionActual?: () => number
 }
 
 export interface OpcionesDeCarga {
@@ -491,6 +520,8 @@ async function cargarDesde(dir: string, p: ProgramaParaCargar, ctx: ContextoDeCa
   const antes = await detectarPlaca(h.run, dir, signal)
   if (!antes.ok) return antes.cancelado ? cancelado() : no(antes.codigo, `NO SE CARGÓ — ${antes.texto}`)
   const placa = antes.placa
+  const otraFamilia = familiaQueNoCoincide(familia, placa)
+  if (otraFamilia) return no("PLACA_NO_COINCIDE", `NO SE CARGÓ — el programa es para ${familia === "esp32" ? "un ESP32" : "un Arduino UNO"}, pero la placa conectada en ${placa.puerto} es ${otraFamilia}. Conectá la placa del proyecto y pedí la carga de nuevo.`)
   const operacion = randomUUID()
   const reserva = reservarPuerto(placa.puerto, `programa ${operacion}`)
   if (!reserva.ok) return no("PUERTO_OCUPADO", `NO SE CARGÓ — el puerto ${placa.puerto} está ocupado: ${reserva.detalle}`)
@@ -521,6 +552,19 @@ async function cargarDesde(dir: string, p: ProgramaParaCargar, ctx: ContextoDeCa
     const ahora = huellaDeLoGenerado(dir, p.archivos)
     if (!ahora.ok || !compararHuellas(generado.huella, ahora.huella).ok) {
       return no("ARCHIVOS_CAMBIARON", "NO SE CARGÓ — los archivos del programa cambiaron entre que se generaron y la carga. No se lanzó nada.")
+    }
+    // ...y el proyecto (Q-04): si cambió de revisión con el cartel abierto, lo aprobado ya no es
+    // el proyecto actual. Se lee sin `await` (el snapshot del servicio es sincrónico).
+    if (p.revisionActual) {
+      let actual: number | null
+      try {
+        actual = p.revisionActual()
+      } catch {
+        actual = null
+      }
+      if (actual !== p.revision) {
+        return no("PROYECTO_CAMBIO", `NO SE CARGÓ — el proyecto cambió (revisión ${p.revision} → ${actual ?? "desconocida"}) mientras el cartel estaba abierto: lo que aprobaste ya no es el proyecto actual. Pedí la carga de nuevo.`)
+      }
     }
 
     // 9. Compilar y grabar, en un solo paso, desde la carpeta privada.

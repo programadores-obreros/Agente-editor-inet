@@ -1,0 +1,269 @@
+// Q-01 del QA de H1: cortar una carga corta el ÁRBOL entero (pio → scons → esptool), y `run()`
+// no vuelve hasta comprobarlo.
+//
+// ACÁ HAY PROCESOS REALES, Y SON INOCUOS. El "pio" es un script de Node que se instala en un
+// `PLATFORMIO_CORE_DIR` temporal (así `pioBin()` lo encuentra como encontraría al de verdad):
+// con `device list` contesta una placa inventada; con cualquier otra cosa lanza un hijo
+// ("scons") que lanza un nieto ("esptool"). El nieto anota su pid y la hora, y al cabo de un
+// rato escribe un archivo MARCADOR: si el marcador aparece, la "grabación" siguió después del
+// corte. No hay `pio` real, ni puerto, ni placa.
+//
+// `Bun.spawn` se imita con `child_process` (no hay Bun en esta máquina), con la semántica de
+// Bun que importa acá: si se le pasa `signal`, mata SÓLO al hijo directo. `run()` ya no se la
+// pasa a una carga; justamente eso es lo que se prueba.
+//
+// POR QUÉ ASÍ Y NO CON ESPÍAS: lo que estaba roto es la relación entre procesos de verdad
+// (reparentado, señales, zombis). Un espía no tiene nietos.
+//
+// LIMPIEZA: cada pid que anotan los procesos se mata con SIGKILL en `finally`/`after`, pase lo
+// que pase, por pid (nunca por patrón).
+
+import { test, after } from "node:test"
+import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { Readable } from "node:stream"
+import os from "node:os"
+import { REPO, nuevoDir } from "./phase2-helpers.mjs"
+
+const LINUX = process.platform === "linux"
+const OUT = mkdtempSync(join(os.tmpdir(), "tecniabot-carga-arbol-"))
+const ENTORNO_ORIGINAL = { PLATFORMIO_CORE_DIR: process.env.PLATFORMIO_CORE_DIR, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME, TECNIA_PIO_TIMEOUT_MS: process.env.TECNIA_PIO_TIMEOUT_MS }
+process.env.PLATFORMIO_CORE_DIR = join(OUT, "core")
+process.env.XDG_CONFIG_HOME = join(OUT, "config")
+process.env.XDG_CACHE_HOME = join(OUT, "cache")
+delete process.env.TECNIA_PIO_TIMEOUT_MS
+
+// ── Bun.spawn sobre child_process ──────────────────────────────────────────────────────
+const BunOriginal = globalThis.Bun
+const lanzados = []
+globalThis.Bun = {
+  which: () => null,
+  spawn(cmd, o) {
+    lanzados.push({ cmd: [...cmd], conSenal: o.signal !== undefined })
+    const cp = spawn(cmd[0], cmd.slice(1), { cwd: o.cwd, stdio: ["ignore", "pipe", "pipe"], ...(o.signal ? { signal: o.signal, killSignal: "SIGTERM" } : {}) })
+    cp.on("error", () => {})
+    const exited = new Promise((listo) => cp.on("exit", (c, s) => listo(c ?? (s === "SIGKILL" ? 137 : 143))))
+    return { pid: cp.pid, stdout: Readable.toWeb(cp.stdout), stderr: Readable.toWeb(cp.stderr), exited, kill: (s) => cp.kill(s) }
+  },
+}
+
+// ── El "pio" de mentira ────────────────────────────────────────────────────────────────
+const PIDS = join(OUT, "pids")
+mkdirSync(PIDS, { recursive: true })
+const PLACA = { port: "/dev/ttyUSB0", hwid: "USB VID:PID=10C4:EA60 SER=A1B2C3D4E5 LOCATION=1-1", description: "CP2102" }
+const PIO_FALSO = `#!${process.execPath}
+const { spawn } = require("node:child_process")
+const fs = require("node:fs")
+const dir = ${JSON.stringify(PIDS)}
+const args = process.argv.slice(2)
+if (args[0] === "device") { process.stdout.write(${JSON.stringify(JSON.stringify([PLACA]))}); process.exit(0) }
+fs.writeFileSync(dir + "/pio.pid", String(process.pid))
+const modo = fs.readFileSync(dir + "/modo", "utf8")
+const nieto = \`
+  const fs = require("node:fs")
+  const dir = \${JSON.stringify(dir)}
+  if (\${JSON.stringify(modo)}.startsWith("ignora")) process.on("SIGTERM", () => {})
+  const espera = Number(\${JSON.stringify(modo)}.split(":")[1])
+  fs.writeFileSync(dir + "/esptool.pid", JSON.stringify({ pid: process.pid, desde: Date.now(), espera }))
+  setTimeout(() => { fs.writeFileSync(dir + "/MARCADOR", "grabé después del corte"); process.exit(0) }, espera)\`
+const hijo = \`
+  const { spawn } = require("node:child_process")
+  require("node:fs").writeFileSync(\${JSON.stringify(dir)} + "/scons.pid", String(process.pid))
+  spawn(process.execPath, ["-e", \${JSON.stringify(nieto)}], { stdio: "ignore" })
+  setInterval(() => {}, 1000)\`
+spawn(process.execPath, ["-e", hijo], { stdio: "ignore" })
+process.stdout.write("esptool.py v4.9.0\\nWriting at 0x00010000... (1 %)\\n")
+setInterval(() => {}, 1000)
+`
+const bin = join(OUT, "core", "penv", "bin")
+mkdirSync(bin, { recursive: true })
+writeFileSync(join(bin, "pio"), PIO_FALSO)
+chmodSync(join(bin, "pio"), 0o755)
+
+const proceso = await import(join(REPO, "opencode/carga/proceso.ts"))
+const { argvDeCargaCompilando, lanzarCarga } = await import(join(REPO, "opencode/carga/ejecutar.ts"))
+const { terminarArbol } = await import(join(REPO, "opencode/carga/arbol.ts"))
+const { reservarPuerto, liberarTodosLosPuertos } = await import(join(REPO, "opencode/carga/puertos.ts"))
+const { ejecutarPrograma, HERRAMIENTAS_DE_CARGA } = await import(join(REPO, "opencode/tool/programa.ts"))
+const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.ts"))).default
+proceso.resetPioCache()
+
+// ── Ayudantes ──────────────────────────────────────────────────────────────────────────
+const todos = new Set()
+function pidsAnotados() {
+  const salida = {}
+  for (const f of existsSync(PIDS) ? readdirSync(PIDS) : []) {
+    if (!f.endsWith(".pid")) continue
+    const t = readFileSync(join(PIDS, f), "utf8")
+    salida[f.slice(0, -4)] = t.startsWith("{") ? JSON.parse(t) : { pid: Number(t) }
+    todos.add(salida[f.slice(0, -4)].pid)
+  }
+  return salida
+}
+/** Vivo = está en /proc y no es zombi. */
+function vivo(pid) {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+    const estado = stat.slice(stat.lastIndexOf(")") + 2)[0]
+    return estado !== "Z" && estado !== "X"
+  } catch {
+    return false
+  }
+}
+/** Espera POR CONDICIÓN, con tope (nunca un sleep a ciegas). */
+async function hasta(cond, topeMs) {
+  const fin = Date.now() + topeMs
+  while (Date.now() < fin) {
+    if (cond()) return true
+    await new Promise((listo) => setTimeout(listo, 20))
+  }
+  return cond()
+}
+function limpiar() {
+  pidsAnotados()
+  for (const pid of todos) if (vivo(pid)) try { process.kill(pid, "SIGKILL") } catch {}
+}
+function preparar(modo) {
+  limpiar()
+  rmSync(PIDS, { recursive: true, force: true })
+  mkdirSync(PIDS, { recursive: true })
+  writeFileSync(join(PIDS, "modo"), modo)
+}
+/** Corta en cuanto el nieto ("esptool") ya está corriendo: el centinela lo escribe él. */
+async function cortarCuandoGrabe(ctrl) {
+  const listo = await hasta(() => existsSync(join(PIDS, "esptool.pid")), 10_000)
+  ctrl.abort()
+  return listo
+}
+
+after(() => {
+  limpiar()
+  liberarTodosLosPuertos()
+  for (const [k, v] of Object.entries(ENTORNO_ORIGINAL)) if (v === undefined) delete process.env[k]
+  else process.env[k] = v
+  globalThis.Bun = BunOriginal
+  rmSync(OUT, { recursive: true, force: true })
+})
+
+const argv = (cwd) => argvDeCargaCompilando({ cwd, environment: "esp32-devkit-v1", puerto: "/dev/ttyUSB0" })
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("cancelar una carga termina pio, scons y esptool; run() vuelve recién con todos muertos; el nieto no llega a grabar", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("normal:1500")
+  try {
+    const ctrl = new AbortController()
+    const corriendo = lanzarCarga(proceso.run, argv(OUT), OUT, ctrl.signal, 60_000)
+    assert.equal(await cortarCuandoGrabe(ctrl), true, "fixture: el nieto no arrancó")
+    const r = await corriendo
+    const p = pidsAnotados()
+    // Al volver run(), ninguno de los tres vive.
+    assert.deepEqual(["pio", "scons", "esptool"].filter((n) => vivo(p[n].pid)), [], "run() volvió con procesos de la carga vivos")
+    assert.equal(r.code, 130)
+    assert.equal(r.procesosDeCargaTerminados, true)
+    assert.equal(lanzados.at(-1).conSenal, false, "a una carga no se le pasa la señal a Bun.spawn (mataría sólo al hijo)")
+    // Pasado el momento en que el nieto iba a grabar, el marcador no existe.
+    const { desde, espera } = p.esptool
+    await hasta(() => Date.now() > desde + espera + 1000, espera + 3000)
+    assert.equal(existsSync(join(PIDS, "MARCADOR")), false, "el nieto siguió grabando después del corte")
+  } finally {
+    limpiar()
+  }
+})
+
+test("un descendiente que ignora SIGTERM cae por SIGKILL, y se confirma", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("ignora:4500") // más que el tope de SIGTERM: si no lo mata SIGKILL, graba
+  try {
+    const ctrl = new AbortController()
+    const corriendo = lanzarCarga(proceso.run, argv(OUT), OUT, ctrl.signal, 60_000)
+    assert.equal(await cortarCuandoGrabe(ctrl), true)
+    const r = await corriendo
+    const p = pidsAnotados()
+    assert.equal(vivo(p.esptool.pid), false, "el que ignora SIGTERM sigue vivo")
+    assert.equal(r.procesosDeCargaTerminados, true)
+    const { desde, espera } = p.esptool
+    await hasta(() => Date.now() > desde + espera + 1000, espera + 3000)
+    assert.equal(existsSync(join(PIDS, "MARCADOR")), false)
+  } finally {
+    limpiar()
+  }
+})
+
+test("timeout de una carga: mismo corte del árbol, código 124", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("normal:1500")
+  try {
+    // El tope corre desde el lanzamiento; 400 ms alcanzan para que el nieto esté vivo (se afirma).
+    const r = await lanzarCarga(proceso.run, argv(OUT), OUT, undefined, 400)
+    const p = pidsAnotados()
+    assert.equal(r.code, 124)
+    assert.ok(p.esptool, "fixture: el nieto no llegó a arrancar antes del timeout")
+    assert.equal(vivo(p.esptool.pid), false)
+    assert.equal(r.procesosDeCargaTerminados, true)
+    await hasta(() => Date.now() > p.esptool.desde + p.esptool.espera + 1000, 5000)
+    assert.equal(existsSync(join(PIDS, "MARCADOR")), false)
+  } finally {
+    limpiar()
+  }
+})
+
+test("si no se puede mirar el sistema, no se confirma", async () => {
+  const sis = { plataforma: "linux", foto: () => null, senal: () => {}, taskkill: () => false }
+  assert.deepEqual((await terminarArbol(123456, sis)).confirmado, false)
+  const quedaVivo = { plataforma: "linux", foto: () => [{ pid: 4242, ppid: 1, zombi: false }], senal: () => {}, taskkill: () => false }
+  assert.equal((await terminarArbol(4242, quedaVivo, { term: 50, kill: 50 })).confirmado, false, "si sigue vivo después de SIGKILL, no se confirma")
+})
+
+test("lo que no es carga sigue como siempre: la señal va a Bun.spawn y no hay campo de árbol", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("normal:1500")
+  const r = await proceso.run(["pio", "device", "list", "--json-output"], OUT, new AbortController().signal)
+  assert.equal(r.code, 0)
+  assert.equal(lanzados.at(-1).conSenal, true)
+  assert.equal("procesosDeCargaTerminados" in r, false)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// De punta a punta: `programa cargar` con el run real y el pio de mentira
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+const PRESIONADO = { capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } }
+const OPS = [
+  { tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } },
+  { tipo: "AgregarComponente", payload: { tipo: "pulsador" } },
+  { tipo: "AgregarComponente", payload: { tipo: "led" } },
+  { tipo: "AgregarComponente", payload: { tipo: "resistencia" } },
+  { tipo: "AsignarPin", payload: { componente: "cmp-0", terminal: "senal", pin: "GPIO4" } },
+  { tipo: "AsignarPin", payload: { componente: "cmp-1", terminal: "anodo", pin: "GPIO18" } },
+  { tipo: "Conectar", payload: { desde: { componente: "cmp-2", terminal: "a" }, hasta: { componente: "cmp-1", terminal: "anodo" } } },
+  { tipo: "SetComportamiento", payload: { comportamiento: { cuando: { sensor: "cmp-0", ...PRESIONADO }, entonces: { actuador: "cmp-1", accion: "encender" } } } },
+]
+
+test("programa cargar cancelado durante la grabación: árbol terminado y confirmado, el candado se suelta y el mensaje dice «a medio grabar»", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("normal:1500")
+  try {
+    const dir = nuevoDir("carga-arbol")
+    const leer = JSON.parse(await proyectoFisico.execute({ accion: "leer" }, { directory: dir }))
+    assert.equal(JSON.parse(await proyectoFisico.execute({ accion: "aplicar", baseRevision: leer.revision, operaciones: OPS }, { directory: dir })).ok, true)
+    const ctrl = new AbortController()
+    const ctx = { directory: dir, agent: "tecnia-bot", abort: ctrl.signal, ask: async () => {} }
+    const corriendo = ejecutarPrograma({ accion: "cargar" }, ctx, undefined, HERRAMIENTAS_DE_CARGA)
+    assert.equal(await cortarCuandoGrabe(ctrl), true)
+    const r = JSON.parse(await corriendo)
+    const p = pidsAnotados()
+    assert.deepEqual(["pio", "scons", "esptool"].filter((n) => vivo(p[n].pid)), [])
+    assert.equal(r.ok, false)
+    assert.equal(r.codigo, "CANCELADO_DURANTE_LA_CARGA")
+    assert.match(r.resultado, /Confirmé que no quedó ningún proceso de la carga corriendo/)
+    assert.match(r.resultado, /a medio grabar/)
+    assert.doesNotMatch(r.resultado, /no se grabó nada/)
+    const reserva = reservarPuerto("/dev/ttyUSB0", "test")
+    assert.equal(reserva.ok, true, "con el árbol confirmado muerto, el candado tiene que quedar libre")
+    reserva.liberar()
+    await hasta(() => Date.now() > p.esptool.desde + p.esptool.espera + 1000, 5000)
+    assert.equal(existsSync(join(PIDS, "MARCADOR")), false)
+  } finally {
+    limpiar()
+    liberarTodosLosPuertos()
+  }
+})

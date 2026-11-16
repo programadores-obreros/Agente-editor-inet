@@ -600,6 +600,78 @@ test("cancelación durante la carga → mensaje propio, nunca éxito; el puerto 
   assert.equal(puertoLibre(), false)
 })
 
+// ── Ciclo 1 (Q-01): según `run()` confirme o no que el árbol de la carga terminó ──────────
+
+for (const [codigo, corte] of [["CANCELADO_DURANTE_LA_CARGA", 130], ["TIEMPO_AGOTADO", 124]]) {
+  test(`${codigo} con el árbol CONFIRMADO muerto → se suelta el candado y dice «a medio grabar», nunca «no se grabó nada»`, async () => {
+    const dir = await armar()
+    const { r } = await cargar(dir, { lanza: lanzador({ carga: { code: corte, stdout: "Writing at 0x00010000... (11 %)\n", stderr: "", procesosDeCargaTerminados: true } }) })
+    assert.equal(r.ok, false)
+    assert.equal(r.codigo, codigo)
+    assert.match(r.resultado, /Confirmé que no quedó ningún proceso de la carga corriendo/)
+    assert.match(r.resultado, /a medio grabar/)
+    assert.doesNotMatch(r.resultado, /no se grabó nada|No desconectes/)
+    assert.equal(r.procesosDeCargaTerminados, true)
+    assert.equal(puertoLibre(), true, "confirmado el corte, el puerto tiene que quedar libre")
+  })
+
+  test(`${codigo} SIN poder confirmar → el candado queda retenido y el mensaje dice que puede seguir grabándose`, async () => {
+    const dir = await armar()
+    const { r } = await cargar(dir, { lanza: lanzador({ carga: { code: corte, stdout: "", stderr: "", procesosDeCargaTerminados: false } }) })
+    assert.equal(r.codigo, codigo)
+    assert.match(r.resultado, /No pude confirmar que la grabación se haya frenado: puede que siga grabándose/)
+    assert.match(r.resultado, /No desconectes la placa todavía/)
+    assert.doesNotMatch(r.resultado, /Confirmé|no se grabó nada/)
+    assert.equal(r.procesosDeCargaTerminados, false)
+    assert.equal(puertoLibre(), false, "sin confirmar, el puerto no se suelta")
+  })
+}
+
+test("Q-04: si el proyecto cambia de revisión con el cartel abierto → PROYECTO_CAMBIO, no se lanza", async () => {
+  const dir = await armar()
+  const pregunta = cartel("si", async () => {
+    const { revision } = await fisico(dir, { accion: "leer" })
+    const r = await fisico(dir, { accion: "aplicar", baseRevision: revision, operaciones: [{ tipo: "AsignarPin", payload: { componente: "cmp-1", terminal: "anodo", pin: "GPIO19" } }] })
+    assert.equal(r.ok, true, JSON.stringify(r))
+  })
+  const { r, lanza } = await cargar(dir, { pregunta })
+  assert.equal(r.codigo, "PROYECTO_CAMBIO")
+  assert.equal(lanza.lanzamientos.length, 0)
+  assert.equal(puertoLibre(), true)
+})
+
+test("Q-05: un programa de ESP32 con un Arduino conectado (y al revés) → PLACA_NO_COINCIDE, sin cartel ni lanzamiento", async () => {
+  const dir = await armar()
+  const a = await cargar(dir, { lanza: lanzador({ placas: [UNO] }) })
+  assert.equal(a.r.codigo, "PLACA_NO_COINCIDE")
+  assert.equal(a.pregunta.pedidos.length, 0)
+  assert.equal(a.lanza.lanzamientos.length, 0)
+  const uno = await armar("arduino-uno", ["D2", "D7"])
+  const espNativo = { port: PUERTO, hwid: "USB VID:PID=303A:1001 SER=F412FA000001 LOCATION=1-3", description: "USB JTAG/serial debug unit" }
+  const b = await cargar(uno, { deps: depsUno, lanza: lanzador({ placas: [espNativo] }) })
+  assert.equal(b.r.codigo, "PLACA_NO_COINCIDE")
+  assert.equal(b.lanza.lanzamientos.length, 0)
+  // Un chip USB-serie genérico no es certeza de nada: se deja seguir.
+  const c = await cargar(uno, { deps: depsUno, lanza: lanzador({ placas: [placa()], carga: { code: 0, stdout: "", stderr: "" }, bytesFirmware: 0 }) })
+  assert.equal(c.lanza.lanzamientos.length, 1)
+})
+
+test("Q-06: abort durante la revalidación (después del cartel) → no se lanza", async () => {
+  const dir = await armar()
+  const ctrl = new AbortController()
+  const lanza = lanzador()
+  const run = lanza.run
+  lanza.run = async (cmd, ...resto) => {
+    if (cmd[1] === "device" && lanza.listados === 1) ctrl.abort() // la segunda detección: el doble no mira la señal
+    return run(cmd, ...resto)
+  }
+  const { r } = await cargar(dir, { lanza, abort: ctrl.signal })
+  assert.equal(lanza.listados, 2)
+  assert.equal(r.codigo, "CANCELADO")
+  assert.equal(lanza.lanzamientos.length, 0)
+  assert.equal(puertoLibre(), true)
+})
+
 // ════════════════════════════════════════════════════════════════════════════════════════
 // Registro
 // ════════════════════════════════════════════════════════════════════════════════════════

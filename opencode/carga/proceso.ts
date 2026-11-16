@@ -22,17 +22,30 @@
 //      "upload" en el código) se evade concatenando strings; ésta mira lo que de verdad
 //      está por ejecutarse.
 //
-// Este módulo importa sólo `node:` — nunca `tool/` ni `@opencode-ai/plugin`.
+//   3. CORTAR UNA CARGA CORTA EL ÁRBOL ENTERO (Q-01 del QA de H1). Si el argv trae la
+//      capacidad y hay que cortarlo (abort o timeout), se terminan el hijo y TODOS sus
+//      descendientes con `./arbol.ts`, y `run()` vuelve recién cuando se comprobó que no
+//      queda ninguno (o vencieron los topes). `procesosDeCargaTerminados` dice cuál de las
+//      dos. Para lo que no es carga, el corte es el de siempre.
+//
+// Este módulo importa sólo `node:` y `./arbol.ts` — nunca `tool/` ni `@opencode-ai/plugin`.
 
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, win32 } from "node:path"
+import { terminarArbol, TOPE_KILL_MS } from "./arbol.ts"
 
 /** En 124 (timeout) y 130 (cancelado), `stdout`/`stderr` traen lo capturado hasta el corte. */
 export interface RunResult {
   code: number
   stdout: string
   stderr: string
+  /**
+   * Sólo en una CARGA cortada (124/130): `true` si se comprobó que no queda vivo ningún
+   * proceso del árbol de la carga (pio → scons → esptool/avrdude); `false` si no se pudo
+   * confirmar. En cualquier otro caso no está.
+   */
+  procesosDeCargaTerminados?: boolean
 }
 
 // PlatformIO casi nunca queda en el PATH tras instalarse (ni en Linux ni en Windows).
@@ -399,7 +412,12 @@ export async function run(
 
   if (corte.aborted) return resultadoCorte()
 
-  const lanzar = () => Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", signal: corte })
+  // UNA CARGA NO LE PASA LA SEÑAL A `Bun.spawn` (Q-01): si se la pasara, Bun mataría al hijo
+  // en el mismo instante del corte y sus descendientes (scons, esptool) quedarían colgando de
+  // init antes de que se los pueda enumerar. El corte de una carga lo hace `terminarArbol`,
+  // abajo. Para todo lo que no es carga, nada cambia.
+  const esCarga = capacidad === CAPACIDAD_DE_CARGA
+  const lanzar = () => Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", ...(esCarga ? {} : { signal: corte }) })
   let proc: ReturnType<typeof lanzar>
   try {
     proc = lanzar()
@@ -417,6 +435,30 @@ export async function run(
 
   const ganador = await Promise.race([lectura, cortado])
   if (ganador !== "cortado") return ganador
+
+  if (esCarga) {
+    // Que la lectura pendiente no quede como rechazo sin atender cuando los pipes se cierran.
+    lectura.catch(() => {})
+    const pid = (proc as { pid?: unknown }).pid
+    if (typeof pid !== "number") {
+      // Sin pid no hay árbol que enumerar (los dobles de los tests): se mata lo que se puede
+      // y se dice que no se pudo confirmar.
+      try {
+        proc.kill()
+      } catch {
+        /* ya estaba muerto */
+      }
+      return { ...resultadoCorte(), procesosDeCargaTerminados: false }
+    }
+    const fin = await terminarArbol(pid)
+    // El hijo directo también tiene que haber terminado para el runtime (con tope: si el árbol
+    // ya se confirmó muerto, esto vuelve enseguida).
+    let tope: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([proc.exited.catch(() => {}), new Promise((listo) => (tope = setTimeout(listo, TOPE_KILL_MS)))])
+    clearTimeout(tope)
+    const r = resultadoCorte()
+    return { ...r, stderr: `${r.stderr}\n${fin.detalle}`, procesosDeCargaTerminados: fin.confirmado }
+  }
 
   // Por si Bun no lo mato solo (o el mock de los tests no lo hace).
   try {

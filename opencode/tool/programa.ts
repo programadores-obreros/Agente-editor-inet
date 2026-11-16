@@ -207,7 +207,7 @@ export async function ejecutarPrograma(
 
     // ── Carga: desde una carpeta privada nueva, nunca desde la derivada. ──
     if (args.accion === "cargar") {
-      const r = await cargarProgramaGenerado({ idProyecto, revision, environment: generado.environment, archivos: archivosGenerados }, ctx, herramientas, opciones)
+      const r = await cargarProgramaGenerado({ idProyecto, revision, environment: generado.environment, archivos: archivosGenerados, revisionActual: () => servicio.snapshot().revision }, ctx, herramientas, opciones)
       return comoCarga(r, { idProyecto, revision, environment: generado.environment })
     }
 
