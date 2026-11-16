@@ -241,10 +241,109 @@ for (const [nombre, desde, hasta] of [
   })
 }
 
+test("2.3 · la falla de OpenCode, una vez marcada, no se desmarca", () => {
+  // Salió de una mutación que la guarda de arriba no veía: marcar la falla y, en la
+  // línea siguiente, volver a ponerla en $false. El resumen final decide con esa
+  // variable; nada en el script tiene motivo para bajarla.
+  assert.doesNotMatch(bootstrap, /\$script:FalloOpenCode\s*=\s*\$false/, "algo desmarca la falla de OpenCode")
+  assert.ok((bootstrap.match(/\$script:FalloOpenCode\s*=\s*\$true/g) ?? []).length >= 3,
+    "la falla de OpenCode se marca en menos de tres ramas (instalación, reset, instalar al lado)")
+})
+
 test("2.3 · Fijar-OpenCode nombra la versión que quedó activa, no la que se quería", () => {
   const fn = funcionPs(bootstrap, "Fijar-OpenCode")
   const ok = fn.split("\n").filter((l) => /\[OK\] OpenCode fijado/.test(l))
   assert.equal(ok.length, 1, "no encuentro el [OK] de Fijar-OpenCode")
   assert.doesNotMatch(ok[0], /\$OpenCodeVersion/, "el [OK] nombra la versión deseada: miente cuando el cambio de versión no se pudo hacer")
   assert.match(fn, /\$activa = Get-OpenCodeVersionInstalada\s*\n\s*Write-Host "  \[OK\] OpenCode fijado en la version \$activa/, "la versión del [OK] no sale del manifiesto de Scoop")
+})
+
+// ── 2.2b · El final dice cómo quedó CADA componente, y sale con un código propio ──
+//
+// Sólo la falla de OpenCode se repetía al final. Las de PlatformIO y Node quedaban
+// cien líneas más arriba y el cierre era "LISTO!" con exit 0. El contrato nuevo:
+//   0 = todo comprobado · 2 = instalado pero degradado · 1 = falla.
+
+const bootstrapCrudo = leer("install", "bootstrap.ps1")
+/** Lo que corre DESPUÉS de lanzar install.ps1: la verificación de la capa y el resumen. */
+const final = bootstrap.slice(bootstrap.indexOf("install\\install.ps1"))
+
+test("2.2b · el código de «degradado» existe, es propio, y el encabezado lo documenta con el mismo número", () => {
+  const defs = [...bootstrap.matchAll(/^\$CodigoDegradado\s*=\s*(\d+)\s*$/gm)].map((m) => Number(m[1]))
+  assert.equal(defs.length, 1, "$CodigoDegradado tiene que definirse una sola vez")
+  const n = defs[0]
+  assert.ok(n !== 0 && n !== 1, `degradado no puede ser ${n}: 0 es OK y 1 es falla (y lo que devuelve PowerShell si el script muere)`)
+  // El encabezado (comentarios: acá sí se mira el archivo crudo, es documentación) dice lo mismo.
+  const encabezado = bootstrapCrudo.slice(0, bootstrapCrudo.indexOf("param("))
+  assert.match(encabezado, /CODIGOS DE SALIDA/, "el encabezado no documenta los códigos de salida")
+  assert.match(encabezado, new RegExp(`^#\\s+${n} = INSTALADO PERO DEGRADADO`, "m"), `el encabezado no documenta el ${n} como «degradado»`)
+  assert.match(encabezado, /^#\s+0 = TODO quedo/m, "el encabezado no documenta el 0")
+  assert.match(encabezado, /^#\s+1 = FALLA/m, "el encabezado no documenta el 1")
+})
+
+test("2.2b · cada componente que falta entra al resumen: PlatformIO, Node y la versión de OpenCode", () => {
+  assert.match(final, /if \(\$PioExe\) \{[^}]*\} else \{\s*\n\s*\$Degradado \+= "falta PlatformIO/, "que falte PlatformIO no degrada el resultado")
+  assert.match(final, /if \(\$NodeExe\) \{[^}]*\} else \{\s*\n\s*\$Degradado \+= "falta Node/, "que falte Node no degrada el resultado")
+  assert.match(final, /\} elseif \(-not \$OpenCodeEsLaFijada\) \{\s*\n\s*\$Degradado \+= "OpenCode quedo en la version/, "una versión de OpenCode distinta de la fijada no degrada el resultado")
+  assert.match(final, /\$OpenCodeEsLaFijada = \(\$OpenCodeActiva -eq \$OpenCodeVersion\)/, "la versión no se compara contra la fijada")
+  assert.match(final, /\$OpenCodeActiva = Get-OpenCodeVersionInstalada/, "la versión activa no sale del manifiesto de Scoop")
+  // $PioExe y $NodeExe sólo se asignan desde las funciones que EJECUTAN el binario.
+  for (const [v, fn] of [["PioExe", "Buscar-Pio"], ["NodeExe", "Buscar-Node"]]) {
+    const asignaciones = bootstrap.split("\n").filter((l) => new RegExp(`^\\s*\\$${v}\\s*=`).test(l))
+    assert.ok(asignaciones.length >= 1, `no encuentro dónde se asigna $${v}`)
+    for (const l of asignaciones) assert.match(l, new RegExp(`\\$${v}\\s*=\\s*${fn}\\s*$`), `$${v} se asigna sin verificar: ${l.trim()}`)
+  }
+})
+
+test("2.2b · OpenCode se EJECUTA al final, salvo que ya esté marcado como caído", () => {
+  assert.match(final, /\$OpenCodeArranca = \$false\s*\n\s*if \(-not \$script:FalloOpenCode\) \{ \$OpenCodeArranca = \[bool\]\(Test-OpenCode\) \}/,
+    "el resumen afirma que OpenCode arranca sin ejecutarlo")
+  // Ninguna otra asignación puede ponerlo en verdadero.
+  const otras = final.split("\n").filter((l) => /\$OpenCodeArranca\s*=/.test(l) && !/\$OpenCodeArranca = \$false\s*$/.test(l) && !/Test-OpenCode/.test(l))
+  assert.deepEqual(otras.map((l) => l.trim()), [], "$OpenCodeArranca se asigna por otro lado")
+})
+
+test("2.2b · la capa que no quedó ya no corta antes del resumen, pero sigue siendo falla", () => {
+  const antesDelResumen = final.slice(0, final.indexOf("$OpenCodeArranca = $false"))
+  assert.doesNotMatch(antesDelResumen, /\bexit\b/, "se corta antes del resumen: el docente no ve cómo quedó el resto")
+  assert.match(antesDelResumen, /if \(\$CodigoInstall -ne 0\) \{\s*\n\s*\$CapaOk = \$false/, "un código distinto de 0 de install.ps1 no marca la capa como caída")
+  assert.match(antesDelResumen, /\} elseif \(-not \(Test-Path \(Join-Path \$cfgDir "agent\\tecnia-bot\.md"\)\)\) \{\s*\n\s*\$CapaOk = \$false/, "no se mira en el disco que el agente haya quedado")
+  // Sólo se pone en verdadero UNA vez, antes de las dos comprobaciones.
+  assert.equal((final.match(/\$CapaOk = \$true/g) ?? []).length, 1, "$CapaOk se pone en verdadero en más de un lugar")
+  assert.ok(final.indexOf("$CapaOk = $true") < final.indexOf("if ($CodigoInstall -ne 0)"), "$CapaOk se pone en verdadero después de comprobar")
+  assert.match(bloqueDesde(final, "\nif (-not $CapaOk) {"), /exit 1/, "sin la capa el bot no es Tecnia Bot: tiene que salir con 1")
+})
+
+test("2.2b · «LISTO!» sólo se alcanza si no hubo falla NI degradación, y cada salida lleva su código", () => {
+  // lastIndexOf: la MISMA condición abre antes la línea del resumen ("[X] OpenCode NO
+  // ARRANCA"); la que corta es la segunda. Con indexOf este test medía la del resumen.
+  const iFalla = final.lastIndexOf("\nif (-not $OpenCodeArranca) {")
+  const iCapa = final.indexOf("\nif (-not $CapaOk) {")
+  const iDegradado = final.indexOf("\nif ($Degradado.Count -gt 0) {")
+  const iListo = final.indexOf("LISTO!")
+  assert.ok(iFalla > 0 && iCapa > iFalla && iDegradado > iCapa && iListo > iDegradado,
+    "el orden tiene que ser: falla de OpenCode, falla de la capa, degradado, y recién ahí LISTO!")
+  assert.equal((bootstrap.match(/LISTO!/g) ?? []).length, 1, "hay más de un LISTO! en el bootstrap")
+
+  const falla = bloqueDesde(final.slice(iFalla), "\nif (-not $OpenCodeArranca) {")
+  assert.match(falla, /Stop-Transcript[^\n]*\n\s*exit 1\s*\n\}$/, "la falla de OpenCode no termina en `exit 1`")
+  const degradado = bloqueDesde(final, "\nif ($Degradado.Count -gt 0) {")
+  assert.match(degradado, /Stop-Transcript[^\n]*\n\s*exit \$CodigoDegradado\s*\n\}$/, "el caso degradado no termina en `exit $CodigoDegradado`")
+  assert.match(degradado, /foreach \(\$d in \$Degradado\)/, "no se le dice al docente QUÉ falta")
+  assert.match(degradado, /Reparar Tecnia Bot/, "no dice cómo completar lo que falta")
+  // Y el camino feliz sale con 0 explícito, después de LISTO!.
+  assert.match(final.slice(iListo), /Stop-Transcript[^\n]*\n\s*exit 0\s*$/, "el camino feliz no termina en `exit 0`")
+  // «la capa quedó instalada» sólo se afirma si se comprobó.
+  assert.match(falla, /if \(\$CapaOk\) \{\s*\n\s*Write-Host "  La capa de Tecnia Bot quedo instalada/, "se afirma que la capa quedó sin haberlo comprobado")
+})
+
+test("2.2b · los que corren el bootstrap no dependen de que salga con 0", () => {
+  // El lanzador lo corre para reparar y vuelve a verificar por su cuenta: las
+  // líneas siguientes no pueden ser un `if errorlevel`.
+  const lanzador = leer("installer", "abrir-tecnia-bot.cmd").replace(/^\s*rem\b.*$/gim, "").split("\n")
+  const i = lanzador.findIndex((l) => /bootstrap\.ps1/.test(l))
+  assert.ok(i >= 0, "el lanzador ya no corre el bootstrap")
+  const siguientes = lanzador.slice(i + 1).filter((l) => l.trim() !== "").slice(0, 4).join("\n")
+  assert.doesNotMatch(siguientes, /errorlevel/i, "el lanzador pasó a decidir por el código del bootstrap: revisá el contrato (0/2/1)")
+  assert.match(siguientes, /goto verificar/, "después de reparar, el lanzador ya no vuelve a verificar por su cuenta")
 })
