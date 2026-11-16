@@ -10,14 +10,19 @@ Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en l
 > Windows real». Quedó ahí seis meses después de dejar de ser cierta — que es
 > justo lo que le pasa a las advertencias: envejecen sin que nadie las mire.
 
-> ⚠️ **Lo que esta guía cuenta de la última pantalla, de "Reparar", de la key y
-> del desinstalador es posterior a la 0.4.8, y al escribirla todavía no se había
-> probado en una máquina con Windows** — ni en un aula ni en la máquina virtual
-> de pruebas. Está escrito, revisado y con pruebas automáticas que corren en
-> Linux; lo que falta es verlo andar. Cuando se pruebe, este cartel cambia. Si tu
-> `.exe` es de la 0.4.8 o anterior, la última pantalla dice siempre "¡Tecnia Bot
-> quedó instalado!", haya salido como haya salido: en ese caso, para saber cómo
-> quedó, abrí **"Diagnostico de Tecnia Bot"** desde el menú inicio.
+> 🧪 **Lo que esta guía cuenta de la última pantalla, de "Reparar", de la key y
+> del desinstalador es posterior a la 0.4.8. Se probó el 15 de noviembre de 2026
+> en la máquina virtual de pruebas** (Windows 10 Pro 22H2, usuario sin permisos
+> de administrador, con el `.exe` compilado ahí mismo): actualizar encima de la
+> 0.4.7, las tres pantallas finales, una instalación con PlatformIO imposible de
+> bajar, desinstalar y volver a instalar, el lanzador, la key y un usuario con
+> tilde en la ruta. **Lo que todavía NO se vio andar:** una notebook de aula, el
+> cartel que aparece al desinstalar eligiendo "Sí", `/actualizar` desde el bot,
+> una carpeta de Documentos en una unidad de red, una computadora con procesador
+> viejo (sin AVX2) y cargar código a una placa. Si tu `.exe` es de la 0.4.8 o
+> anterior, la última pantalla dice siempre "¡Tecnia Bot quedó instalado!", haya
+> salido como haya salido: en ese caso, para saber cómo quedó, abrí
+> **"Diagnostico de Tecnia Bot"** desde el menú inicio.
 
 ## Requisitos
 
