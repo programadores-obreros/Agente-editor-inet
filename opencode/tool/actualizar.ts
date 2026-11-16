@@ -42,9 +42,11 @@ const LIMITE_ALCANCE =
 
 const REPO = "programadores-obreros/Agente-editor-inet"
 
-// install/install.sh sale con 3 cuando instaló CON AVISOS, y install/update.sh lo
-// pasa tal cual (los dos lo documentan en su encabezado). update.ps1 no usa este
-// código: en Windows la rama de abajo no se toma.
+// install/install.sh e install/install.ps1 salen con 3 cuando instalaron CON
+// AVISOS, y install/update.sh e install/update.ps1 lo pasan tal cual (los cuatro
+// lo documentan en su encabezado). El contrato es el mismo en las dos plataformas:
+// cuando Windows no lo tenía, esta rama se salteaba con `!win` y un 3 de
+// update.ps1 se contaba como "No pude actualizar" con la versión ya cambiada.
 const CODIGO_CON_AVISOS = 3
 
 // Config global de OpenCode (donde vive la capa instalada y el manifest).
@@ -203,8 +205,8 @@ export default tool({
     // esta tool contestaba "¡Actualizado!" mostrando los ultimos 400 caracteres,
     // donde el aviso ya no estaba. Decir "no pude actualizar" tampoco seria cierto:
     // la version SI cambio. Se dice lo que paso y se muestra la cola entera, que es
-    // donde install.sh y update.sh dejan la lista de lo que falta.
-    if (code === CODIGO_CON_AVISOS && !win) {
+    // donde el instalador y el actualizador dejan la lista de lo que falta.
+    if (code === CODIGO_CON_AVISOS) {
       const nueva = leerManifest()?.version ?? info.version
       return (
         `Tecnia Bot quedó en la versión ${nueva}, pero la actualización terminó **CON AVISOS**: ` +
