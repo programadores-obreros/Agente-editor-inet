@@ -243,7 +243,8 @@ if not exist "%OCCFG%\agent\tecnia-bot.md" (
   echo.
   echo   Tecnia Bot v%VER% -- OpenCode anda, pero falta la capa educativa.
   echo.
-  echo   Volve a correr el instalador: la copia de archivos quedo a medias.
+  echo   La copia de archivos quedo a medias. Abri "Reparar Tecnia Bot" en el
+  echo   menu inicio: la completa sin volver a bajar el instalador.
   echo.
   pause
   exit /b 1
@@ -255,7 +256,8 @@ echo.
 echo   Tecnia Bot v%VER% -- no se encontro OpenCode.
 echo.
 echo   Si el instalador esta corriendo ahora mismo, esperalo: no lo corras dos veces.
-echo   Si ya termino, volve a correrlo, o mira docs\instalacion-windows.md
+echo   Si ya termino, abri "Reparar Tecnia Bot" en el menu inicio: instala lo
+echo   que falta sin volver a bajar el instalador.
 echo.
 pause
 exit /b 1
