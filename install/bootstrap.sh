@@ -8,8 +8,56 @@
 #
 # Uso (desde la carpeta del repo):
 #   bash install/bootstrap.sh
+#
+# CÓDIGOS DE SALIDA:
+#   0  todo instalado.
+#   1  error: el script cortó (lo que haya dicho arriba es el motivo).
+#   4  se negó a correr: lo lanzaron con sudo o como root prestado. No tocó nada.
 # ============================================================================
 set -euo pipefail
+
+# ---- No con sudo: el instalador es del USUARIO -------------------------------
+# `sudo bash install/bootstrap.sh` (lo que sale por reflejo) instala para root: o
+# todo termina en /root y el usuario abre opencode y no encuentra nada, o —si sudo
+# conserva HOME— quedan archivos de root en la carpeta del usuario, que después no
+# puede actualizar ni desinstalar. Nada de lo que hace este script necesita root.
+#
+# El caso legítimo es una sesión que ES root de verdad (un contenedor de CI, una
+# imagen mínima sin otra cuenta): ahí no hay un usuario al que pisarle nada, y se
+# instala para root avisándolo. Los dos casos se distinguen MIRANDO, no con una
+# variable de escape: si alguien se elevó desde otra cuenta (sudo, doas y pkexec
+# dejan su marca) o si la carpeta personal no es de root, se corta sin tocar nada.
+# Lo que NO se detecta: un `su` a secas, que no deja marca y cambia HOME a /root.
+#
+# Repetida en bootstrap.sh e install.sh a propósito (cada uno corre solo); las
+# mantiene iguales tests/instalador-root.test.mjs.
+cortar_si_es_root_prestado() {
+  [ "$(id -u)" = "0" ] || return 0
+  local desde=""
+  if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER:-}" != "root" ]; then
+    desde="sudo, desde la cuenta $SUDO_USER"
+  elif [ -n "${DOAS_USER:-}" ] && [ "${DOAS_USER:-}" != "root" ]; then
+    desde="doas, desde la cuenta $DOAS_USER"
+  elif [ -n "${PKEXEC_UID:-}" ] && [ "${PKEXEC_UID:-}" != "0" ]; then
+    desde="pkexec"
+  elif [ -d "${HOME:-}" ] && [ ! -O "${HOME:-}" ]; then
+    desde="root, pero con una carpeta personal que no es de root ($HOME)"
+  fi
+  if [ -z "$desde" ]; then
+    echo "  [i] Esta sesión es root: Tecnia Bot se instala para root, en ${HOME:-/root}."
+    return 0
+  fi
+  echo "" >&2
+  echo "  [✗] No corras este instalador con sudo ni como administrador." >&2
+  echo "      Lo lanzaste con $desde." >&2
+  echo "      Tecnia Bot se instala en la carpeta personal de quien lo usa y no necesita" >&2
+  echo "      permisos de administrador. Como root quedaría instalado para root, o dejaría" >&2
+  echo "      archivos de root en tu carpeta, que después no podés actualizar ni borrar." >&2
+  echo "      Volvé a correrlo igual que antes pero SIN sudo." >&2
+  echo "      No instalé ni toqué nada." >&2
+  exit 4
+}
+cortar_si_es_root_prestado
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
