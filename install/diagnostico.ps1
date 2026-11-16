@@ -259,7 +259,7 @@ Write-Host "  -------------------------"
 Aviso-DatosDelReporte
 Write-Host ""
 $ver = "?"
-if (Test-Path "$env:LOCALAPPDATA\TecniaBot\VERSION") { $ver = (Get-Content "$env:LOCALAPPDATA\TecniaBot\VERSION" -Raw).Trim() }
+if (Test-Path "$env:LOCALAPPDATA\TecniaBot\VERSION") { $ver = ([string](Get-Content "$env:LOCALAPPDATA\TecniaBot\VERSION" -Raw)).Trim() }
 Dato "Version instalada" $ver
 Dato "Windows" ((Get-CimInstance Win32_OperatingSystem).Caption + " (" + [Environment]::OSVersion.Version + ")")
 Dato "Usuario es admin" (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))
@@ -355,7 +355,7 @@ function Get-ArchivoScoop([string]$dirApp, [string]$nombre) {
   return $null
 }
 $pinArchivo = Join-Path $PSScriptRoot "OPENCODE_VERSION"
-$pin = if (Test-Path $pinArchivo) { (Get-Content $pinArchivo -Raw).Trim() } else { "" }
+$pin = if (Test-Path $pinArchivo) { ([string](Get-Content $pinArchivo -Raw)).Trim() } else { "" }
 Dato "fijada (OPENCODE_VERSION)" $(if ($pin) { $pin } else { "NO ESTA el archivo install\OPENCODE_VERSION" })
 $ocActual = "$U\scoop\apps\opencode\current"
 $ocInstalada = ""
@@ -535,7 +535,7 @@ Titulo "Node -- solo lo necesita el skill de diagramas de arquitectura"
 # USUARIO en vez de poner un .exe en scoop\shims. Buscar el shim como se hace con
 # opencode daria "FALTA" con Node perfectamente instalado.
 $nodePin = Join-Path $PSScriptRoot "NODE_VERSION"
-$nodeFijada = if (Test-Path $nodePin) { (Get-Content $nodePin -Raw).Trim() } else { "" }
+$nodeFijada = if (Test-Path $nodePin) { ([string](Get-Content $nodePin -Raw)).Trim() } else { "" }
 Dato "fijada (NODE_VERSION)" $(if ($nodeFijada) { $nodeFijada } else { "NO ESTA el archivo install\NODE_VERSION" })
 $nodeCmd = Get-Command node -EA SilentlyContinue
 if ($nodeCmd) {

@@ -100,7 +100,7 @@ Copy-Item (Join-Path $Src "tecniabot-web\*") $WebDir -Recurse -Force
 # Habilita actualizar limpio (borra huerfanos) y desinstalar sin tocar lo del usuario.
 $Manifest = Join-Path $ConfigDir "tecnia-bot.manifest"
 $VerFile = Join-Path $RepoDir "VERSION"
-$Version = if (Test-Path $VerFile) { (Get-Content $VerFile -Raw).Trim() } else { "0.0.0" }
+$Version = if (Test-Path $VerFile) { ([string](Get-Content $VerFile -Raw)).Trim() } else { "0.0.0" }
 
 # Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
 # coincidan con las que escribe el instalador de Linux).
