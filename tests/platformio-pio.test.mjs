@@ -638,14 +638,38 @@ test("el bloque crudo tapa las credenciales ANTES de imprimirlas", () => {
   // el host sirve para diagnosticar, la credencial no agrega nada.
   const iForeach = BLOQUE_CRUDO.indexOf("foreach ($linea in $crudo)")
   assert.ok(iForeach > 0, "no encontré el bucle que imprime las líneas crudas")
-  const cuerpo = BLOQUE_CRUDO.slice(iForeach)
-  const tapa = cuerpo.indexOf("[regex]::Replace")
-  const imprime = cuerpo.indexOf("Write-Host")
-  assert.ok(tapa > 0, "las líneas crudas se imprimen sin tapar el usuario:clave que pueda traer una URL de índice")
-  assert.ok(tapa < imprime, "se tapa la credencial DESPUÉS de imprimirla, que es igual a no taparla")
-  assert.match(cuerpo, /USUARIO:CLAVE/, "no usa el mismo reemplazo que el bloque del proxy")
+  // CAMBIÓ LA FORMA, NO LA REGLA. Antes el bucle tenía su propio
+  // `[regex]::Replace` y su propio `Write-Host`, y este test miraba el orden de
+  // los dos. Ahora cada línea se imprime con `Linea-DeLog`, la ÚNICA función que
+  // vuelca líneas de log: tapa (con `Tapar-Credenciales`) y recién después
+  // imprime. Lo que se custodia es que el bucle no imprima por otro lado, y que la
+  // función tape antes de imprimir.
+  //
+  // SIN COMENTARIOS, y es a propósito: este test (y el de abajo) miraban el texto
+  // crudo, y un comentario que nombrara `-gt 300` o `[regex]::Replace` los dejaba
+  // verdes sin código atrás. Pasó de verdad al hacer este cambio.
+  const cuerpo = sinComentarios(BLOQUE_CRUDO.slice(iForeach))
+  assert.match(cuerpo, /foreach \(\$linea in \$crudo\) \{\s*Linea-DeLog \$linea\s*\}/,
+    "las líneas crudas no se imprimen con Linea-DeLog: salen sin tapar el usuario:clave de una URL de índice")
+  assert.doesNotMatch(cuerpo, /Write-Host[^\n]*\$(linea|t)\b/, "el bucle imprime la línea por su cuenta, sin tapar")
+  const fn = LINEA_DE_LOG()
+  const tapa = fn.indexOf("Tapar-Credenciales $texto")
+  const imprime = fn.indexOf("Write-Host")
+  assert.ok(tapa > 0, "Linea-DeLog no tapa las credenciales")
+  assert.ok(imprime > tapa, "se tapa la credencial DESPUÉS de imprimirla, que es igual a no taparla")
+  assert.match(sinComentarios(DIAGNOSTICO), /function Tapar-Credenciales[\s\S]{0,400}USUARIO:CLAVE/, "no usa el mismo reemplazo que el bloque del proxy")
 })
 
+/** El cuerpo de Linea-DeLog, sin comentarios. */
+function LINEA_DE_LOG() {
+  const codigo = sinComentarios(DIAGNOSTICO)
+  const i = codigo.indexOf("function Linea-DeLog")
+  assert.ok(i >= 0, "diagnostico.ps1 ya no tiene Linea-DeLog")
+  return codigo.slice(i, codigo.indexOf("\n}\n", i))
+}
+
 test("el bloque crudo trunca las líneas largas como el log de OpenCode", () => {
-  assert.match(BLOQUE_CRUDO, /-gt 300/, "no trunca las líneas largas: un stack tapa el resto del reporte")
+  // El corte vive en Linea-DeLog (ver el test de arriba), no en el bucle.
+  assert.match(sinComentarios(BLOQUE_CRUDO), /Linea-DeLog \$linea/, "el bloque crudo no pasa por Linea-DeLog")
+  assert.match(LINEA_DE_LOG(), /if \(\$l\.Length -gt 300\) \{ \$l = \$l\.Substring\(0, 300\)/, "no trunca las líneas largas: un stack tapa el resto del reporte")
 })
