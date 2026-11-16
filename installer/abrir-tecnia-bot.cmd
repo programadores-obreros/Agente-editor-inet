@@ -63,6 +63,23 @@ rem La capa es lo ULTIMO que se instala: si esta, la instalacion termino de verd
 opencode --version >nul 2>nul
 if not errorlevel 1 if exist "%OCCFG%\agent\tecnia-bot.md" goto verificar
 
+rem MARCA HUERFANA, SEGUNDA PARTE: la instalacion NO quedo completa y la marca
+rem sigue puesta. Hay dos mundos posibles y desde afuera se ven iguales:
+rem
+rem   el instalador esta corriendo  -- hay que esperar, como siempre
+rem   el instalador murio           -- no hay nada que esperar, y nadie va a
+rem                                    venir a sacar la marca
+rem
+rem En el segundo caso cada doble clic eran veinte minutos de puntitos y despues
+rem "La instalacion sigue en curso, esperala", para siempre. La unica salida era
+rem adivinar que habia que borrar un archivo oculto a mano.
+rem
+rem Se distinguen preguntando si el instalador VIVE (ver la rutina mirarsetup,
+rem mas abajo, y por que no se mira la antiguedad de la marca). Solo se sale de
+rem la espera si se COMPROBO que no vive; si no se pudo saber, se espera igual.
+call :mirarsetup
+if "%SETUPVIVO%"=="no" goto marcahuerfana
+
 echo.
 echo   Tecnia Bot v%VER% se esta instalando en este momento.
 echo   Baja unos 60 MB, asi que puede tardar varios minutos.
@@ -82,6 +99,12 @@ rem bajando 57 MB de OpenCode mas Python mas PlatformIO por el mismo enlace, cin
 rem minutos no alcanzan ni cerca. Rendirse antes de tiempo era lo que mandaba al
 rem lanzador a "reparar" una instalacion que estaba andando perfecto.
 if %ESPERA% LSS 400 goto esperando
+
+rem Se agoto el techo. El instalador pudo haber muerto MIENTRAS se esperaba: se
+rem vuelve a mirar antes de seguir.
+echo.
+call :mirarsetup
+if "%SETUPVIVO%"=="no" goto marcahuerfana
 
 echo.
 echo.
@@ -189,6 +212,9 @@ if exist "%MARCA%" (
   echo   Esperala a que termine y volve a abrir Tecnia Bot. No la corras dos
   echo   veces: se pisan entre si y rompen la instalacion.
   echo.
+  echo   Si el instalador ya no esta abierto y este cartel sigue apareciendo,
+  echo   abri "Reparar Tecnia Bot" en el menu inicio.
+  echo.
   pause
   exit /b 0
 )
@@ -233,6 +259,70 @@ echo   Si ya termino, volve a correrlo, o mira docs\instalacion-windows.md
 echo.
 pause
 exit /b 1
+
+:marcahuerfana
+rem -- LA INSTALACION ANTERIOR SE CORTO ---------------------------------------
+rem
+rem Aca se llega con dos cosas COMPROBADAS: la marca de instalacion en curso esta
+rem puesta, y el instalador que la puso ya no esta corriendo.
+rem
+rem NO SE REPARA SOLO, y es a proposito. Que el instalador haya muerto no dice
+rem nada de su hijo: la ventana de PowerShell del bootstrap puede seguir viva e
+rem instalando, y lanzar aca otro bootstrap serian dos instalaciones pisandose.
+rem Es el mismo choque que este archivo ya evita mas arriba. Eso lo puede mirar
+rem una persona -hay o no hay una ventana negra abierta- y este script no.
+rem
+rem TAMPOCO SE BORRA LA MARCA: la sacaria justo en el caso en que el bootstrap
+rem sigue corriendo. Cuando Reparar termina bien, el chequeo del principio de
+rem este archivo ya la ignora (OpenCode anda y la capa esta), asi que no estorba.
+echo.
+echo   Tecnia Bot v%VER% -- la instalacion anterior no termino.
+echo.
+echo   El instalador ya no esta corriendo y la instalacion quedo a medias: se
+echo   corto la luz, se cerro la ventana, o lo freno el antivirus.
+echo.
+echo   Si quedo abierta una ventana negra de PowerShell instalando, esperala.
+echo   Si no hay ninguna, abri "Reparar Tecnia Bot" en el menu inicio: completa
+echo   lo que falto sin volver a bajar el instalador.
+echo.
+pause
+exit /b 1
+
+:mirarsetup
+rem -- VIVE EL INSTALADOR? Deja la respuesta en SETUPVIVO -----------------------
+rem
+rem   no    se COMPROBO que no hay ningun instalador de Tecnia Bot corriendo
+rem   nose  cualquier otra cosa: hay uno, o no se pudo averiguar
+rem
+rem COMO SE SABE: el instalador crea un mutex de Windows con nombre propio
+rem mientras corre -la directiva SetupMutex de installer\tecnia-bot.iss- y Windows
+rem lo destruye solo cuando el proceso termina, muera como muera. Si el mutex no
+rem existe, no hay instalador. Un .cmd no puede preguntar por un mutex, asi que se
+rem le pide a PowerShell en una linea. Los dos nombres son los del .iss; hay un
+rem test que compara los dos archivos.
+rem
+rem POR QUE NO LA ANTIGUEDAD DE LA MARCA, que era la otra opcion. En cmd puro lo
+rem unico que mira la edad de un archivo es forfiles, y cuenta en DIAS enteros:
+rem una marca huerfana seguiria colgando al docente hasta el dia siguiente, y una
+rem instalacion que cruza la medianoche se daria por muerta estando viva. Y la
+rem edad no mide lo que importa: con veinte maquinas bajando por el mismo enlace
+rem una instalacion sana puede tardar mas que cualquier umbral razonable.
+rem
+rem POR QUE NO BUSCAR EL PROCESO POR NOMBRE con tasklist: el instalador se puede
+rem llamar de cualquier forma -el navegador lo renombra si se baja dos veces- y
+rem el que corre de verdad es una copia temporal con otra extension.
+rem
+rem EL SENTIDO DE LA FALLA ESTA ELEGIDO. Solo la salida 7 EXACTA significa "no
+rem vive". Si PowerShell no arranca, esta bloqueado, o el chequeo revienta, queda
+rem "nose" y el lanzador espera como hacia antes: equivocarse para ese lado cuesta
+rem tiempo; equivocarse para el otro podria mandar a reparar encima de una
+rem instalacion viva. Por eso dentro del chequeo cualquier error cuenta como
+rem "vive", y de este lado se comparan las dos puntas: un "if errorlevel 7" solo
+rem significa 7 o MAS, y se comeria el 9009 de un PowerShell que no existe.
+set "SETUPVIVO=nose"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$vivo=$false; foreach($n in 'TecniaBotSetup','Global\TecniaBotSetup'){ try { $m=$null; if([System.Threading.Mutex]::TryOpenExisting($n,[ref]$m)){ $vivo=$true; $m.Close() } } catch { $vivo=$true } }; if($vivo){ exit 0 } else { exit 7 }" >nul 2>nul
+if errorlevel 7 if not errorlevel 8 set "SETUPVIVO=no"
+goto :eof
 
 :sinproyectos
 rem -- SIN CARPETA DE PROYECTOS NO SE ABRE EL BOT ------------------------------
