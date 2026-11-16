@@ -386,6 +386,20 @@ if defined DOCS if not exist "%DOCS%\" set "DOCS="
 if not defined DOCS set "DOCS=%USERPROFILE%\Documents"
 
 set "PROY=%DOCS%\Tecnia Bot"
+set "PROYPERFIL=%USERPROFILE%\Documents\Tecnia Bot"
+
+rem SI DOCUMENTOS ESTA EN LA RED, NO SE USA: se va derecho a la del perfil.
+rem
+rem Con la redireccion de carpetas clasica de un dominio escolar, Documentos es
+rem una ruta de red de las que empiezan con dos barras invertidas. Windows la
+rem informa bien y hasta se puede crear la carpeta ahi, pero cmd NO puede pararse
+rem en una ruta asi: el cd falla SIEMPRE, no a veces. La primera version de este
+rem bloque abortaba en ese caso, o sea en cada apertura, en una maquina donde
+rem antes el bot abria. Era una regresion, y la encontro la revision.
+rem
+rem Se mira como empieza la ruta, sin intentar nada, y se usa la del perfil, que
+rem es exactamente lo que se hacia antes de preguntarle a Windows.
+if "%PROY:~0,2%"=="\\" set "PROY=%PROYPERFIL%"
 if not exist "%PROY%\" mkdir "%PROY%" 2>nul
 
 rem Lo que decide es si se pudo ENTRAR, no si el mkdir dijo que anduvo.
@@ -395,7 +409,23 @@ rem linea siguiente: las dos barras miran si ESTE comando fallo. El "if
 rem errorlevel" puede estar leyendo el codigo de un comando anterior, porque cd
 rem no lo pone en 0 cuando le va bien. (No se escriben los simbolos en este
 rem comentario a proposito: mejor no averiguar que hace cmd con ellos en un rem.)
+rem ENPROY se prende SOLO si el cd anduvo, y es lo unico que deja pasar. No
+rem alcanza con mirar despues que no quedamos en la carpeta del programa: si este
+rem archivo se lanzo parado en otro lado, un cd fallido nos deja en ese otro lado.
+set "ENPROY="
+cd /d "%PROY%" 2>nul && set "ENPROY=1"
+if defined ENPROY goto enproyectos
+
+rem No se pudo entrar a la carpeta de Documentos que informo Windows. Antes de
+rem rendirse se prueba la del perfil, que es la que se usaba siempre: puede que
+rem la redirigida este caida o protegida y la local no. Si ya era esa, no hay
+rem segundo intento que hacer.
+if /i "%PROY%"=="%PROYPERFIL%" goto sinproyectos
+set "PROY=%PROYPERFIL%"
+if not exist "%PROY%\" mkdir "%PROY%" 2>nul
 cd /d "%PROY%" 2>nul || goto sinproyectos
+
+:enproyectos
 
 rem Y la comprobacion que importa de verdad, mirando donde quedamos parados: NO
 rem puede ser la carpeta del programa. La carpeta de este archivo termina en
