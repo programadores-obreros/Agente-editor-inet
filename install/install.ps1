@@ -204,6 +204,48 @@ function Test-KeyVieja($k) {
     return ((Get-Sha256Hex ([string]$k)) -eq $HashKeyVieja)
 }
 
+# ---- Leer un archivo de texto como UTF-8, SIEMPRE ----------------------------
+#
+# EL CASO REAL: la usuaria `Direccion310`, con `o` acentuada (el mismo perfil que
+# mudo a PlatformIO a la raiz del disco, ver mas abajo). Este script ESCRIBE sus
+# JSON en UTF-8 sin BOM, y adentro de opencode.json mete rutas absolutas del perfil
+# (las dos de "instructions"). Pero los LEIA con `Get-Content -Raw` sin -Encoding, y
+# Windows PowerShell 5.1 lee un archivo sin BOM con la codepage ANSI de la maquina,
+# no como UTF-8: la `o` acentuada (dos bytes) volvia como dos letras raras.
+#
+# Entonces, en la SEGUNDA corrida (Reparar, /actualizar): la ruta leida ya no era
+# igual a $PerfilFile, `-notcontains` daba verdadero, se agregaba la ruta OTRA VEZ,
+# y la rota se reescribia en UTF-8 -doblemente codificada-. Cada corrida sumaba dos
+# rutas a archivos que no existen y le rompia al docente cualquier otro texto con
+# tilde que tuviera en su config. En una maquina con usuario ASCII no pasaba nada,
+# y por eso no se vio en la VM.
+#
+# Se lee con la MISMA codificacion con la que se escribe. ReadAllText con una
+# codificacion explicita ademas saca el BOM si lo hay, igual que hacia Get-Content.
+# TIRA si no puede leer (archivo tomado, sin permiso): quien llama decide que
+# significa eso, y nunca significa "el archivo esta vacio".
+function Leer-TextoUtf8($ruta) {
+    return [System.IO.File]::ReadAllText($ruta, (New-Object System.Text.UTF8Encoding $false))
+}
+
+# Las formas en que el bug de arriba dejo escrita una ruta: la ruta pasada N veces
+# por "escribir en UTF-8 y leer como ANSI". Sirve para reconocer SOLO la basura que
+# este mismo script genero a partir de SUS dos rutas -- no para adivinar que otra
+# cosa del docente esta mal codificada. Una ruta ASCII no tiene variantes.
+function Get-VariantesMalLeidas($ruta) {
+    $variantes = @()
+    $ansi = [System.Text.Encoding]::Default
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $actual = [string]$ruta
+    for ($vuelta = 0; $vuelta -lt 8; $vuelta++) {
+        $siguiente = $ansi.GetString($utf8.GetBytes($actual))
+        if ($siguiente -ceq $actual) { break }
+        $variantes += $siguiente
+        $actual = $siguiente
+    }
+    return $variantes
+}
+
 # ---- Leer una key del teclado, con timeout -----------------------------------
 #
 # Esta mecanica ya estaba resuelta y esta puesta en una funcion para que la usen
@@ -427,7 +469,7 @@ if (Test-Path $AuthFile) {
 
 $authData = $null
 if (Test-Path $AuthFile) {
-    try { $authData = Get-Content $AuthFile -Raw | ConvertFrom-Json } catch { $authData = $null }
+    try { $authData = (Leer-TextoUtf8 $AuthFile) | ConvertFrom-Json } catch { $authData = $null }
 }
 if (-not $authData) { $authData = [PSCustomObject]@{} }
 
@@ -741,9 +783,11 @@ function Remove-JsonComments($text) {
 }
 
 # Lee un JSON/JSONC existente como PSCustomObject. Devuelve $null si no se pudo.
+# Como UTF-8, no con Get-Content: ver Leer-TextoUtf8 mas arriba.
 function Read-JsonObject($path) {
     if (-not (Test-Path $path)) { return $null }
-    $raw = Get-Content $path -Raw -ErrorAction SilentlyContinue
+    $raw = $null
+    try { $raw = Leer-TextoUtf8 $path } catch { return $null }
     if (-not $raw -or -not $raw.Trim()) { return $null }
     try { return ($raw | ConvertFrom-Json) } catch { }
     try { return ((Remove-JsonComments $raw) | ConvertFrom-Json) } catch { return $null }
@@ -751,9 +795,13 @@ function Read-JsonObject($path) {
 
 # True si el archivo existe y tiene contenido (para distinguir "vacio/ausente" de
 # "existe pero no se pudo parsear" y NO pisar la config del usuario en ese caso).
+# Un archivo que existe y NO SE PUDO LEER (tomado, sin permiso) cuenta como "tiene
+# contenido": antes ese error se tragaba, el archivo pasaba por vacio y se lo
+# reescribia desde cero, pisando la config del docente sin haberla visto.
 function Test-HasContent($path) {
     if (-not (Test-Path $path)) { return $false }
-    $raw = Get-Content $path -Raw -ErrorAction SilentlyContinue
+    $raw = $null
+    try { $raw = Leer-TextoUtf8 $path } catch { return $true }
     return [bool]($raw -and $raw.Trim())
 }
 
@@ -761,7 +809,7 @@ function Test-HasContent($path) {
 $tuiHasContent = Test-HasContent $TuiJson
 $tui = Read-JsonObject $TuiJson
 if ($tuiHasContent -and $null -eq $tui) {
-    Write-Host "  [AVISO] No pude parsear ${TuiJson}: lo dejo intacto."
+    Write-Host "  [AVISO] No pude leer ${TuiJson} como JSON: lo dejo intacto."
     Write-Host "          Agregale a mano `"theme`": `"$TecniaTheme`" y el plugin `"$TecniaPlugin`"."
 } else {
     if (-not $tui) { $tui = [PSCustomObject]@{} }
@@ -793,7 +841,7 @@ if ($tuiHasContent -and $null -eq $tui) {
 $ocHasContent = Test-HasContent $OpencodeJson
 $oc = Read-JsonObject $OpencodeJson
 if ($ocHasContent -and $null -eq $oc) {
-    Write-Host "  [AVISO] No pude parsear ${OpencodeJson}: lo dejo intacto."
+    Write-Host "  [AVISO] No pude leer ${OpencodeJson} como JSON: lo dejo intacto."
     Write-Host "          Agregale a mano `"default_agent`": `"$TecniaAgent`", `"autoupdate`": false y el modelo del agente:"
     Write-Host "          `"agent`": { `"$TecniaAgent`": { `"model`": `"$ModeloElegido`" } }"
 } else {
@@ -868,6 +916,29 @@ if ($ocHasContent -and $null -eq $oc) {
     $instrucciones = @()
     if (($oc.PSObject.Properties.Name -contains "instructions") -and $null -ne $oc.instructions) {
         $instrucciones = @($oc.instructions)
+    }
+    # CURAR LO QUE DEJO EL BUG DE LA CODIFICACION (ver Leer-TextoUtf8): las copias
+    # mal codificadas de NUESTRAS dos rutas que las corridas anteriores fueron
+    # sumando. Se saca una entrada SOLO si se cumplen las dos cosas: es
+    # exactamente una de las formas rotas de la ruta del perfil o de la memoria, y
+    # no existe ningun archivo con ese nombre. Cualquier otra entrada del docente
+    # -aunque este mal codificada- no se toca: no hay forma segura de saber cual
+    # era el texto original, y borrar una instruccion suya es peor que dejarla.
+    $rotas = @(Get-VariantesMalLeidas $PerfilFile) + @(Get-VariantesMalLeidas $MemoriaFile)
+    if ($rotas.Count -gt 0 -and $instrucciones.Count -gt 0) {
+        $sanas = @()
+        $sacadas = 0
+        foreach ($entrada in $instrucciones) {
+            if (($entrada -is [string]) -and ($rotas -ccontains $entrada) -and -not (Test-Path -LiteralPath $entrada)) {
+                $sacadas++
+                continue
+            }
+            $sanas += $entrada
+        }
+        if ($sacadas -gt 0) {
+            $instrucciones = $sanas
+            Write-Host "  [i] Saque $sacadas ruta(s) repetida(s) y mal codificada(s) de `"instructions`": las habia sumado un error de versiones anteriores."
+        }
     }
     if ($instrucciones -notcontains $PerfilFile) {
         $instrucciones += $PerfilFile

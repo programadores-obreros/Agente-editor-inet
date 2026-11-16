@@ -170,9 +170,38 @@ function Remove-JsonComments($text) {
     return $sb.ToString()
 }
 
+# Los JSON de OpenCode se leen como UTF-8, que es como install.ps1 los escribe.
+# `Get-Content -Raw` sin -Encoding, en Windows PowerShell 5.1, lee un archivo sin
+# BOM con la codepage ANSI: con un usuario con tilde (`Direccion310`), las rutas de
+# "instructions" volvian con letras raras, `-ieq $PerfilFile` no coincidia, las dos
+# rutas NO se sacaban, y el archivo se reescribia con todo lo que tuviera tilde
+# roto. ReadAllText con codificacion explicita tambien saca el BOM si lo hay.
+# TIRA si no puede leer: quien llama decide que significa.
+function Leer-TextoUtf8($ruta) {
+    return [System.IO.File]::ReadAllText($ruta, (New-Object System.Text.UTF8Encoding $false))
+}
+
+# Las formas en que ese mismo bug dejo escrita una ruta en instalaciones viejas: la
+# ruta pasada N veces por "escribir en UTF-8 y leer como ANSI". MISMA funcion que
+# en install.ps1 (ningun .ps1 hace dot-sourcing de otro). Una ruta ASCII no tiene.
+function Get-VariantesMalLeidas($ruta) {
+    $variantes = @()
+    $ansi = [System.Text.Encoding]::Default
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    $actual = [string]$ruta
+    for ($vuelta = 0; $vuelta -lt 8; $vuelta++) {
+        $siguiente = $ansi.GetString($utf8.GetBytes($actual))
+        if ($siguiente -ceq $actual) { break }
+        $variantes += $siguiente
+        $actual = $siguiente
+    }
+    return $variantes
+}
+
 function Read-JsonObject($path) {
     if (-not $path -or -not (Test-Path $path)) { return $null }
-    $raw = Get-Content $path -Raw -ErrorAction SilentlyContinue
+    $raw = $null
+    try { $raw = Leer-TextoUtf8 $path } catch { return $null }
     if (-not $raw -or -not $raw.Trim()) { return $null }
     try { return ($raw | ConvertFrom-Json) } catch { }
     try { return ((Remove-JsonComments $raw) | ConvertFrom-Json) } catch { return $null }
@@ -243,11 +272,15 @@ $MemoriaFile = Join-Path $ConfigDir "tecnia-memoria.md"
 # que pueden tener el nombre de una persona: va con el perfil y la memoria.
 $CargasFile  = Join-Path $ConfigDir "tecnia-cargas.json"
 try {
+    # Si el archivo existe y no se pudo LEER, cuenta como "tiene texto": cae en el
+    # aviso de abajo (no se toca y queda pendiente) en vez de pasar por vacio.
     $ocTieneTexto = $false
-    if ($OpencodeJson) { $ocTieneTexto = ((Get-Content $OpencodeJson -Raw -ErrorAction SilentlyContinue) -match '\S') }
+    if ($OpencodeJson) {
+        try { $ocTieneTexto = ((Leer-TextoUtf8 $OpencodeJson) -match '\S') } catch { $ocTieneTexto = $true }
+    }
     $oc = Read-JsonObject $OpencodeJson
     if ($ocTieneTexto -and -not $oc) {
-        Write-Host "  [AVISO] No pude parsear ${OpencodeJson}: lo dejo intacto."
+        Write-Host "  [AVISO] No pude parsear ${OpencodeJson} (o no lo pude leer): lo dejo intacto."
         Write-Host "          Saca a mano `"default_agent`", `"agent`" -> `"$TecniaAgent`" y las dos rutas de"
         Write-Host "          `"instructions`" que terminan en tecnia-perfil.md y tecnia-memoria.md."
         Anotar-Pendiente "las claves de Tecnia Bot en $OpencodeJson (no parsea: hay que sacarlas a mano)"
@@ -262,7 +295,12 @@ try {
             if (@($oc.agent.PSObject.Properties).Count -eq 0) { $oc.PSObject.Properties.Remove("agent") }
         }
         if (($oc.PSObject.Properties.Name -contains "instructions") -and $null -ne $oc.instructions) {
-            $resto = @($oc.instructions | Where-Object { -not (($_ -ieq $PerfilFile) -or ($_ -ieq $MemoriaFile)) })
+            # Ademas de las dos rutas, se van sus copias mal codificadas (ver
+            # Get-VariantesMalLeidas), y SOLO si no existe un archivo con ese nombre.
+            $rotas = @(Get-VariantesMalLeidas $PerfilFile) + @(Get-VariantesMalLeidas $MemoriaFile)
+            $resto = @($oc.instructions | Where-Object {
+                -not (($_ -ieq $PerfilFile) -or ($_ -ieq $MemoriaFile) -or (($_ -is [string]) -and ($rotas -ccontains $_) -and -not (Test-Path -LiteralPath $_)))
+            })
             if ($resto.Count -eq 0) { $oc.PSObject.Properties.Remove("instructions") }
             else { $oc | Add-Member -NotePropertyName "instructions" -NotePropertyValue $resto -Force }
         }
@@ -343,11 +381,11 @@ $AuthFile = Join-Path $DataDir "auth.json"
 # El "?" es el estado que faltaba: "no pude leer" y "no hay key" eran lo mismo,
 # y un auth.json que no parsea puede tener la credencial adentro. Esta misma
 # funcion se usa para DETECTAR antes y para VERIFICAR despues de escribir.
-# Get-Content -Raw saca el BOM al leer; despues se reescribe SIN BOM
+# Leer-TextoUtf8 saca el BOM al leer; despues se reescribe SIN BOM
 # (WriteAllText), que es lo que OpenCode necesita para poder leerlo.
 function Get-EstadoKeyAuth($path) {
     if (-not (Test-Path $path)) { return "no" }
-    try { $raw = Get-Content $path -Raw -ErrorAction Stop } catch { return "?" }
+    try { $raw = Leer-TextoUtf8 $path } catch { return "?" }
     if (-not $raw -or -not $raw.Trim()) { return "no" }
     try { $d = $raw | ConvertFrom-Json -ErrorAction Stop } catch { return "?" }
     if (-not $d) { return "?" }
@@ -360,7 +398,7 @@ $estadoAuth = Get-EstadoKeyAuth $AuthFile
 $hayKeyAuth = ($estadoAuth -eq "si")
 $authData = $null
 if ($hayKeyAuth) {
-    try { $authData = Get-Content $AuthFile -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch { $authData = $null }
+    try { $authData = (Leer-TextoUtf8 $AuthFile) | ConvertFrom-Json -ErrorAction Stop } catch { $authData = $null }
 }
 if ($hayKeyAuth -or $hayKeyEnv) {
     $quitar = [bool]$Borrar

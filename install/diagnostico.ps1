@@ -477,7 +477,9 @@ if ($ocCfg) {
   # Sin sacar comentarios: si es un .jsonc comentado no va a parsear y se informa
   # eso, que ya es un dato (el instalador si los tolera).
   try {
-    $cfg = Get-Content $ocCfg -Raw -EA Stop | ConvertFrom-Json -EA Stop
+    # Como UTF-8, que es como la escribe el instalador: Get-Content sin -Encoding la
+    # leeria con la codepage ANSI de la maquina (ver Leer-TextoUtf8 en install.ps1).
+    $cfg = [System.IO.File]::ReadAllText($ocCfg, (New-Object System.Text.UTF8Encoding $false)) | ConvertFrom-Json -EA Stop
     $cfgParsea = $true
     if ($cfg.agent -and $cfg.agent.'tecnia-bot' -and $cfg.agent.'tecnia-bot'.model) { $modelo = [string]$cfg.agent.'tecnia-bot'.model }
   } catch { }
