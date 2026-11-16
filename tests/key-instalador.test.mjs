@@ -768,14 +768,33 @@ test("en modo silencioso el instalador no espera 60s a nadie", () => {
     return hasta === -1 ? resto : resto.slice(0, hasta)
   }
 
+  // ESTA PARTE MIRABA LA FORMA VIEJA, y se actualizo cuando el bootstrap se mudo.
+  // Buscaba en [Run] una linea con `bootstrap.ps1` y `{code:BanderaSilencio}`. Esa
+  // entrada ya no existe: una entrada de [Run] espera al proceso pero no mira su
+  // codigo de salida, y el instalador mostraba "quedo instalado" aunque el
+  // bootstrap hubiera fallado. Ahora lo lanza [Code] con Exec (CorrerElBootstrap).
+  // Lo que se quiere medir es lo mismo: que LA linea que lanza el bootstrap lleve
+  // la bandera. Y se agrega lo que la mudanza volvio posible romper: que el
+  // bootstrap no quede lanzado desde los DOS lados (correria dos veces).
   const enRun = seccion("Run")
     .split("\n")
-    .filter((l) => l.includes("bootstrap.ps1") && l.includes("Parameters:"))
-  assert.equal(enRun.length, 1, "esperaba exactamente una linea en [Run] que lance bootstrap.ps1")
+    .filter((l) => !/^\s*;/.test(l) && l.includes("bootstrap.ps1"))
+  assert.deepEqual(enRun, [], "[Run] volvio a lanzar bootstrap.ps1: ahora lo lanza [Code], correria dos veces")
+
+  // [Code] sin sus comentarios Pascal: explican la mudanza nombrando el script.
+  // Se recorta desde el ENCABEZADO real (a principio de linea): `seccion("Code")`
+  // usa indexOf y encuentra antes un "[Code]" citado en un comentario de otra
+  // seccion. Y se busca la RUTA del script: los Log() del .iss tambien lo nombran.
+  const enCode = iss
+    .slice(iss.search(/^\[Code\]\s*$/m))
+    .replace(/\{[^}]*\}/g, "")
+    .split("\n")
+    .filter((l) => l.includes("\\install\\bootstrap.ps1"))
+  assert.equal(enCode.length, 1, "esperaba exactamente una linea de [Code] que arme el lanzamiento de bootstrap.ps1")
   assert.match(
-    enRun[0],
-    /\{code:BanderaSilencio\}/,
-    "la linea de [Run] que lanza bootstrap.ps1 no usa {code:BanderaSilencio}: la funcion existe y no la llama nadie",
+    enCode[0],
+    /bootstrap\.ps1'\)\s*\+\s*'"'\s*\+\s*BanderaSilencio\(''\)/,
+    "la linea de [Code] que lanza bootstrap.ps1 no le pega BanderaSilencio: la funcion existe y no la llama nadie",
   )
 
   const enIcons = seccion("Icons")

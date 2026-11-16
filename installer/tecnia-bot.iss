@@ -16,6 +16,19 @@
 ;   1. Copia la capa educativa (agentes + skills + herramientas + web) a la carpeta del programa.
 ;   2. Corre bootstrap.ps1: instala Scoop + OpenCode + PlatformIO y publica la capa en la config de OpenCode.
 ;   3. Crea accesos directos (menú inicio + escritorio) que abren el bot con un doble clic.
+;
+; CÓDIGOS DE SALIDA DEL .exe (para quien lo despliega con /VERYSILENT):
+;   0      todo quedó instalado y bootstrap.ps1 lo comprobó (o se pasó /skipdeps=1,
+;          que saltea el bootstrap: ahí sólo se copiaron archivos).
+;   1 a 8  los de Inno Setup ("Setup Exit Codes" en su ayuda): cancelado, error al
+;          copiar, etc.
+;   20     se copiaron los archivos pero bootstrap.ps1 FALLÓ o no se pudo lanzar:
+;          Tecnia Bot no quedó usable.
+;   21     quedó instalado pero DEGRADADO: el bot abre, falta PlatformIO, Node, o
+;          la versión probada de OpenCode.
+; 20 y 21 son propios (función GetCustomSetupExitCode, en la sección de código) y
+; salen del código con que termina install\bootstrap.ps1, cuyo encabezado
+; documenta el contrato 0 / 2 / 1.
 ; ============================================================================
 
 #ifndef MyAppVersion
@@ -159,24 +172,24 @@ Name: "{autoprograms}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; WorkingDir: "{app}"; IconFilename: "{app}\tecnia-bot.ico"; Tasks: desktopicon
 
 [Run]
-; Instala OpenCode + PlatformIO + la capa (sin admin, vía Scoop). Se muestra la
-; consola a propósito: tarda varios minutos y así el docente ve que avanza.
-; En modo silencioso se agrega -SinPrompt. El instalador ofrece cambiar la key de
-; Google cuando ya hay una, y espera 60 s por si el docente pega una nueva: frente
-; a una persona esta bien, pero en un despliegue desatendido no hay nadie que
-; conteste y son 60 s de reloj por maquina. Medido en la VM: una reinstalacion
-; sobre una maquina ya configurada paso de instantanea a 63 s. El porque completo
-; esta en el encabezado de install\bootstrap.ps1.
-Filename: "powershell.exe"; \
-  Parameters: "-ExecutionPolicy Bypass -NoProfile -File ""{app}\install\bootstrap.ps1""{code:BanderaSilencio}"; \
-  WorkingDir: "{app}"; \
-  StatusMsg: "Instalando OpenCode, PlatformIO y Tecnia Bot (puede tardar varios minutos)..."; \
-  Check: CorrerBootstrap; \
-  Flags: waituntilterminated
-; Se saca la marca de "instalación en curso" pase lo que pase con el paso de
-; arriba. Se pone en [Code], al empezar (ssInstall); el porqué está allá abajo.
-Filename: "cmd.exe"; Parameters: "/c del /q ""{app}\.instalando"""; \
-  Flags: runhidden waituntilterminated
+; EL BOOTSTRAP YA NO SE LANZA DESDE ESTA SECCIÓN, y es a propósito.
+;
+; Acá había una entrada con `Flags: waituntilterminated` que corría bootstrap.ps1.
+; Inno espera a que una entrada de esta sección termine, pero NO mira con qué
+; código terminó: el bootstrap podía salir con 1 sin haber instalado nada y el
+; asistente mostraba igual su pantalla de "quedó instalado". Con /VERYSILENT el
+; .exe devolvía 0. En una notebook real pasó exactamente eso: el paso murió en
+; 2,4 segundos, pantalla verde, y no había nada instalado.
+;
+; Ahora lo lanza CorrerElBootstrap (sección de código, desde CurStepChanged en
+; ssPostInstall) con Exec, que sí devuelve el código de salida. Con ese código se
+; arma la última pantalla y el código de salida del .exe. Lo que hacía la entrada
+; vieja se conserva todo allá: consola visible, -SinPrompt en silencioso, el
+; salteo con /skipdeps=1, la carpeta de trabajo, y el borrado de la marca
+; ".instalando" después del bootstrap y pase lo que pase.
+;
+; NO VUELVAS A AGREGAR ACÁ UNA ENTRADA QUE CORRA bootstrap.ps1: correría dos veces.
+;
 ; Al terminar (casillas marcadas en la última pantalla): abrir la web oficial de
 ; Tecnia Bot (primeros pasos) y abrir el bot.
 Filename: "{#MyAppURL}"; Description: "Visitar la web de Tecnia Bot (primeros pasos)"; \
@@ -228,8 +241,13 @@ Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
 ; Textos branded del asistente.
 WelcomeLabel1=Bienvenido/a a Tecnia Bot
 WelcomeLabel2=Tecnia Bot es el asistente que te acompaña para enseñar Arduino y ESP32 en la escuela técnica: explica el porqué, da código comentado y traduce los errores.%n%nEl asistente instala TODO lo necesario y no hace falta ser administrador. Tocá Siguiente para empezar.
-FinishedHeadingLabel=¡Tecnia Bot quedó instalado!
-FinishedLabel=¡Listo! Arrancá por la web de Tecnia Bot (tecnialab.net.ar/tecnia-bot) para ver los primeros pasos, y abrilo desde el menú inicio o el escritorio. Recordá instalar los drivers USB de tu placa si todavía no lo hiciste.
+; Los dos textos de la última pantalla son NEUTROS a propósito: acá decía
+; "¡Tecnia Bot quedó instalado!" fijo, saliera como saliera el bootstrap. El texto
+; que afirma algo se pone desde el código (CurPageChanged), según lo que
+; bootstrap.ps1 comprobó. Si ese código no llegara a correr, queda esto, que no
+; promete nada.
+FinishedHeadingLabel=Terminó el asistente de Tecnia Bot
+FinishedLabel=El asistente terminó de copiar los archivos de Tecnia Bot.
 
 [Code]
 procedure InitializeWizard;
@@ -265,15 +283,131 @@ begin
     Corriendo por /VERYSILENT hay una consola REAL (vacía, pero real), así que
     bootstrap.ps1 no puede deducirlo: su sondeo de teclado no falla, espera los
     60 s completos y recién ahí sigue. Por eso la seña baja desde acá.
-    Se antepone un espacio porque esto se concatena pegado al -File de arriba. }
+    Se antepone un espacio porque esto se concatena pegado al -File que arma
+    CorrerElBootstrap, más abajo. El parámetro no se usa: quedó de cuando esto se
+    llamaba desde una constante de la sección Run. }
   if WizardSilent() then
     Result := ' -SinPrompt'
   else
     Result := '';
 end;
 
+const
+  { Contrato con install\bootstrap.ps1: ver CODIGOS DE SALIDA en su encabezado.
+    Hay un test (tests/instalador-honesto.test.mjs) que compara los dos archivos:
+    si allá cambia el número de "degradado", acá tiene que cambiar también. }
+  CodigoBootstrapOk = 0;
+  CodigoBootstrapDegradado = 2;
+
+  { Códigos de salida PROPIOS del .exe. Inno usa del 0 al 8 y avisa que puede
+    sumar más: por eso arrancan lejos. Documentados en el encabezado del archivo. }
+  SalidaSetupFallo = 20;
+  SalidaSetupDegradado = 21;
+
+  { Cómo terminó el bootstrap. 0 es "todavía no se intentó" porque es el valor con
+    que nace una variable global: si algo se saltea el paso, NO queda en "bien". }
+  EstadoSinCorrer = 0;
+  EstadoSalteado = 1;
+  EstadoBien = 2;
+  EstadoDegradado = 3;
+  EstadoFallo = 4;
+  EstadoNoLanzo = 5;
+
 var
   MarcaInstalando: String;
+  EstadoBootstrap: Integer;
+  CodigoBootstrap: Integer;
+
+{ ── El bootstrap se lanza desde acá, y se LEE cómo terminó ────────────────────
+
+  Antes era una entrada de la sección Run con "waituntilterminated", que espera
+  pero no mira el código de salida (el porqué largo está en esa sección).
+
+  Exec devuelve dos cosas distintas y se guardan las dos:
+    - el Boolean: si Windows pudo LANZAR powershell.exe. Si da False, el entero
+      trae el código de error de Windows, no un código del script.
+    - el entero: con qué código terminó el script, si se lanzó.
+
+  Se conserva lo que hacía la entrada vieja: consola visible (SW_SHOWNORMAL: tarda
+  minutos y el docente tiene que ver que avanza), -SinPrompt en silencioso
+  (BanderaSilencio), el salteo con /skipdeps=1 (CorrerBootstrap), y la carpeta de
+  instalación como carpeta de trabajo. }
+procedure CorrerElBootstrap;
+var
+  Parametros: String;
+begin
+  if not CorrerBootstrap then
+  begin
+    EstadoBootstrap := EstadoSalteado;
+    Log('Tecnia Bot: bootstrap.ps1 NO se corre (/skipdeps=1).');
+    Exit;
+  end;
+
+  WizardForm.StatusLabel.Caption :=
+    'Instalando OpenCode, PlatformIO y Tecnia Bot (puede tardar varios minutos)...';
+  WizardForm.FilenameLabel.Caption := '';
+
+  Parametros := '-ExecutionPolicy Bypass -NoProfile -File "'
+    + ExpandConstant('{app}\install\bootstrap.ps1') + '"' + BanderaSilencio('');
+
+  if Exec('powershell.exe', Parametros, ExpandConstant('{app}'),
+          SW_SHOWNORMAL, ewWaitUntilTerminated, CodigoBootstrap) then
+  begin
+    if CodigoBootstrap = CodigoBootstrapOk then
+      EstadoBootstrap := EstadoBien
+    else if CodigoBootstrap = CodigoBootstrapDegradado then
+      EstadoBootstrap := EstadoDegradado
+    else
+      EstadoBootstrap := EstadoFallo;
+  end
+  else
+    EstadoBootstrap := EstadoNoLanzo;
+
+  Log(Format('Tecnia Bot: bootstrap.ps1 -> estado %d, codigo %d.', [EstadoBootstrap, CodigoBootstrap]));
+end;
+
+function RutaLogBootstrap: String;
+begin
+  Result := ExpandConstant('{app}\instalacion.log');
+end;
+
+{ Cartel para cuando el bootstrap falló, sólo si hay alguien mirando. La última
+  pantalla también lo dice, pero ahí el texto tiene que ser corto (comparte lugar
+  con las casillas) y es fácil apretar "Finalizar" sin leer.
+
+  Nombra los accesos directos con el MISMO define que los crea en la sección Icons,
+  para que no se pueda mandar al docente a buscar uno que no existe. Y el log se
+  menciona sólo si está en el disco: si el bootstrap murió antes de abrirlo, no
+  hay nada que ir a leer. }
+procedure AvisarSiElBootstrapFallo;
+var
+  Texto: String;
+begin
+  if WizardSilent() then
+    Exit;
+  if (EstadoBootstrap <> EstadoFallo) and (EstadoBootstrap <> EstadoNoLanzo) then
+    Exit;
+
+  if EstadoBootstrap = EstadoNoLanzo then
+    Texto := 'No pude iniciar PowerShell para instalar OpenCode, PlatformIO y la capa de '
+      + 'Tecnia Bot (error ' + IntToStr(CodigoBootstrap) + ' de Windows: '
+      + SysErrorMessage(CodigoBootstrap) + ').'
+  else
+    Texto := 'Se copiaron los archivos, pero la instalación de OpenCode y de la capa de '
+      + 'Tecnia Bot NO terminó bien (código ' + IntToStr(CodigoBootstrap) + ').';
+
+  Texto := Texto + #13#10 + #13#10
+    + 'Tecnia Bot todavía NO está listo para usar.' + #13#10 + #13#10
+    + 'No hace falta volver a bajar el instalador. En el menú inicio:' + #13#10
+    + '  "Reparar {#MyAppName}"  vuelve a intentar lo que faltó.' + #13#10
+    + '  "Diagnostico de {#MyAppName}"  dice qué anda y qué no.';
+
+  if FileExists(RutaLogBootstrap) then
+    Texto := Texto + #13#10 + #13#10 + 'El detalle de lo que pasó quedó escrito en:' + #13#10
+      + '  ' + RutaLogBootstrap;
+
+  MsgBox(Texto, mbError, MB_OK);
+end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
@@ -290,14 +424,103 @@ begin
     mientras el instalador estaba corriendo. Pasó de verdad, dos veces.
 
     ssInstall se dispara apenas se aprieta "Instalar" y ANTES de copiar un solo
-    archivo, así que cubre toda la instalación. El borrado sigue en [Run], después
-    del bootstrap. }
+    archivo, así que cubre toda la instalación. El borrado está más abajo, en este
+    mismo procedimiento, después del bootstrap. }
   if CurStep = ssInstall then
   begin
     MarcaInstalando := ExpandConstant('{app}\.instalando');
     ForceDirectories(ExpandConstant('{app}'));
     SaveStringToFile(MarcaInstalando, '', False);
   end;
+
+  { ── El bootstrap corre ACÁ, y la marca se borra pase lo que pase ───────────────
+
+    ssPostInstall: los archivos ya están copiados, así que bootstrap.ps1 existe.
+
+    La marca se borra en el "finally": salga el bootstrap con 0, con 1, no se
+    haya podido lanzar, o tire una excepción el propio script de Inno. Antes la
+    borraba una entrada de la sección Run puesta después de la del bootstrap; al
+    mudar el bootstrap acá, el borrado se muda con él, para no depender del
+    orden entre este evento y esa sección (que NO está comprobado: ver el
+    mensaje del commit). DeinitializeSetup sigue de red por si se cancela antes. }
+  if CurStep = ssPostInstall then
+  begin
+    try
+      CorrerElBootstrap;
+    finally
+      if MarcaInstalando <> '' then
+        DeleteFile(MarcaInstalando);
+    end;
+    AvisarSiElBootstrapFallo;
+  end;
+end;
+
+{ ── La última pantalla dice lo que el bootstrap COMPROBÓ ──────────────────────
+
+  El título fijo "¡Tecnia Bot quedó instalado!" se mostraba siempre. Ahora hay un
+  texto por resultado, y el que afirma que quedó instalado aparece únicamente
+  cuando bootstrap.ps1 salió con 0, que es su "todo comprobado".
+
+  Los textos son cortos a propósito: esta etiqueta comparte la pantalla con las
+  casillas de "abrir ahora", y no está comprobado que un texto largo no las tape. }
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if CurPageID <> wpFinished then
+    Exit;
+
+  if EstadoBootstrap = EstadoBien then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := '¡Tecnia Bot quedó instalado!';
+    WizardForm.FinishedLabel.Caption :=
+      '¡Listo! Arrancá por la web de Tecnia Bot (tecnialab.net.ar/tecnia-bot) para ver '
+      + 'los primeros pasos, y abrilo desde el menú inicio o el escritorio. Recordá '
+      + 'instalar los drivers USB de tu placa si todavía no lo hiciste.';
+  end
+  else if EstadoBootstrap = EstadoDegradado then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := 'Tecnia Bot quedó instalado, pero incompleto';
+    WizardForm.FinishedLabel.Caption :=
+      'El bot abre, pero faltó instalar algo (PlatformIO, Node, o la versión probada '
+      + 'de OpenCode): la ventana negra lo detalló al final. Para completarlo, en el '
+      + 'menú inicio abrí "Reparar {#MyAppName}".';
+  end
+  else if EstadoBootstrap = EstadoSalteado then
+  begin
+    WizardForm.FinishedHeadingLabel.Caption := 'Se copiaron los archivos de Tecnia Bot';
+    WizardForm.FinishedLabel.Caption :=
+      'Se salteó la instalación de OpenCode, PlatformIO y la capa (/skipdeps=1). '
+      + 'Para instalarlos, en el menú inicio abrí "Reparar {#MyAppName}".';
+  end
+  else
+  begin
+    { EstadoFallo, EstadoNoLanzo, y también EstadoSinCorrer: si por lo que sea el
+      paso del bootstrap no llegó a correr, no se festeja nada. }
+    WizardForm.FinishedHeadingLabel.Caption := 'Tecnia Bot NO quedó instalado';
+    WizardForm.FinishedLabel.Caption :=
+      'Se copiaron los archivos, pero la instalación de OpenCode y de la capa no '
+      + 'terminó bien. No hace falta volver a bajar el instalador: en el menú inicio '
+      + 'abrí "Reparar {#MyAppName}". Si vuelve a fallar, "Diagnostico de {#MyAppName}" dice por qué.';
+  end;
+end;
+
+{ ── El .exe sale con un código propio si el bootstrap no salió bien ────────────
+
+  GetCustomSetupExitCode es el mecanismo documentado de Inno para esto ("Return a
+  non-zero number to instruct Setup to return a custom exit code. This function is
+  only called if Setup was successfully run to completion and the exit code would
+  have been 0", ayuda de Inno Setup, "Pascal Scripting: Event Functions").
+
+  Es lo que le faltaba a un despliegue con /VERYSILENT: sin pantalla que leer, el
+  código de salida es lo ÚNICO que le llega a quien corre el instalador en veinte
+  máquinas, y era 0 aunque el bootstrap no hubiera instalado nada. }
+function GetCustomSetupExitCode: Integer;
+begin
+  Result := 0;
+  if EstadoBootstrap = EstadoDegradado then
+    Result := SalidaSetupDegradado
+  else if (EstadoBootstrap = EstadoFallo) or (EstadoBootstrap = EstadoNoLanzo)
+          or (EstadoBootstrap = EstadoSinCorrer) then
+    Result := SalidaSetupFallo;
 end;
 
 procedure DeinitializeSetup();
