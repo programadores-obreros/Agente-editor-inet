@@ -12,7 +12,45 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO_DIR/opencode"
 
+# ---- python3 que ANDA, no python3 que EXISTE --------------------------------
+# En una Mac sin las Command Line Tools, /usr/bin/python3 es un stub: existe,
+# `command -v python3` da verdadero, y al ejecutarlo falla. Preguntar sólo si
+# EXISTE mandaba a este script por el camino de python3 con un python3 que no
+# corre. Así que se lo EJECUTA de verdad, una vez, y el resultado se guarda en
+# PYTHON3_ANDA: la llamada de más abajo deja la respuesta lista antes de que
+# alguien pregunte desde un $(...), que es otro proceso y no podría guardarla.
+#
+# Esta función está repetida en bootstrap.sh, install.sh, update.sh y
+# uninstall.sh A PROPÓSITO: ningún script hace dot-sourcing de otro, cada uno se
+# copia y corre SOLO. Las mantiene iguales tests/python3-que-anda.test.mjs.
+PYTHON3_ANDA=""
+python3_anda() {
+  if [ -z "$PYTHON3_ANDA" ]; then
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
+      PYTHON3_ANDA="si"
+    else
+      PYTHON3_ANDA="no"
+    fi
+  fi
+  [ "$PYTHON3_ANDA" = "si" ]
+}
+python3_anda || true
+
 echo "==> Instalando Tecnia Bot en: $CONFIG_DIR"
+
+# Un python3 que está y no anda se dice UNA vez, y se sigue por jq o curl.
+# Callarlo deja a la docente sin saber por qué el instalador «no usa» algo que
+# ella ve instalado. En macOS el arreglo tiene nombre propio.
+if [ "$PYTHON3_ANDA" = "no" ] && command -v python3 >/dev/null 2>&1; then
+  echo "  [AVISO] Hay un python3 en esta compu ($(command -v python3)) pero no anda: lo ejecuté y falló."
+  echo "          Sigo sin él (uso jq o curl donde haga falta). Para arreglarlo:"
+  if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ]; then
+    echo "          macOS: xcode-select --install   (instala las Command Line Tools, que traen python3)"
+  else
+    echo "          Debian/Ubuntu: sudo apt install python3"
+    echo "          Arch/Manjaro:  sudo pacman -S python"
+  fi
+fi
 
 mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,nucleo,servidor,vista-fisica,conocimiento,codegen}
 
@@ -242,7 +280,7 @@ probar_key_google() {
   # comandos: /proc/<pid>/cmdline lo lee cualquier proceso del mismo usuario y un
   # `ps` de otra terminal mostraria la key entera. Es la misma razon por la que
   # clave.ts se la pasa a PowerShell por el entorno.
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     TECNIA_KEY_A_PROBAR="$1" python3 - "$URL_PRUEBA_KEY" "$TIMEOUT_PRUEBA_KEY" <<'PYEOF' 2>/dev/null || printf 'sinProbar|no pude correr la prueba (python3)\n'
 import json, os, sys, urllib.request, urllib.error
 
@@ -338,7 +376,7 @@ AUTH_FILE="$DATA_DIR/auth.json"
 # ninguno de los dos no se puede leer el JSON y se asume que no hay.
 auth_leer_key_google() {
   [ -f "$AUTH_FILE" ] || return 0
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     python3 - "$AUTH_FILE" <<'PYEOF' 2>/dev/null || true
 import json, sys
 try:
@@ -355,7 +393,7 @@ PYEOF
 
 # Quita la entrada "google" de auth.json preservando los otros providers.
 auth_quitar_google() {
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     python3 - "$AUTH_FILE" <<'PYEOF'
 import json, sys
 path = sys.argv[1]
@@ -494,7 +532,7 @@ elif [ -n "$GEMINI_KEY" ]; then
     # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
     # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
     PRUEBA_KEY="$PRUEBA_NUEVA"
-    if command -v python3 >/dev/null 2>&1; then
+    if python3_anda; then
       python3 - "$AUTH_FILE" "$GEMINI_KEY" <<'PYEOF'
 import json, sys
 path, key = sys.argv[1], sys.argv[2]
@@ -648,7 +686,7 @@ OPENCODE_JSON="$(resolve_config_file "$CONFIG_DIR/opencode")"
 JSON_TOOL=""
 if command -v jq >/dev/null 2>&1; then
   JSON_TOOL="jq"
-elif command -v python3 >/dev/null 2>&1; then
+elif python3_anda; then
   JSON_TOOL="python3"
 fi
 
@@ -843,7 +881,7 @@ if [ "$JSON_TOOL" = "jq" ]; then
   merge_opencode_jq || JQ_OK=0
   if [ "$JQ_OK" = "1" ]; then
     echo "  [OK] $(basename "$TUI_JSON") y $(basename "$OPENCODE_JSON") actualizados (via jq)."
-  elif command -v python3 >/dev/null 2>&1; then
+  elif python3_anda; then
     # jq no pudo (probablemente comentarios en un .jsonc); reintentar con python.
     merge_via_python
     echo "  [OK] Config actualizada (jq no pudo con comentarios; usé python3)."
