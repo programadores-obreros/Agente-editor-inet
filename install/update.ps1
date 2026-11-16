@@ -94,7 +94,7 @@ function Verificar-Version {
     $esperada = $Tag.TrimStart("v")
     $f = Join-Path $Dir "VERSION"
     if (-not (Test-Path $f)) { Fallar "lo descargado no trae archivo VERSION: no lo instalo" }
-    $real = ([string](Get-Content $f -Raw)).Trim()
+    $real = ("" + (Get-Content $f -Raw)).Trim()
     if ($real -ne $esperada) { Fallar "lo descargado dice version $real y el release es ${esperada}: no lo instalo" }
 }
 
@@ -152,7 +152,7 @@ function Actualizar-Lanzador($nuevo, $instalado) {
 
 function Version-Instalada {
     $f = Join-Path $RepoDir "VERSION"
-    if (Test-Path $f) { return ([string](Get-Content $f -Raw)).Trim() }
+    if (Test-Path $f) { return ("" + (Get-Content $f -Raw)).Trim() }
     return ""
 }
 
