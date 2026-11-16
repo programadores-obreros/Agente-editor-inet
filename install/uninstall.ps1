@@ -17,6 +17,15 @@
 # Remove-Item no hace nada, no tira error, y el mensaje salia igual. Son datos
 # PERSONALES de MENORES (Ley 25.326, ver opencode/tool/memoria.ts) y una
 # credencial del docente. Todo borrado de aca abajo se relee antes de afirmarse.
+#
+# CODIGOS DE SALIDA. Es un contrato: lo leen el desinstalador de Windows
+# (installer\tecnia-bot.iss, que lanza esto con -Conservar o -Borrar) y la CI.
+#   0     se saco todo lo que habia que sacar, y se comprobo releyendo
+#   3     desinstalacion PARCIAL: algo quedo sin borrar (se lista al final)
+#   otro  el script se corto antes de terminar: no se sabe que quedo
+# Antes salia SIEMPRE por 0, tambien despues de imprimir "se desinstalo
+# PARCIALMENTE": quien lo lanzaba leia un exito y Windows informaba una
+# desinstalacion correcta con datos personales todavia en el disco.
 
 param(
     [switch]$Conservar,
@@ -32,12 +41,23 @@ if ($env:XDG_CONFIG_HOME) {
 }
 $Manifest = Join-Path $ConfigDir "tecnia-bot.manifest"
 
-if (-not (Test-Path $Manifest)) {
-    Write-Host "No encontre Tecnia Bot instalado (no hay manifest en $ConfigDir)."
-    exit 0
+# SIN MANIFEST NO SE SALE: se saltea SOLO el borrado de los archivos del programa.
+#
+# Antes aca habia un `exit 0`. El manifest es la lista de los archivos de la capa,
+# nada mas: el perfil, la memoria del aula y la key de Google NO estan en esa lista
+# y viven aunque el manifest falte (una desinstalacion anterior que lo borro, una
+# instalacion a medias). Con ese `exit 0`, `-Borrar` en una compu sin manifest no
+# borraba nada, salia por 0, y Windows informaba una desinstalacion correcta con
+# los datos de los chicos y la credencial del docente todavia adentro.
+$HayManifest = Test-Path $Manifest
+if ($HayManifest) {
+    Write-Host "==> Desinstalando Tecnia Bot de: $ConfigDir"
 }
-
-Write-Host "==> Desinstalando Tecnia Bot de: $ConfigDir"
+if (-not $HayManifest) {
+    Write-Host "==> No encontre el registro de la instalacion (no hay manifest en $ConfigDir)."
+    Write-Host "    Sin esa lista no se que archivos del programa hay, asi que no borro ninguno."
+    Write-Host "    Sigo igual con la config de OpenCode y con los datos personales."
+}
 
 # ---- Borrar y RELEER (la regla del encabezado, en dos funciones) -------------
 #
@@ -59,23 +79,46 @@ function Borrar-YVerificar($path) {
 # se dice cual y se CONSERVA el manifest: es la lista de lo que falta sacar, y
 # sin ella la proxima corrida cree que no hay nada instalado y no borra nada.
 $NoBorrados = New-Object System.Collections.ArrayList
-Get-Content $Manifest | ForEach-Object {
-    $line = $_.Trim()
-    if ($line -and -not $line.StartsWith("#") -and -not $line.StartsWith("version=") -and -not $line.StartsWith("repo_dir=")) {
-        $archivo = Join-Path $ConfigDir $line
-        if (-not (Borrar-YVerificar $archivo)) { [void]$NoBorrados.Add($archivo) }
+if ($HayManifest) {
+    # Si el manifest esta pero no se puede LEER (tomado, sin permiso), no se corta:
+    # se anota y se sigue con los datos personales, que son lo que no puede quedar.
+    $LineasManifest = $null
+    try { $LineasManifest = @(Get-Content $Manifest -ErrorAction Stop) } catch { $LineasManifest = $null }
+    if ($null -eq $LineasManifest) {
+        Write-Host "  [X] No pude leer el registro de la instalacion ($Manifest): no borre los archivos del programa."
+        Anotar-Pendiente "los archivos de Tecnia Bot en $ConfigDir (no pude leer el registro $Manifest)"
+    }
+    if ($null -ne $LineasManifest) {
+        foreach ($renglon in $LineasManifest) {
+            $line = ([string]$renglon).Trim()
+            if ($line -and -not $line.StartsWith("#") -and -not $line.StartsWith("version=") -and -not $line.StartsWith("repo_dir=")) {
+                $archivo = Join-Path $ConfigDir $line
+                if (-not (Borrar-YVerificar $archivo)) { [void]$NoBorrados.Add($archivo) }
+            }
+        }
+
+        if ($NoBorrados.Count -eq 0) {
+            if (-not (Borrar-YVerificar $Manifest)) { Anotar-Pendiente "el registro de la instalacion: $Manifest" }
+        } else {
+            Write-Host "  [X] No pude borrar $($NoBorrados.Count) archivo(s) de Tecnia Bot (los relei y siguen ahi):"
+            foreach ($f in $NoBorrados) { Write-Host "      $f" }
+            Write-Host "      Casi siempre es que OpenCode esta abierto y los tiene tomados."
+            Write-Host "      Cerra OpenCode y volve a correr el desinstalador."
+            Write-Host "      Dejo el registro ($Manifest) para que el proximo intento sepa que falta."
+            Anotar-Pendiente "$($NoBorrados.Count) archivo(s) de Tecnia Bot en $ConfigDir"
+        }
     }
 }
-
-if ($NoBorrados.Count -eq 0) {
-    if (-not (Borrar-YVerificar $Manifest)) { Anotar-Pendiente "el registro de la instalacion: $Manifest" }
-} else {
-    Write-Host "  [X] No pude borrar $($NoBorrados.Count) archivo(s) de Tecnia Bot (los relei y siguen ahi):"
-    foreach ($f in $NoBorrados) { Write-Host "      $f" }
-    Write-Host "      Casi siempre es que OpenCode esta abierto y los tiene tomados."
-    Write-Host "      Cerra OpenCode y volve a correr el desinstalador."
-    Write-Host "      Dejo el registro ($Manifest) para que el proximo intento sepa que falta."
-    Anotar-Pendiente "$($NoBorrados.Count) archivo(s) de Tecnia Bot en $ConfigDir"
+if (-not $HayManifest) {
+    # Sin la lista no se puede borrar la capa, pero SI se puede mirar si esta: el
+    # agente es el archivo que el lanzador y el bootstrap usan para decidir "la capa
+    # esta instalada". Si esta, la desinstalacion no fue completa y se dice.
+    $AgenteSuelto = Join-Path $ConfigDir "agent\tecnia-bot.md"
+    if (Test-Path $AgenteSuelto) {
+        Write-Host "  [X] La capa de Tecnia Bot sigue en $ConfigDir (encontre $AgenteSuelto) y no tengo la lista para sacarla."
+        Write-Host "      Corre 'Reparar Tecnia Bot' (vuelve a escribir el registro) y despues desinstala de nuevo."
+        Anotar-Pendiente "la capa de Tecnia Bot en $ConfigDir (falta el registro para saber que archivos sacar)"
+    }
 }
 
 # ---- Sacar NUESTRAS claves de la config de OpenCode (sin tocar el resto) ----
@@ -150,21 +193,37 @@ function Save-OrRemove($path, $obj) {
     [System.IO.File]::WriteAllText($path, $json, (New-Object System.Text.UTF8Encoding $false))
 }
 
+# UNA ESCRITURA QUE FALLA ACA NO PUEDE CORTAR EL SCRIPT.
+#
+# Este archivo corre con $ErrorActionPreference = "Stop". Si tui.json u
+# opencode.json estan en solo lectura, o tomados por OpenCode abierto, WriteAllText
+# tira una excepcion y -sin el try de abajo- el script moria ACA: antes de llegar
+# al perfil, a la memoria y a la key. Justo el camino `-Borrar` dejaba los datos
+# personales en el disco por un archivo de config que no se pudo tocar. Ahora se
+# anota como pendiente (sale en el resumen y en el codigo 3) y la purga corre igual.
+# Del error se informa el TIPO, nunca el mensaje: el mensaje cita rutas y contenido.
+
 # --- tui.json ---
-$tui = Read-JsonObject $TuiJson
-if ($tui) {
-    if (($tui.PSObject.Properties.Name -contains "plugin") -and $null -ne $tui.plugin) {
-        $plugins = @($tui.plugin | Where-Object { $_ -ne $TecniaPlugin })
-        if ($plugins.Count -eq 0) {
-            $tui.PSObject.Properties.Remove("plugin")
-        } else {
-            $tui | Add-Member -NotePropertyName "plugin" -NotePropertyValue $plugins -Force
+try {
+    $tui = Read-JsonObject $TuiJson
+    if ($tui) {
+        if (($tui.PSObject.Properties.Name -contains "plugin") -and $null -ne $tui.plugin) {
+            $plugins = @($tui.plugin | Where-Object { $_ -ne $TecniaPlugin })
+            if ($plugins.Count -eq 0) {
+                $tui.PSObject.Properties.Remove("plugin")
+            } else {
+                $tui | Add-Member -NotePropertyName "plugin" -NotePropertyValue $plugins -Force
+            }
         }
+        if (($tui.PSObject.Properties.Name -contains "theme") -and $tui.theme -eq $TecniaTheme) {
+            $tui.PSObject.Properties.Remove("theme")
+        }
+        Save-OrRemove $TuiJson $tui
     }
-    if (($tui.PSObject.Properties.Name -contains "theme") -and $tui.theme -eq $TecniaTheme) {
-        $tui.PSObject.Properties.Remove("theme")
-    }
-    Save-OrRemove $TuiJson $tui
+} catch {
+    Write-Host "  [X] No pude sacar el theme y el logo de Tecnia Bot de ${TuiJson} ($($_.Exception.GetType().Name)): quedo como estaba."
+    Write-Host "      Casi siempre es que esta en solo lectura o que OpenCode esta abierto."
+    Anotar-Pendiente "el theme y el plugin del logo de Tecnia Bot en $TuiJson"
 }
 
 # --- opencode.json ---
@@ -183,29 +242,37 @@ $MemoriaFile = Join-Path $ConfigDir "tecnia-memoria.md"
 # cargo ultimo. Son hashes con una sal propia de la compu, pero salen de rutas
 # que pueden tener el nombre de una persona: va con el perfil y la memoria.
 $CargasFile  = Join-Path $ConfigDir "tecnia-cargas.json"
-$ocTieneTexto = $false
-if ($OpencodeJson) { $ocTieneTexto = ((Get-Content $OpencodeJson -Raw -ErrorAction SilentlyContinue) -match '\S') }
-$oc = Read-JsonObject $OpencodeJson
-if ($ocTieneTexto -and -not $oc) {
-    Write-Host "  [AVISO] No pude parsear ${OpencodeJson}: lo dejo intacto."
-    Write-Host "          Saca a mano `"default_agent`", `"agent`" -> `"$TecniaAgent`" y las dos rutas de"
-    Write-Host "          `"instructions`" que terminan en tecnia-perfil.md y tecnia-memoria.md."
-} elseif ($oc) {
-    if (($oc.PSObject.Properties.Name -contains "default_agent") -and $oc.default_agent -eq $TecniaAgent) {
-        $oc.PSObject.Properties.Remove("default_agent")
-    }
-    if (($oc.PSObject.Properties.Name -contains "agent") -and ($oc.agent -is [PSCustomObject])) {
-        if ($oc.agent.PSObject.Properties.Name -contains $TecniaAgent) {
-            $oc.agent.PSObject.Properties.Remove($TecniaAgent)
+try {
+    $ocTieneTexto = $false
+    if ($OpencodeJson) { $ocTieneTexto = ((Get-Content $OpencodeJson -Raw -ErrorAction SilentlyContinue) -match '\S') }
+    $oc = Read-JsonObject $OpencodeJson
+    if ($ocTieneTexto -and -not $oc) {
+        Write-Host "  [AVISO] No pude parsear ${OpencodeJson}: lo dejo intacto."
+        Write-Host "          Saca a mano `"default_agent`", `"agent`" -> `"$TecniaAgent`" y las dos rutas de"
+        Write-Host "          `"instructions`" que terminan en tecnia-perfil.md y tecnia-memoria.md."
+        Anotar-Pendiente "las claves de Tecnia Bot en $OpencodeJson (no parsea: hay que sacarlas a mano)"
+    } elseif ($oc) {
+        if (($oc.PSObject.Properties.Name -contains "default_agent") -and $oc.default_agent -eq $TecniaAgent) {
+            $oc.PSObject.Properties.Remove("default_agent")
         }
-        if (@($oc.agent.PSObject.Properties).Count -eq 0) { $oc.PSObject.Properties.Remove("agent") }
+        if (($oc.PSObject.Properties.Name -contains "agent") -and ($oc.agent -is [PSCustomObject])) {
+            if ($oc.agent.PSObject.Properties.Name -contains $TecniaAgent) {
+                $oc.agent.PSObject.Properties.Remove($TecniaAgent)
+            }
+            if (@($oc.agent.PSObject.Properties).Count -eq 0) { $oc.PSObject.Properties.Remove("agent") }
+        }
+        if (($oc.PSObject.Properties.Name -contains "instructions") -and $null -ne $oc.instructions) {
+            $resto = @($oc.instructions | Where-Object { -not (($_ -ieq $PerfilFile) -or ($_ -ieq $MemoriaFile)) })
+            if ($resto.Count -eq 0) { $oc.PSObject.Properties.Remove("instructions") }
+            else { $oc | Add-Member -NotePropertyName "instructions" -NotePropertyValue $resto -Force }
+        }
+        Save-OrRemove $OpencodeJson $oc
     }
-    if (($oc.PSObject.Properties.Name -contains "instructions") -and $null -ne $oc.instructions) {
-        $resto = @($oc.instructions | Where-Object { -not (($_ -ieq $PerfilFile) -or ($_ -ieq $MemoriaFile)) })
-        if ($resto.Count -eq 0) { $oc.PSObject.Properties.Remove("instructions") }
-        else { $oc | Add-Member -NotePropertyName "instructions" -NotePropertyValue $resto -Force }
-    }
-    Save-OrRemove $OpencodeJson $oc
+} catch {
+    Write-Host "  [X] No pude sacar lo de Tecnia Bot de ${OpencodeJson} ($($_.Exception.GetType().Name)): quedo como estaba."
+    Write-Host "      Casi siempre es que esta en solo lectura o que OpenCode esta abierto."
+    Write-Host "      Quedan ahi `"default_agent`", `"agent`" -> `"$TecniaAgent`" y las rutas de `"instructions`"."
+    Anotar-Pendiente "el agente por defecto, el modelo y las rutas de instructions de Tecnia Bot en $OpencodeJson"
 }
 
 # ---- Datos PERSONALES: se preguntan, no se borran solos ----------------------
@@ -216,8 +283,11 @@ if ($ocTieneTexto -and -not $oc) {
 #   - la key de Google, en auth.json y en la variable GOOGLE_GENERATIVE_AI_API_KEY
 # Borrarlas sin preguntar es perder trabajo ajeno; dejarlas sin avisar es dejar
 # una credencial en una maquina que quizas pasa a otra escuela. Se pregunta con
-# 20 s de espera y "No" por defecto: desde Inno esto corre oculto (runhidden) y
-# ahi nadie contesta, asi que se conserva todo y se dice donde quedo.
+# 20 s de espera y "No" por defecto. La pregunta la ve SOLO quien corre este script
+# a mano y sin banderas. El desinstalador de Windows ya no llega aca preguntando:
+# hace SU pregunta en un cartel (CurUninstallStepChanged en
+# installer\tecnia-bot.iss) y lanza esto con -Conservar (ventana oculta) o con
+# -Borrar (ventana a la vista, para que se lea que se pudo borrar y que no).
 function Preguntar-SiNo($texto, $segundos) {
     Write-Host ""
     Write-Host $texto
@@ -343,16 +413,21 @@ if ($estadoAuth -eq "?") {
     Anotar-Pendiente "no pude verificar si tu API key de Google sigue en $AuthFile"
 }
 
-# Borrar directorios que hayan quedado vacios.
-foreach ($d in @("tecniabot-web", "skills", "plugins", "themes")) {
-    $path = Join-Path $ConfigDir $d
-    if (Test-Path $path) {
-        Get-ChildItem $path -Recurse -Directory | Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        if (-not (Get-ChildItem $path -Recurse -File -ErrorAction SilentlyContinue)) {
-            Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
+# Borrar directorios que hayan quedado vacios (mismo criterio que install.ps1
+# para las tres carpetas de Phase 2 que sumo D12: nucleo, servidor, vista-fisica).
+# Es prolijidad, no parte del contrato: si falla no cambia nada de lo que se
+# informa, y no puede cortar el script antes del resumen y del codigo de salida.
+try {
+    foreach ($d in @("tecniabot-web", "skills", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento", "codegen")) {
+        $path = Join-Path $ConfigDir $d
+        if (Test-Path $path) {
+            Get-ChildItem $path -Recurse -Directory | Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            if (-not (Get-ChildItem $path -Recurse -File -ErrorAction SilentlyContinue)) {
+                Remove-Item $path -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
-}
+} catch { }
 
 # El mensaje final tampoco afirma de mas: si algo quedo sin borrar, se dice que
 # la desinstalacion fue PARCIAL y se lista que quedo y donde.
@@ -363,4 +438,66 @@ if ($Pendientes.Count -eq 0) {
     foreach ($p in $Pendientes) { Write-Host "    - $p" }
     Write-Host "    Cerra OpenCode y volve a correr el desinstalador, o sacalo a mano."
 }
-Write-Host "    (OpenCode y PlatformIO NO se tocaron: son independientes.)"
+
+# ---- LO QUE ESTE DESINSTALADOR NO SACA, DICHO ENTERO -------------------------
+#
+# Antes el cierre decia "(OpenCode y PlatformIO NO se tocaron: son
+# independientes.)" y nada mas. El instalador (install\bootstrap.ps1) pone en la
+# compu Scoop, OpenCode, Python, Node y PlatformIO; el lanzador crea la carpeta de
+# proyectos en Documentos; y OpenCode guarda su historial aparte. Nombrar dos de
+# siete es dejar a la docente creyendo que la compu quedo limpia para entregarla.
+#
+# Y NO SE AFIRMA DE MEMORIA: cada cosa se busca en el disco y se nombra solo si
+# esta, con su ruta. Las rutas salen de donde las saca el resto del repo
+# (SCOOP / USERPROFILE\scoop, PLATFORMIO_CORE_DIR y la raiz del disco del perfil,
+# XDG_DATA_HOME, la carpeta de Documentos que usa el lanzador).
+# Es informativo: si algo de esto falla, no cambia el codigo de salida.
+function Anotar-SiEsta($lista, $ruta, $texto) {
+    if (-not $ruta) { return }
+    if (Test-Path -LiteralPath $ruta) { [void]$lista.Add($texto + ": " + $ruta) }
+}
+$Quedan = New-Object System.Collections.ArrayList
+try {
+    $ScoopDir = $env:SCOOP
+    if (-not $ScoopDir) { $ScoopDir = Join-Path $env:USERPROFILE "scoop" }
+    Anotar-SiEsta $Quedan $ScoopDir "Scoop (el instalador de programas que uso Tecnia Bot)"
+    Anotar-SiEsta $Quedan (Join-Path $ScoopDir "apps\opencode") "OpenCode"
+    Anotar-SiEsta $Quedan (Join-Path $ScoopDir "apps\python") "Python"
+    Anotar-SiEsta $Quedan (Join-Path $ScoopDir "apps\nodejs-lts") "Node"
+
+    $PioDirs = @()
+    if ($env:PLATFORMIO_CORE_DIR) { $PioDirs += $env:PLATFORMIO_CORE_DIR }
+    $PioDirs += (Join-Path $env:USERPROFILE ".platformio")
+    $RaizPerfil = [System.IO.Path]::GetPathRoot($env:USERPROFILE)
+    if ($RaizPerfil) { $PioDirs += (Join-Path $RaizPerfil ".platformio") }
+    foreach ($pd in @($PioDirs | Select-Object -Unique)) {
+        Anotar-SiEsta $Quedan $pd "PlatformIO y las herramientas de las placas (mas de 1 GB)"
+    }
+
+    $ProyDirs = @((Join-Path $env:USERPROFILE "Documents\Tecnia Bot"))
+    $Documentos = [Environment]::GetFolderPath("MyDocuments")
+    if ($Documentos) { $ProyDirs += (Join-Path $Documentos "Tecnia Bot") }
+    foreach ($pr in @($ProyDirs | Select-Object -Unique)) {
+        Anotar-SiEsta $Quedan $pr "Tus proyectos (son tuyos: aca no se tocan nunca)"
+    }
+
+    Anotar-SiEsta $Quedan $DataDir "Lo que OpenCode guarda por su cuenta (historial de las charlas, logs y sus credenciales)"
+
+    $CopiaPrograma = Split-Path -Parent $PSScriptRoot
+    Anotar-SiEsta $Quedan $CopiaPrograma "La carpeta del programa (si desinstalas desde Windows, la saca Windows al terminar)"
+} catch { }
+
+Write-Host ""
+if ($Quedan.Count -gt 0) {
+    Write-Host "    Esto NO lo saca este desinstalador. Lo busque en el disco y SIGUE en esta compu:"
+    foreach ($q in $Quedan) { Write-Host "    - $q" }
+    Write-Host "    Son programas y carpetas aparte de Tecnia Bot. Si esta compu pasa a otra persona y"
+    Write-Host "    no los usas para otra cosa, hay que sacarlos a mano: aca no se tocan."
+}
+if ($Quedan.Count -eq 0) {
+    Write-Host "    No encontre en esta compu Scoop, OpenCode, Python, Node, PlatformIO ni la carpeta de proyectos."
+}
+
+# El codigo de salida es el contrato del encabezado: 3 si quedo algo sin borrar.
+if ($Pendientes.Count -gt 0) { exit 3 }
+exit 0
