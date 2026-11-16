@@ -241,7 +241,18 @@ test("sin key no se escribe auth.json ni la variable de entorno", () => {
     // tiene el mismo texto y pasaría un `includes`. Pasó al probar por mutación.
     assert.ok(e.index >= desde && e.index < hasta, `se escribe la key fuera de la rama "pegó una key": ${e[0]}`)
   }
-  assert.match(shCodigo, /elif \[ -n "\$GEMINI_KEY" \]; then[\s\S]*?d\["google"\] = \{"type": "api", "key": key\}/, "install.sh guarda google sin que haya key")
+  // El guardado vive en guardar_key_google() desde que la key dejó de viajar por
+  // la línea de comandos. Lo que se custodia es lo mismo de antes, dicho con la
+  // forma nueva: la función es la que escribe `google`, y se la llama UNA sola vez
+  // y adentro de la rama «pegaron una key».
+  const iFn = shCodigo.indexOf("guardar_key_google() {")
+  assert.ok(iFn >= 0, "install.sh ya no tiene guardar_key_google()")
+  assert.match(shCodigo.slice(iFn, shCodigo.indexOf("\n}\n", iFn)), /d\["google"\] = \{"type": "api", "key": key\}/, "guardar_key_google no escribe la entrada google")
+  const llamadasGuardar = [...shCodigo.matchAll(/^[ \t]*guardar_key_google( |$)/gm)]
+  assert.equal(llamadasGuardar.length, 1, `guardar_key_google se llama ${llamadasGuardar.length} veces; tiene que ser una`)
+  const iRama = shCodigo.indexOf('elif [ -n "$GEMINI_KEY" ]; then')
+  const iSilencio = shCodigo.indexOf("\nelse\n", iRama)
+  assert.ok(iRama >= 0 && llamadasGuardar[0].index > iRama && llamadasGuardar[0].index < iSilencio, "install.sh guarda google sin que haya key")
   assert.doesNotMatch(shCodigo, /KEY_FINAL=/, "install.sh volvió a tener un KEY_FINAL con default")
 })
 

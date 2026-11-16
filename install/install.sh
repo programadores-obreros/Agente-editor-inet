@@ -163,7 +163,11 @@ fi
 # contexto de CADA sesion: asi el bot recuerda el nombre sin volver a preguntar.
 PERFIL_FILE="$CONFIG_DIR/tecnia-perfil.md"
 if [ ! -f "$PERFIL_FILE" ]; then
-  cat > "$PERFIL_FILE" <<'EOF'
+  # Nace 0600. Con el umask de fabrica (022) quedaba 0644: en una compu con varias
+  # cuentas, cualquiera podia leer el nombre y el rol de quien usa esta. El umask
+  # va en un subshell para no cambiarselo al resto del instalador. Si el archivo ya
+  # existe no se le toca el modo: es del usuario.
+  ( umask 077; cat > "$PERFIL_FILE" ) <<'EOF'
 # Perfil del usuario de Tecnia Bot
 <!-- Lo mantiene Tecnia Bot. No editar a mano salvo que quieras cambiar tus datos.
      Modo "aula" = compu compartida por muchos: el Nombre NO se guarda (privacidad de menores).
@@ -185,7 +189,8 @@ fi
 # cargarla en cada sesion: asi el bot recuerda el progreso sin volver a preguntar.
 MEMORIA_FILE="$CONFIG_DIR/tecnia-memoria.md"
 if [ ! -f "$MEMORIA_FILE" ]; then
-  cat > "$MEMORIA_FILE" <<'EOF'
+  # 0600 al nacer, por lo mismo que el perfil.
+  ( umask 077; cat > "$MEMORIA_FILE" ) <<'EOF'
 # Memoria de ESTA compu (no de una persona)
 <!-- Progreso pedagogico de esta maquina/grupo. Lo mantiene Tecnia Bot.
      NO guarda datos personales de ningun alumno (ni nombre ni nada que identifique
@@ -454,6 +459,89 @@ PYEOF
   fi
 }
 
+# Guarda en auth.json la key que el docente pego ($GEMINI_KEY), preservando las
+# otras credenciales. Devuelve:
+#   0  guardada, Y RELEIDA: se volvio a abrir el archivo y la key que hay es esa.
+#   5  auth.json existe y NO es un JSON valido: NO SE TOCO.
+#   6  no hay python3 ni jq con que escribirlo.
+#   7  no se pudo escribir (permisos, disco), o al releer la key no era la pegada.
+#
+# TRES COSAS QUE ESTABAN MAL ACA, las tres en el camino de python3:
+#
+# 1. LA KEY VIAJABA POR LA LINEA DE COMANDOS (`python3 - "$AUTH_FILE" "$GEMINI_KEY"`,
+#    y `jq --arg k "$GEMINI_KEY"` en el otro camino). /proc/<pid>/cmdline lo lee
+#    cualquier proceso del mismo usuario y un `ps` de otra terminal la mostraba
+#    entera. Es exactamente lo que probar_key_google ya evitaba, a 250 lineas de
+#    distancia. Ahora va por el ENTORNO del proceso hijo en los dos caminos.
+#
+# 2. EL ARCHIVO NACIA 0644 con el umask de fabrica: una credencial legible por
+#    todas las cuentas de la compu. Ahora nace 0600. Si ya existia, python3 lo
+#    escribe en el lugar y le respeta el modo; jq lo reemplaza por un temporal,
+#    que es 0600 (mas cerrado, nunca mas abierto).
+#
+# 3. SI auth.json NO PARSEABA, SE PISABA: `except Exception: d = {}` y a escribir.
+#    Un archivo con una coma de mas se llevaba puestas TODAS las otras
+#    credenciales del docente (Anthropic, OpenAI, lo que tuviera de /connect). El
+#    camino de jq ya se negaba; ahora se niegan los dos, igual. Un archivo vacio
+#    no es un archivo roto: ese si se escribe.
+guardar_key_google() {
+  if python3_anda; then
+    TECNIA_KEY_A_GUARDAR="$GEMINI_KEY" python3 - "$AUTH_FILE" <<'PYEOF' || return $?
+import json, os, sys
+path = sys.argv[1]
+key = os.environ.get("TECNIA_KEY_A_GUARDAR", "")
+if not key:
+    sys.exit(7)
+try:
+    # utf-8-sig: un auth.json con BOM (lo guardo un editor de Windows) es valido.
+    with open(path, "r", encoding="utf-8-sig") as f:
+        txt = f.read()
+except FileNotFoundError:
+    txt = ""
+except ValueError:
+    sys.exit(5)
+except OSError:
+    sys.exit(7)
+d = {}
+if txt.strip():
+    try:
+        d = json.loads(txt)
+    except ValueError:
+        sys.exit(5)
+    if not isinstance(d, dict):
+        sys.exit(5)
+d["google"] = {"type": "api", "key": key}
+try:
+    # El 0o600 vale solo si el archivo se CREA aca; si ya existia conserva su modo.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=2)
+except OSError:
+    sys.exit(7)
+PYEOF
+  elif command -v jq >/dev/null 2>&1; then
+    local tmp
+    # El temporal va AL LADO de auth.json: mktemp lo crea 0600 y el mv es un rename
+    # dentro de la misma carpeta, no una copia entre discos.
+    tmp="$(mktemp "$AUTH_FILE.XXXXXX" 2>/dev/null)" || return 7
+    if [ -s "$AUTH_FILE" ]; then
+      # Si jq no lo puede leer (JSON roto, o no es un objeto) NO se escribe nada.
+      if ! TECNIA_KEY_A_GUARDAR="$GEMINI_KEY" jq '.google = {type: "api", key: env.TECNIA_KEY_A_GUARDAR}' "$AUTH_FILE" > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"; return 5
+      fi
+    else
+      if ! TECNIA_KEY_A_GUARDAR="$GEMINI_KEY" jq -n '{google: {type: "api", key: env.TECNIA_KEY_A_GUARDAR}}' > "$tmp" 2>/dev/null; then
+        rm -f "$tmp"; return 7
+      fi
+    fi
+    if ! mv -f "$tmp" "$AUTH_FILE" 2>/dev/null; then rm -f "$tmp"; return 7; fi
+  else
+    return 6
+  fi
+  # RELEER. Que la escritura no haya tirado error no alcanza para decir "guardada".
+  [ "$(auth_leer_key_google)" = "$GEMINI_KEY" ] || return 7
+}
+
 GOOGLE_KEY_ACTUAL="$(auth_leer_key_google)"
 if es_key_vieja "$GOOGLE_KEY_ACTUAL"; then
   auth_quitar_google
@@ -573,39 +661,38 @@ elif [ -n "$GEMINI_KEY" ]; then
       echo "      Quedo la key que ya estaba guardada: no se piso nada."
     fi
   else
-    # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
-    # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
-    PRUEBA_KEY="$PRUEBA_NUEVA"
-    if python3_anda; then
-      python3 - "$AUTH_FILE" "$GEMINI_KEY" <<'PYEOF'
-import json, sys
-path, key = sys.argv[1], sys.argv[2]
-try:
-    d = json.load(open(path))
-except Exception:
-    d = {}
-d["google"] = {"type": "api", "key": key}
-json.dump(d, open(path, "w"), indent=2)
-PYEOF
-      TIENE_GOOGLE=1
-      echo "  [OK] Key guardada en esta compu."
-    elif command -v jq >/dev/null 2>&1; then
-      [ -s "$AUTH_FILE" ] || printf '{}\n' > "$AUTH_FILE"
-      tmp_auth="$(mktemp)"
-      if jq --arg k "$GEMINI_KEY" '.google = {type: "api", key: $k}' "$AUTH_FILE" > "$tmp_auth" 2>/dev/null; then
-        mv "$tmp_auth" "$AUTH_FILE"
+    RC_GUARDAR=0
+    guardar_key_google || RC_GUARDAR=$?
+    case "$RC_GUARDAR" in
+      0)
         TIENE_GOOGLE=1
-        echo "  [OK] Key guardada en esta compu."
-      else
-        rm -f "$tmp_auth"
-        echo "  [AVISO] No pude escribir $AUTH_FILE (no parsea como JSON). Agregala a mano:"
-        echo "          {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}} y volve a correr este instalador."
-      fi
-    else
-      echo "  [AVISO] No hay python3 ni jq para guardar la key automaticamente."
-      echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
-      echo "          y volve a correr este instalador para que el agente pase a Gemini."
-    fi
+        # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
+        # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
+        # Va ACA y no antes de guardar: si no se pudo guardar, esa prueba es de una
+        # key que no quedo en la compu, y contarla como la de la key guardada seria
+        # informar el resultado de otra credencial.
+        PRUEBA_KEY="$PRUEBA_NUEVA"
+        echo "  [OK] Key guardada en esta compu (la relei de $AUTH_FILE)."
+        ;;
+      5)
+        echo "  [AVISO] NO guarde la key: $AUTH_FILE existe y no es un JSON valido."
+        echo "          Adentro puede haber otras credenciales tuyas, asi que NO lo toque."
+        echo "          Abrilo con un editor de texto y arreglalo (o movelo a otro lado si no lo"
+        echo "          necesitas) y volve a correr este instalador."
+        anotar_aviso "la key de Google que pegaste NO se guardo: $AUTH_FILE no es un JSON valido y no lo toque."
+        ;;
+      6)
+        echo "  [AVISO] No hay python3 ni jq para guardar la key automaticamente."
+        echo "          Agregala a mano en $AUTH_FILE: {\"google\": {\"type\": \"api\", \"key\": \"TU_KEY\"}}"
+        echo "          y volve a correr este instalador para que el agente pase a Gemini."
+        anotar_aviso "la key de Google que pegaste NO se guardo: no hay python3 ni jq en esta compu."
+        ;;
+      *)
+        echo "  [AVISO] NO pude guardar la key en $AUTH_FILE (no se puede escribir, o al releerlo la key no estaba)."
+        echo "          Revisa los permisos de ese archivo y de su carpeta, y volve a correr este instalador."
+        anotar_aviso "la key de Google que pegaste NO se guardo: no pude escribir $AUTH_FILE."
+        ;;
+    esac
   fi
 else
   # Enter, timeout, consola sin nadie, o TECNIA_SIN_PROMPT. NO SE TOCA NADA: ni

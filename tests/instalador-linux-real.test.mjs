@@ -37,13 +37,44 @@
 //   - borrar el `sin_tocar += 20` de la rama «no pude parsear»  → rojo el caso python3
 //   - `if not dump(oc_path, oc):` → `if False:` (no mira si escribió) → rojo el de sólo lectura
 //
+// ── 1.5 y 1.6 · LA KEY: permisos, línea de comandos, y un auth.json roto ──────
+//
+// Tres defectos del guardado de la key, los tres en el camino de python3:
+//   - auth.json, tecnia-perfil.md y tecnia-memoria.md nacían 0644 (umask 022).
+//   - la key viajaba por argv: `python3 - "$AUTH_FILE" "$GEMINI_KEY"` y
+//     `jq --arg k "$GEMINI_KEY"`. Un `ps` de otra terminal la mostraba entera.
+//   - con un auth.json que no parsea, python3 hacía `except: d = {}` y lo pisaba:
+//     se perdían las otras credenciales. jq se negaba; python3 no.
+//
+// Acá se PEGA una key por la entrada estándar (lo que hace la docente) y se mira
+// el disco. La prueba contra Google no sale a Internet: con python3 el entorno
+// trae un proxy que rechaza la conexión (127.0.0.1:9) y sin python3 el PATH no
+// tiene curl. En los dos casos el instalador contesta «no pude probarla» y
+// guarda, que es lo que hace en una escuela con la red filtrada.
+//
+// CÓMO SE MIRA EL ARGV sin simular nada: `python3` y `jq` del PATH armado son un
+// envoltorio que anota sus argumentos en un archivo y después hace `exec` del
+// binario de verdad. El trabajo lo hace el python3/jq real.
+//
+// MUTACIONES que ponen rojo este archivo (exit code 1):
+//   - `( umask 077; cat > "$PERFIL_FILE" )` → sin el umask      → rojos los dos de permisos
+//   - `os.open(..., 0o600)` → `0o644`                            → rojo el de python3
+//   - agregar `"$GEMINI_KEY"` a los argumentos de `python3 -`    → rojo el de python3
+//   - `key: env.TECNIA_KEY_A_GUARDAR` → `--arg k "$GEMINI_KEY"` + `key: $k` → rojo el de jq
+//   - en el python de guardar_key_google, `except ValueError: sys.exit(5)` →
+//     `d = {}` (el defecto original)                             → rojo el de auth.json roto (python3)
+//   - en la rama jq, `if [ -s "$AUTH_FILE" ]; then` → `if false; then` (escribe
+//     de cero sin leer)                                          → rojo el de auth.json roto (jq)
+//
+// SIN PROBAR: el modo con que nacen los archivos en macOS (APFS) y con ACLs.
+//
 // Corre con: node --test tests/instalador-linux-real.test.mjs
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { REPO, armarBin, correr, esRoot, nuevoHome, puedeCorrer, rutaDe } from "./ayuda-instalador-sh.mjs"
+import { REPO, armarBin, correr, esRoot, nuevoHome, ponerEjecutable, puedeCorrer, rutaDe } from "./ayuda-instalador-sh.mjs"
 
 const INSTALL = join(REPO, "install", "install.sh")
 const fuente = readFileSync(INSTALL, "utf8")
@@ -218,3 +249,93 @@ test("el código de «instalado CON AVISOS» es el mismo en install.sh, update.s
   const tool = readFileSync(join(REPO, "opencode", "tool", "actualizar.ts"), "utf8")
   assert.match(tool, new RegExp(`const CODIGO_CON_AVISOS = ${CODIGO_CON_AVISOS}\\b`), "actualizar.ts espera otro código")
 })
+
+// ── 1.5 y 1.6 · la key que pega la docente ───────────────────────────────────
+
+// Armada por concatenación a propósito: tests/modelo.test.mjs barre el repo buscando
+// literales con forma de key de Google, y éste tiene la forma (es lo que se pega).
+const KEY_PEGADA = "AIza" + "SyTEST-no-es-una-key-de-verdad_0123456789"
+// Un proxy que rechaza la conexión al toque: la prueba de la key termina en
+// «no pude probarla» sin que salga un solo paquete de esta compu.
+const SIN_RED = { https_proxy: "http://127.0.0.1:9", HTTPS_PROXY: "http://127.0.0.1:9", http_proxy: "http://127.0.0.1:9" }
+const modoDe = (ruta) => statSync(ruta).mode & 0o777
+
+/**
+ * PATH armado donde `herramienta` es un envoltorio que anota sus argumentos y
+ * después corre el binario real. Devuelve también el archivo del registro.
+ */
+function binQueAnotaArgv(h, herramienta) {
+  const bin = armarBin(h.base)
+  const registro = join(h.base, `argv-${herramienta}.log`)
+  ponerEjecutable(bin, herramienta, `printf '%s\\n' "$*" >> '${registro}'\nexec '${rutaDe(herramienta)}' "$@"`)
+  return { bin, registro }
+}
+
+for (const [camino, herramienta, real] of [["python3", "python3", python3], ["jq", "jq", jq]]) {
+  test(`pegar una key (camino ${camino}): queda guardada, 0600, y NO pasó por la línea de comandos`, { skip: !puedeCorrer || !real }, () => {
+    const h = nuevoHome()
+    try {
+      const { bin, registro } = binQueAnotaArgv(h, herramienta)
+      const r = correr(INSTALL, h, { path: bin, env: SIN_RED, input: `${KEY_PEGADA}\n` })
+      assert.equal(r.status, 0, `install.sh salió con ${r.status}:\n${r.salida}`)
+      assert.match(r.salida, /\[OK\] Key guardada/, r.salida)
+      assert.doesNotMatch(r.salida, new RegExp(KEY_PEGADA), "el instalador IMPRIMIÓ la key")
+
+      const auth = leerJson(h.authFile)
+      assert.deepEqual(auth.google, { type: "api", key: KEY_PEGADA }, "la key guardada no es la que se pegó")
+
+      // Permisos: lo que el instalador CREA con datos personales o credenciales.
+      assert.equal(modoDe(h.authFile).toString(8), "600", "auth.json (la credencial) no nació 0600")
+      assert.equal(modoDe(join(h.configDir, "tecnia-perfil.md")).toString(8), "600", "tecnia-perfil.md no nació 0600")
+      assert.equal(modoDe(join(h.configDir, "tecnia-memoria.md")).toString(8), "600", "tecnia-memoria.md no nació 0600")
+
+      // La línea de comandos. Primero que el envoltorio haya corrido de verdad: un
+      // registro vacío haría pasar el assert de abajo sin haber mirado nada.
+      const argv = readFileSync(registro, "utf8")
+      assert.ok(argv.split("\n").filter(Boolean).length >= 2, `el envoltorio de ${herramienta} casi no corrió: el test no está midiendo nada\n${argv}`)
+      assert.ok(argv.includes(h.authFile), `ninguna llamada a ${herramienta} tocó auth.json: el guardado fue por otro lado`)
+      assert.ok(!argv.includes(KEY_PEGADA), `la key viajó por la línea de comandos de ${herramienta} (la ve cualquiera con \`ps\`)`)
+    } finally {
+      rmSync(h.base, { recursive: true, force: true })
+    }
+  })
+
+  test(`pegar una key (camino ${camino}) con otras credenciales guardadas: se agregan, no se pisan`, { skip: !puedeCorrer || !real }, () => {
+    const h = nuevoHome()
+    try {
+      const { bin } = binQueAnotaArgv(h, herramienta)
+      mkdirSync(h.dataDir, { recursive: true })
+      writeFileSync(h.authFile, JSON.stringify({ anthropic: { type: "api", key: "OTRA-CREDENCIAL" } }))
+      const r = correr(INSTALL, h, { path: bin, env: SIN_RED, input: `${KEY_PEGADA}\n` })
+      assert.equal(r.status, 0, r.salida)
+      const auth = leerJson(h.authFile)
+      assert.equal(auth.google.key, KEY_PEGADA)
+      assert.equal(auth.anthropic.key, "OTRA-CREDENCIAL", "se llevó puesta otra credencial del docente")
+      assert.equal(modoDe(h.authFile) & 0o077 & ~0o044, 0, "dejó auth.json escribible por otros")
+    } finally {
+      rmSync(h.base, { recursive: true, force: true })
+    }
+  })
+
+  test(`pegar una key (camino ${camino}) con auth.json ROTO: el archivo queda byte a byte igual y sale con 3`, { skip: !puedeCorrer || !real }, () => {
+    const h = nuevoHome()
+    try {
+      const { bin } = binQueAnotaArgv(h, herramienta)
+      mkdirSync(h.dataDir, { recursive: true })
+      // Una coma de más: lo que deja un editor de texto a mitad de un arreglo.
+      const roto = Buffer.from('{\n  "anthropic": { "type": "api", "key": "OTRA-CREDENCIAL" },\n}\n')
+      writeFileSync(h.authFile, roto)
+      const r = correr(INSTALL, h, { path: bin, env: SIN_RED, input: `${KEY_PEGADA}\n` })
+      assert.ok(readFileSync(h.authFile).equals(roto), `pisó un auth.json que no pudo leer; quedó:\n${readFileSync(h.authFile, "utf8")}`)
+      assert.doesNotMatch(r.salida, /\[OK\] Key guardada/, `dice que guardó la key:\n${r.salida}`)
+      assert.match(r.salida, /NO guarde la key/, r.salida)
+      assert.equal(r.status, CODIGO_CON_AVISOS, `esperaba el código ${CODIGO_CON_AVISOS} y salió ${r.status}:\n${r.salida}`)
+      const cola = r.stdout.slice(r.stdout.lastIndexOf("instalado CON AVISOS. Falta:"))
+      assert.ok(cola.includes(h.authFile), `el resumen final no dice que la key no se guardó ni dónde:\n${cola}`)
+      // Sin key guardada el agente NO puede quedar apuntando a Gemini.
+      assert.equal(leerJson(join(h.configDir, "opencode.json")).agent[AGENTE].model, MODELO_SIN_KEY, "dejó el agente en Gemini sin haber guardado la key")
+    } finally {
+      rmSync(h.base, { recursive: true, force: true })
+    }
+  })
+}
