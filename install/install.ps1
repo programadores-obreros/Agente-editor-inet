@@ -884,19 +884,28 @@ if ($tieneGoogle) {
         Write-Host "    Tecnia Bot va a fallar al primer mensaje. Lo que mas confunde: la cuota gratuita de Google"
         Write-Host "    es por PROYECTO, no por key -- una key nueva del MISMO proyecto da el mismo error."
         Write-Host "    Saca una de OTRO proyecto (o de otra cuenta) en https://aistudio.google.com/apikey"
-        Write-Host "    y pegala con /clave adentro de Tecnia Bot, o volve a correr 'Reparar Tecnia Bot'."
-        Write-Host "    Si necesitas seguir trabajando ya mismo, /clave tambien te pasa al modelo gratuito Big Pickle."
+        Write-Host "    y volve a correr 'Reparar Tecnia Bot' desde el menu inicio: te la pide y la prueba."
+        Write-Host "    /clave adentro de Tecnia Bot tambien la cambia, y te deja pasar al modelo gratuito Big Pickle,"
+        Write-Host "    PERO lo atiende el mismo modelo que se quedo sin cuota: mientras el bot no conteste, usa Reparar."
     }
     if ($resultadoKey -eq "invalida") {
         Write-Host "    OJO: probe la key guardada y Google la RECHAZO: no sirve."
-        Write-Host "    Escribi /clave adentro de Tecnia Bot para pegar una nueva, o saca una en"
-        Write-Host "    https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+        Write-Host "    Saca una nueva en https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'"
+        Write-Host "    desde el menu inicio: te la pide y la prueba."
+        Write-Host "    /clave adentro de Tecnia Bot hace lo mismo, PERO lo atiende el modelo que usa esta misma key:"
+        Write-Host "    mientras la key no sirva el bot no contesta, asi que usa Reparar."
     }
+    # El actualizador vive al lado de este script; se nombra en el aviso de abajo.
+    $ActualizadorManual = Join-Path $PSScriptRoot "update.ps1"
     if ($resultadoKey -eq "modeloIdo") {
         Write-Host "    OJO: la key esta bien -- el que no esta es el MODELO. Google dice que $ModeloApi ya no"
         Write-Host "    esta disponible; pasa cuando retiran o renombran un modelo."
         Write-Host "    NO es tu computadora, NO es tu key y NO es la red: no hay key nueva que lo arregle."
-        Write-Host "    Hace falta una version de Tecnia Bot que apunte a un modelo vigente: escribi /actualizar."
+        Write-Host "    Hace falta una version de Tecnia Bot que apunte a un modelo vigente."
+        Write-Host "    /actualizar adentro del bot es lo que la trae, PERO lo atiende ese mismo modelo: si el bot no"
+        Write-Host "    contesta, /actualizar tampoco. Y 'Reparar Tecnia Bot' NO alcanza: reinstala la version que ya"
+        Write-Host "    tenes. Sin depender del bot: baja el instalador nuevo y correlo encima, o corre a mano"
+        Write-Host "    powershell -NoProfile -ExecutionPolicy Bypass -File `"$ActualizadorManual`""
     }
     if ($resultadoKey -ne "anda" -and $resultadoKey -ne "cuota" -and $resultadoKey -ne "invalida" -and $resultadoKey -ne "modeloIdo") {
         Write-Host "    NO pude probar la key contra Google ($detalleKey), asi que NO se si anda."
