@@ -26,11 +26,48 @@
 // ESTE worktree (ya resuelto por pnpm) dentro de `<configDir>/node_modules/`, que es
 // exactamente donde Node/Bun lo buscarían subiendo desde `<configDir>/tool/*.ts`
 // (documentado en ARCH_INSTALL_REPORT.md §1, fila `@opencode-ai/plugin`).
+//
+// ── QUÉ FUENTE SE INSTALA: EL ÁRBOL DE TRABAJO, NO `HEAD` ─────────────────────────
+//
+// POR QUÉ ESTO ERA HUECO. La fuente se sacaba con `git archive HEAD`, que empaqueta
+// el ÚLTIMO COMMIT. Pero este test corre en el `pnpm test` de ANTES de commitear:
+// en ese momento lo que se está por commitear todavía no es HEAD, así que el test
+// validaba el commit ANTERIOR y le ponía el verde al cambio nuevo. Medido: con un
+// `exit 1` insertado en la línea 2 de install/install.sh, SIN commitear,
+// `node --test tests/empaquetado-instalado.test.mjs` salía con exit code 0.
+// El comentario viejo lo presentaba como una virtud ("fuente LIMPIA, nunca el
+// worktree sucio"); lo que hacía era mirar para otro lado.
+//
+// Ahora se copia el árbol de trabajo: los archivos que git TRACKEA (`git ls-files
+// --cached`), con el contenido que tienen HOY en el disco. Decisiones, con su porqué:
+//
+//   - Lo modificado sin commitear ENTRA: es lo que se está por commitear.
+//   - Lo ignorado NO entra (no está en el índice): node_modules, salidas de build.
+//   - Lo NO trackeado tampoco entra, y es a propósito. Si un archivo nuevo hace
+//     falta y nadie le hizo `git add`, el commit va a salir sin él: acá tiene que
+//     dar ROJO, no verde. Con `git add` hecho (aunque no esté commiteado) sí entra.
+//   - Lo borrado del disco sin commitear NO entra: así va a quedar el commit.
+//   - No se usa `git stash create`: escribe objetos en `.git`, y este test no
+//     tiene por qué tocar el repo. Tampoco hay rutas fijas: todo va a un mkdtemp.
+//
+// El copiador es un guard, y se prueba a sí mismo: el primer test de abajo arma un
+// repo de juguete y comprueba que copia lo modificado y deja afuera lo ignorado y
+// lo no trackeado. Sin eso, un copiador que copiara de más (o de HEAD) no se nota.
+//
+// Mutaciones que dan ROJO (exit code 1 de este archivo; aplicadas con un script que
+// hace assert de que el texto existe y comprobadas con `git diff --stat`):
+//   - insertar `exit 1` al principio de install/install.sh SIN commitear
+//     (antes de este cambio: exit code 0);
+//   - en `copiarArbolDeTrabajo`, listar con `--cached --others` → rojo el test del
+//     copiador (entra lo no trackeado y lo ignorado).
+// OJO: el test del copiador NO ve si el gate deja de usarlo (por ejemplo, si alguien
+// vuelve a `git archive HEAD`). Eso sólo lo ve la primera mutación: si tocás la
+// extracción de la fuente, repetila.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, chmodSync, symlinkSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, chmodSync, symlinkSync, lstatSync, readlinkSync, copyFileSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { tmpdir } from "node:os"
@@ -46,6 +83,36 @@ const HIJO = join(dirname(fileURLToPath(import.meta.url)), "empaquetado-instalad
 // PATH mínimo (sin ~/.platformio, sin el PATH real de la sesión) es justamente lo que
 // impide que el test dependa de -- o contamine -- lo que haya instalado en esta compu.
 const PATH_RESTRINGIDO = "/usr/bin:/bin"
+
+/**
+ * Copia a `destino` los archivos TRACKEADOS de `repo` bajo `rutas`, con el contenido
+ * que tienen hoy en el disco (o sea: incluye lo modificado sin commitear). No entra
+ * lo ignorado ni lo no trackeado; lo borrado del disco se saltea. No escribe nada
+ * en `repo`. Devuelve cuántos archivos copió.
+ */
+function copiarArbolDeTrabajo(repo, destino, rutas) {
+  const ls = spawnSync("git", ["ls-files", "-z", "--cached", "--", ...rutas], { cwd: repo, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
+  assert.equal(ls.status, 0, `git ls-files falló: ${ls.stderr}`)
+  const archivos = [...new Set(ls.stdout.split("\0").filter(Boolean))]
+  let copiados = 0
+  for (const rel of archivos) {
+    const origen = join(repo, rel)
+    let st
+    try {
+      st = lstatSync(origen)
+    } catch (error) {
+      if (error.code === "ENOENT") continue // borrado sin commitear: así va a salir el commit
+      throw error
+    }
+    const fin = join(destino, rel)
+    mkdirSync(dirname(fin), { recursive: true })
+    if (st.isSymbolicLink()) symlinkSync(readlinkSync(origen), fin)
+    else if (st.isFile()) copyFileSync(origen, fin) // conserva el modo (el bit de ejecución)
+    else continue // un submódulo o algo que no es archivo: no es parte de la capa
+    copiados += 1
+  }
+  return copiados
+}
 
 function listarArchivos(dir) {
   const resultado = []
@@ -150,12 +217,60 @@ async function lanzarCandadoUnaVez(configDir, projectDir, idProyecto, etiqueta, 
   return resultado
 }
 
+test("el copiador de fuente toma el ÁRBOL DE TRABAJO: lo modificado entra, lo ignorado y lo no trackeado no", () => {
+  // Un guard que nunca puede fallar da falsa tranquilidad: se prueba contra un repo
+  // de juguete donde se sabe qué tiene que salir.
+  const raiz = mkdtempSync(join(tmpdir(), "tb-copiador-"))
+  try {
+    const repo = join(raiz, "repo ñ")
+    const destino = join(raiz, "destino")
+    mkdirSync(join(repo, "install"), { recursive: true })
+    mkdirSync(join(repo, "afuera"), { recursive: true })
+    mkdirSync(destino)
+    const git = (...args) => {
+      const r = spawnSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], { cwd: repo, encoding: "utf8" })
+      assert.equal(r.status, 0, `git ${args.join(" ")} falló: ${r.stderr}`)
+      return r.stdout
+    }
+    git("init", "-q")
+    writeFileSync(join(repo, ".gitignore"), "install/ignorado.txt\n")
+    writeFileSync(join(repo, "install", "commiteado.sh"), "version commiteada\n")
+    writeFileSync(join(repo, "install", "se-borra.sh"), "va a desaparecer\n")
+    writeFileSync(join(repo, "afuera", "otra-carpeta.txt"), "no se pidió\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    // Lo que distingue el árbol de trabajo de HEAD:
+    writeFileSync(join(repo, "install", "commiteado.sh"), "MODIFICADO SIN COMMITEAR\n")
+    writeFileSync(join(repo, "install", "con-add.sh"), "nuevo, con git add\n")
+    git("add", "install/con-add.sh")
+    writeFileSync(join(repo, "install", "sin-add.sh"), "nuevo, sin git add\n")
+    writeFileSync(join(repo, "install", "ignorado.txt"), "ignorado\n")
+    rmSync(join(repo, "install", "se-borra.sh"))
+    const estadoAntes = git("status", "--porcelain")
+
+    const copiados = copiarArbolDeTrabajo(repo, destino, ["install"])
+
+    assert.equal(readFileSync(join(destino, "install", "commiteado.sh"), "utf8"), "MODIFICADO SIN COMMITEAR\n",
+      "copió la versión de HEAD, no la del disco: es el hueco que este cambio vino a cerrar")
+    assert.ok(existsSync(join(destino, "install", "con-add.sh")), "no copió un archivo nuevo que ya tiene `git add`")
+    assert.ok(!existsSync(join(destino, "install", "sin-add.sh")), "copió un archivo no trackeado: el commit va a salir sin él y acá daría verde")
+    assert.ok(!existsSync(join(destino, "install", "ignorado.txt")), "copió un archivo ignorado")
+    assert.ok(!existsSync(join(destino, "install", "se-borra.sh")), "copió un archivo que ya no está en el disco")
+    assert.ok(!existsSync(join(destino, "afuera")), "copió una carpeta que no se pidió")
+    assert.equal(copiados, 2, "la cuenta de copiados no coincide con lo que hay en el destino")
+    assert.equal(git("status", "--porcelain"), estadoAntes, "el copiador cambió el estado del repo")
+  } finally {
+    rmSync(raiz, { recursive: true, force: true })
+  }
+})
+
 if (process.platform === "win32") {
   test("gate de instalación aislada (D12-D14): Linux only, ver ci.yml para Windows", { skip: "install.sh es Bash; install.ps1 corre de punta a punta en la matriz Windows PowerShell 5.1 de .github/workflows/ci.yml (windows-latest) — no en este runner" }, () => {})
 } else {
   test("gate de instalación aislada (D12-D14): estructura, imports dinámicos, ciclo de vida real, candado, offline, D13 con servidor/ ausente, y limpieza de uninstall.sh", async () => {
-    // ── Setup: fuente LIMPIA (git archive HEAD, nunca el worktree sucio) bajo una
-    // ruta con espacio y Unicode, FUERA del repo. ──────────────────────────────────
+    // ── Setup: la fuente es el ÁRBOL DE TRABAJO (lo trackeado, como está hoy en el
+    // disco — ver el encabezado de por qué no `git archive HEAD`), copiado bajo una
+    // ruta con espacio y Unicode, FUERA del repo. ───────────────────────────────────
     const raiz = mkdtempSync(join(tmpdir(), "tb-empaquetado-"))
     const base = join(raiz, "tb inst ñandú")
     mkdirSync(base, { recursive: true })
@@ -167,10 +282,11 @@ if (process.platform === "win32") {
     mkdirSync(otroCwd, { recursive: true })
 
     try {
-      const archivo = spawnSync("git", ["archive", "HEAD", "--", "opencode", "install", "VERSION"], { cwd: REPO, maxBuffer: 256 * 1024 * 1024 })
-      assert.equal(archivo.status, 0, `git archive HEAD falló: ${archivo.stderr}`)
-      const tar = spawnSync("tar", ["-x", "-C", fuenteDir], { input: archivo.stdout })
-      assert.equal(tar.status, 0, `tar -x falló: ${tar.stderr}`)
+      const copiados = copiarArbolDeTrabajo(REPO, fuenteDir, ["opencode", "install", "VERSION"])
+      // El piso: una copia vacía (un `ls-files` que no encontró nada) no puede seguir
+      // de largo y terminar en un error raro veinte líneas más abajo.
+      assert.ok(copiados > 100, `sólo se copiaron ${copiados} archivos del árbol de trabajo: la fuente está incompleta`)
+      assert.ok(existsSync(join(fuenteDir, "install", "install.sh")), "la copia de la fuente no trae install/install.sh")
 
       // ── Instalar DE VERDAD. ───────────────────────────────────────────────────
       const { run: runInstall, configDir } = instalar(fuenteDir, home)
