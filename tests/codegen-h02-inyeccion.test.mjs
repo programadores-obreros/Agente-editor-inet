@@ -363,7 +363,7 @@ test("G8 número de pin del registro: entra como literal `uint8_t` o no entra (a
   for (const numero of [-1, 1.5, NaN, "18; INYECTADO()"]) rechazaGeneracion(DHT22, "CODEGEN_PIN_NO_DERIVABLE", {}, conPin("GPIO18", { numero }), undefined, String(numero))
   // El banco analógico (`A<n>`) NO se prueba extremo a extremo: en el catálogo real esos pines sólo
   // son ADC, y con una placa de prueba la admisión corta antes (`CODEGEN_NO_ADMITIDO`: el pin no
-  // mapea a la pieza de Wokwi). `pinAnalogico` queda probado sólo por unidad (E13).
+  // mapea a la pieza de Wokwi). Esa rama (`emision.ts::nombreDePin`) queda probada sólo por unidad (E13).
   rechazaGeneracion(DHT22, "CODEGEN_NO_ADMITIDO", {}, conPin("GPIO18", { banco: "A", numero: 3 }))
   assert.match(genera(DHT22, conPin("GPIO18", { numero: 255 })).archivos["src/main.cpp"], /^static const uint8_t PIN_CMP_1_ANODO = 255;/m)
 })
@@ -525,3 +525,45 @@ test(
     }
   },
 )
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// G12 — colisión de nombres extremo a extremo (catálogo de prueba)
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const { crearConocimiento } = await import(join(REPO, "opencode/conocimiento/conocimiento.ts"))
+const { construirCatalogo } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
+const { sha256Hex } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
+const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, VERSION_CATALOGO_MINIMO } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
+
+/** Catálogo real con el DHT22 cambiado (fixture: una forma que el catálogo real no tiene). */
+function conocimientoConDht22(cambiar) {
+  const componentes = COMPONENTES_CATALOGO_MINIMO.map((x) => (x.id === "dht22" ? cambiar(x) : x))
+  return crearConocimiento(construirCatalogo({ version: VERSION_CATALOGO_MINIMO, componentes, placas: PLACAS_CATALOGO_MINIMO, unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS } }, sha256Hex))
+}
+function construirCon(k, opsDelProyecto) {
+  let p = crearProyecto({ catalogoVersion: k.catalogo.version, catalogoHash: k.catalogo.hash, generadorId: () => "activo", ahora: () => "2026-01-01T00:00:00.000Z" })
+  opsDelProyecto.forEach(([tipo, payload], i) => {
+    const r = ejecutarOperacion(p, { idOperacion: `op-${i}`, actor: "agente", baseRevision: p.revision, tipo, payload }, k.catalogo)
+    assert.equal(r.ok, true, `${tipo}: ${JSON.stringify(r.motivos)}`)
+    p = r.proyecto
+  })
+  return p
+}
+
+test("G12 una capacidad que se llama como el terminal del bus: colisión, no `const bool valida_cmp_0_senal = valida_cmp_0_senal;`", () => {
+  // Fixture: la capacidad `temperatura` del DHT22 renombrada a `senal`, que es el id de su terminal
+  // de datos. La validez del BUS (`valida_<cmp>_<terminal>`) y la de la LECTURA
+  // (`valida_<cmp>_<capacidad>`) pasan a tener el mismo nombre para dos cosas distintas. Antes de
+  // H-02 se generaba una variable inicializada con ella misma, que tapaba a la del bus.
+  const renombrar = (de, a) => conocimientoConDht22((dht) => ({ ...dht, capacidades: dht.capacidades.map((cap) => (cap.id === de ? { ...cap, id: a } : cap)) }))
+  const regla = (capacidad) => ({ capacidad, comparador: ">", umbral: { valor: 30, unidad: "celsius", magnitud: "temperatura" } })
+
+  const kChoca = renombrar("temperatura", "senal")
+  const e = rechazaGeneracion(construirCon(kChoca, ops("dht22", regla("senal"))), "CODEGEN_IDENTIFICADOR_INVALIDO", { clase: "identificador", causa: "colision" }, kChoca)
+  assert.equal(e.datos.valor, "valida_cmp_0_senal")
+
+  // Control: el mismo fixture con un nombre que NO choca genera, y usa los dos nombres.
+  const kNoChoca = renombrar("temperatura", "calor")
+  const cpp = genera(construirCon(kNoChoca, ops("dht22", regla("calor"))), kNoChoca).archivos["src/main.cpp"]
+  assert.match(cpp, /^  const bool valida_cmp_0_calor = valida_cmp_0_senal;$/m)
+})

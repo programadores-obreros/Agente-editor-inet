@@ -50,9 +50,9 @@ import {
   flotante,
   idLocal,
   lineaDeBackend,
+  nombreDePin,
   numero,
   palabra,
-  pinAnalogico,
   texto,
   unirLineas,
   type CodigoRechazoDeEmision,
@@ -444,7 +444,7 @@ function generar(proyecto: Proyecto, conocimiento: ComponentKnowledge, opciones:
 // H-02 (SEC-04 / BUG-04): acá NO hay plantillas de string. Cada línea se arma con `cpp` y cada
 // comentario con `comentario` (`emision.ts`), que sólo aceptan fragmentos ya codificados por la
 // clase léxica que les toca: un id de la IR pasa por `idLocal`, un id del catálogo por `atomo`
-// (identificador) o `texto` (comentario), un número por `entero`/`flotante`/`numero`, un
+// (identificador) o `texto` (comentario), un número por `entero`/`nombreDePin`/`flotante`/`numero`, un
 // operador o un nivel por `palabra`. Interpolar un string crudo es un rechazo, no un descuido
 // posible. Antes de H-02 todo esto era `l.push(\`…${dato}…\`)`: un salto de línea en un id
 // terminaba el comentario y lo que seguía era código (evidencia `inyeccion-ids.out`).
@@ -495,7 +495,7 @@ function renderizarMain(
   const ultimoIntentoDeBus = (b: BusPlan) => nombres.identificador("ultimo-intento-de-bus", "ultimo_intento_", partesDePin(b))
   const activaDeRegla = (s: SalidaPlan) => nombres.identificador("regla", "", [regla(s.regla)])
 
-  const valorDePin = (p: PinPlan) => (p.arduino.clase === "analogico" ? pinAnalogico(p.arduino.numero, "pin.numero") : entero(p.arduino.numero, "pin.numero", { max: UINT8_MAX }))
+  const valorDePin = (p: PinPlan) => nombreDePin(p.arduino, "pin.numero")
   const operador = (s: SalidaPlan) => palabra(s.comparador, OPERADORES, "cuando.comparador")
   const nivelDe = (valor: NivelDigital, campo: string) => palabra(valor, NIVELES, campo)
 

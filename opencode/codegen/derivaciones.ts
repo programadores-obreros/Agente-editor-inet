@@ -73,7 +73,7 @@ export function nombreDePinArduino(pin: RegistroPin): string | undefined {
 /**
  * Lo mismo que `nombreDePinArduino`, pero SIN armar el texto: qué clase de nombre es y con qué
  * número. H-02: el programa no interpola el nombre como string; `programa.ts` lo escribe con el
- * constructor de su clase léxica (`emision.ts::entero`/`pinAnalogico`), que además acota el número
+ * constructor de su clase léxica (`emision.ts::nombreDePin`), que además acota el número
  * al tipo `uint8_t` de la constante (un `numero: 1e21` del catálogo ya no llega como `1e+21`).
  */
 export interface PinArduino {

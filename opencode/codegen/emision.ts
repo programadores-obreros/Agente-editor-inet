@@ -21,7 +21,7 @@
 //   ───────────────────   ──────────────────────────────   ─────────────────────────────────────
 //   identificador         `Nombres.identificador`          forma fija + id de la IR + átomos del
 //                         `Nombres.deBackend`              catálogo; sin colisiones en el programa
-//   literal entero        `entero`, `pinAnalogico`         entero seguro dentro del rango del tipo
+//   literal entero        `entero`, `nombreDePin`          entero seguro dentro del rango del tipo
 //   literal float         `flotante`                       finito y representable en `float`
 //   palabra / operador    `palabra`                        pertenece a una tabla cerrada del backend
 //   comentario de línea   `comentario` + `texto`/`numero`  una sola línea, ASCII visible, sin `\`
@@ -322,9 +322,20 @@ export function entero(valor: unknown, campo: string, rango: { readonly min?: nu
   return marcar<Codigo>(CODIGOS, String(valor))
 }
 
-/** Constante analógica del core Arduino (`A0`…): la letra es del generador, el número pasa por `entero`. */
-export function pinAnalogico(valor: unknown, campo: string): Codigo {
-  return marcar<Codigo>(CODIGOS, `A${entero(valor, campo, { max: UINT8_MAX }).texto}`)
+/**
+ * El nombre de un pin en el core Arduino, desde su descripción (`derivaciones.ts::pinArduino`):
+ * el número solo (`18`) o la constante analógica (`A0`). La letra es del generador; el número
+ * pasa por `entero`, acotado al `uint8_t` de la constante que lo guarda. Una clase que no es
+ * ninguna de las dos no se emite: no hay «por defecto, el número».
+ *
+ * La decisión vive acá, y no en `programa.ts`, porque acá se puede probar: con el catálogo real
+ * ningún proyecto LISTO usa un pin del banco analógico (sólo son ADC), así que en el render esa
+ * rama no tenía ningún test que la necesitara (mutante M108 de H-02, que sobrevivió).
+ */
+export function nombreDePin(pin: { readonly clase: unknown; readonly numero: unknown }, campo: string): Codigo {
+  if (pin.clase === "numero") return entero(pin.numero, campo, { max: UINT8_MAX })
+  if (pin.clase === "analogico") return marcar<Codigo>(CODIGOS, `A${entero(pin.numero, campo, { max: UINT8_MAX }).texto}`)
+  return noEmitible("entero", "clase-de-pin-desconocida", campo, pin.clase)
 }
 
 /**

@@ -16,7 +16,7 @@ import { join } from "node:path"
 import { REPO } from "./phase2-helpers.mjs"
 
 const E = await import(join(REPO, "opencode/codegen/emision.ts"))
-const { RechazoDeEmision, texto, numero, comentario, idLocal, atomo, crearNombres, entero, pinAnalogico, flotante, palabra, lineaDeBackend, expresionDeBackend, cpp, unirLineas, valorIni, entornoIni, ini, UINT8_MAX, UINT32_MAX } = E
+const { RechazoDeEmision, texto, numero, comentario, idLocal, atomo, crearNombres, entero, nombreDePin, flotante, palabra, lineaDeBackend, expresionDeBackend, cpp, unirLineas, valorIni, entornoIni, ini, UINT8_MAX, UINT32_MAX } = E
 
 function rechaza(fn, codigo, clase, causa, mensaje = "") {
   let error
@@ -202,11 +202,19 @@ test("E12 entero: sólo dígitos, dentro del rango del tipo", () => {
   rechaza(() => entero(1e21, "pin.numero", { max: UINT8_MAX }), DATO, "entero", "no-es-entero")
 })
 
-test("E13 pinAnalogico: `A<n>` con el número acotado", () => {
-  assert.equal(pinAnalogico(0, "pin").texto, "A0")
-  assert.equal(pinAnalogico(5, "pin").texto, "A5")
-  rechaza(() => pinAnalogico(256, "pin"), DATO, "entero", "fuera-de-rango")
-  rechaza(() => pinAnalogico("0; system(1)", "pin"), DATO, "entero", "no-es-entero")
+test("E13 nombreDePin: el número solo o `A<n>`, siempre acotado a `uint8_t`; una clase desconocida no se emite", () => {
+  // Con el catálogo real ningún proyecto listo llega a la rama analógica: esta es su única prueba.
+  assert.equal(nombreDePin({ clase: "numero", numero: 18 }, "pin").texto, "18")
+  assert.equal(nombreDePin({ clase: "numero", numero: 0 }, "pin").texto, "0")
+  assert.equal(nombreDePin({ clase: "numero", numero: 255 }, "pin").texto, "255")
+  assert.equal(nombreDePin({ clase: "analogico", numero: 0 }, "pin").texto, "A0")
+  assert.equal(nombreDePin({ clase: "analogico", numero: 5 }, "pin").texto, "A5")
+  assert.equal(nombreDePin({ clase: "analogico", numero: 255 }, "pin").texto, "A255")
+  for (const clase of ["numero", "analogico"]) {
+    for (const numero of [256, 300, -1]) rechaza(() => nombreDePin({ clase, numero }, "pin"), DATO, "entero", "fuera-de-rango", `${clase} ${numero}`)
+    for (const numero of [1e21, 1.5, NaN, "0; system(1)", null, undefined]) rechaza(() => nombreDePin({ clase, numero }, "pin"), DATO, "entero", "no-es-entero", `${clase} ${numero}`)
+  }
+  for (const clase of ["GPIO", "", "constructor", undefined, null, 0]) rechaza(() => nombreDePin({ clase, numero: 4 }, "pin"), DATO, "entero", "clase-de-pin-desconocida", String(clase))
 })
 
 test("E14 flotante: literal `float` válido, y sólo si el valor sobrevive en un float", () => {

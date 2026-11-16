@@ -9,7 +9,7 @@
 // las dos lecturas (nivel y protocolo), los dos protocolos, las dos placas, los cuatro
 // comparadores, las dos acciones, umbrales negativos, decimales, con exponente y convertidos de
 // unidad e ids de dos dígitos. (El banco analógico del UNO no entra: en el catálogo real esos
-// pines sólo son ADC y ningún proyecto LISTO los usa; `pinAnalogico` se prueba en
+// pines sólo son ADC y ningún proyecto LISTO los usa; `nombreDePin` se prueba en
 // `codegen-h02-emision.test.mjs`; extremo a extremo no hay cómo llegar, ver G8.)
 
 import { join } from "node:path"
