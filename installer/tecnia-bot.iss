@@ -228,7 +228,8 @@ Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
 ;
 ; Entonces se borra lo que se sabe que es nuestro, y la carpeta sólo si quedó
 ; vacía. Si queda algo que el instalador no puso, NO se toca, y el código avisa
-; qué quedó y dónde (AvisarSiQuedoAlgoAjeno, en usPostUninstall).
+; qué quedó y dónde (AvisarLoQueQuedo, en usPostUninstall), separando lo que es
+; nuestro y no se pudo borrar de lo que el instalador nunca puso.
 ;
 ; install\ y opencode\ se borran enteras: son la copia maestra de los scripts y
 ; de la capa, nunca la carpeta de trabajo de nadie (mismo criterio que la sección
@@ -729,23 +730,55 @@ begin
   MsgBox(Texto, mbError, MB_OK);
 end;
 
-{ ── Lo que quedó en la carpeta del programa y NO es nuestro ────────────────────
+{ ── Lo que quedó en la carpeta del programa después de desinstalar ─────────────
 
   La sección UninstallDelete borra por lista y deja la carpeta si no quedó vacía
   (el porqué está allá). Esto mira qué quedó, DESPUÉS de desinstalar, y lo dice:
   una carpeta que sobrevive en silencio es justo lo que hace dudar de si se
-  desinstaló, y si lo que quedó son proyectos de un alumno, alguien tiene que
-  enterarse de dónde están.
+  desinstaló.
 
-  Se saltean los unins*: son el propio desinstalador, que Inno borra al final de
-  todo, después de este paso. }
-function LoAjenoQueQuedo: String;
+  SE SEPARA LO PROPIO DE LO AJENO, porque son dos noticias distintas. La primera
+  versión juntaba todo y decía "pueden ser proyectos guardados ahí por error":
+  si lo que había quedado era NUESTRO -la carpeta opencode con un archivo
+  tomado, un log abierto-, se le decía al docente que eran proyectos suyos algo
+  que era un borrado que falló. Lo encontró la revisión.
+
+  EsNuestro es EL lugar donde está la lista de lo que este instalador pone en la
+  carpeta del programa. Tiene que coincidir con lo que declaran las secciones
+  Files y UninstallDelete; hay un test (tests/instalador-honesto.test.mjs) que
+  arma la lista desde esas dos secciones y falla si esta función diverge.
+  Los unins* se saltean aparte: son el propio desinstalador, que Inno borra al
+  final de todo, después de este paso. }
+function EsNuestro(Nombre: String): Boolean;
+var
+  N: String;
+begin
+  N := Lowercase(Nombre);
+  Result := (N = 'opencode') or (N = 'install') or (N = 'version')
+    or (N = 'abrir-tecnia-bot.cmd') or (N = 'tecnia-bot.ico')
+    or (N = '.instalando') or (N = 'instalacion.log')
+    or ((Copy(N, 1, 12) = 'instalacion-') and (Copy(N, Length(N) - 3, 4) = '.log'));
+end;
+
+procedure AnotarEnLista(var Lista: String; var Cuantos: Integer; Nombre: String);
+begin
+  Cuantos := Cuantos + 1;
+  if Cuantos <= 8 then
+    Lista := Lista + '  ' + Nombre + #13#10
+  else if Cuantos = 9 then
+    Lista := Lista + '  ... y más' + #13#10;
+end;
+
+procedure MirarLoQueQuedo(var Propio: String; var Ajeno: String);
 var
   Hallado: TFindRec;
-  Cuantos: Integer;
+  CuantosPropios: Integer;
+  CuantosAjenos: Integer;
 begin
-  Result := '';
-  Cuantos := 0;
+  Propio := '';
+  Ajeno := '';
+  CuantosPropios := 0;
+  CuantosAjenos := 0;
   if FindFirst(ExpandConstant('{app}\*'), Hallado) then
   begin
     try
@@ -753,37 +786,47 @@ begin
         if (Hallado.Name <> '.') and (Hallado.Name <> '..')
            and (CompareText(Copy(Hallado.Name, 1, 5), 'unins') <> 0) then
         begin
-          Cuantos := Cuantos + 1;
-          if Cuantos <= 8 then
-            Result := Result + '  ' + Hallado.Name + #13#10;
+          if EsNuestro(Hallado.Name) then
+            AnotarEnLista(Propio, CuantosPropios, Hallado.Name)
+          else
+            AnotarEnLista(Ajeno, CuantosAjenos, Hallado.Name);
         end;
       until not FindNext(Hallado);
     finally
       FindClose(Hallado);
     end;
   end;
-  if Cuantos > 8 then
-    Result := Result + '  ... y ' + IntToStr(Cuantos - 8) + ' más' + #13#10;
 end;
 
-procedure AvisarSiQuedoAlgoAjeno;
+procedure AvisarLoQueQuedo;
 var
-  Quedo: String;
+  Propio: String;
+  Ajeno: String;
+  Texto: String;
 begin
-  Quedo := LoAjenoQueQuedo;
-  if Quedo = '' then
+  MirarLoQueQuedo(Propio, Ajeno);
+  if (Propio = '') and (Ajeno = '') then
     Exit;
-  Log('Tecnia Bot: en la carpeta del programa quedo algo que el instalador no puso: ' + Quedo);
+  Log('Tecnia Bot: en la carpeta del programa quedo sin borrar, propio: ' + Propio + ' | ajeno: ' + Ajeno);
   if UninstallSilent() then
     Exit;
-  MsgBox('Tecnia Bot se desinstaló, pero en su carpeta quedaron cosas que el '
-    + 'instalador NO había puesto, y por eso no las borré:' + #13#10 + #13#10
-    + Quedo + #13#10
-    + 'Están en:' + #13#10
-    + '  ' + ExpandConstant('{app}') + #13#10 + #13#10
-    + 'Pueden ser proyectos guardados ahí por error. Si te sirven, movelos a '
-    + 'Documentos; si no, podés borrar esa carpeta a mano.',
-    mbInformation, MB_OK);
+
+  Texto := 'Tecnia Bot se desinstaló, pero su carpeta no quedó vacía.';
+  if Propio <> '' then
+    Texto := Texto + #13#10 + #13#10
+      + 'NO PUDE BORRAR estos archivos de Tecnia Bot:' + #13#10 + Propio
+      + 'Suele pasar cuando algo los tiene abiertos (Tecnia Bot, el antivirus). '
+      + 'Cerralo y borralos a mano.';
+  if Ajeno <> '' then
+    Texto := Texto + #13#10 + #13#10
+      + 'Además hay cosas que el instalador NO había puesto, y por eso no las toqué:'
+      + #13#10 + Ajeno
+      + 'Pueden ser proyectos guardados ahí por error. Si te sirven, movelos a '
+      + 'Documentos antes de borrar la carpeta.';
+  Texto := Texto + #13#10 + #13#10 + 'Todo eso está en:' + #13#10
+    + '  ' + ExpandConstant('{app}');
+
+  MsgBox(Texto, mbInformation, MB_OK);
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -910,5 +953,5 @@ begin
   { usPostUninstall: ya se procesaron los archivos instalados y la sección
     UninstallDelete. Recién ahora tiene sentido mirar qué quedó. }
   if CurUninstallStep = usPostUninstall then
-    AvisarSiQuedoAlgoAjeno;
+    AvisarLoQueQuedo;
 end;
