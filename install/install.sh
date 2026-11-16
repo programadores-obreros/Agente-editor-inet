@@ -6,6 +6,9 @@
 # CODIGOS DE SALIDA (los leen bootstrap.sh, update.sh y opencode/tool/actualizar.ts):
 #   0  instalado.
 #   1  error: el script corto a la mitad (lo que haya dicho arriba es el motivo).
+#   3  instalado CON AVISOS: los archivos de Tecnia Bot se copiaron, pero algo de lo
+#      que habia que dejar escrito no quedo (lo tipico: opencode.json o tui.json que
+#      no se pueden leer o escribir). El detalle sale en las ULTIMAS lineas.
 #   4  se nego a correr: lo lanzaron con sudo o como root prestado. No toco nada.
 
 set -euo pipefail
@@ -83,6 +86,16 @@ python3_anda() {
   [ "$PYTHON3_ANDA" = "si" ]
 }
 python3_anda || true
+
+# ---- Lo que NO quedo hecho se junta aca y sale AL FINAL ----------------------
+# Antes este script avisaba por stderr que no habia podido tocar opencode.json y
+# tres lineas despues imprimia "[OK] ... actualizados" y "==> Listo! instalado."
+# con codigo 0: el aviso quedaba enterrado arriba de 60 lineas y la ultima
+# palabra era un OK falso. Ahora cada cosa que no se pudo dejar escrita se anota,
+# el cierre dice "instalado CON AVISOS" con la lista, y el script sale con 3.
+# Cadena y no array: macOS trae bash 3.2 y ahi un array vacio con `set -u` aborta.
+AVISOS=""
+anotar_aviso() { AVISOS="${AVISOS}    - $1"$'\n'; }
 
 echo "==> Instalando Tecnia Bot en: $CONFIG_DIR"
 
@@ -804,9 +817,20 @@ def load(path):
     return None, False
 
 def dump(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    # True si quedo escrito. Un archivo de solo lectura no puede tirar una traza de
+    # Python a la cara del docente ni cortar el instalador: se avisa y se informa.
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except OSError as e:
+        sys.stderr.write("  [AVISO] No pude escribir %s (%s): quedo como estaba.\n" % (path, type(e).__name__))
+        return False
+    return True
+
+# Lo que quedo SIN tocar viaja en el codigo de salida, para que el script no tenga
+# que adivinarlo: 10 = tui, 20 = opencode, 30 = los dos. 0 = se escribieron los dos.
+sin_tocar = 0
 
 # tui: theme + plugin (idempotente, preserva el resto).
 tui, ok = load(tui_path)
@@ -819,8 +843,10 @@ if ok:
     if plugin not in plugins:
         plugins.append(plugin)
     tui["plugin"] = plugins
-    dump(tui_path, tui)
+    if not dump(tui_path, tui):
+        sin_tocar += 10
 else:
+    sin_tocar += 10
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % tui_path)
     sys.stderr.write("          Agregale a mano \"theme\": \"%s\" y el plugin \"%s\".\n" % (theme, plugin))
 
@@ -881,12 +907,37 @@ if ok:
     if memoria_path not in instrucciones:
         instrucciones.append(memoria_path)
     oc["instructions"] = instrucciones
-    dump(oc_path, oc)
+    if not dump(oc_path, oc):
+        sin_tocar += 20
 else:
+    sin_tocar += 20
     sys.stderr.write("  [AVISO] No pude parsear %s: lo dejo intacto.\n" % oc_path)
     sys.stderr.write("          Agregale a mano \"default_agent\": \"%s\" y el modelo del agente:\n" % agent)
     sys.stderr.write("          \"agent\": { \"%s\": { \"model\": \"%s\" } }\n" % (agent, modelo))
+
+sys.exit(sin_tocar)
 PYEOF
+}
+
+# Corre el merge de python3 y deja en TUI_SIN_TOCAR / OC_SIN_TOCAR lo que NO quedo
+# escrito, leyendo el codigo de merge_via_python. Cualquier otro codigo es que
+# python3 revento a mitad de camino: no se sabe que alcanzo a escribir, asi que se
+# dan los dos por pendientes -- afirmar de menos, nunca de mas.
+merge_python_y_anotar() {
+  local rc=0
+  merge_via_python || rc=$?
+  TUI_SIN_TOCAR=0
+  OC_SIN_TOCAR=0
+  case "$rc" in
+    0) ;;
+    10) TUI_SIN_TOCAR=1 ;;
+    20) OC_SIN_TOCAR=1 ;;
+    30) TUI_SIN_TOCAR=1; OC_SIN_TOCAR=1 ;;
+    *)
+      TUI_SIN_TOCAR=1; OC_SIN_TOCAR=1
+      echo "  [AVISO] python3 fallo (codigo $rc) mientras escribia la config de OpenCode."
+      ;;
+  esac
 }
 
 # Merge con jq (solo JSON puro; jq NO soporta comentarios). Devuelve 0 si mergeo,
@@ -899,7 +950,9 @@ merge_tui_jq() {
         | .theme = $theme
         | .plugin = ((.plugin // []) | if any(. == $plugin) then . else . + [$plugin] end)
       ' "$TUI_JSON" > "$tmp" 2>/dev/null; then
-    mv "$tmp" "$TUI_JSON"; return 0
+    # `mv -f` y mirando su resultado: antes era `mv ...; return 0`, que devolvia
+    # exito aunque el mv no hubiera podido.
+    if mv -f "$tmp" "$TUI_JSON" 2>/dev/null; then return 0; fi
   fi
   rm -f "$tmp"; return 1
 }
@@ -918,21 +971,26 @@ merge_opencode_jq() {
         | .instructions = ((.instructions // []) | if any(. == $perfil) then . else . + [$perfil] end)
         | .instructions = ((.instructions // []) | if any(. == $memoria) then . else . + [$memoria] end)
       ' "$OPENCODE_JSON" > "$tmp" 2>/dev/null; then
-    mv "$tmp" "$OPENCODE_JSON"; return 0
+    if mv -f "$tmp" "$OPENCODE_JSON" 2>/dev/null; then return 0; fi
   fi
   rm -f "$tmp"; return 1
 }
 
+# TUI_SIN_TOCAR / OC_SIN_TOCAR: 1 = ese archivo NO quedo con lo de Tecnia Bot.
+# El "[OK]" sale SOLO si los dos quedaron escritos; lo que no, va a AVISOS.
+TUI_SIN_TOCAR=0
+OC_SIN_TOCAR=0
 if [ "$JSON_TOOL" = "jq" ]; then
-  JQ_OK=1
-  merge_tui_jq || JQ_OK=0
-  merge_opencode_jq || JQ_OK=0
-  if [ "$JQ_OK" = "1" ]; then
+  merge_tui_jq || TUI_SIN_TOCAR=1
+  merge_opencode_jq || OC_SIN_TOCAR=1
+  if [ "$TUI_SIN_TOCAR" = "0" ] && [ "$OC_SIN_TOCAR" = "0" ]; then
     echo "  [OK] $(basename "$TUI_JSON") y $(basename "$OPENCODE_JSON") actualizados (via jq)."
   elif python3_anda; then
     # jq no pudo (probablemente comentarios en un .jsonc); reintentar con python.
-    merge_via_python
-    echo "  [OK] Config actualizada (jq no pudo con comentarios; usé python3)."
+    merge_python_y_anotar
+    if [ "$TUI_SIN_TOCAR" = "0" ] && [ "$OC_SIN_TOCAR" = "0" ]; then
+      echo "  [OK] Config actualizada (jq no pudo con comentarios; usé python3)."
+    fi
   else
     echo "  [AVISO] jq no pudo parsear la config (¿.jsonc con comentarios?) y no hay python3."
     echo "          Revisá y agregá a mano lo que falte:"
@@ -941,8 +999,10 @@ if [ "$JSON_TOOL" = "jq" ]; then
     echo "            $(basename "$OPENCODE_JSON"): \"agent\": { \"$TECNIA_AGENT\": { \"model\": \"$MODELO_ELEGIDO\" } }"
   fi
 elif [ "$JSON_TOOL" = "python3" ]; then
-  merge_via_python
-  echo "  [OK] $(basename "$TUI_JSON") y $(basename "$OPENCODE_JSON") actualizados (via python3)."
+  merge_python_y_anotar
+  if [ "$TUI_SIN_TOCAR" = "0" ] && [ "$OC_SIN_TOCAR" = "0" ]; then
+    echo "  [OK] $(basename "$TUI_JSON") y $(basename "$OPENCODE_JSON") actualizados (via python3)."
+  fi
 else
   # Sin jq ni python3: si el archivo no existe lo creamos con nuestro default;
   # si existe NO lo tocamos (evitamos un merge fragil) y avisamos que agregue las
@@ -957,6 +1017,7 @@ else
 EOF
     echo "  [OK] $(basename "$TUI_JSON") creado."
   else
+    TUI_SIN_TOCAR=1
     echo "  [AVISO] No hay jq ni python3 y $TUI_JSON ya existe: no lo toco."
     echo "          Agregale a mano estas claves (sin borrar lo tuyo):"
     echo "            \"theme\": \"$TECNIA_THEME\""
@@ -975,6 +1036,7 @@ EOF
 EOF
     echo "  [OK] $(basename "$OPENCODE_JSON") creado."
   else
+    OC_SIN_TOCAR=1
     echo "  [AVISO] No hay jq ni python3 y $OPENCODE_JSON ya existe: no lo toco."
     echo "          Agregale a mano: \"default_agent\": \"$TECNIA_AGENT\","
     echo "          el modelo: \"agent\": { \"$TECNIA_AGENT\": { \"model\": \"$MODELO_ELEGIDO\" } }"
@@ -982,7 +1044,19 @@ EOF
   fi
 fi
 
-echo "==> Listo! Tecnia Bot v$VERSION instalado."
+if [ "$TUI_SIN_TOCAR" = "1" ]; then
+  anotar_aviso "$TUI_JSON quedo SIN el theme y el logo de Tecnia Bot: no lo pude leer o escribir. Agregale a mano \"theme\": \"$TECNIA_THEME\" y el plugin \"$TECNIA_PLUGIN\"."
+fi
+if [ "$OC_SIN_TOCAR" = "1" ]; then
+  anotar_aviso "$OPENCODE_JSON quedo SIN el agente por defecto ni el modelo de Tecnia Bot: no lo pude leer o escribir. Al abrir opencode NO va a arrancar en tecnia-bot. Revisa que sea un JSON valido y que se pueda escribir."
+fi
+
+# El cierre dice lo que paso. "Listo!" solo si no quedo nada anotado.
+if [ -z "$AVISOS" ]; then
+  echo "==> Listo! Tecnia Bot v$VERSION instalado."
+else
+  echo "==> Tecnia Bot v$VERSION instalado CON AVISOS (el detalle va al final)."
+fi
 echo ""
 
 echo "Verificando dependencias:"
@@ -1163,3 +1237,15 @@ fi
 echo ""
 echo "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
 echo "apreta Tab y elegi 'tecnia-bot'."
+
+# LO ULTIMO QUE SE LEE. Va aca, despues de todo, y no arriba: /actualizar le
+# muestra al docente solo la COLA de esta salida (opencode/tool/actualizar.ts), y
+# en una terminal lo que queda a la vista es el final. El codigo 3 es el contrato
+# con bootstrap.sh, update.sh y actualizar.ts: ver el encabezado.
+if [ -n "$AVISOS" ]; then
+  echo ""
+  echo "==> Tecnia Bot v$VERSION instalado CON AVISOS. Falta:"
+  printf '%s' "$AVISOS"
+  echo "    Cuando lo arregles, volve a correr este instalador (bash install/install.sh)."
+  exit 3
+fi

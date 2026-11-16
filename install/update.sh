@@ -11,6 +11,11 @@
 # `reset --hard` + `clean`, que borraba trabajo sin commitear. Ninguna de las dos
 # cosas vuelve: la regla es PUEDE FALLAR, PERO NO PUEDE ROMPER. Si algo sale mal
 # antes de copiar, la copia instalada queda exactamente como estaba.
+#
+# CÓDIGOS DE SALIDA (los lee opencode/tool/actualizar.ts):
+#   0  actualizado (o ya estaba en la última) y la capa reinstalada.
+#   3  actualizado CON AVISOS: es el 3 de install.sh, pasado tal cual.
+#   otro  no se actualizó, o el instalador de la capa falló. El motivo está arriba.
 
 set -euo pipefail
 
@@ -169,7 +174,29 @@ fi
 # TECNIA_DESDE_ACTUALIZAR: el instalador NO baja las herramientas de las placas
 # (mas de 1 GB) cuando lo llama /actualizar, que suele correrse en clase y sin
 # mostrar progreso: seria el mismo cuelgue que se quiere evitar. Solo avisa.
-TECNIA_DESDE_ACTUALIZAR=1 bash "$REPO_DIR/install/install.sh"
+#
+# El código del instalador se MIRA: 3 es «instalado CON AVISOS» (ver el encabezado
+# de install.sh) — la capa se copió pero algo de la config de OpenCode no quedó
+# escrito. Antes `set -e` cortaba acá con cualquier código distinto de 0 y este
+# script nunca decía nada; ahora dice cuál de los tres casos fue, y sale con el
+# mismo código para que opencode/tool/actualizar.ts pueda contarlo bien.
+rc_instalador=0
+TECNIA_DESDE_ACTUALIZAR=1 bash "$REPO_DIR/install/install.sh" || rc_instalador=$?
 
 echo ""
-echo "==> Tecnia Bot actualizado. Reiniciá OpenCode para cargar los cambios."
+case "$rc_instalador" in
+  0)
+    echo "==> Tecnia Bot actualizado. Reiniciá OpenCode para cargar los cambios."
+    ;;
+  3)
+    echo "==> Tecnia Bot actualizado CON AVISOS: los archivos nuevos se copiaron, pero el"
+    echo "    instalador no pudo dejar escrito todo (lo que falta está en las líneas de arriba)."
+    echo "    Reiniciá OpenCode igual para cargar lo que sí cambió."
+    exit 3
+    ;;
+  *)
+    echo "  [ERROR] El instalador de la capa falló (código $rc_instalador): Tecnia Bot NO quedó actualizado del todo." >&2
+    echo "          Lo que haya dicho arriba es el motivo. Probá de nuevo con: bash $REPO_DIR/install/install.sh" >&2
+    exit "$rc_instalador"
+    ;;
+esac
