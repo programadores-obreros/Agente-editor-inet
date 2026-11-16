@@ -154,11 +154,21 @@ test("R3 los proyectos válidos de los que salen los casos siguen generando (el 
 const { createHash } = await import("node:crypto")
 const { spawnSync } = await import("node:child_process")
 const { BACKENDS_DE_PROTOCOLO } = await import(join(REPO, "opencode/codegen/protocolos.ts"))
+const { renderizarPlatformioIni } = await import(join(REPO, "opencode/codegen/platformio-ini.ts"))
+const { RechazoDeEmision } = await import(join(REPO, "opencode/codegen/emision.ts"))
 const { corpusValido } = await import("./codegen-h02-corpus.mjs")
 
 /** `generarPrograma` rechaza, con ese código y esos datos, y NO devuelve archivos. */
 function rechazaGeneracion(proyecto, codigo, esperado = {}, conocimiento = K, opciones = undefined, mensaje = "") {
-  const g = generarPrograma(proyecto, conocimiento, opciones)
+  // Un rechazo es un RESULTADO (`ok: false`), no una excepción: la tool `programa` espera un
+  // `CODEGEN_*` para explicarle al alumno. Si `generarPrograma` deja escapar el rechazo interno
+  // de `emision.ts`, este test tiene que ponerse rojo por aserción, no por una excepción suelta.
+  let g
+  try {
+    g = generarPrograma(proyecto, conocimiento, opciones)
+  } catch (error) {
+    assert.fail(`generarPrograma lanzó en vez de devolver un rechazo (${mensaje}): ${error}`)
+  }
   assert.equal(g.ok, false, `generó un programa: ${mensaje}`)
   assert.ok(!("archivos" in g), "un rechazo nunca devuelve archivos")
   assert.equal(g.error.codigo, codigo, `${mensaje} ${JSON.stringify(g.error)}`)
@@ -218,6 +228,23 @@ test("G2 un id hostil en algo que el programa NO nombra (una resistencia, una co
   }
   // Control: los mismos documentos, sin tocar, generan.
   genera(documento(DHT22))
+})
+
+test("G2b la identidad se mira antes que la admisión: un proyecto con un id que no es un id se informa como tal, no como «no admitido»", () => {
+  // Sin revisiones eléctricas el proyecto base da CODEGEN_NO_ADMITIDO (paso 2 del gate). Con un id
+  // de regla hostil, el paso 1b corta antes. Sin el chequeo de los ids de las reglas en 1b, este
+  // proyecto se informaba como «no admitido»: era un rechazo, pero por una razón que no es la suya.
+  const sinRevisiones = { revisiones: { placas: [], componentes: [] } }
+  rechazaGeneracion(documento(DHT22), "CODEGEN_NO_ADMITIDO", {}, K, sinRevisiones)
+  for (const [mutar, campo] of [
+    [(d) => { d.comportamientos[0].id = "beh-7\nvoid INYECTADO(){} //" }, "comportamiento.id"],
+    [(d) => renombrar(d, "cmp-1", "cmp_1"), "componente.id"],
+    [(d) => { d.conexiones[0].id = "cable" }, "conexion.id"],
+  ]) {
+    const doc = documento(DHT22)
+    mutar(doc)
+    rechazaGeneracion(doc, "CODEGEN_IDENTIFICADOR_INVALIDO", { causa: "formato-de-id", campo }, K, sinRevisiones, campo)
+  }
 })
 
 test("G3 id de proyecto y revisión hostiles: no entran al comentario de cabecera (CODEGEN_DATO_NO_EMITIBLE)", () => {
@@ -311,6 +338,18 @@ test("G7 platformio.ini: un valor del registro de placas no puede abrir otra opc
       const e = rechazaGeneracion(DHT22, "CODEGEN_DATO_NO_EMITIBLE", { clase: "ini", campo: `placa.backends.platformio.${campo}` }, conPlatformio(campo, valor), undefined, `${campo}=${JSON.stringify(valor)}`)
       assert.equal(e.datos.causa, typeof valor === "string" ? "forma" : "no-es-texto")
     }
+  }
+  // El nombre del environment (el id de la placa) no se puede cambiar extremo a extremo sin que la
+  // admisión corte antes, así que se prueba sobre `renderizarPlatformioIni`: además de ir al .ini,
+  // va como argumento de `pio run -e`, así que no admite ni `.` ni `@` ni empezar con `-`.
+  const real = K.placa("esp32-devkit-v1")
+  assert.equal(renderizarPlatformioIni(real).environment, "esp32-devkit-v1")
+  for (const id of ["esp32\n[env:x]\nextra_scripts = pre:malo.py", "esp32]\nboard = uno\n[env:y", "-e", "--upload-port=/dev/x", "esp32 devkit", "a.b", "a@1", "a;b", "${sysenv.HOME}", "", 7, null]) {
+    assert.throws(
+      () => renderizarPlatformioIni({ ...real, id }),
+      (error) => error instanceof RechazoDeEmision && error.codigo === "CODEGEN_DATO_NO_EMITIBLE" && error.datos.clase === "ini" && error.datos.campo === "placa.id" && error.datos.causa === (typeof id === "string" ? "forma" : "no-es-texto"),
+      `environment ${JSON.stringify(id)}`,
+    )
   }
   // Y el .ini real tiene exactamente las líneas de siempre: una sección y tres opciones.
   assert.equal(genera(DHT22).archivos["platformio.ini"], "; Generado por Tecnia Bot (codegen) desde el registro de placas. No editar: se regenera desde el proyecto.\n\n[env:esp32-devkit-v1]\nplatform = espressif32@6.12.0\nboard = esp32dev\nframework = arduino\n")
