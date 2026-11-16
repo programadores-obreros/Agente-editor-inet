@@ -71,6 +71,10 @@ const nieto = \`
 const hijo = \`
   const { spawn } = require("node:child_process")
   require("node:fs").writeFileSync(\${JSON.stringify(dir)} + "/scons.pid", String(process.pid))
+  // Modo "trap" (ciclo 2, B-2): como scons, maneja SIGTERM y sigue; al recibirlo lanza un hijo.
+  if (\${JSON.stringify(modo)}.startsWith("trap")) process.on("SIGTERM", () => {
+    spawn(process.execPath, ["-e", 'require("node:fs").writeFileSync(' + JSON.stringify(\${JSON.stringify(dir)} + "/tardio.pid") + ', String(process.pid)); setInterval(() => {}, 1000)'], { stdio: "ignore" })
+  })
   spawn(process.execPath, ["-e", \${JSON.stringify(nieto)}], { stdio: "ignore" })
   setInterval(() => {}, 1000)\`
 spawn(process.execPath, ["-e", hijo], { stdio: "ignore" })
@@ -147,6 +151,8 @@ after(() => {
   rmSync(OUT, { recursive: true, force: true })
 })
 
+/** Una carpeta con la forma de la privada (prefijo de mkdtemp): el barrido del corte la exige. */
+const CARGA = mkdtempSync(join(OUT, "carga-"))
 const argv = (cwd) => argvDeCargaCompilando({ cwd, environment: "esp32-devkit-v1", puerto: "/dev/ttyUSB0" })
 
 // ════════════════════════════════════════════════════════════════════════════════════════
@@ -155,7 +161,7 @@ test("cancelar una carga termina pio, scons y esptool; run() vuelve recién con 
   preparar("normal:1500")
   try {
     const ctrl = new AbortController()
-    const corriendo = lanzarCarga(proceso.run, argv(OUT), OUT, ctrl.signal, 60_000)
+    const corriendo = lanzarCarga(proceso.run, argv(CARGA), CARGA, ctrl.signal, 60_000, CARGA)
     assert.equal(await cortarCuandoGrabe(ctrl), true, "fixture: el nieto no arrancó")
     const r = await corriendo
     const p = pidsAnotados()
@@ -177,7 +183,7 @@ test("un descendiente que ignora SIGTERM cae por SIGKILL, y se confirma", { skip
   preparar("ignora:4500") // más que el tope de SIGTERM: si no lo mata SIGKILL, graba
   try {
     const ctrl = new AbortController()
-    const corriendo = lanzarCarga(proceso.run, argv(OUT), OUT, ctrl.signal, 60_000)
+    const corriendo = lanzarCarga(proceso.run, argv(CARGA), CARGA, ctrl.signal, 60_000, CARGA)
     assert.equal(await cortarCuandoGrabe(ctrl), true)
     const r = await corriendo
     const p = pidsAnotados()
@@ -192,10 +198,10 @@ test("un descendiente que ignora SIGTERM cae por SIGKILL, y se confirma", { skip
 })
 
 test("timeout de una carga: mismo corte del árbol, código 124", { skip: !LINUX && "usa /proc" }, async () => {
-  preparar("normal:1500")
+  preparar("normal:3000")
   try {
-    // El tope corre desde el lanzamiento; 400 ms alcanzan para que el nieto esté vivo (se afirma).
-    const r = await lanzarCarga(proceso.run, argv(OUT), OUT, undefined, 400)
+    // El tope corre desde el lanzamiento; 1 s alcanza para que el nieto esté vivo (se afirma).
+    const r = await lanzarCarga(proceso.run, argv(CARGA), CARGA, undefined, 1000, CARGA)
     const p = pidsAnotados()
     assert.equal(r.code, 124)
     assert.ok(p.esptool, "fixture: el nieto no llegó a arrancar antes del timeout")
@@ -209,10 +215,104 @@ test("timeout de una carga: mismo corte del árbol, código 124", { skip: !LINUX
 })
 
 test("si no se puede mirar el sistema, no se confirma", async () => {
-  const sis = { plataforma: "linux", foto: () => null, senal: () => {}, taskkill: () => false }
-  assert.deepEqual((await terminarArbol(123456, sis)).confirmado, false)
-  const quedaVivo = { plataforma: "linux", foto: () => [{ pid: 4242, ppid: 1, zombi: false }], senal: () => {}, taskkill: () => false }
-  assert.equal((await terminarArbol(4242, quedaVivo, { term: 50, kill: 50 })).confirmado, false, "si sigue vivo después de SIGKILL, no se confirma")
+  const PRIV = "/tmp/x/carga-abc"
+  const sis = { plataforma: "linux", foto: () => null, referencian: () => [], senal: () => {}, taskkill: () => false }
+  assert.deepEqual((await terminarArbol(123456, PRIV, sis)).confirmado, false)
+  const quedaVivo = { plataforma: "linux", foto: () => [{ pid: 4242, ppid: 1, zombi: false }], referencian: () => [], senal: () => {}, taskkill: () => false }
+  assert.equal((await terminarArbol(4242, PRIV, quedaVivo, { kill: 50 })).confirmado, false, "si sigue vivo después de SIGKILL, no se confirma")
+  const sinBarrido = { plataforma: "linux", foto: () => [], referencian: () => null, senal: () => {}, taskkill: () => false }
+  assert.equal((await terminarArbol(4242, PRIV, sinBarrido, { kill: 50 })).confirmado, false, "si no se puede barrer por la carpeta, no se confirma")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// Ciclo 2 (B-2, B-3, N-5)
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("B-2: un proceso del árbol con handler de SIGTERM que lanza un hijo NO llega a lanzarlo (nunca se reanuda el árbol)", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("trap:3000")
+  try {
+    const ctrl = new AbortController()
+    const corriendo = lanzarCarga(proceso.run, argv(CARGA), CARGA, ctrl.signal, 60_000, CARGA)
+    assert.equal(await cortarCuandoGrabe(ctrl), true)
+    const r = await corriendo
+    const fin = Date.now() + 1500 // margen para que un hijo tardío alcance a anotarse si existiera
+    await hasta(() => existsSync(join(PIDS, "tardio.pid")) || Date.now() > fin, 3000)
+    const p = pidsAnotados()
+    assert.equal(p.tardio, undefined, `el handler de SIGTERM lanzó un hijo después del corte (pid ${p.tardio?.pid})`)
+    assert.deepEqual(["pio", "scons", "esptool"].filter((n) => vivo(p[n].pid)), [])
+    assert.equal(r.procesosDeCargaTerminados, true)
+  } finally {
+    limpiar()
+  }
+})
+
+/** Un padre que deja un nieto vivo (con cwd en `cwd` y con `extra` en su línea de comando) y termina. */
+async function raizMuertaConNieto({ cwd, extra = "" }) {
+  const nieto = `require("node:fs").writeFileSync(${JSON.stringify(join(PIDS, "huerfano.pid"))}, String(process.pid)); /* ${extra} */ setInterval(() => {}, 1000)`
+  const padre = spawn(process.execPath, ["-e", `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(nieto)}], { cwd: ${JSON.stringify(cwd)}, stdio: "ignore", detached: true }).unref()`], { stdio: "ignore" })
+  const pidPadre = padre.pid
+  await new Promise((listo) => padre.on("exit", listo)) // el padre terminó y Node lo recogió
+  assert.equal(await hasta(() => existsSync(join(PIDS, "huerfano.pid")), 5000), true, "fixture: el nieto no arrancó")
+  const huerfano = Number(readFileSync(join(PIDS, "huerfano.pid"), "utf8"))
+  todos.add(huerfano)
+  return { pidPadre, huerfano }
+}
+
+test("B-3: raíz ya muerta con un nieto vivo con cwd en la carpeta privada → el barrido lo mata y recién ahí confirma", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("normal:1500")
+  try {
+    const { pidPadre, huerfano } = await raizMuertaConNieto({ cwd: CARGA })
+    assert.equal(vivo(huerfano), true)
+    const fin = await terminarArbol(pidPadre, CARGA)
+    assert.equal(vivo(huerfano), false, "el nieto huérfano que usaba la carpeta sigue vivo")
+    assert.equal(fin.confirmado, true, fin.detalle)
+  } finally {
+    limpiar()
+  }
+})
+
+test("B-3: raíz ya muerta con un nieto que NOMBRA la carpeta privada en su línea de comando (cwd en otro lado) → también se lo mata", { skip: !LINUX && "usa /proc" }, async () => {
+  preparar("normal:1500")
+  try {
+    const { pidPadre, huerfano } = await raizMuertaConNieto({ cwd: OUT, extra: `${CARGA}/.pio/build/esp32-devkit-v1/firmware.bin` })
+    const fin = await terminarArbol(pidPadre, CARGA)
+    assert.equal(vivo(huerfano), false)
+    assert.equal(fin.confirmado, true, fin.detalle)
+  } finally {
+    limpiar()
+  }
+})
+
+test("B-3: raíz muerta y sin carpeta privada → no se confirma (y no se manda nada a ese pid)", async () => {
+  const senales = []
+  const sis = { plataforma: "linux", foto: () => [{ pid: 1, ppid: 0, zombi: false }], referencian: () => [], senal: (pid, s) => senales.push([pid, s]), taskkill: () => false }
+  const fin = await terminarArbol(4242, undefined, sis, { kill: 50 })
+  assert.equal(fin.confirmado, false)
+  assert.deepEqual(senales, [], "a un pid que no estaba vivo no se le manda ninguna señal")
+  const zombi = { ...sis, foto: () => [{ pid: 4242, ppid: 1, zombi: true }] }
+  await terminarArbol(4242, "/tmp/x/carga-abc", zombi, { kill: 50 })
+  assert.deepEqual(senales, [], "tampoco a un zombi")
+})
+
+test("N-5: si el árbol congelado sigue creciendo hasta el tope de vueltas → no se confirma", async () => {
+  let siguiente = 5000
+  const foto = [{ pid: 4242, ppid: 1, zombi: false }]
+  const sis = {
+    plataforma: "linux",
+    foto: () => {
+      foto.push({ pid: siguiente, ppid: siguiente === 5000 ? 4242 : siguiente - 1, zombi: false })
+      siguiente++
+      return foto.map((p) => ({ ...p }))
+    },
+    referencian: () => [],
+    senal: (pid, s) => {
+      if (s === "SIGKILL") for (const p of foto) if (p.pid === pid) p.zombi = true
+    },
+    taskkill: () => false,
+  }
+  const fin = await terminarArbol(4242, "/tmp/x/carga-abc", sis, { kill: 50 })
+  assert.equal(fin.confirmado, false, fin.detalle)
+  assert.match(fin.detalle, /siguió cambiando/)
 })
 
 test("lo que no es carga sigue como siempre: la señal va a Bun.spawn y no hay campo de árbol", { skip: !LINUX && "usa /proc" }, async () => {

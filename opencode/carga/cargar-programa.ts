@@ -177,6 +177,8 @@ const TUI_CON_VALOR = new Set(["--agent", "--model", "-m", "--prompt", "--sessio
 const TUI_SIN_VALOR = new Set(["--continue", "-c", "--fork", "--print-logs"])
 /** Las que abren o configuran un servidor (`cli/network.ts` de OpenCode). */
 const DE_SERVIDOR = new Set(["--port", "--hostname", "--mdns", "--mdns-domain", "--cors"])
+/** Las mismas, sin guiones y en minúsculas, para buscarlas en cualquier forma (`--mdnsDomain`, `--PORT=1`). */
+const SERVIDOR_SIN_GUIONES = new Set(["port", "hostname", "mdns", "mdnsdomain", "cors"])
 
 export interface RechazoDeLanzamiento {
   codigo: "APROBACION_AUTOMATICA" | "SERVIDOR_EXPUESTO" | "MODO_NO_PERMITIDO" | "OPCION_DESCONOCIDA"
@@ -191,6 +193,14 @@ export function porQueElLanzamientoNoPermiteCargar(argv: readonly string[]): Rec
   const bandera = banderaDeAprobacionAutomatica(argv)
   if (bandera) return { codigo: "APROBACION_AUTOMATICA", detalle: bandera }
   const args = argv.slice(1)
+  // Las opciones de servidor se buscan en TODOS los elementos antes de interpretar nada
+  // (ciclo 2, B-1), como las de aprobación automática: así no se pueden esconder como el
+  // "valor" de otra opción. Cualquier capitalización, con o sin `=valor`.
+  for (const a of args) {
+    if (!a.startsWith("-")) continue
+    const clave = a.replace(/^-+/, "").split("=")[0]!.replace(/-/g, "").toLowerCase()
+    if (SERVIDOR_SIN_GUIONES.has(clave)) return { codigo: "SERVIDOR_EXPUESTO", detalle: a.split("=")[0]! }
+  }
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!
     if (!a.startsWith("-")) return { codigo: "MODO_NO_PERMITIDO", detalle: a === "serve" || a === "web" || a === "acp" || a === "run" || a === "attach" ? `opencode ${a}` : "opencode con un subcomando o una carpeta" }
@@ -198,7 +208,12 @@ export function porQueElLanzamientoNoPermiteCargar(argv: readonly string[]): Rec
     if (DE_SERVIDOR.has(opcion) || (opcion.startsWith("--") && DE_SERVIDOR.has(`--${nombreDeOpcionLarga(opcion)}`))) return { codigo: "SERVIDOR_EXPUESTO", detalle: opcion }
     if (TUI_SIN_VALOR.has(opcion)) continue
     if (TUI_CON_VALOR.has(opcion)) {
-      if (!a.includes("=")) i++ // el valor es el próximo elemento, sea lo que sea
+      if (a.includes("=")) continue
+      // yargs NO toma como valor un elemento que empieza con `-`: lo parsea como otra opción y
+      // deja el valor vacío (B-1). Acá eso no se interpreta: se rechaza.
+      const valor = args[i + 1]
+      if (valor === undefined || valor.startsWith("-")) return { codigo: "MODO_NO_PERMITIDO", detalle: `${opcion} sin un valor común` }
+      i++
       continue
     }
     return { codigo: "OPCION_DESCONOCIDA", detalle: opcion }
@@ -711,7 +726,7 @@ async function cargarDesde(dir: string, p: ProgramaParaCargar, ctx: ContextoDeCa
     const timeoutMs = timeoutCarga()
     let corrida: RunResult
     try {
-      corrida = await lanzarCarga(h.run, argvDeCargaCompilando({ cwd: dir, environment: p.environment, puerto: placa.puerto }), dir, signal, timeoutMs)
+      corrida = await lanzarCarga(h.run, argvDeCargaCompilando({ cwd: dir, environment: p.environment, puerto: placa.puerto }), dir, signal, timeoutMs, dir)
     } catch (error) {
       // Un `ErrorDeCarga` es un rechazo ANTES de lanzar. Cualquier otra cosa: no se sabe.
       if (error instanceof ErrorDeCarga) return no(error.codigo, `NO SE CARGÓ — ${error.message}. No se lanzó nada.`)

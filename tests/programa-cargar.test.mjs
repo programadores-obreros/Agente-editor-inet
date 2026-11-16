@@ -661,7 +661,7 @@ test("H3: las líneas de comando medidas — la TUI con bandera, serve, run y la
     "E3-tui-dsp": "APROBACION_AUTOMATICA",
     "E3-tui-yolo": "APROBACION_AUTOMATICA",
     "E3-tui-port-attach-auto": "SERVIDOR_EXPUESTO",
-    "E1/E3-attach (serve)": "MODO_NO_PERMITIDO",
+    "E1/E3-attach (serve)": "SERVIDOR_EXPUESTO", // ciclo 2: las opciones de servidor se buscan antes que el subcomando; `serve` solo da MODO_NO_PERMITIDO (test de abajo)
     "E3-run-auto": "APROBACION_AUTOMATICA",
     "E3-run-sin-flags": "MODO_NO_PERMITIDO",
   }
@@ -693,6 +693,28 @@ test("H3: formas de las banderas — =valor, camelCase y después de un valor s�
   for (const red of ["--port", "--port=0", "--hostname", "--hostname=0.0.0.0", "--mdns", "--mdns-domain=x", "--mdnsDomain", "--cors"]) assert.equal(cod(red), "SERVIDOR_EXPUESTO", red)
   for (const sub of ["serve", "web", "acp", "attach", "run", "./otra-carpeta"]) assert.equal(cod(sub), "MODO_NO_PERMITIDO", sub)
   assert.equal(cod("--algo-nuevo"), "OPCION_DESCONOCIDA")
+})
+
+test("ciclo 2, B-1: una opción de servidor escondida como «valor» de otra NO pasa (las cinco líneas del QA)", async () => {
+  const { porQueElLanzamientoNoPermiteCargar } = await import(join(REPO, "opencode/carga/cargar-programa.ts"))
+  const cod = (...args) => porQueElLanzamientoNoPermiteCargar([OC, ...args])?.codigo ?? null
+  // Lo que entiende yargs (QA, yargs-parser 21.1.1): un elemento con `-` no es valor, es otra opción.
+  for (const linea of [["--prompt", "--port=4096"], ["-m", "--mdns"], ["--model", "--hostname=0.0.0.0"], ["-s", "--port=4096"], ["--log-level", "--cors=http://x"]]) {
+    assert.equal(cod(...linea), "SERVIDOR_EXPUESTO", linea.join(" "))
+  }
+  // Cualquier capitalización, en cualquier lugar.
+  for (const red of ["--PORT=1", "--Hostname", "--mdnsDomain=x", "--MDNS"]) assert.equal(cod("--agent", "tecnia-bot", red), "SERVIDOR_EXPUESTO", red)
+  // (a) un elemento que empieza con `-` nunca se consume como valor: se rechaza.
+  assert.equal(cod("--prompt", "--fork"), "MODO_NO_PERMITIDO")
+  assert.equal(cod("-m", "-c"), "MODO_NO_PERMITIDO")
+  assert.equal(cod("--agent"), "MODO_NO_PERMITIDO", "una opción con valor sin valor")
+  // Lo normal sigue pasando.
+  assert.equal(cod("--prompt", "subí el programa", "-m", "x/y", "--agent=tecnia-bot"), null)
+  // Y de punta a punta: no carga.
+  const dir = await armar()
+  const { r, lanza } = await cargar(dir, { herramientas: { lineaDeComando: () => ({ ok: true, argv: [OC, "--prompt", "--port=4096"] }) } })
+  assert.equal(r.codigo, "SERVIDOR_EXPUESTO")
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
 })
 
 test("H3: si la línea de comando no se puede leer, o la plataforma no es Linux → no carga", async () => {

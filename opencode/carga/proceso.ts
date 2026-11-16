@@ -257,6 +257,8 @@ export type Run = (
   signal?: AbortSignal,
   timeoutMs?: number,
   capacidad?: CapacidadDeCarga,
+  /** Sólo cargas: la carpeta privada de la carga, para comprobar al cortar que nadie la usa (`arbol.ts`). */
+  carpetaPrivada?: string,
 ) => Promise<RunResult>
 
 let capacidadEntregada = false
@@ -385,6 +387,7 @@ export async function run(
   signal?: AbortSignal,
   timeoutMs: number = TIMEOUT_CORTO_MS,
   capacidad?: CapacidadDeCarga,
+  carpetaPrivada?: string,
 ): Promise<RunResult> {
   // Resolvemos "pio" a la ruta real del binario (PATH-independiente)
   if (cmd[0] === "pio") cmd = [pioBin(), ...cmd.slice(1)]
@@ -450,7 +453,9 @@ export async function run(
       }
       return { ...resultadoCorte(), procesosDeCargaTerminados: false }
     }
-    const fin = await terminarArbol(pid)
+    // Sin carpeta privada (la carga heredada de `flash`/`both`) el corte se hace igual, pero
+    // no se puede confirmar: `arbol.ts` exige el barrido por carpeta para decir "confirmado".
+    const fin = await terminarArbol(pid, carpetaPrivada)
     // El hijo directo también tiene que haber terminado para el runtime (con tope: si el árbol
     // ya se confirmó muerto, esto vuelve enseguida).
     let tope: ReturnType<typeof setTimeout> | undefined

@@ -118,10 +118,14 @@ function porQueNoEsCargaAdmitida(argv: readonly string[]): string | null {
  * `timeoutMs` no está en CONTRATOS-API §9: se agregó porque la carga heredada
  * necesita conservar su propio tope (3 minutos si faltan herramientas). Sin
  * indicarlo se usa `timeoutCarga()`.
+ *
+ * `carpetaPrivada` (ciclo 2): la carpeta privada de `programa cargar`. Con ella, si hay que
+ * cortar, `run()` puede comprobar que ningún proceso la sigue usando; sin ella (la carga
+ * heredada) el corte nunca se da por confirmado.
  */
-export async function lanzarCarga(run: Run, argv: string[], cwd: string, signal?: AbortSignal, timeoutMs: number = timeoutCarga()): Promise<RunResult> {
+export async function lanzarCarga(run: Run, argv: string[], cwd: string, signal?: AbortSignal, timeoutMs: number = timeoutCarga(), carpetaPrivada?: string): Promise<RunResult> {
   if (CAPACIDAD === null) throw rechazo("este módulo de carga se quedó sin la capacidad: otro la pidió antes. No se puede cargar desde acá")
   const motivo = porQueNoEsCargaAdmitida(argv)
   if (motivo) throw rechazo(`el argv no es una carga admitida (${motivo}); no se lanzó`)
-  return run(argv, cwd, signal, timeoutMs, CAPACIDAD)
+  return run(argv, cwd, signal, timeoutMs, CAPACIDAD, carpetaPrivada)
 }
