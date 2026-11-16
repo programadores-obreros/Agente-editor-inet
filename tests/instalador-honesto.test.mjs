@@ -347,3 +347,188 @@ test("2.2b · los que corren el bootstrap no dependen de que salga con 0", () =>
   assert.doesNotMatch(siguientes, /errorlevel/i, "el lanzador pasó a decidir por el código del bootstrap: revisá el contrato (0/2/1)")
   assert.match(siguientes, /goto verificar/, "después de reparar, el lanzador ya no vuelve a verificar por su cuenta")
 })
+
+// ── 2.1 · El .exe no se enteraba de cómo había terminado el bootstrap ──────────
+//
+// El bootstrap se lanzaba desde [Run] con `Flags: waituntilterminated`: Inno
+// espera, pero no mira el código de salida. La última pantalla decía "¡Tecnia Bot
+// quedó instalado!" fija, y con /VERYSILENT el .exe devolvía 0 aunque no se
+// hubiera instalado nada. Ahora lo lanza [Code] con Exec y el resultado decide la
+// última pantalla y el código de salida del .exe.
+
+const issCrudo = leer("installer", "tecnia-bot.iss")
+
+/**
+ * [Code] sin comentarios Pascal, PERO CON las cadenas intactas.
+ *
+ * El `replace(/\{[^}]*\}/g, "")` que usan los otros tests se lleva puestas las
+ * constantes de Inno que viven adentro de una cadena (`'{app}\install\...'`) y el
+ * `{#MyAppName}` del preprocesador. Para lo que se mide acá hace falta
+ * distinguir: una llave adentro de comillas simples es texto, afuera abre un
+ * comentario. Se recorre carácter por carácter.
+ */
+function pascalSinComentarios(texto) {
+  let out = ""
+  for (let i = 0; i < texto.length; ) {
+    const c = texto[i]
+    if (c === "'") {
+      let j = i + 1
+      for (;;) {
+        j = texto.indexOf("'", j)
+        assert.ok(j > 0, "cadena Pascal sin cerrar")
+        if (texto[j + 1] === "'") { j += 2; continue }
+        break
+      }
+      out += texto.slice(i, j + 1)
+      i = j + 1
+    } else if (c === "{") {
+      const j = texto.indexOf("}", i)
+      assert.ok(j > 0, "comentario Pascal sin cerrar")
+      i = j + 1
+    } else {
+      out += c
+      i++
+    }
+  }
+  return out
+}
+
+/** Una sección del .iss (de `[Nombre]` a la próxima), sin sus líneas `;`. */
+function seccionIss(nombre) {
+  const m = issCrudo.match(new RegExp(`^\\[${nombre}\\]\\s*$`, "m"))
+  assert.ok(m, `el .iss no tiene sección [${nombre}]`)
+  const resto = issCrudo.slice(m.index + m[0].length)
+  const fin = resto.search(/^\[[A-Za-z]+\]\s*$/m)
+  return (fin === -1 ? resto : resto.slice(0, fin)).replace(/^\s*;.*$/gm, "")
+}
+
+const pascal = pascalSinComentarios(seccionIss("Code"))
+
+/**
+ * El cuerpo de un procedure/function de Pascal: hasta su `end;` en la columna 0.
+ *
+ * La primera versión cortaba en el próximo `procedure|function|var|const` a
+ * principio de línea, y devolvía UNA línea: las rutinas con variables locales
+ * tienen su propio `var` en la columna 0, pegado a la firma. Los cuatro tests que
+ * la usaban se pusieron rojos midiendo una firma suelta.
+ */
+function rutina(nombre) {
+  const m = pascal.match(new RegExp(`^(?:procedure|function) ${nombre}\\b`, "m"))
+  assert.ok(m, `no está ${nombre} en [Code]`)
+  const resto = pascal.slice(m.index)
+  const fin = resto.search(/^end;[ \t]*$/m)
+  assert.ok(fin > 0, `${nombre} no cierra con un end; en la columna 0`)
+  return resto.slice(0, fin + 4)
+}
+
+const constantePascal = (nombre) => {
+  const m = pascal.match(new RegExp(`^\\s*${nombre}\\s*=\\s*(\\d+);`, "m"))
+  assert.ok(m, `no está la constante ${nombre} en [Code]`)
+  return Number(m[1])
+}
+
+test("2.1 · [Run] ya no lanza el bootstrap ni toca la marca: lo hace [Code], una sola vez", () => {
+  const run = seccionIss("Run")
+  assert.doesNotMatch(run, /bootstrap\.ps1/, "[Run] volvió a lanzar el bootstrap: no se puede leer su código de salida, y correría dos veces")
+  assert.doesNotMatch(run, /\.instalando/, "[Run] volvió a tocar la marca: su borrado vive en [Code], después del bootstrap")
+  // Se cuenta la RUTA del script (lo que se ejecuta), no su nombre: los Log() lo nombran.
+  assert.equal((pascal.match(/\\install\\bootstrap\.ps1'/g) ?? []).length, 1, "el bootstrap tiene que lanzarse desde un solo lugar de [Code]")
+  // Y se llama desde ssPostInstall (los archivos ya están copiados).
+  const hook = rutina("CurStepChanged")
+  assert.match(hook.slice(hook.indexOf("CurStep = ssPostInstall")), /CorrerElBootstrap;/, "CurStepChanged no corre el bootstrap en ssPostInstall")
+  assert.equal((pascal.match(/\bCorrerElBootstrap;/g) ?? []).length, 2, "CorrerElBootstrap tiene que aparecer dos veces: su definición y UNA llamada")
+})
+
+test("2.1 · el bootstrap se lanza con Exec y conserva lo que hacía la entrada de [Run]", () => {
+  const fn = rutina("CorrerElBootstrap")
+  // Consola visible, espera a que termine, carpeta de trabajo {app}, y el código en CodigoBootstrap.
+  assert.match(fn, /Exec\('powershell\.exe', Parametros, ExpandConstant\('\{app\}'\),\s*SW_SHOWNORMAL, ewWaitUntilTerminated, CodigoBootstrap\)/,
+    "el Exec del bootstrap no es visible, no espera, no usa {app} como carpeta o no guarda el código")
+  assert.match(fn, /Parametros := '-ExecutionPolicy Bypass -NoProfile -File "'\s*\+ ExpandConstant\('\{app\}\\install\\bootstrap\.ps1'\) \+ '"' \+ BanderaSilencio\(''\);/,
+    "los parámetros del bootstrap cambiaron (política, perfil, ruta o la bandera de silencio)")
+  // /skipdeps=1 lo saltea ANTES de lanzar nada, y no cuenta como "bien".
+  const iSalteo = fn.indexOf("if not CorrerBootstrap then")
+  assert.ok(iSalteo > 0 && iSalteo < fn.indexOf("Exec("), "/skipdeps=1 ya no saltea el bootstrap antes de lanzarlo")
+  assert.match(fn.slice(iSalteo, fn.indexOf("Exec(")), /EstadoBootstrap := EstadoSalteado;[\s\S]*?Exit;/, "el salteo no queda anotado como salteado")
+})
+
+test("2.1 · «bien» sólo sale del código 0 del bootstrap; todo lo demás es degradado, falla o no-lanzó", () => {
+  const fn = rutina("CorrerElBootstrap")
+  assert.match(fn, /if CodigoBootstrap = CodigoBootstrapOk then\s+EstadoBootstrap := EstadoBien\s+else if CodigoBootstrap = CodigoBootstrapDegradado then\s+EstadoBootstrap := EstadoDegradado\s+else\s+EstadoBootstrap := EstadoFallo;/,
+    "el código del bootstrap no se traduce a bien / degradado / falla")
+  assert.match(fn, /end\s+else\s+EstadoBootstrap := EstadoNoLanzo;/, "si Exec no pudo lanzar PowerShell no queda anotado")
+  // En TODO [Code], «bien» se asigna una sola vez: no hay otro camino al festejo.
+  assert.equal((pascal.match(/EstadoBootstrap := EstadoBien\b/g) ?? []).length, 1, "EstadoBien se asigna en más de un lugar")
+  // "Sin correr" es el valor con que nace la variable global, y no es ninguno de los buenos.
+  assert.equal(constantePascal("EstadoSinCorrer"), 0, "EstadoSinCorrer tiene que ser 0: es el valor inicial de una variable global")
+  const estados = ["EstadoSinCorrer", "EstadoSalteado", "EstadoBien", "EstadoDegradado", "EstadoFallo", "EstadoNoLanzo"].map(constantePascal)
+  assert.equal(new Set(estados).size, estados.length, "hay dos estados con el mismo número")
+})
+
+test("2.1 · el .iss y bootstrap.ps1 hablan el mismo contrato de códigos (guard cruzado)", () => {
+  const degradadoPs = Number(bootstrap.match(/^\$CodigoDegradado\s*=\s*(\d+)\s*$/m)?.[1])
+  assert.equal(constantePascal("CodigoBootstrapDegradado"), degradadoPs,
+    "el .iss y bootstrap.ps1 no coinciden en el código de «degradado»: el instalador leería una degradación como falla, o al revés")
+  assert.equal(constantePascal("CodigoBootstrapOk"), 0, "el .iss espera un OK distinto de 0")
+  assert.match(bootstrap, /exit 0\s*$/, "bootstrap.ps1 ya no termina su camino feliz en `exit 0`")
+})
+
+test("2.1 · «quedó instalado» se afirma únicamente cuando el bootstrap salió bien", () => {
+  // Los dos textos de [Messages] son neutros: el que afirma lo pone el código.
+  const mensajes = seccionIss("Messages")
+  const fijo = mensajes.match(/^FinishedHeadingLabel=(.*)$/m)?.[1] ?? ""
+  assert.doesNotMatch(fijo, /instalado/i, `el título fijo de la última pantalla afirma algo sin comprobarlo: «${fijo}»`)
+  assert.doesNotMatch(mensajes.match(/^FinishedLabel=(.*)$/m)?.[1] ?? "", /listo|quedó instalado/i, "el texto fijo de la última pantalla festeja sin comprobar")
+
+  const fn = rutina("CurPageChanged")
+  assert.match(fn, /if CurPageID <> wpFinished then\s+Exit;/, "CurPageChanged no se limita a la última pantalla")
+  // El festejo aparece UNA vez en todo [Code], y adentro de la rama EstadoBien.
+  assert.equal((pascal.match(/¡Tecnia Bot quedó instalado!/g) ?? []).length, 1, "el festejo aparece en más de un lugar")
+  assert.match(fn, /if EstadoBootstrap = EstadoBien then\s+begin\s+WizardForm\.FinishedHeadingLabel\.Caption := '¡Tecnia Bot quedó instalado!';/,
+    "el festejo no está condicionado a que el bootstrap haya salido bien")
+  // Y la rama por defecto (falla, no lanzó, sin correr) dice que NO quedó.
+  const ultima = fn.slice(fn.lastIndexOf("else\n  begin"))
+  assert.match(ultima, /FinishedHeadingLabel\.Caption := 'Tecnia Bot NO quedó instalado';/, "la rama por defecto no dice que la instalación falló")
+  assert.match(ultima, /Reparar \{#MyAppName\}/, "la falla no manda a Reparar")
+})
+
+test("2.1 · en falla hay un cartel (si hay alguien mirando) que manda a Reparar y al log", () => {
+  const fn = rutina("AvisarSiElBootstrapFallo")
+  assert.match(fn, /if WizardSilent\(\) then\s+Exit;/, "en modo silencioso no puede aparecer un cartel: nadie lo cierra")
+  assert.match(fn, /if \(EstadoBootstrap <> EstadoFallo\) and \(EstadoBootstrap <> EstadoNoLanzo\) then\s+Exit;/, "el cartel no se limita a la falla")
+  assert.match(fn, /"Reparar \{#MyAppName\}"/, "el cartel no nombra Reparar")
+  // El log se nombra sólo si está en el disco.
+  assert.match(fn, /if FileExists\(RutaLogBootstrap\) then\s+Texto := Texto \+/, "el cartel manda a leer instalacion.log sin mirar si existe")
+  assert.match(rutina("RutaLogBootstrap"), /ExpandConstant\('\{app\}\\instalacion\.log'\)/, "la ruta del log no es la de bootstrap.ps1")
+  assert.match(bootstrap, /\$LogInstalacion\s*=\s*Join-Path\s+\$RepoDir\s+"instalacion\.log"/, "bootstrap.ps1 cambió dónde deja su log")
+  assert.match(fn, /MsgBox\(Texto, mbError, MB_OK\);/, "no muestra el cartel")
+  // Se llama después del bootstrap.
+  const hook = rutina("CurStepChanged")
+  assert.ok(hook.indexOf("AvisarSiElBootstrapFallo;") > hook.indexOf("CorrerElBootstrap;"), "el cartel se evalúa antes de correr el bootstrap")
+})
+
+test("2.1 · todo acceso directo que el .iss le nombra al docente existe en [Icons]", () => {
+  const atajos = [...seccionIss("Icons").matchAll(/Name:\s*"\{autoprograms\}\\([^"]+)"/g)].map((m) => m[1])
+  assert.ok(atajos.length >= 3, `sólo encontré ${atajos.length} accesos directos`)
+  const mencionados = [...pascal.matchAll(/"((?:Reparar|Diagnostico|Diagnóstico|Desinstalar) \{#MyAppName\})"/g)].map((m) => m[1])
+  assert.ok(mencionados.length >= 2, "esperaba que [Code] nombrara al menos Reparar y Diagnostico")
+  for (const m of mencionados) {
+    assert.ok(atajos.includes(m), `[Code] manda al docente a «${m}» y ese acceso directo no existe. Hay: ${atajos.join(", ")}`)
+  }
+})
+
+test("2.1 · el .exe sale con un código propio cuando el bootstrap no salió bien", () => {
+  const fn = rutina("GetCustomSetupExitCode")
+  assert.match(fn, /^function GetCustomSetupExitCode: Integer;/, "la firma no es la que documenta Inno Setup")
+  assert.match(fn, /if EstadoBootstrap = EstadoDegradado then\s+Result := SalidaSetupDegradado/, "un bootstrap degradado no cambia el código de salida del .exe")
+  assert.match(fn, /else if \(EstadoBootstrap = EstadoFallo\) or \(EstadoBootstrap = EstadoNoLanzo\)\s+or \(EstadoBootstrap = EstadoSinCorrer\) then\s+Result := SalidaSetupFallo;/,
+    "un bootstrap caído (o que no llegó a correr) no cambia el código de salida del .exe")
+  const fallo = constantePascal("SalidaSetupFallo")
+  const degradado = constantePascal("SalidaSetupDegradado")
+  assert.ok(fallo > 8 && degradado > 8, "los códigos propios pisan los de Inno Setup (0 a 8)")
+  assert.notEqual(fallo, degradado, "falla y degradado salen con el mismo código")
+  // El encabezado del .iss (comentarios `;`, documentación) dice los mismos números.
+  const encabezado = issCrudo.slice(0, issCrudo.indexOf("#ifndef"))
+  assert.match(encabezado, new RegExp(`^;\\s+${fallo}\\s+se copiaron los archivos pero bootstrap\\.ps1 FALLÓ`, "m"), `el encabezado no documenta el ${fallo}`)
+  assert.match(encabezado, new RegExp(`^;\\s+${degradado}\\s+quedó instalado pero DEGRADADO`, "m"), `el encabezado no documenta el ${degradado}`)
+})
