@@ -451,6 +451,13 @@ fi
 # Borra los directorios que hayan quedado vacíos (tecniabot-web, skills, plugins,
 # themes, y las tres carpetas de Phase 2 que sumó D12: nucleo, servidor,
 # vista-fisica -- ver install.sh, mismo criterio y mismo comentario).
+# El lanzador `tecnia-bot` (H1, ciclo 4) vive fuera de la config: se borra sólo si es el
+# nuestro (lleva la marca `tecnia-bot-lanzador` en la segunda línea), y se relee.
+LANZADOR="$HOME/.local/bin/tecnia-bot"
+if [ -f "$LANZADOR" ] && [ "$(sed -n 2p "$LANZADOR" 2>/dev/null)" = "# tecnia-bot-lanzador — abre Tecnia Bot (OpenCode) revisando ANTES la carpeta." ]; then
+  borrar_verificando "$LANZADOR" || anotar_pendiente "$LANZADOR"
+fi
+
 find "$CONFIG_DIR/tecniabot-web" "$CONFIG_DIR/skills" "$CONFIG_DIR/plugins" "$CONFIG_DIR/themes" "$CONFIG_DIR/nucleo" "$CONFIG_DIR/servidor" "$CONFIG_DIR/vista-fisica" "$CONFIG_DIR/conocimiento" "$CONFIG_DIR/carga" "$CONFIG_DIR/codegen" -type d -empty -delete 2>/dev/null || true
 
 # El mensaje final tampoco afirma de mas: si algo quedo sin borrar, se dice que

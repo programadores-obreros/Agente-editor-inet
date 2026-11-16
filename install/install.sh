@@ -45,6 +45,12 @@ cp -r "$SRC/codegen/." "$CONFIG_DIR/codegen/"
 # entero) y servidor/servicio-con-vista.ts (el candado del proyecto).
 cp -r "$SRC/carga/." "$CONFIG_DIR/carga/"
 
+# El lanzador `tecnia-bot` (H1, ciclo 4): revisa la carpeta ANTES de abrir OpenCode y sólo así
+# habilita la carga a la placa. Se usa en vez de `opencode` (ver install/tecnia-bot.sh).
+mkdir -p "$HOME/.local/bin"
+cp "$REPO_DIR/install/tecnia-bot.sh" "$HOME/.local/bin/tecnia-bot"
+chmod 755 "$HOME/.local/bin/tecnia-bot"
+
 # Plugins + theme violeta. plugins/ trae dos cosas distintas:
 # - tecnia-logo.tsx: plugin de TUI (logo del splash), se declara en tui.json más abajo.
 # - tecnia-idioma.ts (+ idioma/): plugin de servidor que saca la planificación en
@@ -1080,5 +1086,6 @@ else
 fi
 
 echo ""
-echo "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
-echo "apreta Tab y elegi 'tecnia-bot'."
+echo "Para empezar: abri una terminal en la carpeta del proyecto, escribi 'tecnia-bot',"
+echo "apreta Tab y elegi 'tecnia-bot'. (Con 'opencode' a secas anda todo menos cargar a la placa.)"
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "  [AVISO] $HOME/.local/bin no esta en tu PATH: agregalo para que 'tecnia-bot' se encuentre." ;; esac

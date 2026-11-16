@@ -12,7 +12,7 @@
 
 import { test, before, after, afterEach } from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync as lstatReal, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join, relative, sep } from "node:path"
 import os from "node:os"
 import { REPO, nuevoDir } from "./phase2-helpers.mjs"
@@ -162,6 +162,9 @@ const DENEGADO = { _tag: "PermissionDeniedError", message: "The user has specifi
 /** La TUI como la abre el producto (H3: `procSelfCmdline` de la TUI, sin la bandera). El node de los tests no es OpenCode. */
 const TUI_NORMAL = ["/opt/opencode/bin/opencode", "--agent", "tecnia-bot"]
 
+/** Ciclo 4: la marca del lanzador, inyectada (este proceso de test "vino del lanzador"). */
+const LANZADOR_OK = { marca: String(process.pid), pid: process.pid, ancestros: () => [] }
+
 /** Un HOME limpio para el control de configuración (ciclo 3): el HOME real de quien corre los tests no entra. */
 const HOME_LIMPIO = join(OUT, "home-limpio")
 mkdirSync(HOME_LIMPIO, { recursive: true })
@@ -169,7 +172,7 @@ mkdirSync(HOME_LIMPIO, { recursive: true })
 async function cargar(dir, { lanza = lanzador(), pregunta = cartel(), agente = "tecnia-bot", abort, sinAsk = false, deps = depsReales(), herramientas = {}, opciones = {} } = {}) {
   const ctx = { directory: dir, agent: agente, abort: abort ?? new AbortController().signal, ...(sinAsk ? {} : { ask: pregunta.ask }) }
   const configuracion = { cwd: () => dir, home: HOME_LIMPIO, entorno: {} }
-  const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, deps, { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, lineaDeComando: () => ({ ok: true, argv: TUI_NORMAL }), configuracion, ...herramientas }, opciones)
+  const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, deps, { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, lineaDeComando: () => ({ ok: true, argv: TUI_NORMAL }), configuracion, lanzador: LANZADOR_OK, ...herramientas }, opciones)
   return { r: JSON.parse(texto), texto, lanza, pregunta }
 }
 
@@ -929,6 +932,103 @@ test("ciclo 3: carpeta limpia → el camino feliz sigue igual, con cartel", asyn
   assert.equal(x.r.codigo, "CARGADO")
   assert.equal(x.pregunta.pedidos.length, 1)
   assert.equal(x.lanza.lanzamientos.length, 1)
+})
+
+// ── Ciclo 4: el lanzador, la lista ampliada y dos tests huecos del ciclo 3 ─────────────────
+
+test("ciclo 4: sin marca del lanzador (o una que no es un pid) → SIN_LANZADOR, sin detectar, sin lanzar, sin cartel, candado libre", async () => {
+  const dir = await armar()
+  for (const marca of [undefined, "", "abc", "0", "-1"]) {
+    const x = await cargar(dir, { herramientas: { lanzador: { marca, pid: process.pid, ancestros: () => [] } } })
+    assert.equal(x.r.codigo, "SIN_LANZADOR", String(marca))
+    assert.match(x.r.resultado, /`tecnia-bot`/)
+    nadaLanzado(x)
+  }
+})
+
+test("ciclo 4: marca con un pid ajeno (ni éste ni un ancestro) → SIN_LANZADOR; si no se pueden leer los ancestros, también", async () => {
+  const dir = await armar()
+  const ajeno = await cargar(dir, { herramientas: { lanzador: { marca: "4242424", pid: 1000, ancestros: () => [999, 1] } } })
+  assert.equal(ajeno.r.codigo, "SIN_LANZADOR")
+  nadaLanzado(ajeno)
+  const ilegible = await cargar(dir, { herramientas: { lanzador: { marca: "999", pid: 1000, ancestros: () => null } } })
+  assert.equal(ilegible.r.codigo, "SIN_LANZADOR")
+  nadaLanzado(ilegible)
+})
+
+test("ciclo 4: marca de un ANCESTRO + carpeta limpia → cartel y carga", async () => {
+  const dir = await armar()
+  const x = await cargar(dir, { herramientas: { lanzador: { marca: "999", pid: 1000, ancestros: () => [999, 1] } } })
+  assert.equal(x.r.codigo, "CARGADO")
+  assert.equal(x.pregunta.pedidos.length, 1)
+})
+
+test("ciclo 4: ancestrosPorProc lee la cadena real de /proc y falla cerrado si no puede", { skip: process.platform !== "linux" && "usa /proc" }, async () => {
+  const { ancestrosPorProc } = await import(join(REPO, "opencode/carga/cargar-programa.ts"))
+  const reales = ancestrosPorProc()
+  assert.ok(Array.isArray(reales) && reales.includes(process.ppid), JSON.stringify(reales))
+  assert.equal(ancestrosPorProc(process.pid, () => { throw new Error("EACCES") }), null)
+})
+
+for (const nombre of ["tui.json", "tui.jsonc"]) {
+  test(`ciclo 4: \`${nombre}\` en el proyecto y en un ancestro → rechazo`, async () => {
+    const dir = await armar()
+    writeFileSync(join(dir, nombre), JSON.stringify({ plugin: ["./aprobar.ts"] }))
+    const a = await cargar(dir)
+    assert.equal(a.r.codigo, "CONFIGURACION_DE_PROYECTO")
+    nadaLanzado(a)
+    const arriba = carpeta(`arriba-${nombre}`)
+    writeFileSync(join(arriba, nombre), "{}")
+    const b = await cargar(await armar(undefined, undefined, carpeta(`arriba-${nombre}`, "proyecto")))
+    assert.equal(b.r.codigo, "CONFIGURACION_DE_PROYECTO")
+    assert.ok(b.r.resultado.includes(join(arriba, nombre)))
+    nadaLanzado(b)
+  })
+}
+
+for (const variable of ["OPENCODE_TUI_CONFIG", "OPENCODE_TEST_HOME", "OPENCODE_TEST_MANAGED_CONFIG_DIR"]) {
+  test(`ciclo 4: la variable ${variable} → rechazo`, async () => {
+    const dir = await armar()
+    const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home: HOME_LIMPIO, entorno: { [variable]: "/tmp/algo" } } } })
+    assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+    assert.ok(x.r.resultado.includes(variable))
+    nadaLanzado(x)
+  })
+}
+
+// N2 (revisión del ciclo 3): el test "un nivel que no se puede revisar" usaba chmod 0o600 y
+// cortaba en el `realpath` de la carpeta de partida: la rama del `lstat` del RECORRIDO nunca se
+// ejercitaba (un nivel atravesable no da EACCES en `lstat`). Era hueco para esa rama. Acá se
+// inyecta un `lstat` que falla con EIO en un nivel concreto, con el `realpath` funcionando.
+test("ciclo 4 (N2): un `lstat` del recorrido que falla con algo que no es ENOENT → rechazo", async () => {
+  const dir = await armar()
+  const falla = (ruta) => {
+    if (ruta === join(dir, "opencode.json")) throw Object.assign(new Error("EIO"), { code: "EIO" })
+    return lstatReal(ruta)
+  }
+  const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home: HOME_LIMPIO, entorno: {}, lstat: falla } } })
+  assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+  assert.match(x.r.resultado, /no pude revisar la carpeta/)
+  nadaLanzado(x)
+})
+
+// N3 (revisión del ciclo 3): todos los tests inyectaban `configuracion`, así que romper el valor
+// por defecto (`h.configuracion ?? ENTORNO_DE_CONFIGURACION_REAL`) no ponía nada en rojo. Acá se
+// llama SIN `configuracion` y con una variable rechazada en el entorno REAL del proceso.
+test("ciclo 4 (N3): sin `configuracion` inyectada se usa el entorno REAL (y una variable real rechaza)", async () => {
+  const dir = await armar()
+  process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR = "/tmp/no-importa"
+  try {
+    const lanza = lanzador()
+    const ctx = { directory: dir, agent: "tecnia-bot", abort: new AbortController().signal, ask: cartel().ask }
+    const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, depsReales(), { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, lineaDeComando: () => ({ ok: true, argv: TUI_NORMAL }), lanzador: LANZADOR_OK })
+    const r = JSON.parse(texto)
+    assert.equal(r.codigo, "CONFIGURACION_DE_PROYECTO")
+    assert.ok(r.resultado.includes("OPENCODE_TEST_MANAGED_CONFIG_DIR"))
+    assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  } finally {
+    delete process.env.OPENCODE_TEST_MANAGED_CONFIG_DIR
+  }
 })
 
 test("Q-04: si el proyecto cambia de revisión con el cartel abierto → PROYECTO_CAMBIO, no se lanza", async () => {

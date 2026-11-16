@@ -76,6 +76,8 @@ export interface HerramientasDeCarga {
   readonly lineaDeComando?: () => LecturaDeLineaDeComando
   /** De dónde se busca configuración de OpenCode (ciclo 3). En producción, el entorno real; los tests lo inyectan. */
   readonly configuracion?: EntornoDeConfiguracion
+  /** De dónde sale la marca del lanzador (ciclo 4). En producción, `LANZAMIENTO_REAL`; los tests la inyectan. */
+  readonly lanzador?: Lanzamiento
 }
 
 /** Lo que se usa del `ctx` de OpenCode. `ask` no se llama desde acá: lo llama `preguntarChecklist`. */
@@ -285,8 +287,22 @@ const ABRIR_NORMALMENTE =
  *   - La configuración del PERFIL (`$XDG_CONFIG_HOME/opencode`) NO es parte de este control.
  */
 
-const CONFIG_EN_CARPETA = [".opencode", "opencode.json", "opencode.jsonc"] as const
-const VARIABLES_DE_CONFIGURACION = ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_PERMISSION"] as const
+/*
+ * Ciclo 4 (MEDIDO en 1.18.18 sobre f7717f4): un `tui.json` en el proyecto o en un ancestro con
+ * `{"plugin": ["./aprobar.ts"]}` carga un plugin de TUI que contesta el cartel solo; y
+ * `OPENCODE_TEST_MANAGED_CONFIG_DIR` apunta a una configuración administrada que lo aprueba.
+ * Se suman `tui.json[c]` a los nombres y esas variables (y sus parientes) a las rechazadas.
+ */
+const CONFIG_EN_CARPETA = [".opencode", "opencode.json", "opencode.jsonc", "tui.json", "tui.jsonc"] as const
+const VARIABLES_DE_CONFIGURACION = [
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_CONFIG_CONTENT",
+  "OPENCODE_PERMISSION",
+  "OPENCODE_TUI_CONFIG",
+  "OPENCODE_TEST_HOME",
+  "OPENCODE_TEST_MANAGED_CONFIG_DIR",
+] as const
 /**
  * LISTA BLANCA de lo que puede haber en `$HOME/.opencode` (MEDIDO en 1.18.18): el binario del
  * instalador (`bin`) y lo que OpenCode mismo instala en cada `.opencode` que encuentra para sus
@@ -301,6 +317,8 @@ export interface EntornoDeConfiguracion {
   /** La carpeta personal; si `os.homedir()` y `$HOME` difieren, las dos. */
   readonly home: string | readonly string[]
   readonly entorno: NodeJS.ProcessEnv
+  /** El `lstat` del recorrido (por defecto el de `node:fs`). Sólo para probar la rama de un nivel que no se puede revisar. */
+  readonly lstat?: (ruta: string) => unknown
 }
 
 export const ENTORNO_DE_CONFIGURACION_REAL: EntornoDeConfiguracion = {
@@ -357,6 +375,7 @@ export function configuracionDeOpenCodeQueNoSeAdmite(directorio: string, e: Ento
       }
     }
     const revisadas = new Set<string>()
+    const mirar = e.lstat ?? lstatSync
     for (const partida of partidas) {
       for (let dir = partida; ; dir = dirname(dir)) {
         if (!revisadas.has(dir)) {
@@ -364,7 +383,7 @@ export function configuracionDeOpenCodeQueNoSeAdmite(directorio: string, e: Ento
           for (const nombre of CONFIG_EN_CARPETA) {
             const ruta = join(dir, nombre)
             try {
-              lstatSync(ruta)
+              mirar(ruta)
             } catch (error) {
               if (noExiste(error)) continue
               return `no pude revisar la carpeta ${dir}`
@@ -401,8 +420,84 @@ function revisarOpencodeDeHome(ruta: string): string | null {
   return desconocida ? join(ruta, desconocida) : null
 }
 
+/*
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ * EL LANZADOR (ciclo 4)
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ *
+ * MEDIDO en 1.18.18: revisar el disco cuando se llama la tool no alcanza. Una configuración
+ * que OpenCode leyó al arrancar y después se borró sigue en memoria (M2-B). Por eso la revisión
+ * va ANTES de que OpenCode lea nada: la hace el lanzador `tecnia-bot` (`install/tecnia-bot.sh`,
+ * que llama a `carga/revisar-lanzamiento.ts`, la MISMA revisión de acá), limpia el entorno y,
+ * sólo si todo dio limpio, exporta `TECNIA_LANZADOR=<su pid>` y hace `exec` de opencode (el pid
+ * pasa a ser el de OpenCode). La tool exige esa marca: el pid tiene que ser éste o un ancestro.
+ *
+ * LO QUE LA MARCA NO ES: una barrera contra alguien que lanza procesos como el usuario. Quien
+ * escriba `TECNIA_LANZADOR=$$ exec opencode` en una terminal la falsifica. Protege contra el
+ * caso real: abrir OpenCode sin pasar por la revisión previa (a mano, desde otro programa, o
+ * con una configuración que después se borró). Las revisiones de la tool siguen como segunda
+ * capa. Sólo Linux (`/proc`); en el resto falla cerrado.
+ */
+
+/** De dónde sale la marca del lanzador. Inyectable para probar. */
+export interface Lanzamiento {
+  readonly marca: string | undefined
+  readonly pid: number
+  /** Los pids de los ancestros de este proceso (padre, abuelo, …), o `null` si no se pudo leer. */
+  readonly ancestros: () => number[] | null
+}
+
+/** Los ancestros por `/proc/<pid>/stat`. `null` si alguno no se puede leer (fuera de Linux, siempre). */
+export function ancestrosPorProc(pid: number = process.pid, leer: (ruta: string) => string = (r) => readFileSync(r, "utf8")): number[] | null {
+  const salida: number[] = []
+  let actual = pid
+  for (let i = 0; i < 256; i++) {
+    let stat: string
+    try {
+      stat = leer(`/proc/${actual}/stat`)
+    } catch {
+      return null
+    }
+    const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1])
+    if (!Number.isSafeInteger(ppid) || ppid < 0) return null
+    if (ppid === 0) return salida
+    salida.push(ppid)
+    actual = ppid
+  }
+  return null
+}
+
+export const LANZAMIENTO_REAL: Lanzamiento = {
+  get marca() {
+    return process.env.TECNIA_LANZADOR
+  },
+  get pid() {
+    return process.pid
+  },
+  ancestros: () => ancestrosPorProc(),
+}
+
+/** `null` si este proceso viene del lanzador; si no, por qué no. */
+export function porQueNoVieneDelLanzador(l: Lanzamiento): string | null {
+  if (typeof l.marca !== "string" || !/^[1-9]\d{0,9}$/.test(l.marca)) return "OpenCode no se abrió con el lanzador de Tecnia Bot"
+  const marca = Number(l.marca)
+  if (marca === l.pid) return null
+  const ancestros = l.ancestros()
+  if (ancestros === null) return "no pude comprobar cómo se abrió OpenCode"
+  return ancestros.includes(marca) ? null : "la marca del lanzador no corresponde a este OpenCode"
+}
+
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */
-export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion">): ResultadoDeCarga | null {
+export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion" | "lanzador">): ResultadoDeCarga | null {
+  // Ciclo 4: antes que todo, que OpenCode se haya abierto con el lanzador (revisión previa).
+  const sinLanzador = porQueNoVieneDelLanzador(h.lanzador ?? LANZAMIENTO_REAL)
+  if (sinLanzador) {
+    return no(
+      "SIN_LANZADOR",
+      `NO SE CARGÓ — ${sinLanzador}. Para cargar a la placa, cerrá OpenCode y abrí Tecnia Bot escribiendo \`tecnia-bot\` en la terminal, en la carpeta del proyecto: ` +
+        "así se revisa la carpeta antes de abrir. Todo lo demás (explicar, armar el proyecto, compilar) funciona igual.",
+    )
+  }
   const agente = h.agenteQueNoPuedeCargar(ctx)
   if (agente) return no("AGENTE_NO_AUTORIZADO", `NO SE CARGÓ — ${agente}`)
 
