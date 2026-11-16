@@ -274,9 +274,10 @@ const ABRIR_NORMALMENTE =
  *     `/`: ningún `.opencode`, `opencode.json` ni `opencode.jsonc` (con `lstat`: un enlace
  *     simbólico cuenta aunque esté roto). Un nivel que no se puede revisar también rechaza.
  *   - ÚNICA EXCEPCIÓN: `$HOME/.opencode`, porque el instalador oficial de OpenCode deja ahí su
- *     binario (`install/bootstrap.sh` agrega `$HOME/.opencode/bin` al PATH). Se tolera sólo si
- *     es una carpeta común sin nada que OpenCode lea como configuración (ver
- *     `PROHIBIDO_EN_HOME`). Se revisa siempre, esté o no en el camino hacia arriba.
+ *     binario (`install/bootstrap.sh` agrega `$HOME/.opencode/bin` al PATH) y OpenCode instala
+ *     ahí lo de sus plugins. Se tolera sólo si es una carpeta común con nada más que lo de la
+ *     lista blanca `TOLERADO_EN_HOME`. Se revisa SIEMPRE (OpenCode la lee siempre, MEDIDO), con
+ *     `os.homedir()` y `$HOME` si difieren.
  *   - Variables: `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`,
  *     `OPENCODE_PERMISSION` definidas y no vacías rechazan. El producto no define ninguna
  *     (revisado en `install/`, `installer/` y `scripts/`: `producto-local.sh` hace
@@ -286,20 +287,26 @@ const ABRIR_NORMALMENTE =
 
 const CONFIG_EN_CARPETA = [".opencode", "opencode.json", "opencode.jsonc"] as const
 const VARIABLES_DE_CONFIGURACION = ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_PERMISSION"] as const
-/** Lo que OpenCode puede leer de una carpeta de configuración. En `$HOME/.opencode`, cualquiera de estos rechaza. */
-const PROHIBIDO_EN_HOME = new Set(["opencode.json", "opencode.jsonc", "agent", "agents", "command", "commands", "plugin", "plugins", "tool", "tools", "mode", "modes", "skill", "skills", "agents.md"])
+/**
+ * LISTA BLANCA de lo que puede haber en `$HOME/.opencode` (MEDIDO en 1.18.18): el binario del
+ * instalador (`bin`) y lo que OpenCode mismo instala en cada `.opencode` que encuentra para sus
+ * plugins (`package.json`, `node_modules`, el lockfile, `.gitignore`). Cualquier otra entrada
+ * —`opencode.json`, `agent/`, lo que sea— rechaza.
+ */
+const TOLERADO_EN_HOME = new Set(["bin", "package.json", "node_modules", "bun.lock", "bun.lockb", "package-lock.json", "pnpm-lock.yaml", ".gitignore"])
 
 /** De dónde mirar. Inyectable para probar sin tocar el HOME ni la carpeta real. */
 export interface EntornoDeConfiguracion {
   readonly cwd: () => string
-  readonly home: string
+  /** La carpeta personal; si `os.homedir()` y `$HOME` difieren, las dos. */
+  readonly home: string | readonly string[]
   readonly entorno: NodeJS.ProcessEnv
 }
 
 export const ENTORNO_DE_CONFIGURACION_REAL: EntornoDeConfiguracion = {
   cwd: () => process.cwd(),
   get home() {
-    return homedir()
+    return [...new Set([homedir(), process.env.HOME].filter((h): h is string => typeof h === "string" && h !== ""))]
   },
   get entorno() {
     return process.env
@@ -322,18 +329,23 @@ export function configuracionDeOpenCodeQueNoSeAdmite(directorio: string, e: Ento
       if (typeof valor === "string" && valor.trim() !== "") return `la variable de entorno ${nombre}`
     }
 
-    const home = resolve(e.home)
-    let homeReal = home
-    try {
-      homeReal = realpathSync(home)
-    } catch (error) {
-      if (!noExiste(error)) return `no pude revisar la carpeta personal (${home})`
+    const homes = new Set<string>()
+    for (const h of typeof e.home === "string" ? [e.home] : e.home) {
+      homes.add(resolve(h))
+      try {
+        homes.add(realpathSync(h))
+      } catch (error) {
+        if (!noExiste(error)) return `no pude revisar la carpeta personal (${h})`
+      }
     }
-    const esHome = (dir: string) => dir === home || dir === homeReal
+    const esHome = (dir: string) => homes.has(dir)
 
-    // `$HOME/.opencode`: la única excepción, y se revisa siempre.
-    const enHome = revisarOpencodeDeHome(join(home, ".opencode"))
-    if (enHome) return enHome
+    // `$HOME/.opencode`: la única excepción, y se revisa SIEMPRE (OpenCode la lee siempre,
+    // sea o no ancestro del proyecto).
+    for (const home of homes) {
+      const enHome = revisarOpencodeDeHome(join(home, ".opencode"))
+      if (enHome) return enHome
+    }
 
     const partidas = new Set<string>()
     for (const dir of [directorio, e.cwd(), join(directorio, ".tecnia-vista-fisica")]) {
@@ -370,7 +382,7 @@ export function configuracionDeOpenCodeQueNoSeAdmite(directorio: string, e: Ento
   }
 }
 
-/** `$HOME/.opencode` se tolera sólo como carpeta común sin nada de `PROHIBIDO_EN_HOME`. */
+/** `$HOME/.opencode` se tolera sólo como carpeta común con nada más que lo de `TOLERADO_EN_HOME`. */
 function revisarOpencodeDeHome(ruta: string): string | null {
   let st: ReturnType<typeof lstatSync>
   try {
@@ -385,8 +397,8 @@ function revisarOpencodeDeHome(ruta: string): string | null {
   } catch {
     return `no pude revisar ${ruta}`
   }
-  const prohibida = entradas.find((n) => PROHIBIDO_EN_HOME.has(n.toLowerCase()))
-  return prohibida ? join(ruta, prohibida) : null
+  const desconocida = entradas.find((n) => !TOLERADO_EN_HOME.has(n))
+  return desconocida ? join(ruta, desconocida) : null
 }
 
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */

@@ -860,7 +860,40 @@ test("ciclo 3: `$HOME/.opencode` sólo con `bin/` (lo que deja el instalador de 
   assert.equal(x.pregunta.pedidos.length, 1, "siempre con el cartel")
 })
 
-for (const cosa of ["opencode.json", "opencode.jsonc", "agent", "plugins", "tool", "AGENTS.md"]) {
+test("ciclo 3: `$HOME/.opencode` con TODO lo tolerado (bin, package.json, node_modules, lockfiles, .gitignore) → se carga, con cartel", async () => {
+  const home = carpeta("home-tolerado")
+  for (const d of ["bin", "node_modules"]) mkdirSync(join(home, ".opencode", d), { recursive: true })
+  for (const f of ["package.json", "bun.lock", "bun.lockb", "package-lock.json", "pnpm-lock.yaml", ".gitignore"]) writeFileSync(join(home, ".opencode", f), "")
+  const dir = await armar()
+  const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home, entorno: {} } } })
+  assert.equal(x.r.codigo, "CARGADO")
+  assert.equal(x.pregunta.pedidos.length, 1)
+})
+
+test("ciclo 3: `$HOME/.opencode/agent/tecnia-bot.md` (lo medido, sin opencode.json) → rechazo", async () => {
+  const home = carpeta("home-agente")
+  mkdirSync(join(home, ".opencode", "agent"), { recursive: true })
+  writeFileSync(join(home, ".opencode", "agent", "tecnia-bot.md"), "---\npermission:\n  \"*\": allow\n---\n")
+  const dir = await armar()
+  const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home, entorno: {} } } })
+  assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+  nadaLanzado(x)
+})
+
+test("ciclo 3: `$HOME/.opencode/opencode.json` con el proyecto FUERA del HOME → rechazo (se revisa siempre); y también si sólo `$HOME` (no homedir) lo tiene", async () => {
+  const home = carpeta("home-afuera")
+  mkdirSync(join(home, ".opencode"), { recursive: true })
+  writeFileSync(join(home, ".opencode", "opencode.json"), "{}")
+  const dir = await armar() // en la base compartida de tests, que no está dentro de `home`
+  assert.ok(!dir.startsWith(home))
+  const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home, entorno: {} } } })
+  assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+  nadaLanzado(x)
+  const y = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home: [HOME_LIMPIO, home], entorno: {} } } })
+  assert.equal(y.r.codigo, "CONFIGURACION_DE_PROYECTO", "con dos carpetas personales, se revisan las dos")
+})
+
+for (const cosa of ["opencode.json", "opencode.jsonc", "agent", "plugins", "tool", "AGENTS.md", "cualquier-cosa-desconocida", "skills"]) {
   test(`ciclo 3: \`$HOME/.opencode/${cosa}\` → rechazo`, async () => {
     const home = carpeta(`home-con-${cosa}`)
     mkdirSync(join(home, ".opencode", "bin"), { recursive: true })
