@@ -719,3 +719,65 @@ test("2.4b · la carpeta del programa NO se barre entera: lo que el instalador n
   assert.match(busca, /FindFirst\(ExpandConstant\('\{app\}\\\*'\), Hallado\)/, "no recorre la carpeta del programa")
   assert.match(busca, /FindClose\(Hallado\);/, "no cierra la búsqueda")
 })
+
+// ── 2.13 · Una marca .instalando huérfana colgaba el lanzador para siempre ─────
+//
+// Si el Setup muere durante el bootstrap, la marca queda puesta y nadie la saca.
+// Cada doble clic eran ~20 minutos de espera y después "La instalación sigue en
+// curso, esperala" — para siempre. El lanzador ahora pregunta si el instalador
+// VIVE (por su mutex, el de `SetupMutex` del .iss) y, si comprobó que no, manda a
+// "Reparar Tecnia Bot" sin esperar.
+
+test("2.13 · el lanzador pregunta por el mutex que el instalador crea de verdad (guard cruzado con el .iss)", () => {
+  const declarados = (issCrudo.match(/^SetupMutex=(.+)$/m)?.[1] ?? "").split(",").map((x) => x.trim()).filter(Boolean)
+  assert.ok(declarados.length >= 1, "el .iss ya no declara SetupMutex: el lanzador no tiene cómo saber si el instalador vive")
+  const linea = lineasLanzador.find((l) => l.startsWith("powershell") && l.includes("TryOpenExisting"))
+  assert.ok(linea, "el lanzador no consulta ningún mutex")
+  const consultados = [...linea.match(/foreach\(\$n in ([^)]*)\)/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+  assert.deepEqual([...consultados].sort(), [...declarados].sort(),
+    "los mutex que mira el lanzador no son los que crea el instalador: diría «no vive» con el instalador corriendo, o al revés")
+})
+
+test("2.13 · «el instalador no vive» sólo sale de una comprobación positiva; todo lo demás espera", () => {
+  const i = lineasLanzador.indexOf(":mirarsetup")
+  assert.ok(i > 0, "no está la rutina :mirarsetup")
+  const rutinaCmd = lineasLanzador.slice(i, i + 5)
+  // Arranca en «no sé», y sólo la salida 7 EXACTA lo cambia.
+  assert.equal(rutinaCmd[1], 'set "SETUPVIVO=nose"', "la rutina no arranca suponiendo que no sabe")
+  assert.match(rutinaCmd[2], /^powershell -NoProfile .*>nul 2>nul$/, "la consulta no es la segunda línea de la rutina, o ensucia la pantalla")
+  assert.equal(rutinaCmd[3], 'if errorlevel 7 if not errorlevel 8 set "SETUPVIVO=no"', "«no vive» no está atado a la salida 7 exacta: un 9009 (PowerShell ausente) contaría como «no vive»")
+  assert.equal(rutinaCmd[4], "goto :eof", "la rutina no vuelve a quien la llamó")
+  // Adentro de PowerShell: cualquier excepción cuenta como «vive», y el 7 sólo sale si no se abrió ninguno.
+  assert.match(rutinaCmd[2], /catch \{ \$vivo=\$true \}/, "un error al consultar el mutex se toma como «no vive»: es el lado peligroso")
+  assert.match(rutinaCmd[2], /if\(\$vivo\)\{ exit 0 \} else \{ exit 7 \}/, "la salida 7 no depende de lo que se encontró")
+  assert.equal((lanzador.match(/SETUPVIVO=no"/g) ?? []).length, 1, "SETUPVIVO se pone en «no» por otro lado")
+})
+
+test("2.13 · con la marca puesta y el instalador muerto, el lanzador no espera 20 minutos: manda a Reparar", () => {
+  // Antes de empezar a esperar: después del atajo "OpenCode anda y la capa está".
+  const iAtajo = lineasLanzador.indexOf('if not errorlevel 1 if exist "%OCCFG%\\agent\\tecnia-bot.md" goto verificar')
+  assert.ok(iAtajo > 0, "cambió el atajo de la marca huérfana con la instalación completa")
+  assert.deepEqual(lineasLanzador.slice(iAtajo + 1, iAtajo + 3), ["call :mirarsetup", 'if "%SETUPVIVO%"=="no" goto marcahuerfana'],
+    "con la marca puesta no se pregunta si el instalador vive antes de ponerse a esperar")
+  // Y otra vez al agotar el techo: el instalador pudo morir durante la espera.
+  const iTecho = lineasLanzador.findIndex((l) => /^if %ESPERA% LSS \d+ goto esperando$/.test(l))
+  const trasTecho = lineasLanzador.slice(iTecho + 1, iTecho + 5)
+  assert.ok(trasTecho.includes("call :mirarsetup") && trasTecho.includes('if "%SETUPVIVO%"=="no" goto marcahuerfana'),
+    "al agotar la espera no se vuelve a mirar si el instalador sigue vivo")
+})
+
+test("2.13 · la salida de la marca huérfana nombra Reparar, no repara sola y no toca la marca", () => {
+  const desde = lineasLanzador.indexOf(":marcahuerfana")
+  const hasta = lineasLanzador.indexOf(":mirarsetup")
+  assert.ok(desde > 0 && hasta > desde, "no están :marcahuerfana y :mirarsetup en ese orden")
+  const bloque = lineasLanzador.slice(desde, hasta)
+  assert.ok(bloque.some((l) => l.includes('"Reparar Tecnia Bot"')), "no nombra «Reparar Tecnia Bot», que es la salida")
+  assert.deepEqual(bloque.slice(-2), ["pause", "exit /b 1"], "no termina en `pause` + `exit /b 1`")
+  // No lanza el bootstrap (el del Setup muerto puede seguir vivo) ni borra la marca.
+  assert.ok(!bloque.some((l) => /bootstrap\.ps1|goto reparar/i.test(l)), "repara sola: puede pisar un bootstrap que sigue corriendo")
+  assert.ok(!bloque.some((l) => /\bdel\b|\berase\b/i.test(l)), "borra la marca: la saca justo cuando el bootstrap puede seguir vivo")
+  // Y el cartel viejo de "sigue en curso" también nombra la salida.
+  const rep = lanzador.slice(lanzador.indexOf(":reparar"))
+  const enCurso = rep.slice(rep.indexOf('if exist "%MARCA%" ('), rep.indexOf("exit /b 0"))
+  assert.match(enCurso, /"Reparar Tecnia Bot"/, "el cartel «la instalación sigue en curso» no dice cómo salir si el instalador ya no está")
+})
