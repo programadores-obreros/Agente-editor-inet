@@ -166,6 +166,31 @@ if ($NodeVersion -notmatch '^\d+\.\d+\.\d+$') {
     $NodeVersion = ""
 }
 
+# El Node MINIMO que sirve, leido de quien lo exige y no escrito aca.
+#
+# Buscar-Node aceptaba cualquier cosa que contestara "v" y un digito: un Node 12
+# que el docente tuviera de otro curso daba "[OK] Node ya esta instalado" y el
+# skill de diagramas fallaba despues, adentro del bot, lejos de la causa. El
+# numero lo fija archify en su package.json ("engines": { "node": ">=18" }, el
+# mismo que chequea su doctor en bin\archify.mjs), y ese archivo viaja al lado
+# de este script tanto en el repo como en el .exe (que copia opencode\ entero).
+# Se lee de AHI: si archify sube su minimo, este instalador se entera solo.
+#
+# Si no se puede leer NO se inventa un numero: se avisa y se acepta cualquier
+# Node que conteste, que es lo que se hacia antes.
+$ArchivoMotorNode = Join-Path $RepoDir "opencode\skills\archify\package.json"
+$NodeMinimo = 0
+try {
+    if (Test-Path $ArchivoMotorNode) {
+        $motorNode = "" + (Get-Content $ArchivoMotorNode -Raw | ConvertFrom-Json).engines.node
+        if ($motorNode -match '^\s*>=\s*(\d+)') { $NodeMinimo = [int]$Matches[1] }
+    }
+} catch { $NodeMinimo = 0 }
+if ($NodeMinimo -le 0) {
+    Write-Host "  [!] No se pudo leer que version de Node necesita el skill de diagramas ($ArchivoMotorNode)." -ForegroundColor Yellow
+    Write-Host "      Se acepta cualquier Node que conteste, sin comprobar que alcance."
+}
+
 # TLS 1.2 explicito. Medido en un Windows 10 22H2 con .NET 4.8: el default es
 # SystemDefault y negocia 1.2 solo, asi que NO es el problema habitual que
 # cuentan por ahi. Pero SystemDefault obedece a la configuracion del equipo, y en
@@ -995,7 +1020,14 @@ function Buscar-Node {
         try {
             $global:LASTEXITCODE = 0
             $v = (& $ruta --version 2>&1 | Out-String)
-            if ($LASTEXITCODE -eq 0 -and $v -match "^v\d") { return $ruta }
+            # Que conteste no alcanza: tiene que ser un Node que a archify le SIRVA.
+            # El mayor sale de lo que el binario dijo ("v24.20.0" -> 24) y el minimo
+            # de $NodeMinimo, que se leyo del package.json de archify alla arriba.
+            if ($LASTEXITCODE -eq 0 -and $v -match "^v(\d+)\.") {
+                $mayorNode = [int]$Matches[1]
+                if ($mayorNode -ge $NodeMinimo) { return $ruta }
+                Write-Host ("  [i] " + $ruta + " es Node " + $v.Trim() + " y el skill de diagramas necesita la " + $NodeMinimo + " o mas nueva: no sirve.")
+            }
         } catch { } finally { $ErrorActionPreference = $prev }
     }
     return $null
