@@ -144,11 +144,18 @@ test("el proxy se informa sin la credencial que puede traer adentro", () => {
   const usaProxy = /\$proxy/.test(codigo)
   if (!usaProxy) return // si un día deja de informarlo, no hay nada que tapar
 
-  assert.match(codigo, /regex\]::Replace\(\$proxy|-replace/,
+  // CAMBIÓ LA FORMA, NO LA REGLA. Este test buscaba el literal
+  // `[regex]::Replace($proxy` porque el tapado era una expresión escrita en el
+  // lugar. Había DOS copias (el proxy y el bloque crudo del bootstrap) y las otras
+  // colas de log salían sin tapar; ahora hay UNA función, `Tapar-Credenciales`, y
+  // el proxy pasa por ella. Qué tapa esa función —incluido `usuario:clave@host`
+  // sin esquema, que la expresión vieja dejaba pasar— lo prueba
+  // tests/diagnostico-honesto.test.mjs ejecutando sus dos expresiones.
+  assert.match(codigo, /\$proxy = Tapar-Credenciales \$proxy/,
     "informa el proxy sin taparle el usuario:clave que puede traer embebido")
 
   // Y que el tapado ocurra ANTES de imprimirlo, no después.
-  const tapa = codigo.search(/regex\]::Replace\(\$proxy|\$proxy\s*-replace/)
+  const tapa = codigo.search(/\$proxy = Tapar-Credenciales \$proxy/)
   const imprime = codigo.search(/Dato "proxy/)
   assert.ok(tapa > 0 && tapa < imprime,
     "se tapa la credencial del proxy DESPUÉS de imprimirla, que es igual a no taparla")
