@@ -882,8 +882,10 @@ begin
         'credencial tuya. Si esta compu se va a donar, reasignar o resetear, ' +
         'conviene borrarlos.' + #13#10 + #13#10 +
         '¿Los querés borrar también, junto con el programa? Esto NO se puede deshacer.' + #13#10 +
-        '(Si elegís "No", quedan en la compu; los podés borrar después a mano ' +
-        'o volviendo a correr este desinstalador.)',
+        '(Si elegís "No", quedan en la compu, en las carpetas .config\opencode y ' +
+        '.local\share\opencode de tu usuario. Este desinstalador se va junto con ' +
+        'el programa: para borrarlos después hay que hacerlo a mano, o volver a ' +
+        'instalar Tecnia Bot y desinstalarlo eligiendo "Sí".)',
         mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES);
 
     { Y ACA se ejecuta, en el mismo paso, con la respuesta ya en la mano.
