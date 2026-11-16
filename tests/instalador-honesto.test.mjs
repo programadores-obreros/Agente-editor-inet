@@ -435,7 +435,22 @@ function seccionIss(nombre) {
   return (fin === -1 ? resto : resto.slice(0, fin)).replace(/^\s*;.*$/gm, "")
 }
 
-const pascal = pascalSinComentarios(seccionIss("Code"))
+// Adentro de un try: si el .iss está roto de una forma que impide recortar [Code]
+// (un renglón `[Run]` metido en un comentario Pascal, la mutación I.6), este
+// archivo reventaba AL CARGAR y no corría ningún test: salía rojo sin que ninguna
+// guarda dijera por qué. Ahora carga igual, y la guarda I.6 nombra el problema.
+let pascal = ""
+let errorAlLeerCode = null
+try {
+  pascal = pascalSinComentarios(seccionIss("Code"))
+} catch (e) {
+  errorAlLeerCode = e
+}
+
+test("la sección [Code] del .iss se puede recortar y leer", () => {
+  assert.equal(errorAlLeerCode, null, `no pude leer [Code]: ${errorAlLeerCode?.message}. Mirá la guarda I.6: suele ser un renglón que empieza con «[» adentro del código.`)
+  assert.ok(pascal.length > 2000, "[Code] quedó casi vacío: el extractor no está mirando el código")
+})
 
 /**
  * El cuerpo de un procedure/function de Pascal: hasta su `end;` en la columna 0.
