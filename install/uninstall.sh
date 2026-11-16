@@ -38,6 +38,30 @@ CARGAS_FILE="$CONFIG_DIR/tecnia-cargas.json"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
 AUTH_FILE="$DATA_DIR/auth.json"
 
+# ---- python3 que ANDA, no python3 que EXISTE --------------------------------
+# En una Mac sin las Command Line Tools, /usr/bin/python3 es un stub: existe,
+# `command -v python3` da verdadero, y al ejecutarlo falla. Preguntar sólo si
+# EXISTE mandaba a este script por el camino de python3 con un python3 que no
+# corre. Así que se lo EJECUTA de verdad, una vez, y el resultado se guarda en
+# PYTHON3_ANDA: la llamada de más abajo deja la respuesta lista antes de que
+# alguien pregunte desde un $(...), que es otro proceso y no podría guardarla.
+#
+# Esta función está repetida en bootstrap.sh, install.sh, update.sh y
+# uninstall.sh A PROPÓSITO: ningún script hace dot-sourcing de otro, cada uno se
+# copia y corre SOLO. Las mantiene iguales tests/python3-que-anda.test.mjs.
+PYTHON3_ANDA=""
+python3_anda() {
+  if [ -z "$PYTHON3_ANDA" ]; then
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
+      PYTHON3_ANDA="si"
+    else
+      PYTHON3_ANDA="no"
+    fi
+  fi
+  [ "$PYTHON3_ANDA" = "si" ]
+}
+python3_anda || true
+
 if [ ! -f "$MANIFEST" ]; then
   echo "No encontré Tecnia Bot instalado (no hay manifest en $CONFIG_DIR)."
   exit 0
@@ -116,7 +140,7 @@ OPENCODE_JSON="$(resolve_existing_config "$CONFIG_DIR/opencode")"
 JSON_TOOL=""
 if command -v jq >/dev/null 2>&1; then
   JSON_TOOL="jq"
-elif command -v python3 >/dev/null 2>&1; then
+elif python3_anda; then
   JSON_TOOL="python3"
 fi
 
@@ -265,7 +289,7 @@ if [ "$JSON_TOOL" = "jq" ]; then
   JQ_OK=1
   unmerge_tui_jq || JQ_OK=0
   unmerge_opencode_jq || JQ_OK=0
-  if [ "$JQ_OK" != "1" ] && command -v python3 >/dev/null 2>&1; then
+  if [ "$JQ_OK" != "1" ] && python3_anda; then
     # jq no pudo (probablemente comentarios en un .jsonc); reintentar con python.
     unmerge_via_python
   elif [ "$JQ_OK" != "1" ]; then
@@ -343,7 +367,7 @@ fi
 # que nunca habia pasado.
 auth_estado_google() {
   [ -f "$AUTH_FILE" ] || { printf 'no\n'; return 0; }
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     # utf-8-sig y no utf-8 pelado: si auth.json tiene BOM (lo escribio un editor
     # de Windows), json.load revienta con "Unexpected UTF-8 BOM". Es el mismo BOM
     # que install.ps1 y uninstall.ps1 ya manejan del lado Windows; aca faltaba.
@@ -384,7 +408,7 @@ PYEOF
 # install.sh (el "[AVISO] No pude escribir $AUTH_FILE"): faltaba justo en el
 # BORRADO, que es el unico de los dos con consecuencia de privacidad.
 auth_quitar_google() {
-  if command -v python3 >/dev/null 2>&1; then
+  if python3_anda; then
     python3 - "$AUTH_FILE" 2>/dev/null <<'PYEOF' || return 1
 import json, sys
 path = sys.argv[1]

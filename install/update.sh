@@ -20,6 +20,30 @@ API_ULTIMO_RELEASE="https://api.github.com/repos/$REPO/releases/latest"
 # La API de GitHub rechaza pedidos sin User-Agent (403).
 USER_AGENT="tecnia-bot-update"
 
+# ---- python3 que ANDA, no python3 que EXISTE --------------------------------
+# En una Mac sin las Command Line Tools, /usr/bin/python3 es un stub: existe,
+# `command -v python3` da verdadero, y al ejecutarlo falla. Preguntar sólo si
+# EXISTE mandaba a este script por el camino de python3 con un python3 que no
+# corre. Así que se lo EJECUTA de verdad, una vez, y el resultado se guarda en
+# PYTHON3_ANDA: la llamada de más abajo deja la respuesta lista antes de que
+# alguien pregunte desde un $(...), que es otro proceso y no podría guardarla.
+#
+# Esta función está repetida en bootstrap.sh, install.sh, update.sh y
+# uninstall.sh A PROPÓSITO: ningún script hace dot-sourcing de otro, cada uno se
+# copia y corre SOLO. Las mantiene iguales tests/python3-que-anda.test.mjs.
+PYTHON3_ANDA=""
+python3_anda() {
+  if [ -z "$PYTHON3_ANDA" ]; then
+    if command -v python3 >/dev/null 2>&1 && python3 -c 'import json' >/dev/null 2>&1; then
+      PYTHON3_ANDA="si"
+    else
+      PYTHON3_ANDA="no"
+    fi
+  fi
+  [ "$PYTHON3_ANDA" = "si" ]
+}
+python3_anda || true
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -40,7 +64,7 @@ descargar() {
 leer_tag_name() {
   if command -v jq >/dev/null 2>&1; then
     jq -r '.tag_name // ""' "$1"
-  elif command -v python3 >/dev/null 2>&1; then
+  elif python3_anda; then
     python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("tag_name",""))' "$1"
   else
     sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1
