@@ -15,11 +15,13 @@ Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en l
 > en la máquina virtual de pruebas** (Windows 10 Pro 22H2, usuario sin permisos
 > de administrador, con el `.exe` compilado ahí mismo): actualizar encima de la
 > 0.4.7, las tres pantallas finales, una instalación con PlatformIO imposible de
-> bajar, desinstalar y volver a instalar, el lanzador, la key y un usuario con
-> tilde en la ruta. **Lo que todavía NO se vio andar:** una notebook de aula, el
-> cartel que aparece al desinstalar eligiendo "Sí", `/actualizar` desde el bot,
-> una carpeta de Documentos en una unidad de red, una computadora con procesador
-> viejo (sin AVX2) y cargar código a una placa. Si tu `.exe` es de la 0.4.8 o
+> bajar, desinstalar eligiendo "No" y eligiendo "Sí", volver a instalar, el
+> lanzador (también con Documentos en una carpeta de red), la key, el
+> actualizador (`install\update.ps1` contra el release publicado) y un usuario
+> con tilde en la ruta. **Lo que todavía NO se vio andar:** una notebook de aula,
+> `/actualizar` escrito adentro del bot (se probó el script que ese comando
+> lanza, no el comando), una computadora con procesador viejo (sin AVX2) y cargar
+> código a una placa. Si tu `.exe` es de la 0.4.8 o
 > anterior, la última pantalla dice siempre "¡Tecnia Bot quedó instalado!", haya
 > salido como haya salido: en ese caso, para saber cómo quedó, abrí
 > **"Diagnostico de Tecnia Bot"** desde el menú inicio.
