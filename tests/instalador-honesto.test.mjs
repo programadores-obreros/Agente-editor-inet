@@ -946,3 +946,24 @@ test("el 3 de install.ps1 cuenta como capa instalada CON AVISOS: degrada, no fal
   assert.match(final, /\} elseif \(\$CapaOk\) \{\s*\n\s*Write-Host "  \[OK\] Tecnia Bot/, "el [OK] de la capa no excluye el caso con avisos")
 })
 
+
+// ── Las pantallas de error del lanzador nombran una salida que EXISTE ──────────
+//
+// `:completo` decía "Volve a correr el instalador" y `:sinopencode` "volve a
+// correrlo, o mira docs\instalacion-windows.md". El instalador hay que volver a
+// bajarlo del sitio (nadie lo guarda) y ese .md no viaja en el .exe: dos consejos
+// que el docente no puede seguir. El acceso "Reparar Tecnia Bot" existe para eso.
+test("las pantallas «falta la capa» y «no se encontró OpenCode» mandan a Reparar, no a reinstalar ni a un doc que no está", () => {
+  const completo = lanzador.slice(lanzador.indexOf(":completo"), lanzador.indexOf(":sinopencode"))
+  const sinOpenCode = lanzador.slice(lanzador.indexOf(":sinopencode"), lanzador.indexOf(":marcahuerfana"))
+  for (const [nombre, bloque] of [[":completo", completo], [":sinopencode", sinOpenCode]]) {
+    assert.ok(bloque.length > 50, `no pude recortar ${nombre}`)
+    assert.match(bloque, /"Reparar Tecnia Bot"/, `${nombre} no nombra «Reparar Tecnia Bot»`)
+    assert.doesNotMatch(bloque, /volve a correr|docs\\/i, `${nombre} sigue mandando a reinstalar o a un documento que no se instala`)
+  }
+  // Dentro del bloque ( ) de :completo no puede haber paréntesis en un echo: cierran el bloque.
+  const adentro = completo.slice(completo.indexOf("("), completo.lastIndexOf(")"))
+  assert.deepEqual(adentro.split("\n").slice(1).filter((l) => /^\s*echo\b.*[()]/.test(l)), [], "un echo con paréntesis adentro de un bloque ( ) lo cierra antes de tiempo")
+  // Y la de OpenCode sigue avisando que quizá el instalador está corriendo ahora.
+  assert.match(sinOpenCode, /esperalo/i, ":sinopencode dejó de avisar que el instalador puede estar corriendo")
+})
