@@ -584,9 +584,15 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
     #
     # 2. El `foreach` de UNA vuelta no es un adorno. El instalador de Scoop, cuando
     #    no tiene ruta de archivo -y corrido como scriptblock no la tiene-, no sale
-    #    con `exit`: sale con `break` (su funcion Exit-Install, leida en
-    #    github.com/ScoopInstaller/Install, install.ps1: "if ($IS_EXECUTED_FROM_IEX)
-    #    { break } else { exit $ErrorCode }"). Lo hace en cada rechazo: politica de
+    #    con `exit`: sale con `break`. El `break` esta en su funcion Exit-Install,
+    #    a la que llama Deny-Install, que es la que usa cada rechazo. Leido en
+    #    github.com/ScoopInstaller/Install, install.ps1, rama master, lineas 91 a
+    #    115 el dia que se escribio esto:
+    #        if ((-not $env:CI) -and $IS_EXECUTED_FROM_IEX) { break } else { exit $ErrorCode }
+    #    OJO con el "-not $env:CI": en un runner de CI esa variable esta puesta y
+    #    el instalador de Scoop sale con `exit`, no con `break`. O sea que la CI
+    #    NO ejercita el camino del `break`, que es el que ve una escuela; ese se
+    #    prueba en la VM. Lo hace en cada rechazo: politica de
     #    ejecucion restrictiva, corriendo como admin sin -RunAsAdmin, o "Scoop is
     #    already installed" cuando la carpeta scoop existe pero el comando no esta.
     #    Y un `break` sin un bucle que lo contenga sube por la pila de llamadas y,
