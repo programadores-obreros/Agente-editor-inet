@@ -194,7 +194,13 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; Work
 ; Tecnia Bot (primeros pasos) y abrir el bot.
 Filename: "{#MyAppURL}"; Description: "Visitar la web de Tecnia Bot (primeros pasos)"; \
   Flags: postinstall shellexec skipifsilent
+; La casilla de abrir el bot se ofrece SÓLO si el bootstrap dejó un bot que abre
+; (bien o degradado). Antes aparecía tildada siempre: con el bootstrap caído, la
+; pantalla decía "NO quedó instalado" y debajo ofrecía abrirlo. Las entradas
+; postinstall se evalúan después de ssPostInstall (lo verificó la revisión contra
+; las fuentes de Inno), así que para entonces el resultado ya se conoce.
 Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
+  Check: OfrecerAbrirElBot; \
   Flags: postinstall skipifsilent nowait
 
 [UninstallDelete]
@@ -348,6 +354,14 @@ var
   MarcaInstalando: String;
   EstadoBootstrap: Integer;
   CodigoBootstrap: Integer;
+
+{ El Check de la casilla "Abrir Tecnia Bot ahora" de la sección Run. Verdadero
+  sólo si el bootstrap terminó y dejó un bot que abre. Salteado, caído, sin
+  lanzar o sin correr: no se ofrece abrir algo que no se comprobó que abra. }
+function OfrecerAbrirElBot: Boolean;
+begin
+  Result := (EstadoBootstrap = EstadoBien) or (EstadoBootstrap = EstadoDegradado);
+end;
 
 { ── El bootstrap se lanza desde acá, y se LEE cómo terminó ────────────────────
 
