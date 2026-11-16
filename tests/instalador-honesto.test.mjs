@@ -736,13 +736,66 @@ test("2.4b · la carpeta del programa NO se barre entera: lo que el instalador n
     "[UninstallDelete] barre {app} entera: se lleva lo que un alumno haya guardado ahí")
   // Y lo que quede se informa, mirando el disco después de desinstalar.
   const hook = rutina("CurUninstallStepChanged")
-  assert.match(hook, /if CurUninstallStep = usPostUninstall then\s+AvisarSiQuedoAlgoAjeno;/, "después de desinstalar no se mira qué quedó en la carpeta")
-  const aviso = rutina("AvisarSiQuedoAlgoAjeno")
-  assert.match(aviso, /Quedo := LoAjenoQueQuedo;\s+if Quedo = '' then\s+Exit;/, "avisa aunque no haya quedado nada")
+  assert.match(hook, /if CurUninstallStep = usPostUninstall then\s+AvisarLoQueQuedo;/, "después de desinstalar no se mira qué quedó en la carpeta")
+  const aviso = rutina("AvisarLoQueQuedo")
+  assert.match(aviso, /MirarLoQueQuedo\(Propio, Ajeno\);\s+if \(Propio = ''\) and \(Ajeno = ''\) then\s+Exit;/, "avisa aunque no haya quedado nada")
   assert.match(aviso, /if UninstallSilent\(\) then\s+Exit;/, "en modo silencioso no puede aparecer un cartel")
-  const busca = rutina("LoAjenoQueQuedo")
+  const busca = rutina("MirarLoQueQuedo")
   assert.match(busca, /FindFirst\(ExpandConstant\('\{app\}\\\*'\), Hallado\)/, "no recorre la carpeta del programa")
   assert.match(busca, /FindClose\(Hallado\);/, "no cierra la búsqueda")
+})
+
+// ── Revisión de QA · el cartel llamaba "proyectos" a un borrado nuestro que falló ──
+//
+// `LoAjenoQueQuedo` sólo salteaba `unins*`. Si [UninstallDelete] no podía borrar
+// algo PROPIO (opencode\ con un archivo tomado, un log abierto), el cartel decía
+// "pueden ser proyectos guardados ahí por error". Ahora se separa.
+
+test("lo que quedó se separa en propio («no pude borrar») y ajeno («no lo puse»), y cada frase va con su lista", () => {
+  const busca = rutina("MirarLoQueQuedo")
+  assert.match(busca, /if EsNuestro\(Hallado\.Name\) then\s+AnotarEnLista\(Propio, CuantosPropios, Hallado\.Name\)\s+else\s+AnotarEnLista\(Ajeno, CuantosAjenos, Hallado\.Name\);/,
+    "lo que quedó no se reparte entre propio y ajeno")
+  const aviso = rutina("AvisarLoQueQuedo")
+  assert.match(aviso, /if Propio <> '' then\s+Texto := Texto \+ #13#10 \+ #13#10\s+\+ 'NO PUDE BORRAR estos archivos de Tecnia Bot:' \+ #13#10 \+ Propio/, "lo propio que no se borró no se dice como «no pude borrar»")
+  // «Proyectos» sólo se dice de lo ajeno: la frase vive adentro de la rama de Ajeno.
+  const iAjeno = aviso.indexOf("if Ajeno <> '' then")
+  const iProyectos = aviso.indexOf("Pueden ser proyectos")
+  assert.ok(iAjeno > 0 && iProyectos > iAjeno, "«pueden ser proyectos» no depende de que haya algo ajeno")
+  assert.equal((aviso.match(/proyectos/g) ?? []).length, 1, "«proyectos» se dice en más de un lugar del cartel")
+  assert.ok(aviso.indexOf("if Propio <> '' then") < iAjeno, "cambió el orden: primero lo que no se pudo borrar")
+  assert.doesNotMatch(aviso.slice(aviso.indexOf("if Propio <> '' then"), iAjeno), /proyectos/, "la rama de lo propio habla de proyectos")
+})
+
+test("la lista de «lo nuestro» del .iss coincide con lo que declaran [Files] y [UninstallDelete] (guard cruzado)", () => {
+  // Lo que el instalador pone en la raíz de {app}, armado DESDE las secciones:
+  //   [Files]            DestDir "{app}\X..." → X ; DestDir "{app}" → el nombre del Source
+  //   [UninstallDelete]  Name "{app}\X"       → X (los que tienen comodín, aparte)
+  const esperados = new Set()
+  const comodines = []
+  for (const m of seccionIss("Files").matchAll(/^Source:\s*"([^"]+)";\s*DestDir:\s*"\{app\}(?:\\([^"\\]+))?[^"]*"/gm)) {
+    esperados.add((m[2] ?? m[1].split("\\").pop()).toLowerCase())
+  }
+  for (const m of seccionIss("UninstallDelete").matchAll(/^Type:\s*\w+;\s*Name:\s*"\{app\}\\([^"\\]+)"/gm)) {
+    if (m[1].includes("*")) comodines.push(m[1].toLowerCase())
+    else esperados.add(m[1].toLowerCase())
+  }
+  assert.ok(esperados.size >= 6, `sólo pude armar ${esperados.size} nombres desde las secciones: el extractor no está mirando bien`)
+  assert.ok(esperados.has("opencode") && esperados.has("version") && esperados.has(".instalando"), "el extractor perdió nombres que seguro están")
+
+  const fn = rutina("EsNuestro")
+  const enCodigo = new Set([...fn.matchAll(/\(N = '([^']+)'\)/g)].map((m) => m[1]))
+  assert.deepEqual([...enCodigo].sort(), [...esperados].sort(),
+    "EsNuestro y las secciones [Files]/[UninstallDelete] no nombran lo mismo: o se llama «ajeno» a algo nuestro, o «nuestro» a algo del alumno")
+  // Los comodines: cada `prefijo*sufijo` tiene su par Copy(...) = 'prefijo' / 'sufijo'.
+  assert.ok(comodines.length >= 1, "esperaba al menos una entrada con comodín (los logs rotados)")
+  for (const c of comodines) {
+    const [pre, suf] = c.split("*")
+    assert.ok(fn.includes(`(Copy(N, 1, ${pre.length}) = '${pre}') and (Copy(N, Length(N) - ${suf.length - 1}, ${suf.length}) = '${suf}')`),
+      `EsNuestro no reconoce «${c}» como propio`)
+  }
+  assert.equal((fn.match(/Copy\(N, 1,/g) ?? []).length, comodines.length, "EsNuestro reconoce un patrón que las secciones no declaran")
+  // Y compara en minúsculas (Windows no distingue): la lista de arriba está toda en minúsculas.
+  assert.match(fn, /N := Lowercase\(Nombre\);/, "EsNuestro compara sin pasar a minúsculas")
 })
 
 // ── 2.13 · Una marca .instalando huérfana colgaba el lanzador para siempre ─────
