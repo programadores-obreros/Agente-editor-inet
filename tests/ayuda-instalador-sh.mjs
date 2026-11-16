@@ -93,8 +93,11 @@ export function nuevoHome(prefijo = "tecnia-instalador-") {
  * en 022 —el de fábrica de casi toda distro— para que los tests de permisos midan
  * lo que hace el script y no el umask de esta terminal.
  */
-export function correr(script, h, { path, env = {}, args = [], input, timeout = 120_000, cwd } = {}) {
-  const run = spawnSync(bash, ["-c", 'umask 022 && exec "$0" "$@"', bash, script, ...args], {
+export function correr(script, h, { path, env = {}, args = [], input, timeout = 120_000, cwd, envoltorio = [] } = {}) {
+  // `envoltorio`: un comando que va ADELANTE de bash (por ejemplo `unshare -r`, para
+  // correr el script como root de verdad adentro de un espacio de usuarios).
+  const cmd = [...envoltorio, bash, "-c", 'umask 022 && exec "$0" "$@"', bash, script, ...args]
+  const run = spawnSync(cmd[0], cmd.slice(1), {
     cwd: cwd ?? h.base,
     env: { HOME: h.home, XDG_CONFIG_HOME: h.xdgConfig, XDG_DATA_HOME: h.xdgData, PATH: path, ...env },
     input: input ?? "",
