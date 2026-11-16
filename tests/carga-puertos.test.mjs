@@ -226,7 +226,8 @@ test("liberar() sólo libera lo PROPIO: si el candado ya es de otro, no lo borra
   const deOtro = JSON.stringify({ pid: process.ppid, hostname: hostname(), creado: "2031-05-05T05:05:05.000Z" })
   writeFileSync(ruta, deOtro)
   r.liberar()
-  assert.equal(readFileSync(ruta, "utf8"), deOtro, "liberar() borró el candado de otro dueño")
+  assert.equal(existsSync(ruta), true, "liberar() borró el candado de otro dueño")
+  assert.equal(readFileSync(ruta, "utf8"), deOtro, "liberar() tocó el candado de otro dueño")
 })
 
 test("liberar() se puede llamar muchas veces, y una reserva vieja no libera la reserva nueva del mismo puerto", () => {

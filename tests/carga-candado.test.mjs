@@ -151,7 +151,10 @@ test("liberarCandadoSiPropio: borra el propio; el de otro (aunque sea del mismo 
   const deOtro = JSON.stringify({ pid: r.contenido.pid, hostname: r.contenido.hostname, creado: "2031-05-05T05:05:05.000Z" })
   writeFileSync(ruta, deOtro)
   candado.liberarCandadoSiPropio(ruta, r.contenido)
-  assert.equal(readFileSync(ruta, "utf8"), deOtro, "borró el candado de otro dueño")
+  // Primero que EXISTA, como aserción: leer un archivo borrado tira ENOENT, y un test que
+  // se pone rojo por una excepción no está afirmando la propiedad (lo mostró la mutación).
+  assert.equal(existsSync(ruta), true, "borró el candado de otro dueño")
+  assert.equal(readFileSync(ruta, "utf8"), deOtro, "tocó el candado de otro dueño")
 
   for (const ajeno of [{ ...r.contenido, pid: r.contenido.pid + 1 }, { ...r.contenido, hostname: "otra" }]) {
     writeFileSync(ruta, JSON.stringify(ajeno))
@@ -171,6 +174,7 @@ test("liberarCandadoSiPropio: un candado ilegible tampoco se borra", () => {
   const r = candado.tomarCandado(ruta)
   writeFileSync(ruta, "")
   candado.liberarCandadoSiPropio(ruta, r.contenido)
+  assert.equal(existsSync(ruta), true, "borró un candado que no podía leer")
   assert.equal(readFileSync(ruta, "utf8"), "")
 })
 
