@@ -313,8 +313,9 @@ test("2.2b · OpenCode se EJECUTA al final SIEMPRE: «NO ARRANCA» sale de esa c
 test("2.2b · la capa que no quedó ya no corta antes del resumen, pero sigue siendo falla", () => {
   const antesDelResumen = final.slice(0, final.indexOf("$OpenCodeArranca = [bool](Test-OpenCode)"))
   assert.doesNotMatch(antesDelResumen, /\bexit\b/, "se corta antes del resumen: el docente no ve cómo quedó el resto")
-  assert.match(antesDelResumen, /if \(\$CodigoInstall -ne 0\) \{\s*\n\s*\$CapaOk = \$false/, "un código distinto de 0 de install.ps1 no marca la capa como caída")
-  assert.match(antesDelResumen, /\} elseif \(-not \(Test-Path \(Join-Path \$cfgDir "agent\\tecnia-bot\.md"\)\)\) \{\s*\n\s*\$CapaOk = \$false/, "no se mira en el disco que el agente haya quedado")
+  assert.match(antesDelResumen, /if \(\$CodigoInstall -ne 0\) \{\s*\n\s*if \(\$CodigoInstall -eq \$CodigoCapaConAvisos\) \{\s*\n\s*\$CapaConAvisos = \$true\s*\n\s*\} else \{\s*\n\s*\$CapaOk = \$false/,
+    "un código de install.ps1 que no es 0 ni «con avisos» no marca la capa como caída")
+  assert.match(antesDelResumen, /\nif \(\$CapaOk -and -not \(Test-Path \(Join-Path \$cfgDir "agent\\tecnia-bot\.md"\)\)\) \{\s*\n\s*\$CapaOk = \$false/, "no se mira en el disco que el agente haya quedado")
   // Sólo se pone en verdadero UNA vez, antes de las dos comprobaciones.
   assert.equal((final.match(/\$CapaOk = \$true/g) ?? []).length, 1, "$CapaOk se pone en verdadero en más de un lugar")
   assert.ok(final.indexOf("$CapaOk = $true") < final.indexOf("if ($CodigoInstall -ne 0)"), "$CapaOk se pone en verdadero después de comprobar")
@@ -917,3 +918,31 @@ test("la casilla «Abrir Tecnia Bot ahora» sólo se ofrece si el bootstrap dej�
   assert.match(fn, /^function OfrecerAbrirElBot: Boolean;\s+begin\s+Result := \(EstadoBootstrap = EstadoBien\) or \(EstadoBootstrap = EstadoDegradado\);\s+end;$/,
     "la casilla se ofrece en algún estado que no es «bien» ni «degradado»")
 })
+
+// ── Contrato de install.ps1 · 3 = "instalado CON AVISOS" no es una falla ───────
+//
+// install.ps1 sale con 0 = instalado, 3 = instalado con avisos (la capa SÍ se
+// copió; no pudo escribir la config o guardar la key), 1 = se cortó. El bootstrap
+// trataba cualquier código distinto de 0 como "La capa de Tecnia Bot no se
+// instalo", que con el 3 es falso. (En esta rama install.ps1 todavía no devuelve
+// 3: la guarda es contra el contrato; la integración la hace el coordinador.)
+test("el 3 de install.ps1 cuenta como capa instalada CON AVISOS: degrada, no falla y no festeja", () => {
+  assert.equal(Number(bootstrap.match(/^\$CodigoCapaConAvisos\s*=\s*(\d+)\s*$/m)?.[1]), 3, "el código «con avisos» de install.ps1 es 3")
+  const antes = final.slice(0, final.indexOf("$OpenCodeArranca = [bool](Test-OpenCode)"))
+  // Con avisos NO se imprime «no se instalo» ni se baja $CapaOk...
+  const rama = bloqueDesde(antes, "if ($CodigoInstall -eq $CodigoCapaConAvisos) {")
+  assert.match(rama, /^if \(\$CodigoInstall -eq \$CodigoCapaConAvisos\) \{\s*\n\s*\$CapaConAvisos = \$true\s*\n\s*\}$/, "la rama «con avisos» hace algo más que anotarlo")
+  // ...pero el agente en el disco se exige igual: la comprobación NO está en un elseif del código.
+  assert.match(antes, /\n\}\s*\nif \(\$CapaOk -and -not \(Test-Path/, "con el 3 no se comprueba en el disco que el agente esté")
+  // $CapaConAvisos sólo se prende en esa rama.
+  assert.equal((bootstrap.match(/\$CapaConAvisos = \$true/g) ?? []).length, 1, "$CapaConAvisos se prende por otro lado")
+  // En el resumen: degrada (o sea, sale con 2 y sin LISTO!) y remite a lo impreso arriba.
+  assert.match(final, /if \(\$CapaOk -and \$CapaConAvisos\) \{\s*\n\s*\$Degradado \+= "la capa se instalo CON AVISOS/, "la capa con avisos no degrada el resultado: terminaría en LISTO! con exit 0")
+  const linea = bloqueDesde(final, "if ($CapaOk -and $CapaConAvisos) {")
+  assert.match(linea, /CON AVISOS/, "el resumen no dice que la capa quedó con avisos")
+  assert.match(linea, /mas arriba/, "el resumen no remite a los avisos que install.ps1 imprimió")
+  assert.doesNotMatch(linea, /\[OK\]/, "la capa con avisos se muestra como [OK]")
+  // El [OK] de la capa queda sólo para el caso sin avisos.
+  assert.match(final, /\} elseif \(\$CapaOk\) \{\s*\n\s*Write-Host "  \[OK\] Tecnia Bot/, "el [OK] de la capa no excluye el caso con avisos")
+})
+
