@@ -410,39 +410,155 @@ test("el lanzador NO arranca apenas aparece opencode", () => {
 
 const instalarPs1 = readFileSync(join(REPO, "install/install.ps1"), "utf8")
 
-test("ningún archivo JSON se escribe con Set-Content (que mete BOM)", () => {
-  /*
-   * `Set-Content -Encoding UTF8` está permitido sólo para archivos que lee
-   * PowerShell, donde el BOM no molesta. Hoy eso es únicamente el manifest.
-   * Cualquier otro destino tiene que ir por WriteAllText.
-   */
-  const PERMITIDOS = ["$Manifest"]
+// ── POR QUÉ SE REESCRIBIERON LOS TRES TESTS DE ABAJO: ERAN HUECOS ─────────────
+//
+// Los tres existían y los tres daban verde con el bug adentro. Medido por
+// mutación sobre install/install.ps1 antes de tocarlos (exit code de
+// `node --test tests/instalador.test.mjs`, sin pipe):
+//
+//   (a) la cura del BOM con `[System.Text.Encoding]::UTF8` (que EMITE BOM) en vez
+//       de `(New-Object System.Text.UTF8Encoding $false)`             → 0, VERDE
+//   (a') lo mismo en la escritura del temporal de Escribir-TextoAtomico, que es
+//       por donde hoy se guarda la key                                → 0, VERDE
+//   (b) esa escritura del temporal cambiada por
+//       `$texto | Out-File -FilePath $temporal -Encoding utf8`        → 0, VERDE
+//   (b') el guardado de la key cambiado por
+//       `... | Out-File -FilePath $AuthFile -Encoding utf8`           → 0, VERDE
+//
+// Por qué eran huecos, uno por uno:
+//
+//   1. «ningún JSON se escribe con Set-Content» buscaba UN verbo con UNA forma de
+//      escribirlo (`Set-Content -Path $var ... -Encoding UTF8`). `Out-File`,
+//      `Add-Content`, o el mismo Set-Content con `-LiteralPath`, pasaban de largo.
+//      Prohibía una manera de equivocarse, no el error.
+//   2. «las credenciales se escriben sin BOM» pedía que la línea dijera
+//      `WriteAllText`. WriteAllText con `[System.Text.Encoding]::UTF8` ES
+//      WriteAllText y mete BOM igual: lo que decide es el TERCER argumento, y
+//      nadie lo miraba. Además filtraba por líneas que nombraran `$AuthFile`, y la
+//      key hoy se escribe por Escribir-TextoAtomico, que escribe en `$temporal`:
+//      la escritura que más importa había quedado fuera del test.
+//   3. «CURA un auth.json con BOM» recortaba hasta `indexOf("$authData = $null")`,
+//      texto que ya no existe en install.ps1: daba -1 y `slice(0, -1)` devolvía EL
+//      ARCHIVO ENTERO. Los tres `assert.match` se cumplían con cualquier
+//      ReadAllBytes / 0xEF…0xBF / WriteAllText de cualquier parte del script. Y el
+//      `assert.ok(i > 0)` que estaba al final no protegía ese recorte: miraba otro
+//      índice.
+//
+// Ahora se enumeran TODAS las primitivas de escritura del script (no una), se mira
+// el argumento de codificación (no el nombre del método), y la cura se recorta por
+// llaves balanceadas con un assert que explota si la cabecera no está.
+//
+// Mutaciones que ahora dan ROJO (exit code 1 en este archivo; cada una se aplicó
+// con un script que hace assert de que el texto a reemplazar existe, y se comprobó
+// con `git diff --stat` antes de correr): (a), (a'), (b), (b'), y además
+//   (b'') la cura cambiada por `$texto | Out-File -FilePath $AuthFile -Encoding utf8`
+//   (c)  borrar la línea que reescribe el archivo en la cura
+//   (c') neutralizar la detección con `if ($false) {`
+//   (d)  que la cura decodifique desde el byte 0 (`GetString($bytes, 0, ...)`): el
+//        U+FEFF queda adentro del texto y se vuelve a escribir como EF BB BF.
+//
+// LÍMITE HONESTO: esto es forma, no conducta. En esta máquina no hay PowerShell,
+// así que ninguno de estos tests EJECUTA install.ps1. Que el archivo salga sin BOM
+// de verdad sólo se puede medir en Windows (CI, job `windows`).
 
-  const culpables = []
-  for (const m of instalarPs1.matchAll(/Set-Content\s+-Path\s+(\$\w+)[^\r\n]*-Encoding\s+UTF8/g)) {
-    if (!PERMITIDOS.includes(m[1])) culpables.push(m[1])
+/** install.ps1 sin comentarios: los comentarios citan `Set-Content` para explicar el bug. */
+const instalarCodigo = instalarPs1.replace(/^\s*#.*$/gm, "")
+
+/** El único tercer argumento aceptado para escribir algo que lee un runtime de JS. */
+const SIN_BOM = "(New-Object System.Text.UTF8Encoding $false)"
+
+/** Toda forma que tiene PowerShell de dejar bytes en un archivo. */
+const PRIMITIVA_DE_ESCRITURA =
+  /\b(?:Set-Content|Add-Content|Out-File|Tee-Object|Export-Clixml|Export-Csv)\b|\b(?:WriteAllText|WriteAllBytes|WriteAllLines|AppendAllText|AppendAllLines|OpenWrite|CreateText)\s*\(|StreamWriter|FileStream/
+
+/** Las líneas de install.ps1 (sin comentarios) que escriben un archivo. */
+function lineasQueEscriben() {
+  return instalarCodigo
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => PRIMITIVA_DE_ESCRITURA.test(l))
+}
+
+/** Un bloque `cabecera ... }` de PowerShell, contando llaves. Explota si no está. */
+function bloquePs(texto, cabecera) {
+  const i = texto.indexOf(cabecera)
+  assert.ok(i >= 0, `install.ps1 ya no tiene «${cabecera}»: el test no puede recortar a ciegas`)
+  const abre = texto.indexOf("{", i)
+  assert.ok(abre >= 0, `«${cabecera}» no abre llave`)
+  let nivel = 0
+  for (let j = abre; j < texto.length; j++) {
+    if (texto[j] === "{") nivel++
+    else if (texto[j] === "}" && --nivel === 0) return texto.slice(i, j + 1)
   }
+  assert.fail(`«${cabecera}» no cierra llave`)
+}
+
+test("ningún archivo JSON se escribe con BOM: se miran TODAS las escrituras y su codificación", () => {
+  /*
+   * Lo único que puede escribir con otra cosa que UTF-8 sin BOM es lo que NO lee un
+   * runtime de JavaScript. Hoy son dos líneas, y van enteras: si mañana cambia el
+   * destino o la codificación de alguna, alguien tiene que mirarla y decidir.
+   *   - el manifest lo lee PowerShell, que saca el BOM solo;
+   *   - el platformio.ini de precalentado es ASCII puro y lo lee PlatformIO.
+   */
+  const PERMITIDAS = [
+    "Set-Content -Path $Manifest -Value $manifestLines -Encoding UTF8",
+    'Set-Content -Path (Join-Path $proj "platformio.ini") -Value $IniPlacas -Encoding ASCII',
+  ]
+  const escrituras = lineasQueEscriben()
+  // El piso: si el filtro deja de encontrar escrituras, el test no puede quedar verde
+  // por no haber mirado nada.
+  assert.ok(escrituras.length >= 6, `sólo encontré ${escrituras.length} escrituras en install.ps1: el filtro dejó de ver`)
+  for (const permitida of PERMITIDAS) {
+    assert.ok(escrituras.includes(permitida), `la excepción «${permitida}» ya no existe tal cual: revisá la lista`)
+  }
+  const culpables = escrituras.filter((l) => {
+    if (PERMITIDAS.includes(l)) return false
+    // Tiene que ser WriteAllText(<destino>, <texto>, SIN_BOM) y nada más en la línea.
+    return !(l.startsWith("[System.IO.File]::WriteAllText(") && l.endsWith(", " + SIN_BOM + ")"))
+  })
   assert.deepEqual(
     culpables,
     [],
-    "estos archivos van a salir con BOM y JSON.parse los va a rechazar en silencio: " +
-      culpables.join(", ") +
-      " — usá [System.IO.File]::WriteAllText(..., (New-Object System.Text.UTF8Encoding $false))",
+    "estas escrituras pueden salir con BOM (o no declaran la codificación) y JSON.parse las rechaza en silencio — " +
+      "usá [System.IO.File]::WriteAllText(..., " + SIN_BOM + ")",
   )
+  // Y la redirección, que también escribe (en PowerShell 5.1, en UTF-16 con BOM).
+  const redirecciones = instalarCodigo
+    .split(/\r?\n/)
+    .filter((l) => !/Write-Host/.test(l) && /(?:^|[^-=<>2&|])>{1,2}\s*["$(]/.test(l))
+    .map((l) => l.trim())
+  assert.deepEqual(redirecciones, [], "hay una redirección a archivo: en PowerShell 5.1 escribe UTF-16 con BOM")
 })
 
-test("el archivo de credenciales se escribe sin BOM", () => {
-  // El caso concreto, nombrado. Si alguien renombra la variable, el test de
-  // arriba sigue cubriendo la regla; éste cubre el archivo que más duele.
-  const i = instalarPs1.indexOf("$AuthFile")
-  assert.ok(i > 0, "no encontré dónde se escribe el archivo de credenciales")
-  const escrituras = [...instalarPs1.matchAll(/([^\r\n]*\$AuthFile[^\r\n]*)/g)]
-    .map((m) => m[1])
-    .filter((l) => /Set-Content|WriteAllText/.test(l))
-  assert.ok(escrituras.length > 0, "no se escribe el archivo de credenciales")
-  for (const l of escrituras) {
-    assert.match(l, /WriteAllText/, `las credenciales se escriben con BOM:\n  ${l.trim()}`)
-  }
+test("el archivo de credenciales se escribe sin BOM, por los DOS caminos que lo escriben", () => {
+  const escrituras = lineasQueEscriben()
+  // Camino 1: la única escritura directa sobre auth.json es la cura.
+  const directas = escrituras.filter((l) => l.includes("$AuthFile"))
+  assert.deepEqual(
+    directas,
+    ["[System.IO.File]::WriteAllText($AuthFile, $texto, " + SIN_BOM + ")"],
+    "cambió la escritura directa de auth.json (tiene que ser sólo la cura, y sin BOM)",
+  )
+  // Camino 2: todo lo demás va por Escribir-TextoAtomico, y ESA función escribe sin BOM.
+  const fn = bloquePs(instalarCodigo, "function Escribir-TextoAtomico(")
+  const escriturasFn = fn.split(/\r?\n/).map((l) => l.trim()).filter((l) => PRIMITIVA_DE_ESCRITURA.test(l))
+  assert.deepEqual(
+    escriturasFn,
+    ["[System.IO.File]::WriteAllText($temporal, $texto, " + SIN_BOM + ")"],
+    "Escribir-TextoAtomico ya no escribe el temporal en UTF-8 sin BOM: por ahí pasa la key",
+  )
+  // Y que la key de verdad pase por ahí: si el guardado dejara de usarla, lo de
+  // arriba mediría una función que nadie llama.
+  const usos = instalarCodigo.split(/\r?\n/).filter((l) => /^\s*(?:try \{ )?Escribir-TextoAtomico \$AuthFile /.test(l))
+  assert.ok(usos.length >= 2, `esperaba al menos dos escrituras de auth.json por Escribir-TextoAtomico (purga y guardado) y hay ${usos.length}`)
+  assert.ok(usos.some((l) => l.includes("$candidato")), "el guardado de la key ya no pasa por Escribir-TextoAtomico")
+  // Ninguna línea le pasa auth.json por un pipe o por una redirección a otra cosa.
+  const raras = instalarCodigo
+    .split(/\r?\n/)
+    .filter((l) => /\|\s*[\w-]+[^|]*\$AuthFile/.test(l) || />\s*\$AuthFile/.test(l))
+    .map((l) => l.trim())
+  assert.deepEqual(raras, [], "auth.json recibe la salida de un pipe o de una redirección")
 })
 
 test("el instalador CURA un auth.json que ya venía con BOM", () => {
@@ -455,12 +571,27 @@ test("el instalador CURA un auth.json que ya venía con BOM", () => {
   //
   // Arreglar la ESCRITURA no alcanzaba: las máquinas ya infectadas seguían
   // infectadas. Hay que mirar los bytes, que es lo único que ve OpenCode.
-  const i = instalarPs1.indexOf("$AuthFile")
-  const bloque = instalarPs1.slice(0, instalarPs1.indexOf("$authData = $null"))
-  assert.match(bloque, /ReadAllBytes/, "lee el archivo como texto: así el BOM es invisible")
-  assert.match(bloque, /0xEF.*0xBB.*0xBF/s, "no busca la firma del BOM")
-  assert.match(bloque, /WriteAllText/, "detecta el BOM pero no lo saca")
-  assert.ok(i > 0)
+  const cura = bloquePs(instalarCodigo, "if (Test-Path $AuthFile) {")
+  assert.match(cura, /\$bytes = \[System\.IO\.File\]::ReadAllBytes\(\$AuthFile\)/,
+    "lee el archivo como texto: así el BOM es invisible")
+  // La detección, entera: los tres bytes de la firma y que el archivo los tenga.
+  const deteccion = "if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {"
+  const conBom = bloquePs(cura, deteccion)
+  // Se decodifica SALTEANDO los tres bytes: desde 0, el U+FEFF queda en el texto y
+  // WriteAllText lo vuelve a escribir como EF BB BF, con cualquier codificación.
+  assert.match(conBom, /\$texto = \[System\.Text\.Encoding\]::UTF8\.GetString\(\$bytes, 3, \$bytes\.Length - 3\)/,
+    "no saltea los tres bytes del BOM al decodificar")
+  // Y se REESCRIBE, adentro de la rama que detectó el BOM y sin BOM.
+  const reescritura = "[System.IO.File]::WriteAllText($AuthFile, $texto, " + SIN_BOM + ")"
+  assert.ok(conBom.includes(reescritura), "detecta el BOM pero no reescribe el archivo sin BOM")
+  assert.ok(conBom.indexOf(reescritura) > conBom.indexOf("GetString($bytes, 3"),
+    "reescribe antes de haber sacado el BOM del texto")
+  // La cura va ANTES de leer las credenciales: si no, la decisión de «ya está
+  // configurado» se toma sobre el archivo envenenado.
+  const iCura = instalarCodigo.indexOf(cura)
+  const iLectura = instalarCodigo.indexOf("$lecturaAuth = Leer-AuthJson $AuthFile")
+  assert.ok(iLectura >= 0, "install.ps1 ya no lee las credenciales con `$lecturaAuth = Leer-AuthJson $AuthFile`")
+  assert.ok(iCura >= 0 && iCura < iLectura, "la cura del BOM corre después de leer las credenciales")
 })
 
 test("el lanzador COMPLETA la instalación si quedó a medias", () => {
