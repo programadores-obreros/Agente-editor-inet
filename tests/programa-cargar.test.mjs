@@ -963,6 +963,29 @@ test("ciclo 4: marca de un ANCESTRO + carpeta limpia → cartel y carga", async 
   assert.equal(x.pregunta.pedidos.length, 1)
 })
 
+// Sin este test, romper el valor por defecto (`h.lanzador ?? LANZAMIENTO_REAL`) no ponía nada
+// en rojo: todos los demás inyectan `lanzador` (el mismo hueco que N3 con `configuracion`).
+test("ciclo 4: sin `lanzador` inyectado se usa la marca REAL del proceso (TECNIA_LANZADOR)", async () => {
+  const dir = await armar()
+  const { lanzador: _sacado, ...sinLanzador } = { ...HERRAMIENTAS_DE_CARGA, lanzador: undefined }
+  const correr = async () => {
+    const lanza = lanzador()
+    const ctx = { directory: dir, agent: "tecnia-bot", abort: new AbortController().signal, ask: cartel().ask }
+    const configuracion = { cwd: () => dir, home: HOME_LIMPIO, entorno: {} }
+    return JSON.parse(await ejecutarPrograma({ accion: "cargar" }, ctx, depsReales(), { ...sinLanzador, run: lanza.run, lineaDeComando: () => ({ ok: true, argv: TUI_NORMAL }), configuracion }))
+  }
+  const antes = process.env.TECNIA_LANZADOR
+  try {
+    delete process.env.TECNIA_LANZADOR
+    assert.equal((await correr()).codigo, "SIN_LANZADOR")
+    process.env.TECNIA_LANZADOR = String(process.pid)
+    assert.equal((await correr()).codigo, "CARGADO")
+  } finally {
+    if (antes === undefined) delete process.env.TECNIA_LANZADOR
+    else process.env.TECNIA_LANZADOR = antes
+  }
+})
+
 test("ciclo 4: ancestrosPorProc lee la cadena real de /proc y falla cerrado si no puede", { skip: process.platform !== "linux" && "usa /proc" }, async () => {
   const { ancestrosPorProc } = await import(join(REPO, "opencode/carga/cargar-programa.ts"))
   const reales = ancestrosPorProc()
