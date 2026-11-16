@@ -60,7 +60,8 @@
 //   - `( umask 077; cat > "$PERFIL_FILE" )` → sin el umask      → rojos los dos de permisos
 //   - `os.open(..., 0o600)` → `0o644`                            → rojo el de python3
 //   - agregar `"$GEMINI_KEY"` a los argumentos de `python3 -`    → rojo el de python3
-//   - `key: env.TECNIA_KEY_A_GUARDAR` → `--arg k "$GEMINI_KEY"` + `key: $k` → rojo el de jq
+//   - en el `jq -n` que crea auth.json, `key: env.TECNIA_KEY_A_GUARDAR` →
+//     `--arg k "$GEMINI_KEY"` + `key: $k`                         → rojo el de jq
 //   - en el python de guardar_key_google, `except ValueError: sys.exit(5)` →
 //     `d = {}` (el defecto original)                             → rojo el de auth.json roto (python3)
 //   - en la rama jq, `if [ -s "$AUTH_FILE" ]; then` → `if false; then` (escribe
@@ -68,11 +69,42 @@
 //
 // SIN PROBAR: el modo con que nacen los archivos en macOS (APFS) y con ACLs.
 //
+// ── 1.10 · EL PERMISO DEL PUERTO SERIE ───────────────────────────────────────
+//
+// En Linux, quien no está en el grupo dueño de /dev/ttyUSB0 no puede cargar a la
+// placa, y el grupo cambia con la distro (dialout / uucp). install.sh no decía
+// nada: la docente se enteraba en clase con un «Permission denied». Ahora lo mira
+// al final y, si falta, imprime el comando con el grupo y el usuario de esa compu.
+//
+// CÓMO SE PRUEBA SIN INVENTAR NADA. No hay forma honesta de «simular» un grupo, así
+// que se usan tres condiciones REALES del kernel:
+//   - la sesión tal cual: el test calcula por su lado (getent, id) qué rama
+//     corresponde y exige esa;
+//   - `unshare -U --map-user=<yo>`: el mismo usuario en un espacio de usuarios donde
+//     los grupos suplementarios no existen — es «estoy en la base pero la sesión no
+//     lo tomó», lo que pasa después del usermod y antes de volver a entrar;
+//   - `unshare -U --map-user=nobody`: un usuario que de verdad no está en el grupo.
+// Donde `unshare` no lo permite, esos dos casos SE SALTEAN y lo dicen.
+//
+// MUTACIONES que ponen rojo este archivo (exit code 1):
+//   - borrar la llamada `aviso_puerto_serie`                       → rojos los tres
+//   - `esta_en_la_lista "$(id -Gn 2>/dev/null || true)" "$grupo"` → `true`
+//                                                                  → rojos los dos de unshare
+//   - `esta_en_la_lista "$(id -Gn "$usuario" ...)" "$grupo"` → `false`
+//                                                                  → rojo «la sesión no lo tomó»
+//   - `for g in dialout uucp` → `for g in tty`                     → rojos los tres
+//
+// SIN PROBAR: la rama de una placa CONECTADA (leer/escribir el dispositivo y tomar
+// su grupo dueño con `stat -c %G`): en la compu donde se escribió esto no había
+// ninguna. Tampoco la rama gpasswd/addgroup (acá hay usermod).
+//
 // Corre con: node --test tests/instalador-linux-real.test.mjs
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { spawnSync } from "node:child_process"
+import { readdirSync } from "node:fs"
 import { join } from "node:path"
 import { REPO, armarBin, correr, esRoot, nuevoHome, ponerEjecutable, puedeCorrer, rutaDe } from "./ayuda-instalador-sh.mjs"
 
@@ -339,3 +371,82 @@ for (const [camino, herramienta, real] of [["python3", "python3", python3], ["jq
     }
   })
 }
+
+// ── 1.10 · el permiso del puerto serie ───────────────────────────────────────
+
+const esLinux = process.platform === "linux"
+const linea = (cmd, args) => {
+  const r = spawnSync(cmd, args, { encoding: "utf8" })
+  return r.status === 0 ? r.stdout.trim() : null
+}
+// El oráculo: lo mismo que mira el script, calculado por otro camino.
+const placasConectadas = esLinux ? readdirSync("/dev").filter((n) => /^tty(USB|ACM)\d+$/.test(n)) : []
+const grupoSerie = ["dialout", "uucp"].find((g) => linea("getent", ["group", g]) !== null) ?? null
+const usuarioReal = linea("id", ["-un"])
+const gruposDeLaSesion = (linea("id", ["-Gn"]) ?? "").split(/\s+/)
+const gruposEnLaBase = usuarioReal ? (linea("id", ["-Gn", usuarioReal]) ?? "").split(/\s+/) : []
+const sinOraculo = !puedeCorrer || !esLinux || esRoot
+  ? "sólo aplica a Linux y sin ser root"
+  : placasConectadas.length > 0
+    ? `hay una placa conectada (${placasConectadas.join(", ")}): el script toma el grupo del dispositivo y este test sólo sabe calcular el caso sin placa`
+    : !grupoSerie ? "este sistema no tiene ni dialout ni uucp" : false
+
+/** `unshare -U` mapeando el usuario a `quien` (un nombre de cuenta), o null si este sistema no deja. */
+function espacioDeUsuarios(quien) {
+  const unshare = rutaDe("unshare")
+  const uid = linea("id", ["-u", quien])
+  const gid = linea("id", ["-g", quien])
+  if (!unshare || uid === null || gid === null) return null
+  const envoltorio = [unshare, "-U", `--map-user=${uid}`, `--map-group=${gid}`]
+  return linea(envoltorio[0], [...envoltorio.slice(1), "id", "-un"]) === quien ? envoltorio : null
+}
+
+function instalarYLeerPuerto(envoltorio = []) {
+  const h = nuevoHome()
+  try {
+    const r = correr(INSTALL, h, { path: armarBin(h.base, ["jq"]), env: { TECNIA_SIN_PROMPT: "1" }, envoltorio })
+    assert.equal(r.status, 0, `install.sh salió con ${r.status}:\n${r.salida}`)
+    const i = r.stdout.indexOf("Puerto serie:")
+    assert.ok(i >= 0, `install.sh no dice nada del permiso del puerto serie:\n${r.stdout}`)
+    assert.ok(i > r.stdout.indexOf("Verificando dependencias"), "el aviso del puerto no está al final, con las dependencias")
+    return r.stdout.slice(r.stdout.lastIndexOf("\n", i) + 1, r.stdout.indexOf("Para empezar", i))
+  } finally {
+    rmSync(h.base, { recursive: true, force: true })
+  }
+}
+const comandoPara = (usuario) => new RegExp(`^ +sudo (usermod -a -G ${grupoSerie} ${usuario}|gpasswd -a ${usuario} ${grupoSerie}|addgroup ${usuario} ${grupoSerie})$`, "m")
+
+test("puerto serie: en esta sesión, install.sh dice lo mismo que getent e id", { skip: sinOraculo }, () => {
+  const bloque = instalarYLeerPuerto()
+  assert.ok(bloque.includes(grupoSerie), `no nombra el grupo de esta compu (${grupoSerie}):\n${bloque}`)
+  if (gruposDeLaSesion.includes(grupoSerie)) {
+    assert.match(bloque, new RegExp(`\\[OK\\] Puerto serie: tu usuario \\(${usuarioReal}\\) esta en el grupo ${grupoSerie}`), bloque)
+    assert.doesNotMatch(bloque, /sudo/, `pide un comando de administrador que no hace falta:\n${bloque}`)
+  } else if (gruposEnLaBase.includes(grupoSerie)) {
+    assert.match(bloque, /esta sesion todavia no lo tomo/, bloque)
+  } else {
+    assert.match(bloque, /\[FALTA\] Puerto serie/, bloque)
+    assert.match(bloque, comandoPara(usuarioReal), `no da el comando exacto para esta compu:\n${bloque}`)
+  }
+})
+
+const comoYo = sinOraculo || !usuarioReal ? null : espacioDeUsuarios(usuarioReal)
+test("puerto serie: en el grupo pero la sesión no lo tomó → manda a cerrar sesión, no a correr usermod de nuevo",
+  { skip: sinOraculo || (!comoYo && "este sistema no permite `unshare -U --map-user`") || (!gruposEnLaBase.includes(grupoSerie) && `el usuario de este sistema no está en ${grupoSerie}: no hay cómo armar el caso`) }, () => {
+    const bloque = instalarYLeerPuerto(comoYo)
+    assert.match(bloque, new RegExp(`\\[AVISO\\] Puerto serie: tu usuario \\(${usuarioReal}\\) ya figura en el grupo ${grupoSerie}, pero esta sesion todavia no lo tomo`), bloque)
+    assert.match(bloque, /Cerra la sesion y volve a entrar/, bloque)
+    assert.doesNotMatch(bloque, /sudo/, `le pide repetir un comando que ya corrió:\n${bloque}`)
+  })
+
+const comoNobody = sinOraculo ? null : espacioDeUsuarios("nobody")
+test("puerto serie: un usuario que NO está en el grupo → [FALTA] y el comando exacto, con su grupo y su nombre",
+  { skip: sinOraculo || (!comoNobody && "este sistema no permite `unshare -U --map-user`, o no tiene la cuenta nobody") }, () => {
+    assert.ok(!(linea("id", ["-Gn", "nobody"]) ?? "").split(/\s+/).includes(grupoSerie), `en este sistema nobody está en ${grupoSerie}: el caso no sirve`)
+    const bloque = instalarYLeerPuerto(comoNobody)
+    assert.match(bloque, new RegExp(`\\[FALTA\\] Puerto serie: tu usuario \\(nobody\\) NO esta en el grupo ${grupoSerie}`), bloque)
+    assert.match(bloque, comandoPara("nobody"), `no da el comando exacto:\n${bloque}`)
+    assert.match(bloque, /cerra la sesion y volve a entrar/i, bloque)
+    // Sin sudo de verdad: el instalador lo MUESTRA, no lo corre.
+    assert.doesNotMatch(bloque, /\[OK\]/, bloque)
+  })
