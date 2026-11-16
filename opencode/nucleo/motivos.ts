@@ -104,6 +104,16 @@
 //   documentado acá (histórico) para que quien busque este string en el código
 //   viejo/logs archivados encuentre el porqué y hacia dónde se movió.
 //
+// H-02 (SEC-04 / BUG-04, inyección de C++ por ids hostiles) agrega, categoria
+// "estructural", clasificacion "rechazo" siempre:
+// - `ID_MALFORMADO_AL_CARGAR` — `cargador.ts` (`validarFormaProyecto`: momento de carga
+//   y construcción del motor con `proyectoInicial`): el id del proyecto, de un componente,
+//   de una conexión o de una regla es un string no vacío que NO tiene el formato de la IR
+//   (`cmp-<n>`/`conn-<n>`/`beh-<n>`, IR-SPEC.md §2; para el proyecto, `id.ts::
+//   esIdDeProyecto`). `datos`: `entidad`, `campo: "id"`, `formato`, `id` (recortado) y
+//   `largo`. Un id ausente, vacío o que no es string sigue siendo
+//   `CAMPO_REQUERIDO_FALTANTE`, como siempre.
+//
 
 // Phase 1.1 (hallazgo externo E3-01, CRÍTICO) agrega, categoria "motor",
 // clasificacion "rechazo" siempre, emitido por `motor.ts` (`ejecutarLote`, ANTES de

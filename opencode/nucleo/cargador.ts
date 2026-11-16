@@ -14,7 +14,7 @@ import type { ComportamientoRegla, Componente, Conexion, ExtremoConexion, Proyec
 import { ACCIONES, COMPARADORES } from "./ir.ts"
 import type { Motivo } from "./motivos.ts"
 import { canonicalizar, congelarProfundo } from "./canonico.ts"
-import { analizarIdsLocales, compararIdsLocales, generarIdProyectoAleatorio, validarIdsYContador, type GeneradorIdProyecto } from "./id.ts"
+import { analizarIdsLocales, compararIdsLocales, esIdDeProyecto, esIdLocal, generarIdProyectoAleatorio, recorteDeId, validarIdsYContador, type GeneradorIdProyecto } from "./id.ts"
 import { analizarConexionesInvalidas } from "./conexion.ts"
 import { materializarDatosPlanos, motivoEntradaNoPlano } from "./datos-planos.ts"
 import { analizarFormaRegla } from "./regla-forma.ts"
@@ -154,6 +154,7 @@ export function validarFormaProyecto(docCrudo: unknown): ResultadoCarga {
   const { id, schemaVersion, catalogoVersion, catalogoHash, revision, siguienteIdLocal, placa, componentes, conexiones, comportamientos, metadata } = doc
 
   if (typeof id !== "string" || id.length === 0) return rechazo("CAMPO_REQUERIDO_FALTANTE", { campo: "id" })
+  if (!esIdDeProyecto(id)) return rechazo("ID_MALFORMADO_AL_CARGAR", datosDeIdMalformado("proyecto", id))
 
   // Único chequeo de schemaVersion: "más nueva que la soportada" (`compararVersiones`
   // fail-closed: una versión no parseable cuenta como "más nueva", nunca se asume
@@ -314,6 +315,42 @@ type ResultadoValidacion<T> = { readonly ok: true; readonly valor: T } | { reado
 // nunca se valida así.
 // ════════════════════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// H-02 (SEC-04 / BUG-04) — el FORMATO de los ids se exige en la frontera.
+//
+// Antes de este fix, un id sólo tenía que ser un «string no vacío». Un `activo.json` editado
+// a mano (una carpeta compartida, un proyecto de ejemplo descargado, un `write` aprobado del
+// agente) podía traer como id de una regla `"beh-7x\nvoid INYECTADO(){ } //"`: cargaba, y
+// `programa generar` emitía esa función como C++ fuera de comentario en `src/main.cpp`
+// (evidencia: `inyeccion-ids.out`, y `persistencia.out` caso P11). Por las operaciones del
+// Engine no se llegaba: los ids los genera él (`formatearIdLocal`).
+//
+// El formato lo define IR-SPEC.md §2 (`cmp-<n>`/`conn-<n>`/`beh-<n>`) y vive en `id.ts`
+// (`esIdLocal`/`esIdDeProyecto`); acá sólo se pregunta, por entidad y con SU prefijo: un
+// componente llamado `beh-3` tampoco es un componente. Las REFERENCIAS a un componente
+// (extremos de una conexión, sensor y actuador de una regla) no necesitan su propio chequeo:
+// tienen que nombrar a un componente que existe (`REFERENCIA_ROTA_AL_CARGAR`), y todo
+// componente que existe ya pasó por acá.
+//
+// Código propio (`ID_MALFORMADO_AL_CARGAR`), no `CAMPO_REQUERIDO_FALTANTE`: el campo está,
+// lo que está mal es su forma. Se rechaza el documento ENTERO, nunca se «corrige» el id: un id
+// saneado sería otro id, y las referencias a él dejarían de significar lo mismo.
+//
+// Esto es UNA de dos capas. La otra es del codegen (`codegen/emision.ts`), que no confía en
+// que el proyecto haya entrado por acá.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+const FORMATO_ESPERADO: Readonly<Record<"proyecto" | "componente" | "conexion" | "comportamiento", string>> = {
+  proyecto: "letras, dígitos, '-' y '_' (ASCII); empieza con letra o dígito; hasta 64 caracteres",
+  componente: "cmp-<n>",
+  conexion: "conn-<n>",
+  comportamiento: "beh-<n>",
+}
+
+function datosDeIdMalformado(entidad: keyof typeof FORMATO_ESPERADO, id: string): Record<string, unknown> {
+  return { entidad, campo: "id", formato: FORMATO_ESPERADO[entidad], id: recorteDeId(id), largo: id.length }
+}
+
 const CLAVES_COMPONENTE = ["id", "tipo", "pines", "propiedades"] as const
 const CLAVES_CONEXION = ["id", "desde", "hasta"] as const
 const CLAVES_EXTREMO_CONEXION = ["componente", "terminal"] as const
@@ -332,6 +369,7 @@ function validarComponente(c: unknown): ResultadoValidacion<Componente> {
   if (typeof id !== "string" || id.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", campo: "id" } }
   }
+  if (!esIdLocal("cmp", id)) return { ok: false, codigo: "ID_MALFORMADO_AL_CARGAR", datos: datosDeIdMalformado("componente", id) }
   if (typeof tipo !== "string" || tipo.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "componente", componente: id, campo: "tipo" } }
   }
@@ -392,6 +430,7 @@ function validarConexion(cx: unknown): ResultadoValidacion<Conexion> {
   if (typeof id !== "string" || id.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "conexion", campo: "id" } }
   }
+  if (!esIdLocal("conn", id)) return { ok: false, codigo: "ID_MALFORMADO_AL_CARGAR", datos: datosDeIdMalformado("conexion", id) }
   const rDesde = validarExtremoConexion(desde, id, "desde")
   if (!rDesde.ok) return rDesde
   const rHasta = validarExtremoConexion(hasta, id, "hasta")
@@ -423,6 +462,7 @@ function validarComportamiento(b: unknown): ResultadoValidacion<ComportamientoRe
   if (typeof id !== "string" || id.length === 0) {
     return { ok: false, codigo: "CAMPO_REQUERIDO_FALTANTE", datos: { entidad: "comportamiento", campo: "id" } }
   }
+  if (!esIdLocal("beh", id)) return { ok: false, codigo: "ID_MALFORMADO_AL_CARGAR", datos: datosDeIdMalformado("comportamiento", id) }
   if (!forma.ok) {
     const { codigo, campo, claves } = forma.falla
     return codigo === "CLAVE_DESCONOCIDA"

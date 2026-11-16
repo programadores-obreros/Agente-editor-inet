@@ -22,6 +22,52 @@ export function formatearIdLocal(prefijo: PrefijoIdLocal, n: number): string {
   return `${prefijo}-${n}`
 }
 
+// ════════════════════════════════════════════════════════════════════════════════════
+// H-02 (SEC-04 / BUG-04) — el FORMATO de los ids, como predicado.
+//
+// IR-SPEC.md §2 fija la forma de los ids locales: `"cmp-<n>"`/`"conn-<n>"`/`"beh-<n>"`,
+// con `<n>` salido del contador. Hasta H-02 esa forma era sólo lo que el Engine PRODUCÍA
+// (`formatearIdLocal`); nadie la EXIGÍA al entrar: el cargador pedía «string no vacío», así
+// que un `activo.json` editado a mano podía traer como id `"beh-7x\nvoid f(){} //"` y ese
+// texto seguía, crudo, hasta el C++ generado (ver `codegen/emision.ts`).
+//
+// Estos dos predicados son la ÚNICA definición del formato. Los usan la frontera
+// (`cargador.ts::validarFormaProyecto`) y, por su cuenta, el codegen (`codegen/emision.ts`):
+// son dos lugares que PREGUNTAN, no dos definiciones.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** `<n>` tal como lo escribe `formatearIdLocal`: decimal ASCII, sin signo ni ceros a la izquierda. */
+const NUMERO_DE_ID_LOCAL = /^(?:0|[1-9][0-9]*)$/
+
+/**
+ * ¿`id` es un id local bien formado de ese prefijo? Exactamente `<prefijo>-<n>`, con `<n>`
+ * un entero seguro (el contador `siguienteIdLocal` también lo es: `esEnteroNoNegativo`).
+ * Nada más: ni espacios, ni mayúsculas, ni `cmp_1`, ni `cmp-01`, ni otro alfabeto de dígitos.
+ * En JS `$` sin la bandera `m` NO matchea antes de un salto de línea final (eso es Python).
+ */
+export function esIdLocal(prefijo: PrefijoIdLocal, id: unknown): id is string {
+  if (typeof id !== "string" || !id.startsWith(`${prefijo}-`)) return false
+  const numero = id.slice(prefijo.length + 1)
+  return NUMERO_DE_ID_LOCAL.test(numero) && Number.isSafeInteger(Number(numero))
+}
+
+/**
+ * Formato del id de PROYECTO. IR-SPEC.md §2 sólo dice que lo produce un generador inyectable
+ * (por defecto un UUID); no fija su forma. Se adopta la más chica que admite todo lo que el
+ * repo produce o usa hoy (UUID, `activo`, `proy-test`, `MISMO-ID`, `p1`): letras y dígitos
+ * ASCII, guion y guion bajo; empieza con letra o dígito; de 1 a 64 caracteres.
+ */
+const FORMATO_ID_DE_PROYECTO = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+
+export function esIdDeProyecto(id: unknown): id is string {
+  return typeof id === "string" && FORMATO_ID_DE_PROYECTO.test(id)
+}
+
+/** Lo que se muestra de un id rechazado: recortado, para que un id absurdo no infle el error. */
+export function recorteDeId(id: string): string {
+  return id.length > 80 ? `${id.slice(0, 80)}…` : id
+}
+
 /**
  * Orden ESTABLE de ids locales por su número (no por orden de aparición ni
  * lexicográfico puro: "cmp-2" < "cmp-10" numéricamente, aunque "cmp-10" < "cmp-2"
