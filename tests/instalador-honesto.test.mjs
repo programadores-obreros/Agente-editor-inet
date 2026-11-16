@@ -16,6 +16,31 @@
 // rompiendo la línea que dice proteger, este archivo sale con código distinto de 0.
 //
 // La ejecución real es del job `windows` de la CI y de la VM win10 con el `.exe`.
+//
+// ESTE ARCHIVO TUVO GUARDAS HUECAS, Y QUEDA ESCRITO CUÁLES. Una revisión de QA
+// razonó seis mutaciones del producto que lo dejaban en verde. Se ejecutaron una
+// por una contra las guardas de ese momento (código de salida de
+// `node --test tests/instalador-honesto.test.mjs`, medido sin pipe):
+//
+//   I.1  [UninstallDelete]: agregar `Type: filesandordirs; Name: "{app}\*"`
+//        → exit 1, pero de rebote (lo cazaba el guard cruzado de EsNuestro, no
+//          el filtro del barrido, que sólo rechazaba `{app}` exacto).
+//   I.2  lanzador: quitar el `$vivo=$true; ` del `if(...TryOpenExisting...)`
+//        → exit 0. HUECA.
+//   I.3  bootstrap: `$Degradado = @()` antes de `if ($Degradado.Count -gt 0) {`
+//        → exit 0. HUECA.
+//   I.4  .iss: `Result := 0;` como última sentencia de GetCustomSetupExitCode
+//        → exit 0. HUECA.
+//   I.5  bootstrap: `catch { throw }` en los catch de 2.2a, 2.2b (los dos) y 2.2c
+//        → exit 0 las cuatro. HUECAS.
+//   I.6  .iss: un renglón que sea sólo `[Run]` dentro de un comentario Pascal
+//        → exit 1, pero porque el archivo reventaba al cargar, no por una guarda.
+//
+// Por qué eran huecas, que es lo que hay que recordar: todas miraban que la línea
+// buena ESTUVIERA, y ninguna que no hubiera OTRA línea que la deshiciera después
+// (una reasignación, un `Result := 0` al final, un `throw` adentro del catch).
+// Las guardas nuevas están al final del archivo, una por mutación, y después de
+// agregarlas las seis dan exit 1 por la guarda que las nombra.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -966,4 +991,138 @@ test("las pantallas «falta la capa» y «no se encontró OpenCode» mandan a Re
   assert.deepEqual(adentro.split("\n").slice(1).filter((l) => /^\s*echo\b.*[()]/.test(l)), [], "un echo con paréntesis adentro de un bloque ( ) lo cierra antes de tiempo")
   // Y la de OpenCode sigue avisando que quizá el instalador está corriendo ahora.
   assert.match(sinOpenCode, /esperalo/i, ":sinopencode dejó de avisar que el instalador puede estar corriendo")
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GUARDAS ENDURECIDAS TRAS LA REVISIÓN DE QA
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// La revisión razonó seis mutaciones del PRODUCTO que dejaban este archivo en
+// verde. Se ejecutaron todas (el detalle, con sus códigos de salida, está en el
+// encabezado). Cuatro quedaban verdes de verdad. Cada test de acá abajo nombra la
+// mutación que lo originó.
+
+test("I.1 · [UninstallDelete] no puede llevarse la carpeta del programa por la vía de un comodín", () => {
+  // MUTACIÓN: agregar `Type: filesandordirs; Name: "{app}\*"`. El filtro original
+  // sólo rechazaba `Name: "{app}"` EXACTO: `{app}\*` borra lo mismo y pasaba.
+  // (Ejecutada: ya salía roja, pero de rebote, por el guard cruzado de EsNuestro.
+  // Acá queda cazada por lo que es.)
+  const entradas = [...seccionIss("UninstallDelete").matchAll(/^Type:\s*(\w+);\s*Name:\s*"([^"]*)"\s*$/gm)].map((m) => ({ tipo: m[1], nombre: m[2] }))
+  assert.ok(entradas.length >= 4, "no pude leer las entradas de [UninstallDelete]")
+  // Las carpetas que [Files] crea debajo de {app}: lo único que se puede borrar entero.
+  const carpetasPropias = new Set([...seccionIss("Files").matchAll(/DestDir:\s*"\{app\}\\([^"\\]+)"/g)].map((m) => m[1]))
+  for (const { tipo, nombre } of entradas) {
+    assert.ok(nombre === "{app}" || nombre.startsWith("{app}\\"), `entrada fuera de la carpeta del programa: ${nombre}`)
+    const resto = nombre.slice("{app}".length).replace(/^\\/, "")
+    assert.doesNotMatch(resto, /\?/, `comodín «?» en [UninstallDelete]: ${nombre}`)
+    if (tipo === "dirifempty") {
+      assert.equal(nombre, "{app}", `dirifempty sobre algo que no es la carpeta del programa: ${nombre}`)
+    } else if (tipo === "filesandordirs") {
+      // Borrado recursivo: sólo una carpeta que [Files] creó, por su nombre, sin comodines.
+      assert.ok(carpetasPropias.has(resto), `borrado recursivo de «${nombre}», que no es una carpeta que [Files] haya creado: se puede llevar trabajo del alumno`)
+    } else if (tipo === "files") {
+      assert.ok(resto.length > 0 && !resto.includes("\\"), `entrada de archivos con forma inesperada: ${nombre}`)
+      // Un comodín sólo después de un prefijo propio y largo: `*`, `*.log` o `i*` barren de más.
+      if (resto.includes("*")) {
+        assert.match(resto, /^[a-z]{8,}-\*\.[a-z]+$/, `comodín demasiado amplio en [UninstallDelete]: ${nombre}`)
+      }
+    } else {
+      assert.fail(`tipo de entrada no contemplado en [UninstallDelete]: ${tipo}`)
+    }
+  }
+})
+
+test("I.2 · la consulta del mutex es EXACTAMENTE la que distingue «vive» de «no vive»", () => {
+  // MUTACIÓN: quitar el `$vivo=$true; ` de adentro del `if(...TryOpenExisting...)`.
+  // Con el instalador corriendo la consulta salía con 7 = «no vive», y el lanzador
+  // mandaba a Reparar encima de una instalación viva. Quedaba VERDE: la guarda
+  // miraba el `catch` y el `exit`, no la rama que importa. Ahora se compara la
+  // línea entera, armada con los nombres de mutex que declara el .iss.
+  const declarados = (issCrudo.match(/^SetupMutex=(.+)$/m)?.[1] ?? "").split(",").map((x) => x.trim()).filter(Boolean)
+  const nombres = declarados.map((n) => `'${n}'`).join(",")
+  const esperada =
+    'powershell -NoProfile -ExecutionPolicy Bypass -Command "$vivo=$false; foreach($n in ' + nombres +
+    "){ try { $m=$null; if([System.Threading.Mutex]::TryOpenExisting($n,[ref]$m)){ $vivo=$true; $m.Close() } } catch { $vivo=$true } }; " +
+    'if($vivo){ exit 0 } else { exit 7 }" >nul 2>nul'
+  const linea = lineasLanzador.find((l) => l.startsWith("powershell") && l.includes("TryOpenExisting"))
+  assert.equal(linea, esperada, "cambió la consulta del mutex: revisá a mano las tres ramas (se abrió → vive; excepción → vive; ninguna → 7)")
+})
+
+test("I.3 · la lista de degradaciones se inicializa UNA vez, antes de llenarla, y nada la vacía", () => {
+  // MUTACIÓN: insertar `$Degradado = @()` justo antes de `if ($Degradado.Count -gt 0) {`.
+  // Sin PlatformIO el script terminaba en "LISTO!" con exit 0. Quedaba VERDE: las
+  // guardas miraban que cada falta se anotara y que el `if` saliera con 2, pero no
+  // que la lista llegara intacta de un punto al otro.
+  const inicios = [...final.matchAll(/^\s*\$Degradado\s*=(?!=)[^\n]*$/gm)].map((m) => m[0].trim())
+  assert.deepEqual(inicios, ["$Degradado = @()"], "$Degradado se (re)asigna en más de un lugar: una degradación ya anotada se pierde")
+  assert.ok(final.indexOf("$Degradado = @()") < final.indexOf("$Degradado +="), "$Degradado se inicializa después de empezar a llenarla")
+  const usos = final.split("\n").filter((l) => /\$Degradado\b/.test(l) && !/^\s*\$Degradado \+= "/.test(l)).map((l) => l.trim())
+  assert.deepEqual(usos, ["$Degradado = @()", "if ($Degradado.Count -gt 0) {", 'foreach ($d in $Degradado) { Write-Host ("    - " + $d) }'],
+    "$Degradado se usa de alguna forma que no es llenarla, contarla y mostrarla")
+  // Lo mismo para las otras tres variables que deciden el código de salida.
+  for (const [v, veces] of [["CapaOk", 3], ["CapaConAvisos", 2], ["OpenCodeArranca", 1], ["OpenCodeEsLaFijada", 1]]) {
+    const n = final.split("\n").filter((l) => new RegExp(`^\\s*\\$${v}\\s*=(?!=)`).test(l)).length
+    assert.equal(n, veces, `$${v} se asigna ${n} veces en el tramo final y se esperaban ${veces}: una asignación de más puede tapar una falla`)
+  }
+})
+
+test("I.4 · GetCustomSetupExitCode no pisa su resultado: el 0 es sólo el valor inicial", () => {
+  // MUTACIÓN: agregar `Result := 0;` como última sentencia. El .exe volvía a
+  // devolver 0 siempre. Quedaba VERDE: la guarda miraba que las ramas asignaran
+  // 20 y 21, no que nadie las pisara después.
+  const fn = rutina("GetCustomSetupExitCode")
+  // `(\w+)` y no `([^;]+);`: en Pascal la sentencia anterior a un `else` no lleva punto y coma.
+  const asignaciones = [...fn.matchAll(/Result := (\w+)/g)].map((m) => m[1])
+  assert.deepEqual(asignaciones, ["0", "SalidaSetupDegradado", "SalidaSetupFallo"], "GetCustomSetupExitCode asigna Result en un orden o una cantidad que no es la esperada")
+  assert.match(fn, /begin\s+Result := 0;\s+if EstadoBootstrap = EstadoDegradado then/, "el 0 no es la PRIMERA sentencia: puede estar pisando una rama")
+  assert.match(fn, /Result := SalidaSetupFallo;\s+end;$/, "después de la última rama hay algo más")
+  // Mismo cuidado en la otra función que devuelve un veredicto.
+  assert.equal((rutina("OfrecerAbrirElBot").match(/Result :=/g) ?? []).length, 1, "OfrecerAbrirElBot asigna Result más de una vez")
+})
+
+test("I.5 · los `catch` que atajan las tres llamadas CAPTURAN el error: ninguno lo relanza", () => {
+  // MUTACIÓN: cambiar el cuerpo de cualquiera de esos `catch` por `catch { throw }`.
+  // Vuelve EXACTAMENTE el defecto original (una excepción cruda que mata el script
+  // antes de la capa) con el try/catch a la vista. Quedaban VERDES las cuatro: las
+  // guardas pedían `try { ... } catch {` y no miraban qué había adentro.
+  const esperadas = [
+    [/Bajar\s[^\n]*get-platformio\.py/, /\} catch \{ \$errorBajadaPio = \$_\.Exception\.Message \}\s*$/],
+    [/Bajar\s[^\n]*get\.scoop\.sh/, /\} catch \{ \$errorScoop = \$_\.Exception\.Message \}\s*$/],
+    [/\[scriptblock\]::Create\(\$scoopInstaller\)/, /\} catch \{ \$errorScoop = \$_\.Exception\.Message \}\s*$/],
+    [/\$salidaReintento = scoop install opencode/, /\} catch \{ \$salidaReintento = "ERROR " \+ \$_\.Exception\.Message \}\s*$/],
+  ]
+  for (const [cual, cuerpo] of esperadas) {
+    const lineas = comandos.filter((l) => cual.test(l))
+    assert.ok(lineas.length >= 1, `no encuentro la llamada ${cual}`)
+    for (const l of lineas) assert.match(l, cuerpo, `el catch no guarda el error (¿lo relanza?): ${l.trim()}`)
+  }
+  // Y en general: en todo el bootstrap, el único `throw` es el de la función Bajar
+  // (que relanza al tercer intento, y por eso sus llamadas van atajadas).
+  const throws = bootstrap.split("\n").filter((l) => /\bthrow\b/.test(l)).map((l) => l.trim())
+  assert.deepEqual(throws, ["if ($i -eq 3) { throw }"], "apareció un `throw` nuevo en el bootstrap: con ErrorActionPreference en Stop corta antes de instalar la capa")
+  // Toda llamada a Bajar está atajada en su misma línea, o adentro de una función que ataja.
+  const llamadas = comandos.filter((l) => /(^|[\s={(])Bajar -Url/.test(l)).map((l) => l.trim())
+  assert.ok(llamadas.length >= 3, "no encuentro las llamadas a Bajar")
+  const baseline = funcionPs(bootstrap, "Install-OpenCodeBaseline")
+  for (const l of llamadas) {
+    const atajadaEnLinea = /^try \{.*\} catch \{ \$\w+ = /.test(l)
+    const enBaseline = baseline.includes(l) && /try \{[\s\S]*Bajar -Url[\s\S]*\} catch \{\s*return \$false\s*\}/.test(baseline)
+    assert.ok(atajadaEnLinea || enBaseline, `llamada a Bajar sin red de seguridad: ${l}`)
+  }
+})
+
+test("I.6 · los encabezados de sección del .iss son exactamente los esperados, una vez cada uno y ninguno dentro del código", () => {
+  // MUTACIÓN: un renglón que sea sólo `[Run]` adentro de un comentario Pascal. La
+  // guarda de los tres caracteres aceptaba cualquier renglón con forma `[Palabra]`,
+  // y ése tiene exactamente esa forma: ISCC lo lee como el comienzo de una sección
+  // y lo que sigue del código deja de ser código. (Ejecutada: salía roja, pero
+  // porque este archivo reventaba al cargar, no porque alguna guarda lo nombrara.)
+  const encabezados = issCrudo.split("\n").map((l, i) => [l, i + 1]).filter(([l]) => /^\s*\[/.test(l)).map(([l, n]) => `${n}: ${l.trim()}`)
+  const soloNombres = encabezados.map((e) => e.replace(/^\d+: /, ""))
+  assert.deepEqual(soloNombres,
+    ["[Setup]", "[Languages]", "[Tasks]", "[InstallDelete]", "[Files]", "[Icons]", "[Run]", "[UninstallDelete]", "[Messages]", "[Code]"],
+    "los renglones que empiezan con «[» no son las diez secciones, una vez cada una y en orden:\n" + encabezados.join("\n"))
+  // [Code] es la última: nada con forma de sección puede aparecer después.
+  const iCode = issCrudo.search(/^\[Code\]\s*$/m)
+  assert.doesNotMatch(issCrudo.slice(iCode + 6), /^\s*\[/m, "hay un renglón que empieza con «[» adentro de [Code]")
 })
