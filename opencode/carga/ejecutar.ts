@@ -54,6 +54,22 @@ export function argvDeCarga(o: { cwd: string; environment: string; puerto: strin
 }
 
 /**
+ * El argv de `programa` con `accion: "cargar"` (H1 del MVP): COMPILA Y GRABA en un solo paso,
+ * desde la carpeta privada donde se acaba de escribir el programa generado.
+ *
+ *   pio run -d <cwd> -e <environment> -t upload --upload-port <puerto>
+ *
+ * Es `argvDeCarga` SIN `nobuild`: DESVÍO DECLARADO del contrato v1.2 (CONTRATOS-API §9),
+ * decidido por el owner para el MVP — se compila y graba en un paso, como la ruta heredada
+ * que ya funciona. Mismas validaciones que `argvDeCarga` y la misma última barrera en
+ * `lanzarCarga`.
+ */
+export function argvDeCargaCompilando(o: { cwd: string; environment: string; puerto: string }): string[] {
+  argvDeCarga(o) // valida y tira igual que el del gate; el argv que devuelve no se usa
+  return ["pio", "run", "-d", o.cwd, "-e", o.environment, "-t", "upload", "--upload-port", o.puerto]
+}
+
+/**
  * TRANSICIÓN — el argv de carga de `tool/platformio.ts::cargar()`, idéntico al de
  * 0.4.8: compila adentro de la carga, sin `-d` (usa el `cwd` del proceso) y con `-e`
  * sólo si se pidió un environment. No valida el puerto ni el environment, igual que

@@ -1,0 +1,648 @@
+// `programa` con `accion: "cargar"` (H1 del MVP de Programación por Intención): grabar en la
+// placa el programa GENERADO del proyecto físico, por `carga/cargar-programa.ts`.
+//
+// CERO PROCESOS REALES. El lanzador (`run`) es un ESPÍA inyectado: contesta `pio device list`
+// con las placas que pide cada test y, en la carga, anota argv, cwd, capacidad y lo que había
+// en disco, y devuelve la salida que pide el test. `Bun.spawn` es una trampa que falla y se
+// cuenta: si algo llegara a lanzar un proceso de verdad, el último test se pone rojo.
+//
+// Lo que se afirma es comportamiento, no forma: cuántas veces se lanzó, con qué argv y desde
+// dónde, qué carteles se mostraron, si el candado quedó libre (se prueba reservándolo de
+// nuevo), qué dice el resultado y qué NO dice.
+
+import { test, before, after, afterEach } from "node:test"
+import assert from "node:assert/strict"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { join, relative, sep } from "node:path"
+import os from "node:os"
+import { REPO, nuevoDir } from "./phase2-helpers.mjs"
+
+// ── El entorno: todo a un temporal propio ──────────────────────────────────────────────
+const OUT = mkdtempSync(join(os.tmpdir(), "tecniabot-programa-cargar-"))
+const ENTORNO_ORIGINAL = { XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, XDG_CACHE_HOME: process.env.XDG_CACHE_HOME, TECNIA_PIO_TIMEOUT_MS: process.env.TECNIA_PIO_TIMEOUT_MS }
+process.env.XDG_CONFIG_HOME = join(OUT, "config") // candados de puerto y registro de la compu
+process.env.XDG_CACHE_HOME = join(OUT, "cache") // carpetas privadas
+delete process.env.TECNIA_PIO_TIMEOUT_MS
+const CARGAS = join(OUT, "cache", "tecnia-bot", "cargas")
+
+const spawnsReales = []
+const BunOriginal = globalThis.Bun
+globalThis.Bun = {
+  which: () => null,
+  spawn(cmd) {
+    spawnsReales.push(cmd)
+    throw new Error("PROHIBIDO: este test no lanza procesos reales")
+  },
+}
+
+const { ejecutarPrograma, HERRAMIENTAS_DE_CARGA, carpetaDelPrograma } = await import(join(REPO, "opencode/tool/programa.ts"))
+const programaTool = (await import(join(REPO, "opencode/tool/programa.ts"))).default
+const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.ts"))).default
+const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
+const { directorioDeDatos } = await import(join(REPO, "opencode/vista-fisica/ubicacion-proyecto.ts"))
+const { generarPrograma } = await import(join(REPO, "opencode/codegen/programa.ts"))
+const { CONOCIMIENTO_ACTIVO: K } = await import(join(REPO, "opencode/conocimiento/conocimiento-activo.ts"))
+const { REVISIONES_DEL_ANEXO } = await import(join(REPO, "opencode/conocimiento/admision.ts"))
+const { PREGUNTA_CHECKLIST, MARCA_SIEMPRE_PREGUNTA } = await import(join(REPO, "opencode/tool/platformio.ts"))
+const { reservarPuerto, liberarTodosLosPuertos } = await import(join(REPO, "opencode/carga/puertos.ts"))
+const { esCapacidadDeCarga } = await import(join(REPO, "opencode/carga/proceso.ts"))
+const { argvDeCargaCompilando, lanzarCarga } = await import(join(REPO, "opencode/carga/ejecutar.ts"))
+const { TEXTO_CARGA_SIN_VERIFICAR } = await import(join(REPO, "opencode/carga/esptool.ts"))
+const { banderaDeAprobacionAutomatica } = await import(join(REPO, "opencode/carga/cargar-programa.ts"))
+
+const PROMPT = readFileSync(join(REPO, "opencode/agent/tecnia-bot.md"), "utf8")
+const LOG_ESP32 = readFileSync(join(REPO, "tests/fixtures/carga/esptool-carga-real-4-regiones.log"), "utf8")
+const BYTES_FIRMWARE = 240816 // la región 0x10000 del log real
+
+after(() => {
+  liberarTodosLosPuertos()
+  for (const [k, v] of Object.entries(ENTORNO_ORIGINAL)) if (v === undefined) delete process.env[k]
+  else process.env[k] = v
+  globalThis.Bun = BunOriginal
+  rmSync(OUT, { recursive: true, force: true })
+})
+afterEach(() => liberarTodosLosPuertos())
+
+// ── Placas ─────────────────────────────────────────────────────────────────────────────
+const WIN = process.platform === "win32"
+const PUERTO = WIN ? "COM5" : "/dev/ttyUSB0"
+const OTRO_PUERTO = WIN ? "COM6" : "/dev/ttyUSB1"
+const placa = (o = {}) => ({ port: o.port ?? PUERTO, hwid: `USB VID:PID=10C4:EA60 SER=${o.serie ?? "A1B2C3D4E5"} LOCATION=1-1`, description: "CP2102 USB to UART" })
+const UNO = { port: PUERTO, hwid: "USB VID:PID=2341:0043 SER=85735313932351F0A1B2 LOCATION=1-2", description: "Arduino Uno" }
+
+// ── El proyecto, por las tools reales ──────────────────────────────────────────────────
+const PRESIONADO = { capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } }
+const reglaLed = { tipo: "SetComportamiento", payload: { comportamiento: { cuando: { sensor: "cmp-0", ...PRESIONADO }, entonces: { actuador: "cmp-1", accion: "encender" } } } }
+const ops = (placaId, pines) => [
+  { tipo: "SetPlaca", payload: { placa: placaId } },
+  { tipo: "AgregarComponente", payload: { tipo: "pulsador" } },
+  { tipo: "AgregarComponente", payload: { tipo: "led" } },
+  { tipo: "AgregarComponente", payload: { tipo: "resistencia" } },
+  { tipo: "AsignarPin", payload: { componente: "cmp-0", terminal: "senal", pin: pines[0] } },
+  { tipo: "AsignarPin", payload: { componente: "cmp-1", terminal: "anodo", pin: pines[1] } },
+  { tipo: "Conectar", payload: { desde: { componente: "cmp-2", terminal: "a" }, hasta: { componente: "cmp-1", terminal: "anodo" } } },
+  reglaLed,
+]
+const fisico = async (dir, args) => JSON.parse(await proyectoFisico.execute(args, { directory: dir }))
+async function armar(placaId = "esp32-devkit-v1", pines = ["GPIO4", "GPIO18"]) {
+  const dir = nuevoDir("programa-cargar")
+  const { revision } = await fisico(dir, { accion: "leer" })
+  const r = await fisico(dir, { accion: "aplicar", baseRevision: revision, operaciones: ops(placaId, pines) })
+  assert.equal(r.ok, true, JSON.stringify(r))
+  return dir
+}
+const servicioDe = (dir) => obtenerServicioDeProyectoConVista({ directorio: directorioDeDatos(dir), idProyecto: "activo" })
+const generadoDe = (dir, opciones) => generarPrograma(servicioDe(dir).snapshot().proyecto, K, opciones)
+
+const REVISIONES_UNO = {
+  placas: [...REVISIONES_DEL_ANEXO.placas, { placa: "arduino-uno", revisadoPor: "revisión humana de prueba (fixture de test)", evidencia: "test" }],
+  componentes: [...REVISIONES_DEL_ANEXO.componentes, ...["led", "pulsador", "resistencia"].map((tipo) => ({ tipo, placa: "arduino-uno", revisadoPor: "revisión humana de prueba (fixture de test)", evidencia: "test" }))],
+}
+const depsReales = (generar = generarPrograma) => async () => ({ obtenerServicioDeProyectoConVista, conocimiento: K, generarPrograma: generar })
+const depsUno = depsReales((p, k) => generarPrograma(p, k, { revisiones: REVISIONES_UNO }))
+
+// ── Los dobles ─────────────────────────────────────────────────────────────────────────
+function leerArbol(dir) {
+  const salida = {}
+  if (!existsSync(dir)) return salida
+  const recorrer = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory()) recorrer(join(d, e.name))
+      else salida[relative(dir, join(d, e.name)).split(sep).join("/")] = readFileSync(join(d, e.name), "utf8")
+    }
+  }
+  recorrer(dir)
+  return salida
+}
+
+/**
+ * El lanzador espía. `placas` contesta la primera detección; `placasDespues`, la de la
+ * revalidación. En la carga escribe un `firmware.bin` del tamaño pedido (lo que dejaría el
+ * build) y devuelve `carga`.
+ */
+function lanzador({ placas = [placa()], placasDespues, carga = { code: 0, stdout: LOG_ESP32, stderr: "" }, bytesFirmware = BYTES_FIRMWARE, alLanzar } = {}) {
+  const r = { listados: 0, lanzamientos: [] }
+  r.run = async (cmd, cwd, signal, timeoutMs, capacidad) => {
+    if (cmd[1] === "device") {
+      r.listados++
+      const lista = r.listados === 1 ? placas : (placasDespues ?? placas)
+      return { code: 0, stdout: JSON.stringify(lista), stderr: "" }
+    }
+    r.lanzamientos.push({ cmd: [...cmd], cwd, timeoutMs, capacidad: esCapacidadDeCarga(capacidad), enDisco: leerArbol(cwd) })
+    if (bytesFirmware) {
+      const env = cmd[cmd.indexOf("-e") + 1]
+      mkdirSync(join(cwd, ".pio", "build", env), { recursive: true })
+      writeFileSync(join(cwd, ".pio", "build", env, "firmware.bin"), Buffer.alloc(bytesFirmware, 1))
+    }
+    if (alLanzar) await alLanzar({ cmd, cwd, signal })
+    return typeof carga === "function" ? carga({ cwd }) : carga
+  }
+  return r
+}
+
+/** El cartel espía: "si" aprueba; cualquier otra cosa se tira como el rechazo de OpenCode. */
+function cartel(respuesta = "si", alPreguntar) {
+  const c = { pedidos: [] }
+  c.ask = async (input) => {
+    c.pedidos.push(structuredClone(input))
+    if (alPreguntar) await alPreguntar(input)
+    if (respuesta === "si") return
+    throw respuesta
+  }
+  return c
+}
+
+const RECHAZO = { _tag: "PermissionRejectedError", message: "The user rejected permission to use this specific tool call." }
+const CORRECCION = { _tag: "PermissionCorrectedError", feedback: "todavía no lo revisé" }
+const DENEGADO = { _tag: "PermissionDeniedError", message: "The user has specified a rule which prevents you from using this specific tool call." }
+
+async function cargar(dir, { lanza = lanzador(), pregunta = cartel(), agente = "tecnia-bot", abort, sinAsk = false, deps = depsReales(), herramientas = {}, opciones = {} } = {}) {
+  const ctx = { directory: dir, agent: agente, abort: abort ?? new AbortController().signal, ...(sinAsk ? {} : { ask: pregunta.ask }) }
+  const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, deps, { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, ...herramientas }, opciones)
+  return { r: JSON.parse(texto), texto, lanza, pregunta }
+}
+
+const carpetasPrivadas = () => (existsSync(CARGAS) ? readdirSync(CARGAS) : [])
+function puertoLibre(puerto = PUERTO) {
+  const r = reservarPuerto(puerto, "test")
+  if (r.ok) r.liberar()
+  return r.ok
+}
+function sinRutaPrivada(texto) {
+  assert.ok(!texto.includes(CARGAS), "el resultado nombra la carpeta privada")
+  assert.ok(!texto.includes(JSON.stringify(CARGAS).slice(1, -1)), "el resultado nombra la carpeta privada")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// Aprobación → exactamente UN lanzamiento, con el argv exacto, desde la carpeta privada
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("aprobado: UN lanzamiento, argv exacto, cwd = carpeta privada nueva con exactamente lo generado; éxito ESP32 verificado; la carpeta se borra", async () => {
+  const dir = await armar()
+  const esperado = generadoDe(dir)
+  const { r, texto, lanza, pregunta } = await cargar(dir)
+  assert.equal(pregunta.pedidos.length, 1)
+  assert.equal(lanza.lanzamientos.length, 1, "exactamente un lanzamiento")
+  const [l] = lanza.lanzamientos
+  assert.ok(l.cwd.startsWith(CARGAS + sep), `cwd fuera de la carpeta de cargas: ${l.cwd}`)
+  assert.match(l.cwd.slice(CARGAS.length + 1), /^carga-[^/\\]+$/)
+  assert.deepEqual(l.cmd, ["pio", "run", "-d", l.cwd, "-e", "esp32-devkit-v1", "-t", "upload", "--upload-port", PUERTO])
+  assert.ok(!l.cmd.includes("nobuild"), "el owner decidió compilar y grabar en un paso: sin nobuild")
+  assert.equal(l.capacidad, true, "salió por lanzarCarga, con la capacidad")
+  assert.deepEqual(l.enDisco, esperado.archivos, "en la carpeta privada está exactamente lo generado")
+  assert.ok(!l.cwd.startsWith(dir), "la carpeta privada no está dentro del proyecto")
+  assert.equal(existsSync(l.cwd), false, "la carpeta privada se borra al terminar")
+  assert.deepEqual(carpetasPrivadas(), [])
+  assert.equal(r.ok, true, texto)
+  assert.equal(r.codigo, "CARGADO")
+  assert.equal(r.etapa, "carga")
+  assert.match(r.resultado, /^CARGADO — /)
+  assert.equal(r.verificacion.regionesEscritas, 4)
+  assert.equal(r.verificacion.regionesVerificadas, 4)
+  sinRutaPrivada(texto)
+  assert.equal(puertoLibre(), true, "tras el éxito el candado queda libre")
+})
+
+test("dos cargas seguidas del mismo proyecto → dos carteles, los dos con always: [] y patrones distintos", async () => {
+  const dir = await armar()
+  const pregunta = cartel()
+  const a = await cargar(dir, { pregunta })
+  const b = await cargar(dir, { pregunta })
+  assert.equal(a.r.codigo, "CARGADO")
+  assert.equal(b.r.codigo, "CARGADO")
+  assert.equal(pregunta.pedidos.length, 2, "un cartel por carga")
+  for (const p of pregunta.pedidos) assert.deepEqual(p.always, [])
+  assert.notDeepEqual(pregunta.pedidos[0].patterns, pregunta.pedidos[1].patterns, "ningún Allow always guardado puede coincidir con la próxima")
+  assert.equal(a.lanza.lanzamientos.length + b.lanza.lanzamientos.length, 2)
+})
+
+test("el cartel empieza con el prefijo de la regla del agente y nombra proyecto, placa y puerto", async () => {
+  const dir = await armar()
+  const { pregunta } = await cargar(dir)
+  const regla = PROMPT.split("---")[1].match(/^\s*"(¿Revisaste el circuito\?)\*":\s*"ask"\s*$/m)
+  assert.ok(regla, "no encontré la regla del cartel en el agente")
+  const [p] = pregunta.pedidos
+  assert.ok(p.permission.startsWith(regla[1]), p.permission)
+  assert.ok(p.permission.startsWith(PREGUNTA_CHECKLIST))
+  assert.match(p.permission, /proyecto activo/)
+  assert.match(p.permission, /placa esp32-devkit-v1/)
+  assert.ok(p.permission.includes(`puerto ${PUERTO}`), p.permission)
+  assert.ok(p.permission.endsWith(MARCA_SIEMPRE_PREGUNTA), "la leyenda tiene que decir que se pregunta cada vez")
+  assert.ok(!/[*?]/.test(p.permission.slice(PREGUNTA_CHECKLIST.length)), "sin comodines después del prefijo")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// El cartel: sin ask, rechazo, cada error de permiso, excepción y cancelación
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("sin ctx.ask → no se lanza nada, y el candado queda libre", async () => {
+  const dir = await armar()
+  const { r, lanza } = await cargar(dir, { sinAsk: true })
+  assert.equal(r.ok, false)
+  assert.equal(r.codigo, "CARTEL_NO_DISPONIBLE")
+  assert.equal(lanza.lanzamientos.length, 0)
+  assert.equal(puertoLibre(), true)
+})
+
+for (const [nombre, error, codigo] of [
+  ["Reject", RECHAZO, "CARTEL_RECHAZADO"],
+  ["Reject con comentario", CORRECCION, "CARTEL_RECHAZADO"],
+  ["regla deny", DENEGADO, "CARTEL_RECHAZADO"],
+  ["una excepción cualquiera", new Error("se rompió el bridge"), "CARTEL_FALLIDO"],
+]) {
+  test(`cartel con ${nombre} → no se lanza nada y el candado queda libre`, async () => {
+    const dir = await armar()
+    const { r, lanza, pregunta, texto } = await cargar(dir, { pregunta: cartel(error) })
+    assert.equal(pregunta.pedidos.length, 1)
+    assert.equal(r.ok, false)
+    assert.equal(r.codigo, codigo, texto)
+    assert.equal(lanza.lanzamientos.length, 0)
+    assert.equal(lanza.listados, 1, "no se revalida ni se lanza después de un no")
+    assert.doesNotMatch(r.resultado, /^CARGADO/)
+    assert.equal(puertoLibre(), true)
+  })
+}
+
+test("abort antes de responder → no se lanza; un «sí» que llega después tampoco lanza; el candado queda libre", async () => {
+  const dir = await armar()
+  const ctrl = new AbortController()
+  let soltarSi
+  const pregunta = { pedidos: [] }
+  pregunta.ask = (input) => {
+    pregunta.pedidos.push(input)
+    queueMicrotask(() => ctrl.abort())
+    return new Promise((resolve) => (soltarSi = resolve)) // OpenCode colgado
+  }
+  const lanza = lanzador()
+  const { r } = await cargar(dir, { pregunta, lanza, abort: ctrl.signal })
+  assert.equal(r.codigo, "CANCELADO")
+  assert.match(r.resultado, /no se lanzó nada/)
+  soltarSi() // el "sí" tardío
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(lanza.lanzamientos.length, 0, "el sí tardío reactivó la carga")
+  assert.equal(lanza.listados, 1)
+  assert.equal(puertoLibre(), true)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// Quién pide
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("otro agente → no carga: ni detecta, ni pregunta, ni lanza", async () => {
+  const dir = await armar()
+  // (`undefined` acá activaría el valor por defecto del ayudante: `null` y "" son "sin agente")
+  for (const agente of ["build", "", null]) {
+    const { r, lanza, pregunta } = await cargar(dir, { agente })
+    assert.equal(r.codigo, "AGENTE_NO_AUTORIZADO")
+    assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+    assert.equal(pregunta.pedidos.length, 0)
+  }
+})
+
+test("bandera de aprobación automática en process.argv → no carga", async () => {
+  const dir = await armar()
+  for (const bandera of ["--yolo", "--auto", "--dangerously-skip-permissions", "--auto=true"]) {
+    process.argv.push(bandera)
+    try {
+      const { r, lanza, pregunta } = await cargar(dir)
+      assert.equal(r.codigo, "APROBACION_AUTOMATICA", bandera)
+      assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+      assert.equal(pregunta.pedidos.length, 0)
+    } finally {
+      process.argv.pop()
+    }
+  }
+  assert.equal(banderaDeAprobacionAutomatica(["bun", "opencode", "--autor"]), null, "una bandera que sólo se parece no cuenta")
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// El proyecto: no abre, motivos bloqueantes, generador que rechaza, archivos viejos
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("proyecto que no abre → no carga y no crea nada", async () => {
+  const dir = await armar()
+  const deps = async () => ({ obtenerServicioDeProyectoConVista: () => { throw new Error("candado tomado por otra ventana") }, conocimiento: K, generarPrograma })
+  const { r, lanza } = await cargar(dir, { deps })
+  assert.equal(r.codigo, "PROYECTO_BLOQUEADO")
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  assert.deepEqual(carpetasPrivadas(), [])
+  assert.equal(existsSync(carpetaDelPrograma(dir, "activo")), false)
+})
+
+test("proyecto con motivos bloqueantes → no carga, ni siquiera se genera", async () => {
+  const dir = await armar()
+  const real = servicioDe(dir).snapshot()
+  let generaciones = 0
+  const deps = async () => ({
+    obtenerServicioDeProyectoConVista: () => ({ snapshot: () => ({ ...real, validacion: { ...real.validacion, motivos: [{ codigo: "PIN_INVALIDO", severidad: "blocking" }] } }) }),
+    conocimiento: K,
+    generarPrograma: (...a) => (generaciones++, generarPrograma(...a)),
+  })
+  const { r, lanza } = await cargar(dir, { deps })
+  assert.equal(r.codigo, "PROYECTO_CON_MOTIVOS_BLOQUEANTES")
+  assert.equal(generaciones, 0)
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  assert.deepEqual(carpetasPrivadas(), [])
+})
+
+test("generador que rechaza → no carga, no crea nada y no toca la carpeta derivada", async () => {
+  const dir = await armar()
+  const derivada = carpetaDelPrograma(dir, "activo")
+  mkdirSync(join(derivada, "src"), { recursive: true })
+  writeFileSync(join(derivada, "src", "main.cpp"), "// de antes\n")
+  const deps = depsReales(() => ({ ok: false, error: { codigo: "CODEGEN_PROYECTO_NO_LISTO", datos: {} } }))
+  const { r, lanza } = await cargar(dir, { deps })
+  assert.equal(r.ok, false)
+  assert.equal(r.codigo, "CODEGEN_PROYECTO_NO_LISTO")
+  assert.match(r.resultado, /^NO SE CARGÓ/)
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  assert.deepEqual(carpetasPrivadas(), [])
+  assert.equal(readFileSync(join(derivada, "src", "main.cpp"), "utf8"), "// de antes\n", "cargar no vacía ni pisa la carpeta derivada")
+})
+
+test("un main.cpp o un firmware.bin preexistente en la carpeta del proyecto NUNCA se usa", async () => {
+  const dir = await armar()
+  const derivada = carpetaDelPrograma(dir, "activo")
+  for (const base of [dir, derivada]) {
+    mkdirSync(join(base, "src"), { recursive: true })
+    writeFileSync(join(base, "src", "main.cpp"), "// MALICIOSO\nvoid setup(){} void loop(){}\n")
+    writeFileSync(join(base, "platformio.ini"), "[env:esp32-devkit-v1]\nplatform = espressif32\nboard = esp32dev\nframework = arduino\n")
+    mkdirSync(join(base, ".pio", "build", "esp32-devkit-v1"), { recursive: true })
+    writeFileSync(join(base, ".pio", "build", "esp32-devkit-v1", "firmware.bin"), "VIEJO")
+  }
+  const { r, lanza } = await cargar(dir)
+  assert.equal(r.codigo, "CARGADO")
+  const [l] = lanza.lanzamientos
+  assert.ok(l.cwd !== dir && l.cwd !== derivada && !l.cwd.startsWith(dir))
+  assert.deepEqual(l.enDisco, generadoDe(dir).archivos, "lo que se compila y graba es lo generado ahora")
+  assert.doesNotMatch(JSON.stringify(l.enDisco), /MALICIOSO|VIEJO/)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// Pines
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("un pin que deja la placa sin arrancar frena todo, sin cartel ni placa", async () => {
+  const dir = await armar()
+  const real = generadoDe(dir)
+  const conFlash = { ...real, archivos: { ...real.archivos, "src/main.cpp": "#include <Arduino.h>\nvoid setup() { pinMode(6, OUTPUT); }\nvoid loop() { digitalWrite(6, HIGH); }\n" } }
+  const { r, lanza, pregunta } = await cargar(dir, { deps: depsReales(() => conFlash) })
+  assert.equal(r.codigo, "PIN_BLOQUEANTE")
+  assert.match(r.resultado, /NO CARGUÉ NADA/)
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  assert.equal(pregunta.pedidos.length, 0)
+  assert.deepEqual(carpetasPrivadas(), [], "la carpeta privada se borra también al frenar")
+})
+
+test("análisis null (no hay código que analizar) → no carga", async () => {
+  const dir = await armar()
+  const real = generadoDe(dir)
+  const soloIni = { ...real, archivos: { "platformio.ini": real.archivos["platformio.ini"] } }
+  const { r, lanza } = await cargar(dir, { deps: depsReales(() => soloIni) })
+  assert.equal(r.codigo, "ANALISIS_NO_DISPONIBLE")
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+})
+
+test("análisis incompleto o de una placa sin herramienta conocida → no carga", async () => {
+  const dir = await armar()
+  const analizar = (cambio) => (cwd, env) => ({ ...HERRAMIENTAS_DE_CARGA.analizarProyecto(cwd, env), ...cambio })
+  const a = await cargar(dir, { herramientas: { analizarProyecto: analizar({ incompleto: ["src/main.cpp"] }) } })
+  assert.equal(a.r.codigo, "ANALISIS_INCOMPLETO")
+  assert.equal(a.lanza.listados + a.lanza.lanzamientos.length, 0)
+  const b = await cargar(dir, { herramientas: { analizarProyecto: analizar({ familia: null }) } })
+  assert.equal(b.r.codigo, "PLACA_NO_SOPORTADA")
+  assert.equal(b.lanza.listados + b.lanza.lanzamientos.length, 0)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// Placa y candado
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+for (const [nombre, placasDespues] of [
+  ["desaparece", []],
+  ["cambia por otra del mismo modelo (otra serie)", [placa({ serie: "Z9Y8X7W6V5" })]],
+  ["aparece en otro puerto", [placa({ port: OTRO_PUERTO })]],
+  ["aparece otra más", [placa(), placa({ port: OTRO_PUERTO, serie: "Z9Y8X7W6V5" })]],
+]) {
+  test(`placa que ${nombre} entre el cartel y el lanzamiento → no carga`, async () => {
+    const dir = await armar()
+    const { r, lanza, pregunta } = await cargar(dir, { lanza: lanzador({ placasDespues }) })
+    assert.equal(pregunta.pedidos.length, 1)
+    assert.equal(r.codigo, "IDENTIDAD_CAMBIO")
+    assert.equal(lanza.listados, 2, "se volvió a detectar")
+    assert.equal(lanza.lanzamientos.length, 0)
+    assert.equal(puertoLibre(), true)
+  })
+}
+
+test("sin placa, o con varias → no carga y no muestra el cartel", async () => {
+  const dir = await armar()
+  for (const [placas, codigo] of [[[], "SIN_PLACA"], [[placa(), placa({ port: OTRO_PUERTO, serie: "Z9Y8X7W6V5" })], "VARIAS_PLACAS"]]) {
+    const { r, lanza, pregunta } = await cargar(dir, { lanza: lanzador({ placas }) })
+    assert.equal(r.codigo, codigo)
+    assert.equal(lanza.lanzamientos.length, 0)
+    assert.equal(pregunta.pedidos.length, 0)
+  }
+})
+
+for (const [nombre, alterar] of [
+  ["main.cpp cambiado", (d) => writeFileSync(join(d, "src", "main.cpp"), readFileSync(join(d, "src", "main.cpp"), "utf8") + "\n// metido\n")],
+  ["un archivo de más", (d) => writeFileSync(join(d, "src", "extra.cpp"), "void extra() {}\n")],
+  ["platformio.ini borrado", (d) => rmSync(join(d, "platformio.ini"))],
+]) {
+  test(`archivo de la carpeta privada alterado entre generar y lanzar (${nombre}) → no carga`, async () => {
+    const dir = await armar()
+    const pregunta = cartel("si", () => {
+      const [privada] = carpetasPrivadas()
+      alterar(join(CARGAS, privada))
+    })
+    const { r, lanza } = await cargar(dir, { pregunta })
+    assert.equal(r.codigo, "ARCHIVOS_CAMBIARON")
+    assert.equal(lanza.lanzamientos.length, 0)
+    assert.equal(puertoLibre(), true)
+  })
+}
+
+test("puerto ocupado → no carga, no muestra el cartel, y el candado ajeno sigue tomado", async () => {
+  const dir = await armar()
+  const ajena = reservarPuerto(PUERTO, "otra ventana")
+  assert.equal(ajena.ok, true)
+  try {
+    const { r, lanza, pregunta } = await cargar(dir)
+    assert.equal(r.codigo, "PUERTO_OCUPADO")
+    assert.equal(pregunta.pedidos.length, 0)
+    assert.equal(lanza.lanzamientos.length, 0)
+    assert.equal(puertoLibre(), false, "no se soltó un candado ajeno")
+  } finally {
+    ajena.liberar()
+  }
+})
+
+test("el candado se libera tras un fallo de PlatformIO", async () => {
+  const dir = await armar()
+  const { r } = await cargar(dir, { lanza: lanzador({ carga: { code: 1, stdout: "", stderr: "src/main.cpp:3: error: expected ';' before '}'" } }) })
+  assert.equal(r.codigo, "CARGA_FALLIDA")
+  assert.equal(puertoLibre(), true)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// La carpeta privada
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("carpeta privada: un enlace simbólico preparado no la mete en el proyecto, y no se crea nada del otro lado", { skip: WIN ? "enlaces simbólicos en Windows: requieren privilegios" : false }, async () => {
+  const dir = await armar()
+  const cache = join(OUT, "cache-trampa")
+  const trampa = join(dir, "trampa")
+  mkdirSync(cache, { recursive: true })
+  mkdirSync(trampa, { recursive: true })
+  symlinkSync(trampa, join(cache, "tecnia-bot"))
+  const { r, lanza } = await cargar(dir, { opciones: { entorno: { XDG_CACHE_HOME: cache } } })
+  assert.equal(r.codigo, "CARPETA_PRIVADA_RECHAZADA")
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  assert.deepEqual(readdirSync(trampa), [], "se creó algo adentro del proyecto")
+})
+
+test("carpeta privada: con la caché adentro del proyecto, no se carga y no se crea nada ahí", async () => {
+  const dir = await armar()
+  const cache = join(dir, "cache")
+  const { r, lanza } = await cargar(dir, { opciones: { entorno: { XDG_CACHE_HOME: cache } } })
+  assert.equal(r.codigo, "CARPETA_PRIVADA_RECHAZADA")
+  assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  assert.equal(existsSync(cache), false)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// El veredicto: ESP32
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+const sinUltimoHash = (() => {
+  const i = LOG_ESP32.lastIndexOf("Hash of data verified.")
+  return LOG_ESP32.slice(0, i) + LOG_ESP32.slice(i + "Hash of data verified.".length)
+})()
+
+for (const [nombre, carga, bytesFirmware] of [
+  ["la salida real sin una verificación de hash", { code: 0, stdout: sinUltimoHash, stderr: "" }, BYTES_FIRMWARE],
+  ["la salida real con «A fatal error occurred»", { code: 0, stdout: `${LOG_ESP32}\nA fatal error occurred: MD5 of file does not match data in flash!\n`, stderr: "" }, BYTES_FIRMWARE],
+  ["rc 0 con la salida vacía", { code: 0, stdout: "", stderr: "" }, BYTES_FIRMWARE],
+  ["la salida real pero con un firmware compilado de otro tamaño", { code: 0, stdout: LOG_ESP32, stderr: "" }, 1000],
+]) {
+  test(`ESP32: ${nombre} → NO es éxito`, async () => {
+    const dir = await armar()
+    const { r, texto } = await cargar(dir, { lanza: lanzador({ carga, bytesFirmware }) })
+    assert.equal(r.ok, false, texto)
+    assert.equal(r.codigo, "CARGA_SIN_VERIFICAR")
+    assert.equal(r.resultado, TEXTO_CARGA_SIN_VERIFICAR)
+    assert.doesNotMatch(r.resultado, /^CARGADO/)
+    const banco = JSON.parse(readFileSync(join(dir, ".tecnia-vista-fisica", ".banco.json"), "utf8"))
+    assert.equal(banco.ultimoIntento.codigo, "CARGA_SIN_VERIFICAR")
+    assert.equal(banco.ultimaCarga, undefined, "lo no verificado no se anota como última carga")
+  })
+}
+
+test("ESP32 con rc distinto de 0 después de escribir → fallo, y dice que pudo quedar a medio grabar", async () => {
+  const dir = await armar()
+  const { r } = await cargar(dir, { lanza: lanzador({ carga: { code: 1, stdout: "Writing at 0x00010000... (11 %)\nA serial exception error occurred: device disconnected\n", stderr: "" } }) })
+  assert.equal(r.ok, false)
+  assert.equal(r.codigo, "CARGA_FALLIDA")
+  assert.match(r.resultado, /a medio grabar/)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// El veredicto: UNO
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("UNO: rc 0 → CARGA_SIN_VERIFICAR con el texto exacto, nunca «cargado»", async () => {
+  const dir = await armar("arduino-uno", ["D2", "D7"])
+  const salidaAvrdude = "avrdude: 924 bytes of flash written\navrdude: 924 bytes of flash verified\n========================= [SUCCESS] Took 3.10 seconds =========================\n"
+  const { r, texto, lanza } = await cargar(dir, { deps: depsUno, lanza: lanzador({ placas: [UNO], carga: { code: 0, stdout: salidaAvrdude, stderr: "" }, bytesFirmware: 0 }) })
+  assert.equal(lanza.lanzamientos.length, 1)
+  assert.deepEqual(lanza.lanzamientos[0].cmd.slice(4), ["-e", "arduino-uno", "-t", "upload", "--upload-port", PUERTO])
+  assert.equal(r.ok, false)
+  assert.equal(r.codigo, "CARGA_SIN_VERIFICAR")
+  assert.equal(r.resultado, "PlatformIO terminó correctamente, pero no pude verificar la escritura del firmware en la placa")
+  assert.doesNotMatch(texto, /cargad[oa]/i)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// Timeout y cancelación DURANTE la carga
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("timeout durante la carga → mensaje propio, nunca éxito, sin la ruta privada; el puerto queda reservado", async () => {
+  const dir = await armar()
+  const lanza = lanzador({ carga: ({ cwd }) => ({ code: 124, stdout: "Writing at 0x00010000... (11 %)\n", stderr: `El comando no termino en 15 minutos y se corto: pio run -d ${cwd} -e esp32-devkit-v1` }) })
+  const { r, texto } = await cargar(dir, { lanza })
+  assert.equal(r.ok, false)
+  assert.equal(r.codigo, "TIEMPO_AGOTADO")
+  assert.match(r.resultado, /^NO SÉ SI SE CARGÓ/)
+  assert.match(r.resultado, /a medio grabar/)
+  sinRutaPrivada(texto)
+  assert.equal(puertoLibre(), false, "con un corte durante la carga el puerto no se suelta: algo puede seguir grabando")
+  assert.deepEqual(carpetasPrivadas(), [])
+})
+
+test("cancelación durante la carga → mensaje propio, nunca éxito; el puerto queda reservado", async () => {
+  const dir = await armar()
+  const ctrl = new AbortController()
+  const lanza = lanzador({ alLanzar: () => ctrl.abort(), carga: { code: 130, stdout: "Writing at 0x00001000... (100 %)\n", stderr: "Cancelado por el usuario." } })
+  const { r } = await cargar(dir, { lanza, abort: ctrl.signal })
+  assert.equal(r.ok, false)
+  assert.equal(r.codigo, "CANCELADO_DURANTE_LA_CARGA")
+  assert.match(r.resultado, /a medio grabar/)
+  assert.doesNotMatch(r.resultado, /no se grabó nada|no se lanzó nada/)
+  assert.equal(puertoLibre(), false)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// Registro
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("registro: el éxito queda anotado sin rutas ni series; si no se puede anotar, se dice y el éxito sigue siendo éxito", async () => {
+  const dir = await armar()
+  const ok = await cargar(dir)
+  const banco = JSON.parse(readFileSync(join(dir, ".tecnia-vista-fisica", ".banco.json"), "utf8"))
+  assert.equal(banco.ultimaCarga.origen, "programa")
+  assert.equal(banco.ultimaCarga.revision, ok.r.revision)
+  assert.equal(banco.ultimoIntento.codigo, "CARGADO")
+  assert.doesNotMatch(JSON.stringify(banco), /A1B2C3D4E5|ttyUSB|COM5|cargas/)
+  assert.deepEqual(ok.r.registro, { ok: true })
+
+  rmSync(join(dir, ".tecnia-vista-fisica", ".banco.json"))
+  mkdirSync(join(dir, ".tecnia-vista-fisica", ".banco.json")) // no se puede escribir encima de una carpeta
+  const sinRegistro = await cargar(dir)
+  assert.equal(sinRegistro.r.ok, true)
+  assert.equal(sinRegistro.r.codigo, "CARGADO")
+  assert.match(sinRegistro.r.resultado, /^CARGADO — .*no pude anotar esta carga/s)
+  assert.equal(sinRegistro.r.registro.ok, false)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════
+// El argv y la tool
+// ════════════════════════════════════════════════════════════════════════════════════════
+
+test("argvDeCargaCompilando: el argv sin nobuild, con las validaciones del gate, y lanzarCarga lo admite", async () => {
+  assert.deepEqual(argvDeCargaCompilando({ cwd: "/tmp/x", environment: "esp32-devkit-v1", puerto: "/dev/ttyUSB0" }), ["pio", "run", "-d", "/tmp/x", "-e", "esp32-devkit-v1", "-t", "upload", "--upload-port", "/dev/ttyUSB0"])
+  for (const malo of [{ cwd: "rel", environment: "uno", puerto: "COM5" }, { cwd: "/p", environment: "-t uploadfs", puerto: "COM5" }, { cwd: "/p", environment: "uno", puerto: "192.168.0.10" }]) {
+    assert.throws(() => argvDeCargaCompilando(malo), /RUTA_DE_CARGA_NO_AUTORIZADA/)
+  }
+  const vistos = []
+  await lanzarCarga(async (cmd, cwd, s, t, cap) => (vistos.push(esCapacidadDeCarga(cap)), { code: 0, stdout: "", stderr: "" }), argvDeCargaCompilando({ cwd: "/p", environment: "uno", puerto: "COM5" }), "/p")
+  assert.deepEqual(vistos, [true])
+})
+
+test("la tool anuncia la acción: enum y descripción", () => {
+  assert.match(programaTool.description, /`cargar`/)
+  assert.match(programaTool.description, /CARGA_SIN_VERIFICAR/)
+  assert.deepEqual(Object.keys(programaTool.args).sort(), ["accion", "idProyecto"], "no se agregan argumentos: ni puerto, ni rutas, ni flags")
+})
+
+test("el agente sabe que el programa del proyecto físico se carga con `programa` y `cargar`", () => {
+  const i = PROMPT.indexOf("## REGLA CRÍTICA — programa del proyecto físico")
+  const regla = PROMPT.slice(i, PROMPT.indexOf("\n## ", i + 10))
+  assert.match(regla, /`accion: "cargar"`/)
+  assert.doesNotMatch(regla, /todavía no está disponible/)
+})
+
+test("ningún proceso real: Bun.spawn no se llamó nunca en este archivo", () => {
+  assert.deepEqual(spawnsReales, [])
+})

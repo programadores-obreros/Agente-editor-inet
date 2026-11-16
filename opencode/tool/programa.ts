@@ -16,14 +16,35 @@
 // para que no quede un programa viejo que parezca el actual).
 //
 // Si el codegen no soporta el proyecto devuelve su error `CODEGEN_*` tal cual: no hay plan B.
+//
+// `cargar` (H1 del MVP): graba en la placa el programa del proyecto. Abre el proyecto y genera
+// por el mismo camino que `generar`/`compilar`, pero NO usa la carpeta derivada ni nada que ya
+// estuviera en disco: lo generado va a una carpeta privada nueva, fuera del proyecto, y desde
+// ahí se compila y graba en un solo paso. Todo lo que toca la placa (agente, aprobación
+// automática, pines, placa, candado, cartel, revalidación, lanzamiento, veredicto y registro)
+// vive en `carga/cargar-programa.ts`; acá sólo se le pasan las piezas de `platformio.ts`.
 
 import { tool } from "@opencode-ai/plugin"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, relative } from "node:path"
+import { cargarProgramaGenerado, porQueNoSePuedeCargar, type ContextoDeCarga, type HerramientasDeCarga, type OpcionesDeCarga, type ResultadoDeCarga } from "../carga/cargar-programa.ts"
 import type { ServicioDeProyecto, Snapshot } from "../nucleo/composicion-raiz.ts"
 import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
-import { CODIGO_CANCELADO, CODIGO_TIMEOUT, recortarSalida, run, timeoutLargoMs, traducirError } from "./platformio.ts"
+import {
+  agenteQueNoPuedeCargar,
+  analizarProyecto,
+  bloqueoAntesDeCargar,
+  CODIGO_CANCELADO,
+  CODIGO_TIMEOUT,
+  MARCA_SIEMPRE_PREGUNTA,
+  PREGUNTA_CHECKLIST,
+  preguntarChecklist,
+  recortarSalida,
+  run,
+  timeoutLargoMs,
+  traducirError,
+} from "./platformio.ts"
 
 // Import perezoso (criterio D13, igual que `proyecto-fisico.ts`): si falta una carpeta de la
 // instalación, sólo esta tool se entera, y recién cuando se usa.
@@ -90,17 +111,46 @@ function coincideConLoGenerado(carpeta: string, archivos: Readonly<Record<string
 const json = (valor: unknown) => JSON.stringify(valor, null, 2)
 
 /**
+ * Las piezas de `platformio.ts` (y el `run` real) que usa `cargar`. Son las MISMAS funciones que
+ * usan `flash`/`both`: el chequeo del agente, el análisis de pines, el bloqueo y el cartel.
+ */
+export const HERRAMIENTAS_DE_CARGA: HerramientasDeCarga = {
+  run,
+  preguntaChecklist: PREGUNTA_CHECKLIST,
+  marcaSiemprePregunta: MARCA_SIEMPRE_PREGUNTA,
+  agenteQueNoPuedeCargar,
+  analizarProyecto,
+  bloqueoAntesDeCargar,
+  preguntarChecklist,
+}
+
+/** El resultado de `cargar` en la forma de la tool: siempre empieza con `resultado` y trae `etapa`. */
+const comoCarga = (r: ResultadoDeCarga, base: Record<string, unknown> = {}) => {
+  const { resultado, ok, codigo, ...resto } = r
+  return json({ resultado, etapa: "carga", ok, codigo, ...base, ...resto })
+}
+
+/**
  * La ejecución de la tool. `cargar` existe para que los tests inyecten un conocimiento de prueba
  * (mismo patrón que `revisiones` en el codegen); en producción son los módulos reales.
+ * `herramientas` y `opciones` son para los tests de la acción `cargar` (el lanzador espía, el
+ * cartel, el entorno): en producción, las de `platformio.ts` y el `run` real.
  */
 export async function ejecutarPrograma(
   args: { readonly accion: string; readonly idProyecto?: string },
-  ctx: { readonly directory: string; readonly abort?: AbortSignal },
+  ctx: ContextoDeCarga,
   cargar: () => Promise<DependenciasPrograma> = cargarDependencias,
+  herramientas: HerramientasDeCarga = HERRAMIENTAS_DE_CARGA,
+  opciones: OpcionesDeCarga = {},
 ): Promise<string> {
   try {
-    if (args.accion !== "generar" && args.accion !== "compilar") {
-      return json({ resultado: "NO SE HIZO NADA — acción desconocida (usá 'generar' o 'compilar')", ok: false, codigo: "ACCION_DESCONOCIDA" })
+    if (args.accion !== "generar" && args.accion !== "compilar" && args.accion !== "cargar") {
+      return json({ resultado: "NO SE HIZO NADA — acción desconocida (usá 'generar', 'compilar' o 'cargar')", ok: false, codigo: "ACCION_DESCONOCIDA" })
+    }
+    // `cargar`, pasos 1 y 2 (agente y aprobación automática): antes de abrir nada.
+    if (args.accion === "cargar") {
+      const noSePuede = porQueNoSePuedeCargar(ctx, herramientas)
+      if (noSePuede) return comoCarga(noSePuede)
     }
     const idProyecto = args.idProyecto?.trim() || ID_PROYECTO_DEFAULT
     if (!validarIdProyecto(idProyecto)) return json({ resultado: "NO SE HIZO NADA — idProyecto inválido", ok: false, codigo: "ID_PROYECTO_INVALIDO" })
@@ -125,8 +175,22 @@ export async function ejecutarPrograma(
     const snapshot: Snapshot = servicio.snapshot()
     const revision = snapshot.revision
     const carpetaAbsoluta = carpetaDelPrograma(ctx.directory, idProyecto)
+    if (args.accion === "cargar") {
+      // Paso 3: con un motivo bloqueante no se graba (el generador también lo rechazaría; esto no depende de él).
+      const bloqueantes = snapshot.validacion.motivos.filter((m) => m.severidad === "blocking")
+      if (bloqueantes.length > 0) {
+        return comoCarga(
+          { resultado: "NO SE CARGÓ — el proyecto tiene motivos bloqueantes: corregilos con `proyecto-fisico` antes de cargar.", ok: false, codigo: "PROYECTO_CON_MOTIVOS_BLOQUEANTES", motivos: bloqueantes },
+          { idProyecto, revision },
+        )
+      }
+    }
     const generado = deps.generarPrograma(snapshot.proyecto, deps.conocimiento)
     if (!generado.ok) {
+      // `cargar` no toca la carpeta derivada: ni la lee ni la vacía.
+      if (args.accion === "cargar") {
+        return json({ resultado: `NO SE CARGÓ — no se pudo generar el programa (${generado.error.codigo})`, etapa: "generacion", ok: false, idProyecto, revision, codigo: generado.error.codigo, datos: generado.error.datos })
+      }
       vaciar(carpetaAbsoluta)
       return json({
         resultado: `NO SE GENERÓ EL PROGRAMA — ${generado.error.codigo}`,
@@ -140,6 +204,13 @@ export async function ejecutarPrograma(
     }
 
     const archivosGenerados: Readonly<Record<string, string>> = { ...generado.archivos }
+
+    // ── Carga: desde una carpeta privada nueva, nunca desde la derivada. ──
+    if (args.accion === "cargar") {
+      const r = await cargarProgramaGenerado({ idProyecto, revision, environment: generado.environment, archivos: archivosGenerados }, ctx, herramientas, opciones)
+      return comoCarga(r, { idProyecto, revision, environment: generado.environment })
+    }
+
     materializar(carpetaAbsoluta, archivosGenerados)
     const carpeta = relative(ctx.directory, carpetaAbsoluta).split("\\").join("/")
     const archivos = Object.fromEntries(Object.entries(archivosGenerados).map(([ruta, contenido]) => [ruta, { sha256: sha256(contenido), contenido }]))
@@ -190,15 +261,18 @@ export async function ejecutarPrograma(
 }
 
 export default tool({
-  description: `Genera y compila el PROGRAMA del proyecto físico actual (el de \`proyecto-fisico\`). El C++ no lo escribís vos: lo deriva el backend determinista desde el proyecto (componentes, pines y reglas), y esta tool lo entrega a PlatformIO tal cual.
+  description: `Genera, compila y carga el PROGRAMA del proyecto físico actual (el de \`proyecto-fisico\`). El C++ no lo escribís vos: lo deriva el backend determinista desde el proyecto (componentes, pines y reglas), y esta tool lo entrega a PlatformIO tal cual.
 
-Dos \`accion\`:
+Tres \`accion\`:
 - \`generar\`: arma \`platformio.ini\` y \`src/main.cpp\` desde la revisión actual del proyecto y los deja en una carpeta derivada. No compila.
 - \`compilar\`: vuelve a generar desde la revisión actual y compila EXACTAMENTE esos archivos con PlatformIO (environment derivado de la placa del proyecto).
+- \`cargar\`: vuelve a generar desde la revisión actual y lo compila y graba en la placa conectada, en un solo paso. Sólo con el agente Tecnia Bot. Frena si un pin deja la placa sin arrancar. Muestra SIEMPRE un cartel de OpenCode que contesta el docente (botones en inglés: Allow once si ya revisó el circuito, Reject si todavía no): antes de llamarla, repasá con él el checklist de seguridad y avisale del cartel. Si contesta Reject, no reintentes hasta que te lo pida. Sólo decí que quedó cargado si \`resultado\` empieza con \`CARGADO\`; \`CARGA_SIN_VERIFICAR\` NO es "cargado".
 
-Toda salida empieza con \`resultado\` y trae \`etapa\` (generacion | compilacion), \`ok\` y la \`revision\` del proyecto usada. Si la generación falla, \`codigo\` es un \`CODEGEN_*\` con sus \`datos\`: explicalo, pedí la corrección del proyecto o decí que ese caso todavía no está soportado. NUNCA escribas el programa a mano como alternativa ni edites los archivos generados (se pisan en cada llamada). Después de cambiar el proyecto, volvé a generar/compilar: el programa corresponde a una revisión.`,
+Toda salida empieza con \`resultado\` y trae \`etapa\` (generacion | compilacion | carga), \`ok\` y la \`revision\` del proyecto usada. Si la generación falla, \`codigo\` es un \`CODEGEN_*\` con sus \`datos\`: explicalo, pedí la corrección del proyecto o decí que ese caso todavía no está soportado. NUNCA escribas el programa a mano como alternativa ni edites los archivos generados (se pisan en cada llamada). Después de cambiar el proyecto, volvé a generar/compilar: el programa corresponde a una revisión.`,
   args: {
-    accion: tool.schema.enum(["generar", "compilar"]).describe("'generar' arma el programa desde el proyecto actual; 'compilar' lo regenera y lo compila con PlatformIO."),
+    accion: tool.schema
+      .enum(["generar", "compilar", "cargar"])
+      .describe("'generar' arma el programa desde el proyecto actual; 'compilar' lo regenera y lo compila con PlatformIO; 'cargar' lo regenera, lo compila y lo graba en la placa (con el cartel del checklist)."),
     idProyecto: tool.schema
       .string()
       .optional()

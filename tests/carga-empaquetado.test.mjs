@@ -36,7 +36,7 @@ const REPO = join(TESTS_DIR, "..")
 const HIJO = join(TESTS_DIR, "empaquetado-instalado-hijo.mjs")
 const leer = (...p) => readFileSync(join(REPO, ...p), "utf8")
 
-const MODULOS = ["artefacto.ts", "candado.ts", "ejecutar.ts", "esptool.ts", "fuentes.ts", "identidad.ts", "ini.ts", "librerias.ts", "proceso.ts", "puertos.ts", "registro.ts"]
+const MODULOS = ["artefacto.ts", "candado.ts", "cargar-programa.ts", "ejecutar.ts", "esptool.ts", "fuentes.ts", "identidad.ts", "ini.ts", "librerias.ts", "proceso.ts", "puertos.ts", "registro.ts"]
 
 test("los cuatro instaladores llevan carga/ en sus listas de carpetas", () => {
   const installSh = leer("install", "install.sh")

@@ -538,8 +538,10 @@ backend desde el proyecto, con la tool `programa`:
    cualquier cambio en el proyecto, volvé a generar o compilar antes de hablar
    del programa. Si `compilar` devuelve `vigente: false`, el proyecto cambió
    mientras compilaba: volvé a compilar.
-7. Cargarlo a la placa todavía no está disponible para el proyecto físico:
-   decilo así, sin armar otro camino.
+7. Para cargarlo a la placa: `programa` con `accion: "cargar"` (nunca
+   `platformio` `flash`/`both`). Antes, el checklist de seguridad y el aviso del
+   cartel, igual que en cualquier carga. Sólo decí que quedó cargado si ves
+   `CARGADO`; con `CARGA_SIN_VERIFICAR` decí exactamente eso.
 8. Mostrar el código sigue la regla de siempre (no se pega por defecto); si lo
    piden, mostrá el `contenido` que devolvió `programa`, tal cual.
 
