@@ -10,8 +10,11 @@ Esta es la plataforma principal de Tecnia Bot, porque es la que más se usa en l
 > Windows real». Quedó ahí seis meses después de dejar de ser cierta — que es
 > justo lo que le pasa a las advertencias: envejecen sin que nadie las mire.
 
-> ⚠️ **Lo que esta guía cuenta de la última pantalla, de "Reparar" y del
-> desinstalador es posterior a la 0.4.8 y todavía no pasó por un aula.** Si tu
+> ⚠️ **Lo que esta guía cuenta de la última pantalla, de "Reparar", de la key y
+> del desinstalador es posterior a la 0.4.8, y al escribirla todavía no se había
+> probado en una máquina con Windows** — ni en un aula ni en la máquina virtual
+> de pruebas. Está escrito, revisado y con pruebas automáticas que corren en
+> Linux; lo que falta es verlo andar. Cuando se pruebe, este cartel cambia. Si tu
 > `.exe` es de la 0.4.8 o anterior, la última pantalla dice siempre "¡Tecnia Bot
 > quedó instalado!", haya salido como haya salido: en ese caso, para saber cómo
 > quedó, abrí **"Diagnostico de Tecnia Bot"** desde el menú inicio.
