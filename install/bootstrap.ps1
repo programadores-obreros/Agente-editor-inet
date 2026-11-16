@@ -20,8 +20,10 @@
 #       PlatformIO contesta, Node contesta y alcanza, la capa esta publicada.
 #   2 = INSTALADO PERO DEGRADADO: el bot abre (OpenCode arranca y la capa esta
 #       publicada), pero falta algo de lo demas: PlatformIO (no compila ni
-#       carga), Node (no anda el skill de diagramas), u OpenCode quedo en una
-#       version que no es la probada. Vive en $CodigoDegradado.
+#       carga), Node (no anda el skill de diagramas), OpenCode quedo en una
+#       version que no es la probada, o install.ps1 instalo la capa CON AVISOS
+#       (su codigo 3: la capa se copio pero no pudo escribir la config o
+#       guardar la key). Vive en $CodigoDegradado.
 #   1 = FALLA: el bot NO se puede usar. OpenCode no arranca, la capa no quedo
 #       publicada, no se pudo instalar Scoop, o falta install\OPENCODE_VERSION.
 #       Es tambien lo que devuelve powershell.exe si el script no parsea o muere
@@ -64,6 +66,10 @@ if ($SinPrompt) { $env:TECNIA_SIN_PROMPT = "1" }
 # coincidir con CodigoBootstrapDegradado en installer\tecnia-bot.iss; hay un test
 # (tests/instalador-honesto.test.mjs) que compara los dos archivos.
 $CodigoDegradado = 2
+# Lo que devuelve install\install.ps1 cuando la capa quedo "instalada CON AVISOS".
+# Contrato de ESE script (0 = instalado, 3 = instalado con avisos, 1 = se corto),
+# acordado con quien lo mantiene; se usa mas abajo, donde se mira su codigo.
+$CodigoCapaConAvisos = 3
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
 # ---- TODO LO QUE PASA ACA QUEDA ESCRITO -------------------------------------
@@ -1533,15 +1539,29 @@ if ($HayTranscript) {
 # dos fallas hacia su propio `exit 1` y el docente se quedaba sin saber como
 # habia quedado el resto (OpenCode, PlatformIO, Node), que ya estaba decidido
 # cien lineas mas arriba.
+#
+# EL 3 DE install.ps1 NO ES UNA FALLA. Su contrato es 0 = instalado, 3 =
+# instalado CON AVISOS (la capa SI se copio, pero no pudo escribir la config o
+# guardar la key, y lo listo en pantalla), 1 = se corto. Aca cualquier codigo
+# distinto de 0 se informaba como "La capa de Tecnia Bot no se instalo", que con
+# el 3 es FALSO: la capa esta. Se trata aparte, y con la misma exigencia que el
+# 0: la capa cuenta como instalada solo si ADEMAS el agente esta en el disco.
+# Un 3 nunca termina en "LISTO!": degrada el resultado.
 $CapaOk = $true
+$CapaConAvisos = $false
 $cfgDir = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $env:USERPROFILE ".config\opencode" }
 if ($CodigoInstall -ne 0) {
-    $CapaOk = $false
-    Write-Host ""
-    Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $CodigoInstall)." -ForegroundColor Red
-    Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
-    Write-Host ""
-} elseif (-not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
+    if ($CodigoInstall -eq $CodigoCapaConAvisos) {
+        $CapaConAvisos = $true
+    } else {
+        $CapaOk = $false
+        Write-Host ""
+        Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $CodigoInstall)." -ForegroundColor Red
+        Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
+        Write-Host ""
+    }
+}
+if ($CapaOk -and -not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
     $CapaOk = $false
     Write-Host ""
     Write-Host "  [X] La capa educativa no quedo publicada." -ForegroundColor Red
@@ -1604,7 +1624,11 @@ if ($NodeExe) {
     $Degradado += "falta Node: no anda el skill de diagramas de arquitectura"
     Write-Host "  [!]  Node         NO esta: no anda el skill de diagramas de arquitectura." -ForegroundColor Yellow
 }
-if ($CapaOk) {
+if ($CapaOk -and $CapaConAvisos) {
+    $Degradado += "la capa se instalo CON AVISOS: no se pudo escribir parte de la configuracion o guardar la key (el detalle esta mas arriba)"
+    Write-Host "  [!]  Tecnia Bot   la capa educativa esta publicada en $cfgDir, pero CON AVISOS:" -ForegroundColor Yellow
+    Write-Host "                    el instalador de la capa los listo mas arriba."
+} elseif ($CapaOk) {
     Write-Host "  [OK] Tecnia Bot   la capa educativa esta publicada en $cfgDir"
 } else {
     Write-Host "  [X]  Tecnia Bot   la capa educativa NO quedo publicada." -ForegroundColor Red

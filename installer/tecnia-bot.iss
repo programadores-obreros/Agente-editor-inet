@@ -568,8 +568,8 @@ begin
       detalle quedó en el log, y se lo nombra sólo si está en el disco. }
     Titulo := 'Tecnia Bot quedó instalado, pero incompleto';
     Texto :=
-      'El bot abre, pero faltó instalar algo (PlatformIO, Node, o la versión probada '
-      + 'de OpenCode). Para completarlo, en el menú inicio abrí "Reparar {#MyAppName}".';
+      'El bot abre, pero faltó algo (PlatformIO, Node, la versión probada de OpenCode, '
+      + 'o parte de la configuración). Para completarlo, en el menú inicio abrí "Reparar {#MyAppName}".';
     if FileExists(RutaLogBootstrap) then
       Texto := Texto + ' Qué faltó quedó escrito en: ' + RutaLogBootstrap;
   end
