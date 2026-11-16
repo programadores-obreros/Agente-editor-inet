@@ -61,7 +61,11 @@ after(() => {
   globalThis.Bun = BunOriginal
   rmSync(OUT, { recursive: true, force: true })
 })
-afterEach(() => liberarTodosLosPuertos())
+afterEach(() => {
+  liberarTodosLosPuertos()
+  // Un corte sin confirmar deja la carpeta privada a propósito (ciclo 1): cada test empieza sin ninguna.
+  if (existsSync(CARGAS)) for (const c of readdirSync(CARGAS)) rmSync(join(CARGAS, c), { recursive: true, force: true })
+})
 
 // ── Placas ─────────────────────────────────────────────────────────────────────────────
 const WIN = process.platform === "win32"
@@ -156,9 +160,12 @@ const RECHAZO = { _tag: "PermissionRejectedError", message: "The user rejected p
 const CORRECCION = { _tag: "PermissionCorrectedError", feedback: "todavía no lo revisé" }
 const DENEGADO = { _tag: "PermissionDeniedError", message: "The user has specified a rule which prevents you from using this specific tool call." }
 
+/** La TUI como la abre el producto (H3: `procSelfCmdline` de la TUI, sin la bandera). El node de los tests no es OpenCode. */
+const TUI_NORMAL = ["/opt/opencode/bin/opencode", "--agent", "tecnia-bot"]
+
 async function cargar(dir, { lanza = lanzador(), pregunta = cartel(), agente = "tecnia-bot", abort, sinAsk = false, deps = depsReales(), herramientas = {}, opciones = {} } = {}) {
   const ctx = { directory: dir, agent: agente, abort: abort ?? new AbortController().signal, ...(sinAsk ? {} : { ask: pregunta.ask }) }
-  const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, deps, { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, ...herramientas }, opciones)
+  const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, deps, { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, lineaDeComando: () => ({ ok: true, argv: TUI_NORMAL }), ...herramientas }, opciones)
   return { r: JSON.parse(texto), texto, lanza, pregunta }
 }
 
@@ -585,7 +592,10 @@ test("timeout durante la carga → mensaje propio, nunca éxito, sin la ruta pri
   assert.match(r.resultado, /a medio grabar/)
   sinRutaPrivada(texto)
   assert.equal(puertoLibre(), false, "con un corte durante la carga el puerto no se suelta: algo puede seguir grabando")
-  assert.deepEqual(carpetasPrivadas(), [])
+  // Ciclo 1 (H3): sin confirmar el corte, la carpeta privada NO se borra (algo puede seguir leyéndola).
+  assert.equal(carpetasPrivadas().length, 1)
+  assert.match(r.aviso, /No borré la carpeta temporal/)
+  for (const c of carpetasPrivadas()) rmSync(join(CARGAS, c), { recursive: true, force: true })
 })
 
 test("cancelación durante la carga → mensaje propio, nunca éxito; el puerto queda reservado", async () => {
@@ -624,8 +634,101 @@ for (const [codigo, corte] of [["CANCELADO_DURANTE_LA_CARGA", 130], ["TIEMPO_AGO
     assert.doesNotMatch(r.resultado, /Confirmé|no se grabó nada/)
     assert.equal(r.procesosDeCargaTerminados, false)
     assert.equal(puertoLibre(), false, "sin confirmar, el puerto no se suelta")
+    assert.equal(carpetasPrivadas().length, 1, "sin confirmar, la carpeta privada no se borra")
+    for (const c of carpetasPrivadas()) rmSync(join(CARGAS, c), { recursive: true, force: true })
   })
 }
+
+// ── Ciclo 1 (H3-A y H3-B): la línea de comando REAL decide ───────────────────────────────
+// Las líneas son las `procSelfCmdline` que registró el ensayo H3 en OpenCode 1.18.18 real
+// (evidencia/H3/resultados/ab820a3/run/*/plugin-carga.jsonl), con el prompt acortado.
+
+const OC = "<H3>/dist/opencode"
+const PROMPT_H3 = 'Caso H3. PLAN:{"rondas":[[{"tool":"proyecto-fisico","args":{"accion":"leer"}}]]}'
+const H3 = {
+  "E3-tui-auto": [OC, "--agent", "tecnia-bot", "-m", "falso/modelo-falso", "--prompt", PROMPT_H3, "--auto"],
+  "E3-tui-dsp": [OC, "--agent", "tecnia-bot", "-m", "falso/modelo-falso", "--prompt", PROMPT_H3, "--dangerously-skip-permissions"],
+  "E3-tui-yolo": [OC, "--agent", "tecnia-bot", "-m", "falso/modelo-falso", "--prompt", PROMPT_H3, "--yolo"],
+  "E3-tui-port-attach-auto": [OC, "--agent", "tecnia-bot", "-m", "falso/modelo-falso", "--prompt", 'Caso H3. PLAN:{"rondas":[]}', "--port", "39763"],
+  "E1/E3-attach (serve)": [OC, "serve", "--port", "41083", "--hostname", "127.0.0.1", "--print-logs", "--log-level", "INFO"],
+  "E3-run-auto": [OC, "run", "--agent", "tecnia-bot", "-m", "falso/modelo-falso", "--format", "json", "--print-logs", "--log-level", "INFO", "--auto", PROMPT_H3],
+  "E3-run-sin-flags": [OC, "run", "--agent", "tecnia-bot", "-m", "falso/modelo-falso", "--format", "json", "--print-logs", "--log-level", "INFO", PROMPT_H3],
+}
+
+test("H3: las líneas de comando medidas — la TUI con bandera, serve, run y la TUI con --port NO cargan, con su código", async () => {
+  const esperado = {
+    "E3-tui-auto": "APROBACION_AUTOMATICA",
+    "E3-tui-dsp": "APROBACION_AUTOMATICA",
+    "E3-tui-yolo": "APROBACION_AUTOMATICA",
+    "E3-tui-port-attach-auto": "SERVIDOR_EXPUESTO",
+    "E1/E3-attach (serve)": "MODO_NO_PERMITIDO",
+    "E3-run-auto": "APROBACION_AUTOMATICA",
+    "E3-run-sin-flags": "MODO_NO_PERMITIDO",
+  }
+  const dir = await armar()
+  for (const [caso, argv] of Object.entries(H3)) {
+    const { r, lanza, pregunta } = await cargar(dir, { herramientas: { lineaDeComando: () => ({ ok: true, argv }) } })
+    assert.equal(r.codigo, esperado[caso], caso)
+    assert.match(r.resultado, /Tecnia Bot abierto normalmente/, caso)
+    assert.equal(lanza.listados + lanza.lanzamientos.length + pregunta.pedidos.length, 0, caso)
+  }
+})
+
+test("H3: la TUI sin bandera (como la abre el lanzador, o `opencode` a secas) sí carga", async () => {
+  const dir = await armar()
+  for (const argv of [[OC], [OC, "--agent", "tecnia-bot"], [OC, "--agent", "tecnia-bot", "-m", "falso/modelo-falso", "--prompt", PROMPT_H3], [OC, "-c", "--model=x/y", "--print-logs"]]) {
+    const { r } = await cargar(dir, { herramientas: { lineaDeComando: () => ({ ok: true, argv }) } })
+    assert.equal(r.codigo, "CARGADO", JSON.stringify(argv))
+  }
+})
+
+test("H3: formas de las banderas — =valor, camelCase y después de un valor sí; --no-x no; un --prompt que contiene la palabra tampoco", async () => {
+  const { porQueElLanzamientoNoPermiteCargar } = await import(join(REPO, "opencode/carga/cargar-programa.ts"))
+  const cod = (...args) => porQueElLanzamientoNoPermiteCargar([OC, ...args])?.codigo ?? null
+  assert.equal(cod("--auto=true"), "APROBACION_AUTOMATICA")
+  assert.equal(cod("--dangerouslySkipPermissions"), "APROBACION_AUTOMATICA")
+  assert.equal(cod("--yolo=1"), "APROBACION_AUTOMATICA")
+  assert.equal(cod("--no-auto"), "OPCION_DESCONOCIDA", "--no-auto no es aprobación automática (y no es una opción de la TUI conocida)")
+  assert.equal(cod("--prompt", "subilo en modo auto"), null)
+  for (const red of ["--port", "--port=0", "--hostname", "--hostname=0.0.0.0", "--mdns", "--mdns-domain=x", "--mdnsDomain", "--cors"]) assert.equal(cod(red), "SERVIDOR_EXPUESTO", red)
+  for (const sub of ["serve", "web", "acp", "attach", "run", "./otra-carpeta"]) assert.equal(cod(sub), "MODO_NO_PERMITIDO", sub)
+  assert.equal(cod("--algo-nuevo"), "OPCION_DESCONOCIDA")
+})
+
+test("H3: si la línea de comando no se puede leer, o la plataforma no es Linux → no carga", async () => {
+  const { leerLineaDeComandoReal } = await import(join(REPO, "opencode/carga/cargar-programa.ts"))
+  const dir = await armar()
+  for (const [lectura, codigo] of [
+    [leerLineaDeComandoReal("linux", () => { throw Object.assign(new Error("x"), { code: "EACCES" }) }), "LINEA_DE_COMANDO_ILEGIBLE"],
+    [leerLineaDeComandoReal("linux", () => Buffer.from("")), "LINEA_DE_COMANDO_ILEGIBLE"],
+    [leerLineaDeComandoReal("win32"), "PLATAFORMA_NO_HABILITADA"],
+    [leerLineaDeComandoReal("darwin"), "PLATAFORMA_NO_HABILITADA"],
+  ]) {
+    const { r, lanza } = await cargar(dir, { herramientas: { lineaDeComando: () => lectura } })
+    assert.equal(r.codigo, codigo)
+    assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  }
+  // Y la lectura real separa por NUL.
+  assert.deepEqual(leerLineaDeComandoReal("linux", () => Buffer.from(`${OC}\0--agent\0tecnia-bot\0--auto\0`)), { ok: true, argv: [OC, "--agent", "tecnia-bot", "--auto"] })
+})
+
+test("H3-B: una configuración local que nombra \"server\" → no carga", async () => {
+  const dir = await armar()
+  writeFileSync(join(dir, "opencode.json"), JSON.stringify({ server: { port: 4096 } }))
+  try {
+    const { r, lanza } = await cargar(dir)
+    assert.equal(r.codigo, "SERVIDOR_EXPUESTO")
+    assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
+  } finally {
+    rmSync(join(dir, "opencode.json"))
+  }
+  process.env.OPENCODE_CONFIG_CONTENT = '{"server":{"hostname":"0.0.0.0"}}'
+  try {
+    assert.equal((await cargar(dir)).r.codigo, "SERVIDOR_EXPUESTO")
+  } finally {
+    delete process.env.OPENCODE_CONFIG_CONTENT
+  }
+})
 
 test("Q-04: si el proyecto cambia de revisión con el cartel abierto → PROYECTO_CAMBIO, no se lanza", async () => {
   const dir = await armar()

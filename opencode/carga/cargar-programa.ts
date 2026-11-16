@@ -4,9 +4,10 @@
 // tool abre el proyecto y genera el programa por el mismo camino que `generar`/`compilar`;
 // desde ahí, todo lo que toca la placa pasa por acá, en este orden, y cada paso falla CERRADO:
 //
-//    1-2. quién pide (sólo el agente Tecnia Bot) y una defensa HEURÍSTICA contra la aprobación
-//         automática: mira la línea de comando del propio proceso; no ve un cliente que se
-//         conecta a este servidor ni otras formas de aprobar todo (Q-03)
+//    1-2. quién pide (sólo el agente Tecnia Bot) y CÓMO SE LANZÓ este proceso: sólo la TUI
+//         local sin servidor expuesto ni aprobación automática, leído de la línea de comando
+//         real (Linux). Es una restricción sobre este proceso: no ve configuraciones que no
+//         mira ni prueba presencia humana (ver "CÓMO SE LANZÓ ESTE PROCESO", abajo)
 //      4. carpeta privada nueva, fuera del proyecto, con lo generado y nada más
 //      5. análisis de pines sobre lo generado (un pin que deja la placa sin arrancar frena)
 //      6. la placa (`descubrir` + `elegirPuerto`) y el candado del puerto
@@ -28,7 +29,7 @@
 // Este módulo importa sólo `node:` y módulos de `carga/`.
 
 import { createHash, randomUUID } from "node:crypto"
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from "node:path"
 import { compararHuellas, hashearArchivos, type HuellaDeArtefacto } from "./artefacto.ts"
@@ -71,6 +72,8 @@ export interface HerramientasDeCarga {
   analizarProyecto(cwd: string, env?: string): AnalisisDePines | null
   bloqueoAntesDeCargar(a: AnalisisDePines | null): string | null
   preguntarChecklist(ctx: unknown, pedido: PedidoDeCartel): Promise<string | null>
+  /** Cómo se lanzó este proceso. En producción, `leerLineaDeComandoReal`; los tests la inyectan. */
+  readonly lineaDeComando?: () => LecturaDeLineaDeComando
 }
 
 /** Lo que se usa del `ctx` de OpenCode. `ask` no se llama desde acá: lo llama `preguntarChecklist`. */
@@ -92,37 +95,169 @@ const no = (codigo: string, resultado: string, extra: Record<string, unknown> = 
 
 // ── 1-2. Quién pide ──────────────────────────────────────────────────────────────────────
 
-const BANDERAS_DE_APROBACION_AUTOMATICA = ["--auto", "--yolo", "--dangerously-skip-permissions"] as const
+/*
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ * CÓMO SE LANZÓ ESTE PROCESO (H3-A y H3-B del ensayo en OpenCode 1.18.18 real)
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ *
+ * Lo que se MIDIÓ con el binario real:
+ *   - En la TUI la tool corre en un WORKER y `process.argv` es `["bun", ".../worker.js"]`:
+ *     ahí no está la bandera de aprobación automática aunque OpenCode se haya abierto con
+ *     ella. `/proc/self/cmdline` sí la tiene. Por eso la fuente principal es la línea de
+ *     comando REAL del proceso; `process.argv`/`execArgv` quedan como segunda fuente.
+ *   - Con `serve` + un cliente `run --attach … --auto`, o con la TUI abierta con `--port` y
+ *     otro cliente conectado, el cartel lo aprueba OTRO proceso: la bandera no está acá y no
+ *     hay forma de verla (`ctx.ask` no dice quién contestó).
+ *
+ * LA REGLA: `programa cargar` funciona SÓLO si este proceso es la TUI interactiva local, sin
+ * servidor expuesto. Lista cerrada de lo PERMITIDO: ningún subcomando ni posicional (es
+ * `opencode` a secas, como lo abre el lanzador del producto) y sólo las opciones de la TUI
+ * que no abren un servidor. `run` NO está permitido: sin `--attach` OpenCode rechaza solo
+ * todo cartel (nunca llegaría a cargar) y con `--attach` la tool corre en el servidor, no
+ * ahí; permitirlo sólo agrega superficie.
+ *
+ * LO QUE ESTO NO CUBRE, dicho como es: es una restricción sobre cómo se lanzó ESTE proceso.
+ * Un servidor puede exponerse también desde la configuración (`server.port`/`hostname`/
+ * `mdns` en `opencode.json`, leído de varias fuentes). Se mira lo local y chico —la variable
+ * `OPENCODE_CONFIG_CONTENT`, la configuración global y la de la carpeta del proyecto— y se
+ * rechaza si nombra `"server"`; las demás fuentes de configuración (carpetas `.opencode`
+ * de más arriba, `OPENCODE_CONFIG`, configuración administrada) NO se miran.
+ *
+ * PLATAFORMAS: medido sólo en Linux (`/proc/self/cmdline`). En macOS y Windows no hay una
+ * forma verificada de leer la línea de comando real: ahí la carga falla cerrada con
+ * `PLATAFORMA_NO_HABILITADA` (pendiente: Windows por CIM `Win32_Process.CommandLine`, sin
+ * probar).
+ */
+
+/** Las banderas de aprobación automática, sin los guiones. `--x`, `--x=valor` y camelCase cuentan; `--no-x` no. */
+const BANDERAS_DE_APROBACION_AUTOMATICA = ["auto", "yolo", "dangerously-skip-permissions"] as const
+
+/** `--dangerouslySkipPermissions=1` → `dangerously-skip-permissions`; `null` si no es una opción larga. */
+function nombreDeOpcionLarga(token: string): string | null {
+  if (!token.startsWith("--") || token === "--") return null
+  return token
+    .slice(2)
+    .split("=")[0]!
+    .replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)
+}
 
 /**
- * ¿La línea de comando de ESTE proceso trae una bandera de aprobación automática?
- *
- * HEURÍSTICA, Y NO MÁS QUE ESO. Con una de estas banderas el cartel de OpenCode se aprobaría
- * solo, sin que nadie lo lea. Mirar `process.argv`/`process.execArgv` atrapa el caso común de
- * alguien que arrancó así OpenCode; NO prueba que haya una persona del otro lado: hay otras
- * formas de aprobar todo (una configuración, otro cliente, otra versión con otro nombre de
- * bandera) que desde acá no se ven. Es una defensa más, no la garantía.
+ * ¿Esta línea de comando trae una bandera de aprobación automática? Devuelve la bandera o
+ * `null`. Mira TODOS los elementos (también lo que venga después de `--`): ante la duda, es
+ * aprobación automática. `--no-auto` no lo es.
  */
 export function banderaDeAprobacionAutomatica(argv: readonly unknown[] = [...process.argv, ...(process.execArgv ?? [])]): string | null {
   for (const a of argv) {
     if (typeof a !== "string") continue
-    for (const b of BANDERAS_DE_APROBACION_AUTOMATICA) if (a === b || a.startsWith(`${b}=`)) return b
+    const nombre = nombreDeOpcionLarga(a)
+    if (nombre === null || nombre.startsWith("no-")) continue
+    const b = BANDERAS_DE_APROBACION_AUTOMATICA.find((x) => x === nombre)
+    if (b) return `--${b}`
   }
   return null
 }
 
+export type LecturaDeLineaDeComando = { ok: true; argv: string[] } | { ok: false; codigo: "PLATAFORMA_NO_HABILITADA" | "LINEA_DE_COMANDO_ILEGIBLE"; detalle: string }
+
+/** La línea de comando REAL de este proceso. Sólo Linux (medido); en el resto falla cerrado. */
+export function leerLineaDeComandoReal(plataforma: NodeJS.Platform = process.platform, leer: (ruta: string) => Buffer = (r) => readFileSync(r)): LecturaDeLineaDeComando {
+  if (plataforma !== "linux") return { ok: false, codigo: "PLATAFORMA_NO_HABILITADA", detalle: `en ${plataforma} todavía no hay una forma verificada de leer cómo se abrió OpenCode` }
+  try {
+    const partes = leer("/proc/self/cmdline").toString("utf8").split("\0")
+    if (partes[partes.length - 1] === "") partes.pop()
+    if (partes.length === 0 || partes[0] === "") return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "la línea de comando del proceso vino vacía" }
+    return { ok: true, argv: partes }
+  } catch (error) {
+    return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: `no pude leer /proc/self/cmdline (${(error as NodeJS.ErrnoException)?.code ?? "error"})` }
+  }
+}
+
+/** Opciones de la TUI que llevan valor, y las que no. Lo que no esté acá se rechaza. */
+const TUI_CON_VALOR = new Set(["--agent", "--model", "-m", "--prompt", "--session", "-s", "--log-level"])
+const TUI_SIN_VALOR = new Set(["--continue", "-c", "--fork", "--print-logs"])
+/** Las que abren o configuran un servidor (`cli/network.ts` de OpenCode). */
+const DE_SERVIDOR = new Set(["--port", "--hostname", "--mdns", "--mdns-domain", "--cors"])
+
+export interface RechazoDeLanzamiento {
+  codigo: "APROBACION_AUTOMATICA" | "SERVIDOR_EXPUESTO" | "MODO_NO_PERMITIDO" | "OPCION_DESCONOCIDA"
+  detalle: string
+}
+
+/**
+ * Decide, sobre la línea de comando real (`argv[0]` es el ejecutable), si desde este proceso
+ * se puede cargar. `null` si sí. Pura: se prueba con las líneas de comando medidas en H3.
+ */
+export function porQueElLanzamientoNoPermiteCargar(argv: readonly string[]): RechazoDeLanzamiento | null {
+  const bandera = banderaDeAprobacionAutomatica(argv)
+  if (bandera) return { codigo: "APROBACION_AUTOMATICA", detalle: bandera }
+  const args = argv.slice(1)
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!
+    if (!a.startsWith("-")) return { codigo: "MODO_NO_PERMITIDO", detalle: a === "serve" || a === "web" || a === "acp" || a === "run" || a === "attach" ? `opencode ${a}` : "opencode con un subcomando o una carpeta" }
+    const opcion = a.includes("=") ? a.slice(0, a.indexOf("=")) : a
+    if (DE_SERVIDOR.has(opcion) || (opcion.startsWith("--") && DE_SERVIDOR.has(`--${nombreDeOpcionLarga(opcion)}`))) return { codigo: "SERVIDOR_EXPUESTO", detalle: opcion }
+    if (TUI_SIN_VALOR.has(opcion)) continue
+    if (TUI_CON_VALOR.has(opcion)) {
+      if (!a.includes("=")) i++ // el valor es el próximo elemento, sea lo que sea
+      continue
+    }
+    return { codigo: "OPCION_DESCONOCIDA", detalle: opcion }
+  }
+  return null
+}
+
+/**
+ * ¿La configuración local de OpenCode expone un servidor? Mira sólo `OPENCODE_CONFIG_CONTENT`,
+ * la configuración global y la de la carpeta del proyecto, y busca la clave `"server"` en el
+ * texto (sin interpretar JSONC: ante la duda, se rechaza). Un archivo que existe y no se puede
+ * leer también rechaza. Devuelve dónde la vio, o `null`.
+ */
+export function servidorEnLaConfiguracion(directorio: string, entorno: NodeJS.ProcessEnv = process.env, home: string = homedir()): string | null {
+  const tieneServer = (texto: string) => /"server"\s*:/.test(texto)
+  if (entorno.OPENCODE_CONFIG_CONTENT && tieneServer(entorno.OPENCODE_CONFIG_CONTENT)) return "OPENCODE_CONFIG_CONTENT"
+  const global = join(entorno.XDG_CONFIG_HOME && isAbsolute(entorno.XDG_CONFIG_HOME) ? entorno.XDG_CONFIG_HOME : join(home, ".config"), "opencode")
+  for (const base of [global, directorio]) {
+    for (const nombre of ["opencode.json", "opencode.jsonc", "config.json"]) {
+      const ruta = join(base, nombre)
+      if (!lstatSync(ruta, { throwIfNoEntry: false })) continue
+      try {
+        if (tieneServer(readFileSync(ruta, "utf8"))) return nombre
+      } catch {
+        return `${nombre} (no se pudo leer)`
+      }
+    }
+  }
+  return null
+}
+
+const ABRIR_NORMALMENTE =
+  "La carga a la placa sólo se hace desde Tecnia Bot abierto normalmente: la ventana de siempre, sin opciones de servidor ni de aprobación automática y sin otros programas conectados. " +
+  "Pedile al docente que cierre OpenCode y lo vuelva a abrir así; ahí sí se puede cargar."
+
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */
-export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar">): ResultadoDeCarga | null {
+export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando">): ResultadoDeCarga | null {
   const agente = h.agenteQueNoPuedeCargar(ctx)
   if (agente) return no("AGENTE_NO_AUTORIZADO", `NO SE CARGÓ — ${agente}`)
-  const bandera = banderaDeAprobacionAutomatica()
-  if (bandera) {
+
+  // Fuente principal: la línea de comando REAL. Si no se puede leer, no se carga.
+  const lectura = (h.lineaDeComando ?? leerLineaDeComandoReal)()
+  if (!lectura.ok) {
+    return lectura.codigo === "PLATAFORMA_NO_HABILITADA"
+      ? no(lectura.codigo, `NO SE CARGÓ — en esta versión experimental la carga a la placa sólo está habilitada en Linux (${lectura.detalle}).`)
+      : no(lectura.codigo, `NO SE CARGÓ — no pude comprobar cómo se abrió OpenCode (${lectura.detalle}), y sin eso no se carga.`)
+  }
+  const rechazo = porQueElLanzamientoNoPermiteCargar(lectura.argv)
+  // Segunda fuente: `process.argv`/`execArgv` (en `opencode run` es la del hilo principal).
+  const segunda = rechazo ? null : banderaDeAprobacionAutomatica()
+  if (rechazo?.codigo === "APROBACION_AUTOMATICA" || segunda) {
     return no(
       "APROBACION_AUTOMATICA",
-      `NO SE CARGÓ — OpenCode está corriendo con aprobación automática (${bandera}): el cartel del checklist de seguridad se aprobaría solo, sin que nadie revise el circuito. ` +
-        "Pedile al docente que cierre OpenCode y lo vuelva a abrir sin esa opción; ahí sí se puede cargar.",
+      `NO SE CARGÓ — OpenCode está corriendo con aprobación automática (${rechazo?.detalle ?? segunda}): el cartel del checklist de seguridad se aprobaría solo, sin que nadie revise el circuito. ${ABRIR_NORMALMENTE}`,
     )
   }
+  if (rechazo) return no(rechazo.codigo, `NO SE CARGÓ — OpenCode se abrió de una forma desde la que no se carga (${rechazo.detalle}). ${ABRIR_NORMALMENTE}`)
+  const config = servidorEnLaConfiguracion(ctx.directory)
+  if (config) return no("SERVIDOR_EXPUESTO", `NO SE CARGÓ — la configuración de OpenCode expone un servidor (${config}): otro programa podría aprobar el cartel. ${ABRIR_NORMALMENTE}`)
   return null
 }
 
@@ -472,20 +607,25 @@ export async function cargarProgramaGenerado(p: ProgramaParaCargar, ctx: Context
   const dir = privada.dir
   let resultado: ResultadoDeCarga
   let carpetaBorrada = true
+  const estado = { puedeQuedarAlgoVivo: false }
   try {
-    resultado = await cargarDesde(dir, p, ctx, h, o)
+    resultado = await cargarDesde(dir, p, ctx, h, o, estado)
   } catch (error) {
     resultado = no("ERROR_INESPERADO", `NO SÉ SI SE CARGÓ — error inesperado (${error instanceof Error ? error.message : String(error)}).`)
   } finally {
-    // Se borra SIEMPRE: no se conserva para diagnóstico (la salida de PlatformIO ya va en el
-    // resultado, y una carpeta vieja con un programa adentro es justo lo que no queremos).
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 2 })
-    } catch {
-      carpetaBorrada = false
+    // Se borra siempre que no pueda quedar un proceso de la carga usándola: no se conserva
+    // para diagnóstico (la salida de PlatformIO ya va en el resultado). Si un corte no se pudo
+    // confirmar, NO se borra: puede haber un descendiente leyendo de ahí todavía (H3).
+    if (!estado.puedeQuedarAlgoVivo) {
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 2 })
+      } catch {
+        carpetaBorrada = false
+      }
     }
   }
-  if (!carpetaBorrada) resultado = { ...resultado, aviso: "No pude borrar la carpeta temporal de esta carga; se va a pisar con la próxima limpieza del sistema." }
+  if (estado.puedeQuedarAlgoVivo) resultado = { ...resultado, aviso: "No borré la carpeta temporal de esta carga porque algún proceso de la grabación puede seguir usándola." }
+  else if (!carpetaBorrada) resultado = { ...resultado, aviso: "No pude borrar la carpeta temporal de esta carga; se va a pisar con la próxima limpieza del sistema." }
   return sinRutaPrivada(resultado, dir)
 }
 
@@ -497,7 +637,7 @@ function sinRutaPrivada(r: ResultadoDeCarga, dir: string): ResultadoDeCarga {
   return JSON.parse(json.split(enJson).join("<carpeta temporal>")) as ResultadoDeCarga
 }
 
-async function cargarDesde(dir: string, p: ProgramaParaCargar, ctx: ContextoDeCarga, h: HerramientasDeCarga, o: OpcionesDeCarga): Promise<ResultadoDeCarga> {
+async function cargarDesde(dir: string, p: ProgramaParaCargar, ctx: ContextoDeCarga, h: HerramientasDeCarga, o: OpcionesDeCarga, estado: { puedeQuedarAlgoVivo: boolean }): Promise<ResultadoDeCarga> {
   const signal = ctx.abort
   const cancelado = () => no("CANCELADO", "NO SE CARGÓ — se canceló antes de grabar: no se lanzó nada.")
 
@@ -588,6 +728,8 @@ async function cargarDesde(dir: string, p: ProgramaParaCargar, ctx: ContextoDeCa
     const resultado = registro.ok ? v.resultado : `${v.resultado} (Ojo: no pude anotar esta carga en el registro del proyecto: ${registro.detalle}.)`
     return { resultado, ok: v.ok, codigo: v.codigo, puerto: placa.puerto, chip: placa.chip, ...v.extra, registro: registro.ok ? { ok: true } : { ok: false, detalle: registro.detalle } }
   } finally {
+    // Retener el puerto y conservar la carpeta van juntos: los dos son "puede quedar algo vivo".
+    estado.puedeQuedarAlgoVivo = retenerPuerto
     if (!retenerPuerto) reserva.liberar()
   }
 }
