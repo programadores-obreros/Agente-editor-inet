@@ -844,3 +844,16 @@ test("el texto de «degradado» manda al log (si está en el disco), no a una ve
   assert.doesNotMatch(rama, /ventana negra/i, "manda a mirar la consola del bootstrap, que para entonces ya se cerró")
   assert.match(rama, /if FileExists\(RutaLogBootstrap\) then\s+Texto := Texto \+ '[^']*' \+ RutaLogBootstrap;/, "no nombra instalacion.log, o lo nombra sin mirar que exista")
 })
+
+// ── Revisión de QA · "Abrir Tecnia Bot ahora" aparecía tildada con el bootstrap caído ──
+test("la casilla «Abrir Tecnia Bot ahora» sólo se ofrece si el bootstrap dejó un bot que abre", () => {
+  // La entrada entera (puede venir partida con `\` al final del renglón).
+  const run = seccionIss("Run").replace(/\\\n\s*/g, "")
+  const abrir = run.split("\n").filter((l) => /abrir-tecnia-bot\.cmd/.test(l))
+  assert.equal(abrir.length, 1, "esperaba una sola entrada de [Run] que abra el bot")
+  assert.match(abrir[0], /;\s*Check:\s*OfrecerAbrirElBot\s*;/, "la casilla de abrir el bot se ofrece sin mirar cómo terminó el bootstrap")
+  assert.match(abrir[0], /Flags:[^;]*\bpostinstall\b/, "la entrada dejó de ser una casilla de la última pantalla")
+  const fn = rutina("OfrecerAbrirElBot")
+  assert.match(fn, /^function OfrecerAbrirElBot: Boolean;\s+begin\s+Result := \(EstadoBootstrap = EstadoBien\) or \(EstadoBootstrap = EstadoDegradado\);\s+end;$/,
+    "la casilla se ofrece en algún estado que no es «bien» ni «degradado»")
+})
