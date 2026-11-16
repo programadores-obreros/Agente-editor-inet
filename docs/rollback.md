@@ -63,11 +63,10 @@ Son dos pasos, en este orden:
 **Hay que desinstalar primero; instalar el `.exe` viejo encima no alcanza.** Este
 documento decía las dos cosas a la vez —"no hace falta desinstalar nada" y, tres
 renglones más abajo, "desinstalá primero"—, y la que vale es la segunda. Un
-`.exe` viejo no sabe limpiar las piezas que sumó una versión más nueva
-(`opencode/nucleo`, `opencode/servidor`, `opencode/vista-fisica`): copia lo suyo
-arriba y deja mezcladas piezas de las dos versiones. El instalador **actual**
-borra su copia de `opencode` antes de copiar (`[InstallDelete]` en
-`installer/tecnia-bot.iss`, decisión D14), pero eso protege cuando el `.exe` que
+`.exe` viejo no sabe limpiar los archivos que sumó una versión más nueva: copia
+lo suyo arriba y deja mezcladas piezas de las dos versiones. El instalador
+**actual** borra su copia de `opencode` antes de copiar (`[InstallDelete]` en
+`installer/tecnia-bot.iss`), pero eso protege cuando el `.exe` que
 se corre es uno que ya trae esa línea — y en un rollback el que se corre es el
 viejo, que no la tiene.
 
