@@ -9,6 +9,32 @@
 #
 # Uso: clic derecho -> "Ejecutar con PowerShell", o desde una terminal:
 #   powershell -ExecutionPolicy Bypass -File install\bootstrap.ps1
+#
+# CODIGOS DE SALIDA. Son un CONTRATO: los lee installer\tecnia-bot.iss para
+# decidir que le dice al docente en la ultima pantalla (y con que codigo termina
+# el .exe en modo silencioso), y el job windows de la CI. Salen del RESUMEN
+# FINAL de este script, que se arma con lo que se COMPROBO -ejecutando cada
+# binario y mirando el disco-, no con lo que se intento.
+#
+#   0 = TODO quedo y se comprobo: OpenCode arranca y es la version fijada,
+#       PlatformIO contesta, Node contesta y alcanza, la capa esta publicada.
+#   2 = INSTALADO PERO DEGRADADO: el bot abre (OpenCode arranca y la capa esta
+#       publicada), pero falta algo de lo demas: PlatformIO (no compila ni
+#       carga), Node (no anda el skill de diagramas), u OpenCode quedo en una
+#       version que no es la probada. Vive en $CodigoDegradado.
+#   1 = FALLA: el bot NO se puede usar. OpenCode no arranca, la capa no quedo
+#       publicada, no se pudo instalar Scoop, o falta install\OPENCODE_VERSION.
+#       Es tambien lo que devuelve powershell.exe si el script no parsea o muere
+#       con un error sin atajar, asi que "1" nunca significa "anduvo".
+#
+# Antes de este contrato el script salia con 0 y "LISTO!" aunque faltaran
+# PlatformIO y Node: sus avisos quedaban cien lineas mas arriba, y quien miraba
+# el final -una persona o el .exe- se llevaba un OK.
+#
+# Quien mas corre este script y que hace con el codigo (revisado al definirlo):
+#   installer\abrir-tecnia-bot.cmd  no lo mira: vuelve a verificar por su cuenta.
+#   opencode\tool\platformio.ts     solo distingue 127 (no pudo lanzar PowerShell)
+#                                   y despues busca pio.exe en el disco.
 # ============================================================================
 
 # -SinPrompt: NO preguntar nada y NO tocar lo que ya este configurado.
@@ -34,6 +60,10 @@ param([switch]$SinPrompt)
 
 $ErrorActionPreference = "Stop"
 if ($SinPrompt) { $env:TECNIA_SIN_PROMPT = "1" }
+# "Instalado pero degradado": ver CODIGOS DE SALIDA en el encabezado. Tiene que
+# coincidir con CodigoBootstrapDegradado en installer\tecnia-bot.iss; hay un test
+# (tests/instalador-honesto.test.mjs) que compara los dos archivos.
+$CodigoDegradado = 2
 $RepoDir = Split-Path -Parent $PSScriptRoot
 
 # ---- TODO LO QUE PASA ACA QUEDA ESCRITO -------------------------------------
@@ -1499,31 +1529,93 @@ if ($HayTranscript) {
 #
 # Faltaba tambien -NoProfile, que el .iss si usa: un perfil de PowerShell
 # corporativo roto reventaba este paso y nadie se enteraba.
+# NO SE CORTA ACA: se anota y se sigue hasta el resumen. Antes cada una de estas
+# dos fallas hacia su propio `exit 1` y el docente se quedaba sin saber como
+# habia quedado el resto (OpenCode, PlatformIO, Node), que ya estaba decidido
+# cien lineas mas arriba.
+$CapaOk = $true
+$cfgDir = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $env:USERPROFILE ".config\opencode" }
 if ($CodigoInstall -ne 0) {
+    $CapaOk = $false
     Write-Host ""
     Write-Host "  [X] La capa de Tecnia Bot no se instalo (codigo $CodigoInstall)." -ForegroundColor Red
     Write-Host "      Suele ser un archivo bloqueado: cerra OpenCode y proba de nuevo."
     Write-Host ""
-    try { Stop-Transcript | Out-Null } catch { }
-    exit 1
-}
-$cfgDir = if ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME "opencode" } else { Join-Path $env:USERPROFILE ".config\opencode" }
-if (-not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
+} elseif (-not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
+    $CapaOk = $false
     Write-Host ""
     Write-Host "  [X] La capa educativa no quedo publicada." -ForegroundColor Red
     Write-Host "      El instalador dijo que termino, pero el agente no esta en:"
     Write-Host "      $cfgDir"
     Write-Host ""
-    try { Stop-Transcript | Out-Null } catch { }
-    exit 1
 }
 
+# ---- RESUMEN FINAL: UNA LINEA POR COMPONENTE, CON LO QUE SE COMPROBO ----------
+#
+# POR QUE EXISTE. Hasta aca solo la falla de OpenCode se repetia al final. Las de
+# PlatformIO y Node quedaban arriba, tapadas por la salida de install.ps1, y el
+# cierre era "LISTO!" con exit 0. En una maquina sin PlatformIO -que para este
+# bot es la mitad de lo que hace- lo ultimo que se leia era que estaba todo bien.
+# Y como el .exe mira el codigo de salida, el instalador mostraba su pantalla de
+# "quedo instalado" encima de eso.
+#
+# CADA LINEA SALE DE UNA COMPROBACION, no de un "se intento":
+#   OpenCode   -> se EJECUTA de nuevo, aca, al final (Test-OpenCode). Si ya se
+#                 habia marcado la falla no se repite: cuando falla, ese chequeo
+#                 tarda unos veinte segundos y ya dejo su diagnostico arriba.
+#                 La version sale del manifiesto de Scoop.
+#   PlatformIO -> $PioExe, que solo tiene valor si Buscar-Pio lo ejecuto y
+#                 contesto "PlatformIO".
+#   Node       -> $NodeExe, que solo tiene valor si Buscar-Node lo ejecuto y la
+#                 version alcanza.
+#   Capa       -> el codigo de install.ps1 Y el agente en el disco, aca arriba.
+$OpenCodeArranca = $false
+if (-not $script:FalloOpenCode) { $OpenCodeArranca = [bool](Test-OpenCode) }
+$OpenCodeActiva = Get-OpenCodeVersionInstalada
+$OpenCodeEsLaFijada = ($OpenCodeActiva -eq $OpenCodeVersion)
+
+$Degradado = @()
 Write-Host ""
-# EL AVISO VA AL FINAL, DONDE SE LEE. Si OpenCode fallo, la capa igual quedo
-# instalada -- y eso importa: el dia que OpenCode se arregle, el bot ya esta ahi.
-# Cortar antes dejaba la maquina con dos problemas en vez de uno.
-if ($script:FalloOpenCode) {
-    Write-Host "  La capa de Tecnia Bot quedo instalada, pero OPENCODE NO ARRANCA." -ForegroundColor Yellow
+Write-Host "  Como quedo (lo que se comprobo, no lo que se intento):"
+Write-Host "  ------------------------------------------------------"
+if (-not $OpenCodeArranca) {
+    Write-Host "  [X]  OpenCode     NO ARRANCA." -ForegroundColor Red
+} elseif (-not $OpenCodeEsLaFijada) {
+    $Degradado += "OpenCode quedo en la version $OpenCodeActiva, no en la $OpenCodeVersion con la que se probo"
+    Write-Host "  [!]  OpenCode     arranca, pero es la version $OpenCodeActiva y se probo con la $OpenCodeVersion." -ForegroundColor Yellow
+} else {
+    Write-Host "  [OK] OpenCode     arranca, version $OpenCodeActiva."
+}
+if ($PioExe) {
+    Write-Host "  [OK] PlatformIO   contesta en $PioExe"
+} else {
+    $Degradado += "falta PlatformIO: el bot no puede compilar ni cargar codigo a la placa"
+    Write-Host "  [!]  PlatformIO   NO esta: el bot no puede compilar ni cargar codigo a la placa." -ForegroundColor Yellow
+}
+if ($NodeExe) {
+    Write-Host "  [OK] Node         contesta en $NodeExe"
+} else {
+    $Degradado += "falta Node: no anda el skill de diagramas de arquitectura"
+    Write-Host "  [!]  Node         NO esta: no anda el skill de diagramas de arquitectura." -ForegroundColor Yellow
+}
+if ($CapaOk) {
+    Write-Host "  [OK] Tecnia Bot   la capa educativa esta publicada en $cfgDir"
+} else {
+    Write-Host "  [X]  Tecnia Bot   la capa educativa NO quedo publicada." -ForegroundColor Red
+}
+Write-Host ""
+
+# --- FALLA: el bot no se puede usar. Codigo 1. -------------------------------
+if (-not $OpenCodeArranca) {
+    # EL AVISO VA AL FINAL, DONDE SE LEE. Si OpenCode fallo, la capa igual se
+    # instala -- y eso importa: el dia que OpenCode se arregle, el bot ya esta ahi.
+    # Cortar antes dejaba la maquina con dos problemas en vez de uno. Que la capa
+    # quedo se dice SOLO si se comprobo ($CapaOk).
+    if ($CapaOk) {
+        Write-Host "  La capa de Tecnia Bot quedo instalada, pero OPENCODE NO ARRANCA." -ForegroundColor Yellow
+    } else {
+        Write-Host "  OPENCODE NO ARRANCA, y la capa de Tecnia Bot tampoco quedo publicada." -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "  Sin OpenCode el bot no se puede abrir todavia. Para saber por que:"
     Write-Host "    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
@@ -1546,7 +1638,31 @@ if ($script:FalloOpenCode) {
     try { Stop-Transcript | Out-Null } catch { }
     exit 1
 }
+if (-not $CapaOk) {
+    Write-Host "  OpenCode arranca, pero SIN la capa de Tecnia Bot: abre un editor pelado," -ForegroundColor Yellow
+    Write-Host "  sin el agente, sin las fichas y sin las herramientas."
+    Write-Host ""
+    Write-Host "  Para reintentar:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
+}
+
+# --- DEGRADADO: el bot abre, pero le falta algo. Codigo $CodigoDegradado. ----
+if ($Degradado.Count -gt 0) {
+    Write-Host "  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:" -ForegroundColor Yellow
+    foreach ($d in $Degradado) { Write-Host ("    - " + $d) }
+    Write-Host ""
+    Write-Host "  Para completar lo que falta:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    Write-Host "  Para ver por que no quedo:    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
+    Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
+    exit $CodigoDegradado
+}
+
+# --- TODO COMPROBADO. Codigo 0. ----------------------------------------------
 Write-Host "  LISTO! Abri una terminal en cualquier carpeta, escribi 'opencode',"
 Write-Host "  apreta Tab y elegi 'tecnia-bot'."
 Write-Host ""
 try { Stop-Transcript | Out-Null } catch { }
+exit 0
