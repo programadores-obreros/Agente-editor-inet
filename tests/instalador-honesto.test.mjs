@@ -201,3 +201,50 @@ test("2.2c · TODA instalación de OpenCode con Scoop captura la salida y baja e
     assert.match(alrededor, /try\s*\{[\s\S]*scoop install opencode[\s\S]*\}\s*catch\s*\{/, `una excepción de Scoop corta el script: ${l.trim()}`)
   }
 })
+
+// ── 2.3 · "OpenCode ya instalado, en otra versión": dos ramas que decían OK sin ejecutar ──
+//
+// Cuando hay un OpenCode que anda pero no es el de `install/OPENCODE_VERSION`, el
+// bootstrap cambia a la fijada por dos caminos: `scoop reset` si la carpeta ya
+// está en el disco, `scoop install` "al lado" si no. Los dos tenían un OK falso:
+//
+//   reset   → "[OK] OpenCode vuelve a la version X" releyendo el manifiesto de
+//             Scoop, sin ejecutar el binario.
+//   al lado → si no arrancaba imprimía "[X] No pude dejar la version..." y nada
+//             más: ni probaba el build baseline (CPU sin AVX2), ni marcaba la
+//             falla. El script seguía hasta "LISTO!" con exit 0.
+
+const iReset = bootstrap.indexOf("la vuelvo a activar (scoop reset)")
+const iAlLado = bootstrap.indexOf("la instalo al lado")
+// El cierre de la rama "ya instalado": el primer Fijar-OpenCode que sigue.
+const iFinRamas = bootstrap.indexOf("Fijar-OpenCode | Out-Null", iAlLado)
+
+for (const [nombre, desde, hasta] of [
+  ["scoop reset (la fijada ya está en disco)", iReset, iAlLado],
+  ["scoop install al lado (la fijada no está en disco)", iAlLado, iFinRamas],
+]) {
+  test(`2.3 · rama ${nombre}: el OK exige ejecutar OpenCode, prueba el baseline y marca la falla`, () => {
+    assert.ok(desde > 0 && hasta > desde, "no pude recortar la rama: cambiaron sus mensajes")
+    const rama = bootstrap.slice(desde, hasta)
+    assert.match(rama, /\$arranca = \[bool\]\(Test-OpenCode\)/, "no ejecuta OpenCode después de cambiar de versión")
+    // El baseline se intenta sólo si no arranca Y el binario está, y su resultado decide.
+    assert.match(rama, /if \(-not \$arranca -and \(Test-Path \$BinOpenCode\)\) \{[^}]*\$arranca = \[bool\]\(Install-OpenCodeBaseline\)/,
+      "no intenta el build baseline (CPU sin AVX2) cuando el binario está y no arranca")
+    // Hay UN solo [OK] en la rama, y está condicionado por versión Y ejecución.
+    const oks = rama.split("\n").filter((l) => /Write-Host\s+"\s*\[OK\]/.test(l))
+    assert.equal(oks.length, 1, `esperaba un solo [OK] en la rama y hay ${oks.length}`)
+    assert.match(rama, /if \(\(\$quedo -eq \$OpenCodeVersion\) -and \$arranca\) \{\s*\n\s*Write-Host\s+"\s*\[OK\]/,
+      "el [OK] no depende de que OpenCode haya arrancado")
+    // Y si no arranca, queda marcado para el resumen final y el código de salida.
+    assert.match(rama, /\} elseif \(-not \$arranca\) \{\s*\n\s*\$script:FalloOpenCode = \$true/,
+      "si OpenCode no arranca no se marca la falla: el script termina en LISTO! con exit 0")
+  })
+}
+
+test("2.3 · Fijar-OpenCode nombra la versión que quedó activa, no la que se quería", () => {
+  const fn = funcionPs(bootstrap, "Fijar-OpenCode")
+  const ok = fn.split("\n").filter((l) => /\[OK\] OpenCode fijado/.test(l))
+  assert.equal(ok.length, 1, "no encuentro el [OK] de Fijar-OpenCode")
+  assert.doesNotMatch(ok[0], /\$OpenCodeVersion/, "el [OK] nombra la versión deseada: miente cuando el cambio de versión no se pudo hacer")
+  assert.match(fn, /\$activa = Get-OpenCodeVersionInstalada\s*\n\s*Write-Host "  \[OK\] OpenCode fijado en la version \$activa/, "la versión del [OK] no sale del manifiesto de Scoop")
+})
