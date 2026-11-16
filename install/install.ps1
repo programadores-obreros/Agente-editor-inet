@@ -494,22 +494,100 @@ if (Test-Path $AuthFile) {
     }
 }
 
-$authData = $null
-if (Test-Path $AuthFile) {
-    try { $authData = (Leer-TextoUtf8 $AuthFile) | ConvertFrom-Json } catch { $authData = $null }
+# ---- Leer, escribir y RELEER el archivo de credenciales ----------------------
+#
+# Tres cosas que opencode\tool\clave.ts ya hacia y este script no. Aca se alinean:
+#
+# 1. "NO SE PUDO LEER" NO ES "ESTA VACIO". Antes un auth.json que no parseaba se
+#    trataba como un objeto vacio, y al guardar la key de Google se escribia ESE
+#    objeto: las credenciales de los otros servicios que el docente hubiera
+#    conectado con /connect desaparecian sin aviso. Ahora hay tres estados
+#    (no-existe / ilegible / ok, los mismos de leerJson() en clave.ts) y con
+#    "ilegible" el archivo NO SE TOCA.
+#
+# 2. ESCRITURA ATOMICA. WriteAllText directo sobre el archivo lo trunca y lo va
+#    llenando: si la notebook se apaga en el medio queda a medias, y NINGUNA
+#    credencial funciona. Se escribe en un temporal EN LA MISMA CARPETA (un rename
+#    entre discos distintos no es atomico) y se reemplaza de una.
+#
+# 3. RELEER ANTES DE DECIR "[OK]". Un disco lleno, un permiso denegado o un
+#    antivirus que revierte el archivo son cosas que pasan en las compus de
+#    escuela. El "[OK] Key guardada" sale solo si, al volver a leer el archivo, la
+#    key que hay adentro es la que se quiso guardar.
+function Leer-AuthJson($ruta) {
+    if (-not (Test-Path -LiteralPath $ruta)) { return @{ estado = "no-existe"; datos = $null } }
+    $texto = $null
+    try { $texto = Leer-TextoUtf8 $ruta } catch { return @{ estado = "ilegible"; datos = $null } }
+    if (-not $texto -or -not $texto.Trim()) { return @{ estado = "no-existe"; datos = $null } }
+    $objeto = $null
+    try { $objeto = $texto | ConvertFrom-Json } catch { return @{ estado = "ilegible"; datos = $null } }
+    # Un JSON valido que no es un objeto (una lista, un texto, null) tampoco sirve.
+    if (-not ($objeto -is [PSCustomObject])) { return @{ estado = "ilegible"; datos = $null } }
+    return @{ estado = "ok"; datos = $objeto }
 }
-if (-not $authData) { $authData = [PSCustomObject]@{} }
 
-$tieneGoogle = [bool](($authData.PSObject.Properties.Name -contains "google") -and $authData.google.key)
+# La key de Google de un auth.json ya leido, o "" si no hay. NUNCA se imprime.
+function Get-KeyDeAuth($datos) {
+    if ($null -eq $datos) { return "" }
+    if (($datos.PSObject.Properties.Name -contains "google") -and $datos.google -and $datos.google.key) {
+        return [string]$datos.google.key
+    }
+    return ""
+}
+
+# Escribe texto en UTF-8 SIN BOM (OpenCode lee con JSON.parse, que revienta con
+# BOM) y de forma atomica. TIRA si no pudo; el temporal no queda tirado.
+# [NullString]::Value y no $null: PowerShell convierte $null en "" al pasarlo a un
+# parametro string de .NET, y File.Replace con "" como archivo de respaldo falla.
+function Escribir-TextoAtomico($ruta, $texto) {
+    $temporal = $ruta + "." + $PID + ".tmp"
+    try {
+        [System.IO.File]::WriteAllText($temporal, $texto, (New-Object System.Text.UTF8Encoding $false))
+        if (Test-Path -LiteralPath $ruta) {
+            [System.IO.File]::Replace($temporal, $ruta, [NullString]::Value)
+        } else {
+            [System.IO.File]::Move($temporal, $ruta)
+        }
+    } catch {
+        try { if (Test-Path -LiteralPath $temporal) { Remove-Item -LiteralPath $temporal -Force -ErrorAction SilentlyContinue } } catch { }
+        throw
+    }
+}
+
+$lecturaAuth = Leer-AuthJson $AuthFile
+$AuthIlegible = ($lecturaAuth.estado -eq "ilegible")
+$authData = $lecturaAuth.datos
+if (-not $authData) { $authData = [PSCustomObject]@{} }
+if ($AuthIlegible) {
+    Write-Host ""
+    Write-Host "  [AVISO] No pude leer el archivo de credenciales ($AuthFile): no es un JSON valido, o esta tomado."
+    Write-Host "          NO LO TOCO, para no pisar lo que tengas guardado ahi de otros servicios."
+    Write-Host "          Por eso en esta corrida no se puede guardar ni cambiar la key de Google."
+    Write-Host "          Corre 'Diagnostico de Tecnia Bot' desde el menu inicio: dice si tiene BOM o por que"
+    Write-Host "          no parsea, sin mostrar ninguna clave."
+}
+
+$tieneGoogle = [bool](Get-KeyDeAuth $authData)
 
 # Purga de la key compartida vieja (ver arriba): auth.json y variable de usuario.
 $purgada = $false
+$PurgaFallida = $false
 if ($tieneGoogle -and (Test-KeyVieja $authData.google.key)) {
     $authData.PSObject.Properties.Remove("google")
-    # Se reescribe SIN BOM y preservando los otros providers que tenga el archivo.
-    [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+    # Se reescribe SIN BOM, atomico y preservando los otros providers que tenga el
+    # archivo. Y se RELEE: "se quito" se dice solo si al releer ya no esta.
+    try { Escribir-TextoAtomico $AuthFile ($authData | ConvertTo-Json -Depth 10) } catch { }
+    $trasPurga = Leer-AuthJson $AuthFile
+    # Esa key esta muerta en todas las maquinas: quede o no en el archivo, NO cuenta
+    # como "hay key" para elegir el modelo.
     $tieneGoogle = $false
-    $purgada = $true
+    if (($trasPurga.estado -ne "ilegible") -and -not (Test-KeyVieja (Get-KeyDeAuth $trasPurga.datos))) {
+        $purgada = $true
+    } else {
+        $PurgaFallida = $true
+        Write-Host "  [AVISO] En $AuthFile esta la key de respaldo compartida de versiones anteriores (ya no es valida)"
+        Write-Host "          y NO pude sacarla: la relei y sigue ahi. Tecnia Bot queda en el modelo gratuito."
+    }
 }
 $envKeyActual = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
 if (Test-KeyVieja $envKeyActual) {
@@ -556,6 +634,15 @@ $pruebaKey = $null
 $preguntar = $true
 # $true SOLO si en esta corrida se guardo una key nueva sin haber podido probarla.
 $GuardadaSinProbar = $false
+# Lo que se quiso hacer con la key y no se pudo comprobar.
+$KeyNoGuardada = $false
+$VariableDesfasada = $false
+
+if ($AuthIlegible) {
+    # Sin poder leer auth.json no hay donde guardar la key sin arriesgar las otras
+    # credenciales: preguntarla seria pedir algo que despues no se puede cumplir.
+    $preguntar = $false
+}
 
 if ($env:TECNIA_SIN_PROMPT) {
     # TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para
@@ -679,29 +766,73 @@ if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
             Write-Host "      Cuando haya red, volve a correr 'Reparar Tecnia Bot' y pegala de nuevo."
         }
         if (-not $rechazada -and -not $sinProbarConOtraGuardada) {
-            $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
-            # SIN BOM, y esto es un bloqueante que estuvo silencioso.
+            # ESCRIBIR, RELEER, Y RECIEN DESPUES DECIR "[OK]" (ver Leer-AuthJson).
             #
-            # `Set-Content -Encoding UTF8` en PowerShell 5.1 -- el que trae Windows 10 --
-            # escribe UTF-8 CON BOM. OpenCode lee este archivo con JSON.parse, que revienta
-            # con BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
-            #
-            # El docente ve la instalacion perfecta, el bot abre con su logo y su agente, y
-            # al primer mensaje: error de proveedor. Cero pistas.
-            #
-            # Este archivo era el unico que quedaba mal: las otras cuatro escrituras de
-            # este script ya usan WriteAllText por exactamente esta razon, y lo dicen en
-            # sus comentarios. Se sabia, y justo el de las credenciales quedo afuera.
-            [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
-            [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
-            $tieneGoogle = $true
-            # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
-            # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
-            $pruebaKey = $pruebaNueva
-            # Si se guardo SIN haber podido probarla (no habia otra), el cajon de
-            # "no pude probarla" de mas abajo tiene que decir eso, y no "no se toco nada".
-            if ($pruebaNueva.resultado -eq "sinProbar") { $GuardadaSinProbar = $true }
-            Write-Host "  [OK] Key guardada en esta compu."
+            # Se parte de lo que hay AHORA en el disco, no de lo que se leyo al
+            # arrancar: entre una cosa y la otra pasaron hasta 60 s de espera y una
+            # prueba contra Google. Y se arma en un objeto aparte ($candidato):
+            # $authData -que mas abajo decide el modelo- no cambia hasta que la
+            # relectura confirme que la key quedo.
+            $guardadaVerificada = $false
+            $porQueNoGuardo = ""
+            $enDisco = Leer-AuthJson $AuthFile
+            if ($enDisco.estado -eq "ilegible") {
+                $porQueNoGuardo = "el archivo de credenciales no se puede leer (no es un JSON valido, o esta tomado) y no lo piso"
+            }
+            if ($enDisco.estado -ne "ilegible") {
+                $candidato = $enDisco.datos
+                if (-not $candidato) { $candidato = [PSCustomObject]@{} }
+                $candidato | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
+                # SIN BOM: `Set-Content -Encoding UTF8` en PowerShell 5.1 escribe UTF-8
+                # CON BOM, OpenCode lee este archivo con JSON.parse, que revienta con
+                # BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
+                # Escribir-TextoAtomico escribe sin BOM, igual que el WriteAllText de
+                # las otras escrituras de este script.
+                try {
+                    Escribir-TextoAtomico $AuthFile ($candidato | ConvertTo-Json -Depth 10)
+                } catch {
+                    $porQueNoGuardo = "no pude escribir el archivo de credenciales (" + $_.Exception.GetType().Name + ")"
+                }
+                $releido = Leer-AuthJson $AuthFile
+                if (($releido.estado -eq "ok") -and ((Get-KeyDeAuth $releido.datos) -ceq $keyFinal)) {
+                    $guardadaVerificada = $true
+                    $authData = $releido.datos
+                }
+                if (-not $guardadaVerificada -and -not $porQueNoGuardo) {
+                    $porQueNoGuardo = "escribi el archivo de credenciales pero al releerlo la key no estaba"
+                }
+            }
+            if ($guardadaVerificada) {
+                # La variable de usuario LE GANA a auth.json: si queda con una key
+                # vieja, la nueva no se usa. Tambien se relee.
+                try { [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User") } catch { }
+                $enVariable = [Environment]::GetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", "User")
+                $tieneGoogle = $true
+                # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
+                # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
+                $pruebaKey = $pruebaNueva
+                # Si se guardo SIN haber podido probarla (no habia otra), el cajon de
+                # "no pude probarla" de mas abajo tiene que decir eso, y no "no se toco nada".
+                if ($pruebaNueva.resultado -eq "sinProbar") { $GuardadaSinProbar = $true }
+                Write-Host "  [OK] Key guardada en esta compu (relei el archivo y esta)."
+                if ([string]$enVariable -cne [string]$keyFinal) {
+                    $VariableDesfasada = $true
+                    Write-Host "  [AVISO] No pude actualizar la variable de usuario GOOGLE_GENERATIVE_AI_API_KEY."
+                    Write-Host "          Si adentro quedo una key anterior, esa LE GANA a la que acabo de guardar."
+                    Write-Host "          Revisala en Panel de control > Sistema > Variables de entorno."
+                }
+            }
+            if (-not $guardadaVerificada) {
+                $KeyNoGuardada = $true
+                Write-Host "  [X] NO pude guardar la key: $porQueNoGuardo."
+                Write-Host "      No des por hecho que quedo guardada: no quedo."
+                if ($tieneGoogle) {
+                    Write-Host "      Sigue la key que ya estaba."
+                }
+                if (-not $tieneGoogle) {
+                    Write-Host "      Seguimos sin key de Google."
+                }
+            }
         }
     }
 } else {
@@ -725,7 +856,7 @@ if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
 # la que se quedo sin cuota el 8 de septiembre. Sin esto, Reparar seguiria
 # terminando con un "quedo todo bien" sobre una credencial muerta.
 $keyEfectiva = ""
-if ($tieneGoogle) { $keyEfectiva = [string]$authData.google.key }
+if ($tieneGoogle) { $keyEfectiva = Get-KeyDeAuth $authData }
 if ($tieneGoogle -and $null -eq $pruebaKey) {
     Write-Host "  [i] Probando la key guardada contra Google (hasta $TimeoutPruebaKey s)..."
     $pruebaKey = Probar-KeyGoogle $keyEfectiva
