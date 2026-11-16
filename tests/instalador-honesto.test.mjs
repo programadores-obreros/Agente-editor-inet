@@ -624,3 +624,98 @@ test("ningún renglón del .iss empieza con «#» o «[» fuera de lugar, ni hay
   }
   assert.deepEqual(anidadas, [], "un comentario { } cierra en la PRIMERA llave de cierre: nombrar una constante entre llaves ahí adentro rompe la compilación")
 })
+
+// ── 2.4b · El lanzador no puede abrir el bot parado en la carpeta del programa ──
+//
+// La carpeta de proyectos se armaba con `%USERPROFILE%\Documents\Tecnia Bot` a
+// fuego, y ni el `mkdir` ni el `cd /d` se verificaban. Si fallaban, OpenCode
+// arrancaba en la carpeta del programa (la carpeta de trabajo del acceso directo)
+// y los proyectos del alumno quedaban ahí, donde el desinstalador pasa.
+
+/** El `.cmd` sin sus líneas `rem`. */
+const lanzador = leer("installer", "abrir-tecnia-bot.cmd").replace(/^\s*rem\b.*$/gim, "")
+const lineasLanzador = lanzador.split("\n").map((l) => l.trim()).filter((l) => l !== "")
+
+test("2.4b · la carpeta de proyectos sale de la carpeta Documentos real, con el perfil de respaldo", () => {
+  assert.match(lanzador, /for \/f "usebackq delims=" %%D in \(`powershell -NoProfile [^`]*\[Environment\]::GetFolderPath\('MyDocuments'\)[^`]*`\) do set "DOCS=%%D"/,
+    "el lanzador no le pregunta a Windows dónde está Documentos (OneDrive y las redirecciones quedan afuera)")
+  // Lo que conteste PowerShell se comprueba en el disco antes de usarlo, y si no sirve se vuelve al perfil.
+  const i = lineasLanzador.findIndex((l) => l.startsWith("for /f") && l.includes("MyDocuments"))
+  assert.deepEqual(lineasLanzador.slice(i + 1, i + 4), [
+    'if defined DOCS if not exist "%DOCS%\\" set "DOCS="',
+    'if not defined DOCS set "DOCS=%USERPROFILE%\\Documents"',
+    'set "PROY=%DOCS%\\Tecnia Bot"',
+  ], "cambió cómo se valida la respuesta de PowerShell o el respaldo al perfil")
+  // PROY no se arma por ningún otro lado.
+  assert.equal(lineasLanzador.filter((l) => /^set "PROY=/.test(l)).length, 1, "PROY se define en más de un lugar")
+})
+
+test("2.4b · si no se puede ENTRAR a la carpeta de proyectos, el lanzador aborta y no abre el bot", () => {
+  const iCd = lineasLanzador.indexOf('cd /d "%PROY%" 2>nul || goto sinproyectos')
+  assert.ok(iCd > 0, "el `cd` a la carpeta de proyectos no está atado a un `|| goto sinproyectos`: si falla, se sigue de largo")
+  // La comprobación sobre el mundo: no quedar parado en la carpeta del programa.
+  assert.equal(lineasLanzador[iCd + 1], 'if /i "%CD%\\"=="%~dp0" goto sinproyectos', "no se comprueba que la carpeta actual NO sea la del programa")
+  // Las dos cosas pasan antes de abrir OpenCode, y antes de :listo2.
+  const iAbre = lineasLanzador.indexOf('"%OC%"')
+  const iListo2 = lineasLanzador.indexOf(":listo2")
+  assert.ok(iAbre > 0, "no encuentro la línea que abre OpenCode")
+  assert.ok(iCd < iListo2 && iListo2 < iAbre, "la carpeta de proyectos se resuelve después de :listo2 o después de abrir el bot")
+  // No hay atajo: a :listo2 sólo se llega cayendo desde el bloque que verifica.
+  assert.deepEqual(lineasLanzador.filter((l) => /goto listo2\b/i.test(l)), [], "hay un `goto listo2` que se saltea la verificación de la carpeta de proyectos")
+  assert.equal(lineasLanzador[iListo2 - 1], 'if /i "%CD%\\"=="%~dp0" goto sinproyectos', "entre la verificación y :listo2 se coló otra cosa")
+  // Y OpenCode se abre en UN solo lugar.
+  assert.equal(lineasLanzador.filter((l) => l === '"%OC%"').length, 1, "OpenCode se abre desde más de un lugar")
+})
+
+test("2.4b · el aborto dice qué carpeta es, pausa y termina sin abrir nada", () => {
+  const desde = lineasLanzador.indexOf(":sinproyectos")
+  const hasta = lineasLanzador.indexOf(":proyectos")
+  assert.ok(desde > 0 && hasta > desde, "no están las etiquetas :sinproyectos y :proyectos en ese orden")
+  const bloque = lineasLanzador.slice(desde, hasta)
+  assert.ok(bloque.some((l) => /^echo\s+"%PROY%"$/.test(l)), "el aviso no muestra cuál es la carpeta")
+  assert.ok(bloque.some((l) => /^echo\s+Tecnia Bot v%VER% -- /.test(l)), "el aviso no lleva la versión, como las demás pantallas de error")
+  assert.deepEqual(bloque.slice(-2), ["pause", "exit /b 1"], "el aborto no termina en `pause` + `exit /b 1`: o se cierra sin que se lea, o sigue de largo")
+  assert.ok(!bloque.includes('"%OC%"'), "el bloque de aborto abre OpenCode")
+})
+
+// ── 2.4b · [UninstallDelete] había quedado sin una sola entrada ────────────────
+//
+// El commit que mudó la ejecución de uninstall.ps1 a [Code] sacó la entrada de
+// esta sección junto con [UninstallRun], y dejó sólo comentarios (uno cortado a
+// mitad de frase). La carpeta del programa quedaba en el disco, con los
+// instalacion*.log y la marca .instalando.
+
+test("2.4b · [UninstallDelete] tiene entradas REALES, no sólo comentarios", () => {
+  const entradas = seccionIss("UninstallDelete").split("\n").map((l) => l.trim()).filter((l) => l !== "")
+  assert.ok(entradas.length >= 1, "[UninstallDelete] no tiene ninguna entrada: sólo comentarios")
+  for (const l of entradas) assert.match(l, /^Type: (files|filesandordirs|dirifempty); Name: "\{app\}[^"]*"$/, `entrada con forma inesperada: ${l}`)
+  // Lo que nace DESPUÉS de instalar y por eso Inno no borra solo: la marca y los logs del bootstrap.
+  assert.ok(entradas.includes('Type: files; Name: "{app}\\.instalando"'), "no se borra la marca .instalando")
+  assert.ok(entradas.includes('Type: files; Name: "{app}\\instalacion.log"'), "no se borra instalacion.log")
+  assert.ok(entradas.includes('Type: files; Name: "{app}\\instalacion-*.log"'), "no se borran los logs rotados")
+  // Esos nombres son los que bootstrap.ps1 escribe de verdad (guard cruzado).
+  assert.match(bootstrap, /Join-Path \$RepoDir "instalacion\.log"/, "bootstrap.ps1 cambió el nombre de su log")
+  assert.match(bootstrap, /Join-Path \$RepoDir \("instalacion-" \+ \$marca \+ "\.log"\)/, "bootstrap.ps1 cambió el nombre de sus logs rotados")
+  // La carpeta se va sólo si quedó vacía, y esa entrada es la última.
+  assert.equal(entradas[entradas.length - 1], 'Type: dirifempty; Name: "{app}"', "la carpeta del programa no se quita al final (si quedó vacía)")
+})
+
+test("2.4b · la carpeta del programa NO se barre entera: lo que el instalador no puso no se borra, se avisa", () => {
+  // DECISIÓN, y por qué este test la custodia. La entrada original era
+  // `Type: filesandordirs; Name: "{app}"`. Con el lanzador viejo, un `cd` fallido
+  // dejaba proyectos de alumnos adentro de {app}; el lanzador nuevo lo impide de
+  // acá en adelante, pero no devuelve lo que ya haya quedado ahí. Si se decide
+  // volver al barrido total, hay que cambiar este test A PROPÓSITO.
+  const entradas = seccionIss("UninstallDelete").split("\n").map((l) => l.trim()).filter((l) => l !== "")
+  assert.deepEqual(entradas.filter((l) => /^Type: filesandordirs; Name: "\{app\}"$/.test(l)), [],
+    "[UninstallDelete] barre {app} entera: se lleva lo que un alumno haya guardado ahí")
+  // Y lo que quede se informa, mirando el disco después de desinstalar.
+  const hook = rutina("CurUninstallStepChanged")
+  assert.match(hook, /if CurUninstallStep = usPostUninstall then\s+AvisarSiQuedoAlgoAjeno;/, "después de desinstalar no se mira qué quedó en la carpeta")
+  const aviso = rutina("AvisarSiQuedoAlgoAjeno")
+  assert.match(aviso, /Quedo := LoAjenoQueQuedo;\s+if Quedo = '' then\s+Exit;/, "avisa aunque no haya quedado nada")
+  assert.match(aviso, /if UninstallSilent\(\) then\s+Exit;/, "en modo silencioso no puede aparecer un cartel")
+  const busca = rutina("LoAjenoQueQuedo")
+  assert.match(busca, /FindFirst\(ExpandConstant\('\{app\}\\\*'\), Hallado\)/, "no recorre la carpeta del programa")
+  assert.match(busca, /FindClose\(Hallado\);/, "no cierra la búsqueda")
+})

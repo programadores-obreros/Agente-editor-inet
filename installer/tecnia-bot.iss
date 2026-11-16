@@ -198,15 +198,46 @@ Filename: "{app}\abrir-tecnia-bot.cmd"; Description: "Abrir Tecnia Bot ahora"; \
   Flags: postinstall skipifsilent nowait
 
 [UninstallDelete]
-; Inno borra sólo los archivos que él instaló. La carpeta quedaba con lo que
-; nació después: la marca .instalando, el VERSION, restos del bootstrap. Un
-; desinstalador que deja carpetas es el que hace dudar de si desinstaló.
+; Inno borra sólo los archivos que él instaló. En la carpeta del programa quedaba
+; lo que nació después: la marca .instalando y los instalacion*.log que escribe
+; bootstrap.ps1. Un desinstalador que deja carpetas es el que hace dudar de si
+; desinstaló.
 ;
-; Es seguro barrer {app} entero: es %LOCALAPPDATA%\TecniaBot y ahí no hay nada
-; del docente. Sus proyectos viven en Documentos\Tecnia Bot, que no se toca.
+; ESTA SECCIÓN ESTUVO VACÍA, sin querer. Un arreglo de la desinstalación (el que
+; mudó la ejecución de uninstall.ps1 a la sección de código, ver más abajo) sacó
+; de acá la entrada que barría la carpeta junto con la sección UninstallRun, y
+; dejó el comentario cortado a mitad de una frase. Desde entonces la carpeta del
+; programa quedaba en el disco después de desinstalar.
 ;
-; Este borrado se lleva puesto install\uninstall.ps1 -está adentro de {app}-,
-; así que TIENE que pasar después de que [UninstallRun]
+; SE BORRA POR LISTA, NO SE BARRE LA CARPETA ENTERA, y es a propósito.
+;
+; La entrada que había era `Type: filesandordirs` sobre la carpeta del programa
+; completa, con el argumento "ahí no hay nada del docente". Ese argumento NO es
+; cierto en todas las máquinas: hasta este cambio el lanzador no verificaba que
+; hubiera podido entrar a Documentos, y si no podía, OpenCode arrancaba parado
+; en la carpeta del programa y los proyectos del alumno quedaban AHÍ. El
+; lanzador ya lo impide (aborta si no puede entrar a la carpeta de proyectos),
+; pero eso protege de acá en adelante: lo que versiones anteriores hayan dejado
+; ahí adentro sigue estando. Barrer la carpeta entera lo borraría sin avisar.
+;
+; Entonces se borra lo que se sabe que es nuestro, y la carpeta sólo si quedó
+; vacía. Si queda algo que el instalador no puso, NO se toca, y el código avisa
+; qué quedó y dónde (AvisarSiQuedoAlgoAjeno, en usPostUninstall).
+;
+; install\ y opencode\ se borran enteras: son la copia maestra de los scripts y
+; de la capa, nunca la carpeta de trabajo de nadie (mismo criterio que la sección
+; InstallDelete, más arriba). uninstall.ps1 vive en install\, pero para cuando
+; se procesa esta sección ya corrió: se ejecuta en usUninstall, que es anterior.
+Type: files; Name: "{app}\.instalando"
+Type: files; Name: "{app}\instalacion.log"
+Type: files; Name: "{app}\instalacion-*.log"
+Type: filesandordirs; Name: "{app}\install"
+Type: filesandordirs; Name: "{app}\opencode"
+Type: dirifempty; Name: "{app}"
+
+; ── Por qué acá NO hay una sección UninstallRun ──────────────────────────────
+;
+; Esa sección quedó
 ; VACIA A PROPOSITO, y esto es el corazon del bug que se arreglo acá.
 ;
 ; Antes había dos entradas mutuamente excluyentes por `Check`, una con
@@ -647,6 +678,63 @@ begin
   MsgBox(Texto, mbError, MB_OK);
 end;
 
+{ ── Lo que quedó en la carpeta del programa y NO es nuestro ────────────────────
+
+  La sección UninstallDelete borra por lista y deja la carpeta si no quedó vacía
+  (el porqué está allá). Esto mira qué quedó, DESPUÉS de desinstalar, y lo dice:
+  una carpeta que sobrevive en silencio es justo lo que hace dudar de si se
+  desinstaló, y si lo que quedó son proyectos de un alumno, alguien tiene que
+  enterarse de dónde están.
+
+  Se saltean los unins*: son el propio desinstalador, que Inno borra al final de
+  todo, después de este paso. }
+function LoAjenoQueQuedo: String;
+var
+  Hallado: TFindRec;
+  Cuantos: Integer;
+begin
+  Result := '';
+  Cuantos := 0;
+  if FindFirst(ExpandConstant('{app}\*'), Hallado) then
+  begin
+    try
+      repeat
+        if (Hallado.Name <> '.') and (Hallado.Name <> '..')
+           and (CompareText(Copy(Hallado.Name, 1, 5), 'unins') <> 0) then
+        begin
+          Cuantos := Cuantos + 1;
+          if Cuantos <= 8 then
+            Result := Result + '  ' + Hallado.Name + #13#10;
+        end;
+      until not FindNext(Hallado);
+    finally
+      FindClose(Hallado);
+    end;
+  end;
+  if Cuantos > 8 then
+    Result := Result + '  ... y ' + IntToStr(Cuantos - 8) + ' más' + #13#10;
+end;
+
+procedure AvisarSiQuedoAlgoAjeno;
+var
+  Quedo: String;
+begin
+  Quedo := LoAjenoQueQuedo;
+  if Quedo = '' then
+    Exit;
+  Log('Tecnia Bot: en la carpeta del programa quedo algo que el instalador no puso: ' + Quedo);
+  if UninstallSilent() then
+    Exit;
+  MsgBox('Tecnia Bot se desinstaló, pero en su carpeta quedaron cosas que el '
+    + 'instalador NO había puesto, y por eso no las borré:' + #13#10 + #13#10
+    + Quedo + #13#10
+    + 'Están en:' + #13#10
+    + '  ' + ExpandConstant('{app}') + #13#10 + #13#10
+    + 'Pueden ser proyectos guardados ahí por error. Si te sirven, movelos a '
+    + 'Documentos; si no, podés borrar esa carpeta a mano.',
+    mbInformation, MB_OK);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Bandera: String;
@@ -767,4 +855,9 @@ begin
     if (not UninstallSilent()) and ((not Lanzo) or (Codigo <> 0) or (Siguen <> '')) then
       AvisarDesinstalacionIncompleta(Lanzo, Codigo, Siguen);
   end;
+
+  { usPostUninstall: ya se procesaron los archivos instalados y la sección
+    UninstallDelete. Recién ahora tiene sentido mirar qué quedó. }
+  if CurUninstallStep = usPostUninstall then
+    AvisarSiQuedoAlgoAjeno;
 end;
