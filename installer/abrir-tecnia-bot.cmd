@@ -222,7 +222,7 @@ if not exist "%OCCFG%\agent\tecnia-bot.md" (
   pause
   exit /b 1
 )
-goto listo2
+goto proyectos
 
 :sinopencode
 echo.
@@ -234,12 +234,85 @@ echo.
 pause
 exit /b 1
 
-:listo2
+:sinproyectos
+rem -- SIN CARPETA DE PROYECTOS NO SE ABRE EL BOT ------------------------------
+rem
+rem Aca se llega cuando no se pudo ENTRAR a la carpeta de proyectos. Antes eso no
+rem se miraba: ni el mkdir ni el cd se verificaban, y si fallaban el lanzador
+rem seguia de largo. OpenCode arrancaba en la carpeta donde esta parado este
+rem archivo -la del programa, porque el acceso directo la pone como carpeta de
+rem trabajo- y todo lo que el alumno armaba quedaba guardado ahi adentro, mezclado
+rem con el programa, en una carpeta que el desinstalador se lleva.
+rem
+rem No es un caso de laboratorio: el "Acceso controlado a carpetas" de Windows
+rem Defender bloquea que un programa que no conoce escriba en Documentos, y en
+rem una PC administrada puede estar prendido sin que el docente lo sepa.
+rem
+rem Se frena y se dice. Perder el trabajo de un alumno es peor que no abrir.
+echo.
+echo   Tecnia Bot v%VER% -- no pude entrar a la carpeta de proyectos:
+echo.
+echo     "%PROY%"
+echo.
+echo   No abro el bot: los proyectos quedarian guardados adentro de la carpeta
+echo   del programa, que se borra al desinstalar.
+echo.
+echo   Fijate que esa carpeta exista y que se pueda escribir en ella. Si Windows
+echo   avisa que bloqueo un cambio en Documentos, es la proteccion de carpetas:
+echo   hay que permitirlo desde Seguridad de Windows.
+echo.
+pause
+exit /b 1
 
-rem Carpeta de trabajo del docente para sus proyectos (se crea la primera vez).
-set "PROY=%USERPROFILE%\Documents\Tecnia Bot"
-if not exist "%PROY%" mkdir "%PROY%"
-cd /d "%PROY%"
+:proyectos
+rem -- LA CARPETA DE PROYECTOS: la de Documentos DE VERDAD, y verificada --------
+rem
+rem Estaba escrita a fuego: la carpeta Documents adentro del perfil. Esa NO es
+rem siempre la carpeta Documentos: con OneDrive haciendo copia de seguridad de las
+rem carpetas, o con Documentos redirigida por la escuela a otro disco, la de
+rem verdad esta en otro lado y la del perfil puede no existir. El lanzador creaba
+rem una carpeta "Documents" suelta y guardaba ahi: el docente abria Documentos y
+rem sus proyectos no estaban.
+rem
+rem A Windows se le pregunta con la API que usan los programas
+rem (Environment.GetFolderPath), que ya resuelve OneDrive y las redirecciones. Un
+rem .cmd no puede llamarla, asi que se le pide a PowerShell en una linea.
+rem
+rem CUANTO CUESTA, razonado y NO medido (aca no hay un Windows donde medirlo):
+rem es un arranque de powershell.exe con -NoProfile y sin cargar ningun modulo.
+rem Este lanzador YA arranca PowerShell una vez por apertura, mas abajo, para
+rem chequear la key: esto suma un segundo arranque de lo mismo. En una maquina
+rem comun es menos de un segundo; en una netbook con disco mecanico y antivirus
+rem pueden ser dos o tres. Hay que medirlo en la VM y en una notebook real antes
+rem de darlo por bueno.
+rem
+rem SI ALGO DE ESTO FALLA SE VUELVE A LO DE ANTES, no se frena: que PowerShell no
+rem arranque, que este bloqueado, o que conteste una ruta que no existe en el
+rem disco (puede pasar con un nombre de usuario con acentos y la consola en otra
+rem codificacion) deja DOCS vacio y se usa la carpeta del perfil, como siempre.
+set "DOCS="
+for /f "usebackq delims=" %%D in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[Environment]::GetFolderPath('MyDocuments')" 2^>nul`) do set "DOCS=%%D"
+if defined DOCS if not exist "%DOCS%\" set "DOCS="
+if not defined DOCS set "DOCS=%USERPROFILE%\Documents"
+
+set "PROY=%DOCS%\Tecnia Bot"
+if not exist "%PROY%\" mkdir "%PROY%" 2>nul
+
+rem Lo que decide es si se pudo ENTRAR, no si el mkdir dijo que anduvo.
+rem
+rem Se usa el operador de dos barras verticales y no un "if errorlevel 1" en la
+rem linea siguiente: las dos barras miran si ESTE comando fallo. El "if
+rem errorlevel" puede estar leyendo el codigo de un comando anterior, porque cd
+rem no lo pone en 0 cuando le va bien. (No se escriben los simbolos en este
+rem comentario a proposito: mejor no averiguar que hace cmd con ellos en un rem.)
+cd /d "%PROY%" 2>nul || goto sinproyectos
+
+rem Y la comprobacion que importa de verdad, mirando donde quedamos parados: NO
+rem puede ser la carpeta del programa. La carpeta de este archivo termina en
+rem barra y la carpeta actual no, por eso a la actual se le agrega una.
+if /i "%CD%\"=="%~dp0" goto sinproyectos
+
+:listo2
 
 cls
 echo.
