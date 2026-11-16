@@ -1321,6 +1321,104 @@ else
   echo "          Instalalo con: python3 <(curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py)"
 fi
 
+# ---- Permiso del puerto serie (SOLO Linux) -----------------------------------
+# En Linux el puerto de la placa (/dev/ttyUSB0, /dev/ttyACM0) es de un grupo, y
+# quien no esta en ese grupo no puede cargar: PlatformIO falla con "Permission
+# denied" en plena clase, despues de compilar todo. El grupo cambia con la distro
+# (dialout en Debian/Ubuntu, uucp en Arch/Manjaro) y docs/instalacion-linux.md le
+# pedia a la docente que lo averiguara sola. Este instalador no lo arregla --hace
+# falta la contrasena de administrador y aca no se usa sudo-- pero si lo MIRA y
+# dice el comando exacto para esta compu.
+#
+# Que se mira, en orden, y nada se supone:
+#   1. Si hay una placa conectada: se intenta leer y escribir el dispositivo. Si
+#      se puede, listo. Si no, el grupo es el DUENO REAL de ese dispositivo.
+#   2. Si no hay ninguna: el grupo es dialout o uucp, el que EXISTA en el sistema.
+#   3. La pertenencia se mira dos veces: en esta sesion (`id -Gn`) y en la base de
+#      usuarios (`id -Gn usuario`). Estar en la base y no en la sesion es el caso
+#      de quien ya corrio el usermod y todavia no volvio a entrar.
+# En macOS no aplica (el puerto es del usuario) y root no necesita grupo.
+# `stat -c` es de GNU/busybox y no existe en BSD: esta bien, de aca no pasa nadie
+# que no sea Linux.
+grupo_existe() {
+  if command -v getent >/dev/null 2>&1; then
+    getent group "$1" >/dev/null 2>&1
+  else
+    grep -q "^$1:" /etc/group 2>/dev/null
+  fi
+}
+# $1 = lista de grupos separada por espacios (lo que imprime `id -Gn`), $2 = grupo.
+esta_en_la_lista() {
+  case " $1 " in *" $2 "*) return 0 ;; esac
+  return 1
+}
+aviso_puerto_serie() {
+  [ "$(uname -s 2>/dev/null || true)" = "Linux" ] || return 0
+  [ "$(id -u)" != "0" ] || return 0
+  local usuario grupo="" origen="" dev g comando
+  usuario="$(id -un 2>/dev/null || true)"
+  [ -n "$usuario" ] || return 0
+
+  for dev in /dev/ttyUSB* /dev/ttyACM*; do
+    [ -e "$dev" ] || continue
+    if [ -r "$dev" ] && [ -w "$dev" ]; then
+      echo "  [OK] Puerto serie: tu usuario puede leer y escribir $dev (la placa conectada ahora)."
+      return 0
+    fi
+    g="$(stat -c '%G' "$dev" 2>/dev/null || true)"
+    case "$g" in ""|root|UNKNOWN) continue ;; esac
+    grupo="$g"
+    origen="es el grupo dueno de $dev, la placa conectada ahora"
+    break
+  done
+  if [ -z "$grupo" ]; then
+    for g in dialout uucp; do
+      if grupo_existe "$g"; then
+        grupo="$g"
+        origen="no hay ninguna placa conectada ahora; '$g' es el grupo de puertos serie que existe en este sistema"
+        break
+      fi
+    done
+  fi
+  if [ -z "$grupo" ]; then
+    echo "  [AVISO] Puerto serie: no pude comprobar el permiso para cargar a la placa."
+    echo "          No hay ninguna placa conectada y en este sistema no existe ni el grupo dialout ni uucp."
+    echo "          Conecta la placa y volve a correr este instalador para que lo mire."
+    return 0
+  fi
+
+  if esta_en_la_lista "$(id -Gn 2>/dev/null || true)" "$grupo"; then
+    echo "  [OK] Puerto serie: tu usuario ($usuario) esta en el grupo $grupo ($origen)."
+    return 0
+  fi
+  if esta_en_la_lista "$(id -Gn "$usuario" 2>/dev/null || true)" "$grupo"; then
+    echo "  [AVISO] Puerto serie: tu usuario ($usuario) ya figura en el grupo $grupo, pero esta sesion todavia no lo tomo."
+    echo "          Cerra la sesion y volve a entrar (o reinicia la compu) antes de cargar a la placa."
+    return 0
+  fi
+  # El comando, con el grupo y el usuario de ESTA compu ya puestos. usermod vive en
+  # /usr/sbin, que muchas distros no ponen en el PATH de un usuario comun.
+  if command -v usermod >/dev/null 2>&1 || [ -x /usr/sbin/usermod ] || [ -x /sbin/usermod ]; then
+    comando="sudo usermod -a -G $grupo $usuario"
+  elif command -v gpasswd >/dev/null 2>&1; then
+    comando="sudo gpasswd -a $usuario $grupo"
+  elif command -v addgroup >/dev/null 2>&1; then
+    comando="sudo addgroup $usuario $grupo"
+  else
+    comando=""
+  fi
+  echo "  [FALTA] Puerto serie: tu usuario ($usuario) NO esta en el grupo $grupo ($origen)."
+  echo "          Sin ese permiso lo mas probable es que cargar a la placa falle con \"Permission denied\"."
+  if [ -n "$comando" ]; then
+    echo "          Corre esto (te va a pedir tu contrasena):"
+    echo "            $comando"
+  else
+    echo "          Agrega tu usuario a ese grupo con la herramienta de usuarios de tu sistema."
+  fi
+  echo "          Despues cerra la sesion y volve a entrar para que tome efecto."
+}
+aviso_puerto_serie
+
 echo ""
 echo "Para empezar: abri una terminal en cualquier carpeta, escribi 'opencode',"
 echo "apreta Tab y elegi 'tecnia-bot'."

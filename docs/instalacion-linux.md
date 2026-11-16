@@ -32,6 +32,8 @@ sudo usermod -a -G dialout $USER
 sudo usermod -a -G uucp $USER
 ```
 
+> Desde la 0.5 `install/install.sh` lo mira por vos: al final dice si tu usuario ya está en el grupo o, si falta, el comando exacto para tu compu (no lo corre: hace falta tu contraseña).
+>
 > ¿No sabés cuál usar? Corré `getent group dialout` y `getent group uucp`: usá el que exista en tu sistema. Si te da "el grupo no existe", es el otro.
 
 **Cerrá sesión y volvé a entrar** para que tome efecto. Verificá con `groups` que aparezca el grupo.
