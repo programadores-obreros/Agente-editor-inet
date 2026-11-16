@@ -77,3 +77,45 @@ test("el mínimo de Node sale del package.json de archify, no de un número a fu
   const fijas = bootstrap.split("\n").filter((l) => /\$NodeMinimo\s*=\s*[1-9]/.test(l))
   assert.deepEqual(fijas.map((l) => l.trim()), [], "el mínimo de Node está escrito a mano en el bootstrap")
 })
+
+// ── 2.11 · compilar-en-windows.ps1 festejaba un .exe que podía ser viejo ───────
+//
+// Corría ISCC sin mirar `$LASTEXITCODE` y decía "LISTO!" con sólo encontrar el
+// `.exe` en dist\ — que podía ser el de la compilación anterior. Y si faltaba
+// VERSION compilaba un "0.0.0" de relleno.
+
+const compilar = sinComentariosPs(leer("installer", "compilar-en-windows.ps1"))
+
+test("compilar-en-windows.ps1 borra el .exe anterior ANTES de correr ISCC", () => {
+  const borra = compilar.search(/Remove-Item\s+\$Exe\b/)
+  const corre = compilar.search(/&\s+\$iscc\b/)
+  assert.ok(borra >= 0, "no borra el instalador anterior: un .exe viejo pasa por recién compilado")
+  assert.ok(corre >= 0, "no encuentro la línea que corre ISCC")
+  assert.ok(borra < corre, "borra el .exe DESPUÉS de compilar: destruye el que acaba de salir")
+  // Y `$Exe` es de verdad el archivo de salida del .iss, no otra ruta.
+  const iss = leer("installer", "tecnia-bot.iss")
+  const base = iss.match(/^OutputBaseFilename=(\S+)\s*$/m)?.[1]
+  const dir = iss.match(/^OutputDir=(\S+)\s*$/m)?.[1]
+  assert.ok(base && dir, "no pude leer OutputDir/OutputBaseFilename del .iss")
+  assert.ok(compilar.includes(`$Exe = Join-Path $RepoDir "installer\\${dir}\\${base}.exe"`),
+    `$Exe no apunta a installer\\${dir}\\${base}.exe, que es lo que produce el .iss`)
+})
+
+test("compilar-en-windows.ps1 corta si ISCC devuelve un código distinto de 0", () => {
+  const lineas = compilar.split("\n")
+  const i = lineas.findIndex((l) => /&\s+\$iscc\b/.test(l))
+  assert.ok(i >= 0, "no encuentro la línea que corre ISCC")
+  // La línea SIGUIENTE (no "alguna después"): cualquier comando en el medio pisa $LASTEXITCODE.
+  const siguiente = lineas.slice(i + 1).find((l) => l.trim() !== "")
+  assert.match(siguiente, /^\s*\$CodigoIscc\s*=\s*\$LASTEXITCODE\s*$/, "el código de ISCC no se guarda en la línea siguiente a correrlo")
+  const resto = lineas.slice(i + 1).join("\n")
+  const corte = resto.match(/if\s*\(\s*\$CodigoIscc\s+-ne\s+0\s*\)\s*\{\s*\n?\s*throw\b/)
+  assert.ok(corte, "se guarda el código de ISCC pero no se corta con él")
+  assert.ok(resto.indexOf(corte[0]) < resto.indexOf("LISTO!"), "dice LISTO! antes de mirar el código de ISCC")
+})
+
+test("compilar-en-windows.ps1 no inventa una versión cuando falta VERSION", () => {
+  assert.doesNotMatch(compilar, /["']0\.0\.0["']/, "volvió la versión de relleno 0.0.0")
+  assert.match(compilar, /if\s*\(\s*-not\s*\(Test-Path\s+\$VerFile\)\s*\)\s*\{\s*\n?\s*throw\b/, "si falta VERSION no corta")
+  assert.match(compilar, /if\s*\(\s*-not\s+\$Version\s*\)\s*\{\s*\n?\s*throw\b/, "si VERSION está vacío no corta")
+})
