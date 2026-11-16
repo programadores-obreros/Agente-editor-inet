@@ -484,11 +484,15 @@ test("2.1 · «quedó instalado» se afirma únicamente cuando el bootstrap sali
   assert.match(fn, /if CurPageID <> wpFinished then\s+Exit;/, "CurPageChanged no se limita a la última pantalla")
   // El festejo aparece UNA vez en todo [Code], y adentro de la rama EstadoBien.
   assert.equal((pascal.match(/¡Tecnia Bot quedó instalado!/g) ?? []).length, 1, "el festejo aparece en más de un lugar")
-  assert.match(fn, /if EstadoBootstrap = EstadoBien then\s+begin\s+WizardForm\.FinishedHeadingLabel\.Caption := '¡Tecnia Bot quedó instalado!';/,
+  assert.match(fn, /if EstadoBootstrap = EstadoBien then\s+begin\s+Titulo := '¡Tecnia Bot quedó instalado!';/,
     "el festejo no está condicionado a que el bootstrap haya salido bien")
   // Y la rama por defecto (falla, no lanzó, sin correr) dice que NO quedó.
   const ultima = fn.slice(fn.lastIndexOf("else\n  begin"))
-  assert.match(ultima, /FinishedHeadingLabel\.Caption := 'Tecnia Bot NO quedó instalado';/, "la rama por defecto no dice que la instalación falló")
+  assert.match(ultima, /Titulo := 'Tecnia Bot NO quedó instalado';/, "la rama por defecto no dice que la instalación falló")
+  // El título y el texto se asignan a las etiquetas en UN solo lugar, desde esas variables.
+  assert.equal((fn.match(/FinishedHeadingLabel\.Caption :=/g) ?? []).length, 1, "el título de la última pantalla se asigna por más de un camino")
+  assert.match(fn, /WizardForm\.FinishedHeadingLabel\.Caption := Titulo \+ #13#10;/, "el título que se muestra no es el que eligió la rama")
+  assert.match(fn, /WizardForm\.FinishedLabel\.Caption := Texto \+ #13#10;/, "el texto que se muestra no es el que eligió la rama")
   assert.match(ultima, /Reparar \{#MyAppName\}/, "la falla no manda a Reparar")
 })
 
@@ -801,4 +805,42 @@ test("2.13 · la salida de la marca huérfana nombra Reparar, no repara sola y n
   const rep = lanzador.slice(lanzador.indexOf(":reparar"))
   const enCurso = rep.slice(rep.indexOf('if exist "%MARCA%" ('), rep.indexOf("exit /b 0"))
   assert.match(enCurso, /"Reparar Tecnia Bot"/, "el cartel «la instalación sigue en curso» no dice cómo salir si el instalador ya no está")
+})
+
+// ── Revisión de QA · la última pantalla recortaba el texto nuevo ──────────────
+//
+// Inno ajusta el alto del título en el constructor y el del texto (más la posición
+// de las casillas) en ChangeFinishedLabel, ANTES de CurPageChanged. Cambiar el
+// Caption después no reajusta nada: el texto de falla, más largo que el original,
+// salía recortado. Se repite a mano la secuencia de Inno.
+test("la última pantalla reajusta el alto de las dos etiquetas y corre las casillas, en el orden de Inno", () => {
+  const fn = rutina("CurPageChanged")
+  const pasos = [
+    "WizardForm.FinishedHeadingLabel.Caption := Titulo + #13#10;",
+    "Corrimiento := WizardForm.FinishedHeadingLabel.AdjustHeight;",
+    "WizardForm.FinishedHeadingLabel.Top + WizardForm.FinishedHeadingLabel.Height;",
+    "WizardForm.FinishedLabel.Caption := Texto + #13#10;",
+    "Corrimiento := WizardForm.FinishedLabel.AdjustHeight;",
+    "Y := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height;",
+    "Corrimiento := Y - WizardForm.YesRadio.Top;",
+    "WizardForm.RunList.Top := WizardForm.RunList.Top + Corrimiento;",
+    "WizardForm.RunList.Height := WizardForm.RunList.Height - Corrimiento;",
+    "WizardForm.YesRadio.Top := Y;",
+    "WizardForm.NoRadio.Top := Y + ScaleY(22);",
+  ]
+  let pos = -1
+  for (const p of pasos) {
+    const i = fn.indexOf(p, pos + 1)
+    assert.ok(i > pos, `falta el paso, o está fuera de orden: ${p}`)
+    pos = i
+  }
+  // El ajuste va DESPUÉS de elegir el texto: ajustar antes mide el texto viejo.
+  assert.ok(fn.indexOf("Titulo := 'Tecnia Bot NO quedó instalado';") < fn.indexOf(pasos[0]), "se reajusta antes de elegir el texto")
+})
+
+test("el texto de «degradado» manda al log (si está en el disco), no a una ventana que ya se cerró", () => {
+  const fn = rutina("CurPageChanged")
+  const rama = fn.slice(fn.indexOf("else if EstadoBootstrap = EstadoDegradado then"), fn.indexOf("else if EstadoBootstrap = EstadoSalteado then"))
+  assert.doesNotMatch(rama, /ventana negra/i, "manda a mirar la consola del bootstrap, que para entonces ya se cerró")
+  assert.match(rama, /if FileExists\(RutaLogBootstrap\) then\s+Texto := Texto \+ '[^']*' \+ RutaLogBootstrap;/, "no nombra instalacion.log, o lo nombra sin mirar que exista")
 })

@@ -517,33 +517,51 @@ end;
   texto por resultado, y el que afirma que quedó instalado aparece únicamente
   cuando bootstrap.ps1 salió con 0, que es su "todo comprobado".
 
-  Los textos son cortos a propósito: esta etiqueta comparte la pantalla con las
-  casillas de "abrir ahora", y no está comprobado que un texto largo no las tape. }
+  EL ALTO DE LAS ETIQUETAS SE REAJUSTA A MANO, Y SIN ESO EL TEXTO SALE CORTADO.
+  Inno calcula el alto del título una sola vez, al construir el asistente, y el
+  del texto junto con la posición de las casillas en ChangeFinishedLabel, que
+  corre ANTES de este evento (Setup.WizardForm.pas de la 6.7.0, líneas 1081 a
+  1084 y 1458 a 1467; lo señaló la revisión). Cambiar el Caption después no
+  reajusta nada: un texto más largo que el original quedaba recortado y las
+  casillas donde estaban. Lo que sigue repite, con los mismos pasos y en el mismo
+  orden, lo que hace Inno: ajustar el título, colgar el texto debajo, ajustar el
+  texto, y correr las casillas y los botones de reinicio por la diferencia.
+  AdjustHeight, YesRadio, NoRadio y RunList están registrados para el script en
+  Compiler.ScriptClasses.pas de esa misma versión. }
 procedure CurPageChanged(CurPageID: Integer);
+var
+  Titulo: String;
+  Texto: String;
+  Y: Integer;
+  Corrimiento: Integer;
 begin
   if CurPageID <> wpFinished then
     Exit;
 
   if EstadoBootstrap = EstadoBien then
   begin
-    WizardForm.FinishedHeadingLabel.Caption := '¡Tecnia Bot quedó instalado!';
-    WizardForm.FinishedLabel.Caption :=
+    Titulo := '¡Tecnia Bot quedó instalado!';
+    Texto :=
       '¡Listo! Arrancá por la web de Tecnia Bot (tecnialab.net.ar/tecnia-bot) para ver '
       + 'los primeros pasos, y abrilo desde el menú inicio o el escritorio. Recordá '
       + 'instalar los drivers USB de tu placa si todavía no lo hiciste.';
   end
   else if EstadoBootstrap = EstadoDegradado then
   begin
-    WizardForm.FinishedHeadingLabel.Caption := 'Tecnia Bot quedó instalado, pero incompleto';
-    WizardForm.FinishedLabel.Caption :=
+    { Decía "la ventana negra lo detalló al final". Para cuando se lee esta
+      pantalla esa ventana ya se cerró: se mandaba a mirar algo que no está. El
+      detalle quedó en el log, y se lo nombra sólo si está en el disco. }
+    Titulo := 'Tecnia Bot quedó instalado, pero incompleto';
+    Texto :=
       'El bot abre, pero faltó instalar algo (PlatformIO, Node, o la versión probada '
-      + 'de OpenCode): la ventana negra lo detalló al final. Para completarlo, en el '
-      + 'menú inicio abrí "Reparar {#MyAppName}".';
+      + 'de OpenCode). Para completarlo, en el menú inicio abrí "Reparar {#MyAppName}".';
+    if FileExists(RutaLogBootstrap) then
+      Texto := Texto + ' Qué faltó quedó escrito en: ' + RutaLogBootstrap;
   end
   else if EstadoBootstrap = EstadoSalteado then
   begin
-    WizardForm.FinishedHeadingLabel.Caption := 'Se copiaron los archivos de Tecnia Bot';
-    WizardForm.FinishedLabel.Caption :=
+    Titulo := 'Se copiaron los archivos de Tecnia Bot';
+    Texto :=
       'Se salteó la instalación de OpenCode, PlatformIO y la capa (/skipdeps=1). '
       + 'Para instalarlos, en el menú inicio abrí "Reparar {#MyAppName}".';
   end
@@ -551,12 +569,31 @@ begin
   begin
     { EstadoFallo, EstadoNoLanzo, y también EstadoSinCorrer: si por lo que sea el
       paso del bootstrap no llegó a correr, no se festeja nada. }
-    WizardForm.FinishedHeadingLabel.Caption := 'Tecnia Bot NO quedó instalado';
-    WizardForm.FinishedLabel.Caption :=
+    Titulo := 'Tecnia Bot NO quedó instalado';
+    Texto :=
       'Se copiaron los archivos, pero la instalación de OpenCode y de la capa no '
       + 'terminó bien. No hace falta volver a bajar el instalador: en el menú inicio '
       + 'abrí "Reparar {#MyAppName}". Si vuelve a fallar, "Diagnostico de {#MyAppName}" dice por qué.';
   end;
+
+  { El salto de línea final lo agrega también Inno a sus dos textos: deja el
+    renglón de aire entre el título, el texto y las casillas. }
+  WizardForm.FinishedHeadingLabel.Caption := Titulo + #13#10;
+  Corrimiento := WizardForm.FinishedHeadingLabel.AdjustHeight;
+  WizardForm.FinishedLabel.Top :=
+    WizardForm.FinishedHeadingLabel.Top + WizardForm.FinishedHeadingLabel.Height;
+
+  WizardForm.FinishedLabel.Caption := Texto + #13#10;
+  Corrimiento := WizardForm.FinishedLabel.AdjustHeight;
+
+  { Todo lo que cuelga debajo del texto se corre por la diferencia entre dónde
+    termina ahora y dónde estaba (YesRadio marca ese renglón, igual que en Inno). }
+  Y := WizardForm.FinishedLabel.Top + WizardForm.FinishedLabel.Height;
+  Corrimiento := Y - WizardForm.YesRadio.Top;
+  WizardForm.RunList.Top := WizardForm.RunList.Top + Corrimiento;
+  WizardForm.RunList.Height := WizardForm.RunList.Height - Corrimiento;
+  WizardForm.YesRadio.Top := Y;
+  WizardForm.NoRadio.Top := Y + ScaleY(22);
 end;
 
 { ── El .exe sale con un código propio si el bootstrap no salió bien ────────────
