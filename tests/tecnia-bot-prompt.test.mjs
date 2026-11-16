@@ -417,7 +417,9 @@ test("la tool actualizar declara su alcance EN LA RESPUESTA", () => {
   // Ahora se recorren TODOS los `return` de `execute()` y se afirma sobre el
   // TOTAL: si alguien agrega uno, el conteo cambia y esto se pone rojo aunque el
   // nuevo sí tenga el límite. Ese rojo es el punto — obliga a mirarlo.
-  const RETURNS_ESPERADOS = 9
+  // 10 desde que /actualizar distingue «actualizado CON AVISOS» (el código 3 de
+  // install/update.sh): ni éxito ni fracaso, y también declara su alcance.
+  const RETURNS_ESPERADOS = 10
 
   const iExec = codigo.indexOf("async execute(args)")
   assert.ok(iExec > 0, "no encontré execute() en actualizar.ts")

@@ -42,6 +42,11 @@ const LIMITE_ALCANCE =
 
 const REPO = "programadores-obreros/Agente-editor-inet"
 
+// install/install.sh sale con 3 cuando instaló CON AVISOS, y install/update.sh lo
+// pasa tal cual (los dos lo documentan en su encabezado). update.ps1 no usa este
+// código: en Windows la rama de abajo no se toma.
+const CODIGO_CON_AVISOS = 3
+
 // Config global de OpenCode (donde vive la capa instalada y el manifest).
 function configDir(): string {
   const cfg = process.env.XDG_CONFIG_HOME || join(homedir(), ".config")
@@ -191,6 +196,25 @@ export default tool({
       )
     }
     const { code, out, err } = r
+
+    // EL TERCER CASO, QUE NO ES NI EXITO NI FRACASO. Los archivos nuevos se
+    // copiaron pero el instalador no pudo dejar escrita la config de OpenCode
+    // (opencode.json roto o de solo lectura). Antes ese caso salia con codigo 0 y
+    // esta tool contestaba "¡Actualizado!" mostrando los ultimos 400 caracteres,
+    // donde el aviso ya no estaba. Decir "no pude actualizar" tampoco seria cierto:
+    // la version SI cambio. Se dice lo que paso y se muestra la cola entera, que es
+    // donde install.sh y update.sh dejan la lista de lo que falta.
+    if (code === CODIGO_CON_AVISOS && !win) {
+      const nueva = leerManifest()?.version ?? info.version
+      return (
+        `Tecnia Bot quedó en la versión ${nueva}, pero la actualización terminó **CON AVISOS**: ` +
+        `los archivos se copiaron y algo de la configuración de OpenCode NO quedó escrito. ` +
+        `Hasta que se arregle, Tecnia Bot puede no abrir como agente por defecto o con el modelo equivocado.\n\n` +
+        `Esto es lo que dijo el instalador:\n\n${[out.slice(-2000), err.slice(-600)].filter((s) => s.trim()).join("\n")}\n\n` +
+        `Cuando esté arreglado, corré a mano: ${cmd.join(" ")}` +
+        LIMITE_ALCANCE
+      )
+    }
 
     if (code !== 0) {
       return (
