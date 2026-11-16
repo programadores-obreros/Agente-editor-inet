@@ -65,8 +65,25 @@ export function derivarEscritura(componente: ComponenteCatalogo): Escritura | un
  * y `D` (UNO) se nombran con su número; el banco `A` (UNO) con la constante `A<n>`.
  */
 export function nombreDePinArduino(pin: RegistroPin): string | undefined {
+  const arduino = pinArduino(pin)
+  if (!arduino) return undefined
+  return arduino.clase === "analogico" ? `A${arduino.numero}` : String(arduino.numero)
+}
+
+/**
+ * Lo mismo que `nombreDePinArduino`, pero SIN armar el texto: qué clase de nombre es y con qué
+ * número. H-02: el programa no interpola el nombre como string; `programa.ts` lo escribe con el
+ * constructor de su clase léxica (`emision.ts::entero`/`pinAnalogico`), que además acota el número
+ * al tipo `uint8_t` de la constante (un `numero: 1e21` del catálogo ya no llega como `1e+21`).
+ */
+export interface PinArduino {
+  readonly clase: "numero" | "analogico"
+  readonly numero: number
+}
+
+export function pinArduino(pin: RegistroPin): PinArduino | undefined {
   if (!Number.isInteger(pin.numero) || pin.numero < 0) return undefined
-  if (pin.banco === "GPIO" || pin.banco === "D") return String(pin.numero)
-  if (pin.banco === "A") return `A${pin.numero}`
+  if (pin.banco === "GPIO" || pin.banco === "D") return { clase: "numero", numero: pin.numero }
+  if (pin.banco === "A") return { clase: "analogico", numero: pin.numero }
   return undefined
 }

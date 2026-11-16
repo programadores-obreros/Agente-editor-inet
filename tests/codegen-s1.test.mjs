@@ -406,12 +406,29 @@ test("27 ningún id físico (tipo de componente, placa, board, plataforma o pin)
     ...K.catalogo.placas.flatMap((p) => [p.id, p.backends.platformio.board, p.backends.platformio.platform.split("@")[0]]),
   ]
   assert.ok(prohibidos.length > 5)
+  // H-02: el texto de un comentario del PROGRAMA GENERADO no es una decisión del backend por un id
+  // físico («…despues, uno por periodo.» es castellano, no la placa `uno`). Hasta H-02 ese texto
+  // quedaba fuera de esta guarda por accidente: vivía en plantillas que empezaban con `//`, y
+  // `sinComentarios` corta desde `//` hasta el fin de la línea. Ahora vive en plantillas
+  // `comentario\`…\`` (`emision.ts`), sin `//` en el fuente, así que se saca a propósito. Sólo eso:
+  // el texto fijo de una línea de CÓDIGO (`cpp\`…\``) sigue adentro de la guarda (ver 27b).
+  const sinTextoDeComentarioGenerado = (codigo) => codigo.replace(/\bcomentario`[^`]*`/g, "comentario``")
   for (const [archivo, fuente] of fuentesCodegen) {
-    const codigo = sinComentarios(fuente)
+    const codigo = sinTextoDeComentarioGenerado(sinComentarios(fuente))
     for (const id of prohibidos) assert.ok(!new RegExp(`(^|[^A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^A-Za-z0-9_-])`).test(codigo), `${archivo} nombra «${id}»`)
     assert.doesNotMatch(codigo, /["'`](GPIO|D|A)\d+["'`]/, `${archivo} escribe un pin concreto`)
     assert.doesNotMatch(codigo, /\b(Date|Math\.random|performance|process\.|require\(|fetch\()/, `${archivo} no es puro`)
   }
+})
+
+test("27b la guarda 27 sigue viendo un id físico en una línea de código, y sólo perdona el texto de un comentario generado", () => {
+  // La guarda se prueba a sí misma: la excepción de H-02 no puede haberla dejado ciega.
+  const ver = (fuente) => /(^|[^A-Za-z0-9_-])uno($|[^A-Za-z0-9_-])/.test(sinComentarios(fuente).replace(/\bcomentario`[^`]*`/g, "comentario``"))
+  assert.equal(ver("l.push(cpp`  if (placa == uno) {`)"), true, "un id físico en una línea de código se tiene que ver")
+  assert.equal(ver('if (placa.id === "uno") return 13'), true, "un id físico en una decisión del backend se tiene que ver")
+  assert.equal(ver("l.push(cpp`${comentario`despues, uno por periodo.`}`)"), false, "el texto de un comentario generado no es un id físico")
+  // Y el archivo real tiene esa frase: si no la tuviera, la excepción no haría falta y habría que sacarla.
+  assert.match(fuentesCodegen.find(([f]) => f === "programa.ts")[1], /comentario`[^`]*despues, uno por periodo\.`/)
 })
 
 test("28 nucleo/** no importa codegen/", () => {

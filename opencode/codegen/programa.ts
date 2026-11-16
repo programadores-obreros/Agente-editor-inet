@@ -36,7 +36,28 @@ import { derivarReadiness, validarProyecto } from "../nucleo/validar.ts"
 import { compararIdsLocales } from "../nucleo/id.ts"
 import type { ComponentKnowledge } from "../conocimiento/conocimiento.ts"
 import { admitirComponente, admitirPlaca, compatibilidadRevisada, REVISIONES_DEL_ANEXO, type RevisionesElectricas } from "../conocimiento/admision.ts"
-import { derivarEscritura, derivarLectura, nombreDePinArduino, type Lectura, type NivelDigital } from "./derivaciones.ts"
+import { derivarEscritura, derivarLectura, pinArduino, type Lectura, type NivelDigital, type PinArduino } from "./derivaciones.ts"
+import {
+  RechazoDeEmision,
+  UINT32_MAX,
+  UINT8_MAX,
+  atomo,
+  comentario,
+  cpp,
+  crearNombres,
+  entero,
+  expresionDeBackend,
+  flotante,
+  idLocal,
+  lineaDeBackend,
+  numero,
+  palabra,
+  pinAnalogico,
+  texto,
+  unirLineas,
+  type CodigoRechazoDeEmision,
+  type Linea,
+} from "./emision.ts"
 import { renderizarPlatformioIni } from "./platformio-ini.ts"
 import { BACKENDS_DE_PROTOCOLO, backendDeProtocolo, type BackendDeProtocolo, type CampoDeProtocolo } from "./protocolos.ts"
 
@@ -53,6 +74,13 @@ export type CodigoErrorCodegen =
   | "CODEGEN_PROTOCOLO_SIN_BACKEND"
   /** S2: la lectura declarada no se puede cumplir tal cual (terminal, campo del protocolo o tiempos). */
   | "CODEGEN_LECTURA_INCOHERENTE"
+  /**
+   * H-02: un dato no se puede escribir en el programa sin cambiar lo que el programa dice
+   * (`CODEGEN_IDENTIFICADOR_INVALIDO`: un id de la IR o del catálogo no forma un identificador
+   * C++; `CODEGEN_DATO_NO_EMITIBLE`: un texto, un número o un valor del `.ini` no entra en su
+   * clase léxica). Los emite `emision.ts`; `datos` trae `clase`, `causa`, `campo` y `valor`.
+   */
+  | CodigoRechazoDeEmision
 
 export interface ErrorCodegen {
   readonly codigo: CodigoErrorCodegen
@@ -116,7 +144,7 @@ interface PinPlan {
   readonly tipo: string
   readonly terminal: string
   readonly pin: string
-  readonly nombreArduino: string
+  readonly arduino: PinArduino
 }
 
 /** Lectura por el nivel del pin, derivada de la topología (Slice 1). */
@@ -137,8 +165,8 @@ interface BusPlan {
   readonly pin: PinPlan
   readonly esperaMs: number
   readonly periodoMs: number
-  /** Los tiempos tal como los declara Component Knowledge, en UCUM (para el comentario del programa). */
-  readonly declarado: { readonly espera: string; readonly periodo: string }
+  /** Los tiempos tal como los declara Component Knowledge, en segundos (para el comentario del programa). */
+  readonly declarado: { readonly espera: number; readonly periodo: number }
 }
 
 /** Lectura por protocolo (Slice 2): un campo de los datos del bus; puede ser inválida. */
@@ -184,9 +212,9 @@ const compararPorComponente = (a: { readonly componente: string; readonly termin
 function pinDe(componente: Componente, terminal: string, placa: Placa): PinPlan | undefined {
   const pin = componente.pines[terminal]
   const registro = pin === null || pin === undefined ? undefined : placa.pines.find((p) => p.id === pin)
-  const nombreArduino = registro ? nombreDePinArduino(registro) : undefined
-  if (pin === null || pin === undefined || nombreArduino === undefined) return undefined
-  return { componente: componente.id, tipo: componente.tipo, terminal, pin, nombreArduino }
+  const arduino = registro ? pinArduino(registro) : undefined
+  if (pin === null || pin === undefined || arduino === undefined) return undefined
+  return { componente: componente.id, tipo: componente.tipo, terminal, pin, arduino }
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════
@@ -227,7 +255,6 @@ export type LecturaResuelta =
       readonly campo: CampoDeProtocolo
       readonly esperaMs: number
       readonly periodoMs: number
-      readonly declarado: { readonly espera: string; readonly periodo: string }
       /** Los tiempos tal como los declara Component Knowledge (para los datos de un error). */
       readonly tiempos: { readonly esperaTrasEncendido: Cantidad; readonly periodoMinimo: Cantidad }
     }
@@ -266,9 +293,8 @@ export function resolverLectura(
   const periodoMs = milisegundos(conocimiento, declarada.periodoMinimo)
   if (esperaMs === undefined || periodoMs === undefined || !declarada.esperaTrasEncendido || !declarada.periodoMinimo)
     return fallo("CODEGEN_LECTURA_INCOHERENTE", { ...datosLectura, causa: "tiempos", esperaTrasEncendido: declarada.esperaTrasEncendido ?? null, periodoMinimo: declarada.periodoMinimo ?? null })
-  const declarado = { espera: `${declarada.esperaTrasEncendido.valor} s`, periodo: `${declarada.periodoMinimo.valor} s` }
   const tiempos = { esperaTrasEncendido: declarada.esperaTrasEncendido, periodoMinimo: declarada.periodoMinimo }
-  return { ok: true, valor: { kind: "protocolo", terminal: terminal.id, protocolo: declarada.protocolo, backend, campo, esperaMs, periodoMs, declarado, tiempos } }
+  return { ok: true, valor: { kind: "protocolo", terminal: terminal.id, protocolo: declarada.protocolo, backend, campo, esperaMs, periodoMs, tiempos } }
 }
 
 /** Paso 3, escritura: la acción tiene complemento declarado (su reposo) y la topología da un nivel para las dos. */
@@ -292,6 +318,18 @@ export function resolverEscritura(
 // ════════════════════════════════════════════════════════════════════════════════════
 
 export function generarPrograma(proyecto: Proyecto, conocimiento: ComponentKnowledge, opciones: OpcionesGeneracion = {}): ResultadoGeneracion {
+  // H-02: cualquier dato que no entre en su clase léxica corta la generación ENTERA. El rechazo
+  // viaja como excepción desde `emision.ts` y acá se vuelve un error del backend, sin archivos:
+  // no hay forma de devolver medio programa. Cualquier otra excepción no es un rechazo y sigue.
+  try {
+    return generar(proyecto, conocimiento, opciones)
+  } catch (error) {
+    if (error instanceof RechazoDeEmision) return falla(error.codigo, error.datos)
+    throw error
+  }
+}
+
+function generar(proyecto: Proyecto, conocimiento: ComponentKnowledge, opciones: OpcionesGeneracion): ResultadoGeneracion {
   const revisiones = opciones.revisiones ?? REVISIONES_DEL_ANEXO
   const catalogo = conocimiento.catalogo
 
@@ -303,6 +341,16 @@ export function generarPrograma(proyecto: Proyecto, conocimiento: ComponentKnowl
   if (!readiness.listo || proyecto.placa === null) return noListo()
   const placa = conocimiento.placa(proyecto.placa)
   if (!placa) return noListo()
+
+  // ── 1b. identidad (H-02) ──
+  // Segunda capa, independiente del cargador: el codegen no supone que el proyecto entró por
+  // `cargarProyecto`. TODOS los ids locales tienen que tener el formato de la IR, también los
+  // de lo que el programa no nombra (una resistencia, una conexión): de un proyecto con un id
+  // que no es un id no se genera nada. Va después de la readiness para que un proyecto que no
+  // está listo siga diciendo por qué no está listo.
+  for (const c of proyecto.componentes) idLocal("cmp", c.id, "componente.id")
+  for (const cx of proyecto.conexiones) idLocal("conn", cx.id, "conexion.id")
+  for (const b of proyecto.comportamientos) idLocal("beh", b.id, "comportamiento.id")
 
   // ── 2. admisión eléctrica ──
   const noAdmitidos: { readonly kind: "placa" | "componente"; readonly id: string; readonly problemas: readonly string[] }[] = []
@@ -346,7 +394,8 @@ export function generarPrograma(proyecto: Proyecto, conocimiento: ComponentKnowl
         const clave = claveBus(sensor.id, r.terminal, r.protocolo)
         let bus = buses.get(clave)
         if (!bus) {
-          bus = { componente: sensor.id, terminal: r.terminal, protocolo: r.protocolo, backend: r.backend, pin, esperaMs: r.esperaMs, periodoMs: r.periodoMs, declarado: r.declarado }
+          const declarado = { espera: r.tiempos.esperaTrasEncendido.valor, periodo: r.tiempos.periodoMinimo.valor }
+          bus = { componente: sensor.id, terminal: r.terminal, protocolo: r.protocolo, backend: r.backend, pin, esperaMs: r.esperaMs, periodoMs: r.periodoMs, declarado }
           buses.set(clave, bus)
         } else if (bus.esperaMs !== r.esperaMs || bus.periodoMs !== r.periodoMs) {
           // Dos capacidades del mismo bus con tiempos distintos: no hay un único horario que cumpla ambas.
@@ -391,20 +440,24 @@ export function generarPrograma(proyecto: Proyecto, conocimiento: ComponentKnowl
 
 // ════════════════════════════════════════════════════════════════════════════════════
 // Render (orden canónico: por id de componente y terminal, nunca por orden de entrada)
+//
+// H-02 (SEC-04 / BUG-04): acá NO hay plantillas de string. Cada línea se arma con `cpp` y cada
+// comentario con `comentario` (`emision.ts`), que sólo aceptan fragmentos ya codificados por la
+// clase léxica que les toca: un id de la IR pasa por `idLocal`, un id del catálogo por `atomo`
+// (identificador) o `texto` (comentario), un número por `entero`/`flotante`/`numero`, un
+// operador o un nivel por `palabra`. Interpolar un string crudo es un rechazo, no un descuido
+// posible. Antes de H-02 todo esto era `l.push(\`…${dato}…\`)`: un salto de línea en un id
+// terminaba el comentario y lo que seguía era código (evidencia `inyeccion-ids.out`).
+//
+// El texto fijo de cada línea es byte a byte el de antes: para un proyecto válido la salida no
+// cambia (test D1 de `codegen-h02-inyeccion.test.mjs` y la comparación de evidencia/H02/determinismo).
 // ════════════════════════════════════════════════════════════════════════════════════
 
-const identificador = (texto: string) => texto.replace(/[^A-Za-z0-9]/g, "_")
-const constanteDePin = (p: PinPlan) => `PIN_${identificador(p.componente)}_${identificador(p.terminal)}`.toUpperCase()
-const variableDeLectura = (l: LecturaPlan) => `${identificador(l.sensor)}_${identificador(l.capacidad)}`
-const funcionDeLectura = (l: LecturaPlan) => `leer_${variableDeLectura(l)}`
+/** Tablas cerradas del backend: lo que se emite es el valor de la tabla, el dato sólo elige. */
+const OPERADORES: Readonly<Record<Comparador, string>> = Object.freeze({ ">": ">", "<": "<", ">=": ">=", "<=": "<=" })
+const NIVELES: Readonly<Record<NivelDigital, string>> = Object.freeze({ HIGH: "HIGH", LOW: "LOW" })
+const MODOS_DE_PIN: Readonly<Record<Lectura["modo"], string>> = Object.freeze({ INPUT_PULLUP: "INPUT_PULLUP" })
 
-/** Literal `float` de C++ para un número finito (la IR ya rechaza los no finitos). */
-function literalFloat(valor: number): string {
-  const texto = String(valor)
-  return /[.e]/.test(texto) ? `${texto}f` : `${texto}.0f`
-}
-
-const sufijoDeBus = (b: BusPlan) => `${identificador(b.componente)}_${identificador(b.terminal)}`
 const compararBuses = (a: BusPlan, b: BusPlan) => compararPorComponente(a, b) || (a.protocolo < b.protocolo ? -1 : a.protocolo > b.protocolo ? 1 : 0)
 
 function renderizarMain(
@@ -424,87 +477,127 @@ function renderizarMain(
   const pines = [...pinesPorClave.values()].sort(compararPorComponente)
   const drivers = [...new Map(buses.map((b) => [b.protocolo, b.backend] as const)).entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 
-  const condicion = (s: SalidaPlan) => {
-    const conversion = s.umbralIR.unidad === s.unidad ? "" : ` (en la IR: ${s.umbralIR.valor} ${s.umbralIR.unidad})`
-    return `${s.lectura.sensor}.${s.lectura.capacidad} ${s.comparador} ${s.umbral} ${s.unidad}${conversion}`
+  // ── Nombres: un registro por programa; cada identificador sale de acá ──
+  const nombres = crearNombres()
+  const componente = (id: string) => idLocal("cmp", id, "componente.id")
+  const regla = (id: string) => idLocal("beh", id, "comportamiento.id")
+  const partesDePin = (p: { readonly componente: string; readonly terminal: string }) => [componente(p.componente), atomo(p.terminal, "terminal")]
+  const partesDeLectura = (l: LecturaPlan) => [componente(l.sensor), atomo(l.capacidad, "capacidad")]
+  const constanteDePin = (p: PinPlan) => nombres.identificador("pin", "PIN_", partesDePin(p), { mayusculas: true })
+  const variableDeLectura = (l: LecturaPlan) => nombres.identificador("lectura", "", partesDeLectura(l))
+  const funcionDeLectura = (l: LecturaPlan) => nombres.identificador("funcion-de-lectura", "leer_", partesDeLectura(l))
+  const validezDeLectura = (l: LecturaPlan) => nombres.identificador("validez-de-lectura", "valida_", partesDeLectura(l))
+  const esperaDeBus = (b: BusPlan) => nombres.identificador("espera-de-bus", "ESPERA_MS_", partesDePin(b), { mayusculas: true })
+  const periodoDeBus = (b: BusPlan) => nombres.identificador("periodo-de-bus", "PERIODO_MS_", partesDePin(b), { mayusculas: true })
+  const datosDeBus = (b: BusPlan) => nombres.identificador("datos-de-bus", "datos_", partesDePin(b))
+  const validezDeBus = (b: BusPlan) => nombres.identificador("validez-de-bus", "valida_", partesDePin(b))
+  const intentadaDeBus = (b: BusPlan) => nombres.identificador("intentada-de-bus", "intentada_", partesDePin(b))
+  const ultimoIntentoDeBus = (b: BusPlan) => nombres.identificador("ultimo-intento-de-bus", "ultimo_intento_", partesDePin(b))
+  const activaDeRegla = (s: SalidaPlan) => nombres.identificador("regla", "", [regla(s.regla)])
+
+  const valorDePin = (p: PinPlan) => (p.arduino.clase === "analogico" ? pinAnalogico(p.arduino.numero, "pin.numero") : entero(p.arduino.numero, "pin.numero", { max: UINT8_MAX }))
+  const operador = (s: SalidaPlan) => palabra(s.comparador, OPERADORES, "cuando.comparador")
+  const nivelDe = (valor: NivelDigital, campo: string) => palabra(valor, NIVELES, campo)
+
+  /** La regla, como la lee una persona; si el umbral se convirtió, también el de la IR. */
+  const reglaEnComentario = (s: SalidaPlan) => {
+    const id = regla(s.regla).dato
+    const sensor = componente(s.lectura.sensor).dato
+    const capacidad = texto(s.lectura.capacidad, "capacidad")
+    const comparador = texto(operador(s).texto, "cuando.comparador")
+    const umbral = numero(s.umbral, "umbral")
+    const unidad = texto(s.unidad, "umbral.unidad")
+    const actuador = componente(s.actuador).dato
+    const accion = texto(s.accion, "entonces.accion")
+    const reposo = texto(s.reposo, "reposo")
+    if (s.umbralIR.unidad === s.unidad) return comentario`  ${id}: ${sensor}.${capacidad} ${comparador} ${umbral} ${unidad} -> ${actuador} ${accion} (reposo: ${reposo})`
+    const umbralIR = numero(s.umbralIR.valor, "cuando.umbral.valor")
+    const unidadIR = texto(s.umbralIR.unidad, "cuando.umbral.unidad")
+    return comentario`  ${id}: ${sensor}.${capacidad} ${comparador} ${umbral} ${unidad} (en la IR: ${umbralIR} ${unidadIR}) -> ${actuador} ${accion} (reposo: ${reposo})`
   }
-  const l: string[] = []
-  l.push("// Generado por Tecnia Bot (codegen) desde la IR del proyecto. No editar: se regenera desde el proyecto.")
-  l.push(`// proyecto: ${proyecto.id} | revision: ${proyecto.revision} | catalogo: ${catalogoHash} | placa: ${placa.id}`)
+
+  const l: Linea[] = []
+  l.push(cpp`${comentario`Generado por Tecnia Bot (codegen) desde la IR del proyecto. No editar: se regenera desde el proyecto.`}`)
+  l.push(
+    cpp`${comentario`proyecto: ${texto(proyecto.id, "proyecto.id")} | revision: ${numero(proyecto.revision, "proyecto.revision")} | catalogo: ${texto(catalogoHash, "catalogo.hash")} | placa: ${texto(placa.id, "placa.id")}`}`,
+  )
   if (salidas.length > 0) {
-    l.push("//")
-    l.push("// Reglas de nivel: mientras la condicion vale, el actuador esta en el estado objetivo; si no, en su reposo.")
-    for (const s of salidas) l.push(`//   ${s.regla}: ${condicion(s)} -> ${s.actuador} ${s.accion} (reposo: ${s.reposo})`)
+    l.push(cpp`${comentario``}`)
+    l.push(cpp`${comentario`Reglas de nivel: mientras la condicion vale, el actuador esta en el estado objetivo; si no, en su reposo.`}`)
+    for (const s of salidas) l.push(cpp`${reglaEnComentario(s)}`)
   }
   if (buses.length > 0) {
-    l.push("// Lecturas por protocolo: sin una lectura valida (antes de la primera, o si el ultimo intento fallo)")
-    l.push("// la condicion no se cumple y el actuador queda en su reposo.")
+    l.push(cpp`${comentario`Lecturas por protocolo: sin una lectura valida (antes de la primera, o si el ultimo intento fallo)`}`)
+    l.push(cpp`${comentario`la condicion no se cumple y el actuador queda en su reposo.`}`)
   }
-  l.push("")
-  l.push("#include <Arduino.h>")
+  l.push(cpp``)
+  l.push(cpp`#include <Arduino.h>`)
   if (pines.length > 0) {
-    l.push("")
-    for (const p of pines) l.push(`static const uint8_t ${constanteDePin(p)} = ${p.nombreArduino};  // ${p.componente} (${p.tipo}).${p.terminal} -> ${p.pin}`)
+    l.push(cpp``)
+    for (const p of pines) {
+      const detalle = comentario`${componente(p.componente).dato} (${texto(p.tipo, "componente.tipo")}).${texto(p.terminal, "terminal")} -> ${texto(p.pin, "pin")}`
+      l.push(cpp`static const uint8_t ${constanteDePin(p)} = ${valorDePin(p)};  ${detalle}`)
+    }
   }
-  for (const [, backend] of drivers) {
-    l.push("")
-    l.push(...backend.driver)
+  for (const [protocolo, backend] of drivers) {
+    l.push(cpp``)
+    for (const linea of backend.driver) l.push(lineaDeBackend(linea, `backend[${protocolo}].driver`))
   }
   for (const b of buses) {
-    const x = sufijoDeBus(b)
-    l.push("")
-    l.push(`// ${b.componente}.${b.terminal}: protocolo ${b.protocolo}. Component Knowledge: espera tras el encendido ${b.declarado.espera}, periodo minimo ${b.declarado.periodo}.`)
-    l.push(`static const uint32_t ESPERA_MS_${x.toUpperCase()} = ${b.esperaMs};`)
-    l.push(`static const uint32_t PERIODO_MS_${x.toUpperCase()} = ${b.periodoMs};`)
-    l.push(`static uint8_t datos_${x}[${b.backend.bytes}];`)
-    l.push(`static bool valida_${x} = false;`)
-    l.push(`static bool intentada_${x} = false;`)
-    l.push(`static uint32_t ultimo_intento_${x} = 0;`)
+    const detalle = comentario`${componente(b.componente).dato}.${texto(b.terminal, "terminal")}: protocolo ${texto(b.protocolo, "protocolo")}. Component Knowledge: espera tras el encendido ${numero(b.declarado.espera, "esperaTrasEncendido")} s, periodo minimo ${numero(b.declarado.periodo, "periodoMinimo")} s.`
+    l.push(cpp``)
+    l.push(cpp`${detalle}`)
+    l.push(cpp`static const uint32_t ${esperaDeBus(b)} = ${entero(b.esperaMs, "esperaTrasEncendido (ms)", { max: UINT32_MAX })};`)
+    l.push(cpp`static const uint32_t ${periodoDeBus(b)} = ${entero(b.periodoMs, "periodoMinimo (ms)", { max: UINT32_MAX })};`)
+    l.push(cpp`static uint8_t ${datosDeBus(b)}[${entero(b.backend.bytes, "backend.bytes", { min: 1, max: UINT8_MAX })}];`)
+    l.push(cpp`static bool ${validezDeBus(b)} = false;`)
+    l.push(cpp`static bool ${intentadaDeBus(b)} = false;`)
+    l.push(cpp`static uint32_t ${ultimoIntentoDeBus(b)} = 0;`)
   }
   for (const lectura of nivel) {
-    l.push("")
-    l.push(`static float ${funcionDeLectura(lectura)}() {`)
-    l.push(`  return digitalRead(${constanteDePin(lectura.pin)}) == ${lectura.lectura.nivelVerdadero} ? 1.0f : 0.0f;`)
-    l.push("}")
+    l.push(cpp``)
+    l.push(cpp`static float ${funcionDeLectura(lectura)}() {`)
+    l.push(cpp`  return digitalRead(${constanteDePin(lectura.pin)}) == ${nivelDe(lectura.lectura.nivelVerdadero, "lectura.nivelVerdadero")} ? 1.0f : 0.0f;`)
+    l.push(cpp`}`)
   }
-  l.push("")
-  l.push("void setup() {")
-  for (const lectura of nivel) l.push(`  pinMode(${constanteDePin(lectura.pin)}, ${lectura.lectura.modo});`)
-  for (const b of buses) l.push(`  pinMode(${constanteDePin(b.pin)}, INPUT_PULLUP);  // ${b.protocolo}: bus suelto (en reposo queda en alto)`)
+  l.push(cpp``)
+  l.push(cpp`void setup() {`)
+  for (const lectura of nivel) l.push(cpp`  pinMode(${constanteDePin(lectura.pin)}, ${palabra(lectura.lectura.modo, MODOS_DE_PIN, "lectura.modo")});`)
+  for (const b of buses) l.push(cpp`  pinMode(${constanteDePin(b.pin)}, INPUT_PULLUP);  ${comentario`${texto(b.protocolo, "protocolo")}: bus suelto (en reposo queda en alto)`}`)
   for (const s of salidas) {
-    l.push(`  pinMode(${constanteDePin(s.pin)}, OUTPUT);`)
-    l.push(`  digitalWrite(${constanteDePin(s.pin)}, ${s.nivelReposo});  // ${s.actuador} arranca en reposo (${s.reposo})`)
+    l.push(cpp`  pinMode(${constanteDePin(s.pin)}, OUTPUT);`)
+    l.push(cpp`  digitalWrite(${constanteDePin(s.pin)}, ${nivelDe(s.nivelReposo, "nivelReposo")});  ${comentario`${componente(s.actuador).dato} arranca en reposo (${texto(s.reposo, "reposo")})`}`)
   }
-  l.push("}")
-  l.push("")
-  l.push("void loop() {")
-  if (buses.length > 0) l.push("  const uint32_t ahora = millis();")
+  l.push(cpp`}`)
+  l.push(cpp``)
+  l.push(cpp`void loop() {`)
+  if (buses.length > 0) l.push(cpp`  const uint32_t ahora = millis();`)
   for (const b of buses) {
-    const x = sufijoDeBus(b)
-    l.push(`  // ${b.componente}.${b.terminal}: el primer intento despues de la espera tras el encendido; despues, uno por periodo.`)
-    l.push(`  if (intentada_${x} ? ahora - ultimo_intento_${x} >= PERIODO_MS_${x.toUpperCase()} : ahora >= ESPERA_MS_${x.toUpperCase()}) {`)
-    l.push(`    intentada_${x} = true;`)
-    l.push(`    ultimo_intento_${x} = ahora;`)
-    l.push(`    valida_${x} = ${b.backend.funcion}(${constanteDePin(b.pin)}, datos_${x});`)
-    l.push("  }")
+    l.push(cpp`  ${comentario`${componente(b.componente).dato}.${texto(b.terminal, "terminal")}: el primer intento despues de la espera tras el encendido; despues, uno por periodo.`}`)
+    l.push(cpp`  if (${intentadaDeBus(b)} ? ahora - ${ultimoIntentoDeBus(b)} >= ${periodoDeBus(b)} : ahora >= ${esperaDeBus(b)}) {`)
+    l.push(cpp`    ${intentadaDeBus(b)} = true;`)
+    l.push(cpp`    ${ultimoIntentoDeBus(b)} = ahora;`)
+    l.push(cpp`    ${validezDeBus(b)} = ${nombres.deBackend(b.backend.funcion, "backend.funcion")}(${constanteDePin(b.pin)}, ${datosDeBus(b)});`)
+    l.push(cpp`  }`)
   }
   for (const lectura of lecturas) {
-    if (lectura.kind === "nivel") l.push(`  const float ${variableDeLectura(lectura)} = ${funcionDeLectura(lectura)}();`)
+    if (lectura.kind === "nivel") l.push(cpp`  const float ${variableDeLectura(lectura)} = ${funcionDeLectura(lectura)}();`)
     else {
-      const x = sufijoDeBus(lectura.bus)
-      l.push(`  const bool valida_${variableDeLectura(lectura)} = valida_${x};`)
-      l.push(`  const float ${variableDeLectura(lectura)} = ${lectura.campo.expresion(`datos_${x}`)};`)
+      const datos = datosDeBus(lectura.bus)
+      l.push(cpp`  const bool ${validezDeLectura(lectura)} = ${validezDeBus(lectura.bus)};`)
+      l.push(cpp`  const float ${variableDeLectura(lectura)} = ${expresionDeBackend(lectura.campo.expresion(datos.texto), "backend.campo.expresion")};`)
     }
   }
   for (const s of salidas) {
-    const activa = identificador(s.regla)
-    const valida = s.lectura.kind === "protocolo" ? `valida_${variableDeLectura(s.lectura)} && ` : ""
-    l.push("")
-    l.push(`  // ${s.regla} -> ${s.actuador}`)
-    l.push(`  const bool ${activa} = ${valida}${variableDeLectura(s.lectura)} ${s.comparador} ${literalFloat(s.umbral)};`)
-    l.push(`  digitalWrite(${constanteDePin(s.pin)}, ${activa} ? ${s.nivelObjetivo} : ${s.nivelReposo});`)
+    const activa = activaDeRegla(s)
+    const umbral = flotante(s.umbral, "umbral")
+    l.push(cpp``)
+    l.push(cpp`  ${comentario`${regla(s.regla).dato} -> ${componente(s.actuador).dato}`}`)
+    if (s.lectura.kind === "protocolo") l.push(cpp`  const bool ${activa} = ${validezDeLectura(s.lectura)} && ${variableDeLectura(s.lectura)} ${operador(s)} ${umbral};`)
+    else l.push(cpp`  const bool ${activa} = ${variableDeLectura(s.lectura)} ${operador(s)} ${umbral};`)
+    l.push(cpp`  digitalWrite(${constanteDePin(s.pin)}, ${activa} ? ${nivelDe(s.nivelObjetivo, "nivelObjetivo")} : ${nivelDe(s.nivelReposo, "nivelReposo")});`)
   }
-  l.push("}")
-  l.push("")
-  return l.join("\n")
+  l.push(cpp`}`)
+  l.push(cpp``)
+  return unirLineas(l)
 }
