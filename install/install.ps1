@@ -258,7 +258,12 @@ function Leer-KeyConTimeout($segundos) {
                 elseif ($charInfo.Key -eq "Backspace") {
                     if ($key.Length -gt 0) { $key = $key.Substring(0, $key.Length - 1) }
                 } else {
-                    $key += $charInfo.KeyChar
+                    # SOLO lo que se puede tipear. Las flechas, Inicio, Fin, Supr y
+                    # F1..F12 tambien llegan por ReadKey, con KeyChar en el caracter
+                    # nulo: antes se pegaban a la key tal cual. Una flecha apretada
+                    # por error mientras se pegaba dejaba una key con un nulo
+                    # adentro, que no se ve en ningun lado y que Google rechaza.
+                    if (-not [char]::IsControl($charInfo.KeyChar)) { $key += $charInfo.KeyChar }
                 }
             } else {
                 Start-Sleep -Milliseconds 100
@@ -270,9 +275,31 @@ function Leer-KeyConTimeout($segundos) {
         if (-not $key) { $key = "" }
         $recibioAlgo = $true
     }
+    # Lo mismo para lo que llega por un pipe: se sacan los caracteres de control
+    # (un \r suelto de un archivo de Windows, un tab) antes de sacar los blancos.
     $limpia = ""
-    if ($key) { $limpia = ([string]$key).Trim() }
+    if ($key) { $limpia = ([regex]::Replace([string]$key, '[\x00-\x1F\x7F]', '')).Trim() }
     return @{ key = $limpia; respondio = [bool]$recibioAlgo }
+}
+
+# ---- La forma minima de una key, ANTES de gastar una prueba en ella -----------
+#
+# NO es un formato de Google: clave.ts no valida ninguno (le saca los blancos de
+# las puntas, exige que no quede vacia y se la manda a Google, que es el unico que
+# sabe). Aca se mira lo unico que se puede afirmar sin inventar nada: la key viaja
+# en el header x-goog-api-key, y por ahi solo pasan caracteres ASCII visibles. Algo
+# con un espacio en el medio (dos cosas pegadas juntas) o con una letra con tilde
+# (se pego un renglon de un apunte, no la key) no puede ser una key.
+#
+# Hace falta ACA y no en clave.ts por una diferencia de conducta: con un caracter
+# que no entra en un header el pedido ni sale, eso se clasifica "no pude probarla",
+# y este script -a diferencia de clave.ts- a veces GUARDA lo que no pudo probar.
+# Sin este chequeo, un renglon cualquiera pegado por error quedaba guardado como
+# key. Con el, lo que no puede viajar en el header no se prueba ni se guarda: el
+# mismo final que en clave.ts.
+function Test-FormaDeKey($k) {
+    if (-not $k) { return $false }
+    return ([string]$k -cmatch '^[\x21-\x7E]+$')
 }
 
 # ---- Probar la key CONTRA GOOGLE ---------------------------------------------
@@ -507,6 +534,8 @@ if ($purgada) {
 $keyFinal = ""
 $pruebaKey = $null
 $preguntar = $true
+# $true SOLO si en esta corrida se guardo una key nueva sin haber podido probarla.
+$GuardadaSinProbar = $false
 
 if ($env:TECNIA_SIN_PROMPT) {
     # TECNIA_SIN_PROMPT: la CI (y cualquier despliegue desatendido) la define para
@@ -567,55 +596,93 @@ if ($keyFinal -and (Test-KeyVieja $keyFinal)) {
         Write-Host "      (seguimos sin key por ahora)."
     }
 } elseif ($keyFinal) {
-    # PROBAR ANTES DE GUARDAR, y guardar igual salvo un caso.
+    # PROBAR ANTES DE GUARDAR. Y DOS CASOS EN LOS QUE NO SE GUARDA.
     #
-    # Lo UNICO que impide guardar es que Google la RECHACE explicitamente (400/403
-    # / API_KEY_INVALID): eso casi siempre es una key cortada al copiar -- son
-    # larguisimas -- y pisar con eso la key que ya estaba seria cambiarle un
-    # problema por otro peor.
+    # 1. Google la RECHAZA explicitamente (400/403 / API_KEY_INVALID): casi siempre
+    #    es una key cortada al copiar -- son larguisimas -- y pisar con eso la key
+    #    que ya estaba seria cambiarle un problema por otro peor.
     #
-    # Todo lo demas SE GUARDA y se informa. "No pude probarla" NO es motivo para
-    # rechazar nada: si la red de la escuela no llega a Google, no sabemos NADA de
-    # la key, y una instalacion no puede quedarse a medias porque el proxy filtra.
-    # Y una cuota agotada es una key REAL de la docente: guardarla no la deja peor
-    # que antes, y el mensaje de abajo le dice exactamente que hacer.
+    # 2. NO SE PUDO PROBAR y YA HABIA UNA KEY GUARDADA. Este caso faltaba, y era un
+    #    agujero: antes "no pude probarla" se guardaba SIEMPRE. En una escuela con
+    #    la red filtrada, una key mal pegada pisaba -sin copia- la key que andaba, y
+    #    mas abajo se imprimia "la key quedo donde estaba: no se toco nada", que era
+    #    falso. Si no llegamos a Google no sabemos nada de la key NUEVA; de la VIEJA
+    #    por lo menos sabemos que alguna vez sirvio. No se cambia lo conocido por lo
+    #    desconocido. Es lo que hace clave.ts: sin poder probar, no toca nada.
     #
-    # (Aca esta la unica diferencia deliberada con probarClave() de clave.ts: alla
-    # la prueba ademas DECIDE si guardar, porque alla hay una conversacion donde
-    # ofrecer Big Pickle y volver a pedir la key. Aca, muchas veces, no hay nadie.
-    # La CLASIFICACION es identica; lo que cambia es que con ella se hace.)
-    Write-Host "  [i] Probando la key contra Google (hasta $TimeoutPruebaKey s)..."
-    $pruebaNueva = Probar-KeyGoogle $keyFinal
-    $rechazada = ($pruebaNueva.resultado -eq "invalida")
-    if ($rechazada) {
-        Write-Host "  [X] Probe esa key contra Google y la RECHAZO: no es una key valida, asi que no la guarde."
-        Write-Host "      Fijate de copiarla entera (son largas y a veces se corta al copiar), o saca una nueva"
-        Write-Host "      en https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+    # Y UN CASO EN EL QUE SE GUARDA SIN HABER PODIDO PROBAR: cuando NO habia
+    # ninguna key. Ahi no hay nada que perder (lo peor que pasa es lo mismo que sin
+    # key: hay que pegar otra), y una instalacion no puede dejar sin Gemini a un
+    # aula entera porque el proxy filtra justo en ese momento. Es lo mismo que hace
+    # install.sh, y es la unica diferencia deliberada con clave.ts: alla hay una
+    # conversacion donde volver a pedir la key; aca, muchas veces, no hay nadie.
+    # Pero se DICE que quedo guardada sin probar -- ver el cajon de mas abajo.
+    #
+    # Una cuota agotada o un modelo retirado NO frenan el guardado: en los dos casos
+    # Google contesto, la key es real, y el mensaje de abajo dice que hacer.
+    #
+    # (La CLASIFICACION es identica a probarClave() de clave.ts; lo que cambia es
+    # que se hace con ella.)
+    $formaValida = Test-FormaDeKey $keyFinal
+    if (-not $formaValida) {
+        Write-Host "  [X] Eso que pegaste no tiene forma de key: trae espacios en el medio, o letras con tilde u otros"
+        Write-Host "      caracteres que una key no lleva. No la probe ni la guarde."
+        Write-Host "      Copiala de nuevo, entera y sola, desde https://aistudio.google.com/apikey"
+        Write-Host "      y volve a correr 'Reparar Tecnia Bot'."
         if ($tieneGoogle) {
             Write-Host "      Quedo la key que ya estaba guardada: no se piso nada."
         }
+        if (-not $tieneGoogle) {
+            Write-Host "      (seguimos sin key por ahora)."
+        }
     }
-    if (-not $rechazada) {
-        $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
-        # SIN BOM, y esto es un bloqueante que estuvo silencioso.
-        #
-        # `Set-Content -Encoding UTF8` en PowerShell 5.1 -- el que trae Windows 10 --
-        # escribe UTF-8 CON BOM. OpenCode lee este archivo con JSON.parse, que revienta
-        # con BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
-        #
-        # El docente ve la instalacion perfecta, el bot abre con su logo y su agente, y
-        # al primer mensaje: error de proveedor. Cero pistas.
-        #
-        # Este archivo era el unico que quedaba mal: las otras cuatro escrituras de
-        # este script ya usan WriteAllText por exactamente esta razon, y lo dicen en
-        # sus comentarios. Se sabia, y justo el de las credenciales quedo afuera.
-        [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
-        [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
-        $tieneGoogle = $true
-        # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
-        # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
-        $pruebaKey = $pruebaNueva
-        Write-Host "  [OK] Key guardada en esta compu."
+    if ($formaValida) {
+        Write-Host "  [i] Probando la key contra Google (hasta $TimeoutPruebaKey s)..."
+        $pruebaNueva = Probar-KeyGoogle $keyFinal
+        $rechazada = ($pruebaNueva.resultado -eq "invalida")
+        # Se calcula ACA, con el $tieneGoogle de ANTES de guardar nada.
+        $sinProbarConOtraGuardada = ($tieneGoogle -and ($pruebaNueva.resultado -eq "sinProbar"))
+        if ($rechazada) {
+            Write-Host "  [X] Probe esa key contra Google y la RECHAZO: no es una key valida, asi que no la guarde."
+            Write-Host "      Fijate de copiarla entera (son largas y a veces se corta al copiar), o saca una nueva"
+            Write-Host "      en https://aistudio.google.com/apikey y volve a correr 'Reparar Tecnia Bot'."
+            if ($tieneGoogle) {
+                Write-Host "      Quedo la key que ya estaba guardada: no se piso nada."
+            }
+        }
+        if ($sinProbarConOtraGuardada) {
+            $porQueNoSePudo = [string]$pruebaNueva.detalle
+            Write-Host "  [!] NO pude probar contra Google la key que pegaste ($porQueNoSePudo), asi que NO se si anda."
+            Write-Host "      Como ya habia una key guardada, NO la reemplace: quedo la que estaba, sin tocar."
+            Write-Host "      (Si la nueva estuviera mal copiada, pisar la otra te dejaba sin ninguna que ande.)"
+            Write-Host "      Suele ser la red: sin internet, o el filtro de la escuela bloqueando a Google."
+            Write-Host "      Cuando haya red, volve a correr 'Reparar Tecnia Bot' y pegala de nuevo."
+        }
+        if (-not $rechazada -and -not $sinProbarConOtraGuardada) {
+            $authData | Add-Member -NotePropertyName "google" -NotePropertyValue @{ type = "api"; key = $keyFinal } -Force
+            # SIN BOM, y esto es un bloqueante que estuvo silencioso.
+            #
+            # `Set-Content -Encoding UTF8` en PowerShell 5.1 -- el que trae Windows 10 --
+            # escribe UTF-8 CON BOM. OpenCode lee este archivo con JSON.parse, que revienta
+            # con BOM, y se traga el error: se queda sin credencial y NO AVISA NADA.
+            #
+            # El docente ve la instalacion perfecta, el bot abre con su logo y su agente, y
+            # al primer mensaje: error de proveedor. Cero pistas.
+            #
+            # Este archivo era el unico que quedaba mal: las otras cuatro escrituras de
+            # este script ya usan WriteAllText por exactamente esta razon, y lo dicen en
+            # sus comentarios. Se sabia, y justo el de las credenciales quedo afuera.
+            [System.IO.File]::WriteAllText($AuthFile, ($authData | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding $false))
+            [Environment]::SetEnvironmentVariable("GOOGLE_GENERATIVE_AI_API_KEY", $keyFinal, "User")
+            $tieneGoogle = $true
+            # La key nueva ya quedo probada: no se la vuelve a probar mas abajo. Una
+            # llamada por corrida y no dos -- cada prueba consume una del cupo gratis.
+            $pruebaKey = $pruebaNueva
+            # Si se guardo SIN haber podido probarla (no habia otra), el cajon de
+            # "no pude probarla" de mas abajo tiene que decir eso, y no "no se toco nada".
+            if ($pruebaNueva.resultado -eq "sinProbar") { $GuardadaSinProbar = $true }
+            Write-Host "  [OK] Key guardada en esta compu."
+        }
     }
 } else {
     # Enter, timeout, consola sin nadie, o TECNIA_SIN_PROMPT. NO SE TOCA NADA: ni
@@ -687,8 +754,18 @@ if ($tieneGoogle) {
     if ($resultadoKey -ne "anda" -and $resultadoKey -ne "cuota" -and $resultadoKey -ne "invalida" -and $resultadoKey -ne "modeloIdo") {
         Write-Host "    NO pude probar la key contra Google ($detalleKey), asi que NO se si anda."
         Write-Host "    Suele ser la red: sin internet, o el filtro de la escuela bloqueando a Google."
-        Write-Host "    La instalacion siguio igual y la key quedo donde estaba: no se toco nada."
-        Write-Host "    Si al primer mensaje ves un error, escribi /clave adentro de Tecnia Bot para probarla de nuevo."
+        # LO QUE PASO CON LA KEY, dicho segun lo que de verdad paso. Antes aca decia
+        # siempre "la key quedo donde estaba: no se toco nada", tambien cuando unas
+        # lineas mas arriba se acababa de GUARDAR una key nueva sin poder probarla.
+        if ($GuardadaSinProbar) {
+            Write-Host "    Como no habia ninguna key guardada, la que pegaste QUEDO GUARDADA igual, sin probar."
+            Write-Host "    Si estaba bien copiada va a andar en cuanto haya red; si no, Tecnia Bot va a fallar al"
+            Write-Host "    primer mensaje: ahi volve a correr 'Reparar Tecnia Bot' y pegala de nuevo."
+        }
+        if (-not $GuardadaSinProbar) {
+            Write-Host "    La instalacion siguio igual y la key guardada quedo donde estaba: no se toco nada."
+            Write-Host "    Si al primer mensaje ves un error, volve a correr 'Reparar Tecnia Bot' cuando haya red."
+        }
     }
 } else {
     $ModeloElegido = $ModeloSinKey
