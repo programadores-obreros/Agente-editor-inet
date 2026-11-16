@@ -1141,3 +1141,84 @@ test("I.6 · los encabezados de sección del .iss son exactamente los esperados,
   const iCode = issCrudo.search(/^\[Code\]\s*$/m)
   assert.doesNotMatch(issCrudo.slice(iCode + 6), /^\s*\[/m, "hay un renglón que empieza con «[» adentro de [Code]")
 })
+
+// ── Fase 3 · lo que decide SI el bootstrap corre y CON QUÉ CÓDIGO corta ────────
+//
+// DOS HUECOS QUE QUEDABAN, medidos por mutación contra este archivo y contra
+// instalador.test.mjs, opencode-version.test.mjs, robustez.test.mjs,
+// scripts-soporte.test.mjs y ci.test.mjs (exit code de cada `node --test`, sin
+// pipe; cada mutación aplicada con un script que hace assert de que el texto
+// existe, y comprobada con `git diff --stat`):
+//
+//   F3.a  .iss: el cuerpo de CorrerBootstrap cambiado por `Result := False;`
+//         → exit 0 en los seis archivos. HUECA.
+//         Con eso el .exe NO corre nunca el bootstrap, anota "salteado" y sale con
+//         0: un instalador que no instala nada y no avisa (el estado de la v0.3.48).
+//         Por qué era hueca: las guardas de 2.1 miraban que CorrerElBootstrap
+//         PREGUNTARA (`if not CorrerBootstrap then`), y ninguna qué CONTESTABA la
+//         función a la que le preguntaba.
+//   F3.b  bootstrap: sacar el `exit 1` del corte por install\OPENCODE_VERSION
+//         inválida → exit 0 en los seis. HUECA. (El script seguía de largo e
+//         instalaba «la versión que sea», que es lo que ese corte vino a impedir.)
+//   F3.c  bootstrap: ese mismo `exit 1` cambiado por `exit 0` → exit 0 en los
+//         seis. HUECA. (El .exe leía "todo comprobado" de un script que no hizo nada.)
+//         Por qué eran huecas las dos: tests/opencode-version.test.mjs comprueba
+//         que la versión se LEA y se valide, no que el script CORTE cuando no vale.
+//
+// Los demás cortes YA estaban custodiados, y no se duplican (misma medición):
+//   - `exit 1` de «no pude bajar Scoop» → 0: rojo por «2.2b · bajar el instalador
+//     de Scoop está atajado…» de este archivo.
+//   - `exit 1` de «Scoop NO quedó instalado» → 0: rojo por «Scoop también se
+//     verifica, y corta si falta» de instalador.test.mjs.
+//   - los tres `exit` del resumen final (falla de OpenCode, falla de la capa,
+//     degradado) → 0: rojo por las guardas «2.2b · «LISTO!» sólo se alcanza…» y
+//     «2.2b · la capa que no quedó…» de este archivo.
+//
+// Lo que se agrega igual es un CENSO de todos los `exit` del bootstrap: las
+// guardas de arriba miran cada corte por separado, y un `exit 0` NUEVO, metido en
+// cualquier otro lado, no lo veía ninguna. Después de agregar esto, F3.a, F3.b y
+// F3.c dan exit 1 en este archivo.
+
+test("F3.a · CorrerBootstrap contesta según /skipdeps, y es lo único que puede saltear el bootstrap", () => {
+  const fn = rutina("CorrerBootstrap")
+  // UNA asignación, y es la comparación con el parámetro: ni un False fijo, ni un
+  // True fijo, ni una segunda asignación que pise a la primera.
+  const asignaciones = [...fn.matchAll(/Result := ([^;]+);/g)].map((m) => m[1].trim())
+  assert.deepEqual(asignaciones, ["ExpandConstant('{param:skipdeps|0}') <> '1'"],
+    "CorrerBootstrap ya no contesta «corré, salvo que te pasen /skipdeps=1»: con un False fijo el .exe no instala nada y sale con 0")
+  assert.doesNotMatch(fn, /\bExit\b/, "CorrerBootstrap sale antes de asignar su resultado: devuelve False (el valor inicial)")
+  // Y el salteo se anota en UN solo lugar: el que cuelga de esa pregunta.
+  assert.equal((pascal.match(/EstadoBootstrap := EstadoSalteado\b/g) ?? []).length, 1, "«salteado» se asigna en más de un lugar")
+  const lanzar = rutina("CorrerElBootstrap")
+  assert.match(lanzar, /begin\s+if not CorrerBootstrap then\s+begin\s+EstadoBootstrap := EstadoSalteado;/,
+    "el salteo ya no cuelga de CorrerBootstrap, o no es lo primero que se decide")
+  assert.equal((lanzar.match(/\bExit;/g) ?? []).length, 1, "CorrerElBootstrap tiene más de una salida temprana antes de lanzar PowerShell")
+})
+
+/** Cada sentencia `exit` del bootstrap, en orden (sin los Write-Host, que las nombran). */
+const salidasBootstrap = comandos
+  .flatMap((l) => [...l.matchAll(/(?:^|[;{(])\s*exit\b[ \t]*([^\s;})]*)/g)].map((m) => `exit ${m[1]}`.trim()))
+
+test("F3.b · sin una install\\OPENCODE_VERSION válida el bootstrap CORTA con 1, antes de instalar nada", () => {
+  const corte = bloqueDesde(bootstrap, "if ($OpenCodeVersion -notmatch '^\\d+\\.\\d+\\.\\d+$') {")
+  assert.match(corte, /No se pudo leer la version de OpenCode a instalar/, "el corte no dice qué pasó")
+  assert.match(corte, /Stop-Transcript[^\n]*\n\s*exit 1\s*\n\}$/,
+    "con la versión inválida el script no termina en `exit 1`: sigue de largo, o le contesta «todo bien» al .exe")
+  // Y está antes de la primera cosa que instala algo.
+  const iCorte = bootstrap.indexOf(corte)
+  const iPrimeraInstalacion = bootstrap.search(/get\.scoop\.sh|scoop install/)
+  assert.ok(iPrimeraInstalacion > 0, "no encuentro dónde empieza a instalar el bootstrap")
+  assert.ok(iCorte >= 0 && iCorte < iPrimeraInstalacion, "el corte por versión inválida quedó después de empezar a instalar")
+})
+
+test("F3.c · censo de salidas del bootstrap: cinco cortes con 1, el degradado, y UN solo 0 al final", () => {
+  assert.deepEqual(
+    salidasBootstrap,
+    ["exit 1", "exit 1", "exit 1", "exit 1", "exit 1", "exit $CodigoDegradado", "exit 0"],
+    "cambió alguna salida del bootstrap. El orden es: versión de OpenCode inválida, no se pudo bajar Scoop, " +
+      "Scoop no quedó, OpenCode no arranca, la capa no quedó, degradado, y el único `exit 0` (todo comprobado). " +
+      "Si agregaste un corte a propósito, sumalo acá y al encabezado de bootstrap.ps1",
+  )
+  // El único 0 es la ÚLTIMA sentencia del script: nada corre después del veredicto.
+  assert.match(bootstrap, /\n\s*exit 0\s*$/, "el `exit 0` no es lo último del script")
+})
