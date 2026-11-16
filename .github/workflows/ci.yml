@@ -468,7 +468,11 @@ jobs:
             for f in "$d"/*; do
               n="$(basename "$f")"
               case "$n" in curl|wget|opencode|pio|platformio) continue ;; esac
-              [ -e "$bin/$n" ] || ln -s "$f" "$bin/$n"
+              # -L ademas de -e: en el runner hay enlaces rotos en /usr/bin (por ejemplo
+              # grub-ntldr-img). Para `-e` un enlace roto "no existe", asi que al
+              # encontrarlo de nuevo en /bin se intentaba crear otra vez y `ln` cortaba
+              # el paso con "Already exists". Fue lo unico rojo de la primera corrida.
+              if [ ! -e "$bin/$n" ] && [ ! -L "$bin/$n" ]; then ln -s "$f" "$bin/$n"; fi
             done
           done
           if PATH="$bin" command -v curl >/dev/null 2>&1; then echo "::error::la precondicion no se cumple: sigue habiendo curl"; exit 1; fi

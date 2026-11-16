@@ -7,13 +7,20 @@
 > probás, sos la primera persona: abajo dice cómo avisarnos.
 >
 > Lo que sí existe desde noviembre de 2026 es una prueba automática: el job
-> **"Instalador real (macOS, bash 3.2 del sistema)"** de `.github/workflows/ci.yml`
-> corre `install.sh`, `bootstrap.sh` y `uninstall.sh` en una Mac de GitHub. **Al
-> escribir esta guía ese job todavía no había corrido ni una vez**, así que no
-> cambia nada de lo de arriba. Cuando corra, su resultado (verde o rojo) es la
-> primera evidencia real que va a tener el proyecto, y esta nota se actualiza con
-> lo que haya dicho. Una Mac de GitHub trae herramientas de desarrollo que una
-> Mac de escuela puede no tener: aunque dé verde, no reemplaza probarlo a mano.
+> **"Instalador real (macOS, bash 3.2 del sistema)"** de `.github/workflows/ci.yml`.
+> **Corrió por primera vez el 16 de noviembre de 2026 y dio verde** (corrida
+> 43798115754 de GitHub Actions): en una Mac de GitHub con macOS 26.7.2, procesador
+> Apple (arm64) y el `bash` 3.2.57 del sistema, `install.sh` dejó la capa instalada
+> con el perfil protegido, `bootstrap.sh` bajó e instaló OpenCode 1.18.18 y
+> PlatformIO 6.2.0 y los dos contestaron, y `uninstall.sh --conservar` sacó la capa
+> dejando el perfil.
+>
+> **Qué NO prueba eso:** esa Mac trae Xcode y Python instalados, que una Mac de
+> escuela recién sacada de la caja puede no tener (ahí el instalador te va a pedir
+> `xcode-select --install`, y ese camino nadie lo vio). Tampoco abre el bot, ni
+> compila, ni carga a una placa, ni es una Mac con procesador Intel. Por eso el
+> cartel de arriba sigue en pie: pasa la prueba automática, y todavía falta que
+> una persona lo instale en una Mac de verdad.
 
 Si necesitás algo que ande seguro para la clase de mañana, usá
 [Windows](instalacion-windows.md) o [Linux](instalacion-linux.md), que sí están
