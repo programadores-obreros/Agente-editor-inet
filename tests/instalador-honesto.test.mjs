@@ -295,16 +295,23 @@ test("2.2b · cada componente que falta entra al resumen: PlatformIO, Node y la 
   }
 })
 
-test("2.2b · OpenCode se EJECUTA al final, salvo que ya esté marcado como caído", () => {
-  assert.match(final, /\$OpenCodeArranca = \$false\s*\n\s*if \(-not \$script:FalloOpenCode\) \{ \$OpenCodeArranca = \[bool\]\(Test-OpenCode\) \}/,
-    "el resumen afirma que OpenCode arranca sin ejecutarlo")
-  // Ninguna otra asignación puede ponerlo en verdadero.
-  const otras = final.split("\n").filter((l) => /\$OpenCodeArranca\s*=/.test(l) && !/\$OpenCodeArranca = \$false\s*$/.test(l) && !/Test-OpenCode/.test(l))
-  assert.deepEqual(otras.map((l) => l.trim()), [], "$OpenCodeArranca se asigna por otro lado")
+test("2.2b · OpenCode se EJECUTA al final SIEMPRE: «NO ARRANCA» sale de esa comprobación, no de una marca vieja", () => {
+  // ESTE TEST CUSTODIABA EL DEFECTO. Exigía `if (-not $script:FalloOpenCode) { ...
+  // Test-OpenCode }`: si la falla ya estaba marcada, el resumen imprimía "NO
+  // ARRANCA" sin ejecutar nada. Lo señaló la revisión de QA: la frase sobre el
+  // estado FINAL tiene que salir de la comprobación final.
+  const asignaciones = final.split("\n").filter((l) => /\$OpenCodeArranca\s*=/.test(l)).map((l) => l.trim())
+  assert.deepEqual(asignaciones, ["$OpenCodeArranca = [bool](Test-OpenCode)"], "$OpenCodeArranca no sale (sólo) de ejecutar OpenCode")
+  // Sin condición: la línea está en el nivel superior del script, no adentro de un if.
+  assert.match(final, /^\$OpenCodeArranca = \[bool\]\(Test-OpenCode\)$/m, "la comprobación final de OpenCode quedó condicionada")
+  // Y la marca vieja no decide ni el resumen ni el código de salida.
+  const desde = final.indexOf("$OpenCodeArranca = [bool](Test-OpenCode)")
+  const usos = final.slice(desde).split("\n").filter((l) => /FalloOpenCode/.test(l)).map((l) => l.trim())
+  assert.deepEqual(usos, ["if ($script:FalloOpenCode -and $OpenCodeArranca) {"], "la marca de más arriba vuelve a decidir algo del resumen final")
 })
 
 test("2.2b · la capa que no quedó ya no corta antes del resumen, pero sigue siendo falla", () => {
-  const antesDelResumen = final.slice(0, final.indexOf("$OpenCodeArranca = $false"))
+  const antesDelResumen = final.slice(0, final.indexOf("$OpenCodeArranca = [bool](Test-OpenCode)"))
   assert.doesNotMatch(antesDelResumen, /\bexit\b/, "se corta antes del resumen: el docente no ve cómo quedó el resto")
   assert.match(antesDelResumen, /if \(\$CodigoInstall -ne 0\) \{\s*\n\s*\$CapaOk = \$false/, "un código distinto de 0 de install.ps1 no marca la capa como caída")
   assert.match(antesDelResumen, /\} elseif \(-not \(Test-Path \(Join-Path \$cfgDir "agent\\tecnia-bot\.md"\)\)\) \{\s*\n\s*\$CapaOk = \$false/, "no se mira en el disco que el agente haya quedado")

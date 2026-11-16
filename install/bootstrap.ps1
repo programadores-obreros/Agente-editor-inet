@@ -1560,17 +1560,23 @@ if ($CodigoInstall -ne 0) {
 # "quedo instalado" encima de eso.
 #
 # CADA LINEA SALE DE UNA COMPROBACION, no de un "se intento":
-#   OpenCode   -> se EJECUTA de nuevo, aca, al final (Test-OpenCode). Si ya se
-#                 habia marcado la falla no se repite: cuando falla, ese chequeo
-#                 tarda unos veinte segundos y ya dejo su diagnostico arriba.
+#   OpenCode   -> se EJECUTA de nuevo, aca, al final (Test-OpenCode), SIEMPRE.
+#                 La primera version de este resumen se lo salteaba si la falla
+#                 ya estaba marcada mas arriba, e imprimia "NO ARRANCA" sin
+#                 ejecutar nada: una frase sobre el estado final que salia de
+#                 una marca vieja y no de una comprobacion. Lo marco la revision.
+#                 Cuesta unos veinte segundos cuando de verdad no arranca; es el
+#                 precio de que la ultima linea que lee el docente sea cierta.
 #                 La version sale del manifiesto de Scoop.
 #   PlatformIO -> $PioExe, que solo tiene valor si Buscar-Pio lo ejecuto y
 #                 contesto "PlatformIO".
 #   Node       -> $NodeExe, que solo tiene valor si Buscar-Node lo ejecuto y la
 #                 version alcanza.
 #   Capa       -> el codigo de install.ps1 Y el agente en el disco, aca arriba.
-$OpenCodeArranca = $false
-if (-not $script:FalloOpenCode) { $OpenCodeArranca = [bool](Test-OpenCode) }
+$OpenCodeArranca = [bool](Test-OpenCode)
+if ($script:FalloOpenCode -and $OpenCodeArranca) {
+    Write-Host "  [i] Mas arriba OpenCode no arrancaba y ahora si: vale lo de ahora, que es lo que se acaba de comprobar."
+}
 $OpenCodeActiva = Get-OpenCodeVersionInstalada
 $OpenCodeEsLaFijada = ($OpenCodeActiva -eq $OpenCodeVersion)
 
