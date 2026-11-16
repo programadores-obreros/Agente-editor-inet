@@ -646,25 +646,46 @@ test("2.4b · la carpeta de proyectos sale de la carpeta Documentos real, con el
     'if not defined DOCS set "DOCS=%USERPROFILE%\\Documents"',
     'set "PROY=%DOCS%\\Tecnia Bot"',
   ], "cambió cómo se valida la respuesta de PowerShell o el respaldo al perfil")
-  // PROY no se arma por ningún otro lado.
-  assert.equal(lineasLanzador.filter((l) => /^set "PROY=/.test(l)).length, 1, "PROY se define en más de un lugar")
+  // PROY sólo puede valer dos cosas: la de Documentos que informó Windows, o la del perfil.
+  assert.deepEqual(lineasLanzador.filter((l) => /set "PROY=/.test(l)).map((l) => l.replace(/^.*set "PROY=/, 'set "PROY=')),
+    ['set "PROY=%DOCS%\\Tecnia Bot"', 'set "PROY=%PROYPERFIL%"', 'set "PROY=%PROYPERFIL%"'], "PROY se arma por algún otro lado")
+  assert.ok(lineasLanzador.includes('set "PROYPERFIL=%USERPROFILE%\\Documents\\Tecnia Bot"'), "la carpeta de respaldo ya no es la del perfil")
 })
 
-test("2.4b · si no se puede ENTRAR a la carpeta de proyectos, el lanzador aborta y no abre el bot", () => {
-  const iCd = lineasLanzador.indexOf('cd /d "%PROY%" 2>nul || goto sinproyectos')
-  assert.ok(iCd > 0, "el `cd` a la carpeta de proyectos no está atado a un `|| goto sinproyectos`: si falla, se sigue de largo")
-  // La comprobación sobre el mundo: no quedar parado en la carpeta del programa.
-  assert.equal(lineasLanzador[iCd + 1], 'if /i "%CD%\\"=="%~dp0" goto sinproyectos', "no se comprueba que la carpeta actual NO sea la del programa")
-  // Las dos cosas pasan antes de abrir OpenCode, y antes de :listo2.
-  const iAbre = lineasLanzador.indexOf('"%OC%"')
+test("2.4b · Documentos en una ruta de red (UNC) no aborta: cmd no puede pararse ahí, se usa la del perfil", () => {
+  // REGRESIÓN que encontró la revisión: con redirección de carpetas de dominio,
+  // GetFolderPath devuelve \\servidor\share\..., mkdir anda y `cd /d` falla SIEMPRE.
+  // La primera versión abortaba en cada apertura donde antes el bot abría.
+  const i = lineasLanzador.indexOf('set "PROYPERFIL=%USERPROFILE%\\Documents\\Tecnia Bot"')
+  assert.equal(lineasLanzador[i + 1], 'if "%PROY:~0,2%"=="\\\\" set "PROY=%PROYPERFIL%"', "una ruta UNC no se cambia por la del perfil ANTES de intentar el cd")
+  assert.ok(i + 1 < lineasLanzador.indexOf('cd /d "%PROY%" 2>nul && set "ENPROY=1"'), "la ruta UNC se detecta después del primer cd")
+})
+
+test("2.4b · si no se puede ENTRAR a la carpeta de proyectos se reintenta con la del perfil, y si tampoco, se aborta", () => {
+  // Las líneas del tramo, EXACTAS y en orden: cualquier cosa que se cuele acá
+  // cambia quién llega a abrir el bot.
+  const desde = lineasLanzador.indexOf('set "ENPROY="')
   const iListo2 = lineasLanzador.indexOf(":listo2")
-  assert.ok(iAbre > 0, "no encuentro la línea que abre OpenCode")
-  assert.ok(iCd < iListo2 && iListo2 < iAbre, "la carpeta de proyectos se resuelve después de :listo2 o después de abrir el bot")
-  // No hay atajo: a :listo2 sólo se llega cayendo desde el bloque que verifica.
+  assert.ok(desde > 0 && iListo2 > desde, "no está el tramo que entra a la carpeta de proyectos antes de :listo2")
+  assert.deepEqual(lineasLanzador.slice(desde, iListo2 + 1), [
+    'set "ENPROY="',
+    'cd /d "%PROY%" 2>nul && set "ENPROY=1"',
+    "if defined ENPROY goto enproyectos",
+    'if /i "%PROY%"=="%PROYPERFIL%" goto sinproyectos',
+    'set "PROY=%PROYPERFIL%"',
+    'if not exist "%PROY%\\" mkdir "%PROY%" 2>nul',
+    'cd /d "%PROY%" 2>nul || goto sinproyectos',
+    ":enproyectos",
+    'if /i "%CD%\\"=="%~dp0" goto sinproyectos',
+    ":listo2",
+  ], "cambió el tramo que entra a la carpeta de proyectos: un cd fallido puede dejar pasar")
+  // ENPROY sólo se prende atado al éxito del cd, y a :enproyectos sólo se salta con ENPROY.
+  assert.equal(lineasLanzador.filter((l) => /ENPROY=1/.test(l)).length, 1, "ENPROY se prende por otro lado")
+  assert.deepEqual(lineasLanzador.filter((l) => /goto enproyectos/i.test(l)), ["if defined ENPROY goto enproyectos"], "se salta a :enproyectos sin haber entrado")
+  // No hay atajo a :listo2, y OpenCode se abre en UN solo lugar, después.
   assert.deepEqual(lineasLanzador.filter((l) => /goto listo2\b/i.test(l)), [], "hay un `goto listo2` que se saltea la verificación de la carpeta de proyectos")
-  assert.equal(lineasLanzador[iListo2 - 1], 'if /i "%CD%\\"=="%~dp0" goto sinproyectos', "entre la verificación y :listo2 se coló otra cosa")
-  // Y OpenCode se abre en UN solo lugar.
   assert.equal(lineasLanzador.filter((l) => l === '"%OC%"').length, 1, "OpenCode se abre desde más de un lugar")
+  assert.ok(lineasLanzador.indexOf('"%OC%"') > iListo2, "OpenCode se abre antes de resolver la carpeta de proyectos")
 })
 
 test("2.4b · el aborto dice qué carpeta es, pausa y termina sin abrir nada", () => {
