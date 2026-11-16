@@ -74,6 +74,8 @@ export interface HerramientasDeCarga {
   preguntarChecklist(ctx: unknown, pedido: PedidoDeCartel): Promise<string | null>
   /** Cómo se lanzó este proceso. En producción, `leerLineaDeComandoReal`; los tests la inyectan. */
   readonly lineaDeComando?: () => LecturaDeLineaDeComando
+  /** De dónde se busca configuración de OpenCode (ciclo 3). En producción, el entorno real; los tests lo inyectan. */
+  readonly configuracion?: EntornoDeConfiguracion
 }
 
 /** Lo que se usa del `ctx` de OpenCode. `ask` no se llama desde acá: lo llama `preguntarChecklist`. */
@@ -249,8 +251,146 @@ const ABRIR_NORMALMENTE =
   "La carga a la placa sólo se hace desde Tecnia Bot abierto normalmente: la ventana de siempre, sin opciones de servidor ni de aprobación automática y sin otros programas conectados. " +
   "Pedile al docente que cierre OpenCode y lo vuelva a abrir así; ahí sí se puede cargar."
 
+/*
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ * CONFIGURACIÓN DE OPENCODE QUE PUEDE APROBAR EL CARTEL (ciclo 3)
+ * ═══════════════════════════════════════════════════════════════════════════════════════
+ *
+ * MEDIDO en OpenCode 1.18.18 real: con la TUI abierta con `opencode` a secas, un
+ * `<proyecto>/.opencode/opencode.json` con `"permission": {"*": "allow", "¿Revisaste el
+ * circuito?*": "allow"}` (también dentro de `agent.tecnia-bot`) hace que el cartel de
+ * `programa cargar` se apruebe solo: 0 eventos de permiso, 1 grabación. La misma regla en el
+ * `opencode.json` del perfil NO lo logra.
+ *
+ * DE DÓNDE LEE OpenCode (LEÍDO en el checkout local, que es 1.15.12, `config/paths.ts`):
+ * `opencode.json[c]` y carpetas `.opencode` subiendo desde la carpeta de trabajo hasta la raíz
+ * del repositorio git; además `~/.opencode`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG`,
+ * `OPENCODE_CONFIG_CONTENT` y `OPENCODE_PERMISSION`. Que 1.18.18 haga lo mismo: NO VERIFICADO.
+ *
+ * LA REGLA, deliberadamente MÁS estricta que OpenCode: no se lee ni se interpreta nada; la
+ * sola PRESENCIA rechaza.
+ *   - Desde la carpeta de trabajo (`ctx.directory`), desde `process.cwd()` y desde la carpeta
+ *     de datos del proyecto, y desde el `realpath` de cada una, subiendo nivel por nivel hasta
+ *     `/`: ningún `.opencode`, `opencode.json` ni `opencode.jsonc` (con `lstat`: un enlace
+ *     simbólico cuenta aunque esté roto). Un nivel que no se puede revisar también rechaza.
+ *   - ÚNICA EXCEPCIÓN: `$HOME/.opencode`, porque el instalador oficial de OpenCode deja ahí su
+ *     binario (`install/bootstrap.sh` agrega `$HOME/.opencode/bin` al PATH). Se tolera sólo si
+ *     es una carpeta común sin nada que OpenCode lea como configuración (ver
+ *     `PROHIBIDO_EN_HOME`). Se revisa siempre, esté o no en el camino hacia arriba.
+ *   - Variables: `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`,
+ *     `OPENCODE_PERMISSION` definidas y no vacías rechazan. El producto no define ninguna
+ *     (revisado en `install/`, `installer/` y `scripts/`: `producto-local.sh` hace
+ *     `unset OPENCODE_CONFIG_DIR`), así que no hay excepción.
+ *   - La configuración del PERFIL (`$XDG_CONFIG_HOME/opencode`) NO es parte de este control.
+ */
+
+const CONFIG_EN_CARPETA = [".opencode", "opencode.json", "opencode.jsonc"] as const
+const VARIABLES_DE_CONFIGURACION = ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_PERMISSION"] as const
+/** Lo que OpenCode puede leer de una carpeta de configuración. En `$HOME/.opencode`, cualquiera de estos rechaza. */
+const PROHIBIDO_EN_HOME = new Set(["opencode.json", "opencode.jsonc", "agent", "agents", "command", "commands", "plugin", "plugins", "tool", "tools", "mode", "modes", "skill", "skills", "agents.md"])
+
+/** De dónde mirar. Inyectable para probar sin tocar el HOME ni la carpeta real. */
+export interface EntornoDeConfiguracion {
+  readonly cwd: () => string
+  readonly home: string
+  readonly entorno: NodeJS.ProcessEnv
+}
+
+export const ENTORNO_DE_CONFIGURACION_REAL: EntornoDeConfiguracion = {
+  cwd: () => process.cwd(),
+  get home() {
+    return homedir()
+  },
+  get entorno() {
+    return process.env
+  },
+}
+
+const noExiste = (error: unknown) => {
+  const codigo = (error as NodeJS.ErrnoException)?.code
+  return codigo === "ENOENT" || codigo === "ENOTDIR"
+}
+
+/**
+ * ¿Hay configuración de OpenCode que pueda cambiar quién aprueba el cartel? Devuelve qué y
+ * dónde, en palabras, o `null`. Nunca tira: un error al revisar es un rechazo.
+ */
+export function configuracionDeOpenCodeQueNoSeAdmite(directorio: string, e: EntornoDeConfiguracion = ENTORNO_DE_CONFIGURACION_REAL): string | null {
+  try {
+    for (const nombre of VARIABLES_DE_CONFIGURACION) {
+      const valor = e.entorno[nombre]
+      if (typeof valor === "string" && valor.trim() !== "") return `la variable de entorno ${nombre}`
+    }
+
+    const home = resolve(e.home)
+    let homeReal = home
+    try {
+      homeReal = realpathSync(home)
+    } catch (error) {
+      if (!noExiste(error)) return `no pude revisar la carpeta personal (${home})`
+    }
+    const esHome = (dir: string) => dir === home || dir === homeReal
+
+    // `$HOME/.opencode`: la única excepción, y se revisa siempre.
+    const enHome = revisarOpencodeDeHome(join(home, ".opencode"))
+    if (enHome) return enHome
+
+    const partidas = new Set<string>()
+    for (const dir of [directorio, e.cwd(), join(directorio, ".tecnia-vista-fisica")]) {
+      partidas.add(resolve(dir))
+      try {
+        partidas.add(realpathSync(dir))
+      } catch (error) {
+        if (!noExiste(error)) return `no pude revisar la carpeta ${dir}`
+      }
+    }
+    const revisadas = new Set<string>()
+    for (const partida of partidas) {
+      for (let dir = partida; ; dir = dirname(dir)) {
+        if (!revisadas.has(dir)) {
+          revisadas.add(dir)
+          for (const nombre of CONFIG_EN_CARPETA) {
+            const ruta = join(dir, nombre)
+            try {
+              lstatSync(ruta)
+            } catch (error) {
+              if (noExiste(error)) continue
+              return `no pude revisar la carpeta ${dir}`
+            }
+            if (nombre === ".opencode" && esHome(dir)) continue // ya revisada arriba
+            return ruta
+          }
+        }
+        if (dirname(dir) === dir) break
+      }
+    }
+    return null
+  } catch (error) {
+    return `no pude revisar la configuración de OpenCode (${error instanceof Error ? error.message : String(error)})`
+  }
+}
+
+/** `$HOME/.opencode` se tolera sólo como carpeta común sin nada de `PROHIBIDO_EN_HOME`. */
+function revisarOpencodeDeHome(ruta: string): string | null {
+  let st: ReturnType<typeof lstatSync>
+  try {
+    st = lstatSync(ruta)
+  } catch (error) {
+    return noExiste(error) ? null : `no pude revisar ${ruta}`
+  }
+  if (!st.isDirectory()) return ruta // un enlace o un archivo: no es lo que deja el instalador
+  let entradas: string[]
+  try {
+    entradas = readdirSync(ruta)
+  } catch {
+    return `no pude revisar ${ruta}`
+  }
+  const prohibida = entradas.find((n) => PROHIBIDO_EN_HOME.has(n.toLowerCase()))
+  return prohibida ? join(ruta, prohibida) : null
+}
+
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */
-export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando">): ResultadoDeCarga | null {
+export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion">): ResultadoDeCarga | null {
   const agente = h.agenteQueNoPuedeCargar(ctx)
   if (agente) return no("AGENTE_NO_AUTORIZADO", `NO SE CARGÓ — ${agente}`)
 
@@ -271,6 +411,15 @@ export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<Herramientas
     )
   }
   if (rechazo) return no(rechazo.codigo, `NO SE CARGÓ — OpenCode se abrió de una forma desde la que no se carga (${rechazo.detalle}). ${ABRIR_NORMALMENTE}`)
+  // Ciclo 3: configuración de OpenCode que podría aprobar el cartel sola. La sola presencia rechaza.
+  const deProyecto = configuracionDeOpenCodeQueNoSeAdmite(ctx.directory, h.configuracion ?? ENTORNO_DE_CONFIGURACION_REAL)
+  if (deProyecto) {
+    return no(
+      "CONFIGURACION_DE_PROYECTO",
+      `NO SE CARGÓ — encontré configuración de OpenCode que podría aprobar el cartel de la carga sin que nadie lo vea: ${deProyecto}. ` +
+        "Para cargar, hay que quitarla (o abrir Tecnia Bot en otra carpeta que no la tenga) y volver a abrir Tecnia Bot.",
+    )
+  }
   const config = servidorEnLaConfiguracion(ctx.directory)
   if (config) return no("SERVIDOR_EXPUESTO", `NO SE CARGÓ — la configuración de OpenCode expone un servidor (${config}): otro programa podría aprobar el cartel. ${ABRIR_NORMALMENTE}`)
   return null

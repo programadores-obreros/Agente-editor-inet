@@ -347,7 +347,7 @@ test("programa cargar cancelado durante la grabación: árbol terminado y confir
     assert.equal(JSON.parse(await proyectoFisico.execute({ accion: "aplicar", baseRevision: leer.revision, operaciones: OPS }, { directory: dir })).ok, true)
     const ctrl = new AbortController()
     const ctx = { directory: dir, agent: "tecnia-bot", abort: ctrl.signal, ask: async () => {} }
-    const corriendo = ejecutarPrograma({ accion: "cargar" }, ctx, undefined, { ...HERRAMIENTAS_DE_CARGA, lineaDeComando: () => ({ ok: true, argv: ["/opt/opencode/bin/opencode", "--agent", "tecnia-bot"] }) })
+    const corriendo = ejecutarPrograma({ accion: "cargar" }, ctx, undefined, { ...HERRAMIENTAS_DE_CARGA, lineaDeComando: () => ({ ok: true, argv: ["/opt/opencode/bin/opencode", "--agent", "tecnia-bot"] }), configuracion: { cwd: () => dir, home: join(OUT, "home-limpio"), entorno: {} } })
     assert.equal(await cortarCuandoGrabe(ctrl), true)
     const r = JSON.parse(await corriendo)
     const p = pidsAnotados()

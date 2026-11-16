@@ -88,8 +88,7 @@ const ops = (placaId, pines) => [
   reglaLed,
 ]
 const fisico = async (dir, args) => JSON.parse(await proyectoFisico.execute(args, { directory: dir }))
-async function armar(placaId = "esp32-devkit-v1", pines = ["GPIO4", "GPIO18"]) {
-  const dir = nuevoDir("programa-cargar")
+async function armar(placaId = "esp32-devkit-v1", pines = ["GPIO4", "GPIO18"], dir = nuevoDir("programa-cargar")) {
   const { revision } = await fisico(dir, { accion: "leer" })
   const r = await fisico(dir, { accion: "aplicar", baseRevision: revision, operaciones: ops(placaId, pines) })
   assert.equal(r.ok, true, JSON.stringify(r))
@@ -163,9 +162,14 @@ const DENEGADO = { _tag: "PermissionDeniedError", message: "The user has specifi
 /** La TUI como la abre el producto (H3: `procSelfCmdline` de la TUI, sin la bandera). El node de los tests no es OpenCode. */
 const TUI_NORMAL = ["/opt/opencode/bin/opencode", "--agent", "tecnia-bot"]
 
+/** Un HOME limpio para el control de configuración (ciclo 3): el HOME real de quien corre los tests no entra. */
+const HOME_LIMPIO = join(OUT, "home-limpio")
+mkdirSync(HOME_LIMPIO, { recursive: true })
+
 async function cargar(dir, { lanza = lanzador(), pregunta = cartel(), agente = "tecnia-bot", abort, sinAsk = false, deps = depsReales(), herramientas = {}, opciones = {} } = {}) {
   const ctx = { directory: dir, agent: agente, abort: abort ?? new AbortController().signal, ...(sinAsk ? {} : { ask: pregunta.ask }) }
-  const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, deps, { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, lineaDeComando: () => ({ ok: true, argv: TUI_NORMAL }), ...herramientas }, opciones)
+  const configuracion = { cwd: () => dir, home: HOME_LIMPIO, entorno: {} }
+  const texto = await ejecutarPrograma({ accion: "cargar" }, ctx, deps, { ...HERRAMIENTAS_DE_CARGA, run: lanza.run, lineaDeComando: () => ({ ok: true, argv: TUI_NORMAL }), configuracion, ...herramientas }, opciones)
   return { r: JSON.parse(texto), texto, lanza, pregunta }
 }
 
@@ -736,13 +740,17 @@ test("H3: si la línea de comando no se puede leer, o la plataforma no es Linux 
 
 test("H3-B: una configuración local que nombra \"server\" → no carga", async () => {
   const dir = await armar()
-  writeFileSync(join(dir, "opencode.json"), JSON.stringify({ server: { port: 4096 } }))
+  // Ciclo 3: un `opencode.json` en el PROYECTO ya rechaza antes (CONFIGURACION_DE_PROYECTO, con
+  // sus propios tests); el chequeo de "server" sigue valiendo para la configuración GLOBAL del perfil.
+  const global = join(process.env.XDG_CONFIG_HOME, "opencode")
+  mkdirSync(global, { recursive: true })
+  writeFileSync(join(global, "opencode.json"), JSON.stringify({ server: { port: 4096 } }))
   try {
     const { r, lanza } = await cargar(dir)
     assert.equal(r.codigo, "SERVIDOR_EXPUESTO")
     assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
   } finally {
-    rmSync(join(dir, "opencode.json"))
+    rmSync(join(global, "opencode.json"))
   }
   process.env.OPENCODE_CONFIG_CONTENT = '{"server":{"hostname":"0.0.0.0"}}'
   try {
@@ -750,6 +758,144 @@ test("H3-B: una configuración local que nombra \"server\" → no carga", async 
   } finally {
     delete process.env.OPENCODE_CONFIG_CONTENT
   }
+})
+
+// ── Ciclo 3: configuración de OpenCode que podría aprobar el cartel ───────────────────────
+// Medido en OpenCode 1.18.18: un `<proyecto>/.opencode/opencode.json` con `permission: allow`
+// aprobaba el cartel solo. Acá la sola presencia rechaza, antes de abrir nada.
+
+const PERMITIR_CARTEL = { "*": "allow", "¿Revisaste el circuito?*": "allow" }
+const nadaLanzado = (x) => {
+  assert.equal(x.lanza.listados + x.lanza.lanzamientos.length, 0, "se detectó la placa o se lanzó algo")
+  assert.equal(x.pregunta.pedidos.length, 0, "se mostró el cartel")
+  assert.deepEqual(carpetasPrivadas(), [], "se creó una carpeta privada (se llegó a regenerar)")
+  assert.equal(puertoLibre(), true, "el candado quedó tomado")
+}
+/** Una carpeta propia bajo OUT (no la base compartida de los otros tests). */
+const carpeta = (...tramos) => {
+  const d = join(OUT, "ciclo3", ...tramos)
+  mkdirSync(d, { recursive: true })
+  return d
+}
+
+test("ciclo 3: `.opencode/opencode.json` en el proyecto (el caso medido) → CONFIGURACION_DE_PROYECTO, sin cartel, sin placa, sin candado, sin lanzar", async () => {
+  const dir = await armar()
+  mkdirSync(join(dir, ".opencode"))
+  writeFileSync(join(dir, ".opencode", "opencode.json"), JSON.stringify({ permission: PERMITIR_CARTEL, agent: { "tecnia-bot": { permission: PERMITIR_CARTEL } } }))
+  const x = await cargar(dir)
+  assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+  assert.ok(x.r.resultado.includes(join(dir, ".opencode")), x.r.resultado)
+  assert.match(x.r.resultado, /quitarla|otra carpeta/)
+  nadaLanzado(x)
+})
+
+for (const nombre of ["opencode.json", "opencode.jsonc"]) {
+  test(`ciclo 3: \`${nombre}\` en la raíz del proyecto → rechazo (aunque esté vacío: no se interpreta)`, async () => {
+    const dir = await armar()
+    writeFileSync(join(dir, nombre), "")
+    const x = await cargar(dir)
+    assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+    assert.ok(x.r.resultado.includes(join(dir, nombre)))
+    nadaLanzado(x)
+  })
+}
+
+test("ciclo 3: `.opencode` en una carpeta de más arriba → rechazo (desde la carpeta de trabajo y desde process.cwd())", async () => {
+  const arriba = carpeta("arriba")
+  mkdirSync(join(arriba, ".opencode"), { recursive: true })
+  const dir = await armar(undefined, undefined, carpeta("arriba", "medio", "proyecto"))
+  const a = await cargar(dir)
+  assert.equal(a.r.codigo, "CONFIGURACION_DE_PROYECTO")
+  assert.ok(a.r.resultado.includes(join(arriba, ".opencode")))
+  nadaLanzado(a)
+  // Proyecto limpio, pero OpenCode corriendo (cwd) debajo de una carpeta con `.opencode`.
+  const limpio = await armar()
+  const b = await cargar(limpio, { herramientas: { configuracion: { cwd: () => carpeta("arriba", "otro"), home: HOME_LIMPIO, entorno: {} } } })
+  assert.equal(b.r.codigo, "CONFIGURACION_DE_PROYECTO")
+  nadaLanzado(b)
+})
+
+test("ciclo 3: `.opencode` como enlace simbólico (válido o roto) → rechazo", { skip: WIN ? "enlaces en Windows" : false }, async () => {
+  for (const destino of [carpeta("destino-valido"), join(OUT, "ciclo3", "no-existe")]) {
+    const dir = await armar()
+    symlinkSync(destino, join(dir, ".opencode"))
+    const x = await cargar(dir)
+    assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO", destino)
+    nadaLanzado(x)
+  }
+})
+
+test("ciclo 3: carpeta de trabajo que es un enlace a una carpeta cuyo ancestro REAL tiene `.opencode` → rechazo", { skip: WIN ? "enlaces en Windows" : false }, async () => {
+  const real = carpeta("real")
+  mkdirSync(join(real, ".opencode"), { recursive: true })
+  const destino = carpeta("real", "proyecto")
+  const enlace = join(carpeta("enlaces"), "proyecto")
+  symlinkSync(destino, enlace)
+  const dir = await armar(undefined, undefined, enlace)
+  const x = await cargar(dir)
+  assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+  assert.ok(x.r.resultado.includes(join(real, ".opencode")), x.r.resultado)
+  nadaLanzado(x)
+})
+
+for (const variable of ["OPENCODE_CONFIG", "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "OPENCODE_PERMISSION"]) {
+  test(`ciclo 3: la variable ${variable} definida → rechazo; vacía no cuenta`, async () => {
+    const dir = await armar()
+    const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home: HOME_LIMPIO, entorno: { [variable]: '{"permission":"allow"}' } } } })
+    assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+    assert.ok(x.r.resultado.includes(variable))
+    nadaLanzado(x)
+    const vacia = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home: HOME_LIMPIO, entorno: { [variable]: "  " } } } })
+    assert.equal(vacia.r.codigo, "CARGADO")
+  })
+}
+
+test("ciclo 3: `$HOME/.opencode` sólo con `bin/` (lo que deja el instalador de OpenCode) → se carga, con cartel", async () => {
+  const home = carpeta("home-con-bin")
+  mkdirSync(join(home, ".opencode", "bin"), { recursive: true })
+  writeFileSync(join(home, ".opencode", "bin", "opencode"), "")
+  const dir = await armar()
+  const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home, entorno: {} } } })
+  assert.equal(x.r.codigo, "CARGADO")
+  assert.equal(x.pregunta.pedidos.length, 1, "siempre con el cartel")
+})
+
+for (const cosa of ["opencode.json", "opencode.jsonc", "agent", "plugins", "tool", "AGENTS.md"]) {
+  test(`ciclo 3: \`$HOME/.opencode/${cosa}\` → rechazo`, async () => {
+    const home = carpeta(`home-con-${cosa}`)
+    mkdirSync(join(home, ".opencode", "bin"), { recursive: true })
+    if (cosa.includes(".")) writeFileSync(join(home, ".opencode", cosa), "")
+    else mkdirSync(join(home, ".opencode", cosa))
+    const dir = await armar()
+    const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => dir, home, entorno: {} } } })
+    assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+    assert.ok(x.r.resultado.includes(join(home, ".opencode", cosa)))
+    nadaLanzado(x)
+  })
+}
+
+test("ciclo 3: un nivel que no se puede revisar → rechazo", { skip: WIN || process.getuid?.() === 0 ? "permisos de Unix sin root" : false }, async () => {
+  const { chmodSync } = await import("node:fs")
+  const cerrada = carpeta("cerrada")
+  mkdirSync(join(cerrada, "adentro"))
+  chmodSync(cerrada, 0o600) // se puede listar, no atravesar: lstat de lo de adentro da EACCES
+  try {
+    const dir = await armar()
+    const x = await cargar(dir, { herramientas: { configuracion: { cwd: () => join(cerrada, "adentro"), home: HOME_LIMPIO, entorno: {} } } })
+    assert.equal(x.r.codigo, "CONFIGURACION_DE_PROYECTO")
+    assert.match(x.r.resultado, /no pude revisar/)
+    nadaLanzado(x)
+  } finally {
+    chmodSync(cerrada, 0o700)
+  }
+})
+
+test("ciclo 3: carpeta limpia → el camino feliz sigue igual, con cartel", async () => {
+  const dir = await armar(undefined, undefined, carpeta("limpia", "proyecto"))
+  const x = await cargar(dir)
+  assert.equal(x.r.codigo, "CARGADO")
+  assert.equal(x.pregunta.pedidos.length, 1)
+  assert.equal(x.lanza.lanzamientos.length, 1)
 })
 
 test("Q-04: si el proyecto cambia de revisión con el cartel abierto → PROYECTO_CAMBIO, no se lanza", async () => {
