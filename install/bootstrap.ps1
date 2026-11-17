@@ -25,7 +25,8 @@
 #       (su codigo 3: la capa se copio pero no pudo escribir la config o
 #       guardar la key). Vive en $CodigoDegradado.
 #   1 = FALLA: el bot NO se puede usar. OpenCode no arranca, la capa no quedo
-#       publicada, no se pudo instalar Scoop, o falta install\OPENCODE_VERSION.
+#       publicada, no se pudo instalar Scoop, falta install\OPENCODE_VERSION, o
+#       el manifest install\scoop\opencode.json falta o es de otra version.
 #       Es tambien lo que devuelve powershell.exe si el script no parsea o muere
 #       con un error sin atajar, asi que "1" nunca significa "anduvo".
 #
@@ -149,6 +150,56 @@ if ($OpenCodeVersion -notmatch '^\d+\.\d+\.\d+$') {
     Write-Host "      Tiene que estar en: $ArchivoVersionOpenCode"
     if ($OpenCodeVersion) { Write-Host "      Dice '$OpenCodeVersion' y se esperaba algo como 1.18.18." }
     else { Write-Host "      El archivo falta o esta vacio. Volve a descargar el instalador." }
+    Write-Host ""
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
+}
+
+# ---- POR QUE UN MANIFEST PROPIO, Y NO EL BUCKET DE SCOOP ----------------------
+#
+# Hasta la 0.4.9 la version fijada se instalaba con `scoop install opencode@<ver>`.
+# Ese comando NO busca la version vieja en ningun lado: toma el manifest ACTUAL del
+# bucket 'main' y le regenera la URL con su plantilla 'autoupdate'. Anduvo mientras
+# la plantilla apuntaba a los releases de GitHub.
+#
+# El 2026-11-11 el bucket paso opencode a la 2.x y cambio la plantilla a npm
+# (@opencode/cli-windows-x64), donde no existe ninguna 1.x. Desde ese dia, en TODA
+# instalacion nueva:
+#
+#     https://registry.npmjs.org/@opencode/cli-windows-x64/-/cli-windows-x64-1.18.18.tgz
+#     Error en el servidor remoto: (404) No se encontro.
+#     Could not install: opencode@1.18.18
+#
+# Se vio el 2026-11-17 en un aula, con los docentes delante. No se rompio una
+# maquina: se rompieron todas a la vez, sin que cambiara una linea de este repo.
+#
+# Ahora el manifest viaja ADENTRO del instalador (install\scoop\opencode.json), con
+# la URL del release de GitHub y el hash escritos. Scoop instala desde ese archivo
+# (`scoop install <ruta>.json` toma el nombre de la app del nombre del archivo, por
+# eso se llama opencode.json) y lo que haga el bucket deja de importar.
+#
+# Y NO SE CAE A `scoop install opencode` A SECAS si esto falla: eso instala la 2.x,
+# y el propio manifest del bucket avisa que su configuracion es incompatible con la
+# de la 1.x. Es preferible no tener OpenCode a tener uno que rompe la capa.
+#
+# El archivo tiene que decir la MISMA version que OPENCODE_VERSION. Si no coinciden
+# se corta aca: instalar "la que diga el manifest" con el cartel de "la que dice
+# OPENCODE_VERSION" es un OK falso. Lo custodia tests\opencode-manifest.test.mjs.
+$ManifiestoOpenCode = Join-Path $PSScriptRoot "scoop\opencode.json"
+$VersionDelManifiesto = ""
+try {
+    if (Test-Path $ManifiestoOpenCode) {
+        $VersionDelManifiesto = ("" + (("" + (Get-Content $ManifiestoOpenCode -Raw)) | ConvertFrom-Json).version).Trim()
+    }
+} catch {
+    $VersionDelManifiesto = ""
+}
+if ($VersionDelManifiesto -ne $OpenCodeVersion) {
+    Write-Host ""
+    Write-Host "  [X] El instalador no trae el manifest de OpenCode $OpenCodeVersion." -ForegroundColor Red
+    Write-Host "      Tiene que estar en: $ManifiestoOpenCode"
+    if ($VersionDelManifiesto) { Write-Host "      El archivo es de la version '$VersionDelManifiesto' y se esperaba la $OpenCodeVersion." }
+    else { Write-Host "      El archivo falta o no se pudo leer. Volve a descargar el instalador." }
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
     exit 1
@@ -662,15 +713,15 @@ if (Get-Command scoop -ErrorAction SilentlyContinue) {
 # en su codigo (github.com/ScoopInstaller/Scoop, libexec/scoop-install.ps1,
 # scoop-hold.ps1, scoop-update.ps1 y lib/manifest.ps1):
 #
-#   scoop install opencode@1.18.18
-#     No busca en el historial git del bucket: toma el manifest actual y le
-#     REGENERA la url y el hash para esa version con su bloque 'autoupdate'
-#     (generate_user_manifest). Avisa "Given version (x) does not match
-#     manifest (y)" y "Attempting to generate manifest": es normal, no es error.
-#     El manifest generado queda en scoop\workspace\opencode.json y el
-#     install.json de la app apunta a ese archivo ('url') en vez de al bucket:
-#     por eso `scoop info opencode` muestra esa ruta como Source. Necesita red,
-#     como cualquier instalacion.
+#   scoop install <ruta a install\scoop\opencode.json>
+#     Instala desde el manifest que trae este instalador, no desde el bucket
+#     (el porque esta arriba, en "POR QUE UN MANIFEST PROPIO"). El install.json
+#     de la app apunta a ese archivo ('url') en vez de a un bucket: por eso
+#     `scoop info opencode` muestra esa ruta como Source. Necesita red, como
+#     cualquier instalacion: el zip se baja de los releases de GitHub.
+#     SIEMPRE SIN `@<version>` atras de la ruta: con la version pegada, Scoop
+#     termina instalando el opencode del bucket 'main' (detalle en la rama
+#     "la fijada no esta en el disco", mas abajo).
 #
 #   scoop hold opencode
 #     Escribe "hold": true en scoop\apps\opencode\current\install.json.
@@ -797,17 +848,36 @@ if (Test-OpenCodeInstalado) {
                 }
             }
         } else {
-            # La fijada no esta en el disco. Instalarla con Scoop a version explicita la pone AL LADO
-            # de la que hay y cambia el enlace 'current': no desinstala nada (verificado en
-            # libexec/scoop-install.ps1: solo se salta si ESA version ya esta instalada).
-            # Visto en una notebook real: tenia 1.18.19 -> 1.18.29 (auto-update) y nunca la
-            # fijada; antes se dejaba como estaba y el pin no servia para nada.
+            # La fijada no esta en el disco y hay OTRA version activa.
+            #
+            # Hasta la 0.4.9 aca se hacia `scoop install opencode@<fijada>`, que la ponia AL
+            # LADO de la que habia y cambiaba 'current' sin desinstalar nada. Visto en una
+            # notebook real: tenia 1.18.19 -> 1.18.29 (auto-update) y nunca la fijada. Ese
+            # camino dependia de la plantilla del bucket de Scoop y desde el 2026-11-11 da
+            # 404 (ver "POR QUE UN MANIFEST PROPIO", mas arriba).
+            #
+            # CON EL MANIFEST PROPIO SCOOP NO INSTALA AL LADO, Y HAY QUE SABERLO. Leido en su
+            # codigo (libexec/scoop-install.ps1 y lib/manifest.ps1, master, 2026-11-17):
+            #
+            #   scoop install <ruta>.json
+            #     Con otra version activa contesta "is already installed" y sale con 0 sin
+            #     instalar nada. Es lo que se llama aca abajo: hoy no cambia nada, y lo que
+            #     sigue lo dice con todas las letras porque relee el disco en vez de creerle
+            #     al comando.
+            #
+            #   scoop install <ruta>.json@<version>
+            #     NO SE USA NUNCA. Cuando la version pedida coincide con la del archivo,
+            #     generate_user_manifest devuelve manifest_path <app> con el bucket vacio, y
+            #     eso cae al bucket 'main': instalaria el opencode DEL BUCKET (hoy la 2.x,
+            #     con una configuracion incompatible) creyendo instalar el nuestro.
+            #
+            # Desinstalar la que hay para poner la fijada tampoco: puede fallar, no romper.
             Write-Host "  [..] La $OpenCodeVersion no esta en el disco: la instalo al lado (no se borra la $instalada)..."
             $prev = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
             $salidaInst = ""
             try {
-                $salidaInst = scoop install opencode@$OpenCodeVersion *>&1 | Out-String
+                $salidaInst = scoop install $ManifiestoOpenCode *>&1 | Out-String
             } catch {
                 $salidaInst = "ERROR " + $_.Exception.Message
             }
@@ -841,7 +911,8 @@ if (Test-OpenCodeInstalado) {
                     Write-Host "      Tecnia Bot (OpenCode) esta abierto. Cerralo y volve a correr 'Reparar Tecnia Bot'."
                 } else {
                     foreach ($l in ($salidaInst -split "`n")) { if ($l -match "^\s*ERROR") { Write-Host ("      " + $l.Trim()) } }
-                    Write-Host "      Volve a correr 'Reparar Tecnia Bot'; si sigue, en PowerShell: scoop install opencode@$OpenCodeVersion"
+                    Write-Host "      Scoop no instala la $OpenCodeVersion al lado de otra version. Queda la $quedo, que arranca;"
+                    Write-Host "      esta version de Tecnia Bot se probo solo con la ${OpenCodeVersion}: avisale al referente tecnico."
                 }
             }
         }
@@ -857,7 +928,7 @@ if (Test-OpenCodeInstalado) {
     $prevInst = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $salidaInstalar = ""
-    try { $salidaInstalar = scoop install opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaInstalar = "ERROR " + $_.Exception.Message }
+    try { $salidaInstalar = scoop install $ManifiestoOpenCode *>&1 | Out-String } catch { $salidaInstalar = "ERROR " + $_.Exception.Message }
     $ErrorActionPreference = $prevInst
     foreach ($l in ($salidaInstalar -split "`n")) { if ($l.Trim() -and $l -notmatch "^\s*(Downloading|Extracting|Checking hash|Loading|Linking|Creating shim)") { Write-Host ("      " + $l.Trim()) } }
     Refresh-Path
@@ -947,7 +1018,7 @@ if (Test-OpenCodeInstalado) {
                 # no es ruido de descarga, y decide la verificacion que sigue.
                 $ErrorActionPreference = "Continue"
                 $salidaReintento = ""
-                try { $salidaReintento = scoop install opencode@$OpenCodeVersion *>&1 | Out-String } catch { $salidaReintento = "ERROR " + $_.Exception.Message }
+                try { $salidaReintento = scoop install $ManifiestoOpenCode *>&1 | Out-String } catch { $salidaReintento = "ERROR " + $_.Exception.Message }
                 $ErrorActionPreference = $prevInst
                 foreach ($l in ($salidaReintento -split "`n")) { if ($l.Trim() -and $l -notmatch "^\s*(Downloading|Extracting|Checking hash|Loading|Linking|Creating shim)") { Write-Host ("      " + $l.Trim()) } }
             }

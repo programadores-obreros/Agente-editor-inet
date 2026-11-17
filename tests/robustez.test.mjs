@@ -11,7 +11,7 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, readdirSync } from "node:fs"
+import { readFileSync, readdirSync, statSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -29,7 +29,14 @@ const sinComentariosTs = (t) => t.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\
 // script que se corre justo cuando algo ya no anda. Y el reporte lleva datos de
 // la máquina: a una carpeta ajena va sólo si alguien lo pide.
 test("ningún script de install/ tiene una IP de red local escrita a fuego", () => {
-  for (const f of readdirSync(join(REPO, "install"))) {
+  // CON SUBCARPETAS, y sólo archivos. Recorría install/ a un nivel y leía cada entrada
+  // como archivo: con la primera carpeta (install/scoop/, 0.4.10) reventó con EISDIR, y
+  // una IP escrita un nivel más abajo no la hubiera visto.
+  const archivos = readdirSync(join(REPO, "install"), { recursive: true })
+    .map((f) => f.split("\\").join("/"))
+    .filter((f) => statSync(join(REPO, "install", f)).isFile())
+  assert.ok(archivos.some((f) => f.includes("/")), "el listado no está bajando a las subcarpetas de install/")
+  for (const f of archivos) {
     const codigo = sinComentariosPs(leer(`install/${f}`))
     assert.doesNotMatch(codigo, /\\\\192\.168\.|\\\\10\.\d+\.|\\\\172\.(1[6-9]|2\d|3[01])\./,
       `install/${f} apunta a una carpeta de red con IP fija: en otra escuela se cuelga y filtra el reporte`)
