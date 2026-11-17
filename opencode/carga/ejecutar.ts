@@ -122,10 +122,13 @@ function porQueNoEsCargaAdmitida(argv: readonly string[]): string | null {
  * `carpetaPrivada` (ciclo 2): la carpeta privada de `programa cargar`. Con ella, si hay que
  * cortar, `run()` puede comprobar que ningún proceso la sigue usando; sin ella (la carga
  * heredada) el corte nunca se da por confirmado.
+ *
+ * `marcaDeCarga` (ciclo 5): un valor aleatorio único de esta carga. `run()` lo pone en el entorno
+ * del hijo (`TECNIA_CARGA`) y, al cortar, mata todo proceso que lo tenga, esté donde esté.
  */
-export async function lanzarCarga(run: Run, argv: string[], cwd: string, signal?: AbortSignal, timeoutMs: number = timeoutCarga(), carpetaPrivada?: string): Promise<RunResult> {
+export async function lanzarCarga(run: Run, argv: string[], cwd: string, signal?: AbortSignal, timeoutMs: number = timeoutCarga(), carpetaPrivada?: string, marcaDeCarga?: string): Promise<RunResult> {
   if (CAPACIDAD === null) throw rechazo("este módulo de carga se quedó sin la capacidad: otro la pidió antes. No se puede cargar desde acá")
   const motivo = porQueNoEsCargaAdmitida(argv)
   if (motivo) throw rechazo(`el argv no es una carga admitida (${motivo}); no se lanzó`)
-  return run(argv, cwd, signal, timeoutMs, CAPACIDAD, carpetaPrivada)
+  return run(argv, cwd, signal, timeoutMs, CAPACIDAD, carpetaPrivada, marcaDeCarga)
 }

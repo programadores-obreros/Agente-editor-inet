@@ -28,7 +28,7 @@
 //
 // Este módulo importa sólo `node:` y módulos de `carga/`.
 
-import { createHash, randomUUID } from "node:crypto"
+import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from "node:path"
@@ -782,9 +782,14 @@ const MEDIO_GRABAR =
   "Después desenchufala y volvé a enchufarla: pudo haber quedado a medio grabar (con el programa anterior roto o sin programa). " +
   "Para volver a cargar, cerrá y volvé a abrir Tecnia Bot: hasta entonces, `programa cargar` tiene ese puerto reservado."
 
-/** Corte de una carga en el que SÍ se comprobó que no quedó ningún proceso de grabación vivo. */
+/**
+ * Corte de una carga que `arbol.ts` confirmó. Dice EXACTAMENTE lo comprobado (ciclo 5): ningún
+ * proceso de la carga entre los que lanzó, en su carpeta ni con su marca. No dice "no quedó nada":
+ * un proceso que se separa a propósito, limpia su entorno y se va de la carpeta no se vería
+ * (límite escrito en `arbol.ts`).
+ */
 const CORTE_CONFIRMADO =
-  "Confirmé que no quedó ningún proceso de la carga corriendo, pero la placa pudo haber quedado a medio grabar (con el programa anterior roto o sin programa): hay que volver a cargarla."
+  "Corté la carga y comprobé que no quedó corriendo ningún proceso de ella (ni de los que lanzó, ni en su carpeta, ni con su marca). Pero la placa pudo haber quedado a medio grabar (con el programa anterior roto o sin programa): hay que volver a cargarla."
 
 /** Qué decir y si retener el puerto, según si `run()` confirmó que el árbol de la carga terminó (Q-01). */
 const despuesDelCorte = (corrida: RunResult) =>
@@ -1008,7 +1013,7 @@ async function cargarDesde(dir: string, p: ProgramaParaCargar, ctx: ContextoDeCa
     const timeoutMs = timeoutCarga()
     let corrida: RunResult
     try {
-      corrida = await lanzarCarga(h.run, argvDeCargaCompilando({ cwd: dir, environment: p.environment, puerto: placa.puerto }), dir, signal, timeoutMs, dir)
+      corrida = await lanzarCarga(h.run, argvDeCargaCompilando({ cwd: dir, environment: p.environment, puerto: placa.puerto }), dir, signal, timeoutMs, dir, randomBytes(32).toString("hex"))
     } catch (error) {
       // Un `ErrorDeCarga` es un rechazo ANTES de lanzar. Cualquier otra cosa: no se sabe.
       if (error instanceof ErrorDeCarga) return no(error.codigo, `NO SE CARGÓ — ${error.message}. No se lanzó nada.`)

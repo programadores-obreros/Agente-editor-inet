@@ -33,7 +33,7 @@
 import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { join, win32 } from "node:path"
-import { terminarArbol, TOPE_KILL_MS } from "./arbol.ts"
+import { inicioDe, terminarArbol, TOPE_KILL_MS } from "./arbol.ts"
 
 /** En 124 (timeout) y 130 (cancelado), `stdout`/`stderr` traen lo capturado hasta el corte. */
 export interface RunResult {
@@ -259,6 +259,8 @@ export type Run = (
   capacidad?: CapacidadDeCarga,
   /** Sólo cargas: la carpeta privada de la carga, para comprobar al cortar que nadie la usa (`arbol.ts`). */
   carpetaPrivada?: string,
+  /** Sólo cargas (ciclo 5): la marca única de esta carga; va SÓLO al entorno del hijo, como `TECNIA_CARGA`. */
+  marcaDeCarga?: string,
 ) => Promise<RunResult>
 
 let capacidadEntregada = false
@@ -388,6 +390,7 @@ export async function run(
   timeoutMs: number = TIMEOUT_CORTO_MS,
   capacidad?: CapacidadDeCarga,
   carpetaPrivada?: string,
+  marcaDeCarga?: string,
 ): Promise<RunResult> {
   // Resolvemos "pio" a la ruta real del binario (PATH-independiente)
   if (cmd[0] === "pio") cmd = [pioBin(), ...cmd.slice(1)]
@@ -420,13 +423,21 @@ export async function run(
   // init antes de que se los pueda enumerar. El corte de una carga lo hace `terminarArbol`,
   // abajo. Para todo lo que no es carga, nada cambia.
   const esCarga = capacidad === CAPACIDAD_DE_CARGA
-  const lanzar = () => Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", ...(esCarga ? {} : { signal: corte }) })
+  // Ciclo 5: la marca de la carga va SÓLO en el entorno del hijo (una copia), nunca en
+  // `process.env` de OpenCode: así la heredan pio, scons, esptool y cualquier nieto huérfano,
+  // y `terminarArbol` los encuentra aunque ya no sean descendientes ni usen la carpeta.
+  const entornoDeCarga = esCarga && marcaDeCarga ? { env: { ...process.env, TECNIA_CARGA: marcaDeCarga } } : {}
+  const lanzar = () => Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", ...entornoDeCarga, ...(esCarga ? {} : { signal: corte }) })
   let proc: ReturnType<typeof lanzar>
   try {
     proc = lanzar()
   } catch {
     return { code: CODIGO_NO_LANZADO, stdout: "", stderr: "command not found" }
   }
+  // Ciclo 5: cuándo arrancó el hijo de la carga, para que el barrido por marca no cuente como
+  // "ilegibles" a procesos que ya existían antes (ver `conMarcaEnProc` en `arbol.ts`).
+  const pidDelHijo = (proc as { pid?: unknown }).pid
+  const inicioDeLaCarga = esCarga && typeof pidDelHijo === "number" ? inicioDe(pidDelHijo) : undefined
 
   const lectura = (async (): Promise<RunResult> => {
     await Promise.all([leerAcumulando(proc.stdout, salida), leerAcumulando(proc.stderr, errores)])
@@ -455,7 +466,7 @@ export async function run(
     }
     // Sin carpeta privada (la carga heredada de `flash`/`both`) el corte se hace igual, pero
     // no se puede confirmar: `arbol.ts` exige el barrido por carpeta para decir "confirmado".
-    const fin = await terminarArbol(pid, carpetaPrivada)
+    const fin = await terminarArbol(pid, carpetaPrivada, marcaDeCarga, undefined, undefined, inicioDeLaCarga)
     // El hijo directo también tiene que haber terminado para el runtime (con tope: si el árbol
     // ya se confirmó muerto, esto vuelve enseguida).
     let tope: ReturnType<typeof setTimeout> | undefined

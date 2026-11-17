@@ -10,20 +10,29 @@
 //   1. Se enumera el árbol del hijo ANTES de matar a nadie: muerto el padre, los nietos pasan
 //      a colgar de init (o de un subreaper) y el vínculo se pierde. Si el hijo ya no está vivo
 //      en esa primera foto, a su pid NO se le manda nada (puede ser de otro proceso).
-//   2. Se CONGELA todo el árbol (SIGSTOP) y se vuelve a enumerar hasta un punto fijo: un
-//      proceso congelado no puede lanzar otro. Si el punto fijo no llega en el tope de vueltas,
-//      NO se confirma.
-//   3. SIGKILL a todos, TODAVÍA CONGELADOS. Nunca se reanuda el árbol (ciclo 2, B-2): con
-//      SIGTERM + SIGCONT, un proceso con handler de SIGTERM (scons lo tiene) volvía a correr y
-//      podía lanzar un hijo que nadie veía. SIGKILL no necesita SIGCONT. Se pierde el SIGTERM
-//      amable: aceptado, es una grabación cancelada.
-//   4. SEGUNDA COMPROBACIÓN, independiente del PPID (ciclo 2, B-3): ningún proceso del usuario
-//      puede tener el cwd adentro de la carpeta privada de esta carga ni nombrarla en su línea
-//      de comando (`pio -d <privada>`, scons con cwd ahí, esptool con rutas de
-//      `<privada>/.pio/build`). Los que aparezcan se matan con SIGKILL y se vuelve a mirar.
-//   `confirmado: true` exige las DOS cosas: el árbol muerto Y cero procesos que referencien la
-//   carpeta privada. Sin carpeta privada (la carga heredada de `platformio flash`) o sin `/proc`
-//   legible, no se confirma.
+//      Ciclo 5: al conjunto inicial se suman TODOS los procesos que tienen en su entorno la
+//      marca de esta carga (`TECNIA_CARGA=<valor aleatorio>`, que `run()` le pone sólo al hijo
+//      y que heredan sus descendientes), estén donde estén en el árbol.
+//   2. Se CONGELA todo (SIGSTOP) y se vuelve a enumerar —descendientes y marcados— hasta un
+//      punto fijo: un proceso congelado no puede lanzar otro. Si el punto fijo no llega en el
+//      tope de vueltas, NO se confirma.
+//   3. SIGKILL a todos, TODAVÍA CONGELADOS. Nunca se reanuda (ciclo 2, B-2): con SIGTERM +
+//      SIGCONT, un proceso con handler de SIGTERM (scons lo tiene) volvía a correr y podía
+//      lanzar un hijo que nadie veía. SIGKILL no necesita SIGCONT.
+//   4. COMPROBACIÓN independiente del PPID, hasta que quede vacía (matar y volver a mirar):
+//      ningún proceso del usuario con el cwd en la carpeta privada o que la nombre en su línea
+//      de comando (ciclo 2, B-3), y ningún proceso con la marca de esta carga (ciclo 5).
+//   `confirmado: true` exige TODO: el árbol muerto, cero procesos que referencien la carpeta
+//   privada y cero procesos con la marca. Sin carpeta privada o sin marca (la carga heredada de
+//   `platformio flash`), o sin `/proc` legible, no se confirma.
+//
+// LA MARCA (ciclo 5, MEDIDO en 1.18.18 sobre a4c75ee: un nieto que quedó huérfano ANTES del
+// corte por doble fork, con cwd `/` y sin nombrar la carpeta, seguía vivo mientras el producto
+// decía "confirmé"). Se busca la marca EXACTA en `/proc/<pid>/environ`. Fallar cerrado con
+// criterio: un `environ` ilegible de un proceso del MISMO usuario es "no pude confirmar"; los
+// de otro usuario se ignoran (no pueden ser de esta carga); uno que desaparece mientras se lee,
+// también. Nunca se toca un proceso sin la marca exacta, ni éste ni sus ancestros.
+//
 // En Linux la foto sale de `/proc/*/stat` (sin lanzar nada); en otros Unix de
 // `ps -A -o pid=,ppid=,stat=`; en Windows se usa `taskkill /PID <pid> /T /F`. Los comandos
 // auxiliares van con argv FIJO (sólo el pid, que es un número), por `spawnSync` de Node y
@@ -36,29 +45,53 @@
 //     puede descartar del todo sin pidfd; se acepta por la ventana chica.
 //   - Windows: NO VERIFICADO. `taskkill /T` mata el árbol que conoce Windows; "confirmado"
 //     ahí es "taskkill terminó bien y el hijo ya no existe", no una enumeración propia.
-//   - Un proceso reparentado que no tenga el cwd en la carpeta privada ni la nombre no se ve
-//     por ninguna de las dos vías. En la cadena pio → scons → esptool no es el caso.
+//   - UN PROCESO QUE SE ESCAPA A PROPÓSITO SIGUE PUDIENDO ESCAPAR: si deja de ser descendiente
+//     (doble fork, setsid), LIMPIA su entorno (pierde la marca) y no tiene el cwd en la carpeta
+//     privada ni la nombra, no se ve por ninguna de las tres vías. Ni `pio`, ni `scons`, ni
+//     `esptool` hacen eso; cerrarlo del todo pide grupos de procesos o cgroups, que no se
+//     pueden probar acá. Por eso el mensaje dice lo que se comprobó, no "no quedó nada".
 //
 // Este módulo importa sólo `node:`.
 
 import { spawnSync } from "node:child_process"
-import { readdirSync, readFileSync, readlinkSync } from "node:fs"
+import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs"
 import { basename, isAbsolute, relative } from "node:path"
 
 /** Cuánto se espera después de SIGKILL antes de declarar que NO se pudo confirmar. */
 export const TOPE_KILL_MS = 2_000
 /** Cuántas veces se vuelve a enumerar el árbol congelado buscando el punto fijo. */
 const VUELTAS_PUNTO_FIJO = 5
-/** Cuántas veces se barre por la carpeta privada (matar y volver a mirar). */
+/** Cuántas veces se barre por la carpeta privada y la marca (matar y volver a mirar). */
 const VUELTAS_BARRIDO = 3
 /** Cada cuánto se vuelve a mirar si quedan vivos (es una espera por condición, con tope). */
 const INTERVALO_MS = 25
+/** La forma de una marca de carga: la genera `cargar-programa.ts` con `randomBytes(32)`. */
+export const FORMA_MARCA_DE_CARGA = /^[0-9a-f]{64}$/
 
 export interface Proceso {
   pid: number
   ppid: number
   /** Zombi: terminó y sólo falta que lo recojan. No ejecuta nada. */
   zombi: boolean
+  /** Cuándo arrancó, en ticks desde el arranque del sistema (`/proc/<pid>/stat`, campo 22). Sólo Linux. */
+  inicio?: number
+}
+
+/** Cuándo arrancó `pid` (ticks desde el arranque del sistema), o `undefined` si no se puede leer. */
+export function inicioDe(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+    const inicio = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19])
+    return Number.isSafeInteger(inicio) && inicio >= 0 ? inicio : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Procesos con la marca, y cuántos del mismo usuario no se pudieron leer. `null` si no se pudo mirar nada. */
+export interface ConMarca {
+  pids: number[]
+  ilegibles: number
 }
 
 /** Lo que el algoritmo necesita del sistema. Inyectable para probar los caminos raros. */
@@ -68,6 +101,8 @@ export interface Sistema {
   foto(): Proceso[] | null
   /** Procesos vivos (no zombis, no éste) con el cwd adentro de `carpeta` o que la nombran en su línea de comando; `null` si no se pudo mirar. */
   referencian(carpeta: string): number[] | null
+  /** Procesos vivos (no zombis, ni éste ni sus ancestros) con `TECNIA_CARGA=<marca>` exacta en su entorno. */
+  conMarca(marca: string, desde?: number): ConMarca | null
   senal(pid: number, senal: NodeJS.Signals): void
   /** Sólo Windows. `true` si `taskkill /T /F` terminó bien. */
   taskkill(pid: number): boolean
@@ -87,7 +122,7 @@ function fotoDeProc(): Proceso[] | null {
     try {
       const stat = readFileSync(`/proc/${e}/stat`, "utf8")
       const resto = stat.slice(stat.lastIndexOf(")") + 2).split(" ")
-      salida.push({ pid: Number(e), ppid: Number(resto[1]), zombi: resto[0] === "Z" || resto[0] === "X" })
+      salida.push({ pid: Number(e), ppid: Number(resto[1]), zombi: resto[0] === "Z" || resto[0] === "X", inicio: Number(resto[19]) })
     } catch {
       // terminó mientras se leía: no está
     }
@@ -150,11 +185,66 @@ function referencianEnProc(carpeta: string): number[] | null {
   return salida
 }
 
+/** Este proceso y todos sus ancestros: con la marca o sin ella, a ellos no se les manda nada. */
+function esteYSusAncestros(foto: readonly Proceso[]): Set<number> {
+  const padres = new Map(foto.map((p) => [p.pid, p.ppid]))
+  const salida = new Set<number>()
+  for (let pid: number | undefined = process.pid; pid !== undefined && pid > 0 && !salida.has(pid); pid = padres.get(pid)) salida.add(pid)
+  return salida
+}
+
+/** El código de un error de E/S, o `""`. */
+const codigoDe = (error: unknown) => String((error as NodeJS.ErrnoException)?.code ?? "")
+const desaparecio = (error: unknown) => ["ENOENT", "ESRCH"].includes(codigoDe(error))
+
+/**
+ * Linux: procesos con la marca exacta en su `/proc/<pid>/environ`. Ver "LA MARCA" arriba.
+ *
+ * `desde`: cuándo arrancó el hijo de la carga. Un `environ` ilegible cuenta como "no pude
+ * confirmar" sólo si ese proceso arrancó en ese momento o después. MEDIDO en la compu de
+ * desarrollo: hay procesos del mismo usuario con `environ` ilegible que existen desde mucho
+ * antes (`systemd --user`, `(sd-pam)`, procesos de contenedores): están en casi cualquier
+ * escritorio Linux, y contarlos haría imposible confirmar un corte. Un proceso que arrancó
+ * ANTES que la carga no puede tener la marca: es aleatoria y se crea para esta carga. Sin
+ * `desde`, todos cuentan (falla cerrado).
+ */
+function conMarcaEnProc(marca: string, desde?: number): ConMarca | null {
+  const foto = fotoDeProc()
+  if (!foto) return null
+  const intocables = esteYSusAncestros(foto)
+  const uid = typeof process.getuid === "function" ? process.getuid() : -1
+  const buscada = `TECNIA_CARGA=${marca}`
+  const salida: ConMarca = { pids: [], ilegibles: 0 }
+  const puedeSerDeLaCarga = (p: Proceso) => desde === undefined || p.inicio === undefined || !Number.isSafeInteger(p.inicio) || p.inicio >= desde
+  for (const p of foto) {
+    if (p.zombi || intocables.has(p.pid)) continue
+    let suyo: boolean
+    try {
+      suyo = statSync(`/proc/${p.pid}`).uid === uid
+    } catch (error) {
+      if (desaparecio(error)) continue
+      if (puedeSerDeLaCarga(p)) salida.ilegibles++
+      continue
+    }
+    if (!suyo) continue // de otro usuario: no puede ser de esta carga
+    let entorno: string
+    try {
+      entorno = readFileSync(`/proc/${p.pid}/environ`, "utf8")
+    } catch (error) {
+      if (!desaparecio(error) && puedeSerDeLaCarga(p)) salida.ilegibles++
+      continue
+    }
+    if (entorno.split("\0").includes(buscada)) salida.pids.push(p.pid)
+  }
+  return salida
+}
+
 export function sistemaReal(plataforma: NodeJS.Platform = process.platform): Sistema {
   return {
     plataforma,
     foto: () => (plataforma === "linux" ? (fotoDeProc() ?? fotoDePs()) : fotoDePs()),
     referencian: (carpeta) => (plataforma === "linux" ? referencianEnProc(carpeta) : null),
+    conMarca: (marca, desde) => (plataforma === "linux" ? conMarcaEnProc(marca, desde) : null),
     senal: (pid, senal) => {
       try {
         process.kill(pid, senal)
@@ -200,19 +290,21 @@ async function esperarQueMueran(pids: ReadonlySet<number>, sis: Sistema, topeMs:
 }
 
 export interface FinDelArbol {
-  /** `true` sólo si se comprobó que no queda ningún proceso del árbol vivo NI ninguno que use la carpeta privada. */
+  /** `true` sólo si se comprobó que no queda ningún proceso del árbol vivo, ninguno que use la carpeta privada NI ninguno con la marca. */
   confirmado: boolean
   detalle: string
 }
 
 /** Una carpeta privada de carga, y no cualquier cosa: absoluta y con el prefijo de `mkdtemp`. Barrer `/` mataría todo. */
 const esCarpetaPrivada = (carpeta: string | undefined): carpeta is string => typeof carpeta === "string" && isAbsolute(carpeta) && basename(carpeta).startsWith("carga-")
+const esMarcaDeCarga = (marca: string | undefined): marca is string => typeof marca === "string" && FORMA_MARCA_DE_CARGA.test(marca)
 
 /**
- * Termina `raiz` y todo su árbol, barre por `carpetaPrivada` y dice si lo pudo CONFIRMAR.
- * Nunca tira. Vuelve cuando no queda nadie o cuando vencieron los topes.
+ * Termina `raiz` y todo su árbol (y los procesos con `marcaDeCarga`), barre por `carpetaPrivada`
+ * y por la marca, y dice si lo pudo CONFIRMAR. Nunca tira. Vuelve cuando no queda nadie o cuando
+ * vencieron los topes.
  */
-export async function terminarArbol(raiz: number, carpetaPrivada?: string, sis: Sistema = sistemaReal(), topes: { kill: number } = { kill: TOPE_KILL_MS }): Promise<FinDelArbol> {
+export async function terminarArbol(raiz: number, carpetaPrivada?: string, marcaDeCarga?: string, sis: Sistema = sistemaReal(), topes: { kill: number } = { kill: TOPE_KILL_MS }, inicioDeLaCarga?: number): Promise<FinDelArbol> {
   try {
     if (!Number.isSafeInteger(raiz) || raiz <= 0) return { confirmado: false, detalle: "no sé el pid del proceso de carga" }
     if (sis.plataforma === "win32") {
@@ -220,20 +312,24 @@ export async function terminarArbol(raiz: number, carpetaPrivada?: string, sis: 
       const quedan = vivos(new Set([raiz]), sis)
       return ok && quedan !== null && quedan.length === 0 ? { confirmado: true, detalle: "taskkill /T terminó el árbol" } : { confirmado: false, detalle: "taskkill no pudo confirmar que el árbol terminó" }
     }
+    const conMarca = esMarcaDeCarga(marcaDeCarga)
+    /** Los marcados ahora, o `null` si no se pudo mirar (sin marca, siempre `[]`). */
+    const marcados = (): ConMarca | null => (conMarca ? sis.conMarca(marcaDeCarga, inicioDeLaCarga) : { pids: [], ilegibles: 0 })
 
     // 1-2. Foto, congelar, y volver a mirar hasta un punto fijo.
     const primera = sis.foto()
     if (!primera) return { confirmado: false, detalle: "no pude ver los procesos del sistema" }
     const raizViva = primera.some((p) => p.pid === raiz && !p.zombi)
     // Una raíz que ya no está (o es zombi) no tiene árbol visible y su pid puede ser de otro:
-    // no se le manda nada. Lo que haya quedado colgando lo busca el barrido por carpeta.
+    // no se le manda nada. Lo que haya quedado colgando lo buscan la marca y la carpeta.
     const arbol = new Set(raizViva ? arbolDe(raiz, primera) : [])
+    for (const pid of marcados()?.pids ?? []) arbol.add(pid)
     for (const pid of arbol) sis.senal(pid, "SIGSTOP")
     let estable = arbol.size === 0
     for (let vuelta = 0; vuelta < VUELTAS_PUNTO_FIJO && !estable; vuelta++) {
       const foto = sis.foto()
       if (!foto) break
-      const nuevos = [...arbol].flatMap((pid) => arbolDe(pid, foto)).filter((pid) => !arbol.has(pid))
+      const nuevos = [...new Set([...[...arbol].flatMap((pid) => arbolDe(pid, foto)), ...(marcados()?.pids ?? [])])].filter((pid) => !arbol.has(pid))
       if (nuevos.length === 0) {
         estable = true
         break
@@ -248,16 +344,24 @@ export async function terminarArbol(raiz: number, carpetaPrivada?: string, sis: 
     for (const pid of arbol) sis.senal(pid, "SIGKILL")
     const quedan = arbol.size > 0 ? await esperarQueMueran(arbol, sis, topes.kill) : []
 
-    // 4. Barrido por la carpeta privada: matar y volver a mirar.
+    // 4. Barrido por la carpeta privada y por la marca: matar y volver a mirar.
     let referencian: number[] | null = null
+    let conLaMarca: ConMarca | null = null
     if (esCarpetaPrivada(carpetaPrivada)) {
       for (let vuelta = 0; vuelta < VUELTAS_BARRIDO; vuelta++) {
         referencian = sis.referencian(carpetaPrivada)
-        if (referencian === null || referencian.length === 0) break
-        for (const pid of referencian) sis.senal(pid, "SIGKILL")
-        await esperarQueMueran(new Set(referencian), sis, topes.kill)
+        conLaMarca = marcados()
+        if (referencian === null || conLaMarca === null) break
+        const restantes = [...new Set([...referencian, ...conLaMarca.pids])]
+        if (restantes.length === 0) break
+        for (const pid of restantes) sis.senal(pid, "SIGSTOP")
+        for (const pid of restantes) sis.senal(pid, "SIGKILL")
+        await esperarQueMueran(new Set(restantes), sis, topes.kill)
       }
-      if (referencian !== null && referencian.length > 0) referencian = sis.referencian(carpetaPrivada)
+      if (referencian !== null && conLaMarca !== null && (referencian.length > 0 || conLaMarca.pids.length > 0)) {
+        referencian = sis.referencian(carpetaPrivada)
+        conLaMarca = marcados()
+      }
     }
 
     if (!raizViva && !esCarpetaPrivada(carpetaPrivada)) return { confirmado: false, detalle: "el proceso de carga ya no estaba y no tengo con qué buscar a sus descendientes" }
@@ -265,9 +369,13 @@ export async function terminarArbol(raiz: number, carpetaPrivada?: string, sis: 
     if (quedan === null) return { confirmado: false, detalle: "no pude volver a mirar los procesos después de cortarlos" }
     if (quedan.length > 0) return { confirmado: false, detalle: `quedan ${quedan.length} proceso(s) de la carga vivos` }
     if (!esCarpetaPrivada(carpetaPrivada)) return { confirmado: false, detalle: "no hay carpeta privada con la que comprobar que no quedó nada" }
+    if (!conMarca) return { confirmado: false, detalle: "no hay marca de carga con la que comprobar que no quedó nada" }
     if (referencian === null) return { confirmado: false, detalle: "no pude mirar qué procesos usan la carpeta de la carga" }
     if (referencian.length > 0) return { confirmado: false, detalle: `quedan ${referencian.length} proceso(s) usando la carpeta de la carga` }
-    return { confirmado: true, detalle: `terminé ${arbol.size} proceso(s) de la carga y comprobé que no queda ninguno ni nada usando su carpeta` }
+    if (conLaMarca === null) return { confirmado: false, detalle: "no pude mirar qué procesos tienen la marca de la carga" }
+    if (conLaMarca.pids.length > 0) return { confirmado: false, detalle: `quedan ${conLaMarca.pids.length} proceso(s) con la marca de la carga` }
+    if (conLaMarca.ilegibles > 0) return { confirmado: false, detalle: `no pude leer el entorno de ${conLaMarca.ilegibles} proceso(s) míos: no sé si son de la carga` }
+    return { confirmado: true, detalle: `terminé ${arbol.size} proceso(s) de la carga y comprobé que no queda ninguno entre sus descendientes, en su carpeta ni con su marca` }
   } catch (error) {
     return { confirmado: false, detalle: `falló el corte (${error instanceof Error ? error.message : String(error)})` }
   }
