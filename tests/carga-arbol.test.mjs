@@ -488,4 +488,11 @@ test("ciclo 5: un environ ilegible de un proceso propio → no se confirma; sin 
   assert.match(sinMarca.detalle, /no hay marca/)
   const limpio = await terminarArbol(4242, PRIV, MARCA, { ...base, conMarca: () => ({ pids: [], ilegibles: 0 }) }, { kill: 50 })
   assert.equal(limpio.confirmado, true, "control: con todo limpio se confirma")
+  // Un marcado que no muere ni con SIGKILL (p. ej. en espera de E/S): sin este caso, sacar la
+  // condición "quedan con la marca" no ponía nada en rojo (mutación G05 del ciclo 5).
+  const senales = []
+  const inmortal = await terminarArbol(4242, PRIV, MARCA, { ...base, senal: (pid, s) => senales.push([pid, s]), conMarca: () => ({ pids: [7777], ilegibles: 0 }) }, { kill: 50 })
+  assert.equal(inmortal.confirmado, false)
+  assert.match(inmortal.detalle, /con la marca/)
+  assert.ok(senales.some(([pid, s]) => pid === 7777 && s === "SIGKILL"), "al marcado se le manda SIGKILL")
 })
