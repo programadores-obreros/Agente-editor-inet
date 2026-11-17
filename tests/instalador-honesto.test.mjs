@@ -214,16 +214,21 @@ test("2.2b · el instalador de Scoop se ejecuta atajado y dentro de un bucle que
 
 test("2.2c · TODA instalación de OpenCode con Scoop captura la salida y baja el ErrorActionPreference", () => {
   const lineas = bootstrap.split("\n")
-  const idx = lineas.map((l, i) => [l, i]).filter(([l]) => /scoop install opencode/.test(l) && !/Write-Host/.test(l))
+  // Desde la 0.4.10 OpenCode se instala desde el manifest propio ($ManifiestoOpenCode) y no
+  // con `opencode@<ver>` (el bucket de Scoop dejó de poder bajar la 1.x: ver
+  // tests/opencode-manifest.test.mjs). Se buscan las DOS formas: si alguien vuelve a meter
+  // una instalación por el bucket, también tiene que cumplir esto —y además la corta el
+  // otro test—.
+  const idx = lineas.map((l, i) => [l, i]).filter(([l]) => /scoop install (opencode|\$ManifiestoOpenCode)/.test(l) && !/Write-Host/.test(l))
   assert.ok(idx.length >= 2, `sólo encontré ${idx.length} instalación(es) de OpenCode`)
   for (const [l, i] of idx) {
-    assert.match(l, /=\s*scoop install opencode@\$OpenCodeVersion \*>&1 \| Out-String/, `instala sin capturar todos los streams: ${l.trim()}`)
+    assert.match(l, /=\s*scoop install \$ManifiestoOpenCode \*>&1 \| Out-String/, `instala sin capturar todos los streams: ${l.trim()}`)
     // En las 6 líneas de código anteriores se baja a Continue (mismo patrón en las tres ramas).
     const antes = lineas.slice(Math.max(0, i - 6), i).join("\n")
     assert.match(antes, /\$ErrorActionPreference\s*=\s*"Continue"/, `se llama a Scoop con ErrorActionPreference en Stop: ${l.trim()}`)
     // Y la excepción se ataja: en la misma línea, o en el `catch` que le sigue.
     const alrededor = lineas.slice(Math.max(0, i - 1), i + 3).join("\n")
-    assert.match(alrededor, /try\s*\{[\s\S]*scoop install opencode[\s\S]*\}\s*catch\s*\{/, `una excepción de Scoop corta el script: ${l.trim()}`)
+    assert.match(alrededor, /try\s*\{[\s\S]*scoop install \$ManifiestoOpenCode[\s\S]*\}\s*catch\s*\{/, `una excepción de Scoop corta el script: ${l.trim()}`)
   }
 })
 
@@ -1104,7 +1109,7 @@ test("I.5 · los `catch` que atajan las tres llamadas CAPTURAN el error: ninguno
     [/Bajar\s[^\n]*get-platformio\.py/, /\} catch \{ \$errorBajadaPio = \$_\.Exception\.Message \}\s*$/],
     [/Bajar\s[^\n]*get\.scoop\.sh/, /\} catch \{ \$errorScoop = \$_\.Exception\.Message \}\s*$/],
     [/\[scriptblock\]::Create\(\$scoopInstaller\)/, /\} catch \{ \$errorScoop = \$_\.Exception\.Message \}\s*$/],
-    [/\$salidaReintento = scoop install opencode/, /\} catch \{ \$salidaReintento = "ERROR " \+ \$_\.Exception\.Message \}\s*$/],
+    [/\$salidaReintento = scoop install \$ManifiestoOpenCode/, /\} catch \{ \$salidaReintento = "ERROR " \+ \$_\.Exception\.Message \}\s*$/],
   ]
   for (const [cual, cuerpo] of esperadas) {
     const lineas = comandos.filter((l) => cual.test(l))
@@ -1211,11 +1216,12 @@ test("F3.b · sin una install\\OPENCODE_VERSION válida el bootstrap CORTA con 1
   assert.ok(iCorte >= 0 && iCorte < iPrimeraInstalacion, "el corte por versión inválida quedó después de empezar a instalar")
 })
 
-test("F3.c · censo de salidas del bootstrap: cinco cortes con 1, el degradado, y UN solo 0 al final", () => {
+test("F3.c · censo de salidas del bootstrap: seis cortes con 1, el degradado, y UN solo 0 al final", () => {
   assert.deepEqual(
     salidasBootstrap,
-    ["exit 1", "exit 1", "exit 1", "exit 1", "exit 1", "exit $CodigoDegradado", "exit 0"],
-    "cambió alguna salida del bootstrap. El orden es: versión de OpenCode inválida, no se pudo bajar Scoop, " +
+    ["exit 1", "exit 1", "exit 1", "exit 1", "exit 1", "exit 1", "exit $CodigoDegradado", "exit 0"],
+    "cambió alguna salida del bootstrap. El orden es: versión de OpenCode inválida, el manifest de OpenCode " +
+      "falta o es de otra versión (0.4.10), no se pudo bajar Scoop, " +
       "Scoop no quedó, OpenCode no arranca, la capa no quedó, degradado, y el único `exit 0` (todo comprobado). " +
       "Si agregaste un corte a propósito, sumalo acá y al encabezado de bootstrap.ps1",
   )

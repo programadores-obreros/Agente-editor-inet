@@ -4,6 +4,28 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.10] — 2026-11-17
+
+**Instalar Tecnia Bot en Windows vuelve a funcionar. Desde el 11 de noviembre el instalador no podía bajar OpenCode y terminaba en "OpenCode NO ARRANCA", en cualquier computadora nueva. No era tu computadora ni tu red.**
+
+### Corregido
+
+- **Windows: el instalador vuelve a poder instalar OpenCode.** Tecnia Bot se prueba con una versión puntual de OpenCode (la 1.18.18) y el instalador se la pedía a Scoop, el programa que usa para bajar las dependencias. El 11 de noviembre Scoop pasó a ofrecer OpenCode 2 y dejó de poder entregar la 1.18.18: la descarga daba "(404) No se encontró" y la instalación terminaba con "OpenCode NO ARRANCA". Pasó en un aula, con los docentes delante. Ahora el instalador trae escrito de dónde se baja esa versión y con qué verificación, así que lo que cambie Scoop ya no lo afecta.
+- **Windows: nunca se instala OpenCode 2 por las dudas.** OpenCode 2 no es compatible con esta versión de Tecnia Bot. Si la versión probada no se puede bajar, el instalador lo dice y no pone otra en su lugar.
+- **Windows: los carteles ya no mandan a escribir un comando que no funciona.** El diagnóstico y la guía de instalación manual recomendaban `scoop install opencode@1.18.18`, que es justo lo que dejó de andar.
+
+### Si te quedó "OpenCode NO ARRANCA" con la 0.4.9
+
+Bajá este instalador y corrélo encima: no hace falta desinstalar nada. **"Reparar Tecnia Bot" no alcanza**, porque usa los archivos de la versión que ya tenés instalada, que es la que falla.
+
+### Qué cambia para peor, y hay que saberlo
+
+- **Si la computadora ya tiene otra versión de OpenCode, queda esa.** La 0.4.9 instalaba la versión probada al lado de la que hubiera. Scoop no permite hacer eso con el camino nuevo, así que el instalador deja la que estaba, te dice cuál es y avisa que no es la probada. No desinstala nada.
+
+### Qué no se probó
+
+Una notebook de aula, y una computadora que ya tuviera otra versión de OpenCode instalada.
+
 ## [0.4.9] — 2026-11-16
 
 **El instalador ya no dice "listo" si no lo comprobó — en Windows y en Linux. Se probó en una máquina virtual y en las pruebas automáticas; todavía no en un aula: qué sí y qué no está dicho abajo, con el mismo tamaño de letra.**

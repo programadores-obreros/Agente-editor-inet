@@ -98,7 +98,15 @@ test("ningún archivo de install/ trae una key ni la nombra como respaldo hardco
   // la vieja la nombra así, y es el nombre con que la conocen los docentes.
   const prohibidos = [FORMA_DE_KEY, /KEY_RESPALDO/, /respaldo hardcodeada/i]
   const problemas = []
-  for (const f of readdirSync(join(REPO, "install"))) {
+  // CON SUBCARPETAS, y sólo archivos. Esto recorría `readdirSync("install")` a un nivel
+  // y leía cada entrada como archivo: el día que install/ tuvo una carpeta
+  // (install/scoop/, 0.4.10) reventó con EISDIR. Peor que el EISDIR era lo otro: una
+  // key escondida un nivel más abajo no la hubiera visto nunca.
+  const archivos = readdirSync(join(REPO, "install"), { recursive: true })
+    .map((f) => f.split("\\").join("/"))
+    .filter((f) => statSync(join(REPO, "install", f)).isFile())
+  assert.ok(archivos.some((f) => f.includes("/")), "el listado no está bajando a las subcarpetas de install/")
+  for (const f of archivos) {
     const texto = leer(join("install", f))
     for (const p of prohibidos) {
       const m = texto.match(p)

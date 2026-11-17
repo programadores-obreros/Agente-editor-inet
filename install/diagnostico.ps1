@@ -364,7 +364,7 @@ try { if ($ocManifiesto) { $ocInstalada = ("" + (Get-Content $ocManifiesto -Raw 
 Dato "instalada (Scoop)" $(if ($ocInstalada) { $ocInstalada } else { "no se pudo leer el manifiesto de Scoop en current" })
 if ($pin -and $ocInstalada -and $pin -ne $ocInstalada) {
   Write-Host "     >> NO COINCIDEN: el bot se probo con la $pin. Reparar Tecnia Bot la activa si esta en el disco;" -ForegroundColor Yellow
-  Write-Host "        si no, en PowerShell: scoop install opencode@$pin" -ForegroundColor Yellow
+  Write-Host "        si no esta, queda la $ocInstalada (Scoop no instala la $pin al lado de otra): avisale al referente tecnico." -ForegroundColor Yellow
 }
 $ocHold = $false
 $ocInstall = Get-ArchivoScoop $ocActual "install"

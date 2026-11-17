@@ -47,8 +47,16 @@ test("bootstrap.ps1 instala OpenCode FIJANDO la versión, nunca 'la última'", (
     [],
     "hay un `scoop install opencode` sin versión: esa PC se lleva la última que haya ese día",
   )
-  const fijados = ps1.split("\n").filter((l) => !/Write-Host/.test(l) && /scoop install opencode@\$OpenCodeVersion/.test(l))
-  assert.ok(fijados.length >= 1, "ningún `scoop install opencode@$OpenCodeVersion`: el bootstrap no instala la versión fijada")
+  // DESDE LA 0.4.10 LA FIJADA SE INSTALA DESDE EL MANIFEST PROPIO, no con
+  // `opencode@<ver>`. Este test exigía al menos un `scoop install
+  // opencode@$OpenCodeVersion`, y eso era exactamente lo que se rompió el
+  // 2026-11-11: Scoop regenera la URL con la plantilla ACTUAL del bucket, el bucket
+  // pasó a la 2.x en npm, y la 1.18.18 dio 404 en todas las instalaciones nuevas.
+  // El test estaba verde ese día: custodiaba la forma del comando, no que la
+  // versión se pudiera bajar. El detalle del manifest lo mira
+  // tests/opencode-manifest.test.mjs.
+  const fijados = ps1.split("\n").filter((l) => !/Write-Host/.test(l) && /scoop install \$ManifiestoOpenCode\b/.test(l))
+  assert.ok(fijados.length >= 1, "ningún `scoop install $ManifiestoOpenCode`: el bootstrap no instala la versión fijada")
 })
 
 test("bootstrap.ps1 lee la versión de install/OPENCODE_VERSION, relativo a sí mismo, y corta si falta", () => {
@@ -195,14 +203,37 @@ test("bootstrap.ps1 captura TODOS los streams de scoop hold/reset (*>&1), no sol
 // Notebook real (2026-09-06): tenia 1.18.19 -> 1.18.29 por auto-update y NUNCA la fijada.
 // El bootstrap decia "se deja como esta" y el pin no servia para nada. `scoop install
 // opencode@<ver>` con otra version instalada la pone AL LADO y cambia current: no borra nada.
-test("bootstrap.ps1 instala la version fijada al lado cuando no esta en el disco, y verifica que arranca", () => {
+//
+//
+// 0.4.10: LA RAMA SIGUE, PERO HOY NO CAMBIA LA VERSIÓN, Y LO DICE. `opencode@<ver>` dejó
+// de poder bajar una 1.x (el bucket pasó a la 2.x), y con el manifest propio Scoop NO
+// instala "al lado": con otra versión activa contesta "already installed" y sale con 0.
+// Se conserva la rama entera —releer la versión, ejecutar OpenCode, probar el baseline,
+// marcar la falla— porque es lo que hace que el resultado se lea del disco y no del
+// comando. Lo que cambió es el consejo final: ya no manda a correr un comando que da 404.
+test("bootstrap.ps1: con otra version activa y la fijada fuera del disco, intenta desde el manifest y relee lo que quedo", () => {
   const i = ps1.indexOf("no esta en el disco: la instalo al lado")
   assert.ok(i > 0, "no existe la rama 'la fijada no esta en el disco'")
-  const rama = ps1.slice(i, i + 2500)
-  assert.match(rama, /scoop install opencode@\$OpenCodeVersion \*>&1/, "no instala la fijada (o no captura todos los streams)")
+  const rama = ps1.slice(i, i + 2700)
+  assert.match(rama, /scoop install \$ManifiestoOpenCode \*>&1/, "no instala desde el manifest (o no captura todos los streams)")
   assert.match(rama, /Get-OpenCodeVersionInstalada/, "no relee la version tras instalar")
   assert.match(rama, /Test-OpenCode\)/, "no comprueba que OpenCode CORRA despues de instalar")
-  assert.doesNotMatch(rama, /Se deja como esta/, "sigue dejando la version que haya")
+  assert.doesNotMatch(rama, /Se deja como esta/, "sigue dejando la version que haya sin decirlo")
+  // El consejo: dice qué versión queda y NO manda a tipear la forma que da 404.
+  assert.match(rama, /Queda la \$quedo, que arranca/, "cuando no pudo cambiar de versión no dice cuál queda")
+  assert.doesNotMatch(rama, /opencode@\$OpenCodeVersion"/, "le sigue aconsejando al docente `scoop install opencode@<ver>`, que da 404")
+})
+
+test("bootstrap.ps1 NUNCA le pega `@<version>` a la ruta del manifest (Scoop instalaría el del bucket)", () => {
+  // lib/manifest.ps1 de Scoop, generate_user_manifest: si la versión pedida coincide con
+  // la del archivo devuelve `manifest_path $app $bucket` con $bucket vacío, que
+  // Find-BucketDirectory resuelve a 'main'. O sea: `scoop install ruta.json@1.18.18`
+  // instala el opencode.json DEL BUCKET (hoy 2.x). Es un arreglo "obvio" que rompe todo.
+  assert.doesNotMatch(ps1, /\$ManifiestoOpenCode@/, "hay un `$ManifiestoOpenCode@...`")
+  assert.doesNotMatch(ps1, /ManifiestoOpenCode\)?"?@\$?OpenCodeVersion/, "la ruta del manifest lleva la versión pegada")
+  // Y ya no queda ninguna instalación por el bucket con versión, que es la que da 404.
+  const porBucket = ps1.split("\n").filter((l) => !/Write-Host/.test(l) && /scoop install opencode@/.test(l))
+  assert.deepEqual(porBucket.map((l) => l.trim()), [], "queda un `scoop install opencode@...`: depende de la plantilla del bucket y hoy da 404")
 })
 
 test("el lanzador reintenta una vez antes de decir que OpenCode no arranca", () => {

@@ -135,7 +135,7 @@ function bloqueTrasInstalar(comando) {
 }
 
 test("después de instalar OpenCode se verifica que quedó", () => {
-  const bloque = bloqueTrasInstalar("scoop install opencode")
+  const bloque = bloqueTrasInstalar("scoop install $ManifiestoOpenCode")
   assert.match(bloque, /Test-OpenCode/, "se imprime [OK] sin comprobar nada")
 })
 
@@ -194,7 +194,7 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   // texto, no una tercera reinstalación.
   const instalaciones = codigo
     .split("\n")
-    .filter((l) => /scoop install opencode/.test(l) && !/Write-Host/.test(l)).length
+    .filter((l) => /scoop install \$ManifiestoOpenCode/.test(l) && !/Write-Host/.test(l)).length
   // El TECHO, que es lo que este test vino a poner.
   // Tres ramas, cada una corre a lo sumo UNA vez por corrida: el intento normal, UNA
   // reparación, y el cambio a la versión fijada cuando en el disco hay otra (Scoop la
@@ -252,7 +252,7 @@ test("si OpenCode falla, la capa educativa SE INSTALA IGUAL", () => {
   //
   // La capa NO depende de OpenCode para instalarse: es copia de archivos, sin
   // red. El dia que OpenCode se arregle, el bot ya tiene que estar ahi.
-  const paso2 = codigo.indexOf("scoop install opencode")
+  const paso2 = codigo.indexOf("scoop install $ManifiestoOpenCode")
   const paso4 = codigo.indexOf("install.ps1")
   assert.ok(paso2 > 0 && paso4 > paso2, "no encontré los pasos en orden")
 
