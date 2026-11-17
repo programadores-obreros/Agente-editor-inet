@@ -163,7 +163,7 @@ const DENEGADO = { _tag: "PermissionDeniedError", message: "The user has specifi
 const TUI_NORMAL = ["/opt/opencode/bin/opencode", "--agent", "tecnia-bot"]
 
 /** Ciclo 4: la marca del lanzador, inyectada (este proceso de test "vino del lanzador"). */
-const LANZADOR_OK = { marca: String(process.pid), pid: process.pid, ancestros: () => [] }
+const LANZADOR_OK = { marca: String(process.pid), pid: process.pid, ancestros: () => [], marcaCon: () => undefined }
 
 /** Un HOME limpio para el control de configuración (ciclo 3): el HOME real de quien corre los tests no entra. */
 const HOME_LIMPIO = join(OUT, "home-limpio")
@@ -939,7 +939,7 @@ test("ciclo 3: carpeta limpia → el camino feliz sigue igual, con cartel", asyn
 test("ciclo 4: sin marca del lanzador (o una que no es un pid) → SIN_LANZADOR, sin detectar, sin lanzar, sin cartel, candado libre", async () => {
   const dir = await armar()
   for (const marca of [undefined, "", "abc", "0", "-1"]) {
-    const x = await cargar(dir, { herramientas: { lanzador: { marca, pid: process.pid, ancestros: () => [] } } })
+    const x = await cargar(dir, { herramientas: { lanzador: { marca, pid: process.pid, ancestros: () => [], marcaCon: () => undefined } } })
     assert.equal(x.r.codigo, "SIN_LANZADOR", String(marca))
     assert.match(x.r.resultado, /`tecnia-bot`/)
     nadaLanzado(x)
@@ -948,19 +948,49 @@ test("ciclo 4: sin marca del lanzador (o una que no es un pid) → SIN_LANZADOR,
 
 test("ciclo 4: marca con un pid ajeno (ni éste ni un ancestro) → SIN_LANZADOR; si no se pueden leer los ancestros, también", async () => {
   const dir = await armar()
-  const ajeno = await cargar(dir, { herramientas: { lanzador: { marca: "4242424", pid: 1000, ancestros: () => [999, 1] } } })
+  const ajeno = await cargar(dir, { herramientas: { lanzador: { marca: "4242424", pid: 1000, ancestros: () => [999, 1], marcaCon: () => "4242424" } } })
   assert.equal(ajeno.r.codigo, "SIN_LANZADOR")
   nadaLanzado(ajeno)
-  const ilegible = await cargar(dir, { herramientas: { lanzador: { marca: "999", pid: 1000, ancestros: () => null } } })
+  const ilegible = await cargar(dir, { herramientas: { lanzador: { marca: "999", pid: 1000, ancestros: () => null, marcaCon: () => "999" } } })
   assert.equal(ilegible.r.codigo, "SIN_LANZADOR")
   nadaLanzado(ilegible)
 })
 
 test("ciclo 4: marca de un ANCESTRO + carpeta limpia → cartel y carga", async () => {
   const dir = await armar()
-  const x = await cargar(dir, { herramientas: { lanzador: { marca: "999", pid: 1000, ancestros: () => [999, 1] } } })
+  const x = await cargar(dir, { herramientas: { lanzador: { marca: "999", pid: 1000, ancestros: () => [999, 1], marcaCon: (pid) => (pid === 999 ? "999" : undefined) } } })
   assert.equal(x.r.codigo, "CARGADO")
   assert.equal(x.pregunta.pedidos.length, 1)
+})
+
+// MEDIDO en OpenCode 1.18.18 sobre 22a1dc1: `TECNIA_LANZADOR=1 opencode` pasaba el control
+// (el pid 1 es ancestro de todo proceso) y, con una configuración borrada tras arrancar, cargaba
+// sin cartel. El test de arriba no lo veía porque sólo probaba un ancestro "bueno".
+test("ciclo 4: marca de un ancestro que NO arrancó con esa marca (pid 1, la terminal) → SIN_LANZADOR; si no se puede leer, también", async () => {
+  const dir = await armar()
+  for (const marcaCon of [() => undefined, () => "1000", () => null]) {
+    for (const marca of ["1", "999"]) {
+      const x = await cargar(dir, { herramientas: { lanzador: { marca, pid: 1000, ancestros: () => [999, 1], marcaCon } } })
+      assert.equal(x.r.codigo, "SIN_LANZADOR", `${marca} ${marcaCon}`)
+      nadaLanzado(x)
+    }
+  }
+})
+
+test("ciclo 4: marcaConLaQueArranco lee el entorno real de /proc y falla cerrado si no puede", { skip: process.platform !== "linux" && "usa /proc" }, async () => {
+  const { marcaConLaQueArranco } = await import(join(REPO, "opencode/carga/cargar-programa.ts"))
+  assert.equal(marcaConLaQueArranco(1, () => "A=1\0TECNIA_LANZADOR=77\0B=2\0"), "77")
+  assert.equal(marcaConLaQueArranco(1, () => "A=1\0XTECNIA_LANZADOR=77\0"), undefined)
+  assert.equal(marcaConLaQueArranco(1, () => { throw new Error("EACCES") }), null)
+  // El mundo, no el doble: un hijo lanzado con la marca la tiene en su /proc/<pid>/environ.
+  const { spawn } = await import("node:child_process")
+  const hijo = spawn("sleep", ["30"], { env: { ...process.env, TECNIA_LANZADOR: "12345" }, stdio: "ignore" })
+  try {
+    await new Promise((ok, mal) => { hijo.once("spawn", ok); hijo.once("error", mal) })
+    assert.equal(marcaConLaQueArranco(hijo.pid), "12345")
+  } finally {
+    hijo.kill("SIGKILL")
+  }
 })
 
 // Sin este test, romper el valor por defecto (`h.lanzador ?? LANZAMIENTO_REAL`) no ponía nada

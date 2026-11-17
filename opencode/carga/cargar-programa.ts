@@ -430,7 +430,8 @@ function revisarOpencodeDeHome(ruta: string): string | null {
  * va ANTES de que OpenCode lea nada: la hace el lanzador `tecnia-bot` (`install/tecnia-bot.sh`,
  * que llama a `carga/revisar-lanzamiento.ts`, la MISMA revisión de acá), limpia el entorno y,
  * sólo si todo dio limpio, exporta `TECNIA_LANZADOR=<su pid>` y hace `exec` de opencode (el pid
- * pasa a ser el de OpenCode). La tool exige esa marca: el pid tiene que ser éste o un ancestro.
+ * pasa a ser el de OpenCode). La tool exige esa marca: el pid tiene que ser éste, o un ancestro que
+ * arrancó con esa misma marca apuntándose a sí mismo.
  *
  * LO QUE LA MARCA NO ES: una barrera contra alguien que lanza procesos como el usuario. Quien
  * escriba `TECNIA_LANZADOR=$$ exec opencode` en una terminal la falsifica. Protege contra el
@@ -445,6 +446,23 @@ export interface Lanzamiento {
   readonly pid: number
   /** Los pids de los ancestros de este proceso (padre, abuelo, …), o `null` si no se pudo leer. */
   readonly ancestros: () => number[] | null
+  /**
+   * El valor de `TECNIA_LANZADOR` con el que ARRANCÓ el proceso `pid` (su `/proc/<pid>/environ`),
+   * `undefined` si no la tenía, `null` si no se pudo leer.
+   */
+  readonly marcaCon: (pid: number) => string | undefined | null
+}
+
+/** La marca con la que arrancó `pid`, leída de `/proc/<pid>/environ`. `null` si no se puede leer. */
+export function marcaConLaQueArranco(pid: number, leer: (ruta: string) => string = (r) => readFileSync(r, "utf8")): string | undefined | null {
+  let entorno: string
+  try {
+    entorno = leer(`/proc/${pid}/environ`)
+  } catch {
+    return null
+  }
+  const linea = entorno.split("\0").find((x) => x.startsWith("TECNIA_LANZADOR="))
+  return linea === undefined ? undefined : linea.slice("TECNIA_LANZADOR=".length)
 }
 
 /** Los ancestros por `/proc/<pid>/stat`. `null` si alguno no se puede leer (fuera de Linux, siempre). */
@@ -475,6 +493,7 @@ export const LANZAMIENTO_REAL: Lanzamiento = {
     return process.pid
   },
   ancestros: () => ancestrosPorProc(),
+  marcaCon: (pid) => marcaConLaQueArranco(pid),
 }
 
 /** `null` si este proceso viene del lanzador; si no, por qué no. */
@@ -484,7 +503,14 @@ export function porQueNoVieneDelLanzador(l: Lanzamiento): string | null {
   if (marca === l.pid) return null
   const ancestros = l.ancestros()
   if (ancestros === null) return "no pude comprobar cómo se abrió OpenCode"
-  return ancestros.includes(marca) ? null : "la marca del lanzador no corresponde a este OpenCode"
+  if (!ancestros.includes(marca)) return "la marca del lanzador no corresponde a este OpenCode"
+  // MEDIDO en 1.18.18 sobre 22a1dc1: con sólo "es un ancestro" alcanzaba `TECNIA_LANZADOR=1`
+  // (el pid 1 es ancestro de todo), y con una configuración borrada tras arrancar eso cargaba
+  // sin cartel. El ancestro vale sólo si ÉL arrancó con la marca apuntándose a sí mismo, que es
+  // lo que deja el `exec` del lanzador (caso: `opencode` es un envoltorio que lanza el binario).
+  const suya = l.marcaCon(marca)
+  if (suya === null) return "no pude comprobar cómo se abrió OpenCode"
+  return suya === l.marca ? null : "la marca del lanzador no corresponde a este OpenCode"
 }
 
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */
