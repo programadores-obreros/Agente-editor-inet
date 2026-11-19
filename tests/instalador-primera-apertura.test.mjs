@@ -80,6 +80,12 @@ test("que quedó se lee del DISCO, con la misma condición que usa OpenCode para
   const f = cuerpo("Test-DependenciasOpenCode")
   assert.match(f, /node_modules\\@opencode-ai\\plugin\\package\.json/, "no mira que el paquete esté en node_modules")
   assert.match(f, /package-lock\.json/, "no mira el package-lock.json")
+  // ESTE TEST ERA HUECO EN SU PRIMERA VERSIÓN. Con los dos asserts de arriba alcanzaba con
+  // que la función NOMBRARA las rutas: borrando el `if (-not (Test-Path $paquete))` seguía
+  // verde, porque la ruta sigue escrita en el Join-Path. Lo marcó la mutación del 2026-11-19.
+  // Lo que se protege es que la AUSENCIA de cada archivo dé falso.
+  assert.match(f, /if \(-not \(Test-Path \$paquete\)\) \{ return \$false \}/, "si falta el paquete en node_modules no devuelve falso")
+  assert.match(f, /if \(-not \(Test-Path \$lock\)\) \{ return \$false \}/, "si falta el package-lock.json no devuelve falso")
   assert.match(f, /Select-String[^\n]*"@opencode-ai\/plugin"/, "no busca el paquete dentro del lock")
   // PowerShell 5.1 no puede leer ese archivo con ConvertFrom-Json (tiene una clave vacía ""):
   // visto en la VM el 2026-11-19, "el valor del argumento name no es válido".
