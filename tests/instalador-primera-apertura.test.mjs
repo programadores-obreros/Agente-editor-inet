@@ -56,7 +56,16 @@ test("la preparación tiene tope de tiempo y mata el proceso si se pasa", () => 
   // en rendirse. Un instalador que se queda colgado ahí es peor que el negro que arregla.
   const f = cuerpo("Preparar-PrimeraApertura")
   assert.match(f, /\.WaitForExit\(\$TopePrimeraAperturaMs\)/, "espera sin tope")
-  assert.match(f, /\.Kill\(\)/, "si se pasa del tope no corta el proceso")
+  // El corte va DENTRO de la rama del tope, mata el ÁRBOL y espera a que muera. La primera
+  // versión de este assert sólo pedía que ".Kill()" apareciera en algún lado de la función:
+  // lo marcó la revisión independiente. Un Kill() a secas deja vivo a cualquier hijo de
+  // OpenCode y no espera, así que los temporales quedaban tomados y no se borraban.
+  const rama = /if \(-not \$proc\.WaitForExit\(\$TopePrimeraAperturaMs\)\) \{([\s\S]*?)\n        \}\n/.exec(f)
+  assert.ok(rama, "no encuentro la rama del tope")
+  assert.match(rama[1], /taskkill\.exe \/PID \$proc\.Id \/T \/F/, "al pasarse del tope no mata el árbol de procesos")
+  assert.match(rama[1], /\$proc\.WaitForExit\(\d+\)/, "después de matar no espera a que el proceso muera")
+  const lineasRama = rama[1].split("\n").filter((l) => !/Write-Host/.test(l)).join("\n")
+  assert.ok(lineasRama.indexOf("taskkill.exe") < lineasRama.indexOf("WaitForExit("), "espera antes de matar")
   const tope = /\$TopePrimeraAperturaMs\s*=\s*(\d+)/.exec(ps1)
   assert.ok(tope, "no define $TopePrimeraAperturaMs")
   assert.ok(Number(tope[1]) >= 150000, `tope de ${tope[1]} ms: con red filtrada OpenCode tardó 135 s; un tope menor corta una instalación que iba a terminar`)
@@ -84,9 +93,12 @@ test("que quedó se lee del DISCO, con la misma condición que usa OpenCode para
   // que la función NOMBRARA las rutas: borrando el `if (-not (Test-Path $paquete))` seguía
   // verde, porque la ruta sigue escrita en el Join-Path. Lo marcó la mutación del 2026-11-19.
   // Lo que se protege es que la AUSENCIA de cada archivo dé falso.
-  assert.match(f, /if \(-not \(Test-Path \$paquete\)\) \{ return \$false \}/, "si falta el paquete en node_modules no devuelve falso")
-  assert.match(f, /if \(-not \(Test-Path \$lock\)\) \{ return \$false \}/, "si falta el package-lock.json no devuelve falso")
-  assert.match(f, /Select-String[^\n]*"@opencode-ai\/plugin"/, "no busca el paquete dentro del lock")
+  assert.match(f, /if \(-not \(Test-Path -LiteralPath \$paquete\)\) \{ return \$false \}/, "si falta el paquete en node_modules no devuelve falso")
+  assert.match(f, /if \(-not \(Test-Path -LiteralPath \$lock\)\) \{ return \$false \}/, "si falta el package-lock.json no devuelve falso")
+  // Con -Path un corchete en la ruta es un comodín: el archivo "no existe" y la instalación
+  // queda incompleta para siempre con todo bien puesto.
+  assert.doesNotMatch(f, /(Test-Path|Select-String) (?!-LiteralPath)/, "usa -Path: una ruta con corchetes da falso con los archivos presentes")
+  assert.match(f, /Select-String -LiteralPath \$lock[^\n]*"@opencode-ai\/plugin"/, "no busca el paquete dentro del lock")
   // PowerShell 5.1 no puede leer ese archivo con ConvertFrom-Json (tiene una clave vacía ""):
   // visto en la VM el 2026-11-19, "el valor del argumento name no es válido".
   assert.doesNotMatch(f, /package-lock[^\n]*ConvertFrom-Json/, "lee el lock con ConvertFrom-Json, que en PowerShell 5.1 revienta")
@@ -95,7 +107,10 @@ test("que quedó se lee del DISCO, con la misma condición que usa OpenCode para
 test("el resultado de la preparación NO sale del exit code de OpenCode", () => {
   const f = cuerpo("Preparar-PrimeraApertura")
   assert.doesNotMatch(f, /ExitCode/, "decide mirando el exit code: `debug config` sale con 0 aunque no haya instalado nada")
-  assert.match(f, /return \(Test-DependenciasOpenCode \$cfgDir\)/, "no devuelve lo que dice el disco")
+  assert.match(f, /\$quedo = \[bool\]\(Test-DependenciasOpenCode \$cfgDir\)/, "no lee el disco después de correr OpenCode")
+  assert.match(f, /\n    return \$quedo\n\}$/, "no devuelve lo que dice el disco")
+  // Y $quedo no se pisa en ningún otro lado.
+  assert.equal((f.match(/\$quedo\s*=/g) || []).length, 1, "$quedo se asigna más de una vez")
 })
 
 test("si ya están, no las vuelve a bajar", () => {
@@ -115,8 +130,31 @@ test("si no quedaron, el resumen lo dice y la instalación NO termina en LISTO",
   const resumen = ps1.slice(i, fin)
   assert.match(resumen, /if \(\$PrimeraAperturaLista\) \{\s*\n\s*Write-Host "  \[OK\] Arranque/, "el [OK] de arranque no depende de lo que se comprobó")
   assert.match(resumen, /\$Degradado \+= "la primera vez que abras Tecnia Bot va a necesitar internet/, "cuando no quedaron no degrada el resultado: cerraría en LISTO")
+  // El aviso de degradado vive DENTRO del bloque que sólo corre si se intentó, y ese
+  // bloque depende de una marca que se pone al intentarlo. La primera versión no lo
+  // protegía: borrando `$PrimeraAperturaIntentada = $true` el resumen se salteaba entero
+  // y una instalación que no pudo bajar nada cerraba en LISTO. Lo marcó la revisión.
+  const bloque = /if \(\$PrimeraAperturaIntentada\) \{\n([\s\S]*?)\n\}\n/.exec(resumen)
+  assert.ok(bloque, "el resumen no tiene el bloque condicionado a que se haya intentado")
+  assert.match(bloque[1], /\$Degradado \+= "la primera vez que abras/, "el degradado quedó fuera del bloque")
+  assert.match(
+    comandos,
+    /\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)\s*\n\s*\$PrimeraAperturaIntentada = \$true/,
+    "no marca que se intentó: el resumen se saltearía y cerraría en LISTO",
+  )
   // Y la variable sale de la función, no de una marca puesta a mano.
   assert.match(comandos, /^\s*\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)/m, "$PrimeraAperturaLista no sale de la comprobación")
+})
+
+test("si no quedó, muestra lo que dijo OpenCode por su salida de errores y nunca la estándar", () => {
+  // La salida estándar de `debug config` es la configuración entera. La de errores es lo
+  // único que explica por qué no bajó (antivirus, disco, permisos), y sin eso el aviso
+  // afirmaba una causa de red que nadie había medido.
+  const f = cuerpo("Preparar-PrimeraApertura")
+  assert.match(f, /Get-Content -LiteralPath \$errores -Tail \d+/, "no muestra la cola de la salida de errores")
+  assert.doesNotMatch(f, /Get-Content[^\n]*\$salida/, "lee la salida estándar, que es la configuración entera")
+  assert.match(f, /Remove-Item -LiteralPath \$t -Force/, "no borra los temporales")
+  assert.match(f, /if \(\$salida -and \(Test-Path -LiteralPath \$salida\)\) \{\s*\n\s*Write-Host "  \[i\] No pude borrar un archivo temporal con la configuracion/, "si el temporal con la configuración no se pudo borrar, no lo dice")
 })
 
 test("no se intenta sin OpenCode o sin la capa: no hay nada que preparar y el aviso sería ruido", () => {

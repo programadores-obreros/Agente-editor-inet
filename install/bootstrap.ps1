@@ -1727,10 +1727,13 @@ function Test-DependenciasOpenCode {
     param([string]$dir)
     $paquete = Join-Path $dir "node_modules\@opencode-ai\plugin\package.json"
     $lock = Join-Path $dir "package-lock.json"
-    if (-not (Test-Path $paquete)) { return $false }
-    if (-not (Test-Path $lock)) { return $false }
+    # -LiteralPath en los tres: con -Path, un corchete en la ruta (XDG_CONFIG_HOME=D:\conf[1])
+    # se toma como comodin, el archivo "no existe" y la instalacion quedaria marcada como
+    # incompleta para siempre con todo bien puesto. Lo marco la revision.
+    if (-not (Test-Path -LiteralPath $paquete)) { return $false }
+    if (-not (Test-Path -LiteralPath $lock)) { return $false }
     try {
-        return [bool](Select-String -Path $lock -Pattern '"@opencode-ai/plugin"' -SimpleMatch -Quiet)
+        return [bool](Select-String -LiteralPath $lock -Pattern '"@opencode-ai/plugin"' -SimpleMatch -Quiet)
     } catch {
         return $false
     }
@@ -1740,30 +1743,77 @@ function Preparar-PrimeraApertura {
     if (Test-DependenciasOpenCode $cfgDir) { return $true }
     Write-Host ""
     Write-Host "  [..] Preparando la primera apertura de Tecnia Bot (baja unos archivos; hasta 3 minutos)..."
-    # Carpeta vacia a proposito: OpenCode tambien instala en cada `.opencode` que
-    # encuentre desde donde arranca hacia arriba, y las espera a todas.
-    $dirVacio = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N"))
-    $salida = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N") + ".out")
-    $errores = $salida + ".err"
+    # Se arranca desde una carpeta nueva y vacia para no sumar carpetas `.opencode` de
+    # un proyecto. NO LAS EVITA TODAS: %TEMP% cuelga del perfil, asi que si existe
+    # %USERPROFILE%\.opencode OpenCode la encuentra igual, instala ahi tambien y la
+    # espera. Eso puede alargar este paso; no cambia lo que se informa, que sale de
+    # mirar $cfgDir. SIN CUBRIR: una `.opencode` propia del docente en su perfil o en
+    # Documentos, a la que le falten dependencias, sigue haciendo esperar a la primera
+    # apertura aunque aca diga [OK]. No se midio.
+    $dirVacio = $null
+    $salida = $null
+    $errores = $null
+    $proc = $null
+    $cortado = $false
     $prev = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
+        # Adentro del try: si %TEMP% viniera vacia, Join-Path es un error terminante y
+        # afuera cortaria el instalador sin llegar al resumen (puede fallar, no romper).
+        $dirVacio = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N"))
+        $salida = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N") + ".out")
+        $errores = $salida + ".err"
         New-Item -ItemType Directory -Force -Path $dirVacio | Out-Null
-        # La salida (la configuracion entera) se manda a un archivo que se borra: no
-        # va a la pantalla ni al registro de instalacion.
+        # La salida estandar es la configuracion ENTERA: se manda a un archivo que se
+        # borra, y no va a la pantalla ni al registro de instalacion.
         $proc = Start-Process -FilePath $BinOpenCode -ArgumentList "debug", "config" -WorkingDirectory $dirVacio -WindowStyle Hidden -RedirectStandardOutput $salida -RedirectStandardError $errores -PassThru
         if (-not $proc.WaitForExit($TopePrimeraAperturaMs)) {
+            $cortado = $true
             Write-Host "  [i] Paso el tiempo maximo y OpenCode seguia intentando bajar: lo corto."
+            # SE MATA EL ARBOL Y SE ESPERA A QUE MUERA. La primera version hacia solo
+            # $proc.Kill(): mata al padre y deja vivo a cualquier hijo, que puede seguir
+            # escribiendo en node_modules despues de que este script ya dio su veredicto
+            # y bloquear archivos de una reinstalacion. Y como Kill() no espera, los
+            # temporales (uno tiene la configuracion entera) quedaban tomados y el
+            # Remove-Item de abajo fallaba callado. Lo marcaron las dos revisiones.
+            try { & taskkill.exe /PID $proc.Id /T /F *> $null } catch { }
             try { $proc.Kill() } catch { }
+            try { $proc.WaitForExit(10000) | Out-Null } catch { }
         }
     } catch {
         Write-Host "  [i] No pude lanzar la preparacion: $($_.Exception.Message)"
     } finally {
         $ErrorActionPreference = $prev
-        Remove-Item $salida, $errores -Force -ErrorAction SilentlyContinue
-        Remove-Item $dirVacio -Recurse -Force -ErrorAction SilentlyContinue
     }
-    return (Test-DependenciasOpenCode $cfgDir)
+    $quedo = [bool](Test-DependenciasOpenCode $cfgDir)
+    # SI NO QUEDO, SE DICE LO QUE SE SABE, NO UNA CAUSA SUPUESTA. Antes el aviso decia
+    # "sin internet, o la red la bloquea" sin haberlo comprobado: con un antivirus, el
+    # disco lleno o la carpeta sin permiso de escritura el docente leia una causa de red
+    # que nadie midio. Se muestran las ultimas lineas de lo que OpenCode escribio en su
+    # salida de ERRORES (no la estandar, que es la configuracion) y quedan en el registro.
+    if (-not $quedo) {
+        if ($cortado) {
+            Write-Host "      No termino en $([int]($TopePrimeraAperturaMs / 1000)) segundos."
+        }
+        try {
+            if ($errores -and (Test-Path -LiteralPath $errores)) {
+                $cola = @(Get-Content -LiteralPath $errores -Tail 6 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
+                if ($cola.Count -gt 0) {
+                    Write-Host "      Lo ultimo que dijo OpenCode:"
+                    foreach ($l in $cola) { Write-Host ("        " + $l.Trim().Substring(0, [Math]::Min(200, $l.Trim().Length))) }
+                }
+            }
+        } catch { }
+    }
+    foreach ($t in @($salida, $errores)) {
+        if ($t) { Remove-Item -LiteralPath $t -Force -ErrorAction SilentlyContinue }
+    }
+    if ($dirVacio) { Remove-Item -LiteralPath $dirVacio -Recurse -Force -ErrorAction SilentlyContinue }
+    # El de salida tiene la configuracion entera: si no se pudo borrar, se dice donde quedo.
+    if ($salida -and (Test-Path -LiteralPath $salida)) {
+        Write-Host "  [i] No pude borrar un archivo temporal con la configuracion: $salida"
+    }
+    return $quedo
 }
 
 $PrimeraAperturaLista = $false
@@ -1774,7 +1824,7 @@ if ($CapaOk -and (Test-Path $BinOpenCode)) {
     if ($PrimeraAperturaLista) {
         Write-Host "  [OK] La primera apertura ya no necesita internet."
     } else {
-        Write-Host "  [!] No pude dejar lista la primera apertura (sin internet, o la red la bloquea)." -ForegroundColor Yellow
+        Write-Host "  [!] No pude dejar lista la primera apertura (suele ser falta de internet o una red que bloquea la descarga)." -ForegroundColor Yellow
         Write-Host "      Sigo; el aviso completo va al final."
     }
 }
