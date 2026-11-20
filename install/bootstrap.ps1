@@ -1665,6 +1665,170 @@ if ($CapaOk -and -not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
     Write-Host ""
 }
 
+# --- 6. Primera apertura: las dependencias de OpenCode quedan puestas ----------
+#
+# POR QUE EXISTE. Medido en una VM Windows 11 con la 0.4.10 (auditoria por
+# escenarios, 2026-11-18/19): la primera vez que arranca, OpenCode instala el
+# paquete @opencode-ai/plugin en la carpeta de configuracion y NO DIBUJA NADA
+# hasta que esa instalacion termina o falla. La ventana queda en negro, con el
+# titulo "Tecnia Bot" y sin un cartel:
+#
+#     con buena red ............ 16 a 28 s
+#     red cortada .............. 71 s
+#     reloj atrasado 3 anios ... 72 s  ("certificate is not yet valid")
+#     red filtrada ............. 135 s
+#
+# Y se repite en CADA apertura hasta que la instalacion sale bien una vez. Una
+# docente que abre el icono en el aula, con la red de la escuela, ve una ventana
+# negra durante dos minutos y la cierra. Despues de una apertura que si pudo
+# bajar, abre en 1 s incluso sin red.
+#
+# POR QUE BLOQUEA (leido en el codigo de OpenCode v1.18.18):
+#   config/config.ts:424-457   lanza la instalacion "en segundo plano" por cada
+#                              carpeta de configuracion.
+#   plugin/index.ts:179-182    si hay plugins de servidor, ESPERA esa instalacion
+#                              antes de cargarlos. Tecnia Bot trae uno
+#                              (plugins\tecnia-idioma.ts): por eso espera.
+#   No hay timeout propio ni opcion que la apague sin apagar tambien los plugins.
+#
+# COMO SE ADELANTA. `opencode debug config` carga la instancia igual que la
+# pantalla -y por lo tanto dispara y espera la misma instalacion- pero termina
+# sin abrir nada. Probado en la VM: 55 s con red, 3938 archivos en node_modules,
+# y la apertura siguiente SIN red bajo de 71 s a 1 s.
+#
+# TRES COSAS QUE NO SON OBVIAS:
+#
+#   1. VA DESPUES DE install.ps1. Sin el plugin copiado OpenCode no espera la
+#      instalacion, y `debug config` saldria antes de que termine de bajar.
+#
+#   2. EL EXIT CODE NO DICE NADA. OpenCode anota el fallo como aviso y sale con 0
+#      igual. Lo unico que vale es mirar el disco, con la MISMA condicion que usa
+#      OpenCode para decidir que ya no tiene que instalar (core/src/npm.ts:139-190):
+#      que exista node_modules y que package-lock.json nombre el paquete.
+#
+#   3. package-lock.json NO SE LEE CON ConvertFrom-Json. Tiene una clave vacia
+#      ("") y PowerShell 5.1 revienta con "el valor del argumento name no es
+#      valido" (visto en la VM). Se busca el texto.
+#
+# TIENE TOPE. OpenCode no corta nunca por su cuenta; con la red filtrada tardo
+# 135 s en rendirse. Se le dan 3 minutos y despues se lo mata: un instalador
+# colgado es peor que el negro que viene a arreglar.
+#
+# SI NO QUEDA, NO ES "LISTO". El bot abre igual, pero la primera apertura vuelve a
+# depender de la red y se dice asi en el resumen. No es una falla (codigo 1): es
+# un instalado incompleto, y Reparar lo completa cuando haya red.
+#
+# SIN VERIFICAR: que las herramientas del bot fallen cuando falta este paquete.
+# Lo importan todas (`import { tool } from "@opencode-ai/plugin"`), asi que es lo
+# esperable, pero no se midio.
+$TopePrimeraAperturaMs = 180000
+
+function Test-DependenciasOpenCode {
+    param([string]$dir)
+    $paquete = Join-Path $dir "node_modules\@opencode-ai\plugin\package.json"
+    $lock = Join-Path $dir "package-lock.json"
+    # -LiteralPath en los tres: con -Path, un corchete en la ruta (XDG_CONFIG_HOME=D:\conf[1])
+    # se toma como comodin, el archivo "no existe" y la instalacion quedaria marcada como
+    # incompleta para siempre con todo bien puesto. Lo marco la revision.
+    if (-not (Test-Path -LiteralPath $paquete)) { return $false }
+    if (-not (Test-Path -LiteralPath $lock)) { return $false }
+    try {
+        return [bool](Select-String -LiteralPath $lock -Pattern '"@opencode-ai/plugin"' -SimpleMatch -Quiet)
+    } catch {
+        return $false
+    }
+}
+
+function Preparar-PrimeraApertura {
+    if (Test-DependenciasOpenCode $cfgDir) { return $true }
+    Write-Host ""
+    Write-Host "  [..] Preparando la primera apertura de Tecnia Bot (baja unos archivos; hasta 3 minutos)..."
+    # Se arranca desde una carpeta nueva y vacia para no sumar carpetas `.opencode` de
+    # un proyecto. NO LAS EVITA TODAS: %TEMP% cuelga del perfil, asi que si existe
+    # %USERPROFILE%\.opencode OpenCode la encuentra igual, instala ahi tambien y la
+    # espera. Eso puede alargar este paso; no cambia lo que se informa, que sale de
+    # mirar $cfgDir. SIN CUBRIR: una `.opencode` propia del docente en su perfil o en
+    # Documentos, a la que le falten dependencias, sigue haciendo esperar a la primera
+    # apertura aunque aca diga [OK]. No se midio.
+    $dirVacio = $null
+    $salida = $null
+    $errores = $null
+    $proc = $null
+    $cortado = $false
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        # Adentro del try: si %TEMP% viniera vacia, Join-Path es un error terminante y
+        # afuera cortaria el instalador sin llegar al resumen (puede fallar, no romper).
+        $dirVacio = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N"))
+        $salida = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N") + ".out")
+        $errores = $salida + ".err"
+        New-Item -ItemType Directory -Force -Path $dirVacio | Out-Null
+        # La salida estandar es la configuracion ENTERA: se manda a un archivo que se
+        # borra, y no va a la pantalla ni al registro de instalacion.
+        $proc = Start-Process -FilePath $BinOpenCode -ArgumentList "debug", "config" -WorkingDirectory $dirVacio -WindowStyle Hidden -RedirectStandardOutput $salida -RedirectStandardError $errores -PassThru
+        if (-not $proc.WaitForExit($TopePrimeraAperturaMs)) {
+            $cortado = $true
+            Write-Host "  [i] Paso el tiempo maximo y OpenCode seguia intentando bajar: lo corto."
+            # SE MATA EL ARBOL Y SE ESPERA A QUE MUERA. La primera version hacia solo
+            # $proc.Kill(): mata al padre y deja vivo a cualquier hijo, que puede seguir
+            # escribiendo en node_modules despues de que este script ya dio su veredicto
+            # y bloquear archivos de una reinstalacion. Y como Kill() no espera, los
+            # temporales (uno tiene la configuracion entera) quedaban tomados y el
+            # Remove-Item de abajo fallaba callado. Lo marcaron las dos revisiones.
+            try { & taskkill.exe /PID $proc.Id /T /F *> $null } catch { }
+            try { $proc.Kill() } catch { }
+            try { $proc.WaitForExit(10000) | Out-Null } catch { }
+        }
+    } catch {
+        Write-Host "  [i] No pude lanzar la preparacion: $($_.Exception.Message)"
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    $quedo = [bool](Test-DependenciasOpenCode $cfgDir)
+    # SI NO QUEDO, SE DICE LO QUE SE SABE, NO UNA CAUSA SUPUESTA. Antes el aviso decia
+    # "sin internet, o la red la bloquea" sin haberlo comprobado: con un antivirus, el
+    # disco lleno o la carpeta sin permiso de escritura el docente leia una causa de red
+    # que nadie midio. Se muestran las ultimas lineas de lo que OpenCode escribio en su
+    # salida de ERRORES (no la estandar, que es la configuracion) y quedan en el registro.
+    if (-not $quedo) {
+        if ($cortado) {
+            Write-Host "      No termino en $([int]($TopePrimeraAperturaMs / 1000)) segundos."
+        }
+        try {
+            if ($errores -and (Test-Path -LiteralPath $errores)) {
+                $cola = @(Get-Content -LiteralPath $errores -Tail 6 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
+                if ($cola.Count -gt 0) {
+                    Write-Host "      Lo ultimo que dijo OpenCode:"
+                    foreach ($l in $cola) { Write-Host ("        " + $l.Trim().Substring(0, [Math]::Min(200, $l.Trim().Length))) }
+                }
+            }
+        } catch { }
+    }
+    foreach ($t in @($salida, $errores)) {
+        if ($t) { Remove-Item -LiteralPath $t -Force -ErrorAction SilentlyContinue }
+    }
+    if ($dirVacio) { Remove-Item -LiteralPath $dirVacio -Recurse -Force -ErrorAction SilentlyContinue }
+    # El de salida tiene la configuracion entera: si no se pudo borrar, se dice donde quedo.
+    if ($salida -and (Test-Path -LiteralPath $salida)) {
+        Write-Host "  [i] No pude borrar un archivo temporal con la configuracion: $salida"
+    }
+    return $quedo
+}
+
+$PrimeraAperturaLista = $false
+$PrimeraAperturaIntentada = $false
+if ($CapaOk -and (Test-Path $BinOpenCode)) {
+    $PrimeraAperturaLista = [bool](Preparar-PrimeraApertura)
+    $PrimeraAperturaIntentada = $true
+    if ($PrimeraAperturaLista) {
+        Write-Host "  [OK] La primera apertura ya no necesita internet."
+    } else {
+        Write-Host "  [!] No pude dejar lista la primera apertura (suele ser falta de internet o una red que bloquea la descarga)." -ForegroundColor Yellow
+        Write-Host "      Sigo; el aviso completo va al final."
+    }
+}
+
 # ---- RESUMEN FINAL: UNA LINEA POR COMPONENTE, CON LO QUE SE COMPROBO ----------
 #
 # POR QUE EXISTE. Hasta aca solo la falla de OpenCode se repetia al final. Las de
@@ -1727,6 +1891,16 @@ if ($CapaOk -and $CapaConAvisos) {
     Write-Host "  [OK] Tecnia Bot   la capa educativa esta publicada en $cfgDir"
 } else {
     Write-Host "  [X]  Tecnia Bot   la capa educativa NO quedo publicada." -ForegroundColor Red
+}
+# Solo si se intento: sin OpenCode o sin la capa, las lineas de arriba ya dicen lo
+# que importa y esta seria ruido.
+if ($PrimeraAperturaIntentada) {
+    if ($PrimeraAperturaLista) {
+        Write-Host "  [OK] Arranque     la primera apertura no necesita internet."
+    } else {
+        $Degradado += "la primera vez que abras Tecnia Bot va a necesitar internet, y la ventana puede quedar en negro uno o dos minutos antes de mostrar algo: no la cierres"
+        Write-Host "  [!]  Arranque     la primera apertura va a necesitar internet y puede tardar uno o dos minutos en negro." -ForegroundColor Yellow
+    }
 }
 Write-Host ""
 
