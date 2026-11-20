@@ -4,6 +4,20 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+### Corregido
+
+- **Windows: la primera vez que abrís Tecnia Bot ya no queda la ventana en negro.** Al abrirlo por primera vez, OpenCode baja unos archivos de internet y no muestra nada hasta terminar. Con buena conexión eran unos 20 segundos; con la red de la escuela filtrada, o con el reloj de la computadora atrasado, la ventana quedaba negra entre uno y dos minutos, sin un cartel, y se repetía cada vez que la abrías hasta que una vez lograba bajar. Ahora esos archivos los deja puestos el instalador. Medido en una máquina virtual con Windows 11: abrir sin internet pasó de 71 segundos a 1.
+- **Windows: si esos archivos no se pudieron bajar, el instalador lo dice.** La lista final tiene una línea nueva, "Arranque". Si quedó en amarillo, la instalación cierra como incompleta y avisa que la primera apertura va a necesitar internet y puede tardar; "Reparar Tecnia Bot" lo completa cuando haya conexión.
+
+### Qué cambia para peor, y hay que saberlo
+
+- **La instalación tarda alrededor de un minuto más.** Es el tiempo que antes se esperaba con la pantalla en negro.
+- **Si se corta internet a mitad de la instalación, el instalador tarda más en terminar** (un minuto y medio en vez de 20 segundos en la prueba), porque intenta bajar esos archivos antes de rendirse. Nunca espera más de 3 minutos por esto.
+
+### Qué no se probó
+
+El instalador haciendo clic en cada pantalla (se probó en modo silencioso), Windows 10, y una notebook de aula. Tampoco está probado que la ventana negra del aula del 17 de noviembre haya sido por esto: es una de las tres condiciones que la producen en la máquina virtual.
+
 ## [0.4.10] — 2026-11-17
 
 **Instalar Tecnia Bot en Windows vuelve a funcionar. Desde el 11 de noviembre el instalador no podía bajar OpenCode y terminaba en "OpenCode NO ARRANCA", en cualquier computadora nueva. No era tu computadora ni tu red.**
