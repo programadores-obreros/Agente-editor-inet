@@ -841,10 +841,22 @@ function Test-OpenCodeFijadoEnCache {
     return $false
 }
 
+# EL SERVICIO DE FONDO NO ES "OPENCODE ABIERTO". El 2.x deja corriendo un
+# `opencode serve --service` sin ventana, que sigue vivo mucho despues de cerrar el
+# programa (visto en la VM: 40 minutos). Si contara como abierto, el cambio no se
+# haria nunca. Se distinguen por la linea de comando: lo que NO es ese servicio es
+# una ventana que alguien esta usando, y esa no se toca.
+function Get-OpenCodeAbiertos {
+    param([switch]$Servicio)
+    $todos = @(Get-CimInstance Win32_Process -Filter "Name='opencode.exe'" -ErrorAction SilentlyContinue)
+    if ($Servicio) { return @($todos | Where-Object { $_.CommandLine -match 'serve\s+--service' }) }
+    return @($todos | Where-Object { $_.CommandLine -notmatch 'serve\s+--service' })
+}
+
 function Quitar-OpenCodeAjeno {
     param([string]$habia)
     $script:MotivoNoCambio = ""
-    if (@(Get-Process opencode -ErrorAction SilentlyContinue).Count -gt 0) {
+    if (@(Get-OpenCodeAbiertos).Count -gt 0) {
         $script:MotivoNoCambio = "OpenCode esta abierto"
         return $false
     }
@@ -854,6 +866,22 @@ function Quitar-OpenCodeAjeno {
         try { scoop download $ManifiestoOpenCode *>&1 | Out-Null } catch { }
         if (-not (Test-OpenCodeFijadoEnCache)) {
             $script:MotivoNoCambio = "no pude bajar la $OpenCodeVersion (hace falta internet)"
+            return $false
+        }
+        # El servicio de fondo se cierra RECIEN ACA, con la fijada ya bajada: si no se va a
+        # cambiar nada, no se le toca nada al docente. Y se vuelve a mirar: si quedo algo
+        # vivo (el servicio no murio, o alguien abrio OpenCode mientras bajaba), no se saca.
+        foreach ($p in @(Get-OpenCodeAbiertos -Servicio)) {
+            try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch { }
+        }
+        $quedan = 0
+        for ($i = 0; $i -lt 10; $i++) {
+            $quedan = @(Get-Process opencode -ErrorAction SilentlyContinue).Count
+            if ($quedan -eq 0) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if ($quedan -gt 0) {
+            $script:MotivoNoCambio = "OpenCode esta abierto"
             return $false
         }
         try { scoop uninstall opencode *>&1 | Out-Null } catch { }

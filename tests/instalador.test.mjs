@@ -250,7 +250,7 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   const quitar = codigo.slice(iq, codigo.indexOf("\n}", iq))
   assert.ok(iq > 0 && quitar.includes("scoop uninstall opencode"), "el único uninstall no está en Quitar-OpenCodeAjeno")
   const pos = (t) => quitar.indexOf(t)
-  const abierto = pos("if (@(Get-Process opencode -ErrorAction SilentlyContinue).Count -gt 0) {")
+  const abierto = pos("if (@(Get-OpenCodeAbiertos).Count -gt 0) {")
   const baja = pos("scoop download $ManifiestoOpenCode")
   const comprueba = pos("if (-not (Test-OpenCodeFijadoEnCache)) {")
   const saca = pos("scoop uninstall opencode")
@@ -258,6 +258,19 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   // Entre la comprobación y el uninstall hay un `return $false`: si el zip no está, no se saca nada.
   assert.match(quitar.slice(comprueba, saca), /return \$false/, "si la fijada no quedó bajada, igual saca el OpenCode que había")
   assert.match(quitar.slice(abierto, baja), /return \$false/, "saca un OpenCode que está abierto")
+  // EL SERVICIO DE FONDO DEL 2.x (`opencode serve --service`) no cuenta como abierto: queda
+  // vivo mucho después de cerrar el programa y el cambio no se haría nunca. Pero se cierra
+  // DESPUÉS de comprobar la descarga (si no se va a cambiar, no se le toca nada al docente)
+  // y antes de sacar se vuelve a mirar que no quede NINGÚN opencode vivo.
+  const cierra = pos("foreach ($p in @(Get-OpenCodeAbiertos -Servicio)) {")
+  const remira = pos("if ($quedan -gt 0) {")
+  assert.ok(cierra > comprueba && remira > cierra && saca > remira, "el orden no es: comprobar la descarga → cerrar el servicio de fondo → volver a mirar → sacar")
+  assert.match(quitar.slice(remira, saca), /return \$false/, "saca aunque quedó un OpenCode vivo")
+  assert.match(quitar, /\$quedan = @\(Get-Process opencode -ErrorAction SilentlyContinue\)\.Count/, "la segunda mirada no cuenta todos los procesos de OpenCode")
+  const ia = codigo.indexOf("function Get-OpenCodeAbiertos {")
+  const abiertos = codigo.slice(ia, codigo.indexOf("\n}", ia))
+  assert.match(abiertos, /if \(\$Servicio\) \{ return @\(\$todos \| Where-Object \{ \$_\.CommandLine -match 'serve\\s\+--service' \}\) \}/, "no reconoce el servicio de fondo por su línea de comando")
+  assert.match(abiertos, /return @\(\$todos \| Where-Object \{ \$_\.CommandLine -notmatch 'serve\\s\+--service' \}\)/, "trata como servicio de fondo a una ventana que alguien está usando")
   // La comprobación mira el archivo y su hash; no le cree al exit de Scoop.
   const ic = codigo.indexOf("function Test-OpenCodeFijadoEnCache {")
   const cache = codigo.slice(ic, codigo.indexOf("\n}", ic))
