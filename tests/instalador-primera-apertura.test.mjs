@@ -270,9 +270,21 @@ test("la base de otro OpenCode se aparta sola: se le cambia el nombre, no se bor
   assert.doesNotMatch(f, /Remove-Item/, "borra la base: es el historial de otro programa del docente")
   assert.match(f, /Rename-Item -LiteralPath \$f -NewName \(\$n \+ \$marca\) -ErrorAction Stop/, "no le cambia el nombre")
   assert.match(f, /\$marca = "\.de-otra-version-" \+ \(Get-Date -Format "yyyyMMdd-HHmmss"\)/, "el nombre nuevo no lleva fecha: una segunda vez pisaría la primera")
-  // Los tres archivos de la base, con el principal al final (si falla antes, la base sigue entera).
-  assert.match(f, /foreach \(\$n in @\("opencode\.db-wal", "opencode\.db-shm", "opencode\.db"\)\)/, "no aparta los tres archivos de la base, o aparta primero el principal")
-  assert.match(f, /^function Apartar-BaseDeOtraVersion \{\n    if \(@\(Get-Process opencode -ErrorAction SilentlyContinue\)\.Count -gt 0\) \{ return \$false \}/, "toca la base con OpenCode abierto")
+  // LOS TRES O NINGUNO. La primera versión de este test pedía el orden -wal, -shm, .db y
+  // afirmaba "si falla antes, la base sigue entera". Era falso: con el .db tomado por el
+  // antivirus quedaba la base en su lugar SIN su -wal (sus últimos cambios). Lo marcó la
+  // revisión. Ahora: primero el principal (si falla, no se tocó nada), y si falla otro se
+  // devuelven a su nombre los que ya se movieron.
+  assert.match(f, /foreach \(\$n in @\("opencode\.db", "opencode\.db-wal", "opencode\.db-shm"\)\)/, "no aparta los tres archivos, o no empieza por el principal")
+  assert.match(f, /Rename-Item -LiteralPath \$f -NewName \(\$n \+ \$marca\) -ErrorAction Stop\n\s*\$movidos \+= \$n/, "no anota lo que ya movió: no podría volver atrás")
+  assert.match(
+    f,
+    /\} catch \{\n\s*\$motivo = [^\n]*\n\s*foreach \(\$n in \$movidos\) \{\n\s*try \{ Rename-Item -LiteralPath \(Join-Path \$DatosOpenCode \(\$n \+ \$marca\)\) -NewName \$n -ErrorAction Stop \} catch \{ \}\n\s*\}\n[^\n]*\n\s*return \$false/,
+    "si falla a mitad no devuelve a su nombre lo que ya movió",
+  )
+  // Sin OpenCode abierto, y sólo si la base está donde se la busca. Las dos salidas avisan.
+  assert.match(f, /^function Apartar-BaseDeOtraVersion \{\n    if \(@\(Get-Process opencode -ErrorAction SilentlyContinue\)\.Count -gt 0\) \{\n\s*Write-Host "[^"]*OpenCode esta abierto\."\n\s*return \$false/, "toca la base con OpenCode abierto, o lo calla")
+  assert.match(f, /if \(\(-not \$base\) -or \(-not \(Test-Path -LiteralPath \$base\)\)\) \{\n\s*\$script:BaseNoEncontrada = \$true\n\s*Write-Host "[^"]*no la encontre en \$DatosOpenCode"\n\s*return \$false/, "sin base en esa carpeta diría que la apartó, o lo calla")
   // El OK sale de mirar el disco, no de que Rename-Item no haya tirado.
   assert.match(f, /if \(Test-Path -LiteralPath \$base\) \{ return \$false \}\n\s*\$script:BaseApartadaComo = /, "dice que la apartó sin mirar si sigue ahí")
   // Una vez, no en bucle; y la marca se baja sólo si de verdad se apartó.
@@ -284,4 +296,6 @@ test("la base de otro OpenCode se aparta sola: se le cambia el nombre, no se bor
   assert.equal(comandos.split("Apartar-BaseDeOtraVersion)").length - 1, 1, "se aparta más de una vez")
   // Y el resumen cuenta que se hizo y dónde quedó.
   assert.match(ps1, /if \(\$script:BaseApartadaComo\) \{\n\s*Write-Host "[^"]*No se borro:"\n\s*Write-Host "[^"]*\$script:BaseApartadaComo en \$DatosOpenCode"/, "el resumen no dice que se apartó la base ni dónde quedó")
+  // Si no la encontró, no manda al docente a renombrar un archivo que no está en esa carpeta.
+  assert.match(ps1, /if \(\$script:BaseNoEncontrada\) \{\n\s*\$Degradado \+= "[^"]*No encontre esa base en la carpeta \$DatosOpenCode[^"]*"\n\s*\} else \{\n\s*\$Degradado \+= "[^"]*cambiale el nombre a opencode\.db /, "manda a renombrar un archivo que no encontró")
 })

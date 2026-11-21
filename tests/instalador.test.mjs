@@ -286,6 +286,34 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   assert.match(cache, /if \(\$hashes -contains \$h\) \{ return \$true \}/, "da por bueno un zip cuyo hash no es el del manifest")
   assert.match(cache, /-Filter "opencode#\$OpenCodeVersion#\*"/, "no busca el zip de la versión fijada")
   assert.match(cache, /return \$false\s*$/, "si no encontró el zip, no devuelve falso")
+  // LO QUE MARCÓ LA SEGUNDA REVISIÓN, que estos asserts no cubrían:
+  // Sólo vale el zip de la arquitectura de ESTA compu. Antes se aceptaba el hash de
+  // cualquiera de las dos del manifest: un zip arm64 en el cache de una x64 daba luz verde.
+  assert.match(cache, /\$arq = if \(@\(\$env:PROCESSOR_ARCHITEW6432, \$env:PROCESSOR_ARCHITECTURE\) -contains "ARM64"\) \{ "arm64" \} else \{ "64bit" \}/, "no decide qué arquitectura le toca a esta compu")
+  assert.match(cache, /if \(\$mf\.architecture\.\$arq\.hash\) \{ \$hashes \+= /, "acepta el hash de otra arquitectura")
+  assert.doesNotMatch(cache, /architecture\.PSObject\.Properties/, "junta los hashes de todas las arquitecturas")
+  assert.match(cache, /if \(\$hashes\.Count -eq 0\) \{ return \$false \}/, "sin hash en el manifest daría por bueno cualquier cosa")
+  assert.match(cache, /^function Test-OpenCodeFijadoEnCache \{\n\s*try \{[\s\S]*\} catch \{ \}\n\s*return \$false$/, "una excepción al leer el manifest o el cache corta el instalador")
+  // Después de pedir el uninstall se RELEE el disco: si Scoop no lo sacó, no se sigue.
+  assert.match(quitar.slice(saca), /if \(Test-Path \(Join-Path \$OpenCodeAppDir "current"\)\) \{\n\s*\$script:MotivoNoCambio = "[^"\n]*"\n\s*return \$false\n\s*\}/, "da por sacado un OpenCode sin mirar si sigue ahí")
+  assert.match(quitar, /Stop-Process -Id \$p\.ProcessId -Force -ErrorAction Stop/, "no cierra el servicio de fondo")
+  // Queda anotado QUÉ se sacó, y si después no hay OpenCode el cierre lo dice y manda a
+  // Reparar (que instala desde el zip ya bajado). Sin eso el cierre callaba lo que el
+  // instalador había hecho.
+  assert.match(quitar, /\$script:OpenCodeQuitado = \$habia\n\s*return \$true/, "no anota qué OpenCode sacó")
+  assert.match(
+    codigo,
+    /if \(\$script:OpenCodeQuitado\) \{\n\s*Write-Host "  ESTE INSTALADOR SACO EL OPENCODE QUE HABIA[^\n]*\n\s*Write-Host "[^"\n]*no hace falta internet\."\n\s*Write-Host "    Para instalarlo:  menu inicio -> Reparar Tecnia Bot"/,
+    "si sacó el OpenCode que había y no pudo instalar el suyo, el cierre no lo dice",
+  )
+  // El resultado de Quitar-OpenCodeAjeno se usa, y se la llama desde un solo lugar: la rama
+  // "hay otra versión y la fijada no está en el disco".
+  const llamadas = codigo.split("\n").filter((l) => /Quitar-OpenCodeAjeno/.test(l) && !/^function /.test(l) && !/Write-Host/.test(l))
+  assert.deepEqual(llamadas.map((l) => l.trim()), ["if ([bool](Quitar-OpenCodeAjeno $instalada)) {"], "se llama a Quitar-OpenCodeAjeno desde otro lado, o se ignora lo que devuelve")
+  const iRama = codigo.indexOf("la bajo antes de tocar nada")
+  const iLlamada = codigo.indexOf("if ([bool](Quitar-OpenCodeAjeno $instalada)) {")
+  const iInstala = codigo.indexOf("$salidaInst = scoop install $ManifiestoOpenCode", iLlamada)
+  assert.ok(iRama > 0 && iLlamada > iRama && iInstala > iLlamada && iInstala - iLlamada < 900, "la instalación no sigue inmediatamente al reemplazo, en la misma rama")
 
   // Y no puede preguntarle nada: el instalador también corre en silencio
   // (/VERYSILENT), donde un prompt no espera respuesta, cuelga para siempre.

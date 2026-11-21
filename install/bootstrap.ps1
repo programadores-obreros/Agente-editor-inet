@@ -823,14 +823,20 @@ function Fijar-OpenCode {
 # SIN VERIFICAR: un cache de Scoop en otra carpeta (SCOOP_CACHE o la configuracion
 # de Scoop). Ahi el zip no se encuentra, y por eso mismo no se saca nada.
 $script:MotivoNoCambio = ""
+$script:OpenCodeQuitado = ""
 
 function Test-OpenCodeFijadoEnCache {
     try {
-        $hashes = @()
+        # SOLO EL ZIP DE ESTA ARQUITECTURA. La primera version aceptaba el hash de
+        # cualquiera de las dos del manifest: con un zip arm64 en el cache de una compu
+        # x64 daba por bajada la version, se sacaba el OpenCode que habia y la
+        # instalacion salia a buscar a la red el zip que de verdad necesitaba. Lo marco
+        # la revision. Si Scoop eligiera otra arquitectura que esta, el zip no coincide
+        # y no se saca nada, que es el lado seguro.
+        $arq = if (@($env:PROCESSOR_ARCHITEW6432, $env:PROCESSOR_ARCHITECTURE) -contains "ARM64") { "arm64" } else { "64bit" }
         $mf = Get-Content -LiteralPath $ManifiestoOpenCode -Raw | ConvertFrom-Json
-        foreach ($a in $mf.architecture.PSObject.Properties) {
-            if ($a.Value.hash) { $hashes += ("" + $a.Value.hash).ToLower() }
-        }
+        $hashes = @()
+        if ($mf.architecture.$arq.hash) { $hashes += ("" + $mf.architecture.$arq.hash).ToLower() }
         if ($hashes.Count -eq 0) { return $false }
         $cache = Join-Path $env:USERPROFILE "scoop\cache"
         foreach ($f in @(Get-ChildItem -LiteralPath $cache -Filter "opencode#$OpenCodeVersion#*" -File -ErrorAction SilentlyContinue)) {
@@ -889,6 +895,9 @@ function Quitar-OpenCodeAjeno {
             $script:MotivoNoCambio = "Scoop no pudo sacar la $habia"
             return $false
         }
+        # Queda anotado QUE se saco. Si la instalacion de despues falla, el cierre tiene
+        # que decirlo con todas las letras: la compu quedo sin el OpenCode que tenia.
+        $script:OpenCodeQuitado = $habia
         return $true
     } finally {
         $ErrorActionPreference = $prev
@@ -1949,24 +1958,46 @@ function Preparar-PrimeraApertura {
 # nombre, con fecha, y queda en la misma carpeta: es el historial de otro programa del
 # docente y no se destruye. No se toca con OpenCode abierto.
 $script:BaseApartadaComo = ""
+$script:BaseNoEncontrada = $false
 function Apartar-BaseDeOtraVersion {
-    if (@(Get-Process opencode -ErrorAction SilentlyContinue).Count -gt 0) { return $false }
-    $marca = ".de-otra-version-" + (Get-Date -Format "yyyyMMdd-HHmmss")
-    try {
-        $base = Join-Path $DatosOpenCode "opencode.db"
-        if (-not (Test-Path -LiteralPath $base)) { return $false }
-        foreach ($n in @("opencode.db-wal", "opencode.db-shm", "opencode.db")) {
-            $f = Join-Path $DatosOpenCode $n
-            if (Test-Path -LiteralPath $f) { Rename-Item -LiteralPath $f -NewName ($n + $marca) -ErrorAction Stop }
-        }
-        if (Test-Path -LiteralPath $base) { return $false }
-        $script:BaseApartadaComo = "opencode.db" + $marca
-        Write-Host "  [i] Aparte la base de datos de otro OpenCode: quedo como $script:BaseApartadaComo en $DatosOpenCode"
-        return $true
-    } catch {
-        Write-Host "  [i] No pude apartar la base de datos de otro OpenCode: $($_.Exception.Message)"
+    if (@(Get-Process opencode -ErrorAction SilentlyContinue).Count -gt 0) {
+        Write-Host "  [i] No aparte la base de datos de otro OpenCode: OpenCode esta abierto."
         return $false
     }
+    $marca = ".de-otra-version-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+    $base = $null
+    try { $base = Join-Path $DatosOpenCode "opencode.db" } catch { }
+    if ((-not $base) -or (-not (Test-Path -LiteralPath $base))) {
+        $script:BaseNoEncontrada = $true
+        Write-Host "  [i] No aparte la base de datos de otro OpenCode: no la encontre en $DatosOpenCode"
+        return $false
+    }
+    # LOS TRES ARCHIVOS O NINGUNO. La primera version movia primero -wal y -shm y al
+    # final opencode.db, sin volver atras: si el antivirus tenia tomado el .db, la base
+    # del docente quedaba EN SU LUGAR pero sin su -wal, o sea sin sus ultimos cambios.
+    # Lo marco la revision. Ahora va primero el principal (si ese falla no se toco
+    # nada) y, si falla alguno de los otros, se devuelven a su nombre los ya movidos.
+    $movidos = @()
+    try {
+        foreach ($n in @("opencode.db", "opencode.db-wal", "opencode.db-shm")) {
+            $f = Join-Path $DatosOpenCode $n
+            if (Test-Path -LiteralPath $f) {
+                Rename-Item -LiteralPath $f -NewName ($n + $marca) -ErrorAction Stop
+                $movidos += $n
+            }
+        }
+    } catch {
+        $motivo = $_.Exception.Message
+        foreach ($n in $movidos) {
+            try { Rename-Item -LiteralPath (Join-Path $DatosOpenCode ($n + $marca)) -NewName $n -ErrorAction Stop } catch { }
+        }
+        Write-Host "  [i] No pude apartar la base de datos de otro OpenCode (la deje como estaba): $motivo"
+        return $false
+    }
+    if (Test-Path -LiteralPath $base) { return $false }
+    $script:BaseApartadaComo = "opencode.db" + $marca
+    Write-Host "  [i] Aparte la base de datos de otro OpenCode: quedo como $script:BaseApartadaComo en $DatosOpenCode"
+    return $true
 }
 
 $PrimeraAperturaLista = $false
@@ -2096,10 +2127,15 @@ if ($PrimeraAperturaIntentada) {
     if ($PrimeraAperturaLista) {
         Write-Host "  [OK] Arranque     la primera apertura no necesita internet."
     } elseif ($script:BaseDeOtraVersion) {
-        # Se dice el remedio exacto, y es el que se probo en la VM: con la base apartada
-        # (no borrada) el bot abrio en 21 s. No se aparta sola: es el historial de OTRO
-        # programa del docente, y tocarlo sin preguntar no nos corresponde.
-        $Degradado += "en esta compu hubo un OpenCode mas nuevo y dejo una base de datos que este no puede leer: asi Tecnia Bot queda EN NEGRO al abrir, y esperar no lo arregla. Cerra Tecnia Bot y OpenCode, entra a la carpeta $DatosOpenCode y cambiale el nombre a opencode.db (por ejemplo opencode.db.viejo). Despues abri Tecnia Bot"
+        # LLEGAR ACA ES QUE NO SE PUDO APARTAR SOLA (OpenCode abierto, archivo tomado, o
+        # no esta donde se la busco). Se dice el remedio que se probo en la VM: con la
+        # base apartada, no borrada, el bot abrio en 21 s. Y si no se la encontro, no se
+        # manda al docente a renombrar un archivo que no esta en esa carpeta.
+        if ($script:BaseNoEncontrada) {
+            $Degradado += "en esta compu hubo un OpenCode mas nuevo y dejo una base de datos que este no puede leer: asi Tecnia Bot queda EN NEGRO al abrir, y esperar no lo arregla. No encontre esa base en la carpeta $DatosOpenCode, asi que no la pude apartar: avisale al referente tecnico"
+        } else {
+            $Degradado += "en esta compu hubo un OpenCode mas nuevo y dejo una base de datos que este no puede leer: asi Tecnia Bot queda EN NEGRO al abrir, y esperar no lo arregla. Cerra Tecnia Bot y OpenCode, entra a la carpeta $DatosOpenCode y cambiale el nombre a opencode.db (por ejemplo opencode.db.viejo). Despues abri Tecnia Bot"
+        }
         Write-Host "  [!]  Arranque     NO VA A ABRIR: quedo la base de datos de un OpenCode mas nuevo. Abajo dice como seguir." -ForegroundColor Yellow
     } else {
         $Degradado += "la primera vez que abras Tecnia Bot va a necesitar internet, y la ventana puede quedar en negro uno o dos minutos antes de mostrar algo: no la cierres"
@@ -2132,6 +2168,17 @@ if (-not $OpenCodeArranca) {
         Write-Host "  OPENCODE NO ARRANCA, y la capa de Tecnia Bot tampoco quedo publicada." -ForegroundColor Yellow
     }
     Write-Host ""
+    # SI ESTE INSTALADOR SACO EL OPENCODE QUE HABIA Y NO PUDO PONER EL NUESTRO, SE DICE.
+    # Es el peor caso del reemplazo: la compu quedo sin el OpenCode que tenia. El zip ya
+    # esta bajado y comprobado, asi que Reparar lo instala desde el disco, sin internet
+    # (medido en la VM con la red cortada: 2 segundos). Sin este aviso el cierre mandaba
+    # solo al Diagnostico y callaba lo que el instalador habia hecho. Lo marco la revision.
+    if ($script:OpenCodeQuitado) {
+        Write-Host "  ESTE INSTALADOR SACO EL OPENCODE QUE HABIA ($script:OpenCodeQuitado) Y NO PUDO INSTALAR EL SUYO." -ForegroundColor Red
+        Write-Host "  El OpenCode $OpenCodeVersion ya esta bajado en esta compu: no hace falta internet."
+        Write-Host "    Para instalarlo:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+        Write-Host ""
+    }
     Write-Host "  Sin OpenCode el bot no se puede abrir todavia. Para saber por que:"
     Write-Host "    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
     Write-Host ""
