@@ -966,6 +966,22 @@ test("la casilla «Abrir Tecnia Bot ahora» sólo se ofrece si el bootstrap dej�
     "la casilla se ofrece en algún estado que no es «bien» ni «degradado»")
 })
 
+// ── Prueba del asistente en la VM (2026-11-21) · el navegador tapaba al bot ──
+test("la casilla «Visitar la web» viene destildada, y la de abrir el bot sigue tildada", () => {
+  // En un Windows 11 recién instalado, con las dos casillas tildadas el navegador abre su
+  // pantalla de bienvenida a pantalla completa y tapa la ventana de Tecnia Bot: el docente
+  // termina de instalar y no ve el bot. `unchecked` sólo cambia el estado inicial de la
+  // casilla; sigue estando en la pantalla para el que la quiera.
+  const run = seccionIss("Run").replace(/\\\n\s*/g, "")
+  const web = run.split("\n").filter((l) => /^Filename: "\{#MyAppURL\}"/.test(l))
+  assert.equal(web.length, 1, "esperaba una sola entrada de [Run] que abra la web")
+  assert.match(web[0], /Flags:[^;]*\bpostinstall\b/, "la web dejó de ser una casilla de la última pantalla")
+  assert.match(web[0], /Flags:[^;]*\bunchecked\b/, "la casilla de la web vuelve a venir tildada: el navegador tapa al bot")
+  // Y el arreglo no se pasa de largo: abrir el bot es lo que el docente vino a hacer.
+  const abrir = run.split("\n").filter((l) => /abrir-tecnia-bot\.cmd/.test(l))
+  assert.doesNotMatch(abrir[0], /\bunchecked\b/, "la casilla de abrir el bot quedó destildada")
+})
+
 // ── Contrato de install.ps1 · 3 = "instalado CON AVISOS" no es una falla ───────
 //
 // install.ps1 sale con 0 = instalado, 3 = instalado con avisos (la capa SÍ se
