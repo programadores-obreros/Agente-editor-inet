@@ -50,7 +50,7 @@ $Src = Join-Path $RepoDir "opencode"
 
 Write-Host "==> Instalando Tecnia Bot en: $ConfigDir"
 
-foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes")) {
+foreach ($sub in @("agent", "tool", "skills", "command", "plugins", "themes", "plataforma")) {
     New-Item -ItemType Directory -Force -Path (Join-Path $ConfigDir $sub) | Out-Null
 }
 
@@ -70,6 +70,11 @@ Copy-Item (Join-Path $Src "command\*") (Join-Path $ConfigDir "command\") -Recurs
 Copy-Item (Join-Path $Src "plugins\*") (Join-Path $ConfigDir "plugins\") -Recurse -Force
 Copy-Item (Join-Path $Src "themes\*")  (Join-Path $ConfigDir "themes\")  -Recurse -Force
 
+# Cuenta de Tecnia Lab: cliente de la API del bot y vinculo por navegador. Va al lado
+# de tool\ porque tool\cuenta.ts la importa con rutas ..\plataforma\... Sin esta
+# carpeta el tool `cuenta` queda instalado y contesta "falta la carpeta, reinstala".
+Copy-Item (Join-Path $Src "plataforma\*") (Join-Path $ConfigDir "plataforma\") -Recurse -Force
+
 # Biblioteca visual (piezas Wokwi + componentes dibujados) para los circuitos en HTML.
 # SIN esto, la herramienta de circuitos no puede dibujar nada.
 $WebDir = Join-Path $ConfigDir "tecniabot-web"
@@ -84,7 +89,7 @@ $Version = if (Test-Path $VerFile) { ("" + (Get-Content $VerFile -Raw)).Trim() }
 
 # Lista de archivos instalados, rutas relativas a $ConfigDir con "/" (para que
 # coincidan con las que escribe el instalador de Linux).
-$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes")) {
+$Nuevos = foreach ($sub in @("agent", "tool", "skills", "command", "tecniabot-web", "plugins", "themes", "plataforma")) {
     Get-ChildItem -Path (Join-Path $Src $sub) -Recurse -File | ForEach-Object {
         $rel = $_.FullName.Substring($Src.Length + 1) -replace '\\', '/'
         $rel

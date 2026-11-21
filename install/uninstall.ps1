@@ -267,6 +267,8 @@ try {
 # OpenCode al desinstalar es peor que dejar tres claves de mas.
 $PerfilFile  = Join-Path $ConfigDir "tecnia-perfil.md"
 $MemoriaFile = Join-Path $ConfigDir "tecnia-memoria.md"
+# Sesion de la cuenta de Tecnia Lab del docente (la escribe opencode\plataforma\sesion-local.ts).
+$SesionFile  = Join-Path $ConfigDir "tecnia-sesion.json"
 # El registro de cargas del tool platformio (0.4.8): por placa, que proyecto se
 # cargo ultimo. Son hashes con una sal propia de la compu, pero salen de rutas
 # que pueden tener el nombre de una persona: va con el perfil y la memoria.
@@ -370,6 +372,34 @@ if ((Test-Path $PerfilFile) -or (Test-Path $MemoriaFile) -or (Test-Path $CargasF
     }
 }
 
+# ---- Sesion de Tecnia Lab (tecnia-sesion.json) --------------------------------
+# El token del vinculo con la cuenta del docente, mas su nombre y su email. Es una
+# credencial, igual que la key de Google, y va con la misma regla: se borra, se
+# RELEE, y se dice lo que paso. Borrarla de aca NO la cierra en la plataforma
+# (este script no habla con la red), y eso tambien se dice.
+if (Test-Path $SesionFile) {
+    $quitarSesion = [bool]$Borrar
+    if (-not $Borrar -and -not $Conservar) {
+        $quitarSesion = Preguntar-SiNo "==> Hay una sesion de Tecnia Lab guardada en esta compu (tecnia-sesion.json). Es TU credencial, no del programa: si esta compu pasa a otra persona conviene quitarla. Quitarla tambien?" 20
+    }
+    if ($quitarSesion) {
+        $SesionQuedo = -not (Borrar-YVerificar $SesionFile)
+        if (-not $SesionQuedo) {
+            Write-Host "    Sesion de Tecnia Lab borrada de esta compu (la relei y ya no esta)."
+            Write-Host "    OJO: en la plataforma sigue abierta. Para cerrarla del todo, entra a tu"
+            Write-Host "    perfil en la plataforma Tecnia Lab, seccion Tecnia Bot, y cerra el acceso de esta compu."
+        } else {
+            Write-Host "    [X] NO PUDE BORRAR la sesion de Tecnia Lab: SIGUE EN ESTA COMPUTADORA."
+            Write-Host "        $SesionFile"
+            Write-Host "        Cerra OpenCode y volve a correr el desinstalador, o borrala a mano."
+            Write-Host "        Mientras tanto podes cortarle el acceso desde tu perfil en la plataforma Tecnia Lab."
+            Anotar-Pendiente "sesion de Tecnia Lab en $SesionFile"
+        }
+    } else {
+        Write-Host "    Se conserva la sesion de Tecnia Lab en $SesionFile (borrala a mano si queres)."
+    }
+}
+
 if ($env:XDG_DATA_HOME) { $DataDir = Join-Path $env:XDG_DATA_HOME "opencode" }
 else { $DataDir = Join-Path $env:USERPROFILE ".local\share\opencode" }
 $AuthFile = Join-Path $DataDir "auth.json"
@@ -456,7 +486,7 @@ if ($estadoAuth -eq "?") {
 # Es prolijidad, no parte del contrato: si falla no cambia nada de lo que se
 # informa, y no puede cortar el script antes del resumen y del codigo de salida.
 try {
-    foreach ($d in @("tecniabot-web", "skills", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "conocimiento", "codegen")) {
+    foreach ($d in @("tecniabot-web", "skills", "plugins", "themes", "nucleo", "servidor", "vista-fisica", "plataforma", "conocimiento", "codegen")) {
         $path = Join-Path $ConfigDir $d
         if (Test-Path $path) {
             Get-ChildItem $path -Recurse -Directory | Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File) } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue

@@ -687,8 +687,12 @@ end;
 
   Es la comprobación propia del desinstalador, y no depende de lo que diga el
   script: se mira el mundo, no el reporte del mundo. Si el docente eligió borrar
-  y uno de estos tres archivos todavía existe, no se borró, haya salido el script
+  y uno de estos cuatro archivos todavía existe, no se borró, haya salido el script
   con el código que haya salido.
+
+  tecnia-sesion.json es la sesión de la cuenta de Tecnia Lab del docente: una
+  credencial, pero en un archivo entero que el script borra completo, así que acá
+  sí alcanza con mirar si existe.
 
   La key de Google NO entra acá: auth.json sigue existiendo aunque se haya
   borrado bien (uninstall.ps1 saca sólo el bloque "google"), así que la
@@ -705,6 +709,8 @@ begin
     Result := Result + '  ' + Carpeta + 'tecnia-memoria.md' + #13#10;
   if FileExists(Carpeta + 'tecnia-cargas.json') then
     Result := Result + '  ' + Carpeta + 'tecnia-cargas.json' + #13#10;
+  if FileExists(Carpeta + 'tecnia-sesion.json') then
+    Result := Result + '  ' + Carpeta + 'tecnia-sesion.json' + #13#10;
 end;
 
 { El cartel de "la desinstalación no salió entera". Un solo lugar arma el texto
@@ -737,8 +743,8 @@ begin
         + '(lo acabo de mirar en el disco):' + #13#10 + Siguen
     else if (not Lanzo) or (Codigo <> 0) then
       Texto := Texto + #13#10 + #13#10
-        + 'Elegiste borrar los datos personales. El perfil, la memoria del aula y el '
-        + 'registro de cargas ya no están en el disco.';
+        + 'Elegiste borrar los datos personales. El perfil, la memoria del aula, el '
+        + 'registro de cargas y la sesión de Tecnia Lab ya no están en el disco.';
     if (not Lanzo) or (Codigo <> 0) then
       Texto := Texto + #13#10
         + 'La key de Google no la puedo comprobar desde acá. Si cargaste una, se '

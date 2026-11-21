@@ -31,6 +31,8 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
 PERFIL_FILE="$CONFIG_DIR/tecnia-perfil.md"
 MEMORIA_FILE="$CONFIG_DIR/tecnia-memoria.md"
+# Sesion de la cuenta de Tecnia Lab del docente (la escribe opencode/plataforma/sesion-local.ts).
+SESION_FILE="$CONFIG_DIR/tecnia-sesion.json"
 # El registro de cargas del tool platformio (0.4.8): por placa, que proyecto se
 # cargo ultimo. Son hashes con una sal propia de la compu, pero salen de rutas
 # que pueden tener el nombre de una persona: va con el perfil y la memoria.
@@ -412,6 +414,30 @@ if [ -f "$PERFIL_FILE" ] || [ -f "$MEMORIA_FILE" ] || [ -f "$CARGAS_FILE" ]; the
   fi
 fi
 
+# Sesion de Tecnia Lab (tecnia-sesion.json): el token del vinculo con la cuenta
+# del docente, mas su nombre y su email. Es una credencial, igual que la key de
+# Google, y va con la misma regla: se borra, se RELEE, y se dice lo que paso.
+# Borrarla de aca NO la cierra en la plataforma (este script no habla con la
+# red), y eso tambien se dice: si la compu pasa a otra persona el archivo ya no
+# esta, pero la sesion sigue figurando en el perfil web hasta que se cierre o venza.
+if [ -e "$SESION_FILE" ]; then
+  if decidir "==> Hay una sesión de Tecnia Lab guardada en esta compu (tecnia-sesion.json). Es TU credencial, no del programa: si esta compu pasa a otra persona conviene quitarla. ¿Quitarla también?"; then
+    if borrar_verificando "$SESION_FILE"; then
+      echo "    Sesión de Tecnia Lab borrada de esta compu (la relei y ya no esta)."
+      echo "    OJO: en la plataforma sigue abierta. Para cerrarla del todo, entrá a tu"
+      echo "    perfil en la plataforma Tecnia Lab, sección Tecnia Bot, y cerrá el acceso de esta compu."
+    else
+      echo "    [X] NO PUDE BORRAR la sesión de Tecnia Lab: SIGUE EN ESTA COMPUTADORA."
+      echo "        $SESION_FILE"
+      echo "        Cerra OpenCode y volve a correr el desinstalador, o borrala a mano."
+      echo "        Mientras tanto podes cortarle el acceso desde tu perfil en la plataforma Tecnia Lab."
+      anotar_pendiente "sesión de Tecnia Lab en $SESION_FILE"
+    fi
+  else
+    echo "    Se conserva la sesión de Tecnia Lab en $SESION_FILE (borrala a mano si querés)."
+  fi
+fi
+
 # Key de Google en auth.json (se quita SOLO la entrada "google", el resto queda).
 #
 # Estado de la key: imprime "si", "no" o "?".
@@ -530,7 +556,7 @@ if [ -n "${GOOGLE_GENERATIVE_AI_API_KEY:-}" ]; then
 fi
 
 # Borra los directorios que hayan quedado vacíos (tecniabot-web, skills, plugins, themes...).
-find "$CONFIG_DIR/tecniabot-web" "$CONFIG_DIR/skills" "$CONFIG_DIR/plugins" "$CONFIG_DIR/themes" -type d -empty -delete 2>/dev/null || true
+find "$CONFIG_DIR/tecniabot-web" "$CONFIG_DIR/skills" "$CONFIG_DIR/plugins" "$CONFIG_DIR/themes" "$CONFIG_DIR/plataforma" -type d -empty -delete 2>/dev/null || true
 
 # El mensaje final tampoco afirma de mas: si algo quedo sin borrar, se dice que
 # la desinstalacion fue PARCIAL y se lista que quedo y donde.

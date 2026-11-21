@@ -113,7 +113,7 @@ if [ "$PYTHON3_ANDA" = "no" ] && command -v python3 >/dev/null 2>&1; then
   fi
 fi
 
-mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes}
+mkdir -p "$CONFIG_DIR"/{agent,tool,skills,command,plugins,themes,plataforma}
 
 # Copiamos todo el contenido de cada carpeta (asi los archivos nuevos
 # se instalan solos, sin tener que actualizar este script cada vez).
@@ -131,6 +131,11 @@ cp -r "$SRC/command/." "$CONFIG_DIR/command/"
 cp -r "$SRC/plugins/." "$CONFIG_DIR/plugins/"
 cp -r "$SRC/themes/."  "$CONFIG_DIR/themes/"
 
+# Cuenta de Tecnia Lab: cliente de la API del bot y vínculo por navegador. Va al lado
+# de tool/ porque tool/cuenta.ts la importa con `../plataforma/...`. Sin esta carpeta
+# el tool `cuenta` queda instalado y contesta "falta la carpeta, reinstalá".
+cp -r "$SRC/plataforma/." "$CONFIG_DIR/plataforma/"
+
 # Biblioteca visual (piezas Wokwi Elements, MIT) para circuitos en HTML
 mkdir -p "$CONFIG_DIR/tecniabot-web"
 cp -r "$SRC/tecniabot-web/." "$CONFIG_DIR/tecniabot-web/"
@@ -139,7 +144,7 @@ cp -r "$SRC/tecniabot-web/." "$CONFIG_DIR/tecniabot-web/"
 # Habilita actualizar limpio (borra huérfanos) y desinstalar sin tocar lo del usuario.
 MANIFEST="$CONFIG_DIR/tecnia-bot.manifest"
 VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null || echo "0.0.0")"
-NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes -type f | LC_ALL=C sort)"
+NUEVOS="$(cd "$SRC" && find agent tool skills command tecniabot-web plugins themes plataforma -type f | LC_ALL=C sort)"
 
 # Borrar huérfanos: lo que instalamos ANTES y ya no existe (ej: un agente renombrado).
 if [ -f "$MANIFEST" ]; then

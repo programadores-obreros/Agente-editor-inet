@@ -175,6 +175,45 @@ test("uninstall.ps1: 'Perfil y memoria borrados' cuelga de una RELECTURA con Tes
   assert.match(fracaso, /Anotar-Pendiente/, "el fracaso no queda anotado para el resumen final")
 })
 
+// ── 4b. uninstall.ps1: la sesión de Tecnia Lab ──────────────────────────────
+//
+// Estático, como el resto de los tests de uninstall.ps1: en Linux no hay PowerShell.
+// La mitad funcional de esto está más abajo, contra uninstall.sh, que es el mismo
+// diseño. Lo que acá NO se prueba es que el .ps1 corra: eso es la VM.
+// Mutaciones: sacar el `-not` de `$SesionQuedo`, poner el mensaje de éxito fuera del
+// `if`, o reemplazar Borrar-YVerificar por un Remove-Item suelto → rojo.
+test("uninstall.ps1: 'Sesion de Tecnia Lab borrada' cuelga de la relectura, y dice que en la plataforma sigue abierta", () => {
+  assert.match(PS, /\$SesionFile\s*=\s*Join-Path \$ConfigDir "tecnia-sesion\.json"/, "no conoce el archivo de la sesión")
+  const exito = [...PS.matchAll(/^[ \t]*Write-Host "[^"]*Sesion de Tecnia Lab borrada[^"]*"/gm)]
+  assert.equal(exito.length, 1, `esperaba UNA afirmación de "Sesion de Tecnia Lab borrada" y encontré ${exito.length}`)
+
+  const iRelee = PS.indexOf("$SesionQuedo = -not (Borrar-YVerificar $SesionFile)")
+  assert.ok(iRelee >= 0, "la sesión no se borra con Borrar-YVerificar (que relee con Test-Path)")
+  const iGuarda = PS.indexOf("if (-not $SesionQuedo) {", iRelee)
+  assert.ok(iGuarda > iRelee && iGuarda < exito[0].index, "el mensaje de éxito no cuelga de lo que dijo la relectura")
+  assert.doesNotMatch(PS.slice(iGuarda, exito[0].index), /\}/,
+    "entre la guarda y el mensaje se cierra un bloque: el mensaje quedó afuera de la verificación")
+
+  const iFracaso = PS.indexOf("NO PUDE BORRAR la sesion de Tecnia Lab")
+  assert.ok(iFracaso > exito[0].index, "no hay rama de fracaso para la sesión")
+  // Entre el éxito y el fracaso: el aviso de que borrar acá no cierra del otro lado, y el `else`.
+  const entre = PS.slice(exito[0].index, iFracaso)
+  assert.match(entre, /en la plataforma sigue abierta/, "no avisa que la sesión sigue abierta en la plataforma")
+  assert.match(entre, /\} else \{/, "el fracaso no está en la rama contraria al éxito")
+  const fracaso = PS.slice(iFracaso, iFracaso + 600)
+  assert.match(fracaso, /Write-Host "\s+\$SesionFile"/, "el fracaso no dice DÓNDE quedó la sesión")
+  assert.match(fracaso, /a mano/, "el fracaso no le dice qué hacer")
+  assert.match(fracaso, /Anotar-Pendiente "sesion de Tecnia Lab en \$SesionFile"/, "el fracaso no queda anotado para el resumen final")
+
+  // Y sólo se toca si existe y si el docente dijo que sí (o -Borrar): -Conservar no la borra.
+  const iBloque = PS.indexOf("if (Test-Path $SesionFile) {")
+  assert.ok(iBloque >= 0 && iBloque < iRelee, "el bloque de la sesión no está condicionado a que el archivo exista")
+  const antes = PS.slice(iBloque, iRelee)
+  assert.match(antes, /\$quitarSesion = \[bool\]\$Borrar/)
+  assert.match(antes, /if \(-not \$Borrar -and -not \$Conservar\) \{\s*\$quitarSesion = Preguntar-SiNo/)
+  assert.match(antes, /if \(\$quitarSesion\) \{\s*$/, "se borra sin mirar la decisión del docente")
+})
+
 test("uninstall.ps1: la key se relee después de escribir, y la variable de entorno también", () => {
   const exito = [...PS.matchAll(/^[ \t]*Write-Host "[^"]*Key de Google quitada[^"]*"/gm)]
   assert.equal(exito.length, 1, `esperaba UNA afirmación de "Key de Google quitada" y encontré ${exito.length}`)
@@ -223,9 +262,9 @@ test("ninguna afirmación de borrado de los uninstall.* llega sin una relectura 
         `${archivo}:${i + 1} afirma un borrado y en las 30 líneas de arriba no hay ninguna relectura: ${linea.trim()}`)
     }
   }
-  // El conteo: perfil, key y "desinstalado" en cada uno de los dos scripts.
-  assert.equal(encontradas.length, 6,
-    `esperaba 6 afirmaciones de borrado (perfil, key y el "desinstalado" final, en los dos scripts) y encontré ` +
+  // El conteo: perfil, sesión de Tecnia Lab, key y "desinstalado", en cada uno de los dos scripts.
+  assert.equal(encontradas.length, 8,
+    `esperaba 8 afirmaciones de borrado (perfil, sesión, key y el "desinstalado" final, en los dos scripts) y encontré ` +
       `${encontradas.length}:\n${encontradas.join("\n")}`)
 })
 
@@ -597,3 +636,56 @@ for (const [herramienta, real] of [["python3", python3], ["jq", jq]]) {
     },
   )
 }
+
+// ─── Sesión de Tecnia Lab (tecnia-sesion.json) ──────────────────────────────
+// El archivo trae el token del vínculo con la cuenta del docente, su nombre y su
+// email. Misma regla que la key de Google: lo que el script dice y lo que quedó
+// en el disco tienen que coincidir, y borrar acá NO es cerrar en la plataforma.
+
+const SESION = '{"token":"TOKENSECRETO","cuenta":{"nombre":"Ana","email":"ana@escuela.test"},"base":"https://x.test"}\n'
+const sesionDe = (base) => join(base, "cfg", "opencode", "tecnia-sesion.json")
+
+test("FUNCIONAL: con sesión de Tecnia Lab → la borra, lo dice, y avisa que en la plataforma sigue abierta", { skip: !puedeCorrer }, () => {
+  const base = armarEscuela({ auth: "{}" })
+  try {
+    writeFileSync(sesionDe(base), SESION)
+    const salida = desinstalar(base)
+    assert.ok(!existsSync(sesionDe(base)), `la sesión sigue en disco:\n${salida}`)
+    assert.match(salida, /Sesión de Tecnia Lab borrada/, `borró la sesión y no lo dice:\n${salida}`)
+    assert.match(salida, /en la plataforma sigue abierta/, `no avisa que la sesión sigue abierta del otro lado:\n${salida}`)
+    assert.doesNotMatch(salida, /TOKENSECRETO/, "el token salió por la pantalla")
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test("FUNCIONAL: la sesión no se puede borrar → NO dice que la borró, dice dónde quedó y termina PARCIALMENTE", { skip: !puedeCorrer }, () => {
+  const base = armarEscuela({ auth: "{}" })
+  try {
+    // Un directorio con ese nombre: `rm -f` no lo saca, igual que un archivo tomado.
+    mkdirSync(sesionDe(base))
+    writeFileSync(join(sesionDe(base), "adentro"), SESION)
+    const salida = desinstalar(base)
+    assert.ok(existsSync(sesionDe(base)), "el escenario no se armó: la sesión se pudo borrar")
+    assert.doesNotMatch(salida, /Sesión de Tecnia Lab borrada/, `AFIRMA haber borrado la sesión y sigue ahí:\n${salida}`)
+    assert.match(salida, /NO PUDE BORRAR la sesión de Tecnia Lab/, `se calla que la sesión quedó:\n${salida}`)
+    // Dos asserts que al principio eran más flojos y dejaban vivas dos mutaciones:
+    // "la ruta aparece en algún lado" lo cumplía el resumen final aunque el aviso no
+    // la dijera, y "dice PARCIALMENTE" lo cumplía el auth.json ilegible de esta
+    // escuela (sin jq ni python3) aunque la sesión no se anotara como pendiente.
+    assert.ok(salida.includes(`SIGUE EN ESTA COMPUTADORA.\n        ${sesionDe(base)}\n`), `el aviso no dice DÓNDE quedó la sesión:\n${salida}`)
+    assert.match(salida, /PARCIALMENTE/, `el resumen final dice que salió todo bien:\n${salida}`)
+    assert.ok(salida.includes(`    - sesión de Tecnia Lab en ${sesionDe(base)}\n`), `la sesión no figura en lo que quedó sin borrar:\n${salida}`)
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test("FUNCIONAL: sin sesión de Tecnia Lab → el script no la nombra", { skip: !puedeCorrer }, () => {
+  const base = armarEscuela({ auth: "{}" })
+  try {
+    assert.doesNotMatch(desinstalar(base), /Tecnia Lab/)
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
