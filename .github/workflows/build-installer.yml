@@ -114,6 +114,7 @@ jobs:
           if (Test-Path "$app\.instalando") { Write-Host "::error::quedo la marca .instalando despues de instalar"; exit 1 }
           $cfg = Join-Path $env:USERPROFILE ".config\opencode"
           if (-not (Test-Path "$cfg\agent\tecnia-bot.md")) { Write-Host "::error::la capa NO quedo publicada en $cfg"; exit 1 }
+          if (-not (Test-Path "$cfg\plataforma\cuenta.ts")) { Write-Host "::error::la carpeta del vinculo con Tecnia Lab NO quedo publicada en $cfg"; exit 1 }
           $oc = [System.IO.File]::ReadAllText("$cfg\opencode.json", (New-Object System.Text.UTF8Encoding $false)) | ConvertFrom-Json
           if ($oc.default_agent -ne "tecnia-bot") { Write-Host "::error::default_agent es [$($oc.default_agent)]"; exit 1 }
           $oce = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\opencode.exe"
