@@ -227,12 +227,44 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   //
   // La regla: EL INSTALADOR PUEDE FALLAR, PERO NO PUEDE ROMPER.
   const comandos = codigo.split("\n").filter((l) => !/Write-Host/.test(l))
+  //
+  // LA 0.4.11 VUELVE A SACAR UN OPENCODE, Y ESTE GUARD CAMBIA DE FORMA, NO DE REGLA.
+  // Con un OpenCode 2.x puesto por el docente, Scoop contesta "already installed" a
+  // nuestro manifest y Tecnia Bot quedaba sobre el 2.x. Se decidió sacarlo (2026-11-21).
+  // Lo que hace que NO sea el incidente de arriba es el ORDEN, y eso es lo que se exige:
+  //
+  //   1. hay UN solo `scoop uninstall`, y está dentro de Quitar-OpenCodeAjeno;
+  //   2. antes, en esa función, se bajó la versión fijada (`scoop download`) y se
+  //      comprobó EN EL DISCO que el zip está y que su sha256 es el del manifest;
+  //      si no, la función vuelve sin sacar nada;
+  //   3. tampoco se saca con OpenCode abierto.
+  //
+  // Medido en la VM: con el zip en el cache, sacar e instalar anda con la red cortada.
   const destructivos = comandos.filter((l) => /scoop uninstall|Remove-Item.*scoop|rm .*scoop/i.test(l))
   assert.deepEqual(
     destructivos.map((l) => l.trim()),
-    [],
-    "el instalador desinstala o borra algo: puede dejar la máquina peor de como estaba",
+    ["try { scoop uninstall opencode *>&1 | Out-Null } catch { }"],
+    "el instalador desinstala o borra algo fuera del único lugar permitido",
   )
+  const iq = codigo.indexOf("function Quitar-OpenCodeAjeno {")
+  const quitar = codigo.slice(iq, codigo.indexOf("\n}", iq))
+  assert.ok(iq > 0 && quitar.includes("scoop uninstall opencode"), "el único uninstall no está en Quitar-OpenCodeAjeno")
+  const pos = (t) => quitar.indexOf(t)
+  const abierto = pos("if (@(Get-Process opencode -ErrorAction SilentlyContinue).Count -gt 0) {")
+  const baja = pos("scoop download $ManifiestoOpenCode")
+  const comprueba = pos("if (-not (Test-OpenCodeFijadoEnCache)) {")
+  const saca = pos("scoop uninstall opencode")
+  assert.ok(abierto > 0 && baja > abierto && comprueba > baja && saca > comprueba, "el orden no es: nadie lo usa → bajar → comprobar en el disco → sacar")
+  // Entre la comprobación y el uninstall hay un `return $false`: si el zip no está, no se saca nada.
+  assert.match(quitar.slice(comprueba, saca), /return \$false/, "si la fijada no quedó bajada, igual saca el OpenCode que había")
+  assert.match(quitar.slice(abierto, baja), /return \$false/, "saca un OpenCode que está abierto")
+  // La comprobación mira el archivo y su hash; no le cree al exit de Scoop.
+  const ic = codigo.indexOf("function Test-OpenCodeFijadoEnCache {")
+  const cache = codigo.slice(ic, codigo.indexOf("\n}", ic))
+  assert.match(cache, /Get-FileHash -LiteralPath \$f\.FullName -Algorithm SHA256/, "no calcula el sha256 del zip bajado")
+  assert.match(cache, /if \(\$hashes -contains \$h\) \{ return \$true \}/, "da por bueno un zip cuyo hash no es el del manifest")
+  assert.match(cache, /-Filter "opencode#\$OpenCodeVersion#\*"/, "no busca el zip de la versión fijada")
+  assert.match(cache, /return \$false\s*$/, "si no encontró el zip, no devuelve falso")
 
   // Y no puede preguntarle nada: el instalador también corre en silencio
   // (/VERYSILENT), donde un prompt no espera respuesta, cuelga para siempre.

@@ -197,14 +197,17 @@ test("con un OpenCode que no es el fijado NO se ejecuta la preparación", () => 
   )
 })
 
-test("con la versión equivocada, el cierre avisa que Reparar no la cambia (y no manda a un bucle)", () => {
-  // La primera versión de este cambio imprimía el remedio que funcionó en la VM
-  // (`scoop uninstall opencode` + reinstalar). Lo frenó el guard de instalador.test.mjs
-  // "tampoco se le SUGIERE al docente un comando destructivo", y tenía razón: sale de una
-  // notebook que quedó sin OpenCode. Lo que queda es decir la verdad: Reparar no lo cambia.
+test("con la versión equivocada, el cierre dice por qué no se cambió y que Reparar lo vuelve a intentar", () => {
+  // TRES VERSIONES de este aviso, en dos días:
+  //   1. imprimía `scoop uninstall opencode` para que lo corriera el docente → lo frenó el
+  //      guard "tampoco se le SUGIERE al docente un comando destructivo", con razón;
+  //   2. "Reparar NO lo cambia" → cierto mientras el instalador no tocaba el OpenCode ajeno;
+  //   3. (ésta) el instalador lo saca él, con la versión fijada ya bajada. Si llega acá es
+  //      que no pudo (sin internet, o con OpenCode abierto) y Reparar SÍ lo reintenta.
   const m = /elseif \(-not \$OpenCodeEsLaFijada\) \{\n([\s\S]*?)\n\} else \{/.exec(ps1)
   assert.ok(m, "no encuentro la rama de la versión equivocada en el resumen")
-  assert.match(m[1], /\$Degradado \+= "[^"]*Reparar NO lo cambia/, "no avisa que Reparar es un bucle para este caso")
+  assert.match(m[1], /\$Degradado \+= "[^"]*: \$porque\. [^"]*Reparar lo vuelve a intentar"\n\s*\$ReparaSirve = \$true/, "no dice por qué no se cambió, o no ofrece Reparar")
+  assert.match(comandos, /^\$porque = if \(\$script:MotivoNoCambio\) \{ \$script:MotivoNoCambio \} else \{ "no se pudo cambiar" \}$/m, "el motivo no sale de lo que pasó al intentar el cambio")
 })
 
 test("la base de un OpenCode más nuevo se reconoce por lo que dijo OpenCode y no sale con el aviso de red", () => {
@@ -218,7 +221,7 @@ test("la base de un OpenCode más nuevo se reconoce por lo que dijo OpenCode y n
   assert.match(f, /\$dicho = @\(Get-Content -LiteralPath \$errores -Tail (\d+)/, "no lee la salida de errores para buscar el mensaje")
   assert.ok(Number(/\$dicho = @\(Get-Content -LiteralPath \$errores -Tail (\d+)/.exec(f)[1]) >= 40, "busca el mensaje en muy pocas líneas")
   // Con la base de otra versión NO está lista aunque las dependencias estén.
-  assert.match(comandos, /\$PrimeraAperturaIntentada = \$true\s*\n\s*if \(\$script:BaseDeOtraVersion\) \{ \$PrimeraAperturaLista = \$false \}/, "con la base incompatible y las dependencias puestas diría [OK] Arranque")
+  assert.match(comandos, /\n    \}\n    if \(\$script:BaseDeOtraVersion\) \{ \$PrimeraAperturaLista = \$false \}\n    if \(\$PrimeraAperturaLista\) \{/, "con la base incompatible y las dependencias puestas diría [OK] Arranque")
   // La marca arranca en falso ANTES de preparar: si no, una corrida vieja en la misma sesión la deja puesta.
   assert.match(comandos, /\$script:BaseDeOtraVersion = \$false[\s\S]*\$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada/, "la marca no se limpia antes de preparar")
   const i = ps1.indexOf("Como quedo (lo que se comprobo")
@@ -245,8 +248,8 @@ test("el cierre no manda a Reparar cuando Reparar no arregla lo que falta, ni di
   assert.match(cierre[1], /if \(\$script:BaseDeOtraVersion\) \{\s*\n\s*Write-Host "  Tecnia Bot quedo instalado, PERO ASI NO ABRE:"/, "dice que abre cuando no va a abrir")
   // Los dos avisos que Reparar no arregla NO prenden la marca; los demás sí.
   const marcado = (ini) => new RegExp(`\\$Degradado \\+= "${ini}[^\\n]*\\n\\s*\\$ReparaSirve = \\$true`).test(ps1)
-  for (const ini of ["falta PlatformIO", "falta Node", "la capa se instalo CON AVISOS", "la primera vez que abras"]) assert.ok(marcado(ini), `"${ini}" se arregla con Reparar y no lo dice`)
-  for (const ini of ["OpenCode quedo en la version", "en esta compu hubo un OpenCode mas nuevo"]) assert.ok(!marcado(ini), `"${ini}" no se arregla con Reparar y manda igual`)
+  for (const ini of ["falta PlatformIO", "falta Node", "la capa se instalo CON AVISOS", "la primera vez que abras", "OpenCode quedo en la version"]) assert.ok(marcado(ini), `"${ini}" se arregla con Reparar y no lo dice`)
+  for (const ini of ["en esta compu hubo un OpenCode mas nuevo"]) assert.ok(!marcado(ini), `"${ini}" no se arregla con Reparar y manda igual`)
   assert.match(comandos, /^\$ReparaSirve = \$false$/m, "la marca no arranca apagada")
 })
 
@@ -259,4 +262,26 @@ test("si no se intentó preparar y al final el OpenCode era el fijado, no cierra
     /if \(\(-not \$PrimeraAperturaIntentada\) -and \$CapaOk -and \$OpenCodeArranca -and \$OpenCodeEsLaFijada\) \{\n\s*\$ReparaSirve = \$true\n\s*\$Degradado \+= "no se pudo preparar la primera apertura/,
     "saltear la preparación con el OpenCode correcto no degrada el resultado",
   )
+})
+
+test("la base de otro OpenCode se aparta sola: se le cambia el nombre, no se borra, y se prueba UNA vez más", () => {
+  // Decisión del 2026-11-21. Probado en la VM: con la base apartada Tecnia Bot abre.
+  const f = cuerpo("Apartar-BaseDeOtraVersion")
+  assert.doesNotMatch(f, /Remove-Item/, "borra la base: es el historial de otro programa del docente")
+  assert.match(f, /Rename-Item -LiteralPath \$f -NewName \(\$n \+ \$marca\) -ErrorAction Stop/, "no le cambia el nombre")
+  assert.match(f, /\$marca = "\.de-otra-version-" \+ \(Get-Date -Format "yyyyMMdd-HHmmss"\)/, "el nombre nuevo no lleva fecha: una segunda vez pisaría la primera")
+  // Los tres archivos de la base, con el principal al final (si falla antes, la base sigue entera).
+  assert.match(f, /foreach \(\$n in @\("opencode\.db-wal", "opencode\.db-shm", "opencode\.db"\)\)/, "no aparta los tres archivos de la base, o aparta primero el principal")
+  assert.match(f, /^function Apartar-BaseDeOtraVersion \{\n    if \(@\(Get-Process opencode -ErrorAction SilentlyContinue\)\.Count -gt 0\) \{ return \$false \}/, "toca la base con OpenCode abierto")
+  // El OK sale de mirar el disco, no de que Rename-Item no haya tirado.
+  assert.match(f, /if \(Test-Path -LiteralPath \$base\) \{ return \$false \}\n\s*\$script:BaseApartadaComo = /, "dice que la apartó sin mirar si sigue ahí")
+  // Una vez, no en bucle; y la marca se baja sólo si de verdad se apartó.
+  assert.match(
+    comandos,
+    /if \(\$script:BaseDeOtraVersion -and \[bool\]\(Apartar-BaseDeOtraVersion\)\) \{\n\s*\$script:BaseDeOtraVersion = \$false\n\s*\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)\n\s*\}/,
+    "no reintenta después de apartar, o reintenta sin haber apartado",
+  )
+  assert.equal(comandos.split("Apartar-BaseDeOtraVersion)").length - 1, 1, "se aparta más de una vez")
+  // Y el resumen cuenta que se hizo y dónde quedó.
+  assert.match(ps1, /if \(\$script:BaseApartadaComo\) \{\n\s*Write-Host "[^"]*No se borro:"\n\s*Write-Host "[^"]*\$script:BaseApartadaComo en \$DatosOpenCode"/, "el resumen no dice que se apartó la base ni dónde quedó")
 })

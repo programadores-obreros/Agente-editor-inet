@@ -245,7 +245,9 @@ test("2.2c · TODA instalación de OpenCode con Scoop captura la salida y baja e
 //             falla. El script seguía hasta "LISTO!" con exit 0.
 
 const iReset = bootstrap.indexOf("la vuelvo a activar (scoop reset)")
-const iAlLado = bootstrap.indexOf("la instalo al lado")
+// Hasta la 0.4.10 esta rama decía "la instalo al lado". Desde la 0.4.11 baja la fijada, saca la que
+// había y recién ahí instala (ver Quitar-OpenCodeAjeno en bootstrap.ps1); lo que este test cuida no cambió.
+const iAlLado = bootstrap.indexOf("la bajo antes de tocar nada")
 // El cierre de la rama "ya instalado": el primer Fijar-OpenCode que sigue.
 const iFinRamas = bootstrap.indexOf("Fijar-OpenCode | Out-Null", iAlLado)
 
