@@ -1798,6 +1798,13 @@ function Preparar-PrimeraApertura {
         try {
             if ($errores -and (Test-Path -LiteralPath $errores)) {
                 $cola = @(Get-Content -LiteralPath $errores -Tail 6 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
+                # LA BASE DE UN OPENCODE MAS NUEVO. Visto en la VM (2026-11-20): si en la
+                # compu corrio alguna vez OpenCode 2.x, deja opencode.db en un formato que
+                # el $OpenCodeVersion no lee. `debug config` sale con este texto, y lo grave
+                # es lo que pasa al abrir: la ventana queda en negro SIN FIN (mas de cuatro
+                # minutos medidos, sin una linea). No es falta de red y no se arregla
+                # esperando, asi que no puede salir con el aviso de red.
+                if (($cola -join " ") -match "Database is not empty") { $script:BaseDeOtraVersion = $true }
                 if ($cola.Count -gt 0) {
                     Write-Host "      Lo ultimo que dijo OpenCode:"
                     foreach ($l in $cola) { Write-Host ("        " + $l.Trim().Substring(0, [Math]::Min(200, $l.Trim().Length))) }
@@ -1818,11 +1825,27 @@ function Preparar-PrimeraApertura {
 
 $PrimeraAperturaLista = $false
 $PrimeraAperturaIntentada = $false
-if ($CapaOk -and (Test-Path $BinOpenCode)) {
+$script:BaseDeOtraVersion = $false
+$DatosOpenCode = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME "opencode" } else { Join-Path $env:USERPROFILE ".local\share\opencode" }
+# SOLO CON LA VERSION FIJADA. Si quedo activo otro OpenCode (el docente ya tenia uno
+# por Scoop y Scoop contesto "already installed"), NO se lo ejecuta. Visto en la VM
+# con el 2.3.2 (2026-11-20): `debug config` vuelve enseguida sin instalar nada y deja
+# vivo un `opencode serve --service` que nadie pidio. El .exe del instalador termina
+# igual, pero cualquiera que espere al arbol de procesos (Start-Process -Wait, un
+# despliegue por script) queda colgado: asi estuvo 45 minutos la prueba. Y preparar
+# las dependencias de una version que no es la del bot no arregla nada: el resumen
+# ya dice que la version no es la probada, que es lo que importa.
+$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada
+if ($CapaOk -and (Test-Path $BinOpenCode) -and ($OpenCodeParaPreparar -ne $OpenCodeVersion)) {
+    Write-Host ""
+    Write-Host "  [i] No preparo la primera apertura: el OpenCode activo es el $OpenCodeParaPreparar, no el $OpenCodeVersion."
+} elseif ($CapaOk -and (Test-Path $BinOpenCode)) {
     $PrimeraAperturaLista = [bool](Preparar-PrimeraApertura)
     $PrimeraAperturaIntentada = $true
     if ($PrimeraAperturaLista) {
         Write-Host "  [OK] La primera apertura ya no necesita internet."
+    } elseif ($script:BaseDeOtraVersion) {
+        Write-Host "  [!] OpenCode no puede leer la base que dejo una version mas nueva. El aviso completo va al final." -ForegroundColor Yellow
     } else {
         Write-Host "  [!] No pude dejar lista la primera apertura (suele ser falta de internet o una red que bloquea la descarga)." -ForegroundColor Yellow
         Write-Host "      Sigo; el aviso completo va al final."
@@ -1866,7 +1889,19 @@ Write-Host "  ------------------------------------------------------"
 if (-not $OpenCodeArranca) {
     Write-Host "  [X]  OpenCode     NO ARRANCA." -ForegroundColor Red
 } elseif (-not $OpenCodeEsLaFijada) {
-    $Degradado += "OpenCode quedo en la version $OpenCodeActiva, no en la $OpenCodeVersion con la que se probo"
+    # "REPARAR" SOLO NO LO ARREGLA, Y SE DICE. El cierre mandaba a Reparar, y Reparar
+    # vuelve a pedirle la version a Scoop, que vuelve a contestar "already installed":
+    # un bucle sin salida para el docente.
+    #
+    # LO QUE NO SE DICE, A PROPOSITO: el comando que si la cambia. En la VM (2026-11-20,
+    # con el 2.3.2 puesto por el docente) `scoop uninstall opencode` + volver a instalar
+    # dejo la $OpenCodeVersion fijada. Pero este instalador no le sugiere al docente un
+    # comando destructivo (tests/instalador.test.mjs, "tampoco se le SUGIERE..."): con
+    # la red del aula saturada el uninstall anda y la descarga no, y se queda sin nada.
+    # Esa regla salio de un incidente real y no se afloja por un cartel. La salida de
+    # fondo es que Tecnia Bot traiga su propio OpenCode; mientras tanto, esto es un
+    # limite conocido y se informa como tal.
+    $Degradado += "OpenCode quedo en la version $OpenCodeActiva, no en la $OpenCodeVersion con la que se probo: ya habia un OpenCode instalado en esta compu y no se lo toca. Reparar NO lo cambia. Tecnia Bot puede andar distinto o no abrir"
     Write-Host "  [!]  OpenCode     arranca, pero es la version $OpenCodeActiva y se probo con la $OpenCodeVersion." -ForegroundColor Yellow
 } else {
     Write-Host "  [OK] OpenCode     arranca, version $OpenCodeActiva."
@@ -1897,6 +1932,12 @@ if ($CapaOk -and $CapaConAvisos) {
 if ($PrimeraAperturaIntentada) {
     if ($PrimeraAperturaLista) {
         Write-Host "  [OK] Arranque     la primera apertura no necesita internet."
+    } elseif ($script:BaseDeOtraVersion) {
+        # Se dice el remedio exacto, y es el que se probo en la VM: con la base apartada
+        # (no borrada) el bot abrio en 21 s. No se aparta sola: es el historial de OTRO
+        # programa del docente, y tocarlo sin preguntar no nos corresponde.
+        $Degradado += "en esta compu hubo un OpenCode mas nuevo y dejo una base de datos que este no puede leer: asi Tecnia Bot queda EN NEGRO al abrir, y esperar no lo arregla. Cerra Tecnia Bot y OpenCode, entra a la carpeta $DatosOpenCode y cambiale el nombre a opencode.db (por ejemplo opencode.db.viejo). Despues abri Tecnia Bot"
+        Write-Host "  [!]  Arranque     NO VA A ABRIR: quedo la base de datos de un OpenCode mas nuevo. Abajo dice como seguir." -ForegroundColor Yellow
     } else {
         $Degradado += "la primera vez que abras Tecnia Bot va a necesitar internet, y la ventana puede quedar en negro uno o dos minutos antes de mostrar algo: no la cierres"
         Write-Host "  [!]  Arranque     la primera apertura va a necesitar internet y puede tardar uno o dos minutos en negro." -ForegroundColor Yellow

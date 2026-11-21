@@ -160,7 +160,58 @@ test("si no quedó, muestra lo que dijo OpenCode por su salida de errores y nunc
 test("no se intenta sin OpenCode o sin la capa: no hay nada que preparar y el aviso sería ruido", () => {
   assert.match(
     comandos,
-    /if \(\$CapaOk -and \(Test-Path \$BinOpenCode\)\) \{\s*\n\s*\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)/,
+    /elseif \(\$CapaOk -and \(Test-Path \$BinOpenCode\)\) \{\s*\n\s*\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)/,
     "la preparación no está condicionada a que haya capa y binario",
   )
+})
+
+// ── Lo que apareció al probar el caso "el docente ya tenía OpenCode 2.x por Scoop" ──────
+//
+// VM Windows 11, 2026-11-20, con el instalador de esta rama. Tres cosas, ninguna prevista:
+//
+//   1. Con el 2.3.2 activo, `debug config` vuelve enseguida, no instala nada y deja vivo
+//      un `opencode serve --service`. El .exe termina, pero quien espere al árbol de
+//      procesos queda colgado (la prueba estuvo 45 minutos así).
+//   2. El cierre mandaba a "Reparar", que no cambia la versión: Scoop vuelve a contestar
+//      "already installed". Lo que sí la cambia es `scoop uninstall opencode` (alcanza
+//      solo, aun con hold) y volver a instalar, pero eso NO se le imprime al docente:
+//      lo prohíbe un guard con historia (ver el test de la versión equivocada).
+//   3. Después de eso el 1.18.18 encuentra la base que dejó el 2.x, dice "Database is not
+//      empty and has no session table" y al abrir queda EN NEGRO SIN FIN. Con opencode.db
+//      apartada abrió en 21 s.
+
+test("con un OpenCode que no es el fijado NO se ejecuta la preparación", () => {
+  // Va ANTES que la rama que prepara, y compara contra la versión fijada. Si se invierte
+  // el orden o se borra la rama, vuelve el `serve --service` huérfano del punto 1.
+  assert.match(
+    comandos,
+    /\$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada\s*\nif \(\$CapaOk -and \(Test-Path \$BinOpenCode\) -and \(\$OpenCodeParaPreparar -ne \$OpenCodeVersion\)\) \{\s*\n\} elseif \(\$CapaOk -and \(Test-Path \$BinOpenCode\)\) \{\s*\n\s*\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)/,
+    "la preparación corre aunque el OpenCode activo no sea el fijado",
+  )
+})
+
+test("con la versión equivocada, el cierre avisa que Reparar no la cambia (y no manda a un bucle)", () => {
+  // La primera versión de este cambio imprimía el remedio que funcionó en la VM
+  // (`scoop uninstall opencode` + reinstalar). Lo frenó el guard de instalador.test.mjs
+  // "tampoco se le SUGIERE al docente un comando destructivo", y tenía razón: sale de una
+  // notebook que quedó sin OpenCode. Lo que queda es decir la verdad: Reparar no lo cambia.
+  const m = /elseif \(-not \$OpenCodeEsLaFijada\) \{\n([\s\S]*?)\n\} else \{/.exec(ps1)
+  assert.ok(m, "no encuentro la rama de la versión equivocada en el resumen")
+  assert.match(m[1], /\$Degradado \+= "[^"]*Reparar NO lo cambia/, "no avisa que Reparar es un bucle para este caso")
+})
+
+test("la base de un OpenCode más nuevo se reconoce por lo que dijo OpenCode y no sale con el aviso de red", () => {
+  const f = cuerpo("Preparar-PrimeraApertura")
+  assert.match(f, /if \(\(\$cola -join " "\) -match "Database is not empty"\) \{ \$script:BaseDeOtraVersion = \$true \}/, "no reconoce el mensaje de la base incompatible")
+  // La marca arranca en falso ANTES de preparar: si no, una corrida vieja en la misma sesión la deja puesta.
+  assert.match(comandos, /\$script:BaseDeOtraVersion = \$false[\s\S]*\$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada/, "la marca no se limpia antes de preparar")
+  const i = ps1.indexOf("Como quedo (lo que se comprobo")
+  const resumen = ps1.slice(i, ps1.indexOf("LISTO! Abri una terminal"))
+  const bloque = /if \(\$PrimeraAperturaIntentada\) \{\n([\s\S]*?)\n\}\n/.exec(resumen)
+  // El orden importa: OK, después la base, y recién al final el aviso de red.
+  const rama = /\} elseif \(\$script:BaseDeOtraVersion\) \{\n([\s\S]*?)\n    \} else \{/.exec(bloque[1])
+  assert.ok(rama, "el resumen no tiene una rama propia para la base incompatible")
+  assert.match(rama[1], /\$Degradado \+= "[^"]*EN NEGRO[^"]*\$DatosOpenCode[^"]*opencode\.db/, "no dice qué archivo apartar ni dónde está")
+  assert.doesNotMatch(rama[1], /necesitar internet/, "le echa la culpa a la red")
+  assert.match(comandos, /\$DatosOpenCode = if \(\$env:XDG_DATA_HOME\) \{ Join-Path \$env:XDG_DATA_HOME "opencode" \} else \{ Join-Path \$env:USERPROFILE "\.local\\share\\opencode" \}/, "la carpeta de datos no sale de donde OpenCode la busca")
 })
