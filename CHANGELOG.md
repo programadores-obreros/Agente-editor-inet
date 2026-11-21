@@ -9,6 +9,9 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 - **Windows: la primera vez que abrís Tecnia Bot ya no queda la ventana en negro.** Al abrirlo por primera vez, OpenCode baja unos archivos de internet y no muestra nada hasta terminar. Con buena conexión eran unos 20 segundos; con la red de la escuela filtrada, o con el reloj de la computadora atrasado, la ventana quedaba negra entre uno y dos minutos, sin un cartel, y se repetía cada vez que la abrías hasta que una vez lograba bajar. Ahora esos archivos los deja puestos el instalador. Medido en una máquina virtual con Windows 11: abrir sin internet pasó de 71 segundos a 1.
 - **Windows: si esos archivos no se pudieron bajar, el instalador lo dice.** La lista final tiene una línea nueva, "Arranque". Si quedó en amarillo, la instalación cierra como incompleta y avisa que la primera apertura va a necesitar internet y puede tardar; "Reparar Tecnia Bot" lo completa cuando haya conexión.
 
+- **Windows: si en la computadora hubo un OpenCode más nuevo, el instalador avisa que Tecnia Bot no va a abrir, y dice cómo seguir.** Un OpenCode 2.x deja una base de datos que el OpenCode de Tecnia Bot (1.18.18) no puede leer. Con esa base en la computadora, al abrir Tecnia Bot la ventana queda en negro y no avanza nunca: en la prueba pasaron más de cuatro minutos sin una línea. Ahora el instalador lo reconoce, cierra como "ASÍ NO ABRE" y nombra el archivo y la carpeta a los que hay que cambiarles el nombre. Con el archivo apartado, Tecnia Bot abrió en 21 segundos. El instalador no lo aparta solo.
+- **Windows: con otro OpenCode ya instalado, el cierre ya no manda a "Reparar".** Si la computadora ya tenía un OpenCode puesto por Scoop, Tecnia Bot queda sobre ese y no sobre el que se probó. El cierre mandaba a "Reparar Tecnia Bot", que no lo cambia. Ahora dice eso mismo: que Reparar no lo cambia.
+
 ### Qué cambia para peor, y hay que saberlo
 
 - **La instalación tarda alrededor de un minuto más.** Es el tiempo que antes se esperaba con la pantalla en negro.
@@ -16,7 +19,7 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ### Qué no se probó
 
-El instalador haciendo clic en cada pantalla (se probó en modo silencioso), Windows 10, y una notebook de aula. Tampoco está probado que la ventana negra del aula del 17 de noviembre haya sido por esto: es una de las tres condiciones que la producen en la máquina virtual.
+El instalador haciendo clic en cada pantalla (se probó en modo silencioso), Windows 10, y una notebook de aula. Lo de la base de datos se probó con un OpenCode 2.3.2 instalado por Scoop; no se probó con la aplicación de escritorio de OpenCode, ni qué pasa si el docente sigue usando su OpenCode 2.x después de apartar la base (es esperable que vuelva a pasar). Tampoco está probado que la ventana negra del aula del 17 de noviembre haya sido por esto: es una de las tres condiciones que la producen en la máquina virtual.
 
 ## [0.4.10] — 2026-11-17
 
