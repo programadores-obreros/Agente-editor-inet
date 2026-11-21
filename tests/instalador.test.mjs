@@ -256,7 +256,15 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   const saca = pos("scoop uninstall opencode")
   assert.ok(abierto > 0 && baja > abierto && comprueba > baja && saca > comprueba, "el orden no es: nadie lo usa → bajar → comprobar en el disco → sacar")
   // Entre la comprobación y el uninstall hay un `return $false`: si el zip no está, no se saca nada.
-  assert.match(quitar.slice(comprueba, saca), /return \$false/, "si la fijada no quedó bajada, igual saca el OpenCode que había")
+  // Se pide el `return $false` DENTRO del bloque de la comprobación. La primera versión lo buscaba
+  // en todo el tramo hasta el uninstall, y cuando se agregó la segunda mirada (que tiene su
+  // propio `return $false`) borrar éste dejaba el test en verde: mutante vivo, y era justo
+  // el que reproduce el incidente de la notebook sin OpenCode.
+  assert.match(
+    quitar,
+    /if \(-not \(Test-OpenCodeFijadoEnCache\)\) \{\n\s*\$script:MotivoNoCambio = "[^"\n]*"\n\s*return \$false\n\s*\}/,
+    "si la fijada no quedó bajada, igual saca el OpenCode que había",
+  )
   assert.match(quitar.slice(abierto, baja), /return \$false/, "saca un OpenCode que está abierto")
   // EL SERVICIO DE FONDO DEL 2.x (`opencode serve --service`) no cuenta como abierto: queda
   // vivo mucho después de cerrar el programa y el cambio no se haría nunca. Pero se cierra
