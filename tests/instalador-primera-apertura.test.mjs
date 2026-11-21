@@ -113,14 +113,21 @@ test("el resultado de la preparación NO sale del exit code de OpenCode", () => 
   assert.equal((f.match(/\$quedo\s*=/g) || []).length, 1, "$quedo se asigna más de una vez")
 })
 
-test("si ya están, no las vuelve a bajar", () => {
-  // Reparar Tecnia Bot corre este mismo script: 55 s de más en cada reparación, y sin red
-  // un [!] nuevo sobre una máquina que estaba bien.
+test("si ya están, igual se comprueba que OpenCode arranca, y el veredicto sale del disco DESPUÉS", () => {
+  // HISTORIA. Este test pedía lo contrario: `if (Test-DependenciasOpenCode $cfgDir) { return $true }`
+  // como primera línea, para no gastar tiempo en cada Reparar. Ese atajo era un OK falso:
+  // con las dependencias puestas y la base de un OpenCode 2.x en la compu, el instalador
+  // cerraba en "[OK] Arranque" sin haber ejecutado nada y la ventana quedaba en negro sin
+  // fin. Lo marcó la revisión del 2026-11-21. Con las dependencias puestas `debug config`
+  // no baja nada, así que no vuelve el costo que este test cuidaba.
   const f = cuerpo("Preparar-PrimeraApertura")
-  const chequeo = f.indexOf("if (Test-DependenciasOpenCode $cfgDir) { return $true }")
+  assert.doesNotMatch(f, /\{ return \$true \}/, "vuelve con verdadero sin ejecutar OpenCode: no puede saber si arranca")
   const arranque = f.indexOf("Start-Process")
-  assert.ok(chequeo > 0, "no pregunta primero si ya están")
-  assert.ok(arranque > chequeo, "lanza OpenCode antes de mirar si hacía falta")
+  const veredicto = f.indexOf("$quedo = [bool](Test-DependenciasOpenCode $cfgDir)")
+  assert.ok(arranque > 0 && veredicto > arranque, "el veredicto no se toma mirando el disco después de ejecutar")
+  assert.match(f, /return \$quedo\n\}$/, "no devuelve lo que vio en el disco")
+  // Y no le dice "baja unos archivos; hasta 3 minutos" a quien ya los tiene.
+  assert.match(f, /if \(\$yaEstaban\) \{\s*\n\s*Write-Host "  \[\.\.\] Comprobando que OpenCode arranca/, "anuncia una descarga aunque ya esté todo")
 })
 
 test("si no quedaron, el resumen lo dice y la instalación NO termina en LISTO", () => {
@@ -185,7 +192,7 @@ test("con un OpenCode que no es el fijado NO se ejecuta la preparación", () => 
   // el orden o se borra la rama, vuelve el `serve --service` huérfano del punto 1.
   assert.match(
     comandos,
-    /\$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada\s*\nif \(\$CapaOk -and \(Test-Path \$BinOpenCode\) -and \(\$OpenCodeParaPreparar -ne \$OpenCodeVersion\)\) \{\s*\n\} elseif \(\$CapaOk -and \(Test-Path \$BinOpenCode\)\) \{\s*\n\s*\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)/,
+    /\$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada\s*\nif \(\$CapaOk -and \(Test-Path \$BinOpenCode\) -and \(\$OpenCodeParaPreparar -ne \$OpenCodeVersion\)\) \{\s*\n\s*if \(\$OpenCodeParaPreparar\) \{\s*\n\s*\} else \{\s*\n\s*\}\s*\n\} elseif \(\$CapaOk -and \(Test-Path \$BinOpenCode\)\) \{\s*\n\s*\$PrimeraAperturaLista = \[bool\]\(Preparar-PrimeraApertura\)/,
     "la preparación corre aunque el OpenCode activo no sea el fijado",
   )
 })
@@ -202,7 +209,16 @@ test("con la versión equivocada, el cierre avisa que Reparar no la cambia (y no
 
 test("la base de un OpenCode más nuevo se reconoce por lo que dijo OpenCode y no sale con el aviso de red", () => {
   const f = cuerpo("Preparar-PrimeraApertura")
-  assert.match(f, /if \(\(\$cola -join " "\) -match "Database is not empty"\) \{ \$script:BaseDeOtraVersion = \$true \}/, "no reconoce el mensaje de la base incompatible")
+  assert.match(f, /if \(\(\$dicho -join " "\) -match "Database is not empty"\) \{ \$script:BaseDeOtraVersion = \$true \}/, "no reconoce el mensaje de la base incompatible")
+  // SE MIRA SIEMPRE, no sólo cuando faltan las dependencias: la primera versión lo buscaba
+  // dentro de `if (-not $quedo)` y con las dependencias ya puestas nunca lo veía. Y se
+  // buscan 40 líneas, no las 6 que se muestran: una traza después del mensaje lo tapaba.
+  const antes = f.slice(0, f.indexOf('-match "Database is not empty"'))
+  assert.doesNotMatch(antes, /if \(\(?-not \$quedo\)?/, "la base sólo se busca cuando faltan las dependencias")
+  assert.match(f, /\$dicho = @\(Get-Content -LiteralPath \$errores -Tail (\d+)/, "no lee la salida de errores para buscar el mensaje")
+  assert.ok(Number(/\$dicho = @\(Get-Content -LiteralPath \$errores -Tail (\d+)/.exec(f)[1]) >= 40, "busca el mensaje en muy pocas líneas")
+  // Con la base de otra versión NO está lista aunque las dependencias estén.
+  assert.match(comandos, /\$PrimeraAperturaIntentada = \$true\s*\n\s*if \(\$script:BaseDeOtraVersion\) \{ \$PrimeraAperturaLista = \$false \}/, "con la base incompatible y las dependencias puestas diría [OK] Arranque")
   // La marca arranca en falso ANTES de preparar: si no, una corrida vieja en la misma sesión la deja puesta.
   assert.match(comandos, /\$script:BaseDeOtraVersion = \$false[\s\S]*\$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada/, "la marca no se limpia antes de preparar")
   const i = ps1.indexOf("Como quedo (lo que se comprobo")
@@ -217,4 +233,30 @@ test("la base de un OpenCode más nuevo se reconoce por lo que dijo OpenCode y n
   assert.match(rama[1], /\$Degradado \+= "[^"]*EN NEGRO[^"]*\$DatosOpenCode[^"]*cambiale el nombre a opencode\.db /, "no dice qué archivo apartar ni dónde está")
   assert.doesNotMatch(rama[1], /necesitar internet/, "le echa la culpa a la red")
   assert.match(comandos, /\$DatosOpenCode = if \(\$env:XDG_DATA_HOME\) \{ Join-Path \$env:XDG_DATA_HOME "opencode" \} else \{ Join-Path \$env:USERPROFILE "\.local\\share\\opencode" \}/, "la carpeta de datos no sale de donde OpenCode la busca")
+})
+
+test("el cierre no manda a Reparar cuando Reparar no arregla lo que falta, ni dice que abre cuando no abre", () => {
+  // Lo marcó la revisión: el aviso decía "Reparar NO lo cambia" y dos líneas más abajo el
+  // cierre común decía "Para completar lo que falta: Reparar Tecnia Bot". Y con la base
+  // incompatible el título era "quedo instalado y abre".
+  const cierre = /if \(\$Degradado\.Count -gt 0\) \{\n([\s\S]*?)exit \$CodigoDegradado/.exec(ps1)
+  assert.ok(cierre, "no encuentro el cierre de la instalación incompleta")
+  assert.match(cierre[1], /if \(\$ReparaSirve\) \{\s*\n\s*Write-Host "  Para completar lo que falta:  menu inicio -> Reparar Tecnia Bot"/, "manda a Reparar sin mirar si sirve")
+  assert.match(cierre[1], /if \(\$script:BaseDeOtraVersion\) \{\s*\n\s*Write-Host "  Tecnia Bot quedo instalado, PERO ASI NO ABRE:"/, "dice que abre cuando no va a abrir")
+  // Los dos avisos que Reparar no arregla NO prenden la marca; los demás sí.
+  const marcado = (ini) => new RegExp(`\\$Degradado \\+= "${ini}[^\\n]*\\n\\s*\\$ReparaSirve = \\$true`).test(ps1)
+  for (const ini of ["falta PlatformIO", "falta Node", "la capa se instalo CON AVISOS", "la primera vez que abras"]) assert.ok(marcado(ini), `"${ini}" se arregla con Reparar y no lo dice`)
+  for (const ini of ["OpenCode quedo en la version", "en esta compu hubo un OpenCode mas nuevo"]) assert.ok(!marcado(ini), `"${ini}" no se arregla con Reparar y manda igual`)
+  assert.match(comandos, /^\$ReparaSirve = \$false$/m, "la marca no arranca apagada")
+})
+
+test("si no se intentó preparar y al final el OpenCode era el fijado, no cierra en LISTO", () => {
+  // Caso angosto que marcó la revisión: la versión activa no se pudo leer al momento de
+  // preparar (se saltea) y al llegar al resumen sí es la fijada. Sin esto: [OK] OpenCode,
+  // ninguna línea de Arranque y LISTO, sin haber preparado ni comprobado nada.
+  assert.match(
+    ps1,
+    /if \(\(-not \$PrimeraAperturaIntentada\) -and \$CapaOk -and \$OpenCodeArranca -and \$OpenCodeEsLaFijada\) \{\n\s*\$ReparaSirve = \$true\n\s*\$Degradado \+= "no se pudo preparar la primera apertura/,
+    "saltear la preparación con el OpenCode correcto no degrada el resultado",
+  )
 })

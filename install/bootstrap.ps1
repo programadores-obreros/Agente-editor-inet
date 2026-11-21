@@ -1740,9 +1740,18 @@ function Test-DependenciasOpenCode {
 }
 
 function Preparar-PrimeraApertura {
-    if (Test-DependenciasOpenCode $cfgDir) { return $true }
+    # SE EJECUTA SIEMPRE, AUNQUE LAS DEPENDENCIAS YA ESTEN. La primera version volvia
+    # con $true apenas las veia en el disco, sin correr nada. Con eso, una compu con las
+    # dependencias puestas (una corrida anterior) Y la base de un OpenCode mas nuevo
+    # cerraba en "[OK] Arranque" y LISTO, y la ventana quedaba en negro sin fin: un OK
+    # falso. Lo marco la revision. Con todo en su lugar esto tarda uno o dos segundos.
+    $yaEstaban = [bool](Test-DependenciasOpenCode $cfgDir)
     Write-Host ""
-    Write-Host "  [..] Preparando la primera apertura de Tecnia Bot (baja unos archivos; hasta 3 minutos)..."
+    if ($yaEstaban) {
+        Write-Host "  [..] Comprobando que OpenCode arranca con lo que hay en esta compu..."
+    } else {
+        Write-Host "  [..] Preparando la primera apertura de Tecnia Bot (baja unos archivos; hasta 3 minutos)..."
+    }
     # Se arranca desde una carpeta nueva y vacia para no sumar carpetas `.opencode` de
     # un proyecto. NO LAS EVITA TODAS: %TEMP% cuelga del perfil, asi que si existe
     # %USERPROFILE%\.opencode OpenCode la encuentra igual, instala ahi tambien y la
@@ -1791,26 +1800,29 @@ function Preparar-PrimeraApertura {
     # disco lleno o la carpeta sin permiso de escritura el docente leia una causa de red
     # que nadie midio. Se muestran las ultimas lineas de lo que OpenCode escribio en su
     # salida de ERRORES (no la estandar, que es la configuracion) y quedan en el registro.
-    if (-not $quedo) {
+    # LA BASE DE UN OPENCODE MAS NUEVO, SE MIRA SIEMPRE (queden o no las dependencias).
+    # Visto en la VM (2026-11-20): si en la compu corrio alguna vez OpenCode 2.x, deja
+    # opencode.db en un formato que el $OpenCodeVersion no lee. `debug config` sale con
+    # este texto, y lo grave es lo que pasa al abrir: la ventana queda en negro SIN FIN
+    # (mas de cuatro minutos medidos, sin una linea). No es falta de red y no se arregla
+    # esperando. Se busca en las ultimas 40 lineas y no en las 6 que se muestran: si
+    # OpenCode agrega una traza despues del mensaje, con 6 se perdia.
+    $cola = @()
+    try {
+        if ($errores -and (Test-Path -LiteralPath $errores)) {
+            $dicho = @(Get-Content -LiteralPath $errores -Tail 40 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
+            if (($dicho -join " ") -match "Database is not empty") { $script:BaseDeOtraVersion = $true }
+            $cola = @($dicho | Select-Object -Last 6)
+        }
+    } catch { }
+    if ((-not $quedo) -or $script:BaseDeOtraVersion) {
         if ($cortado) {
             Write-Host "      No termino en $([int]($TopePrimeraAperturaMs / 1000)) segundos."
         }
-        try {
-            if ($errores -and (Test-Path -LiteralPath $errores)) {
-                $cola = @(Get-Content -LiteralPath $errores -Tail 6 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
-                # LA BASE DE UN OPENCODE MAS NUEVO. Visto en la VM (2026-11-20): si en la
-                # compu corrio alguna vez OpenCode 2.x, deja opencode.db en un formato que
-                # el $OpenCodeVersion no lee. `debug config` sale con este texto, y lo grave
-                # es lo que pasa al abrir: la ventana queda en negro SIN FIN (mas de cuatro
-                # minutos medidos, sin una linea). No es falta de red y no se arregla
-                # esperando, asi que no puede salir con el aviso de red.
-                if (($cola -join " ") -match "Database is not empty") { $script:BaseDeOtraVersion = $true }
-                if ($cola.Count -gt 0) {
-                    Write-Host "      Lo ultimo que dijo OpenCode:"
-                    foreach ($l in $cola) { Write-Host ("        " + $l.Trim().Substring(0, [Math]::Min(200, $l.Trim().Length))) }
-                }
-            }
-        } catch { }
+        if ($cola.Count -gt 0) {
+            Write-Host "      Lo ultimo que dijo OpenCode:"
+            foreach ($l in $cola) { Write-Host ("        " + $l.Trim().Substring(0, [Math]::Min(200, $l.Trim().Length))) }
+        }
     }
     foreach ($t in @($salida, $errores)) {
         if ($t) { Remove-Item -LiteralPath $t -Force -ErrorAction SilentlyContinue }
@@ -1826,7 +1838,12 @@ function Preparar-PrimeraApertura {
 $PrimeraAperturaLista = $false
 $PrimeraAperturaIntentada = $false
 $script:BaseDeOtraVersion = $false
-$DatosOpenCode = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME "opencode" } else { Join-Path $env:USERPROFILE ".local\share\opencode" }
+# En un try: con las dos variables vacias Join-Path es un error terminante y el instalador
+# moriria antes del resumen por un dato que solo se usa en un cartel.
+$DatosOpenCode = "de datos de OpenCode"
+try {
+    $DatosOpenCode = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME "opencode" } else { Join-Path $env:USERPROFILE ".local\share\opencode" }
+} catch { }
 # SOLO CON LA VERSION FIJADA. Si quedo activo otro OpenCode (el docente ya tenia uno
 # por Scoop y Scoop contesto "already installed"), NO se lo ejecuta. Visto en la VM
 # con el 2.3.2 (2026-11-20): `debug config` vuelve enseguida sin instalar nada y deja
@@ -1838,10 +1855,16 @@ $DatosOpenCode = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME "opencod
 $OpenCodeParaPreparar = Get-OpenCodeVersionInstalada
 if ($CapaOk -and (Test-Path $BinOpenCode) -and ($OpenCodeParaPreparar -ne $OpenCodeVersion)) {
     Write-Host ""
-    Write-Host "  [i] No preparo la primera apertura: el OpenCode activo es el $OpenCodeParaPreparar, no el $OpenCodeVersion."
+    if ($OpenCodeParaPreparar) {
+        Write-Host "  [i] No preparo la primera apertura: el OpenCode activo es el $OpenCodeParaPreparar, no el $OpenCodeVersion."
+    } else {
+        Write-Host "  [i] No preparo la primera apertura: no pude leer que version de OpenCode esta activa."
+    }
 } elseif ($CapaOk -and (Test-Path $BinOpenCode)) {
     $PrimeraAperturaLista = [bool](Preparar-PrimeraApertura)
     $PrimeraAperturaIntentada = $true
+    # Con la base de otra version NO esta lista, aunque las dependencias esten puestas.
+    if ($script:BaseDeOtraVersion) { $PrimeraAperturaLista = $false }
     if ($PrimeraAperturaLista) {
         Write-Host "  [OK] La primera apertura ya no necesita internet."
     } elseif ($script:BaseDeOtraVersion) {
@@ -1883,6 +1906,10 @@ $OpenCodeActiva = Get-OpenCodeVersionInstalada
 $OpenCodeEsLaFijada = ($OpenCodeActiva -eq $OpenCodeVersion)
 
 $Degradado = @()
+# Si algo de lo que falta se completa con "Reparar Tecnia Bot". El cierre mandaba SIEMPRE a
+# Reparar, tambien en los dos casos que Reparar no arregla (otra version de OpenCode, la
+# base de una version mas nueva): el mismo bucle que esos avisos venian a cortar.
+$ReparaSirve = $false
 Write-Host ""
 Write-Host "  Como quedo (lo que se comprobo, no lo que se intento):"
 Write-Host "  ------------------------------------------------------"
@@ -1910,16 +1937,19 @@ if ($PioExe) {
     Write-Host "  [OK] PlatformIO   contesta en $PioExe"
 } else {
     $Degradado += "falta PlatformIO: el bot no puede compilar ni cargar codigo a la placa"
+    $ReparaSirve = $true
     Write-Host "  [!]  PlatformIO   NO esta: el bot no puede compilar ni cargar codigo a la placa." -ForegroundColor Yellow
 }
 if ($NodeExe) {
     Write-Host "  [OK] Node         contesta en $NodeExe"
 } else {
     $Degradado += "falta Node: no anda el skill de diagramas de arquitectura"
+    $ReparaSirve = $true
     Write-Host "  [!]  Node         NO esta: no anda el skill de diagramas de arquitectura." -ForegroundColor Yellow
 }
 if ($CapaOk -and $CapaConAvisos) {
     $Degradado += "la capa se instalo CON AVISOS: no se pudo escribir parte de la configuracion o guardar la key (el detalle esta mas arriba)"
+    $ReparaSirve = $true
     Write-Host "  [!]  Tecnia Bot   la capa educativa esta publicada en $cfgDir, pero CON AVISOS:" -ForegroundColor Yellow
     Write-Host "                    el instalador de la capa los listo mas arriba."
 } elseif ($CapaOk) {
@@ -1940,8 +1970,16 @@ if ($PrimeraAperturaIntentada) {
         Write-Host "  [!]  Arranque     NO VA A ABRIR: quedo la base de datos de un OpenCode mas nuevo. Abajo dice como seguir." -ForegroundColor Yellow
     } else {
         $Degradado += "la primera vez que abras Tecnia Bot va a necesitar internet, y la ventana puede quedar en negro uno o dos minutos antes de mostrar algo: no la cierres"
+        $ReparaSirve = $true
         Write-Host "  [!]  Arranque     la primera apertura va a necesitar internet y puede tardar uno o dos minutos en negro." -ForegroundColor Yellow
     }
+}
+# NO SE INTENTO Y DEBIA: arriba no se pudo leer la version activa y ahora resulta que es la
+# fijada. Sin esta rama el cierre seria LISTO sin haber preparado ni comprobado nada.
+if ((-not $PrimeraAperturaIntentada) -and $CapaOk -and $OpenCodeArranca -and $OpenCodeEsLaFijada) {
+    $ReparaSirve = $true
+    $Degradado += "no se pudo preparar la primera apertura: va a necesitar internet y la ventana puede quedar en negro uno o dos minutos antes de mostrar algo"
+    Write-Host "  [!]  Arranque     no se preparo: la primera apertura va a necesitar internet." -ForegroundColor Yellow
 }
 Write-Host ""
 
@@ -1990,10 +2028,16 @@ if (-not $CapaOk) {
 
 # --- DEGRADADO: el bot abre, pero le falta algo. Codigo $CodigoDegradado. ----
 if ($Degradado.Count -gt 0) {
-    Write-Host "  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:" -ForegroundColor Yellow
+    if ($script:BaseDeOtraVersion) {
+        Write-Host "  Tecnia Bot quedo instalado, PERO ASI NO ABRE:" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:" -ForegroundColor Yellow
+    }
     foreach ($d in $Degradado) { Write-Host ("    - " + $d) }
     Write-Host ""
-    Write-Host "  Para completar lo que falta:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    if ($ReparaSirve) {
+        Write-Host "  Para completar lo que falta:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    }
     Write-Host "  Para ver por que no quedo:    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }
