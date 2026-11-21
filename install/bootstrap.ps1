@@ -792,6 +792,118 @@ function Fijar-OpenCode {
     }
 }
 
+# ---- SACAR EL OPENCODE QUE HABIA, PARA PONER EL FIJADO -------------------------
+#
+# HASTA LA 0.4.10 ESTO ESTABA PROHIBIDO, Y LA PROHIBICION TENIA RAZON. Habia un
+# `scoop uninstall opencode` antes de reinstalar, a ciegas: con un falso negativo
+# desinstalaba un OpenCode sano y, si la descarga fallaba por la red del aula, la
+# notebook quedaba sin ninguno. Paso de verdad. De ahi la regla "el instalador
+# puede fallar, pero no puede romper", que SIGUE VALIENDO.
+#
+# POR QUE SE VUELVE A SACAR (decision del 2026-11-21). Scoop no instala nuestro
+# manifest al lado de otra version: contesta "already installed". Con un OpenCode
+# 2.x puesto por el docente, Tecnia Bot quedaba sobre ese: sin el plugin de idioma,
+# con otro logo y sin las pruebas que tiene la version fijada. No habia salida que
+# no fuera sacarlo, y decirle al docente que lo saque a mano es peor (lo hace con
+# la red que tenga).
+#
+# COMO SE HACE PARA QUE NO ROMPA: PRIMERO SE BAJA, DESPUES SE SACA. Medido en la
+# VM (Windows 11, Scoop 0.6.0, 2026-11-21):
+#   scoop download <manifest>   deja el zip en scoop\cache y NO instala ni toca nada;
+#   con la red CORTADA, `scoop uninstall opencode` + `scoop install <manifest>`
+#   instala desde ese zip en 2 segundos ("Loading ... from cache").
+# Entonces: se baja, se comprueba que el zip esta en el cache Y que su sha256 es
+# el del manifest (no se le cree a Scoop: se mira el disco), y recien ahi se saca
+# el que habia. Si algo de eso no se cumple, NO SE SACA NADA y queda como estaba.
+# Tampoco se saca con OpenCode abierto.
+#
+# LO QUE CUESTA Y HAY QUE SABER: el docente se queda sin SU OpenCode. Si lo vuelve
+# a instalar, Tecnia Bot vuelve a quedar sobre ese.
+#
+# SIN VERIFICAR: un cache de Scoop en otra carpeta (SCOOP_CACHE o la configuracion
+# de Scoop). Ahi el zip no se encuentra, y por eso mismo no se saca nada.
+$script:MotivoNoCambio = ""
+$script:OpenCodeQuitado = ""
+
+function Test-OpenCodeFijadoEnCache {
+    try {
+        # SOLO EL ZIP DE ESTA ARQUITECTURA. La primera version aceptaba el hash de
+        # cualquiera de las dos del manifest: con un zip arm64 en el cache de una compu
+        # x64 daba por bajada la version, se sacaba el OpenCode que habia y la
+        # instalacion salia a buscar a la red el zip que de verdad necesitaba. Lo marco
+        # la revision. Si Scoop eligiera otra arquitectura que esta, el zip no coincide
+        # y no se saca nada, que es el lado seguro.
+        $arq = if (@($env:PROCESSOR_ARCHITEW6432, $env:PROCESSOR_ARCHITECTURE) -contains "ARM64") { "arm64" } else { "64bit" }
+        $mf = Get-Content -LiteralPath $ManifiestoOpenCode -Raw | ConvertFrom-Json
+        $hashes = @()
+        if ($mf.architecture.$arq.hash) { $hashes += ("" + $mf.architecture.$arq.hash).ToLower() }
+        if ($hashes.Count -eq 0) { return $false }
+        $cache = Join-Path $env:USERPROFILE "scoop\cache"
+        foreach ($f in @(Get-ChildItem -LiteralPath $cache -Filter "opencode#$OpenCodeVersion#*" -File -ErrorAction SilentlyContinue)) {
+            $h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash.ToLower()
+            if ($hashes -contains $h) { return $true }
+        }
+    } catch { }
+    return $false
+}
+
+# EL SERVICIO DE FONDO NO ES "OPENCODE ABIERTO". El 2.x deja corriendo un
+# `opencode serve --service` sin ventana, que sigue vivo mucho despues de cerrar el
+# programa (visto en la VM: 40 minutos). Si contara como abierto, el cambio no se
+# haria nunca. Se distinguen por la linea de comando: lo que NO es ese servicio es
+# una ventana que alguien esta usando, y esa no se toca.
+function Get-OpenCodeAbiertos {
+    param([switch]$Servicio)
+    $todos = @(Get-CimInstance Win32_Process -Filter "Name='opencode.exe'" -ErrorAction SilentlyContinue)
+    if ($Servicio) { return @($todos | Where-Object { $_.CommandLine -match 'serve\s+--service' }) }
+    return @($todos | Where-Object { $_.CommandLine -notmatch 'serve\s+--service' })
+}
+
+function Quitar-OpenCodeAjeno {
+    param([string]$habia)
+    $script:MotivoNoCambio = ""
+    if (@(Get-OpenCodeAbiertos).Count -gt 0) {
+        $script:MotivoNoCambio = "OpenCode esta abierto"
+        return $false
+    }
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        try { scoop download $ManifiestoOpenCode *>&1 | Out-Null } catch { }
+        if (-not (Test-OpenCodeFijadoEnCache)) {
+            $script:MotivoNoCambio = "no pude bajar la $OpenCodeVersion (hace falta internet)"
+            return $false
+        }
+        # El servicio de fondo se cierra RECIEN ACA, con la fijada ya bajada: si no se va a
+        # cambiar nada, no se le toca nada al docente. Y se vuelve a mirar: si quedo algo
+        # vivo (el servicio no murio, o alguien abrio OpenCode mientras bajaba), no se saca.
+        foreach ($p in @(Get-OpenCodeAbiertos -Servicio)) {
+            try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch { }
+        }
+        $quedan = 0
+        for ($i = 0; $i -lt 10; $i++) {
+            $quedan = @(Get-Process opencode -ErrorAction SilentlyContinue).Count
+            if ($quedan -eq 0) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        if ($quedan -gt 0) {
+            $script:MotivoNoCambio = "OpenCode esta abierto"
+            return $false
+        }
+        try { scoop uninstall opencode *>&1 | Out-Null } catch { }
+        if (Test-Path (Join-Path $OpenCodeAppDir "current")) {
+            $script:MotivoNoCambio = "Scoop no pudo sacar la $habia"
+            return $false
+        }
+        # Queda anotado QUE se saco. Si la instalacion de despues falla, el cierre tiene
+        # que decirlo con todas las letras: la compu quedo sin el OpenCode que tenia.
+        $script:OpenCodeQuitado = $habia
+        return $true
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
 if (Test-OpenCodeInstalado) {
     Write-Host "  [OK] OpenCode ya esta instalado"
     $instalada = Get-OpenCodeVersionInstalada
@@ -871,8 +983,15 @@ if (Test-OpenCodeInstalado) {
             #     eso cae al bucket 'main': instalaria el opencode DEL BUCKET (hoy la 2.x,
             #     con una configuracion incompatible) creyendo instalar el nuestro.
             #
-            # Desinstalar la que hay para poner la fijada tampoco: puede fallar, no romper.
-            Write-Host "  [..] La $OpenCodeVersion no esta en el disco: la instalo al lado (no se borra la $instalada)..."
+            # POR ESO SE SACA LA QUE HAY, pero solo con la fijada ya bajada y comprobada
+            # (ver Quitar-OpenCodeAjeno, mas arriba). Si no se pudo, el install de abajo
+            # contesta "already installed" y queda todo como estaba.
+            Write-Host "  [..] Hay otro OpenCode ($instalada) y la $OpenCodeVersion no esta en el disco: la bajo antes de tocar nada..."
+            if ([bool](Quitar-OpenCodeAjeno $instalada)) {
+                Write-Host "  [i] La $OpenCodeVersion ya esta bajada y saque la $instalada. La instalo..."
+            } else {
+                Write-Host "  [!] No cambio el OpenCode que habia: $script:MotivoNoCambio. Queda la $instalada." -ForegroundColor Yellow
+            }
             $prev = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
             $salidaInst = ""
@@ -911,8 +1030,7 @@ if (Test-OpenCodeInstalado) {
                     Write-Host "      Tecnia Bot (OpenCode) esta abierto. Cerralo y volve a correr 'Reparar Tecnia Bot'."
                 } else {
                     foreach ($l in ($salidaInst -split "`n")) { if ($l -match "^\s*ERROR") { Write-Host ("      " + $l.Trim()) } }
-                    Write-Host "      Scoop no instala la $OpenCodeVersion al lado de otra version. Queda la $quedo, que arranca;"
-                    Write-Host "      esta version de Tecnia Bot se probo solo con la ${OpenCodeVersion}: avisale al referente tecnico."
+                    Write-Host "      Queda la $quedo, que arranca; esta version de Tecnia Bot se probo solo con la ${OpenCodeVersion}."
                 }
             }
         }
@@ -1665,6 +1783,268 @@ if ($CapaOk -and -not (Test-Path (Join-Path $cfgDir "agent\tecnia-bot.md"))) {
     Write-Host ""
 }
 
+# --- 6. Primera apertura: las dependencias de OpenCode quedan puestas ----------
+#
+# POR QUE EXISTE. Medido en una VM Windows 11 con la 0.4.10 (auditoria por
+# escenarios, 2026-11-18/19): la primera vez que arranca, OpenCode instala el
+# paquete @opencode-ai/plugin en la carpeta de configuracion y NO DIBUJA NADA
+# hasta que esa instalacion termina o falla. La ventana queda en negro, con el
+# titulo "Tecnia Bot" y sin un cartel:
+#
+#     con buena red ............ 16 a 28 s
+#     red cortada .............. 71 s
+#     reloj atrasado 3 anios ... 72 s  ("certificate is not yet valid")
+#     red filtrada ............. 135 s
+#
+# Y se repite en CADA apertura hasta que la instalacion sale bien una vez. Una
+# docente que abre el icono en el aula, con la red de la escuela, ve una ventana
+# negra durante dos minutos y la cierra. Despues de una apertura que si pudo
+# bajar, abre en 1 s incluso sin red.
+#
+# POR QUE BLOQUEA (leido en el codigo de OpenCode v1.18.18):
+#   config/config.ts:424-457   lanza la instalacion "en segundo plano" por cada
+#                              carpeta de configuracion.
+#   plugin/index.ts:179-182    si hay plugins de servidor, ESPERA esa instalacion
+#                              antes de cargarlos. Tecnia Bot trae uno
+#                              (plugins\tecnia-idioma.ts): por eso espera.
+#   No hay timeout propio ni opcion que la apague sin apagar tambien los plugins.
+#
+# COMO SE ADELANTA. `opencode debug config` carga la instancia igual que la
+# pantalla -y por lo tanto dispara y espera la misma instalacion- pero termina
+# sin abrir nada. Probado en la VM: 55 s con red, 3938 archivos en node_modules,
+# y la apertura siguiente SIN red bajo de 71 s a 1 s.
+#
+# TRES COSAS QUE NO SON OBVIAS:
+#
+#   1. VA DESPUES DE install.ps1. Sin el plugin copiado OpenCode no espera la
+#      instalacion, y `debug config` saldria antes de que termine de bajar.
+#
+#   2. EL EXIT CODE NO DICE NADA. OpenCode anota el fallo como aviso y sale con 0
+#      igual. Lo unico que vale es mirar el disco, con la MISMA condicion que usa
+#      OpenCode para decidir que ya no tiene que instalar (core/src/npm.ts:139-190):
+#      que exista node_modules y que package-lock.json nombre el paquete.
+#
+#   3. package-lock.json NO SE LEE CON ConvertFrom-Json. Tiene una clave vacia
+#      ("") y PowerShell 5.1 revienta con "el valor del argumento name no es
+#      valido" (visto en la VM). Se busca el texto.
+#
+# TIENE TOPE. OpenCode no corta nunca por su cuenta; con la red filtrada tardo
+# 135 s en rendirse. Se le dan 3 minutos y despues se lo mata: un instalador
+# colgado es peor que el negro que viene a arreglar.
+#
+# SI NO QUEDA, NO ES "LISTO". El bot abre igual, pero la primera apertura vuelve a
+# depender de la red y se dice asi en el resumen. No es una falla (codigo 1): es
+# un instalado incompleto, y Reparar lo completa cuando haya red.
+#
+# SIN VERIFICAR: que las herramientas del bot fallen cuando falta este paquete.
+# Lo importan todas (`import { tool } from "@opencode-ai/plugin"`), asi que es lo
+# esperable, pero no se midio.
+$TopePrimeraAperturaMs = 180000
+
+function Test-DependenciasOpenCode {
+    param([string]$dir)
+    $paquete = Join-Path $dir "node_modules\@opencode-ai\plugin\package.json"
+    $lock = Join-Path $dir "package-lock.json"
+    # -LiteralPath en los tres: con -Path, un corchete en la ruta (XDG_CONFIG_HOME=D:\conf[1])
+    # se toma como comodin, el archivo "no existe" y la instalacion quedaria marcada como
+    # incompleta para siempre con todo bien puesto. Lo marco la revision.
+    if (-not (Test-Path -LiteralPath $paquete)) { return $false }
+    if (-not (Test-Path -LiteralPath $lock)) { return $false }
+    try {
+        return [bool](Select-String -LiteralPath $lock -Pattern '"@opencode-ai/plugin"' -SimpleMatch -Quiet)
+    } catch {
+        return $false
+    }
+}
+
+function Preparar-PrimeraApertura {
+    # SE EJECUTA SIEMPRE, AUNQUE LAS DEPENDENCIAS YA ESTEN. La primera version volvia
+    # con $true apenas las veia en el disco, sin correr nada. Con eso, una compu con las
+    # dependencias puestas (una corrida anterior) Y la base de un OpenCode mas nuevo
+    # cerraba en "[OK] Arranque" y LISTO, y la ventana quedaba en negro sin fin: un OK
+    # falso. Lo marco la revision. Con todo en su lugar esto tarda uno o dos segundos.
+    $yaEstaban = [bool](Test-DependenciasOpenCode $cfgDir)
+    Write-Host ""
+    if ($yaEstaban) {
+        Write-Host "  [..] Comprobando que OpenCode arranca con lo que hay en esta compu..."
+    } else {
+        Write-Host "  [..] Preparando la primera apertura de Tecnia Bot (baja unos archivos; hasta 3 minutos)..."
+    }
+    # Se arranca desde una carpeta nueva y vacia para no sumar carpetas `.opencode` de
+    # un proyecto. NO LAS EVITA TODAS: %TEMP% cuelga del perfil, asi que si existe
+    # %USERPROFILE%\.opencode OpenCode la encuentra igual, instala ahi tambien y la
+    # espera. Eso puede alargar este paso; no cambia lo que se informa, que sale de
+    # mirar $cfgDir. SIN CUBRIR: una `.opencode` propia del docente en su perfil o en
+    # Documentos, a la que le falten dependencias, sigue haciendo esperar a la primera
+    # apertura aunque aca diga [OK]. No se midio.
+    $dirVacio = $null
+    $salida = $null
+    $errores = $null
+    $proc = $null
+    $cortado = $false
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        # Adentro del try: si %TEMP% viniera vacia, Join-Path es un error terminante y
+        # afuera cortaria el instalador sin llegar al resumen (puede fallar, no romper).
+        $dirVacio = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N"))
+        $salida = Join-Path $env:TEMP ("tecnia-primera-apertura-" + [guid]::NewGuid().ToString("N") + ".out")
+        $errores = $salida + ".err"
+        New-Item -ItemType Directory -Force -Path $dirVacio | Out-Null
+        # La salida estandar es la configuracion ENTERA: se manda a un archivo que se
+        # borra, y no va a la pantalla ni al registro de instalacion.
+        $proc = Start-Process -FilePath $BinOpenCode -ArgumentList "debug", "config" -WorkingDirectory $dirVacio -WindowStyle Hidden -RedirectStandardOutput $salida -RedirectStandardError $errores -PassThru
+        if (-not $proc.WaitForExit($TopePrimeraAperturaMs)) {
+            $cortado = $true
+            Write-Host "  [i] Paso el tiempo maximo y OpenCode seguia intentando bajar: lo corto."
+            # SE MATA EL ARBOL Y SE ESPERA A QUE MUERA. La primera version hacia solo
+            # $proc.Kill(): mata al padre y deja vivo a cualquier hijo, que puede seguir
+            # escribiendo en node_modules despues de que este script ya dio su veredicto
+            # y bloquear archivos de una reinstalacion. Y como Kill() no espera, los
+            # temporales (uno tiene la configuracion entera) quedaban tomados y el
+            # Remove-Item de abajo fallaba callado. Lo marcaron las dos revisiones.
+            try { & taskkill.exe /PID $proc.Id /T /F *> $null } catch { }
+            try { $proc.Kill() } catch { }
+            try { $proc.WaitForExit(10000) | Out-Null } catch { }
+        }
+    } catch {
+        Write-Host "  [i] No pude lanzar la preparacion: $($_.Exception.Message)"
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    $quedo = [bool](Test-DependenciasOpenCode $cfgDir)
+    # SI NO QUEDO, SE DICE LO QUE SE SABE, NO UNA CAUSA SUPUESTA. Antes el aviso decia
+    # "sin internet, o la red la bloquea" sin haberlo comprobado: con un antivirus, el
+    # disco lleno o la carpeta sin permiso de escritura el docente leia una causa de red
+    # que nadie midio. Se muestran las ultimas lineas de lo que OpenCode escribio en su
+    # salida de ERRORES (no la estandar, que es la configuracion) y quedan en el registro.
+    # LA BASE DE UN OPENCODE MAS NUEVO, SE MIRA SIEMPRE (queden o no las dependencias).
+    # Visto en la VM (2026-11-20): si en la compu corrio alguna vez OpenCode 2.x, deja
+    # opencode.db en un formato que el $OpenCodeVersion no lee. `debug config` sale con
+    # este texto, y lo grave es lo que pasa al abrir: la ventana queda en negro SIN FIN
+    # (mas de cuatro minutos medidos, sin una linea). No es falta de red y no se arregla
+    # esperando. Se busca en las ultimas 40 lineas y no en las 6 que se muestran: si
+    # OpenCode agrega una traza despues del mensaje, con 6 se perdia.
+    $cola = @()
+    try {
+        if ($errores -and (Test-Path -LiteralPath $errores)) {
+            $dicho = @(Get-Content -LiteralPath $errores -Tail 40 -ErrorAction SilentlyContinue | Where-Object { $_ -and $_.Trim() })
+            if (($dicho -join " ") -match "Database is not empty") { $script:BaseDeOtraVersion = $true }
+            $cola = @($dicho | Select-Object -Last 6)
+        }
+    } catch { }
+    if ((-not $quedo) -or $script:BaseDeOtraVersion) {
+        if ($cortado) {
+            Write-Host "      No termino en $([int]($TopePrimeraAperturaMs / 1000)) segundos."
+        }
+        if ($cola.Count -gt 0) {
+            Write-Host "      Lo ultimo que dijo OpenCode:"
+            foreach ($l in $cola) { Write-Host ("        " + $l.Trim().Substring(0, [Math]::Min(200, $l.Trim().Length))) }
+        }
+    }
+    foreach ($t in @($salida, $errores)) {
+        if ($t) { Remove-Item -LiteralPath $t -Force -ErrorAction SilentlyContinue }
+    }
+    if ($dirVacio) { Remove-Item -LiteralPath $dirVacio -Recurse -Force -ErrorAction SilentlyContinue }
+    # El de salida tiene la configuracion entera: si no se pudo borrar, se dice donde quedo.
+    if ($salida -and (Test-Path -LiteralPath $salida)) {
+        Write-Host "  [i] No pude borrar un archivo temporal con la configuracion: $salida"
+    }
+    return $quedo
+}
+
+# APARTAR (NO BORRAR) LA BASE DE OTRO OPENCODE. Es lo unico que hace abrir a Tecnia Bot
+# cuando quedo la base de un 2.x (probado en la VM: abre en 21 s). Se le cambia el
+# nombre, con fecha, y queda en la misma carpeta: es el historial de otro programa del
+# docente y no se destruye. No se toca con OpenCode abierto.
+$script:BaseApartadaComo = ""
+$script:BaseNoEncontrada = $false
+function Apartar-BaseDeOtraVersion {
+    if (@(Get-Process opencode -ErrorAction SilentlyContinue).Count -gt 0) {
+        Write-Host "  [i] No aparte la base de datos de otro OpenCode: OpenCode esta abierto."
+        return $false
+    }
+    $marca = ".de-otra-version-" + (Get-Date -Format "yyyyMMdd-HHmmss")
+    $base = $null
+    try { $base = Join-Path $DatosOpenCode "opencode.db" } catch { }
+    if ((-not $base) -or (-not (Test-Path -LiteralPath $base))) {
+        $script:BaseNoEncontrada = $true
+        Write-Host "  [i] No aparte la base de datos de otro OpenCode: no la encontre en $DatosOpenCode"
+        return $false
+    }
+    # LOS TRES ARCHIVOS O NINGUNO. La primera version movia primero -wal y -shm y al
+    # final opencode.db, sin volver atras: si el antivirus tenia tomado el .db, la base
+    # del docente quedaba EN SU LUGAR pero sin su -wal, o sea sin sus ultimos cambios.
+    # Lo marco la revision. Ahora va primero el principal (si ese falla no se toco
+    # nada) y, si falla alguno de los otros, se devuelven a su nombre los ya movidos.
+    $movidos = @()
+    try {
+        foreach ($n in @("opencode.db", "opencode.db-wal", "opencode.db-shm")) {
+            $f = Join-Path $DatosOpenCode $n
+            if (Test-Path -LiteralPath $f) {
+                Rename-Item -LiteralPath $f -NewName ($n + $marca) -ErrorAction Stop
+                $movidos += $n
+            }
+        }
+    } catch {
+        $motivo = $_.Exception.Message
+        foreach ($n in $movidos) {
+            try { Rename-Item -LiteralPath (Join-Path $DatosOpenCode ($n + $marca)) -NewName $n -ErrorAction Stop } catch { }
+        }
+        Write-Host "  [i] No pude apartar la base de datos de otro OpenCode (la deje como estaba): $motivo"
+        return $false
+    }
+    if (Test-Path -LiteralPath $base) { return $false }
+    $script:BaseApartadaComo = "opencode.db" + $marca
+    Write-Host "  [i] Aparte la base de datos de otro OpenCode: quedo como $script:BaseApartadaComo en $DatosOpenCode"
+    return $true
+}
+
+$PrimeraAperturaLista = $false
+$PrimeraAperturaIntentada = $false
+$script:BaseDeOtraVersion = $false
+# En un try: con las dos variables vacias Join-Path es un error terminante y el instalador
+# moriria antes del resumen por un dato que solo se usa en un cartel.
+$DatosOpenCode = "de datos de OpenCode"
+try {
+    $DatosOpenCode = if ($env:XDG_DATA_HOME) { Join-Path $env:XDG_DATA_HOME "opencode" } else { Join-Path $env:USERPROFILE ".local\share\opencode" }
+} catch { }
+# SOLO CON LA VERSION FIJADA. Si quedo activo otro OpenCode (el docente ya tenia uno
+# por Scoop y Scoop contesto "already installed"), NO se lo ejecuta. Visto en la VM
+# con el 2.3.2 (2026-11-20): `debug config` vuelve enseguida sin instalar nada y deja
+# vivo un `opencode serve --service` que nadie pidio. El .exe del instalador termina
+# igual, pero cualquiera que espere al arbol de procesos (Start-Process -Wait, un
+# despliegue por script) queda colgado: asi estuvo 45 minutos la prueba. Y preparar
+# las dependencias de una version que no es la del bot no arregla nada: el resumen
+# ya dice que la version no es la probada, que es lo que importa.
+$OpenCodeParaPreparar = Get-OpenCodeVersionInstalada
+if ($CapaOk -and (Test-Path $BinOpenCode) -and ($OpenCodeParaPreparar -ne $OpenCodeVersion)) {
+    Write-Host ""
+    if ($OpenCodeParaPreparar) {
+        Write-Host "  [i] No preparo la primera apertura: el OpenCode activo es el $OpenCodeParaPreparar, no el $OpenCodeVersion."
+    } else {
+        Write-Host "  [i] No preparo la primera apertura: no pude leer que version de OpenCode esta activa."
+    }
+} elseif ($CapaOk -and (Test-Path $BinOpenCode)) {
+    $PrimeraAperturaLista = [bool](Preparar-PrimeraApertura)
+    $PrimeraAperturaIntentada = $true
+    # Si lo que frena es la base de otro OpenCode, se aparta y se prueba UNA vez mas.
+    if ($script:BaseDeOtraVersion -and [bool](Apartar-BaseDeOtraVersion)) {
+        $script:BaseDeOtraVersion = $false
+        $PrimeraAperturaLista = [bool](Preparar-PrimeraApertura)
+    }
+    # Con la base de otra version NO esta lista, aunque las dependencias esten puestas.
+    if ($script:BaseDeOtraVersion) { $PrimeraAperturaLista = $false }
+    if ($PrimeraAperturaLista) {
+        Write-Host "  [OK] La primera apertura ya no necesita internet."
+    } elseif ($script:BaseDeOtraVersion) {
+        Write-Host "  [!] OpenCode no puede leer la base que dejo una version mas nueva. El aviso completo va al final." -ForegroundColor Yellow
+    } else {
+        Write-Host "  [!] No pude dejar lista la primera apertura (suele ser falta de internet o una red que bloquea la descarga)." -ForegroundColor Yellow
+        Write-Host "      Sigo; el aviso completo va al final."
+    }
+}
+
 # ---- RESUMEN FINAL: UNA LINEA POR COMPONENTE, CON LO QUE SE COMPROBO ----------
 #
 # POR QUE EXISTE. Hasta aca solo la falla de OpenCode se repetia al final. Las de
@@ -1696,13 +2076,23 @@ $OpenCodeActiva = Get-OpenCodeVersionInstalada
 $OpenCodeEsLaFijada = ($OpenCodeActiva -eq $OpenCodeVersion)
 
 $Degradado = @()
+$porque = if ($script:MotivoNoCambio) { $script:MotivoNoCambio } else { "no se pudo cambiar" }
+# Si algo de lo que falta se completa con "Reparar Tecnia Bot". El cierre mandaba SIEMPRE a
+# Reparar, tambien en los dos casos que Reparar no arregla (otra version de OpenCode, la
+# base de una version mas nueva): el mismo bucle que esos avisos venian a cortar.
+$ReparaSirve = $false
 Write-Host ""
 Write-Host "  Como quedo (lo que se comprobo, no lo que se intento):"
 Write-Host "  ------------------------------------------------------"
 if (-not $OpenCodeArranca) {
     Write-Host "  [X]  OpenCode     NO ARRANCA." -ForegroundColor Red
 } elseif (-not $OpenCodeEsLaFijada) {
-    $Degradado += "OpenCode quedo en la version $OpenCodeActiva, no en la $OpenCodeVersion con la que se probo"
+    # SE DICE POR QUE NO SE CAMBIO, Y REPARAR SI SIRVE. Desde que el instalador saca el
+    # OpenCode que habia (con el fijado ya bajado), llegar aca quiere decir que no pudo:
+    # sin internet para bajarlo, o con OpenCode abierto. Las dos se arreglan volviendo a
+    # correr. Antes de eso este aviso decia "Reparar NO lo cambia", y era cierto.
+    $Degradado += "OpenCode quedo en la version $OpenCodeActiva, no en la $OpenCodeVersion con la que se probo: $porque. Tecnia Bot puede andar distinto o no abrir. Con internet y con Tecnia Bot cerrado, Reparar lo vuelve a intentar"
+    $ReparaSirve = $true
     Write-Host "  [!]  OpenCode     arranca, pero es la version $OpenCodeActiva y se probo con la $OpenCodeVersion." -ForegroundColor Yellow
 } else {
     Write-Host "  [OK] OpenCode     arranca, version $OpenCodeActiva."
@@ -1711,22 +2101,58 @@ if ($PioExe) {
     Write-Host "  [OK] PlatformIO   contesta en $PioExe"
 } else {
     $Degradado += "falta PlatformIO: el bot no puede compilar ni cargar codigo a la placa"
+    $ReparaSirve = $true
     Write-Host "  [!]  PlatformIO   NO esta: el bot no puede compilar ni cargar codigo a la placa." -ForegroundColor Yellow
 }
 if ($NodeExe) {
     Write-Host "  [OK] Node         contesta en $NodeExe"
 } else {
     $Degradado += "falta Node: no anda el skill de diagramas de arquitectura"
+    $ReparaSirve = $true
     Write-Host "  [!]  Node         NO esta: no anda el skill de diagramas de arquitectura." -ForegroundColor Yellow
 }
 if ($CapaOk -and $CapaConAvisos) {
     $Degradado += "la capa se instalo CON AVISOS: no se pudo escribir parte de la configuracion o guardar la key (el detalle esta mas arriba)"
+    $ReparaSirve = $true
     Write-Host "  [!]  Tecnia Bot   la capa educativa esta publicada en $cfgDir, pero CON AVISOS:" -ForegroundColor Yellow
     Write-Host "                    el instalador de la capa los listo mas arriba."
 } elseif ($CapaOk) {
     Write-Host "  [OK] Tecnia Bot   la capa educativa esta publicada en $cfgDir"
 } else {
     Write-Host "  [X]  Tecnia Bot   la capa educativa NO quedo publicada." -ForegroundColor Red
+}
+# Solo si se intento: sin OpenCode o sin la capa, las lineas de arriba ya dicen lo
+# que importa y esta seria ruido.
+if ($PrimeraAperturaIntentada) {
+    if ($PrimeraAperturaLista) {
+        Write-Host "  [OK] Arranque     la primera apertura no necesita internet."
+    } elseif ($script:BaseDeOtraVersion) {
+        # LLEGAR ACA ES QUE NO SE PUDO APARTAR SOLA (OpenCode abierto, archivo tomado, o
+        # no esta donde se la busco). Se dice el remedio que se probo en la VM: con la
+        # base apartada, no borrada, el bot abrio en 21 s. Y si no se la encontro, no se
+        # manda al docente a renombrar un archivo que no esta en esa carpeta.
+        if ($script:BaseNoEncontrada) {
+            $Degradado += "en esta compu hubo un OpenCode mas nuevo y dejo una base de datos que este no puede leer: asi Tecnia Bot queda EN NEGRO al abrir, y esperar no lo arregla. No encontre esa base en la carpeta $DatosOpenCode, asi que no la pude apartar: avisale al referente tecnico"
+        } else {
+            $Degradado += "en esta compu hubo un OpenCode mas nuevo y dejo una base de datos que este no puede leer: asi Tecnia Bot queda EN NEGRO al abrir, y esperar no lo arregla. Cerra Tecnia Bot y OpenCode, entra a la carpeta $DatosOpenCode y cambiale el nombre a opencode.db (por ejemplo opencode.db.viejo). Despues abri Tecnia Bot"
+        }
+        Write-Host "  [!]  Arranque     NO VA A ABRIR: quedo la base de datos de un OpenCode mas nuevo. Abajo dice como seguir." -ForegroundColor Yellow
+    } else {
+        $Degradado += "la primera vez que abras Tecnia Bot va a necesitar internet, y la ventana puede quedar en negro uno o dos minutos antes de mostrar algo: no la cierres"
+        $ReparaSirve = $true
+        Write-Host "  [!]  Arranque     la primera apertura va a necesitar internet y puede tardar uno o dos minutos en negro." -ForegroundColor Yellow
+    }
+}
+if ($script:BaseApartadaComo) {
+    Write-Host "  [i]  Habia una base de datos de otro OpenCode que este no puede leer. No se borro:"
+    Write-Host "       quedo como $script:BaseApartadaComo en $DatosOpenCode"
+}
+# NO SE INTENTO Y DEBIA: arriba no se pudo leer la version activa y ahora resulta que es la
+# fijada. Sin esta rama el cierre seria LISTO sin haber preparado ni comprobado nada.
+if ((-not $PrimeraAperturaIntentada) -and $CapaOk -and $OpenCodeArranca -and $OpenCodeEsLaFijada) {
+    $ReparaSirve = $true
+    $Degradado += "no se pudo preparar la primera apertura: va a necesitar internet y la ventana puede quedar en negro uno o dos minutos antes de mostrar algo"
+    Write-Host "  [!]  Arranque     no se preparo: la primera apertura va a necesitar internet." -ForegroundColor Yellow
 }
 Write-Host ""
 
@@ -1742,6 +2168,17 @@ if (-not $OpenCodeArranca) {
         Write-Host "  OPENCODE NO ARRANCA, y la capa de Tecnia Bot tampoco quedo publicada." -ForegroundColor Yellow
     }
     Write-Host ""
+    # SI ESTE INSTALADOR SACO EL OPENCODE QUE HABIA Y NO PUDO PONER EL NUESTRO, SE DICE.
+    # Es el peor caso del reemplazo: la compu quedo sin el OpenCode que tenia. El zip ya
+    # esta bajado y comprobado, asi que Reparar lo instala desde el disco, sin internet
+    # (medido en la VM con la red cortada: 2 segundos). Sin este aviso el cierre mandaba
+    # solo al Diagnostico y callaba lo que el instalador habia hecho. Lo marco la revision.
+    if ($script:OpenCodeQuitado) {
+        Write-Host "  ESTE INSTALADOR SACO EL OPENCODE QUE HABIA ($script:OpenCodeQuitado) Y NO PUDO INSTALAR EL SUYO." -ForegroundColor Red
+        Write-Host "  El OpenCode $OpenCodeVersion ya esta bajado en esta compu: no hace falta internet."
+        Write-Host "    Para instalarlo:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+        Write-Host ""
+    }
     Write-Host "  Sin OpenCode el bot no se puede abrir todavia. Para saber por que:"
     Write-Host "    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
     Write-Host ""
@@ -1775,10 +2212,16 @@ if (-not $CapaOk) {
 
 # --- DEGRADADO: el bot abre, pero le falta algo. Codigo $CodigoDegradado. ----
 if ($Degradado.Count -gt 0) {
-    Write-Host "  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:" -ForegroundColor Yellow
+    if ($script:BaseDeOtraVersion) {
+        Write-Host "  Tecnia Bot quedo instalado, PERO ASI NO ABRE:" -ForegroundColor Yellow
+    } else {
+        Write-Host "  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:" -ForegroundColor Yellow
+    }
     foreach ($d in $Degradado) { Write-Host ("    - " + $d) }
     Write-Host ""
-    Write-Host "  Para completar lo que falta:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    if ($ReparaSirve) {
+        Write-Host "  Para completar lo que falta:  menu inicio -> Reparar Tecnia Bot" -ForegroundColor Yellow
+    }
     Write-Host "  Para ver por que no quedo:    menu inicio -> Diagnostico de Tecnia Bot" -ForegroundColor Yellow
     Write-Host ""
     try { Stop-Transcript | Out-Null } catch { }

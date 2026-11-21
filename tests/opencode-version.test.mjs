@@ -76,8 +76,14 @@ test("bootstrap.ps1 no cambia de versión desinstalando: como mucho `scoop reset
   // La regla de siempre: puede fallar, pero no puede romper. `scoop reset
   // app@ver` sólo mueve el junction 'current' y rehace los shims (libexec/
   // scoop-reset.ps1); si la versión no está, dice "isn't installed" y no toca nada.
+  //
+  // DESDE LA 0.4.11 HAY UN `scoop uninstall`, UNO SOLO, y este test cambió con él. Scoop no
+  // instala nuestro manifest al lado de otra versión ("already installed"), así que con el
+  // OpenCode 2.x de un docente no había forma de llegar a la fijada. Se saca el que había,
+  // pero la regla sigue en pie porque ANTES se baja la fijada y se comprueba en el disco.
+  // El orden lo cuida tests/instalador.test.mjs ("repara solo, UNA vez...").
   const comandos = ps1.split("\n").filter((l) => !/Write-Host/.test(l))
-  assert.deepEqual(comandos.filter((l) => /scoop uninstall/.test(l)), [], "hay un scoop uninstall")
+  assert.equal(comandos.filter((l) => /scoop uninstall/.test(l)).length, 1, "tiene que haber un único scoop uninstall (el de Quitar-OpenCodeAjeno)")
   const resets = comandos.filter((l) => /scoop reset opencode@\$OpenCodeVersion/.test(l))
   assert.ok(resets.length >= 1, "no hay `scoop reset opencode@$OpenCodeVersion` para activar la fijada cuando ya está en disco")
 })
@@ -212,9 +218,9 @@ test("bootstrap.ps1 captura TODOS los streams de scoop hold/reset (*>&1), no sol
 // marcar la falla— porque es lo que hace que el resultado se lea del disco y no del
 // comando. Lo que cambió es el consejo final: ya no manda a correr un comando que da 404.
 test("bootstrap.ps1: con otra version activa y la fijada fuera del disco, intenta desde el manifest y relee lo que quedo", () => {
-  const i = ps1.indexOf("no esta en el disco: la instalo al lado")
+  const i = ps1.indexOf("no esta en el disco: la bajo antes de tocar nada")
   assert.ok(i > 0, "no existe la rama 'la fijada no esta en el disco'")
-  const rama = ps1.slice(i, i + 2700)
+  const rama = ps1.slice(i, i + 3200)
   assert.match(rama, /scoop install \$ManifiestoOpenCode \*>&1/, "no instala desde el manifest (o no captura todos los streams)")
   assert.match(rama, /Get-OpenCodeVersionInstalada/, "no relee la version tras instalar")
   assert.match(rama, /Test-OpenCode\)/, "no comprueba que OpenCode CORRA despues de instalar")
