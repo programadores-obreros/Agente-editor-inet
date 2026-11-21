@@ -211,7 +211,10 @@ test("la base de un OpenCode más nuevo se reconoce por lo que dijo OpenCode y n
   // El orden importa: OK, después la base, y recién al final el aviso de red.
   const rama = /\} elseif \(\$script:BaseDeOtraVersion\) \{\n([\s\S]*?)\n    \} else \{/.exec(bloque[1])
   assert.ok(rama, "el resumen no tiene una rama propia para la base incompatible")
-  assert.match(rama[1], /\$Degradado \+= "[^"]*EN NEGRO[^"]*\$DatosOpenCode[^"]*opencode\.db/, "no dice qué archivo apartar ni dónde está")
+  // Se pide la frase entera "cambiale el nombre a opencode.db". La primera versión sólo
+  // pedía que "opencode.db" apareciera después de la carpeta, y lo cumplía el ejemplo
+  // ("opencode.db.viejo") aunque el aviso ya no dijera QUÉ archivo tocar: mutante vivo.
+  assert.match(rama[1], /\$Degradado \+= "[^"]*EN NEGRO[^"]*\$DatosOpenCode[^"]*cambiale el nombre a opencode\.db /, "no dice qué archivo apartar ni dónde está")
   assert.doesNotMatch(rama[1], /necesitar internet/, "le echa la culpa a la red")
   assert.match(comandos, /\$DatosOpenCode = if \(\$env:XDG_DATA_HOME\) \{ Join-Path \$env:XDG_DATA_HOME "opencode" \} else \{ Join-Path \$env:USERPROFILE "\.local\\share\\opencode" \}/, "la carpeta de datos no sale de donde OpenCode la busca")
 })
