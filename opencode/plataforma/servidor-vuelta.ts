@@ -136,10 +136,19 @@ export function abrirServidorDeVuelta(intento: Intento, esperaMs: number = ESPER
       if (terminado) return
       terminado = true
       clearTimeout(reloj)
-      // `close()` deja de escuchar y corta las conexiones ociosas. Acá hubo además un
-      // `closeAllConnections()`: se sacó porque ningún test lo podía poner rojo (el
-      // `close()` de Node ya corta las ociosas, y los pedidos se responden en el acto).
+      // `close()` deja de escuchar. `closeAllConnections()` corta las conexiones que
+      // quedaron abiertas sin pedir nada (un navegador abre de más y las deja).
+      //
+      // HISTORIA, para que nadie lo vuelva a sacar: `closeAllConnections()` estuvo, y
+      // se sacó «porque ningún test lo podía poner rojo»: con Node 26 el `close()`
+      // solo ya corta esas conexiones. Con Node 22 y 24 NO las corta, y el test
+      // «al terminar corta también las conexiones…» falla. Se vio el 21/11/2026, la
+      // primera vez que esta rama corrió en el CI, que usa Node 24. La conclusión
+      // «no hace falta» valía para UNA versión de Node, la de la compu donde se probó.
+      // El bot además corre sobre Bun, no sobre Node: otra razón para pedirlo
+      // explícito en vez de depender de lo que haga `close()`.
       servidor.close()
+      servidor.closeAllConnections?.()
       terminar(resultado)
     }
 
