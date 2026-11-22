@@ -2892,3 +2892,100 @@ test("instalación dañada: un archivo de 0 bytes no es un archivo instalado", a
     rmSync(cfg, { recursive: true, force: true })
   }
 })
+
+// ── EL LCD EN ESP32: UNA SOLA VOZ ─────────────────────────────────────────────
+//
+// Auditoría de código del 2026-11-22 (CIR-02, el único hallazgo que quedó en
+// severidad alta), reproducido por QA. La hoja que genera el tool para un LCD en
+// ESP32 traía tres afirmaciones que no podían ser ciertas a la vez:
+//
+//   - la tabla y el dibujo: «VIN (5V) · GND · GPIO21 · GPIO22»;
+//   - la advertencia del componente, en el mismo recuadro: «Nunca mochila a 5V con
+//     SDA/SCL directo al ESP32»;
+//   - el aviso de la placa: «los componentes de 5V (servo, PIR, HC-SR04, LCD) van a VIN».
+//
+// O sea: el tool entregaba como instrucción de cableado justo lo que su propio texto
+// prohibía. Y al chat sólo llegaba la tabla, bajo «usá estos pines, no inventes otros».
+//
+// LA DECISIÓN (owner, 2026-11-22): el plano es el que es. El LCD va a 5 V, GND, SDA y
+// SCL, como lo dibuja el tool y como lo indican las fichas del INET (proyectos 04, 05
+// y 12), con una ACLARACIÓN. La aclaración es la que esas fichas ya traían: la mochila
+// puede dejar el bus en 5 V, se mide con el téster, y si marca cerca de 5 V va un
+// conversor de nivel. Lo que se saca es el «nunca», que contradecía al dibujo.
+//
+// QUÉ NO AFIRMA NINGUNO DE ESTOS TEXTOS: que conectarlo directo sea seguro. Nadie lo
+// midió con un módulo en la mano. Por eso la aclaración manda a medir.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - volver a «Nunca mochila a 5V con SDA/SCL directo al ESP32» en el tool → rojo «no se contradice»
+//   - volver a «Lo que no se hace nunca» en el skill                        → rojo «dicen lo mismo»
+//   - cambiar el destino de VCC del LCD a 3.3V                               → rojos «no se contradice» y «dicen lo mismo»
+//   - sacar la aclaración de las notas del chat                             → rojo «llega al chat»
+//   - mandar la aclaración también con Arduino UNO                           → rojo «llega al chat»
+//   - sacar de la hoja que se mide con el téster, o el conversor            → rojos «no se contradice» y «dicen lo mismo»
+//   - sacar del skill la instrucción de medir                                → rojo «dicen lo mismo»
+
+const PROHIBE_LO_QUE_DIBUJA = /nunca[^.\n]{0,40}mochila[^.\n]{0,20}5\s?V|no se hace nunca[^\n]{0,40}mochila a 5\s?V/i
+
+test("LCD en ESP32: la hoja no prohíbe lo mismo que dibuja, y trae la aclaración", async () => {
+  for (const args of [{ circuito: "lcd-esp32" }, { componentes: "lcd" }, { circuito: "estacion-meteo" }]) {
+    const nombre = "lcd-voz-" + (args.circuito ?? "libre")
+    const { r, html } = await gen(args, nombre)
+    assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+    // El plano: 5 V, GND y el bus I2C.
+    assert.match(r, /LCD I2C: VCC → VIN \(5V\), GND → GND, SDA → GPIO21, SCL → GPIO22/, `${nombre}: cambió el plano del LCD:\n${r}`)
+    // La hoja no dice «nunca» sobre lo que dibuja…
+    assert.doesNotMatch(html, PROHIBE_LO_QUE_DIBUJA, `${nombre}: la hoja dibuja el LCD a 5V con SDA/SCL directo y en el mismo recuadro dice que eso no se hace nunca`)
+    // …y sí trae la aclaración entera: por qué, cómo se comprueba y qué va si da mal.
+    assert.match(html, /pull-ups/i, `${nombre}: la aclaración no dice por qué`)
+    assert.match(html, /téster/i, `${nombre}: la aclaración no manda a medir`)
+    assert.match(html, /conversor de nivel bidireccional/i, `${nombre}: la aclaración no dice qué va si el bus marca 5V`)
+    assert.match(html, /divisor de resistencias NO sirve/i, `${nombre}: perdió el aviso de que el divisor no sirve en I2C`)
+  }
+})
+
+test("LCD en ESP32: la aclaración llega al chat, y con Arduino UNO no aparece", async () => {
+  // Las advertencias de componente van sólo a la hoja. El modelo recibía la tabla bajo
+  // «usá estos pines, no inventes otros» y nada más: no tenía qué contarle al docente.
+  const esp = await gen({ componentes: "lcd, led" }, "lcd-chat-esp32")
+  assert.match(esp.r, /LCD en ESP32/i, `la aclaración del LCD no llegó al chat:\n${esp.r}`)
+  assert.match(esp.r, /téster/i, esp.r)
+  assert.match(esp.r, /conversor de nivel/i, esp.r)
+  assert.equal(esp.r.match(/LCD en ESP32/gi).length, 1, "la aclaración salió repetida")
+
+  // En el UNO la mochila y la placa trabajan a la misma tensión: no hay nada que aclarar.
+  const uno = await gen({ componentes: "lcd, led", placa: "uno" }, "lcd-chat-uno")
+  assert.ok(uno.r.startsWith("Listo"), uno.r.slice(0, 200))
+  assert.doesNotMatch(uno.r, /LCD en ESP32|conversor de nivel/i, `con Arduino UNO salió la aclaración del ESP32:\n${uno.r}`)
+
+  // Y sin LCD tampoco.
+  const sin = await gen({ componentes: "led, servo" }, "lcd-chat-sin")
+  assert.doesNotMatch(sin.r, /LCD en ESP32/i)
+})
+
+test("LCD en ESP32: el tool, el skill de seguridad y las fichas del INET dicen lo mismo", () => {
+  const { COMPONENTES } = ns
+  const lcd = COMPONENTES?.lcd
+  assert.ok(lcd, "`COMPONENTES` dejó de exportarse o perdió el LCD: este invariante se quedó sin red")
+  const vcc = lcd.pines.find((p) => p.nombre === "VCC")
+  assert.equal(vcc.destino, "V5", "el LCD ya no se alimenta de 5V: revisá el skill, las fichas y este test, que parten de ese plano")
+
+  const skill = readFileSync(join(REPO, "opencode/skills/checklist-seguridad/SKILL.md"), "utf8")
+  assert.doesNotMatch(skill, PROHIBE_LO_QUE_DIBUJA, "el skill de seguridad dice que NUNCA se conecta como el tool lo dibuja")
+  assert.doesNotMatch(skill, /no hay respuesta simple/i, "el skill sigue diciendo que el LCD en ESP32 no tiene respuesta, y el tool le da una")
+  // Las tres fuentes mandan a medir y nombran el conversor.
+  const fuentes = {
+    "el tool": lcd.advertencia.esp32,
+    "el skill checklist-seguridad": skill,
+    "la ficha 04": readFileSync(join(REPO, "opencode/skills/proyectos-inet/proyectos/04-invernadero.md"), "utf8"),
+    "la ficha 12": readFileSync(join(REPO, "opencode/skills/proyectos-inet/proyectos/12-calefaccion.md"), "utf8"),
+  }
+  for (const [quien, texto] of Object.entries(fuentes)) {
+    // La frase entera, no la palabra «téster» suelta: el skill la nombra en otros lados, y
+    // con la palabra sola este renglón pasaba aunque se le sacara la instrucción de medir.
+    assert.match(texto, /SDA y SCL con el t[eé]ster/i, `${quien} no manda a medir SDA y SCL con el téster`)
+    assert.match(texto, /conversor de nivel bidireccional/i, `${quien} no nombra el conversor de nivel`)
+  }
+  // El contrapeso: lo que en Arduino UNO sigue siendo cierto no se tocó.
+  assert.match(lcd.advertencia.uno, /sin conversor/i)
+})
