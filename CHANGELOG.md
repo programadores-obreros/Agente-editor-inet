@@ -11,6 +11,11 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 - **Desde tu perfil en la plataforma, pestaña "Tecnia Bot",** ves qué recuerda el bot de vos y en qué compus está vinculado, y podés cortarle el acceso a cualquiera o borrar la memoria.
 - **Cerrar la sesión desde el bot** ("cerrá mi sesión de Tecnia Lab") la cierra en la plataforma y la borra de la compu. El bot te dice por separado qué pasó en cada lado.
 
+### Arreglado
+
+- **La hoja para imprimir ya no pierde los pines.** Cuando una conexión traía más de una flecha o dos puntos, la hoja se quedaba con el principio y tiraba el resto. "LED: Ánodo (+) → GPIO4 (con 220Ω), Cátodo (−) → GND" salía impreso como "LED | Ánodo (+)", sin el número de pin, y "GPIO18 → 220Ω → LED rojo" salía sin el LED. Es la hoja que el alumno lleva a la mesa. Ahora cada conexión llega entera: el nombre del componente en la primera columna y todo lo demás en la segunda.
+- **La hoja para imprimir te dice siempre dónde quedó guardada.** Antes, si el navegador no llegaba a abrirse, el bot decía igual "te la abrí" y no había forma de encontrarla.
+
 ### Qué hay que saber
 
 - **En una compu de aula no se vincula.** Si el perfil de la compu está en modo aula, el bot no deja vincular una cuenta: esa compu la usan muchos chicos y la cuenta de un docente quedaría al alcance del que se siente después.

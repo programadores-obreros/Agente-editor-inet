@@ -62,6 +62,58 @@ function esc(s: string): string {
     .replace(/"/g, "&quot;")
 }
 
+/**
+ * Parte una conexión en las dos columnas de la tabla, SIN PERDER NADA.
+ *
+ * Antes era un `split` por flecha o dos puntos con límite 2 (la expresión literal
+ * no se copia acá: trae un asterisco y una barra seguidos, que cierran este
+ * comentario). Tenía dos errores:
+ *
+ *  1. El límite de `split` en JavaScript no junta el resto en el último pedazo:
+ *     lo TIRA. «GPIO18 → 220Ω → LED rojo (ánodo)» salía «GPIO18 | 220Ω», sin el LED.
+ *  2. Los dos puntos separaban al mismo nivel que la flecha. La línea que devuelve
+ *     el tool `circuito` («LED: Ánodo (+) → GPIO4 (con 220Ω), Cátodo (−) → GND»)
+ *     se cortaba en el «:» y salía «LED | Ánodo (+)»: la hoja que el alumno lleva a
+ *     la mesa, sin ningún número de pin, y la respuesta decía «Listo». Y una
+ *     aclaración alcanzaba para romper la frase: «GPIO26 (activo en LOW: ojo)».
+ *
+ * La regla ahora, en este orden:
+ *
+ *  - Si hay flecha (→ o ->), ella manda. Se parte en la PRIMERA; lo que sigue,
+ *    con las flechas que tenga, queda entero a la derecha.
+ *  - Salvo que ANTES de esa flecha haya un rótulo «Componente: »: dos puntos
+ *    seguidos de un espacio y fuera de paréntesis. Ahí se parte en el rótulo, y a
+ *    la derecha van todas las patas con sus pines.
+ *  - Sin flecha, se parte en los primeros dos puntos que estén fuera de paréntesis.
+ *  - Si un lado queda vacío, no se parte: va la conexión entera en una sola celda.
+ *
+ * En ningún caso se descarta texto: lo custodia tests/imprimible.test.mjs.
+ * Exportada para poder probarla sin escribir un archivo.
+ */
+export function partirConexion(conexion: string): [string, string] | null {
+  const flecha = /→|->/.exec(conexion)
+  const hasta = flecha ? flecha.index : conexion.length
+  let corte: { desde: number; ancho: number } | null = null
+  let profundidad = 0
+  for (let i = 0; i < hasta; i++) {
+    const letra = conexion[i]
+    if (letra === "(") profundidad++
+    else if (letra === ")") profundidad = Math.max(0, profundidad - 1)
+    else if (letra === ":" && profundidad === 0) {
+      // Con flecha, los dos puntos sólo rotulan si les sigue un espacio: «12:30» no rotula.
+      if (!flecha || /\s/.test(conexion[i + 1] ?? "")) {
+        corte = { desde: i, ancho: 1 }
+        break
+      }
+    }
+  }
+  if (!corte && flecha) corte = { desde: flecha.index, ancho: flecha[0].length }
+  if (!corte) return null
+  const izquierda = conexion.slice(0, corte.desde).trim()
+  const derecha = conexion.slice(corte.desde + corte.ancho).trim()
+  return izquierda && derecha ? [izquierda, derecha] : null
+}
+
 // Nombre de archivo seguro a partir del titulo.
 function nombreSeguro(titulo: string): string {
   const base = titulo
@@ -141,10 +193,10 @@ export default tool({
     const materiales = (args.materiales || []).map((m) => `<li>${esc(m)}</li>`).join("\n")
     const conexiones = (args.conexiones || [])
       .map((c) => {
-        const [izq, der] = c.split(/\s*(?:→|->|:)\s*/, 2)
-        return izq != null && der != null
-          ? `<tr><td>${esc(izq)}</td><td>${esc(der)}</td></tr>`
-          : `<tr><td colspan="2">${esc(c)}</td></tr>`
+        const partes = partirConexion(c)
+        return partes
+          ? `<tr><td>${esc(partes[0])}</td><td>${esc(partes[1])}</td></tr>`
+          : `<tr><td colspan="2">${esc(c.trim())}</td></tr>`
       })
       .join("\n")
     const notas = args.notas ? `<h2>Antes de prender</h2>\n<div class="notas">${esc(args.notas)}</div>` : ""
@@ -180,10 +232,15 @@ export default tool({
     } catch (e) {
       return `No pude crear la hoja (${e instanceof Error ? e.message : "error"}).`
     }
+    // LA RUTA VA SIEMPRE. Que `Bun.spawn` no tire excepción no prueba que se haya
+    // abierto una ventana: start, open y xdg-open no fallan aunque no abran nada
+    // (ver ficha.ts, que por eso deja la ruta en los dos casos). Antes esta rama
+    // decía «Te la abrí en el navegador» y nada más, y el prompt le pide al modelo
+    // que para reabrir una hoja dé «la ruta exacta, la que te devolvió el tool».
     const abierto = abrirEnNavegador(archivo)
     const comoAbrir = abierto
-      ? "**Te la abrí en el navegador.**"
-      : `Abrila con doble clic: \`${comoUrl(archivo)}\``
+      ? `Le pedí al navegador que la abra. Si no se te abrió ninguna ventana, está acá: \`${comoUrl(archivo)}\``
+      : `No pude abrirla solo. Abrila con doble clic: \`${comoUrl(archivo)}\``
     return `Listo, armé la hoja para imprimir de **${args.titulo}**. ${comoAbrir} Para guardarla como PDF o imprimirla, apretá **${atajoImprimir()}**. Ideal para repartir en el aula.`
   },
 })
