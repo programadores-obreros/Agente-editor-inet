@@ -56,6 +56,41 @@ function parsearPersonas(texto: string): Persona[] {
   return personas
 }
 
+/**
+ * El modo tal como lo entiende el código, aunque en el archivo esté escrito de otra forma.
+ *
+ * El perfil se puede editar a mano (su encabezado lo dice), y las comparaciones eran
+ * `=== "aula"` exactas. Con «- Modo: Aula», «AULA» o «aula (compartida)» dejaba de ser
+ * modo aula: `perfil` guardaba el nombre del alumno y `cuenta` dejaba vincular la cuenta
+ * del docente en una compu compartida por los chicos (auditoría del 2026-11-22, TCH-04).
+ *
+ * Se reconoce la palabra al principio, sin importar mayúsculas ni lo que siga. NO se
+ * adivina por parecido: «aulas» o «jaula» no son el modo aula, y un texto que no es
+ * ninguno de los tres se devuelve tal cual.
+ *
+ * Está copiada en perfil.ts, plataforma/cuenta.ts y plataforma/sincronizar.ts, porque los
+ * tools no se importan entre sí. Que las tres sean iguales letra por letra lo custodia
+ * tests/plataforma-sincronizar.test.mjs.
+ */
+function normalizarModo(crudo: string): string {
+  const limpio = crudo.trim()
+  const m = limpio.toLowerCase().match(/^(aula|grupo|personal)(?![a-záéíóúñ])/)
+  return m ? m[1]! : limpio
+}
+
+/**
+ * Los campos de texto libre van en UN renglón. El archivo se lee por renglones y se carga
+ * como instrucciones en cada sesión: un nombre con un salto de línea adentro agregaba
+ * renglones propios («Ana\n- Modo: aula» dejaba un segundo «- Modo:»). Devuelve el nombre
+ * del primer campo que no cumple, o null.
+ */
+function campoConSaltoDeLinea(campos: Record<string, unknown>): string | null {
+  for (const [nombre, valor] of Object.entries(campos)) {
+    if (typeof valor === "string" && /[\r\n\u2028\u2029]/.test(valor)) return nombre
+  }
+  return null
+}
+
 // Lee el perfil del disco. Si no existe o no se puede leer, devuelve todo
 // "(sin definir)" (nunca rompe: es dato del usuario, se trata con cuidado).
 function leerPerfil(): Perfil {
@@ -80,7 +115,7 @@ function leerPerfil(): Perfil {
   const rol = texto.match(/^-\s*Rol:\s*(.*)$/m)?.[1]?.trim()
   const genero = texto.match(/^-\s*Género:\s*(.*)$/m)?.[1]?.trim()
   const placa = texto.match(/^-\s*Placa preferida:\s*(.*)$/m)?.[1]?.trim()
-  if (modo) perfil.modo = modo
+  if (modo) perfil.modo = normalizarModo(modo)
   if (nombre) perfil.nombre = nombre
   if (rol) perfil.rol = rol
   if (genero) perfil.genero = genero
@@ -257,6 +292,10 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
     }
 
     // accion === "guardar": leemos lo actual, mergeamos y reescribimos.
+    const roto = campoConSaltoDeLinea({ nombre: args.nombre, persona: args.persona, placa: args.placa })
+    if (roto) {
+      return `No guardé nada: '${roto}' vino con un salto de línea adentro, y en el perfil cada dato va en un solo renglón. Pasámelo de nuevo en un solo renglón.`
+    }
     const actual = leerPerfil()
     if (args.modo) actual.modo = args.modo
     if (args.rol) actual.rol = args.rol
@@ -267,6 +306,10 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
     if (actual.modo === "grupo") {
       // Guardamos POR persona (upsert). El nombre "plano" no se usa en grupo.
       const quien = (args.persona || args.nombre || "").trim()
+      // En la lista de personas la barra separa las columnas: adentro de un dato la rompe.
+      if (quien.includes("|") || (args.placa ?? "").includes("|")) {
+        return "No guardé nada: en modo grupo el nombre y la placa no pueden llevar la barra «|», que es la que separa las columnas de cada persona. Pasámelos sin la barra."
+      }
       if (quien) {
         upsertPersona(actual.personas, quien, {
           rol: args.rol,

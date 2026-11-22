@@ -126,12 +126,19 @@ function decirFalla(falla: Falla): string {
   }
 }
 
+/** Ver el comentario largo de la misma función en opencode/tool/perfil.ts: es una copia. */
+function normalizarModo(crudo: string): string {
+  const limpio = crudo.trim()
+  const m = limpio.toLowerCase().match(/^(aula|grupo|personal)(?![a-záéíóúñ])/)
+  return m ? m[1]! : limpio
+}
+
 /** Lee el modo del perfil de esta compu. Mismo archivo y mismo renglón que escribe `perfil.ts`. */
 function modoDelPerfil(carpeta: string): string {
   const ruta = join(carpeta, "tecnia-perfil.md")
   if (!existsSync(ruta)) return ""
   try {
-    return readFileSync(ruta, "utf8").match(/^-\s*Modo:\s*(.*)$/m)?.[1]?.trim() ?? ""
+    return normalizarModo(readFileSync(ruta, "utf8").match(/^-\s*Modo:\s*(.*)$/m)?.[1] ?? "")
   } catch {
     return ""
   }

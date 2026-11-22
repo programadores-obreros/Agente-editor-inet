@@ -300,6 +300,22 @@ test("vincular: si el navegador no se abre, entrega el enlace para abrirlo a man
   }
 })
 
+// TCH-04 (auditoría del 2026-11-22): la comparación era `=== "aula"` exacta, y el
+// perfil se puede editar a mano. Con «Aula» o «AULA» se vinculaba la cuenta del docente
+// en una compu compartida por los chicos. Mutación: `normalizarModo(...)` → sin normalizar.
+for (const modo of ["Aula", "AULA", "aula (compartida)"]) {
+  test(`vincular: «- Modo: ${modo}» escrito a mano también es modo aula`, async () => {
+    const caso = await armar({ modo })
+    try {
+      assert.match(await caso.cuenta.ejecutar("vincular"), /modo aula/)
+      assert.equal(caso.abiertas.length, 0)
+      assert.ok(!existsSync(caso.rutaSesion))
+    } finally {
+      await caso.plataforma.cerrar()
+    }
+  })
+}
+
 test("vincular: en modo aula no vincula ni abre nada", async () => {
   const caso = await armar({ modo: "aula" })
   try {

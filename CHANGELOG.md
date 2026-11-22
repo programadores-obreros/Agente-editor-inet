@@ -21,6 +21,8 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 - **El circuito ya no pone un sensor analógico en un pin que no puede leerlo.** Si pedías a mano, por ejemplo, el potenciómetro en GPIO23 del ESP32, el bot lo dibujaba ahí y decía "listo": ese pin no tiene conversor analógico y la lectura no mide nada. Ahora lo pasa a un pin que sí sirve y te dice por qué. Lo mismo con GPIO37 y GPIO38, que existen en el chip pero no salen a ningún pin de la placa.
 - **"Mega con sensor shield" ya no sale dibujado como un Arduino UNO.** Si nombrabas una placa que el bot no sabe dibujar junto con la palabra "shield", armaba el circuito de un UNO y decía que no le habías dicho la placa. Ahora te dice que esa placa no la dibuja. Y acepta que le escribas "Arduino UNO" o "ESP32 DevKit", que antes rebotaba.
 - **Con la instalación dañada, el circuito lo dice en vez de entregarte una página vacía.** Si la biblioteca de piezas había quedado en cero bytes, el bot decía "listo" y la página mostraba la tabla sin ninguna pieza.
+- **El modo aula ya no depende de cómo esté escrito.** Si alguien editaba el perfil a mano y ponía "Aula" o "AULA" en vez de "aula", la compu dejaba de contar como compartida: el bot guardaba el nombre del alumno y dejaba vincular la cuenta del docente. Ahora los reconoce igual.
+- **El perfil y la memoria no aceptan datos partidos en varios renglones.** Son archivos que el bot lee en cada sesión, renglón por renglón. Un dato con un salto de línea adentro podía agregar renglones que no eran suyos. Ahora el bot no lo guarda y te pide que se lo pases en un solo renglón.
 
 ### Qué hay que saber
 

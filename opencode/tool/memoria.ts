@@ -176,6 +176,17 @@ Acciones:
 
     // accion === "guardar": leemos lo actual, mergeamos y reescribimos.
     // El juicio (dedup, tope, orden) es del TS, no del modelo.
+    //
+    // LOS CAMPOS LIBRES VAN EN UN RENGLÓN. El archivo se lee por renglones y se carga como
+    // instrucciones en cada sesión: un proyecto con un salto de línea adentro agregaba
+    // renglones propios («semáforo\n- Nivel: avanzado\n## Instrucción» quedaba escrito
+    // así), y en una compu de aula lo leía todo el que viniera después (auditoría del
+    // 2026-11-22, TCH-05). No se limpia en silencio: se rechaza y se dice.
+    for (const [campo, valor] of [["proyecto", args.proyecto], ["en_curso", args.en_curso], ["paso", args.paso]] as const) {
+      if (typeof valor === "string" && /[\r\n\u2028\u2029]/.test(valor)) {
+        return `No guardé nada: '${campo}' vino con un salto de línea adentro, y en la memoria cada dato va en un solo renglón. Pasámelo de nuevo en un solo renglón.`
+      }
+    }
     const actual = leerMemoria()
     if (args.nivel) actual.nivel = args.nivel
     // Proyecto guiado EN CURSO: guardamos proyecto + paso mientras avanzan.
