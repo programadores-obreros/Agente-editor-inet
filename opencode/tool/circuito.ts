@@ -330,8 +330,20 @@ export const POOL_DIGITAL = [4, 5, 18, 19, 23, 25, 26, 27, 33, 13, 14, 15, 2]
 const POOL_ANALOGICO = [34, 35, 36, 39, 32, 33]
 
 // Validación de GPIO manual (el alumno puede forzar un pin con "led:5").
-// GPIOs que EXISTEN en el ESP32 DevKit.
-export const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 37, 38, 39])
+// GPIOs que EXISTEN en el ESP32 DevKit, o sea: que tienen un pin en la placa.
+export const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39])
+// GPIO37 y GPIO38 existen en el CHIP pero no salen a ningún pin del módulo WROOM que
+// tienen las escuelas (skills/esp32). Estaban en GPIO_VALIDOS: «led:37» se dibujaba con
+// «Listo!» en un pin que el alumno no iba a encontrar en la placa. Van aparte, y no
+// simplemente afuera de la lista, para poder decir POR QUÉ: «no existe» sería falso.
+export const GPIO_SIN_PIN_EN_LA_PLACA = new Set([37, 38])
+// Los GPIO del DevKit que tienen conversor analógico. ADC1 (32 a 39) y ADC2 (0, 2, 4,
+// 12 a 15, 25 a 27): skills/esp32/SKILL.md. Un pin analógico pedido a mano se aceptaba
+// con sólo existir: «potenciometro:23» salía «GPIO23 (analógico)», y ahí analogRead no
+// mide nada. El reparto automático (POOL_ANALOGICO) siempre usó sólo ADC1.
+// Los de ADC2 se aceptan aunque no se pueden leer con WiFi encendido: eso depende del
+// programa, no del circuito, y lo explica el skill esp32.
+export const GPIO_CON_ADC = new Set([32, 33, 34, 35, 36, 39, 0, 2, 4, 12, 13, 14, 15, 25, 26, 27])
 // GPIO6–11 están cableados a la memoria flash SPI: usarlos CUELGA/rompe la placa.
 export const GPIO_FLASH = new Set([6, 7, 8, 9, 10, 11])
 // Pines "strapping": funcionan, pero pueden complicar el arranque si tienen algo conectado.
@@ -583,6 +595,9 @@ const SHIELDS: ReadonlyArray<{
  * nombra ninguna, el default es UNO, porque el shield de las escuelas es formato UNO
  * ("no entra en un ESP32", `skills/placas`) — pero eso se AVISA, no se asume en silencio.
  */
+const OTRAS_PLACAS_CON_NOMBRE =
+  /\b(?:mega|nano|leonardo|due|pro\s*mini|esp8266|esp-?01|nodemcu|wemos|d1\s*mini|pico|raspberry|stm32|blue\s*pill|attiny|teensy|micro\s*:?\s*bit|bhoot|educablocks|mis\s*ladrillos)\b/i
+
 function shieldDe(
   texto: string,
 ): {
@@ -598,6 +613,21 @@ function shieldDe(
   const nombrada = (Object.keys(PLACAS) as PlacaId[]).find((id) =>
     new RegExp(`\\b${id}\\b`, "i").test(texto),
   )
+  /*
+   * SI NOMBRA OTRA PLACA, NO ES "NO ME DIJO CUÁL".
+   *
+   * «mega con sensor shield», «nano con shield» y «esp8266 con shield» no nombran ni
+   * `uno` ni `esp32`, así que caían al default y salían dibujados como Arduino UNO, con
+   * una nota que decía «como no me dijiste sobre qué placa va». Sí lo había dicho. Es el
+   * mismo bug de arriba —darle al docente una placa que no es la suya— para cualquier
+   * placa que no sea las dos que dibujamos. Devolver `null` hace que el pedido siga por
+   * el camino de siempre y rebote con «No sé DIBUJAR…», que es la verdad.
+   *
+   * Es una lista de las placas que se nombran en las escuelas, no un análisis del texto:
+   * si aparece una que no está acá, el comportamiento es el de antes (UNO, avisándolo).
+   * Se eligió ese lado a propósito: equivocarse rebotando un pedido válido es peor.
+   */
+  if (nombrada === undefined && OTRAS_PLACAS_CON_NOMBRE.test(texto)) return null
   /*
    * La VERSIÓN del shield, si el docente la dijo.
    *
@@ -632,6 +662,34 @@ const ESP32_WOKWI_PIN = new Map<number, string>([
 
 /** Los GPIO de la columna IZQUIERDA de la pieza: su masa más cercana es `GND.2`. */
 const ESP32_WOKWI_IZQUIERDA = new Set([12, 13, 14, 25, 26, 27, 32, 33, 34, 35, 36, 39])
+
+/**
+ * El id de la placa a partir de lo que escribieron: el id («uno») o la etiqueta que
+ * el propio tool imprime («Arduino UNO», «ESP32 DevKit»), sin importar mayúsculas ni
+ * espacios de más. Antes sólo valía el id: el tool rebotaba como «no sé dibujar» el
+ * nombre exacto con el que él mismo rotula la hoja. Cualquier otra cosa se devuelve
+ * tal cual y cae al rechazo: NO se adivina por parecido («arduino mega» no es «uno»).
+ */
+function idDePlacaPorNombre(texto: string): string {
+  const limpio = texto.trim().toLowerCase().replace(/\s+/g, " ")
+  const porEtiqueta = Object.values(PLACAS).find((p) => p.etiqueta.toLowerCase() === limpio)
+  return porEtiqueta ? porEtiqueta.id : limpio
+}
+
+/**
+ * ¿El archivo está y TIENE algo adentro? Los chequeos de instalación eran `existsSync`,
+ * y un archivo de 0 bytes existe: con la biblioteca de piezas vacía (copia cortada,
+ * antivirus, un marcador de OneDrive) el tool contestaba «Listo!» y salía una página
+ * con la tabla y ninguna pieza; con la plantilla vacía, un HTML de 0 bytes.
+ */
+function instalado(ruta: string): "ok" | "falta" | "vacio" {
+  try {
+    return statSync(ruta).size > 0 ? "ok" : "vacio"
+  } catch {
+    return "falta"
+  }
+}
+const ESTA_VACIO = "está instalado pero VACÍO (0 bytes): la instalación quedó a medias o algo lo dañó. Reinstalá Tecnia Bot con el instalador."
 
 export const PLACAS: Record<PlacaId, Placa> = {
   esp32: {
@@ -677,9 +735,13 @@ export const PLACAS: Record<PlacaId, Placa> = {
       const g = p.n
       if (GPIO_FLASH.has(g))
         return `⚠️ GPIO${g} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa. Le asigné un pin seguro.`
+      if (GPIO_SIN_PIN_EN_LA_PLACA.has(g))
+        return `⚠️ GPIO${g} existe en el chip del ESP32 pero no sale a ningún pin de la placa (pasa con GPIO37 y GPIO38): no hay dónde conectarlo. Le asigné un pin que sí está en la placa.`
       if (!GPIO_VALIDOS.has(g)) return `⚠️ GPIO${g} no existe en el ESP32. Le asigné un pin válido.`
       if (GPIO_UART_USB.has(g))
         return `⚠️ GPIO${g} es el puerto serie del USB (GPIO1=TX, GPIO3=RX): con algo conectado ahí la placa no acepta la carga del programa. Le asigné otro pin.`
+      if (clase === "analogico" && !GPIO_CON_ADC.has(g))
+        return `⚠️ GPIO${g} no puede leer un valor analógico: en el ESP32 no todos los pines tienen conversor (ADC), y ése no lo tiene. Con ${etiqueta} ahí la lectura no mediría nada. Le asigné un pin analógico (los mejores son GPIO34, 35, 36, 39, 32 y 33).`
       if (clase !== "analogico" && GPIO_SOLO_ENTRADA.has(g))
         return `⚠️ GPIO${g} es SOLO ENTRADA en el ESP32 (34, 35, 36 y 39): no puede encender nada ni tiene pull-up interno, así que ${etiqueta} ahí no funcionaría nunca. Le asigné un pin que sí sirve. Esos cuatro son ideales para sensores analógicos.`
       return null
@@ -2511,8 +2573,12 @@ function sugerenciaQueEntra(crudo: Pedido[], placa: Placa): string {
  */
 function faltanPiezasDibujadas(pedidos: Pedido[]): string | null {
   const dibujadas = pedidos.filter((p) => componenteDe(p.tipo).tag.startsWith("pb-"))
-  if (dibujadas.length === 0 || existsSync(extraPath())) return null
+  const estado = dibujadas.length === 0 ? "ok" : instalado(extraPath())
+  if (estado === "ok") return null
   const nombres = [...new Set(dibujadas.map((p) => componenteDe(p.tipo).etiqueta))].join(", ")
+  if (estado === "vacio") {
+    return `El archivo de piezas dibujadas (componentes-extra.js) ${ESTA_VACIO} Este circuito lo necesita para: ${nombres}.`
+  }
   return `Me falta el archivo de piezas dibujadas (componentes-extra.js) y este circuito lo necesita para: ${nombres}. Si lo genero igual te sale una página con la tabla de conexiones y NINGUNA pieza dibujada, así que no lo genero. Reinstalá Tecnia Bot con el instalador (es el que copia la biblioteca visual) y pedímelo de nuevo. Mientras tanto puedo armarte circuitos con las piezas que sí tengo: led, servo, buzzer, potenciómetro, botón, ultrasónico, DHT22, PIR, LCD, OLED y varias más.`
 }
 
@@ -2935,7 +3001,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
         ? "esp32"
         : typeof args.placa === "string"
           ? args.placa.trim()
-            ? (shieldPedido?.base ?? args.placa.trim().toLowerCase())
+            ? (shieldPedido?.base ?? idDePlacaPorNombre(args.placa))
             : "esp32" // string vacío o de puros espacios = "no me la dijeron"
           : PLACA_INVALIDA
     const placaBase = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
@@ -2974,9 +3040,11 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     }
 
     const bundle = bundlePath()
-    if (!existsSync(bundle)) {
+    const estadoBundle = instalado(bundle)
+    if (estadoBundle === "falta") {
       return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Tecnia Bot con el instalador para que copie la biblioteca visual."
     }
+    if (estadoBundle === "vacio") return `El archivo de la biblioteca de piezas (wokwi-bundle.js) ${ESTA_VACIO}`
     // El navegador bloquea que un file:// cargue otro file:// de otra carpeta (security origin).
     // Por eso copiamos el bundle AL LADO del HTML y lo referenciamos con ruta relativa.
     const scriptSrc = "wokwi-bundle.js"
@@ -3128,9 +3196,11 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       // reales pinchados en la placa + jumpers). Se lee del asset instalado.
       const def = PLANTILLAS_PROTOBOARD[args.circuito]
       const plantillaFile = def ? plantillaPath(def.archivo) : ""
-      if (!def || !existsSync(plantillaFile)) {
+      const estadoPlantilla = def ? instalado(plantillaFile) : "falta"
+      if (!def || estadoPlantilla === "falta") {
         return "No encontré la plantilla del circuito en protoboard. Reinstalá Tecnia Bot con el instalador."
       }
+      if (estadoPlantilla === "vacio") return `El archivo de la plantilla del circuito en protoboard ${ESTA_VACIO}`
       const nom = nombreSeguro(args.nombre_archivo, args.circuito)
       pedidoNoUsado = nom.pedidoNoUsado
       base = nom.nombre
