@@ -505,3 +505,91 @@ for (const [camino, herramienta, real] of [["python3", "python3", python3], ["jq
     }
   })
 }
+
+// ── REINSTALAR NO PISA EL PERFIL NI LA MEMORIA ───────────────────────────────
+//
+// install.sh crea tecnia-perfil.md y tecnia-memoria.md VACÍOS la primera vez, y su
+// comentario promete «nunca se pisa»: son los datos del docente (nombre, rol,
+// placa) y el progreso de la compu, y tienen que sobrevivir a cada reinstalación
+// y a cada /actualizar, que vuelve a correr este mismo script.
+//
+// POR QUÉ ESTE BLOQUE. Esa promesa no la sostenía ningún test. La auditoría de
+// código del 2026-11-22 lo midió por mutación (TST-03): cambiar
+// `if [ ! -f "$PERFIL_FILE" ]; then` por `if true; then` —o sea, que reinstalar
+// reemplace el perfil del docente por la plantilla vacía— dejaba este archivo
+// entero en VERDE. Los tests de arriba instalan sobre un HOME nuevo y miran que
+// el perfil EXISTA y quede 0600; ninguno lo llena y vuelve a instalar.
+//
+// CÓMO MIDE. Instala, escribe datos como los que guardaría el bot, le cambia el
+// modo al archivo, reinstala, y compara byte por byte y el modo. No mira el texto
+// del script.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - `if [ ! -f "$PERFIL_FILE" ]; then`  → `if true; then`   → rojo el del perfil
+//   - `if [ ! -f "$MEMORIA_FILE" ]; then` → `if true; then`   → rojo el de la memoria
+//   - agregar `chmod 600 "$PERFIL_FILE"` después del `fi`     → rojo el del perfil (le toca el modo)
+//   - lo mismo con `chmod 600 "$MEMORIA_FILE"`                → rojo el de la memoria
+//   - en install.ps1, `if (-not (Test-Path $PerfilFile)) {` → `if ($true) {` → rojo la guarda de forma
+//   - en install.ps1, sacar el WriteAllText de la memoria afuera de su `if` → rojo la guarda de forma
+//
+// LÍMITE HONESTO: install.ps1 no se ejecuta acá (no hay PowerShell). Lo suyo es
+// una guarda de FORMA: que cada escritura siga adentro de su `Test-Path`.
+
+const PERFIL_DEL_DOCENTE = `# Perfil del usuario de Tecnia Bot
+
+- Modo: personal
+- Nombre: Docente De Prueba
+- Rol: docente
+- Género: mujer
+- Placa preferida: ESP32 DevKit V1
+`
+const MEMORIA_DE_LA_COMPU = `# Memoria de ESTA compu (no de una persona)
+
+- Nivel: intermedio
+- Proyectos hechos: semáforo, alarma con PIR
+- Ultimo proyecto: alarma con PIR
+- En curso: estación meteorológica
+`
+
+for (const [que, archivo, contenido, plantilla] of [
+  ["el perfil", "tecnia-perfil.md", PERFIL_DEL_DOCENTE, /- Nombre: \(sin definir\)/],
+  ["la memoria", "tecnia-memoria.md", MEMORIA_DE_LA_COMPU, /- Nivel: \(sin definir\)/],
+]) {
+  test(`reinstalar no pisa ${que} que ya tenía datos, ni le cambia el modo`, { skip: !puedeCorrer || !jq }, () => {
+    const h = nuevoHome()
+    try {
+      const path = armarBin(h.base, ["jq"])
+      const ruta = join(h.configDir, archivo)
+      const primera = correr(INSTALL, h, { path, env: { TECNIA_SIN_PROMPT: "1" } })
+      assert.equal(primera.status, 0, `la primera instalación salió con ${primera.status}:\n${primera.salida}`)
+      // El contrapeso: la primera vez SÍ lo crea, y vacío. Si no, lo de abajo pasaría
+      // con un instalador que nunca escribe el archivo.
+      assert.match(readFileSync(ruta, "utf8"), plantilla, `la primera instalación no creó ${que} con la plantilla vacía`)
+
+      // Lo que el bot habría guardado, con un modo que el docente (o su distro) eligió.
+      writeFileSync(ruta, contenido)
+      chmodSync(ruta, 0o640)
+
+      const segunda = correr(INSTALL, h, { path, env: { TECNIA_SIN_PROMPT: "1" } })
+      assert.equal(segunda.status, 0, `reinstalar salió con ${segunda.status}:\n${segunda.salida}`)
+      assert.equal(readFileSync(ruta, "utf8"), contenido, `reinstalar pisó ${que}: el docente perdió lo que tenía guardado`)
+      assert.equal(modoDe(ruta), 0o640, `reinstalar le cambió el modo a ${que}, que ya era del usuario`)
+      assert.doesNotMatch(segunda.salida, new RegExp(`creada? \\(vac[ií]a?o?\\) en ${ruta.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+        `reinstalar dice que creó ${que} vacío, y ya existía:\n${segunda.salida}`)
+    } finally {
+      rmSync(h.base, { recursive: true, force: true })
+    }
+  })
+}
+
+test("install.ps1 sólo escribe el perfil y la memoria si no existen (guarda de forma)", () => {
+  const ps1 = readFileSync(join(REPO, "install", "install.ps1"), "utf8").replace(/^\s*#.*$/gm, "")
+  for (const [variable, plantilla] of [["PerfilFile", "perfilTemplate"], ["MemoriaFile", "memoriaTemplate"]]) {
+    const escrituras = [...ps1.matchAll(new RegExp(`WriteAllText\\(\\$${variable}\\b`, "g"))]
+    assert.equal(escrituras.length, 1, `esperaba una sola escritura de $${variable} en install.ps1 y hay ${escrituras.length}`)
+    // Desde el `if` hasta la escritura no se cierra ninguna llave en la columna 0:
+    // la escritura está adentro de ese bloque.
+    const bloque = new RegExp(`\\nif \\(-not \\(Test-Path \\$${variable}\\)\\) \\{\\n(?:(?!\\n\\})[\\s\\S])*?WriteAllText\\(\\$${variable}, \\$${plantilla},`)
+    assert.match(ps1, bloque, `install.ps1 escribe $${variable} fuera de su \`if (-not (Test-Path ...))\`: reinstalar pisaría los datos del docente`)
+  }
+})
