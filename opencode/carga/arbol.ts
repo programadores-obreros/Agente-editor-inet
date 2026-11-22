@@ -197,6 +197,49 @@ function esteYSusAncestros(foto: readonly Proceso[]): Set<number> {
 const codigoDe = (error: unknown) => String((error as NodeJS.ErrnoException)?.code ?? "")
 const desaparecio = (error: unknown) => ["ENOENT", "ESRCH"].includes(codigoDe(error))
 
+/** Lo que `conMarcaEnProc` le pide a `/proc`. Inyectable: las carreras de abajo no se pueden provocar a pedido con procesos de verdad. */
+export interface LectorDeProc {
+  foto(): Proceso[] | null
+  /** El uid dueño de `/proc/<pid>`. Tira si no se puede mirar. */
+  uidDe(pid: number): number
+  /** El contenido de un archivo de `/proc`. Tira si no se puede leer. */
+  leer(ruta: string): string
+}
+
+const lectorReal: LectorDeProc = {
+  foto: fotoDeProc,
+  uidDe: (pid) => statSync(`/proc/${pid}`).uid,
+  leer: (ruta) => readFileSync(ruta, "utf8"),
+}
+
+/**
+ * ¿`pid` ya no puede estar ejecutando nada? Verdadero si desapareció, si es zombi, o si ya
+ * soltó su memoria (`statm` empieza con «0 »: el proceso está adentro de `exit`, no vuelve a
+ * correr código de usuario y no puede seguir grabando una placa).
+ *
+ * POR QUÉ EXISTE. `environ` de un proceso que se está muriendo da EACCES, no ENOENT: el
+ * proceso todavía figura en `/proc`, pero ya no tiene memoria de la que leer el entorno.
+ * Contarlo como "ilegible" hacía que el corte de una carga dijera «no pude confirmar… puede
+ * que siga grabándose» cada vez que CUALQUIER programa del mismo usuario cerraba un proceso
+ * en ese instante: una carga que sí se había frenado quedaba como dudosa, con el puerto
+ * retenido. Medido el 2026-11-22: hasta 79 de 250 cortes con procesos de Node muriendo
+ * alrededor, y era la causa de las fallas intermitentes de tests/carga-arbol.test.mjs.
+ *
+ * FALLA CERRADO: si no se puede leer `stat` o `statm` por algo que no sea "ya no está", la
+ * respuesta es `false` y el proceso se sigue contando como ilegible. Un proceso VIVO que de
+ * verdad no deja leer su entorno (no volcable) tiene memoria, así que también da `false`.
+ */
+export function yaNoEjecuta(pid: number, leer: (ruta: string) => string = lectorReal.leer): boolean {
+  try {
+    const stat = leer(`/proc/${pid}/stat`)
+    const estado = stat.slice(stat.lastIndexOf(")") + 2)[0]
+    if (estado === "Z" || estado === "X") return true
+    return leer(`/proc/${pid}/statm`).startsWith("0 ")
+  } catch (error) {
+    return desaparecio(error)
+  }
+}
+
 /**
  * Linux: procesos con la marca exacta en su `/proc/<pid>/environ`. Ver "LA MARCA" arriba.
  *
@@ -208,8 +251,8 @@ const desaparecio = (error: unknown) => ["ENOENT", "ESRCH"].includes(codigoDe(er
  * ANTES que la carga no puede tener la marca: es aleatoria y se crea para esta carga. Sin
  * `desde`, todos cuentan (falla cerrado).
  */
-function conMarcaEnProc(marca: string, desde?: number): ConMarca | null {
-  const foto = fotoDeProc()
+export function conMarcaEnProc(marca: string, desde?: number, lector: LectorDeProc = lectorReal): ConMarca | null {
+  const foto = lector.foto()
   if (!foto) return null
   const intocables = esteYSusAncestros(foto)
   const uid = typeof process.getuid === "function" ? process.getuid() : -1
@@ -220,7 +263,7 @@ function conMarcaEnProc(marca: string, desde?: number): ConMarca | null {
     if (p.zombi || intocables.has(p.pid)) continue
     let suyo: boolean
     try {
-      suyo = statSync(`/proc/${p.pid}`).uid === uid
+      suyo = lector.uidDe(p.pid) === uid
     } catch (error) {
       if (desaparecio(error)) continue
       if (puedeSerDeLaCarga(p)) salida.ilegibles++
@@ -229,9 +272,10 @@ function conMarcaEnProc(marca: string, desde?: number): ConMarca | null {
     if (!suyo) continue // de otro usuario: no puede ser de esta carga
     let entorno: string
     try {
-      entorno = readFileSync(`/proc/${p.pid}/environ`, "utf8")
+      entorno = lector.leer(`/proc/${p.pid}/environ`)
     } catch (error) {
-      if (!desaparecio(error) && puedeSerDeLaCarga(p)) salida.ilegibles++
+      // Se vuelve a mirar ANTES de contarlo: entre la foto y esta lectura puede haberse muerto.
+      if (!desaparecio(error) && puedeSerDeLaCarga(p) && !yaNoEjecuta(p.pid, lector.leer)) salida.ilegibles++
       continue
     }
     if (entorno.split("\0").includes(buscada)) salida.pids.push(p.pid)
