@@ -216,8 +216,13 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; Work
 ;
 ; Al terminar (casillas marcadas en la última pantalla): abrir la web oficial de
 ; Tecnia Bot (primeros pasos) y abrir el bot.
+; LA CASILLA DE LA WEB VIENE DESTILDADA. Visto en una maquina virtual con Windows 11
+; recien instalado (2026-11-21): con las dos casillas tildadas, el navegador abre
+; su pantalla de bienvenida a pantalla completa y TAPA la ventana de Tecnia Bot. El
+; docente termina de instalar y ve el navegador, no el bot. El texto de la pantalla
+; final sigue nombrando la web, asi que el que la quiere la tilda.
 Filename: "{#MyAppURL}"; Description: "Visitar la web de Tecnia Bot (primeros pasos)"; \
-  Flags: postinstall shellexec skipifsilent
+  Flags: postinstall shellexec skipifsilent unchecked
 ; La casilla de abrir el bot se ofrece SÓLO si el bootstrap dejó un bot que abre
 ; (bien o degradado). Antes aparecía tildada siempre: con el bootstrap caído, la
 ; pantalla decía "NO quedó instalado" y debajo ofrecía abrirlo. Las entradas
