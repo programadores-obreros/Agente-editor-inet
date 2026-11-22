@@ -3991,10 +3991,18 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
         if (!pioOk) {
           // Sin link a la documentacion oficial: ver pioNoEncontrado(). La
           // reparacion de Tecnia Bot es volver a correr SU instalador.
+          //
+          // MISMO ORDEN QUE pioNoEncontrado(): primero reparar desde el bot, y el menu
+          // inicio como plan B. Antes este texto daba el menu inicio como unico arreglo
+          // (tambien en Linux, donde ese acceso no existe), y /diagnostico le ordena al
+          // modelo "pasa el texto del tool": le llegaba al docente la instruccion vieja.
+          // Lo ata tests/coherencia-prompt.test.mjs.
           estado =
-            "Falta instalar PlatformIO. Se arregla con 'Reparar Tecnia Bot', en el menu " +
-            "inicio: lo instala solo. NO hay que instalar VS Code " +
-            "ni nada aparte. Si aun asi falta, es la red: correr 'Diagnostico de Tecnia Bot'."
+            "Falta instalar PlatformIO. Lo puedo instalar yo: llama a este mismo tool con action: \"reparar\" " +
+            "(avisale antes al usuario que tarda unos minutos). NO hay que instalar VS Code ni nada aparte. " +
+            "Plan B, solo si la reparacion desde aca no pudo correr: menu inicio -> 'Reparar Tecnia Bot' " +
+            "(en Linux/Mac, el tool devuelve el comando exacto). " +
+            "Si aun asi falta, es la red: correr 'Diagnostico de Tecnia Bot'."
         } else if (noPudeListar) {
           estado =
             "PlatformIO esta, pero **no pude ver los puertos USB**, así que no sé si hay una placa conectada. " +

@@ -23,6 +23,8 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 - **Con la instalación dañada, el circuito lo dice en vez de entregarte una página vacía.** Si la biblioteca de piezas había quedado en cero bytes, el bot decía "listo" y la página mostraba la tabla sin ninguna pieza.
 - **El modo aula ya no depende de cómo esté escrito.** Si alguien editaba el perfil a mano y ponía "Aula" o "AULA" en vez de "aula", la compu dejaba de contar como compartida: el bot guardaba el nombre del alumno y dejaba vincular la cuenta del docente. Ahora los reconoce igual.
 - **El perfil y la memoria no aceptan datos partidos en varios renglones.** Son archivos que el bot lee en cada sesión, renglón por renglón. Un dato con un salto de línea adentro podía agregar renglones que no eran suyos. Ahora el bot no lo guarda y te pide que se lo pases en un solo renglón.
+- **El bot ya no te dice que sólo dibuja circuitos para ESP32.** Hace rato que dibuja también el Arduino UNO, pero una instrucción vieja le hacía contestar que con un UNO había que armar el cableado a mano. Ahora te pregunta la placa y dibuja la tuya. Lo que sigue igual: los circuitos ya armados (el semáforo, la estación meteorológica) son sólo de ESP32, y hay componentes que en UNO todavía no se dibujan.
+- **Textos que decían una cosa mientras el bot hacía otra.** La ayuda prometía abrir el circuito solo, y ya no se abre sin que lo pidas. Si el manual no está instalado, el bot lo dice en vez de mandarte a abrir un archivo que no existe. Y el diagnóstico, cuando falta PlatformIO, te ofrece instalarlo desde el bot en vez de mandarte sólo al menú inicio.
 
 ### Qué hay que saber
 

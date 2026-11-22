@@ -11,8 +11,8 @@
 // - Si esto importara del tool, arrastraría `@opencode-ai/plugin` a un módulo que
 //   se prueba bajo Node sin OpenCode.
 // Es el mismo criterio que `escribirArchivoAtomico` y `comoUrl`, duplicadas entre
-// tools. El riesgo de una copia es que se separen: `tests/plataforma-memoria-local.test.mjs`
-// escribe con el tool y lee con esto, y al revés. Si cambiás el formato en un
+// tools. El riesgo de una copia es que se separen: `tests/plataforma-sincronizar.test.mjs`
+// («COMPATIBILIDAD con el tool memoria») escribe con el tool y lee con esto, y al revés. Si cambiás el formato en un
 // lado y no en el otro, ese test se pone rojo.
 //
 // QUÉ SE PIERDE AL PASAR DE UN FORMATO AL OTRO, y es a propósito:

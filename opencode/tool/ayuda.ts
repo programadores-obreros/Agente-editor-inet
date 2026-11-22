@@ -53,7 +53,7 @@ const RESUMEN = `**Tecnia Bot — cómo usarlo, en 30 segundos:**
 
 Escribime en español, con tus palabras. Podés pedirme, por ejemplo:
 - *"¿cómo funciona un LED con Arduino?"* — te explico el concepto
-- *"dibujame el circuito de un servo con ESP32"* — te lo abro en el navegador (sin internet)
+- *"dibujame el circuito de un servo con ESP32"* — te lo armo y te ofrezco abrirlo en el navegador (sin internet)
 - *"quiero armar el semáforo paso a paso"* — te guío y me acuerdo dónde quedaste
 - *"cargá este código al ESP32"* — compilo y lo subo a tu placa
 - *"abrí el monitor serial"* — para ver los datos de la placa
@@ -68,7 +68,18 @@ export default tool({
   args: {},
   async execute() {
     const ruta = manualPath()
-    const abierto = existsSync(ruta) && abrirEnNavegador(ruta)
+    // SI EL MANUAL NO ESTÁ, SE DICE. Antes esta rama caía en la de «no pude abrirlo» y
+    // contestaba «El manual completo está en file://… (doble clic para abrirlo)»: mandaba
+    // al docente a un archivo que este mismo tool acababa de comprobar que no existe.
+    if (!existsSync(ruta)) {
+      return (
+        RESUMEN +
+        "\n\n📖 El manual completo no está instalado en esta compu (lo busqué en `" +
+        comoUrl(ruta) +
+        "` y no está). Reinstalá Tecnia Bot con el instalador para recuperarlo; mientras tanto, lo de arriba es lo esencial."
+      )
+    }
+    const abierto = abrirEnNavegador(ruta)
     const manual = abierto
       ? "\n\n📖 **Te abrí el manual completo en el navegador** (con más ejemplos y qué hacer si algo falla)."
       : `\n\n📖 El manual completo está en \`${comoUrl(ruta)}\` (doble clic para abrirlo).`
