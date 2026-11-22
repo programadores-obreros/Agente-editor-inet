@@ -462,3 +462,41 @@ test("existe el comando /reparar", () => {
   assert.match(cmd, /Nunca digas que algo quedó instalado si el tool no lo dijo/i,
     "no le prohíbe informar un OK que la tool no dio")
 })
+
+// ── EL PROMPT NO PUEDE DECIR DEL TOOL circuito ALGO QUE EL TOOL NO HACE ───────
+//
+// Auditoría de código del 2026-11-22 (PRM-03), reproducido por QA. El bloque de
+// los circuitos le hacía decir al bot, al docente con Arduino UNO: «El esquema que
+// te puedo dibujar es para ESP32… armamos el cableado a mano». Era cierto cuando
+// se escribió. Después el tool aprendió a dibujar el UNO (`placa: "uno"`, hoy 23 de
+// sus 33 componentes), y su propia descripción le dice al modelo «si te dice UNO,
+// pasá placa="uno"». El modelo recibía dos instrucciones opuestas sobre la placa
+// más usada en las escuelas, y la del prompt llevaba forma de regla.
+//
+// El test de arriba («avisa si la placa no es ESP32») sólo pedía que el bloque
+// nombrara «ESP32» y «UNO»: el texto viejo lo cumplía, y por eso sobrevivió.
+//
+// Lo que SIGUE siendo cierto, y el prompt tiene que seguir diciendo: los presets
+// son sólo de ESP32, y no todos los componentes se dibujan en UNO.
+//
+// MUTACIONES que ponen rojo este test (exit code 1):
+//   - volver a la frase «El esquema que te puedo dibujar es para ESP32»
+//   - sacar `placa: "uno"` del bloque
+//   - sacar del bloque que los presets son sólo de ESP32
+//   - sacar de la descripción del tool la frase de los presets, o la de placa="uno"
+test("circuitos: el prompt dice que el tool dibuja el UNO, igual que la descripción del tool", () => {
+  const bloque = bloqueDesde(prompt, "lo mismo con los circuitos")
+  assert.match(bloque, /placa:\s*"uno"/, 'el bloque no le dice al bot que con Arduino UNO pase `placa: "uno"`')
+  assert.doesNotMatch(bloque, /El esquema que te puedo dibujar es para ESP32/,
+    "el prompt sigue diciendo que sólo dibuja ESP32: el tool dibuja el UNO desde hace rato")
+  assert.doesNotMatch(bloque, /armamos el cableado a mano\.\s*\n\s*\n\s*Mostrarle/,
+    "sigue mandando al cableado a mano como única salida para quien tiene un UNO")
+  assert.match(bloque, /presets[^.\n]*s[oó]lo[^.\n]*ESP32/i, "ya no avisa que los presets son sólo de ESP32")
+  assert.match(bloque, /todav[ií]a no (?:se )?(?:los? )?(?:dibuja|puedo dibujar)[^.\n]*UNO|UNO[^.\n]*todav[ií]a no/i,
+    "ya no avisa que hay componentes que todavía no se dibujan en UNO")
+
+  // Y la otra punta: la descripción del tool, que es lo que el modelo lee junto con esto.
+  const circuito = readFileSync(join(REPO, "opencode/tool/circuito.ts"), "utf8")
+  assert.match(circuito, /si te dice UNO, pasá placa="uno"/, "la descripción del tool ya no manda a pasar placa=\"uno\": revisá que el prompt siga diciendo lo mismo que el tool")
+  assert.match(circuito, /TODOS LOS PRESETS SON PARA ESP32/, "la descripción del tool ya no dice que los presets son de ESP32: revisá el prompt")
+})

@@ -207,3 +207,77 @@ test("si el bootstrap manda a /diagnostico por Node, /diagnostico tiene que sabe
   assert.match(aviso, /Reparar Tecnia Bot/,
     "el aviso perdió el remedio: hay que poder reintentar, no sólo diagnosticar")
 })
+
+// ── TEXTOS QUE CONTRADECÍAN A LAS TOOLS (auditoría del 2026-11-22) ────────────
+//
+// Cuatro frases que le decían al modelo, o al docente, algo que la tool no hace.
+// Ninguna rompía una llamada: eran instrucciones cruzadas que el modelo resolvía a
+// su criterio. Cada test de acá ata el texto a la tool, para que no se vuelvan a
+// separar. Las mutaciones están en cada uno.
+
+test("«falta PlatformIO» en el reporte de diagnostico dice lo mismo que pioNoEncontrado()", () => {
+  // PRM-05. El test de más arriba («UNA sola instrucción») recorta el código desde
+  // `function pioNoEncontrado` hasta `export default tool`. El texto que arma la acción
+  // `diagnostico` está DESPUÉS de ese corte, y nadie lo miraba: seguía diciendo «Se
+  // arregla con 'Reparar Tecnia Bot', en el menu inicio», sin nombrar la acción
+  // `reparar` —la primera opción en todos los demás lados— y lo decía igual en Linux,
+  // donde ese acceso no existe. Y /diagnostico le ordena al modelo «pasá el texto del tool».
+  // Mutación: volver al texto viejo → rojo.
+  const codigo = platformioSrc.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+  const i = codigo.indexOf('case "diagnostico": {')
+  assert.ok(i > 0, "no encontré la acción diagnostico: el tool cambió de forma")
+  const rama = codigo.slice(i)
+  // Cada literal: comillas, y adentro cualquier cosa que no sea comilla ni barra, o una
+  // barra seguida de lo que sea (así `\"` no corta el literal a la mitad).
+  const m = rama.match(/if \(!pioOk\) \{\s*estado =\s*((?:"(?:[^"\\\n]|\\.)*"\s*\+?\s*)+)/)
+  assert.ok(m, "no encontré el texto de «falta PlatformIO» en diagnostico: el tool cambió de forma")
+  const texto = m[1]
+  assert.match(texto, /action: \\"reparar\\"/, "el reporte de diagnostico no ofrece reparar desde el bot, que es la primera opción")
+  assert.match(texto, /Plan B[\s\S]*Reparar Tecnia Bot/i, "el menú inicio tiene que quedar como plan B")
+  assert.doesNotMatch(texto, /^"Falta instalar PlatformIO\. Se arregla con 'Reparar Tecnia Bot'/, "sigue dando el menú inicio como único arreglo")
+})
+
+test("/clave y el skill dicen cuántos resultados da la prueba de la key: los que tiene el tool", () => {
+  // PRM-08 (5). /clave decía «uno de cuatro resultados» y no nombraba «el modelo ya no
+  // está»; el tool tiene cinco y el skill errores-del-bot ya decía cinco.
+  // Mutación: volver a «cuatro» en clave.md → rojo. Agregar un sexto al tipo → rojo.
+  const tipo = leer("opencode/tool/clave.ts").match(/export type ResultadoPrueba = ([^\n]+)/)
+  assert.ok(tipo, "no encontré ResultadoPrueba en clave.ts")
+  const cuantos = tipo[1].split("|").length
+  const EN_LETRAS = { 4: "cuatro", 5: "cinco", 6: "seis", 7: "siete" }
+  assert.ok(EN_LETRAS[cuantos], `el tool tiene ${cuantos} resultados y este test no sabe escribir ese número`)
+  for (const archivo of ["opencode/command/clave.md", "opencode/skills/errores-del-bot/SKILL.md"]) {
+    assert.match(leer(archivo), new RegExp(`uno de ${EN_LETRAS[cuantos]} resultados`),
+      `${archivo} no dice «uno de ${EN_LETRAS[cuantos]} resultados», que son los que tiene el tool`)
+  }
+  assert.match(leer("opencode/command/clave.md"), /modelo ya no\s+est[áa]/i, "/clave no nombra el resultado «el modelo ya no está»")
+})
+
+test("ningún comentario del producto cita un archivo de test que no existe", () => {
+  // TCH-11. memoria-local.ts decía que su copia del formato de la memoria la custodia
+  // «tests/plataforma-memoria-local.test.mjs». Ese archivo no existe: el test que lo
+  // hace está en tests/plataforma-sincronizar.test.mjs. Un comentario que apunta a una
+  // red que no está es peor que no decir nada: el próximo que cambie el formato confía
+  // en ella. Mutación: volver a citar el archivo inexistente → rojo.
+  const carpetas = ["opencode/tool", "opencode/plataforma", "opencode/plugins", "install", "installer", "scripts"]
+  const fuentes = []
+  const andar = (dir) => {
+    for (const e of readdirSync(join(REPO, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`
+      if (e.isDirectory()) andar(rel)
+      else if (/\.(ts|tsx|mjs|sh|ps1|iss|cmd|py)$/.test(e.name)) fuentes.push(rel)
+    }
+  }
+  carpetas.forEach(andar)
+  assert.ok(fuentes.length > 30, `sólo junté ${fuentes.length} archivos: no estoy recorriendo el producto`)
+  const rotos = []
+  let citas = 0
+  for (const f of fuentes) {
+    for (const [, cita] of leer(f).matchAll(/(tests\/[A-Za-z0-9_.-]+\.mjs)/g)) {
+      citas++
+      if (!existsSync(join(REPO, cita))) rotos.push(`${f} cita ${cita}`)
+    }
+  }
+  assert.ok(citas > 20, `sólo encontré ${citas} citas a tests: la expresión dejó de encontrarlas`)
+  assert.deepEqual(rotos, [], "comentarios que citan un test que no existe")
+})
