@@ -17,6 +17,19 @@
 //
 // LIMPIEZA: cada pid que anotan los procesos se mata con SIGKILL en `finally`/`after`, pase lo
 // que pase, por pid (nunca por patrón).
+//
+// POR QUÉ ESTE ARCHIVO FALLABA A VECES (2026-11-22). En una corrida de la suite completa
+// dieron rojo tres tests de acá, y en la siguiente ninguno. No era la CPU ni un plazo corto:
+// con los ocho núcleos ocupados daba verde. Era el PRODUCTO. El barrido final del corte lee
+// el `environ` de cada proceso del usuario, y uno que se está muriendo en ese instante —de la
+// suite, que corre varios archivos a la vez, o de cualquier otro programa— da EACCES. Se lo
+// contaba como «ilegible» y el corte quedaba sin confirmar, con el árbol de la carga muerto.
+// Se reproduce a pedido con ocho `while :; do node -e 0; done` corriendo al lado.
+//
+// El arreglo está en `yaNoEjecuta` (opencode/carga/arbol.ts). Y los `assert` de
+// `procesosDeCargaTerminados` ahora muestran `r.stderr`: antes decían «false !== true» y no
+// había forma de saber por qué no se había confirmado. NO se subió ningún plazo ni se agregó
+// ningún reintento: eso hubiera tapado el defecto.
 
 import { test, after } from "node:test"
 import assert from "node:assert/strict"
@@ -98,7 +111,7 @@ chmodSync(join(bin, "pio"), 0o755)
 
 const proceso = await import(join(REPO, "opencode/carga/proceso.ts"))
 const { argvDeCargaCompilando, lanzarCarga } = await import(join(REPO, "opencode/carga/ejecutar.ts"))
-const { inicioDe, terminarArbol } = await import(join(REPO, "opencode/carga/arbol.ts"))
+const { conMarcaEnProc, inicioDe, terminarArbol, yaNoEjecuta } = await import(join(REPO, "opencode/carga/arbol.ts"))
 const { reservarPuerto, liberarTodosLosPuertos } = await import(join(REPO, "opencode/carga/puertos.ts"))
 const { ejecutarPrograma, HERRAMIENTAS_DE_CARGA } = await import(join(REPO, "opencode/tool/programa.ts"))
 const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.ts"))).default
@@ -180,7 +193,7 @@ test("cancelar una carga termina pio, scons y esptool; run() vuelve recién con 
     // Al volver run(), ninguno de los tres vive.
     assert.deepEqual(["pio", "scons", "esptool"].filter((n) => vivo(p[n].pid)), [], "run() volvió con procesos de la carga vivos")
     assert.equal(r.code, 130)
-    assert.equal(r.procesosDeCargaTerminados, true)
+    assert.equal(r.procesosDeCargaTerminados, true, `el corte no se confirmó. Lo que dijo el producto: ${r.stderr}`)
     assert.equal(lanzados.at(-1).conSenal, false, "a una carga no se le pasa la señal a Bun.spawn (mataría sólo al hijo)")
     // Pasado el momento en que el nieto iba a grabar, el marcador no existe.
     const { desde, espera } = p.esptool
@@ -200,7 +213,7 @@ test("un descendiente que ignora SIGTERM cae por SIGKILL, y se confirma", { skip
     const r = await corriendo
     const p = pidsAnotados()
     assert.equal(vivo(p.esptool.pid), false, "el que ignora SIGTERM sigue vivo")
-    assert.equal(r.procesosDeCargaTerminados, true)
+    assert.equal(r.procesosDeCargaTerminados, true, `el corte no se confirmó. Lo que dijo el producto: ${r.stderr}`)
     const { desde, espera } = p.esptool
     await hasta(() => Date.now() > desde + espera + 1000, espera + 3000)
     assert.equal(existsSync(join(PIDS, "MARCADOR")), false)
@@ -218,7 +231,7 @@ test("timeout de una carga: mismo corte del árbol, código 124", { skip: !LINUX
     assert.equal(r.code, 124)
     assert.ok(p.esptool, "fixture: el nieto no llegó a arrancar antes del timeout")
     assert.equal(vivo(p.esptool.pid), false)
-    assert.equal(r.procesosDeCargaTerminados, true)
+    assert.equal(r.procesosDeCargaTerminados, true, `el corte no se confirmó. Lo que dijo el producto: ${r.stderr}`)
     await hasta(() => Date.now() > p.esptool.desde + p.esptool.espera + 1000, 5000)
     assert.equal(existsSync(join(PIDS, "MARCADOR")), false)
   } finally {
@@ -252,7 +265,7 @@ test("B-2: un proceso del árbol con handler de SIGTERM que lanza un hijo NO lle
     const p = pidsAnotados()
     assert.equal(p.tardio, undefined, `el handler de SIGTERM lanzó un hijo después del corte (pid ${p.tardio?.pid})`)
     assert.deepEqual(["pio", "scons", "esptool"].filter((n) => vivo(p[n].pid)), [])
-    assert.equal(r.procesosDeCargaTerminados, true)
+    assert.equal(r.procesosDeCargaTerminados, true, `el corte no se confirmó. Lo que dijo el producto: ${r.stderr}`)
   } finally {
     limpiar()
   }
@@ -444,7 +457,7 @@ test("ciclo 5: testigos ajenos (sin marca, con OTRA marca, con una marca parecid
     const corriendo = lanzarCarga(proceso.run, argv(CARGA), CARGA, ctrl.signal, 60_000, CARGA, MARCA)
     assert.equal(await cortarCuandoGrabe(ctrl), true)
     const r = await corriendo
-    assert.equal(r.procesosDeCargaTerminados, true)
+    assert.equal(r.procesosDeCargaTerminados, true, `el corte no se confirmó. Lo que dijo el producto: ${r.stderr}`)
     for (const [nombre, pid] of [["sin marca", sinMarca], ["otra marca", otra], ["marca parecida", parecida]]) assert.equal(vivo(pid), true, `se mató un testigo ${nombre}`)
   } finally {
     limpiar()
@@ -495,4 +508,110 @@ test("ciclo 5: un environ ilegible de un proceso propio → no se confirma; sin 
   assert.equal(inmortal.confirmado, false)
   assert.match(inmortal.detalle, /con la marca/)
   assert.ok(senales.some(([pid, s]) => pid === 7777 && s === "SIGKILL"), "al marcado se le manda SIGKILL")
+})
+
+
+// ── UN PROCESO QUE SE ESTÁ MURIENDO NO ES UN PROCESO ILEGIBLE ──────────────────────────
+//
+// Lo de acá abajo es el caso que hacía fallar este archivo a veces (ver el encabezado). La
+// carrera entre la foto de /proc y la lectura del `environ` no se puede provocar a pedido con
+// procesos de verdad, así que /proc se inyecta: `conMarcaEnProc` acepta un lector.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - sacar `&& !yaNoEjecuta(p.pid, lector.leer)` del catch de environ  → rojo «se está muriendo»
+//   - en yaNoEjecuta, `return desaparecio(error)` → `return true`      → rojos los dos de «falla cerrado»
+//   - en yaNoEjecuta, sacar el `if (estado === "Z" || estado === "X")`  → rojos la unidad y «se está muriendo»
+//   - en yaNoEjecuta, leer el estado después del PRIMER «)»             → rojo la unidad
+//   - `p.inicio >= desde` → `true` en puedeSerDeLaCarga                 → rojo «arrancó antes» (y casi todo el archivo)
+//
+// UNA MUTACIÓN QUE QUEDA VERDE, Y POR QUÉ NO ES UN HUECO: `startsWith("0 ")` → `startsWith("0")`.
+// El primer campo de `statm` es un entero sin ceros a la izquierda, así que «empieza con 0»
+// y «empieza con 0 y un espacio» dicen lo mismo sobre cualquier `statm` real. No hay entrada
+// válida que las distinga.
+//
+// LÍMITE HONESTO: que un proceso con `statm` en «0 » no vuelve a ejecutar código es cómo
+// funciona Linux (ya soltó su memoria adentro de `exit`); acá no se prueba el kernel, se
+// prueba que el código lee eso y decide bien. Medido sólo en Linux 7.1.
+
+const eacces = () => Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+const enoent = () => Object.assign(new Error("ENOENT: no such file or directory"), { code: "ENOENT" })
+const lineaStat = (pid, nombre, estado, inicio = 5000) => `${pid} (${nombre}) ${estado} 1 ${pid} ${pid} 0 -1 4194560 100 0 0 0 1 1 0 0 20 0 1 0 ${inicio} 1000000 200 18446744073709551615 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0`
+const STATM_VIVO = "25000 1200 800 10 0 5000 0\n"
+const STATM_SIN_MEMORIA = "0 0 0 0 0 0 0\n"
+
+/** Un /proc de mentira. `archivos`: ruta → texto, o una función que arma el error a TIRAR. Lo que no figura, no existe. */
+function lectorDe(foto, archivos) {
+  return {
+    foto: () => foto,
+    uidDe: () => process.getuid(),
+    leer: (ruta) => {
+      const v = archivos[ruta]
+      if (v === undefined) throw enoent()
+      if (typeof v === "function") throw v()
+      return v
+    },
+  }
+}
+
+test("yaNoEjecuta: zombi, sin memoria o desaparecido → sí; vivo o imposible de mirar → no (falla cerrado)", () => {
+  const con = (archivos) => (ruta) => lectorDe([], archivos).leer(ruta)
+  // A los dos zombis se les pone un `statm` CON memoria, que en un Linux de verdad no pasa
+  // (un zombi ya la soltó): es para que este renglón mida la mirada al estado y no la de
+  // `statm`. Sin eso el caso pasaba igual con la línea del estado borrada.
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "node", "Z"), "/proc/7/statm": STATM_VIVO })), true, "un zombi no ejecuta nada")
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "node", "X"), "/proc/7/statm": STATM_VIVO })), true, "un proceso muerto (X) no ejecuta nada")
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "node", "R"), "/proc/7/statm": STATM_SIN_MEMORIA })), true, "en R pero sin memoria: está adentro de exit")
+  assert.equal(yaNoEjecuta(7, con({})), true, "ya no está en /proc")
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "node", "R") })), true, "desapareció entre stat y statm")
+  // El nombre puede traer paréntesis y espacios: el estado se lee después del ÚLTIMO «)».
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "a) Z (b", "S"), "/proc/7/statm": STATM_VIVO })), false, "leyó el estado adentro del nombre")
+  // Falla cerrado.
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "esptool", "S"), "/proc/7/statm": STATM_VIVO })), false, "un proceso vivo y con memoria SÍ puede estar ejecutando")
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "esptool", "R"), "/proc/7/statm": "100 0 0 0 0 0 0\n" })), false, "«100 …» no es «0 …»: tiene memoria")
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": eacces })), false, "si no se puede mirar, no se afirma que ya no ejecuta")
+  assert.equal(yaNoEjecuta(7, con({ "/proc/7/stat": lineaStat(7, "esptool", "S"), "/proc/7/statm": eacces })), false, "si no se puede leer statm, tampoco")
+})
+
+test("barrido por marca: un proceso propio que se está muriendo (environ con EACCES) NO deja el corte sin confirmar", () => {
+  const DESDE = 4000
+  const foto = [
+    // Estaba vivo en la foto; cuando se le va a leer el entorno ya soltó la memoria.
+    { pid: 901, ppid: 1, zombi: false, inicio: 5000 },
+    // Estaba vivo en la foto; cuando se lo vuelve a mirar ya es zombi.
+    { pid: 902, ppid: 1, zombi: false, inicio: 5000 },
+    // Estaba vivo en la foto; desapareció del todo antes de la segunda mirada.
+    { pid: 903, ppid: 1, zombi: false, inicio: 5000 },
+  ]
+  const r = conMarcaEnProc(MARCA, DESDE, lectorDe(foto, {
+    "/proc/901/environ": eacces, "/proc/901/stat": lineaStat(901, "node", "R"), "/proc/901/statm": STATM_SIN_MEMORIA,
+    "/proc/902/environ": eacces, "/proc/902/stat": lineaStat(902, "node", "Z"), "/proc/902/statm": STATM_VIVO,
+    "/proc/903/environ": eacces,
+  }))
+  assert.deepEqual(r, { pids: [], ilegibles: 0 }, "contó como ilegible a un proceso que ya no puede estar ejecutando nada: una carga frenada quedaría como «puede que siga grabándose»")
+})
+
+test("barrido por marca, falla cerrado: un proceso propio VIVO con el entorno ilegible sí deja el corte sin confirmar", () => {
+  const DESDE = 4000
+  const foto = [{ pid: 911, ppid: 1, zombi: false, inicio: 5000 }]
+  const vivo = conMarcaEnProc(MARCA, DESDE, lectorDe(foto, {
+    "/proc/911/environ": eacces, "/proc/911/stat": lineaStat(911, "no-volcable", "S"), "/proc/911/statm": STATM_VIVO,
+  }))
+  assert.deepEqual(vivo, { pids: [], ilegibles: 1 }, "un proceso vivo que no deja leer su entorno puede ser de la carga: no se puede confirmar")
+  const sinPoderMirar = conMarcaEnProc(MARCA, DESDE, lectorDe(foto, { "/proc/911/environ": eacces, "/proc/911/stat": eacces }))
+  assert.deepEqual(sinPoderMirar, { pids: [], ilegibles: 1 }, "si tampoco se puede volver a mirar, se sigue contando")
+})
+
+test("barrido por marca: lo que arrancó antes que la carga no cuenta, y lo que tiene la marca se encuentra", () => {
+  const DESDE = 4000
+  const foto = [
+    { pid: 921, ppid: 1, zombi: false, inicio: 100 }, // systemd --user y compañía: ilegibles desde siempre
+    { pid: 922, ppid: 1, zombi: false, inicio: 5000 },
+    { pid: 923, ppid: 1, zombi: false, inicio: 5000 },
+  ]
+  const r = conMarcaEnProc(MARCA, DESDE, lectorDe(foto, {
+    "/proc/921/environ": eacces, "/proc/921/stat": lineaStat(921, "systemd", "S", 100), "/proc/921/statm": STATM_VIVO,
+    "/proc/922/environ": `PATH=/usr/bin\0TECNIA_CARGA=${MARCA}\0HOME=/home/x\0`,
+    "/proc/923/environ": `PATH=/usr/bin\0TECNIA_CARGA=${"b".repeat(64)}\0`,
+  }))
+  assert.deepEqual(r, { pids: [922], ilegibles: 0 })
 })
