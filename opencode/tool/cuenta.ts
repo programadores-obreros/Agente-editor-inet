@@ -23,6 +23,7 @@ import { hostname } from "node:os"
 
 type ModuloCuenta = typeof import("../plataforma/cuenta.ts")
 type ModuloSesion = typeof import("../plataforma/sesion-local.ts")
+type ModuloNavegador = typeof import("../plataforma/navegador.ts")
 type Cuenta = ReturnType<ModuloCuenta["crearCuenta"]>
 type Accion = Parameters<Cuenta["ejecutar"]>[0]
 
@@ -67,15 +68,14 @@ export function decirAMedias(d: { definida: string; falta: string }): string {
   )
 }
 
-/** Misma lógica mínima que `abrirEnNavegador` de `vista-fisica.ts`; los tools de este repo no se importan entre sí. */
-function abrirEnNavegador(url: string): boolean {
+/**
+ * Lanza el comando que arma `plataforma/navegador.ts`. El comando NO se arma acá:
+ * en Windows un intérprete en el medio partía el enlace en cada `&` (ver ese archivo).
+ */
+function abrirEnNavegador(navegador: ModuloNavegador, url: string): boolean {
   try {
-    const cmd =
-      process.platform === "win32"
-        ? ["cmd", "/c", "start", "", url]
-        : process.platform === "darwin"
-          ? ["open", url]
-          : ["xdg-open", url]
+    const cmd = navegador.comandoParaAbrir(process.platform, url, process.env.SystemRoot)
+    if (!cmd) return false
     const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
     proc.unref()
     return true
@@ -87,10 +87,14 @@ function abrirEnNavegador(url: string): boolean {
 
 // Import perezoso (mismo criterio que `programa.ts`): si falta la carpeta en la
 // instalación, sólo este tool se entera, y recién cuando se usa.
-async function cargarModulos(): Promise<{ cuenta: ModuloCuenta; sesion: ModuloSesion }> {
+async function cargarModulos(): Promise<{ cuenta: ModuloCuenta; sesion: ModuloSesion; navegador: ModuloNavegador }> {
   try {
-    const [cuenta, sesion] = await Promise.all([import("../plataforma/cuenta.ts"), import("../plataforma/sesion-local.ts")])
-    return { cuenta, sesion }
+    const [cuenta, sesion, navegador] = await Promise.all([
+      import("../plataforma/cuenta.ts"),
+      import("../plataforma/sesion-local.ts"),
+      import("../plataforma/navegador.ts"),
+    ])
+    return { cuenta, sesion, navegador }
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
     throw new Error(
@@ -112,14 +116,14 @@ function obtenerCuenta(api: string, web: string): Promise<Cuenta> {
   const clave = `${api}\n${web}`
   if (instancia && instanciaDe === clave) return instancia
   instanciaDe = clave
-  const nueva = cargarModulos().then(({ cuenta, sesion }) =>
+  const nueva = cargarModulos().then(({ cuenta, sesion, navegador }) =>
     cuenta.crearCuenta({
       fetch: (url, init) => fetch(url, init),
       api,
       web,
       carpeta: sesion.carpetaPorDefecto(),
       etiqueta: hostname(),
-      abrirNavegador: abrirEnNavegador,
+      abrirNavegador: (url) => abrirEnNavegador(navegador, url),
     }),
   )
   instancia = nueva
