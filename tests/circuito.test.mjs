@@ -2909,7 +2909,7 @@ test("instalación dañada: un archivo de 0 bytes no es un archivo instalado", a
 //
 // LA DECISIÓN (owner, 2026-11-22): el plano es el que es. El LCD va a 5 V, GND, SDA y
 // SCL, como lo dibuja el tool y como lo indican las fichas del INET (proyectos 04, 05
-// y 12), con una ACLARACIÓN. La aclaración es la que esas fichas ya traían: la mochila
+// y 12), con una ACLARACIÓN. La aclaración es la que esas fichas ya traían: el adaptador I2C
 // puede dejar el bus en 5 V, se mide con el téster, y si marca cerca de 5 V va un
 // conversor de nivel. Lo que se saca es el «nunca», que contradecía al dibujo.
 //
@@ -2961,7 +2961,7 @@ test("LCD en ESP32: la aclaración llega al chat, y con Arduino UNO no aparece",
     assert.doesNotMatch(ns.COMPONENTES.lcd.advertencia[placa], /mochila/i, `la advertencia de la hoja (${placa}) dice «mochila»`)
   }
 
-  // En el UNO la mochila y la placa trabajan a la misma tensión: no hay nada que aclarar.
+  // En el UNO el adaptador I2C y la placa trabajan a la misma tensión: no hay nada que aclarar.
   const uno = await gen({ componentes: "lcd, led", placa: "uno" }, "lcd-chat-uno")
   assert.ok(uno.r.startsWith("Listo"), uno.r.slice(0, 200))
   assert.doesNotMatch(uno.r, /LCD en ESP32|conversor de nivel/i, `con Arduino UNO salió la aclaración del ESP32:\n${uno.r}`)
