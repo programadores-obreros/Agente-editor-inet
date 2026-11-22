@@ -2523,11 +2523,15 @@ test("wokwi: cada pin que el tool puede repartir existe en la pieza de esa placa
     // Definitions: SENSOR_VP = pin físico 5 = GPIO36; SENSOR_VN = pin 8 = GPIO39) y
     // escrito con la cita en `skills/esp32`, que es donde vive un dato de hardware.
     //
-    // GPIO0/37/38 SIGUEN siendo huecos, y por un motivo distinto: pasan por
-    // `motivoRechazo` pero no salen a ningún pin del header de la DevKit v1. GPIO37 y
-    // GPIO38 son SENSOR_CAPP/SENSOR_CAPN y el módulo WROOM no los expone; GPIO0 es
-    // strapping y tampoco tiene agujero. Ésos no se pueden "mapear": no están.
-    esp32: ["GPIO0", "GPIO37", "GPIO38"],
+    // GPIO0 SIGUE siendo un hueco: pasa por `motivoRechazo` pero no sale a ningún pin
+    // del header de la DevKit v1 (es strapping y no tiene agujero). No se puede
+    // "mapear": no está.
+    //
+    // GPIO37 y GPIO38 ESTABAN acá por el mismo motivo (SENSOR_CAPP/SENSOR_CAPN, el
+    // módulo WROOM no los expone). Desde el 2026-11-22 el tool ya no los reparte: los
+    // rechaza diciendo que no salen a ningún pin de la placa. Antes «led:37» se dibujaba
+    // con «Listo!». Salieron de esta lista porque dejaron de ser un pin repartible.
+    esp32: ["GPIO0"],
     uno: [],
   }
 
@@ -2764,5 +2768,127 @@ test("signals: los GPIO que Wokwi NO marca pwm son los solo-entrada del tool", (
   assert.equal(esp.poolPwm, undefined, "el ESP32 declaró un poolPwm: si de verdad hay pines sin PWM, este test tiene que decir cuáles")
   for (const p of esp.poolDigital) {
     assert.ok(!sinPwm.includes(p.n), `GPIO${p.n} está en el pool digital del ESP32 y Wokwi dice que no hace PWM`)
+  }
+})
+
+// ── «LISTO!» SIN HABER MIRADO: cuatro validaciones que faltaban ───────────────
+//
+// Auditoría de código del 2026-11-22 (CIR-03, CIR-04, CIR-06, PRM-10), ejecutando el
+// tool y reproducido por QA. En los cuatro casos el tool contestaba «Listo!» y
+// entregaba una hoja que en la mesa del alumno no funciona:
+//
+//  - Un pin analógico pedido a mano se aceptaba aunque ese GPIO no tuviera conversor:
+//    «potenciometro:23» salía «GPIO23 (analógico)», y ahí analogRead no mide nada. El
+//    reparto automático siempre usó pines con ADC; el agujero era sólo el pin a mano.
+//  - GPIO37 y GPIO38 figuraban como válidos. Existen en el chip, pero no salen a
+//    ningún pin del DevKit de las escuelas: el alumno no los va a encontrar.
+//  - La palabra «shield» salteaba el rechazo de placa desconocida. «mega con sensor
+//    shield» se dibujaba como Arduino UNO, con una nota que decía «como no me dijiste
+//    sobre qué placa va»: sí lo había dicho.
+//  - Los chequeos de instalación miraban sólo que el archivo existiera. Con la
+//    biblioteca de piezas en 0 bytes (copia cortada, antivirus) salía «Listo!» y una
+//    página con la tabla y ninguna pieza; con la plantilla vacía, un HTML de 0 bytes.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - sacar el chequeo de ADC de motivoRechazo                   → rojo «sin conversor»
+//   - sacar 32 del conjunto con ADC                              → rojo el contrapeso de «sin conversor»
+//   - volver a poner 37 y 38 en GPIO_VALIDOS (y sacar su aviso)   → rojo «no salen a ningún pin»
+//   - vaciar la lista de otras placas de shieldDe                → rojo «otra placa con shield»
+//   - agregar «uno» a esa lista                                  → rojo el contrapeso de shield
+//   - no aceptar la etiqueta de la placa                          → rojo «la etiqueta que el tool imprime»
+//   - volver a `existsSync` en cualquiera de los tres chequeos   → rojo el de 0 bytes que corresponde
+//
+// LÍMITE HONESTO: qué pines tienen ADC y cuáles salen al header no se midió en una
+// placa; sale de skills/esp32/SKILL.md, que es la fuente del repo.
+
+test("ESP32: un pin analógico pedido a mano tiene que tener conversor (ADC)", async () => {
+  for (const [pedido, gpio] of [["potenciometro:23", "GPIO23"], ["ldr:5", "GPIO5"], ["joystick:23", "GPIO23"], ["potenciometro:18", "GPIO18"]]) {
+    const { r, html } = await gen({ componentes: pedido }, "adc-" + pedido.replace(":", "-"))
+    assert.ok(!pinesAsignados(html).includes(gpio), `«${pedido}»: dejó el sensor analógico en ${gpio}, que no tiene ADC: analogRead no mide nada`)
+    assert.match(r, /no puede leer un valor analógico/i, `«${pedido}»: lo reasignó sin avisarlo en la respuesta:\n${r}`)
+  }
+  // Contrapeso: los que SÍ tienen conversor se respetan. 34 y 32 son ADC1; 4 es ADC2.
+  for (const [pedido, gpio] of [["potenciometro:34", "GPIO34"], ["potenciometro:32", "GPIO32"], ["ldr:4", "GPIO4"]]) {
+    const { r, html } = await gen({ componentes: pedido }, "adc-ok-" + pedido.replace(":", "-"))
+    assert.ok(pinesAsignados(html).includes(gpio), `«${pedido}»: le sacó un pin que sí tiene ADC`)
+    assert.doesNotMatch(r, /no puede leer un valor analógico/i)
+  }
+})
+
+test("ESP32: GPIO37 y GPIO38 no salen a ningún pin del DevKit, y se dice", async () => {
+  for (const pedido of ["led:37", "led:38", "boton:37", "potenciometro:38"]) {
+    const gpio = "GPIO" + pedido.split(":")[1]
+    const { r, html } = await gen({ componentes: pedido }, "sinpin-" + pedido.replace(":", "-"))
+    assert.ok(!pinesAsignados(html).includes(gpio), `«${pedido}»: dibujó algo en ${gpio}, que el alumno no va a encontrar en la placa`)
+    assert.match(r, /no sale a ningún pin/i, `«${pedido}»: no explica por qué lo cambió:\n${r}`)
+  }
+})
+
+test("una placa que no se sabe dibujar no pasa por decir «shield»", async () => {
+  for (const placa of ["mega con sensor shield", "arduino mega 2560 + sensor shield v5", "nano con shield", "esp8266 con shield", "Leonardo + Sensor Shield"]) {
+    const nombre = "otra-placa-" + placa.replace(/[^a-z0-9]+/gi, "-")
+    const { r, html } = await gen({ componentes: "led", placa }, nombre)
+    assert.match(r, /No sé DIBUJAR/, `«${placa}»: generó un circuito de otra placa:\n${r.slice(0, 300)}`)
+    assert.equal(html, "", `«${placa}»: dejó un archivo escrito`)
+    assert.doesNotMatch(r, /asumí el Arduino UNO/, `«${placa}»: dice que no le dijeron la placa, y sí se la dijeron`)
+  }
+  // Contrapeso: el shield a secas sigue cayendo en UNO, avisándolo; y con la placa nombrada, también anda.
+  const solo = await gen({ componentes: "led", placa: "sensor shield v5" }, "shield-solo")
+  assert.ok(solo.r.startsWith("Listo"), solo.r.slice(0, 200))
+  assert.match(solo.r, /asumí el Arduino UNO/)
+  for (const placa of ["uno con sensor shield", "esp32 con sensor shield"]) {
+    const { r } = await gen({ componentes: "led", placa }, "shield-" + placa.split(" ")[0])
+    assert.ok(r.startsWith("Listo"), `«${placa}»: ${r.slice(0, 200)}`)
+  }
+})
+
+test("placa: se acepta también la etiqueta que el propio tool imprime", async () => {
+  for (const [placa, tag] of [["Arduino UNO", "wokwi-arduino-uno"], ["ESP32 DevKit", "wokwi-esp32-devkit-v1"], ["  esp32 devkit ", "wokwi-esp32-devkit-v1"]]) {
+    const { r, html } = await gen({ componentes: "led", placa }, "etiqueta-" + placa.trim().replace(/\s+/g, "-"))
+    assert.ok(r.startsWith("Listo"), `«${placa}»: ${r.slice(0, 200)}`)
+    assert.ok(html.includes(tag), `«${placa}»: dibujó otra placa`)
+  }
+  // Contrapeso: una etiqueta parecida de otra placa sigue rebotando.
+  const { r } = await gen({ componentes: "led", placa: "Arduino Mega" }, "etiqueta-mega")
+  assert.match(r, /No sé DIBUJAR/)
+})
+
+test("instalación dañada: un archivo de 0 bytes no es un archivo instalado", async () => {
+  const cfg = join(os.tmpdir(), "tecniabot-test-cfg-vacio")
+  const web = join(cfg, "opencode", "tecniabot-web")
+  const previo = process.env.XDG_CONFIG_HOME
+  const armar = (vacios) => {
+    rmSync(web, { recursive: true, force: true })
+    mkdirSync(web, { recursive: true })
+    writeFileSync(join(web, "wokwi-bundle.js"), vacios.includes("bundle") ? "" : "/*stub*/")
+    writeFileSync(join(web, "componentes-extra.js"), vacios.includes("extra") ? "" : "/*stub*/")
+    for (const p of Object.values(PLANTILLAS)) {
+      if (vacios.includes("plantillas")) writeFileSync(join(web, p), "")
+      else copyFileSync(join(REPO, "opencode/tecniabot-web", p), join(web, p))
+    }
+  }
+  process.env.XDG_CONFIG_HOME = cfg
+  try {
+    for (const [que, vacios, args] of [
+      ["la biblioteca de piezas", ["bundle"], { circuito: "led-esp32" }],
+      ["las piezas dibujadas", ["extra"], { componentes: "higrometro, relay, bomba" }],
+      ["la plantilla de protoboard", ["plantillas"], { circuito: "semaforo-protoboard" }],
+    ]) {
+      armar(vacios)
+      const { r, html } = await gen(args, "vacio-" + vacios[0])
+      assert.ok(!r.startsWith("Listo"), `con ${que} en 0 bytes contestó «Listo!»:\n${r.slice(0, 200)}`)
+      assert.match(r, /vac[ií]/i, `con ${que} en 0 bytes no dice que el archivo está vacío:\n${r}`)
+      assert.match(r, /Reinstal/i, r)
+      assert.equal(html, "", `con ${que} en 0 bytes escribió un archivo igual`)
+    }
+    // Contrapeso: con los tres archivos con contenido, los mismos pedidos generan.
+    armar([])
+    for (const [args, n] of [[{ circuito: "led-esp32" }, "a"], [{ componentes: "higrometro, relay, bomba" }, "b"], [{ circuito: "semaforo-protoboard" }, "c"]]) {
+      const { r } = await gen(args, "lleno-" + n)
+      assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+    }
+  } finally {
+    process.env.XDG_CONFIG_HOME = previo
+    rmSync(cfg, { recursive: true, force: true })
   }
 })
