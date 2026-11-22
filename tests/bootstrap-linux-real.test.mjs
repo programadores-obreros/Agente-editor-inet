@@ -239,3 +239,132 @@ test("bootstrap.sh con sólo wget: PlatformIO se intenta, OpenCode dice que le h
     rmSync(h.base, { recursive: true, force: true })
   }
 })
+
+// ── LAS HERRAMIENTAS DE LAS PLACAS: «¡Todo listo!» SIN CON QUÉ COMPILAR ────────
+//
+// EL DEFECTO (auditoría integral del 2026-11-21). install.sh baja las
+// herramientas de ESP32 y Arduino UNO (más de 1 GB) y, si no puede, «avisa y
+// sigue»: está bien que no corte, pero el aviso quedaba arriba y nadie lo volvía
+// a mirar. bootstrap.sh sólo preguntaba si un pio contesta --version, así que
+// cerraba con «✅ ¡Todo listo!» y código 0 sin las herramientas. La docente se
+// enteraba en clase, en la primera compilación: una descarga de más de 1 GB con
+// la red del aula, que se corta a los 3 minutos.
+//
+// AHORA el cierre MIRA EL DISCO después de instalar la capa: las cuatro carpetas
+// en <core>/packages. No le cree a install.sh ni al código de `pio pkg install`.
+//
+// Los pio de acá son ejecutables de verdad puestos donde el script los busca;
+// contestan --version y hacen con `pkg install` lo que cada caso necesita. La
+// falla es real para el script: no hay un modo de prueba adentro de bootstrap.sh.
+//
+// VERIFICADO POR MUTACIÓN (cada una pone rojo este archivo, exit code 1):
+//   - sacar `&& [ -z "$PLACAS_FALTA" ]` de la condición del cierre
+//     → rojos los tres casos de «faltan»
+//   - después del bucle que mira el disco, forzar `PLACAS_FALTA=""`
+//     → rojos los tres casos de «faltan»
+//   - mirar sólo la primera carpeta (`break` al final del cuerpo del bucle)
+//     → rojos «no se pueden bajar» (no nombra las cuatro) y «bajó la mitad»
+//   - decidir por el código de pio en vez de por el disco no se puede escribir
+//     como mutación de una línea; lo cubre «pio dice que anduvo y no dejó nada».
+//
+// SIN PROBAR: una descarga real de `pio pkg install` (eso lo corre la CI, en el
+// job del instalador de Linux), ni una carpeta de herramienta que exista pero
+// haya quedado a medio descomprimir: se mira que la carpeta esté, igual que hace
+// install.sh para decidir si baja.
+
+const PAQUETES_DE_PLACAS = ["toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr"]
+
+/**
+ * Un PlatformIO que contesta --version pero SIN las herramientas de las placas.
+ * `alInstalar` es lo que hace su `pkg install` (un guión de sh).
+ */
+function ponerPlatformioSinPlacas(h, alInstalar) {
+  const core = join(h.base, "platformio-core")
+  mkdirSync(join(core, "penv", "bin"), { recursive: true })
+  ponerEjecutable(join(core, "penv", "bin"), "pio", [
+    'case "$1" in',
+    '  --version) echo "PlatformIO Core, version 6.1.18" ;;',
+    `  pkg) ${alInstalar} ;;`,
+    "  *) exit 64 ;;",
+    "esac",
+  ].join("\n"))
+  return { core, env: { PLATFORMIO_CORE_DIR: core } }
+}
+
+function bootstrapConPio(h, alInstalar) {
+  const bin = armarBin(h.base, ["jq", "python3"])
+  ponerOpenCode(bin)
+  const { core, env } = ponerPlatformioSinPlacas(h, alInstalar)
+  return { core, r: bootstrap(h, { path: bin, env }) }
+}
+
+test("bootstrap.sh cuando las herramientas de las placas no se pueden bajar: sale con 3 y no dice «Todo listo»", { skip: !puedeCorrer || !jq }, () => {
+  const h = nuevoHome()
+  try {
+    const { core, r } = bootstrapConPio(h, 'echo "Error: no pude conectar" >&2; exit 1')
+    assert.equal(r.status, 3, `sin las herramientas de las placas esperaba 3 y salió ${r.status}:\n${r.salida}`)
+    const resumen = verificarCierreIncompleto(r, "placas sin bajar")
+    assert.match(resumen, /\[✓\] PlatformIO: contesta/, resumen)
+    assert.match(resumen, /\[✗\] Placas: FALTAN las herramientas/, resumen)
+    for (const p of PAQUETES_DE_PLACAS) assert.ok(resumen.includes(p), `el resumen no nombra ${p}:\n${resumen}`)
+    assert.ok(resumen.includes(core), `el resumen no dice en qué carpeta las buscó:\n${resumen}`)
+    assert.ok(capaEnDisco(h), "no instaló la capa")
+  } finally {
+    rmSync(h.base, { recursive: true, force: true })
+  }
+})
+
+test("bootstrap.sh cuando pio dice que anduvo y no dejó nada en disco: le cree al disco, no al código", { skip: !puedeCorrer || !jq }, () => {
+  const h = nuevoHome()
+  try {
+    const { r } = bootstrapConPio(h, "exit 0")
+    assert.equal(r.status, 3, `pio salió con 0 sin dejar las herramientas y el instalador le creyó (rc=${r.status}):\n${r.salida}`)
+    assert.match(verificarCierreIncompleto(r, "pio miente"), /\[✗\] Placas: FALTAN las herramientas/)
+  } finally {
+    rmSync(h.base, { recursive: true, force: true })
+  }
+})
+
+test("bootstrap.sh cuando bajó la mitad de las herramientas: nombra sólo las que faltan", { skip: !puedeCorrer || !jq }, () => {
+  const h = nuevoHome()
+  try {
+    // Quedan las de ESP32 y faltan las de Arduino UNO.
+    const { r } = bootstrapConPio(h, 'mkdir -p "$PLATFORMIO_CORE_DIR/packages/toolchain-xtensa-esp32" "$PLATFORMIO_CORE_DIR/packages/framework-arduinoespressif32"; exit 1')
+    assert.equal(r.status, 3, `con la mitad de las herramientas esperaba 3 y salió ${r.status}:\n${r.salida}`)
+    const resumen = verificarCierreIncompleto(r, "placas a medias")
+    const renglon = resumen.split("\n").find((l) => l.includes("Placas: FALTAN")) ?? ""
+    assert.ok(renglon.includes("toolchain-atmelavr") && renglon.includes("framework-arduino-avr"), `no nombra las que faltan:\n${resumen}`)
+    assert.ok(!renglon.includes("toolchain-xtensa-esp32") && !renglon.includes("framework-arduinoespressif32"), `nombra como faltantes las que sí están:\n${resumen}`)
+  } finally {
+    rmSync(h.base, { recursive: true, force: true })
+  }
+})
+
+test("bootstrap.sh cuando las herramientas se bajan en esta misma corrida: «¡Todo listo!» y código 0", { skip: !puedeCorrer || !jq }, () => {
+  // El contrapeso: el disco se mira DESPUÉS de instalar la capa. Si se mirara antes,
+  // una instalación limpia que bajó todo bien terminaría en «incompleta».
+  const h = nuevoHome()
+  try {
+    const bajar = PAQUETES_DE_PLACAS.map((p) => `"$PLATFORMIO_CORE_DIR/packages/${p}"`).join(" ")
+    const { r } = bootstrapConPio(h, `mkdir -p ${bajar}`)
+    assert.equal(r.status, 0, `bajó las herramientas y salió ${r.status}:\n${r.salida}`)
+    assert.match(r.stdout, /✅ ¡Todo listo!/, r.stdout)
+    assert.doesNotMatch(r.stdout, /NO quedó completa/, r.stdout)
+  } finally {
+    rmSync(h.base, { recursive: true, force: true })
+  }
+})
+
+test("bootstrap.sh sin PlatformIO: de las placas no dice nada que no haya mirado", { skip: !puedeCorrer || !python3 || !jq }, () => {
+  // Sin pio no se pudo ni intentar bajarlas: el renglón de PlatformIO ya dice que
+  // no compila, y uno de «Placas» sería un segundo aviso por la misma causa.
+  const h = nuevoHome()
+  try {
+    const r = bootstrap(h, { path: armarBin(h.base, ["jq", "python3"]) })
+    const resumen = verificarCierreIncompleto(r, "sin PlatformIO")
+    assert.match(resumen, /\[✗\] PlatformIO: NO quedó instalado/, resumen)
+    assert.doesNotMatch(resumen, /Placas:/, resumen)
+  } finally {
+    rmSync(h.base, { recursive: true, force: true })
+  }
+})

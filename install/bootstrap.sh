@@ -15,12 +15,14 @@
 #
 # CÓDIGOS DE SALIDA:
 #   0  todo comprobado: `opencode --version` contesta, un pio contesta --version,
-#      y la capa quedó en disco con install.sh terminando en 0.
+#      las herramientas de las placas están en disco, y la capa quedó en disco
+#      con install.sh terminando en 0.
 #   1  no se pudo ni empezar (falta install/OPENCODE_VERSION).
 #   2  la capa de Tecnia Bot NO quedó instalada (install.sh falló o el agente no
 #      está en disco). Es el caso grave: no hay Tecnia Bot.
-#   3  la capa quedó instalada, pero falta OpenCode o PlatformIO, o install.sh
-#      terminó CON AVISOS (su código 3). El resumen del final dice cuál.
+#   3  la capa quedó instalada, pero falta OpenCode, PlatformIO o las
+#      herramientas de las placas (ESP32/UNO), o install.sh terminó CON AVISOS
+#      (su código 3). El resumen del final dice cuál.
 #   4  se negó a correr: lo lanzaron con sudo o como root prestado. No tocó nada.
 # ============================================================================
 set -euo pipefail
@@ -360,13 +362,31 @@ if [ -s "$AGENTE_EN_DISCO" ]; then
   esac
 fi
 
+# --- Las herramientas de las placas: se mira el DISCO, después de la capa -----
+# install.sh las baja (más de 1 GB) y, si no puede, «avisa y sigue». Está bien que
+# no corte, pero ese aviso queda arriba y este cierre no lo miraba: con un pio que
+# contesta --version salía «¡Todo listo!» y código 0 sin las herramientas, y la
+# docente se enteraba en clase, en la primera compilación (auditoría del
+# 2026-11-21). Acá no se le cree a install.sh ni al código de `pio pkg install`:
+# se buscan las cuatro carpetas, con la MISMA regla y la MISMA lista que
+# preparar_placas() en install.sh (las ata tests/placas-herramientas.test.mjs).
+# Se mira DESPUÉS de instalar la capa, que es cuando se bajan.
+# Sin PlatformIO no se mira: no se pudo ni intentar, y su renglón ya lo dice.
+PLACAS_CORE="${PLATFORMIO_CORE_DIR:-$HOME/.platformio}"
+PLACAS_FALTA=""
+if [ -z "$PIO_FALTA" ]; then
+  for p in toolchain-xtensa-esp32 framework-arduinoespressif32 toolchain-atmelavr framework-arduino-avr; do
+    [ -d "$PLACAS_CORE/packages/$p" ] || PLACAS_FALTA="${PLACAS_FALTA:+$PLACAS_FALTA, }$p"
+  done
+fi
+
 # --- El cierre: lo que se comprobó, y NADA más -------------------------------
 # Acá había un «✅ ¡Todo listo!» sin ninguna condición: salía igual con OpenCode
 # sin instalar, sin PlatformIO o con la capa a medias. Ahora sale sólo si las
-# tres cosas se comprobaron. Si falta algo, el resumen va AL FINAL —es lo que
+# cuatro cosas se comprobaron. Si falta algo, el resumen va AL FINAL —es lo que
 # queda a la vista en la terminal— y el script sale distinto de 0.
 echo ""
-if [ -z "$OPENCODE_FALTA" ] && [ -z "$PIO_FALTA" ] && [ "$CAPA" = "ok" ]; then
+if [ -z "$OPENCODE_FALTA" ] && [ -z "$PIO_FALTA" ] && [ -z "$PLACAS_FALTA" ] && [ "$CAPA" = "ok" ]; then
   echo "  ✅ ¡Todo listo! Abrí una terminal en cualquier carpeta, escribí 'opencode',"
   echo "     apretá Tab y elegí 'tecnia-bot'."
   echo ""
@@ -391,6 +411,16 @@ if [ -z "$PIO_FALTA" ]; then
 else
   echo "     [✗] PlatformIO: NO quedó instalado — $PIO_FALTA."
   echo "         Tecnia Bot igual explica, dibuja circuitos y reparte fichas; no compila ni carga a la placa."
+fi
+if [ -z "$PIO_FALTA" ]; then
+  if [ -z "$PLACAS_FALTA" ]; then
+    echo "     [✓] Placas: las herramientas de ESP32 y Arduino UNO están en $PLACAS_CORE."
+  else
+    echo "     [✗] Placas: FALTAN las herramientas en $PLACAS_CORE/packages — $PLACAS_FALTA."
+    echo "         La primera compilación va a intentar bajarlas (más de 1 GB) y, sin buena red, se corta a los 3 minutos."
+    echo "         Más arriba, donde dice [AVISO], está por qué no se bajaron. Con buena red y 3 GB libres,"
+    echo "         volver a correr este instalador las baja."
+  fi
 fi
 case "$CAPA" in
   ok)

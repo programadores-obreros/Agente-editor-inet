@@ -17,10 +17,12 @@
 # binario y mirando el disco-, no con lo que se intento.
 #
 #   0 = TODO quedo y se comprobo: OpenCode arranca y es la version fijada,
-#       PlatformIO contesta, Node contesta y alcanza, la capa esta publicada.
+#       PlatformIO contesta, las herramientas de las placas estan en el disco,
+#       Node contesta y alcanza, la capa esta publicada.
 #   2 = INSTALADO PERO DEGRADADO: el bot abre (OpenCode arranca y la capa esta
 #       publicada), pero falta algo de lo demas: PlatformIO (no compila ni
-#       carga), Node (no anda el skill de diagramas), OpenCode quedo en una
+#       carga), las herramientas de las placas ESP32/UNO (la primera compilacion
+#       tiene que bajar mas de 1 GB), Node (no anda el skill de diagramas), OpenCode quedo en una
 #       version que no es la probada, o install.ps1 instalo la capa CON AVISOS
 #       (su codigo 3: la capa se copio pero no pudo escribir la config o
 #       guardar la key). Vive en $CodigoDegradado.
@@ -2073,7 +2075,34 @@ if ($CapaOk -and (Test-Path $BinOpenCode) -and ($OpenCodeParaPreparar -ne $OpenC
 #                 contesto "PlatformIO".
 #   Node       -> $NodeExe, que solo tiene valor si Buscar-Node lo ejecuto y la
 #                 version alcanza.
+#   Placas     -> las cuatro carpetas de herramientas, buscadas en el disco aca
+#                 mismo, DESPUES de que install.ps1 intento bajarlas.
 #   Capa       -> el codigo de install.ps1 Y el agente en el disco, aca arriba.
+
+# LAS HERRAMIENTAS DE LAS PLACAS: SE MIRA EL DISCO, NO LO QUE DIJO install.ps1.
+#
+# install.ps1 las baja (mas de 1 GB) y, si no puede, "avisa y sigue". Esta bien
+# que no corte, pero su codigo de salida no cubre las dependencias (lo dice su
+# encabezado) y este resumen solo preguntaba si pio contesta: sin red para el GB,
+# o con menos de 3 GB libres, el cierre era "LISTO!" con exit 0 y el .exe mostraba
+# su pantalla de "quedo instalado". El docente se enteraba en clase, en la primera
+# compilacion, que se corta a los 3 minutos (auditoria integral del 2026-11-21).
+#
+# La lista y la carpeta son LAS MISMAS que usa Preparar-Placas en install.ps1 para
+# decidir si baja: si fueran distintas, este resumen diria "faltan" sobre algo que
+# Reparar da por bajado, y seria un bucle. Las ata tests/placas-herramientas.test.mjs,
+# que tambien exige que Core-PlatformIO sea igual letra por letra en los dos archivos
+# (cada .ps1 corre solo: no hay dot-sourcing).
+$PaquetesPlacas = @("toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr")
+function Core-PlatformIO {
+    if ($env:PLATFORMIO_CORE_DIR) { return $env:PLATFORMIO_CORE_DIR }
+    $raiz = [System.IO.Path]::GetPathRoot($env:USERPROFILE)
+    if ($raiz) {
+        $enRaiz = Join-Path $raiz ".platformio"
+        if (Test-Path -LiteralPath $enRaiz -PathType Container) { return $enRaiz }
+    }
+    return (Join-Path $env:USERPROFILE ".platformio")
+}
 $OpenCodeArranca = [bool](Test-OpenCode)
 if ($script:FalloOpenCode -and $OpenCodeArranca) {
     Write-Host "  [i] Mas arriba OpenCode no arrancaba y ahora si: vale lo de ahora, que es lo que se acaba de comprobar."
@@ -2109,6 +2138,19 @@ if ($PioExe) {
     $Degradado += "falta PlatformIO: el bot no puede compilar ni cargar codigo a la placa"
     $ReparaSirve = $true
     Write-Host "  [!]  PlatformIO   NO esta: el bot no puede compilar ni cargar codigo a la placa." -ForegroundColor Yellow
+}
+# Solo con PlatformIO: sin el no se pudo ni intentar bajarlas, y el renglon de
+# arriba ya dice que no compila. Un segundo aviso por la misma causa seria ruido.
+if ($PioExe) {
+    $CorePlacas = Core-PlatformIO
+    $FaltanPlacas = @($PaquetesPlacas | Where-Object { -not (Test-Path -LiteralPath (Join-Path $CorePlacas "packages\$_") -PathType Container) })
+    if ($FaltanPlacas.Count -eq 0) {
+        Write-Host "  [OK] Placas       las herramientas de ESP32 y Arduino UNO estan en $CorePlacas"
+    } else {
+        $Degradado += "faltan las herramientas de las placas en ${CorePlacas}\packages ($($FaltanPlacas -join ', ')): la primera compilacion va a intentar bajarlas (mas de 1 GB) y, sin buena red, se corta a los 3 minutos. Mas arriba, donde dice [AVISO], esta por que no se bajaron. Con buena red y 3 GB libres, Reparar las baja"
+        $ReparaSirve = $true
+        Write-Host "  [!]  Placas       FALTAN las herramientas de ESP32 y Arduino UNO: la primera compilacion tiene que bajar mas de 1 GB." -ForegroundColor Yellow
+    }
 }
 if ($NodeExe) {
     Write-Host "  [OK] Node         contesta en $NodeExe"

@@ -11,6 +11,10 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 - **Desde tu perfil en la plataforma, pestaña "Tecnia Bot",** ves qué recuerda el bot de vos y en qué compus está vinculado, y podés cortarle el acceso a cualquiera o borrar la memoria.
 - **Cerrar la sesión desde el bot** ("cerrá mi sesión de Tecnia Lab") la cierra en la plataforma y la borra de la compu. El bot te dice por separado qué pasó en cada lado.
 
+### Arreglado
+
+- **El instalador ya no dice "listo" si no pudo bajar las herramientas de las placas.** Al instalar se bajan el compilador y las librerías de ESP32 y Arduino UNO, que pesan más de 1 GB. Si esa descarga fallaba (sin buena red, o con menos de 3 GB libres), el instalador avisaba en el medio y terminaba igual con "LISTO!" en Windows y "¡Todo listo!" en Linux y macOS. Te enterabas en clase, en la primera compilación. Ahora, al terminar, busca esas herramientas en el disco: si faltan, cierra diciendo que Tecnia Bot quedó instalado pero incompleto, nombra cuáles faltan y en qué carpeta las buscó, y te dice cómo bajarlas ("Reparar Tecnia Bot" en Windows, o volver a correr el instalador en Linux y macOS, con buena red).
+
 ### Qué hay que saber
 
 - **En una compu de aula no se vincula.** Si el perfil de la compu está en modo aula, el bot no deja vincular una cuenta: esa compu la usan muchos chicos y la cuenta de un docente quedaría al alcance del que se siente después.
@@ -22,6 +26,8 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 ### Qué no se probó
 
 Una notebook de aula y Windows 10. El vínculo se probó de punta a punta contra la plataforma real en Linux y en una máquina virtual con Windows 11. En esa Windows, la página que aparece al volver del navegador y el aviso al cerrar la sesión no se vieron con esta versión: se probaron con una anterior, y los cambios posteriores sólo en Linux.
+
+El aviso de las herramientas de las placas se probó ejecutando el instalador de Linux con descargas que fallan. En Windows no se probó una descarga que falla: sólo la instalación limpia, que es la que corre en la verificación automática.
 
 ## [0.4.11] — 2026-11-21
 
