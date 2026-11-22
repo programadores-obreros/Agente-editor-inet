@@ -267,6 +267,10 @@ test("bootstrap.sh con sólo wget: PlatformIO se intenta, OpenCode dice que le h
 //   - decidir por el código de pio en vez de por el disco no se puede escribir
 //     como mutación de una línea; lo cubre «pio dice que anduvo y no dejó nada».
 //
+// EL DISCO NO SE MIRA DE VERDAD: `df` es un ejecutable puesto por el test (ver ponerDf).
+// MUTACIÓN que lo prueba: `KB_DE_SOBRA` → 2 GB pone rojos «bajó la mitad» y «se bajan en
+// esta misma corrida», que es exactamente como fallaron con el disco real casi lleno.
+//
 // SIN PROBAR: una descarga real de `pio pkg install` (eso lo corre la CI, en el
 // job del instalador de Linux), ni una carpeta de herramienta que exista pero
 // haya quedado a medio descomprimir: se mira que la carpeta esté, igual que hace
@@ -291,9 +295,30 @@ function ponerPlatformioSinPlacas(h, alInstalar) {
   return { core, env: { PLATFORMIO_CORE_DIR: core } }
 }
 
-function bootstrapConPio(h, alInstalar) {
+/**
+ * Un `df` que contesta el espacio libre que el test decide.
+ *
+ * POR QUÉ EXISTE. install.sh no baja las herramientas con menos de 3 GB libres en el
+ * disco de PlatformIO, y lo mira con `df`. Los tests de este bloque usaban el `df` de
+ * verdad sobre la carpeta temporal: en una máquina con /tmp casi lleno, el instalador
+ * —con razón— no bajaba nada, y «bajó la mitad» y «se bajan en esta misma corrida»
+ * daban rojo sin que hubiera cambiado una línea del producto. Pasó el 2026-11-22, el
+ * mismo día en que entraron: /tmp quedó con 3,0 GB libres y los dos fallaron.
+ * Un test que depende de cuánto disco le queda a quien lo corre no mide el producto.
+ *
+ * Se saca primero el enlace que dejó armarBin: escribir sobre un enlace es escribir
+ * sobre el `df` del sistema.
+ */
+function ponerDf(bin, kbLibres) {
+  rmSync(join(bin, "df"), { force: true })
+  ponerEjecutable(bin, "df", `echo "Filesystem 1024-blocks Used Available Capacity Mounted on"\necho "disco-de-prueba 104857600 1 ${kbLibres} 1% /"`)
+}
+const KB_DE_SOBRA = 50 * 1024 * 1024 // 50 GB
+
+function bootstrapConPio(h, alInstalar, { kbLibres = KB_DE_SOBRA } = {}) {
   const bin = armarBin(h.base, ["jq", "python3"])
   ponerOpenCode(bin)
+  ponerDf(bin, kbLibres)
   const { core, env } = ponerPlatformioSinPlacas(h, alInstalar)
   return { core, r: bootstrap(h, { path: bin, env }) }
 }
@@ -350,6 +375,22 @@ test("bootstrap.sh cuando las herramientas se bajan en esta misma corrida: «¡T
     assert.equal(r.status, 0, `bajó las herramientas y salió ${r.status}:\n${r.salida}`)
     assert.match(r.stdout, /✅ ¡Todo listo!/, r.stdout)
     assert.doesNotMatch(r.stdout, /NO quedó completa/, r.stdout)
+  } finally {
+    rmSync(h.base, { recursive: true, force: true })
+  }
+})
+
+test("bootstrap.sh con menos de 3 GB libres: no intenta bajar las herramientas, lo avisa, y sale con 3", { skip: !puedeCorrer || !jq }, () => {
+  // La rama que hizo fallar a los dos tests de arriba cuando dependían del disco real.
+  // El pio de acá SÍ bajaría todo: si el instalador lo llamara, quedaría el testigo.
+  const h = nuevoHome()
+  try {
+    const bajar = PAQUETES_DE_PLACAS.map((p) => `"$PLATFORMIO_CORE_DIR/packages/${p}"`).join(" ")
+    const { core, r } = bootstrapConPio(h, `touch "$PLATFORMIO_CORE_DIR/SE-LLAMO-A-PKG-INSTALL"; mkdir -p ${bajar}`, { kbLibres: 2 * 1024 * 1024 })
+    assert.ok(!existsSync(join(core, "SE-LLAMO-A-PKG-INSTALL")), `con 2 GB libres intentó bajar más de 1 GB igual:\n${r.salida}`)
+    assert.match(r.stdout, /\[AVISO\] Hay 2 GB libres: no bajo las herramientas de las placas/, r.stdout)
+    assert.equal(r.status, 3, `sin las herramientas esperaba 3 y salió ${r.status}:\n${r.salida}`)
+    assert.match(verificarCierreIncompleto(r, "poco disco"), /\[✗\] Placas: FALTAN las herramientas/)
   } finally {
     rmSync(h.base, { recursive: true, force: true })
   }
