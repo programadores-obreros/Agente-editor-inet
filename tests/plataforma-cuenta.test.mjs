@@ -238,6 +238,9 @@ test("vincular: abre la plataforma, no dice «vinculado», y estado lo confirma 
     const mensaje = await vincularConSesion(caso)
     assert.match(mensaje, /TODAVÍA NO ESTÁ VINCULADO/)
     assert.match(mensaje, /NUNCA en este chat/)
+    // En una Windows recién estrenada Edge tapa la página con su bienvenida: hay que avisarlo.
+    assert.match(mensaje, /^Abrí el navegador en la plataforma\./)
+    assert.match(mensaje, /pantalla de bienvenida[^\n]*hay que pasarla: la página de vincular está en esa misma ventana/)
     assert.ok(!/Tecnia Bot está vinculado/.test(mensaje))
 
     assert.equal(caso.abiertas.length, 1)
@@ -285,6 +288,8 @@ test("vincular: si el navegador no se abre, entrega el enlace para abrirlo a man
     const mensaje = await caso.cuenta.ejecutar("vincular")
     assert.match(mensaje, /No pude abrir el navegador solo/)
     assert.ok(mensaje.includes(caso.abiertas[0]))
+    // Sin navegador abierto no hay ninguna ventana con una bienvenida que pasar.
+    assert.doesNotMatch(mensaje, /pantalla de bienvenida/)
     assert.match(await caso.cuenta.ejecutar("estado"), /Sigo esperando que el docente confirme/)
     // Un segundo `vincular` no abre otro puerto ni otra pestaña: devuelve el mismo enlace.
     assert.ok((await caso.cuenta.ejecutar("vincular")).includes(caso.abiertas[0]))

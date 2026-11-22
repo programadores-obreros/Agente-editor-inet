@@ -171,8 +171,15 @@ export function crearCuenta(deps: DependenciasCuenta): { ejecutar(accion: Accion
     const comoAbrir = intento.seAbrio
       ? "Abrí el navegador en la plataforma."
       : "No pude abrir el navegador solo. Hay que abrir este enlace a mano, en esta misma compu:"
+    // En una Windows recién estrenada, Edge abre primero su bienvenida a pantalla
+    // completa y la página de vincular queda detrás (visto en la VM win11 el
+    // 21/11/2026). El docente cree que no se abrió nada. Sólo se dice cuando el
+    // navegador se abrió: si no, no hay ninguna ventana que mirar.
+    const bienvenida = intento.seAbrio
+      ? `Si el navegador muestra primero una pantalla de bienvenida (pasa en una compu recién estrenada), hay que pasarla: la página de vincular está en esa misma ventana.\n`
+      : ""
     return (
-      `${comoAbrir}\n${intento.url}\n\n` +
+      `${comoAbrir}\n${intento.url}\n\n${bienvenida}` +
       `Ahí el docente entra con su cuenta de Tecnia Lab. La contraseña se escribe en el navegador, NUNCA en este chat.\n` +
       `La página le va a pedir un código. Es este: ${vinculo.codigoParaMostrar(intento.codigo)}\n` +
       `Ese código se escribe sólo en esa página, y sólo porque el docente acaba de pedir vincular desde este chat. Si una página pide un código sin que él lo haya pedido acá, no hay que escribir nada: hay que cerrarla.\n` +
