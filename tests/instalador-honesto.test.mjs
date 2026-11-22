@@ -1246,3 +1246,22 @@ test("F3.c · censo de salidas del bootstrap: seis cortes con 1, el degradado, y
   // El único 0 es la ÚLTIMA sentencia del script: nada corre después del veredicto.
   assert.match(bootstrap, /\n\s*exit 0\s*$/, "el `exit 0` no es lo último del script")
 })
+
+// ── Prueba con el asistente (2026-11-21) · letras rojas en una instalación que sale bien ──
+test("ningún chequeo previsto del bootstrap puede imprimir un error rojo de PowerShell", () => {
+  // `try { Get-Item X } catch { ... }` NO atrapa un error no terminante: con
+  // ErrorActionPreference en Continue (como está en los bloques de diagnóstico), PowerShell
+  // imprime el error en rojo y sigue. En una instalación nueva pasaba siempre, porque el
+  // diagnóstico mira la carpeta de OpenCode antes de que exista. La instalación terminaba
+  // bien y el docente veía seis renglones rojos. Regla: todo `try { ... } catch` de UNA línea
+  // que lea el disco o los procesos lleva -ErrorAction Stop (o SilentlyContinue).
+  const sinComentarios = bootstrap.split("\n").filter((l) => !/^\s*#/.test(l))
+  const flojos = sinComentarios.filter(
+    (l) =>
+      /try \{[^}]*\b(Get-Item|Get-ChildItem|Get-Content|Get-ItemProperty|Resolve-Path|Get-Process|Get-Command)\b[^}]*\} catch/.test(l) &&
+      !/-ErrorAction (Stop|SilentlyContinue)/.test(l),
+  )
+  assert.deepEqual(flojos.map((l) => l.trim().slice(0, 90)), [], "hay un try/catch de una línea que puede imprimir un error rojo")
+  // Y el que se vio en pantalla, con nombre y apellido.
+  assert.match(bootstrap, /\$dirReal = try \{ \(Get-Item \$dirCurrent -Force -ErrorAction Stop\)\.Target \} catch \{ \$dirCurrent \}/, "volvió el Get-Item sin -ErrorAction Stop del diagnóstico de OpenCode")
+})

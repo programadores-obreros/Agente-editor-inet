@@ -521,7 +521,13 @@ function Test-OpenCode {
         $versiones = try { (Get-ChildItem (Split-Path $dirCurrent -Parent) -Name -ErrorAction Stop) -join "," } catch { "?" }
         Write-Host ("      entorno: cwd=" + (Get-Location).Path + " | TEMP=" + $env:TEMP + " | __COMPAT_LAYER=" + $env:__COMPAT_LAYER + " | stdin redirigido=" + [Console]::IsInputRedirected + " | stdout redirigido=" + [Console]::IsOutputRedirected + " | procesos opencode=" + @(Get-Process opencode -ErrorAction SilentlyContinue).Count)
         Write-Host ("      binario: File.Exists=" + [System.IO.File]::Exists($BinOpenCode) + " | Directory.Exists(current)=" + [System.IO.Directory]::Exists($dirCurrent) + " | current: " + $infoCurrent + " | versiones en apps\opencode: " + $versiones)
-        $dirReal = try { (Get-Item $dirCurrent -Force).Target } catch { $dirCurrent }
+        # -ErrorAction Stop, COMO EN LAS DEMAS LINEAS DE ESTE BLOQUE. Sin eso, cuando la
+        # carpeta todavia no existe (instalacion nueva: OpenCode aun no se bajo) el error
+        # no es terminante, el catch no lo atrapa y PowerShell lo imprime EN ROJO:
+        # "Get-Item : No se encuentra la ruta de acceso ...". La instalacion seguia y
+        # terminaba bien, pero el docente veia seis renglones rojos en el medio. Visto
+        # en la prueba con el asistente (2026-11-21).
+        $dirReal = try { (Get-Item $dirCurrent -Force -ErrorAction Stop).Target } catch { $dirCurrent }
         $archivos = try { (Get-ChildItem $dirReal -Force -ErrorAction Stop | ForEach-Object { $_.Name + "(" + $_.Length + ")" }) -join "," } catch { "Get-ChildItem fallo: " + $_.Exception.Message }
         $cmdDir = try { (& cmd /c "dir /b `"$dirReal`"" 2>&1 | Out-String) -replace "\s+", "," } catch { "?" }
         $ident = try { (& whoami /groups 2>&1 | Out-String) -split "`n" | Where-Object { $_ -match "Mandatory|Nivel" } | ForEach-Object { $_.Trim() -replace "\s+", " " } } catch { "?" }
