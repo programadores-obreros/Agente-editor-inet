@@ -2,7 +2,7 @@
 import { tool } from "@opencode-ai/plugin"
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { isAbsolute, join, resolve, win32 } from "node:path"
 
 interface RunResult {
@@ -167,6 +167,14 @@ export function timeoutCompilarMs(faltaban: string[]): number {
 export const CODIGO_TIMEOUT = 124
 /** Lo que devuelve `run()` cuando el usuario corto la accion desde OpenCode (Ctrl+C: 128+SIGINT). */
 export const CODIGO_CANCELADO = 130
+/**
+ * Lo que devuelve `run()` cuando el programa EXISTE pero no se pudo lanzar (sin permiso de
+ * ejecucion, por ejemplo). Es el codigo de las shells para "encontrado pero no ejecutable".
+ * No es lo mismo que 127 ("no esta"): mandar a reinstalar algo que esta instalado no lo arregla.
+ */
+export const CODIGO_NO_LANZO = 126
+/** Los errores de lanzamiento que quieren decir "el programa esta, pero no se pudo ejecutar". */
+const EXISTE_Y_NO_SE_PUDO_LANZAR = new Set(["EACCES", "EPERM", "ENOEXEC", "ETXTBSY"])
 
 /**
  * Una sola senal que se dispara si CUALQUIERA de las dos se dispara. Bun trae
@@ -224,7 +232,23 @@ export async function run(
   let proc: ReturnType<typeof lanzar>
   try {
     proc = lanzar()
-  } catch {
+  } catch (error) {
+    // NO TODA EXCEPCION ES "NO ESTA INSTALADO". Antes cualquiera salia como 127 y
+    // "command not found", y el tool contestaba "PlatformIO no esta instalado... llama a
+    // reparar" tambien cuando pio estaba y lo que fallaba era ejecutarlo.
+    //
+    // Se distingue SOLO lo que el sistema dice sin ambiguedad que es "esta y no lo pude
+    // lanzar". Todo lo demas sigue siendo 127, como siempre: es el caso comun (pio no
+    // esta) y no se arriesga por un codigo de error que no se midio. MEDIDO en Bun 1.4.4
+    // sobre Linux: programa que no existe -> code "ENOENT" (con el nombre pelado el mensaje
+    // es "Executable not found in $PATH" y NO dice ENOENT: por eso se mira `code` y no el
+    // texto); sin permiso de ejecucion, o una carpeta -> code "EACCES". En Windows no se midio.
+    // (La carpeta del proyecto inexistente tambien da ENOENT: esa se mira antes, en execute.)
+    const codigo = String((error as { code?: unknown } | null)?.code ?? "")
+    if (EXISTE_Y_NO_SE_PUDO_LANZAR.has(codigo)) {
+      const motivo = error instanceof Error ? error.message : String(error)
+      return { code: CODIGO_NO_LANZO, stdout: "", stderr: `No se pudo lanzar ${cmd[0]}: ${motivo}` }
+    }
     return { code: 127, stdout: "", stderr: "command not found" }
   }
 
@@ -857,18 +881,52 @@ async function placasSinDriver(cwd: string, signal?: AbortSignal) {
   return r.code === 0 ? leerDispositivosConProblema(r.stdout) : []
 }
 
-async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string; hwid?: string } | { error: string }> {
-  const result = await run(["pio", "device", "list", "--json-output"], cwd, signal)
+type ListaDePuertos = { ok: true; devices: Device[] } | { ok: false; motivo: string }
 
-  let devices: Device[] = []
-  try {
-    devices = JSON.parse(result.stdout) as Device[]
-  } catch {
-    const isWindows = process.platform === "win32"
-    const pattern = isWindows ? /COM\d+/g : /\/dev\/tty(?:USB|ACM)\d+/g
-    const matches = result.stdout.match(pattern) ?? []
-    devices = matches.map((port) => ({ port }))
+/**
+ * Los puertos que ve PlatformIO, O POR QUE NO SE PUDIERON VER. Son dos respuestas distintas.
+ *
+ * Antes nadie miraba el codigo de salida de `pio device list`. Si fallaba -un timeout, una
+ * cancelacion, pyserial roto: los tres dejan la salida vacia- la lista quedaba en cero y el
+ * tool AFIRMABA "No encuentro ninguna placa conectada", y el diagnostico "Ninguno - no hay
+ * ni siquiera un puerto serie". No habia medido que no hay placa: no habia podido listar. El
+ * docente revisaba el cable de una placa que estaba bien enchufada. Y con una salida que es
+ * JSON pero no una lista (`null`), tiraba un TypeError sin atajar.
+ *
+ * "Lista vacia" sale SOLO de un `pio device list` que termino bien y contesto `[]`.
+ */
+async function listarPuertos(cwd: string, signal?: AbortSignal): Promise<ListaDePuertos> {
+  const r = await run(["pio", "device", "list", "--json-output"], cwd, signal)
+  if (r.code === CODIGO_TIMEOUT) return { ok: false, motivo: "PlatformIO no contesto a tiempo" }
+  if (r.code === CODIGO_CANCELADO) return { ok: false, motivo: "se cancelo antes de terminar" }
+  if (r.code !== 0) {
+    const primera = r.stderr.trim().split("\n")[0]?.trim().slice(0, 200) ?? ""
+    return { ok: false, motivo: `\`pio device list\` fallo (codigo ${r.code})${primera ? `: ${primera}` : ""}` }
   }
+  try {
+    const parsed: unknown = JSON.parse(r.stdout)
+    if (Array.isArray(parsed)) return { ok: true, devices: parsed as Device[] }
+  } catch {
+    /* no es JSON: se prueba el respaldo de abajo */
+  }
+  // Respaldo para un pio que no entiende --json-output: se leen los nombres de puerto del
+  // texto. Si no nombra ninguno, no hay forma de saber que hay: no se pudo leer.
+  const pattern = process.platform === "win32" ? /COM\d+/g : /\/dev\/tty(?:USB|ACM)\d+/g
+  const matches = r.stdout.match(pattern) ?? []
+  if (matches.length > 0) return { ok: true, devices: matches.map((port) => ({ port })) }
+  return { ok: false, motivo: "PlatformIO contesto algo que no es una lista de puertos" }
+}
+
+async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string; hwid?: string } | { error: string }> {
+  const puertos = await listarPuertos(cwd, signal)
+  if (!puertos.ok) {
+    return {
+      error:
+        `No pude ver los puertos USB: ${puertos.motivo}. No sé si hay una placa conectada: no es que no la encuentre, es que no pude mirar.` +
+        ` Probá de nuevo; si sigue igual, corré \`/diagnostico\`.`,
+    }
+  }
+  const devices = puertos.devices
 
   /*
    * SÓLO PLACAS, y nunca "lo que haya".
@@ -3491,7 +3549,33 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
       .describe("Ruta al proyecto PlatformIO. Por defecto usa el directorio actual."),
   },
   async execute(args, ctx) {
-    const cwd = args.project_path ?? ctx.directory
+    /*
+     * LA CARPETA SE MIRA ANTES DE LANZAR NADA.
+     *
+     * Bun tira ENOENT al lanzar un proceso en una carpeta que no existe, igual que cuando
+     * no existe el programa. Con PlatformIO instalado y un `project_path` mal escrito (o
+     * un proyecto que todavia no se creo), el tool contestaba "PlatformIO no esta
+     * instalado... llama a reparar": mandaba a reinstalar, minutos y una descarga, por un
+     * error de ruta. Y el diagnostico decia "PlatformIO: NO encontrado".
+     *
+     * Una ruta relativa se resuelve contra la carpeta de la sesion, no contra la del
+     * proceso de OpenCode, que es otra.
+     */
+    const carpetaPedida = args.project_path ? resolve(ctx.directory, args.project_path) : ctx.directory
+    let problemaDeCarpeta: string | null = null
+    try {
+      if (!statSync(carpetaPedida).isDirectory()) {
+        problemaDeCarpeta = `\`${carpetaPedida}\` no es una carpeta: es un archivo. Pasame la carpeta que tiene adentro el platformio.ini.`
+      }
+    } catch {
+      problemaDeCarpeta = `\`${carpetaPedida}\` no existe. Fijate si la ruta esta bien escrita y si el proyecto ya se creo.`
+    }
+    // `reparar` no usa la carpeta del proyecto. `diagnostico` informa del entorno igual,
+    // corriendo en una carpeta que si existe, y avisa de la carpeta en su reporte.
+    if (problemaDeCarpeta && args.action !== "reparar" && args.action !== "diagnostico") {
+      return `No encuentro la carpeta del proyecto: ${problemaDeCarpeta}\n\nNo es un problema de PlatformIO ni de la instalacion: no hay que instalar nada.`
+    }
+    const cwd = problemaDeCarpeta ? (existsSync(homedir()) ? homedir() : tmpdir()) : carpetaPedida
     const signal = ctx.abort
     const envFlag = args.environment ? ["-e", args.environment] : []
 
@@ -3563,6 +3647,14 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
       if (check.code === 127 || check.stderr.includes("command not found") || check.stderr.includes("is not recognized")) {
         return pioNoEncontrado()
       }
+      if (check.code === CODIGO_NO_LANZO) {
+        return (
+          "PlatformIO esta en esta compu, pero no lo pude ejecutar.\n\n" +
+          `${check.stderr}\n\n` +
+          "No es que falte instalarlo: algo impide lanzarlo (permisos, un antivirus, un archivo dañado). " +
+          "Corre `/diagnostico` para ver el detalle."
+        )
+      }
     }
 
     switch (args.action) {
@@ -3628,8 +3720,8 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           timeoutLargoMs(),
         )
 
-        // 127 es lo que devuelve run() cuando ni siquiera pudo lanzar el proceso.
-        if (result.code === 127) {
+        // 127 y CODIGO_NO_LANZO son lo que devuelve run() cuando ni siquiera pudo lanzar el proceso.
+        if (result.code === 127 || result.code === CODIGO_NO_LANZO) {
           return (
             "NO PUDE CORRER LA REPARACION: no se pudo lanzar PowerShell desde aca.\n\n" +
             (pioAntes
@@ -3870,16 +3962,17 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
         let dispositivosText = "No disponible (PlatformIO no instalado)"
         let placas = 0
 
-        if (pioOk) {
-          const devResult = await run(["pio", "device", "list", "--json-output"], cwd, signal)
-          let devices: Device[] = []
-          try {
-            devices = JSON.parse(devResult.stdout) as Device[]
-          } catch {
-            devices = []
-          }
+        // Por que no se pudo listar, o null si se pudo. Ver listarPuertos().
+        let noPudeListar: string | null = null
 
-          if (devices.length === 0) {
+        if (pioOk) {
+          const lista = await listarPuertos(cwd, signal)
+          const devices = lista.ok ? lista.devices : []
+
+          if (!lista.ok) {
+            noPudeListar = lista.motivo
+            dispositivosText = `No pude verlos: ${lista.motivo}`
+          } else if (devices.length === 0) {
             dispositivosText = "Ninguno — no hay ni siquiera un puerto serie"
           } else {
             dispositivosText = devices
@@ -3902,6 +3995,10 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
             "Falta instalar PlatformIO. Se arregla con 'Reparar Tecnia Bot', en el menu " +
             "inicio: lo instala solo. NO hay que instalar VS Code " +
             "ni nada aparte. Si aun asi falta, es la red: correr 'Diagnostico de Tecnia Bot'."
+        } else if (noPudeListar) {
+          estado =
+            "PlatformIO esta, pero **no pude ver los puertos USB**, así que no sé si hay una placa conectada. " +
+            "No es que no la encuentre: no pude mirar. Probá `/diagnostico` de nuevo; si sigue igual, 'Reparar Tecnia Bot' del menu inicio."
         } else if (placas === 0) {
           /*
            * ANTES DE DECIR "no hay nada", PREGUNTARLE A WINDOWS.
@@ -3935,7 +4032,7 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
 **PlatformIO:** ${pioText}
 
 **Sistema operativo:** ${os}
-
+${problemaDeCarpeta ? `\n**Carpeta del proyecto:** ${problemaDeCarpeta}\n` : ""}
 **Puertos que veo:**
 ${dispositivosText}
 

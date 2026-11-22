@@ -138,8 +138,22 @@ test("reparar en Windows (simulado) sin PlatformIO llega al chequeo del bootstra
 })
 
 test("compile sin PlatformIO sí contesta 'anda al menu inicio' (el pre-chequeo sigue vivo para el resto)", async () => {
-  const r = await mod.default.execute({ action: "compile" }, ctx)
-  assert.match(r, FRASE_NO_ENCONTRADO)
+  // POR QUÉ ACÁ SE TIRA ENOENT A MANO. Este test «simulaba» que pio faltaba con que
+  // `Bun.spawn` no existiera: run() atajaba el TypeError y devolvía 127. Seguiría pasando
+  // así, pero se apoyaba en un error que no tiene nada que ver con que pio falte. Bun,
+  // cuando el programa no existe, tira un error con `code: "ENOENT"` (medido en Bun 1.4.4):
+  // el test lo reproduce como es.
+  const spawnOriginal = globalThis.Bun.spawn
+  globalThis.Bun.spawn = () => {
+    throw Object.assign(new Error("ENOENT: no such file or directory, posix_spawn 'pio'"), { code: "ENOENT" })
+  }
+  try {
+    const r = await mod.default.execute({ action: "compile" }, ctx)
+    assert.match(r, FRASE_NO_ENCONTRADO)
+  } finally {
+    if (spawnOriginal) globalThis.Bun.spawn = spawnOriginal
+    else delete globalThis.Bun.spawn
+  }
 })
 
 // ── los baudios del monitor salen del platformio.ini ────────────────────────
