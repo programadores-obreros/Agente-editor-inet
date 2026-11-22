@@ -40,7 +40,7 @@ Para el detalle por componente (lámpara, calefactor, bomba) está el skill `act
 
 **El ESP32 trabaja a 3.3V en sus pines (GPIO). El Arduino UNO, a 5V.** Meterle 5V a un GPIO del ESP32 lo puede **dañar de forma permanente**. Este es el error más caro y más común.
 
-- **Alimentación de componentes:** los que necesitan 5V (servo, PIR, HC-SR04, algunos relés) van al pin **VIN (5V)** del ESP32, **NUNCA a 3.3V**. (El LCD 16x2 con mochila I2C también va a VIN, y tiene una aclaración propia más abajo: leela ANTES de conectarlo.)
+- **Alimentación de componentes:** los que necesitan 5V (servo, PIR, HC-SR04, algunos relés) van al pin **VIN (5V)** del ESP32, **NUNCA a 3.3V**. (El LCD 16x2 con adaptador I2C también va a VIN, y tiene una aclaración propia más abajo: leela ANTES de conectarlo.)
 - **Señales que ENTRAN al ESP32:** si un sensor devuelve 5V (ej: el pin ECHO del HC-SR04), **no lo conectes directo a un GPIO** → necesitás un divisor de tensión (R1=1kΩ + R2=2kΩ) para bajarlo a ~3.3V. Directo, lo dañás.
 - **En el UNO (5V) esto no es problema** — es tolerante a 5V. El salto de peligro es propio del ESP32.
 
@@ -71,16 +71,16 @@ Para el detalle por componente (lámpara, calefactor, bomba) está el skill `act
 | DHT11/22 | 3.3V | la plaqueta de 3 pines **ya trae** su pull-up; sólo el sensor pelado de 4 patas necesita uno externo |
 | Relé | según módulo (muchos 5V → VIN) | separá la potencia de la lógica. 🛑 **Si el otro lado va a 220V, leé la sección ALTO del principio antes de conectar nada**: lo cablea un adulto, desenergizado y aislado |
 
-## ⚠️ El LCD 16x2 con mochila I2C — el que parecía fácil y no lo es
+## ⚠️ El LCD 16x2 con adaptador I2C — el que parecía fácil y no lo es
 
 Este es el único componente de la tabla que **no tiene una respuesta limpia**, y conviene decirlo antes de que el alumno conecte, no después.
 
 El módulo son **dos cosas pegadas** con necesidades distintas:
 
 - el **display HD44780**, que pide **5V**: el contraste del cristal se hace con esa tensión (hoja de datos Hitachi);
-- la **mochila PCF8574**, que es la plaquita soldada atrás y la que habla I2C, y que tolera bastante menos.
+- el **adaptador I2C** (un PCF8574), que es la plaquita soldada atrás del display y la que habla I2C, y que tolera bastante menos.
 
-**Si lo alimentás a 5V:** el display se ve perfecto — pero las resistencias de pull-up del bus I2C están **adentro de la mochila** y van a **su propio VCC**. O sea: alimentar la mochila a 5V pone **SDA y SCL en 5V**. Y GPIO21 / GPIO22 del ESP32 **no son tolerantes a 5V**, exactamente igual que en el caso del ECHO del HC-SR04 unos párrafos más arriba. Para hacerlo bien necesitás un **conversor de nivel bidireccional** en SDA y SCL.
+**Si lo alimentás a 5V:** el display se ve perfecto — pero las resistencias de pull-up del bus I2C están **adentro del adaptador** y van a **su propio VCC**. O sea: alimentar el adaptador a 5V pone **SDA y SCL en 5V**. Y GPIO21 / GPIO22 del ESP32 **no son tolerantes a 5V**, exactamente igual que en el caso del ECHO del HC-SR04 unos párrafos más arriba. Para hacerlo bien necesitás un **conversor de nivel bidireccional** en SDA y SCL.
 
 **Y ojo con esto, que es el error que sigue al error:** el divisor de tensión de dos resistencias (R1=1kΩ + R2=2kΩ) que usás para el ECHO **NO sirve acá**. El I2C es un bus bidireccional: los dos extremos manejan la misma línea, y un divisor solo baja en un sentido. Tiene que ser un conversor bidireccional (los de dos MOSFET, que se venden hechos y son baratos).
 
@@ -91,7 +91,7 @@ El módulo son **dos cosas pegadas** con necesidades distintas:
 - Con **Arduino UNO** no hay problema: la placa ya es de 5V, alimentación y bus van los dos a 5V y listo.
 - Con **ESP32** el LCD va a **VIN (5V)**, GND, SDA a GPIO21 y SCL a GPIO22. Es como lo dibuja el tool `circuito` y como lo indican las fichas del INET (proyectos 04, 05 y 12): a 3.3V el display queda sin contraste.
 - **La aclaración, que va siempre con ese plano:** nadie puede afirmar desde acá que ese adaptador I2C en particular deje el bus en un nivel seguro. Las plaquetas no declaran el valor de sus pull-ups ni contra qué tensión quedan. Por eso **se mide**: SDA y SCL con el téster, con el LCD alimentado y el ESP32 apagado. Si marcan **cerca de 5V**, entre el display y el ESP32 va un **conversor de nivel bidireccional I2C** (o un adaptador con los pull-ups del lado de 3.3V).
-- **Cuando se lo expliques al docente no digas "mochila" a secas:** es como le dicen al adaptador I2C quienes ya lo conocen. Decí "el adaptador I2C, la plaquita que el display trae soldada atrás".
+- **Cuando se lo expliques al docente no digas "mochila":** es el apodo que le ponen al adaptador I2C quienes ya lo conocen, y al que lo ve por primera vez no le dice nada. Decí "el adaptador I2C, la plaquita que el display trae soldada atrás". Si el docente usa esa palabra, sabé que habla de esto.
 - **Lo que no sirve como arreglo:** el divisor de dos resistencias del ECHO. Lo dice el párrafo de arriba: I2C es bidireccional.
 
 **Para el alumno:** "El LCD es dos aparatos en uno: la pantalla quiere 5 voltios para verse bien, y el chiquito que la maneja habla en el voltaje que vos le des. Si le das 5, la pantalla se ve hermosa pero le está gritando 5 voltios al ESP32 por los cables de datos. Por eso lo conectamos a 5 y después medimos esos dos cables con el téster: si ahí hay 5 voltios, ponemos un traductor de voltaje en el medio."

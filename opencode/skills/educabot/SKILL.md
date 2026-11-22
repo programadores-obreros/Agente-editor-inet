@@ -240,7 +240,7 @@ En Tecnia Bot: idéntico, con `lib_deps = marcoschwartz/LiquidCrystal_I2C` (mism
 
 **La dirección: en los kits de Educabot, `0x27`. Ponela y seguí.**
 
-En los kits que vimos **hasta hoy**, la mochila del LCD siempre fue la de `0x27`. Usala
+En los kits que vimos **hasta hoy**, el adaptador I2C del LCD (la plaquita soldada atrás del display) siempre fue el de `0x27`. Usala
 **sin preguntar y sin avisar nada**: un aviso sobre algo que no pasa nunca entrena al
 docente a ignorar los avisos, y el día que le des uno que importa no te va a leer.
 
@@ -252,8 +252,8 @@ docente a ignorar los avisos, y el día que le des uno que importa no te va a le
 
 **Si NO muestra nada, recién ahí:**
 
-Estos displays vienen en dos versiones que por fuera son idénticas — cambia el chip de la
-mochila, y con él la dirección. Decíselo con el síntoma, no con el número:
+Estos displays vienen en dos versiones que por fuera son idénticas — cambia el chip del
+adaptador I2C, y con él la dirección. Decíselo con el síntoma, no con el número:
 
 > Estos displays vienen en dos versiones que por fuera son idénticas. **Dale vuelta el
 > display y mirá el chip más grande de la plaquita de atrás: si dice `PCF8574A`, con A al

@@ -281,3 +281,46 @@ test("ningún comentario del producto cita un archivo de test que no existe", ()
   assert.ok(citas > 20, `sólo encontré ${citas} citas a tests: la expresión dejó de encontrarlas`)
   assert.deepEqual(rotos, [], "comentarios que citan un test que no existe")
 })
+
+test("el adaptador I2C del LCD no se llama «mochila» en nada de lo que lee el modelo o el docente", () => {
+  // Decisión del owner (2026-11-22): «la palabra mochila puede ser confusa». Es el apodo
+  // que le ponen al adaptador I2C del display quienes ya lo conocen; al docente que lo ve
+  // por primera vez no le dice nada, y el modelo repite la palabra que encuentra en sus
+  // fuentes. Se cambió en todos lados por «adaptador I2C», y la primera vez que aparece
+  // se dice qué es: la plaquita que el display trae soldada atrás.
+  //
+  // Lo que SÍ puede decir «mochila», y por qué:
+  //   - la ficha 08 (dron): son mochilas de verdad, las que hay que sacar de la zona de vuelo;
+  //   - el skill de seguridad, en el renglón que le pide al bot que no la use;
+  //   - dos comentarios de circuito.ts que cuentan la historia del cambio.
+  // Mutación: volver a escribir «la mochila I2C» en cualquier skill o ficha → rojo.
+  const PERMITIDO = [
+    /mochilas, compañeros circulando/,
+    /no digas "mochila"/,
+    /decía «Nunca mochila a 5V con SDA\/SCL/,
+    /No dice «mochila»: es como le dicen al adaptador/,
+  ]
+  const fuera = []
+  let mirados = 0
+  const andar = (dir) => {
+    for (const e of readdirSync(join(REPO, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`
+      if (e.isDirectory()) { andar(rel); continue }
+      if (!/\.(md|ts|tsx|json)$/.test(e.name) || /bundle|compressed/.test(e.name)) continue
+      mirados++
+      leer(rel).split("\n").forEach((linea, i) => {
+        if (/mochila/i.test(linea) && !PERMITIDO.some((p) => p.test(linea))) fuera.push(`${rel}:${i + 1}: ${linea.trim().slice(0, 90)}`)
+      })
+    }
+  }
+  andar("opencode")
+  assert.ok(mirados > 80, `sólo miré ${mirados} archivos: no estoy recorriendo opencode/`)
+  assert.deepEqual(fuera, [], "todavía dicen «mochila»")
+  // El contrapeso: las excepciones siguen existiendo (si no, la lista de permitidos es un adorno).
+  assert.match(leer("opencode/skills/proyectos-inet/proyectos/08-dron-de-vuelo.md"), /mochilas, compañeros circulando/)
+  assert.match(leer("opencode/skills/checklist-seguridad/SKILL.md"), /no digas "mochila"/)
+  // Y las tres fichas dicen qué es el adaptador la primera vez que lo nombran.
+  for (const f of ["04-invernadero", "05-estacion-meteorologica", "12-calefaccion"]) {
+    assert.match(leer(`opencode/skills/proyectos-inet/proyectos/${f}.md`), /adaptador I²C \(la plaquita que el display trae soldada atrás\)/, `la ficha ${f} no explica qué es el adaptador I²C`)
+  }
+})
