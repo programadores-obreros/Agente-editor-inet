@@ -761,3 +761,158 @@ test("los instaladores dicen lo mismo que el bot: /actualizar no baja, y el pend
   assert.match(sh, /core="\$\{PLATFORMIO_CORE_DIR:-\$HOME\/\.platformio\}"/)
   assert.match(readFileSync(join(REPO, "install/diagnostico.ps1"), "utf8"), /function Core-PlatformIO \{[\s\S]{0,400}-PathType Container/)
 })
+
+// ── NO AFIRMAR LO QUE NO SE MIDIÓ: LA CARPETA Y LA LISTA DE PUERTOS ────────────
+//
+// Dos OK falsos (bueno: dos diagnósticos falsos) que encontró la auditoría de
+// código del 2026-11-22, ejecutando el tool sobre el Bun real con un pio falso.
+//
+// PIO-01. `run()` convertía CUALQUIER excepción de `Bun.spawn` en «command not
+// found» con código 127, y Bun tira ENOENT también cuando la CARPETA no existe.
+// Con PlatformIO instalado y un `project_path` mal escrito, el tool contestaba
+// «PlatformIO no esta instalado… Instalalo VOS ahora: action "reparar"», y el
+// diagnóstico «PlatformIO: NO encontrado». Mandaba a reinstalar (minutos, una
+// descarga) por un error de tipeo. El pio no había sido llamado ni una vez.
+//
+// PIO-05. Nadie miraba el código de salida de `pio device list`. Si fallaba
+// (timeout, cancelación, pyserial roto: los tres dejan la salida vacía), el tool
+// afirmaba «No encuentro ninguna placa conectada» y el diagnóstico «Ninguno — no
+// hay ni siquiera un puerto serie». No había medido que no hay placa: no había
+// podido listar. Y con una salida que es JSON pero no una lista, tiraba un
+// TypeError sin atajar.
+//
+// POR QUÉ LOS TESTS DE ARRIBA NO LO VEÍAN: `ctx.directory` es siempre una carpeta
+// que existe, y el guion de `device list` siempre devuelve una lista válida con
+// código 0. Y el `Bun.spawn` falso de este archivo NO falla con una carpeta
+// inexistente, como sí hace el de verdad: por eso acá se mira que el tool ni
+// siquiera llegue a lanzar nada.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - sacar el chequeo de la carpeta del principio de execute     → rojos «no existe» y «es un ARCHIVO»
+//   - `resolve(ctx.directory, args.project_path)` → sin resolver  → rojo «relativo»
+//   - en diagnostico, usar la carpeta pedida aunque no exista     → rojo «diagnostico con carpeta inexistente»
+//   - en run(), devolver 127 ante cualquier excepción             → rojo «existe y no se puede ejecutar»
+//   - en run(), devolver CODIGO_NO_LANZO ante cualquier excepción → rojo el contrapeso de «pio que no existe»
+//   - en listarPuertos, sacar `if (r.code !== 0)`                 → rojos los dos de «código 1 habiendo impreso una lista vacía»
+//   - en listarPuertos, sacar `Array.isArray`                     → rojos los de «no es una lista»
+//   - en diagnostico, tratar «no pude listar» como lista vacía    → rojo el de diagnostico
+//
+// LÍMITE HONESTO: esto corre contra un `Bun.spawn` guionado. Que el Bun de verdad
+// tire ENOENT con una carpeta inexistente lo midió la auditoría sobre Bun 1.4.4;
+// acá no se vuelve a medir.
+
+const SIN_INSTALAR = /PlatformIO no esta instalado/
+
+test("compile con una carpeta de proyecto que no existe: lo dice, y NO culpa a la instalación", async () => {
+  const noExiste = join(OUT, "no-existe", "proyecto")
+  const r = await mod.default.execute({ action: "compile", project_path: noExiste }, ctx)
+  assert.doesNotMatch(r, SIN_INSTALAR, `culpó a la instalación por una carpeta que no existe:\n${r}`)
+  assert.doesNotMatch(r, /reparar/i, "mandó a reparar (minutos y una descarga) por un error de ruta")
+  assert.ok(r.includes(noExiste), `no nombra la carpeta que buscó:\n${r}`)
+  assert.match(r, /no existe/i)
+  assert.deepEqual(lanzados(), [], "no hay nada que lanzar en una carpeta que no existe")
+})
+
+test("flash y monitor con una carpeta que es un ARCHIVO: lo dicen, sin lanzar nada", async () => {
+  const archivo = join(OUT, "soy-un-archivo.ini")
+  writeFileSync(archivo, "[env:uno]\n")
+  for (const action of ["flash", "monitor", "both"]) {
+    spawns = []
+    const r = await mod.default.execute({ action, project_path: archivo }, ctx)
+    assert.doesNotMatch(r, SIN_INSTALAR, `${action}: culpó a la instalación:\n${r}`)
+    assert.match(r, /no es una carpeta/i, `${action}: no dice que la ruta no es una carpeta:\n${r}`)
+    assert.deepEqual(lanzados(), [], `${action}: lanzó algo`)
+  }
+})
+
+test("un project_path relativo se resuelve contra la carpeta de la sesión, no contra la del proceso", async () => {
+  mkdirSync(join(OUT, "proy-relativo"), { recursive: true })
+  const r = await mod.default.execute({ action: "compile", project_path: "proy-relativo" }, ctx)
+  assert.match(r, /Compilacion exitosa/, r)
+  const compilacion = spawns.find((s) => s.cmd.join(" ").includes(" run"))
+  assert.equal(compilacion.opts.cwd, join(OUT, "proy-relativo"), "compiló en otra carpeta que la que se le pidió")
+})
+
+test("diagnostico con una carpeta que no existe: informa PlatformIO igual, y avisa de la carpeta", async () => {
+  const noExiste = join(OUT, "tampoco-existe")
+  const r = await mod.default.execute({ action: "diagnostico", project_path: noExiste }, ctx)
+  assert.doesNotMatch(r, /NO encontrado|Falta instalar PlatformIO/, `dijo que falta PlatformIO por una carpeta que no existe:\n${r}`)
+  assert.match(r, /\*\*PlatformIO:\*\* OK/, r)
+  assert.ok(r.includes(noExiste) && /no existe/i.test(r), `no avisa de la carpeta:\n${r}`)
+  for (const s of spawns) assert.ok(existsSync(s.opts.cwd), `lanzó ${s.cmd.join(" ")} en una carpeta que no existe (${s.opts.cwd})`)
+})
+
+test("un pio que existe y no se puede ejecutar no es «no está instalado»", async () => {
+  guion = () => Object.assign(new Error("EACCES: permission denied, posix_spawn '/x/pio'"), { code: "EACCES" })
+  const r = await mod.default.execute({ action: "compile" }, ctx)
+  assert.doesNotMatch(r, SIN_INSTALAR, `dijo que no está instalado cuando lo que falló fue ejecutarlo:\n${r}`)
+  assert.match(r, /no lo pude ejecutar/i, r)
+  assert.match(r, /EACCES/, "no deja el motivo que dio el sistema")
+})
+
+test("pio que no existe, con el error tal cual lo tira Bun: sigue siendo «no esta instalado» (contrapeso)", async () => {
+  // Medido en Bun 1.4.4 (Linux): con el nombre pelado y fuera del PATH, el mensaje es
+  // «Executable not found in $PATH» y NO dice ENOENT; lo que lo dice es `code`. Y un error
+  // sin `code` (o con uno que no se midió) tampoco puede pasar por «está y no lo pude
+  // ejecutar»: ante la duda, el caso común.
+  for (const error of [
+    Object.assign(new Error('Executable not found in $PATH: "pio"'), { code: "ENOENT" }),
+    Object.assign(new Error("ENOENT: no such file or directory, posix_spawn '/x/pio'"), { code: "ENOENT" }),
+    new Error("algo que no se sabe qué es"),
+    Object.assign(new Error("un código que nadie midió"), { code: "EWHATEVER" }),
+  ]) {
+    guion = () => error
+    const r = await mod.default.execute({ action: "compile" }, ctx)
+    assert.match(r, SIN_INSTALAR, `con «${error.message}» dejó de decir que no está instalado:\n${r}`)
+    assert.doesNotMatch(r, /no lo pude ejecutar/i)
+  }
+})
+
+for (const [caso, lista] of [
+  ["sale con código 1 y sin salida", { code: 1, stdout: "", stderr: "ImportError: No module named serial\n" }],
+  // Con una lista VÁLIDA y vacía en la salida: lo único que dice que falló es el código.
+  // Sin este caso, sacar la mirada al código de salida dejaba todo en verde, porque el de
+  // arriba (salida vacía) lo atrapa la rama de «no es una lista».
+  ["sale con código 1 habiendo impreso una lista vacía", { code: 1, stdout: "[]", stderr: "Error: se cortó a mitad\n" }],
+  ["devuelve `null`", { stdout: "null" }],
+  ["devuelve un objeto en vez de una lista", { stdout: '{"error":"algo"}' }],
+  ["no devuelve nada", { stdout: "" }],
+]) {
+  test(`flash cuando \`pio device list\` ${caso}: «no pude ver los puertos», no «ninguna placa»`, async () => {
+    escenario()
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").includes("device list") ? lista : base(cmd))
+    const r = await mod.default.execute({ action: "flash" }, ctx)
+    assert.doesNotMatch(r, /No encuentro ninguna placa conectada/, `afirmó que no hay placa sin haber podido listar:\n${r}`)
+    assert.match(r, /No pude ver los puertos/, r)
+    assert.match(r, /no sé si hay una placa/i, r)
+    assert.equal(indice("--target upload"), -1, "intentó cargar sin puerto")
+  })
+
+  test(`diagnostico cuando \`pio device list\` ${caso}: no afirma «ninguna placa conectada»`, async () => {
+    escenario()
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").includes("device list") ? lista : base(cmd))
+    const r = await mod.default.execute({ action: "diagnostico" }, ctx)
+    assert.doesNotMatch(r, /Ninguna placa conectada|no hay ni siquiera un puerto serie|Listo/, `afirmó algo sobre las placas sin haber podido listar:\n${r}`)
+    assert.match(r, /\*\*Puertos que veo:\*\*\nNo pude verlos/, r)
+    assert.match(r, /no sé si hay una placa/i, r)
+  })
+}
+
+test("flash cuando la lista sale bien y vacía: ahí SÍ es «no encuentro ninguna placa» (contrapeso)", async () => {
+  escenario({ lista: [] })
+  const r = await mod.default.execute({ action: "flash" }, ctx)
+  assert.match(r, /No encuentro ninguna placa conectada/)
+  assert.doesNotMatch(r, /No pude ver los puertos/)
+})
+
+test("flash cuando la lista no es JSON pero nombra un puerto: se sigue leyendo, como antes", async () => {
+  // El camino viejo de respaldo: versiones de pio que no entienden --json-output.
+  escenario()
+  const base = guion
+  guion = (cmd) => (cmd.join(" ").includes("device list") ? { stdout: "/dev/ttyUSB0\n----\nHardware ID: n/a\n" } : base(cmd))
+  const r = await mod.default.execute({ action: "flash" }, ctx)
+  assert.doesNotMatch(r, /No pude ver los puertos/, r)
+  assert.match(r, /Veo un puerto serie \(\/dev\/ttyUSB0\), pero no es una placa/, r)
+})
