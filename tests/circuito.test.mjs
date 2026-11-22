@@ -2952,6 +2952,14 @@ test("LCD en ESP32: la aclaración llega al chat, y con Arduino UNO no aparece",
   assert.match(esp.r, /téster/i, esp.r)
   assert.match(esp.r, /conversor de nivel/i, esp.r)
   assert.equal(esp.r.match(/LCD en ESP32/gi).length, 1, "la aclaración salió repetida")
+  // «Mochila» es como le dicen al adaptador I2C quienes ya lo conocen: al docente que lo ve
+  // por primera vez no le dice nada (lo marcó el owner al leer el texto). En lo que llega
+  // al chat y a la hoja se lo nombra por lo que se ve. Mutación: volver a «la mochila I2C».
+  assert.doesNotMatch(esp.r, /mochila/i, `la aclaración del chat dice «mochila»:\n${esp.r}`)
+  assert.match(esp.r, /adaptador I2C \(la plaquita que el display trae soldada atrás\)/, esp.r)
+  for (const placa of ["esp32", "uno"]) {
+    assert.doesNotMatch(ns.COMPONENTES.lcd.advertencia[placa], /mochila/i, `la advertencia de la hoja (${placa}) dice «mochila»`)
+  }
 
   // En el UNO la mochila y la placa trabajan a la misma tensión: no hay nada que aclarar.
   const uno = await gen({ componentes: "lcd, led", placa: "uno" }, "lcd-chat-uno")
