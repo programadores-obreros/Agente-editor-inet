@@ -42,12 +42,46 @@ export type ResultadoAbrir = { estado: "escuchando"; servidor: ServidorDeVuelta 
 
 const ESPERA_MS = 5 * 60_000
 
-const PAGINA_LISTO = `<!doctype html>
+// La página que ve el docente cuando el navegador vuelve a la compu.
+//
+// DOS REGLAS, y las dos tienen test:
+// - NO DICE QUE QUEDÓ VINCULADO. Cuando se muestra, el bot recién recibió el
+//   código: todavía falta canjearlo con la plataforma, y eso puede fallar. Lo
+//   único que sabe esta página es que el navegador volvió. Por eso manda al chat
+//   a preguntar, que es donde `estado` lo confirma.
+// - NO PIDE NADA DE AFUERA. Sin fuentes, imágenes ni hojas de estilo de otro
+//   sitio: se sirve desde 127.0.0.1 con el código del vínculo en la barra, y
+//   cualquier pedido a otro lado es un lugar por donde se puede filtrar.
+export const PAGINA_LISTO = `<!doctype html>
 <html lang="es">
-<head><meta charset="utf-8"><title>Tecnia Bot</title></head>
-<body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; padding: 0 1rem">
-<h1>Listo</h1>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tecnia Bot</title>
+<style>
+  :root { color-scheme: dark light; --fondo: #1a1c18; --tarjeta: #22251f; --borde: #3a3f35; --texto: #f2f1ea; --suave: #b9bcae; --acento: #9ad1a3; }
+  @media (prefers-color-scheme: light) {
+    :root { --fondo: #f5f4ee; --tarjeta: #ffffff; --borde: #d9d8cd; --texto: #1c1e19; --suave: #55594d; --acento: #2f7d43; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 1.5rem;
+         background: var(--fondo); color: var(--texto); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }
+  main { width: 100%; max-width: 30rem; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 14px; padding: 2rem; }
+  .marca { font-size: .8rem; letter-spacing: .14em; text-transform: uppercase; color: var(--suave); margin: 0 0 1.25rem; }
+  .tilde { width: 3rem; height: 3rem; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--acento); color: var(--acento); font-size: 1.6rem; margin-bottom: 1rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .5rem; }
+  p { margin: 0 0 .75rem; }
+  .suave { color: var(--suave); font-size: .95rem; margin: 0; }
+</style>
+</head>
+<body>
+<main>
+<p class="marca">Tecnia Bot</p>
+<div class="tilde" aria-hidden="true">&#10003;</div>
+<h1>Recibido</h1>
 <p>Ya podés cerrar esta pestaña y volver a Tecnia Bot.</p>
+<p class="suave">Tecnia Bot está terminando de conectar esta compu con tu cuenta. Preguntale en el chat si ya quedó.</p>
+</main>
 </body>
 </html>
 `
@@ -58,6 +92,9 @@ function responder(res: http.ServerResponse, status: number, tipo: string, cuerp
     "Cache-Control": "no-store",
     // El código viene en la URL: que no viaje como referente a ningún lado.
     "Referrer-Policy": "no-referrer",
+    // La página no carga nada de ningún lado y no corre scripts. Esto hace que el
+    // navegador lo exija, por si alguien edita la página sin leer su comentario.
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
     Connection: "close",
   })
   res.end(cuerpo)

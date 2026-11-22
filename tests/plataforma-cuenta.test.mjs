@@ -534,9 +534,16 @@ test("cerrar: cierra en la plataforma y borra de la compu, y dice las dos cosas"
     const cierre = await caso.cuenta.ejecutar("cerrar")
     assert.match(cierre, /La plataforma confirmó que cerró la sesión/)
     assert.match(cierre, /ya no queda ninguna sesión guardada/)
+    // Cerrar no borra la memoria de la cuenta, y hay que decirlo y decir dónde se borra:
+    // sin esto el docente ve su memoria en la web después de cerrar y cree que no cerró.
+    assert.match(cierre, /no borra la memoria guardada en la cuenta/)
+    assert.match(cierre, /perfil en la plataforma, pestaña «Tecnia Bot»/)
     assert.equal(caso.plataforma.estado.cierres, 1)
     assert.ok(!existsSync(caso.rutaSesion))
-    assert.match(await caso.cuenta.ejecutar("cerrar"), /No había ninguna cuenta vinculada/)
+    // Sin sesión no se habla de memoria: no hubo nada que cerrar.
+    const sinNada = await caso.cuenta.ejecutar("cerrar")
+    assert.match(sinNada, /No había ninguna cuenta vinculada/)
+    assert.doesNotMatch(sinNada, /memoria/)
   } finally {
     await caso.plataforma.cerrar()
   }

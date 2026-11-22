@@ -327,7 +327,14 @@ export function crearCuenta(deps: DependenciasCuenta): { ejecutar(accion: Accion
       borrado.estado === "sin-sesion"
         ? "En esta compu ya no queda ninguna sesión guardada."
         : `NO pude borrar la sesión de esta compu (${borrado.ruta}): sigue ahí.`
-    return `${cancelado}${enPlataforma} ${enCompu}`
+    // Lo que el docente no ve desde acá: cerrar sesión no toca la memoria que haya
+    // guardado en la cuenta. En la primera prueba en Windows (21/11/2026) quien
+    // probaba cerró la sesión, vio la memoria todavía en su perfil web y dudó de si
+    // el cierre había andado. Se dice siempre que hubo una sesión, sin preguntarle a
+    // la plataforma si hay memoria: sería un pedido más con un token que se acaba de cerrar.
+    const memoria =
+      "Cerrar la sesión no borra la memoria guardada en la cuenta: si el docente guardó alguna, sigue ahí, y se borra desde su perfil en la plataforma, pestaña «Tecnia Bot»."
+    return `${cancelado}${enPlataforma} ${enCompu} ${memoria}`
   }
 
   return {

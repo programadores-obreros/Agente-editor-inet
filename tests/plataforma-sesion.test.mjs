@@ -22,7 +22,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const { leerSesionGuardada, guardarSesionLocal, borrarSesionGuardada, rutaSesion, carpetaPorDefecto } = await import(
   join(REPO, "opencode/plataforma/sesion-local.ts")
 )
-const { abrirServidorDeVuelta } = await import(join(REPO, "opencode/plataforma/servidor-vuelta.ts"))
+const { abrirServidorDeVuelta, PAGINA_LISTO } = await import(join(REPO, "opencode/plataforma/servidor-vuelta.ts"))
 
 const RAIZ = mkdtempSync(join(os.tmpdir(), "tecniabot-sesion-"))
 after(() => rmSync(RAIZ, { recursive: true, force: true }))
@@ -192,8 +192,27 @@ test("la vuelta válida entrega el código, responde la página fija y libera el
   assert.match(html, /volver a Tecnia Bot/)
   assert.ok(!html.includes("abc123"), "el código no puede volver en la página")
   assert.equal(res.headers.get("referrer-policy"), "no-referrer")
+  assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; style-src 'unsafe-inline'")
+  assert.equal(html, PAGINA_LISTO, "la página que se sirve no es la que se prueba más abajo")
   assert.deepEqual(await servidor.vuelta, { estado: "ok", code: "abc123" })
   await assert.rejects(pedir(servidor.puerto, "/callback?code=abc123&state=state-de-prueba"), "el puerto tiene que haber quedado libre")
+})
+
+test("la página de vuelta NO dice que quedó vinculado, y manda al chat a confirmarlo", () => {
+  // Cuando se muestra, el bot recién recibió el código: falta canjearlo y puede
+  // fallar. Si esta página dijera «vinculado» sería un OK que nadie comprobó.
+  const texto = PAGINA_LISTO.replace(/<style>[\s\S]*?<\/style>/, "").replace(/<[^>]+>/g, " ")
+  assert.doesNotMatch(texto, /vinculad[oa]|qued[oó] conectad|conectad[oa] con [eé]xito|ya est[aá] conectad/i, `afirma un vínculo que todavía no se comprobó: ${texto}`)
+  assert.match(texto, /volver a Tecnia Bot/)
+  assert.match(texto, /Preguntale en el chat/, "no manda al docente a confirmar en el chat")
+})
+
+test("la página de vuelta no pide nada de afuera ni corre scripts", () => {
+  // Se sirve desde 127.0.0.1 con el código del vínculo en la barra de direcciones.
+  assert.doesNotMatch(PAGINA_LISTO, /https?:|\/\/[a-z0-9]/i, "la página nombra una dirección de afuera")
+  assert.doesNotMatch(PAGINA_LISTO, /<script|<img|<link|<iframe|@import|url\(|\bon[a-z]+\s*=/i, "la página carga algo o corre código")
+  assert.match(PAGINA_LISTO, /<html lang="es">/)
+  assert.match(PAGINA_LISTO, /<meta charset="utf-8">/)
 })
 
 test("un pedido con otra marca se rechaza y el servidor sigue esperando la vuelta buena", async () => {
