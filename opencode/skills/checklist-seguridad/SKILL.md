@@ -40,7 +40,7 @@ Para el detalle por componente (lámpara, calefactor, bomba) está el skill `act
 
 **El ESP32 trabaja a 3.3V en sus pines (GPIO). El Arduino UNO, a 5V.** Meterle 5V a un GPIO del ESP32 lo puede **dañar de forma permanente**. Este es el error más caro y más común.
 
-- **Alimentación de componentes:** los que necesitan 5V (servo, PIR, HC-SR04, algunos relés) van al pin **VIN (5V)** del ESP32, **NUNCA a 3.3V**. (El LCD 16x2 con mochila I2C es el caso especial de todos — tiene su propia nota más abajo, leela ANTES de conectarlo.)
+- **Alimentación de componentes:** los que necesitan 5V (servo, PIR, HC-SR04, algunos relés) van al pin **VIN (5V)** del ESP32, **NUNCA a 3.3V**. (El LCD 16x2 con mochila I2C también va a VIN, y tiene una aclaración propia más abajo: leela ANTES de conectarlo.)
 - **Señales que ENTRAN al ESP32:** si un sensor devuelve 5V (ej: el pin ECHO del HC-SR04), **no lo conectes directo a un GPIO** → necesitás un divisor de tensión (R1=1kΩ + R2=2kΩ) para bajarlo a ~3.3V. Directo, lo dañás.
 - **En el UNO (5V) esto no es problema** — es tolerante a 5V. El salto de peligro es propio del ESP32.
 
@@ -48,7 +48,7 @@ Para el detalle por componente (lámpara, calefactor, bomba) está el skill `act
 
 ## ✅ El checklist (elegí los que apliquen)
 
-1. **¿Alimentación correcta?** Los componentes de 5V (servo, PIR, HC-SR04) al **VIN**, no a 3.3V. Los de 3.3V a 3.3V. El **LCD I2C** tiene su nota aparte más abajo: no se resuelve con "VIN y listo".
+1. **¿Alimentación correcta?** Los componentes de 5V (servo, PIR, HC-SR04) al **VIN**, no a 3.3V. Los de 3.3V a 3.3V. El **LCD I2C** también va a VIN, con la aclaración de su nota más abajo: hay que medir su bus.
 2. **¿Polaridad del LED?** La pata larga (ánodo, +) va al lado de la señal/positivo; la corta (cátodo, −) a GND. Al revés no enciende (y no es lindo para el LED).
 3. **¿Resistencia en serie con cada LED?** Siempre una resistencia entre el GPIO y el LED — sin ella, el LED y el pin sufren. El valor de la casa es **220Ω**, el que viene en los kits, y sirve en las dos placas: en los **5V del UNO** deja 13,6 mA con un LED de 2V (el pin aguanta 20) y en los **3.3V del ESP32** deja 5,5 mA con un LED de 2,1V. **Pero en 3.3V hay una trampa que no existe en 5V:** un LED azul, blanco o verde InGaN cae ~3,2V, así que sobre 3,3V **no enciende con ninguna resistencia** (con 220Ω recibe 0,45 mA) — no queda tensión, y no se arregla cambiando el valor. El color del LED no dice su tensión: medila con el téster (modo diodo). Ver el skill `esp32` para el cálculo y las salidas. Y en 3.3V nunca bajes de 100Ω.
 4. **¿GND común?** Si usás una fuente externa (para el servo, tira de LEDs, etc.), el GND de ESA fuente tiene que estar unido al GND del ESP32. Sin GND común, no funciona o se comporta raro.
@@ -67,7 +67,7 @@ Para el detalle por componente (lámpara, calefactor, bomba) está el skill `act
 | Servo SG90 | **VIN (5V)** | consume corriente; si tiembla, fuente externa + GND común |
 | HC-SR04 (ultrasónico) | **VIN (5V)** | ECHO devuelve 5V → **divisor** antes del GPIO **sólo en ESP32**; en **UNO va directo**, sin divisor |
 | PIR (movimiento) | **VIN (5V)** | OUT = 3.3V en el HC-SR501 (trae regulador), OK directo; sólo módulos mini sin regulador pueden dar 5V: medí antes |
-| LCD 16x2 (I2C) | **UNO: 5V y listo.** ESP32: ⚠️ **no hay respuesta simple** — leé la nota de abajo | SDA/SCL **NO** son tolerantes a 5V en el ESP32. En **UNO el problema no existe**: la placa ya es de 5V, no hace falta conversor de nivel |
+| LCD 16x2 (I2C) | **UNO: 5V y listo.** ESP32: **VIN (5V)**, con una aclaración — leé la nota de abajo | SDA/SCL **NO** son tolerantes a 5V en el ESP32: por eso se mide el bus. En **UNO el problema no existe**: la placa ya es de 5V, no hace falta conversor de nivel |
 | DHT11/22 | 3.3V | la plaqueta de 3 pines **ya trae** su pull-up; sólo el sensor pelado de 4 patas necesita uno externo |
 | Relé | según módulo (muchos 5V → VIN) | separá la potencia de la lógica. 🛑 **Si el otro lado va a 220V, leé la sección ALTO del principio antes de conectar nada**: lo cablea un adulto, desenergizado y aislado |
 
@@ -89,10 +89,12 @@ El módulo son **dos cosas pegadas** con necesidades distintas:
 **Qué hacer en el aula, siendo honestos:**
 
 - Con **Arduino UNO** no hay problema: la placa ya es de 5V, alimentación y bus van los dos a 5V y listo.
-- Con **ESP32** hay que elegir a conciencia: **3.3V** si te alcanza con el contraste flojo (es la opción segura para la placa, y para una demo de clase suele alcanzar), o **5V + conversor de nivel bidireccional** si necesitás que se lea bien de lejos.
-- **Lo que no se hace nunca:** mochila a 5V con SDA/SCL directo a GPIO21/22. Eso es meterle 5V a un pin de 3.3V, que es justo el error que este skill existe para evitar.
+- Con **ESP32** el LCD va a **VIN (5V)**, GND, SDA a GPIO21 y SCL a GPIO22. Es como lo dibuja el tool `circuito` y como lo indican las fichas del INET (proyectos 04, 05 y 12): a 3.3V el display queda sin contraste.
+- **La aclaración, que va siempre con ese plano:** nadie puede afirmar desde acá que ese adaptador I2C en particular deje el bus en un nivel seguro. Las plaquetas no declaran el valor de sus pull-ups ni contra qué tensión quedan. Por eso **se mide**: SDA y SCL con el téster, con el LCD alimentado y el ESP32 apagado. Si marcan **cerca de 5V**, entre el display y el ESP32 va un **conversor de nivel bidireccional I2C** (o un adaptador con los pull-ups del lado de 3.3V).
+- **Cuando se lo expliques al docente no digas "mochila" a secas:** es como le dicen al adaptador I2C quienes ya lo conocen. Decí "el adaptador I2C, la plaquita que el display trae soldada atrás".
+- **Lo que no sirve como arreglo:** el divisor de dos resistencias del ECHO. Lo dice el párrafo de arriba: I2C es bidireccional.
 
-**Para el alumno:** "El LCD es dos aparatos en uno: la pantalla quiere 5 voltios para verse bien, y el chiquito que la maneja habla en el voltaje que vos le des. Si le das 5, la pantalla se ve hermosa pero le está gritando 5 voltios al ESP32 por los cables de datos. No hay opción mágica: o aceptás que se vea más pálido, o ponés un traductor de voltaje en el medio."
+**Para el alumno:** "El LCD es dos aparatos en uno: la pantalla quiere 5 voltios para verse bien, y el chiquito que la maneja habla en el voltaje que vos le des. Si le das 5, la pantalla se ve hermosa pero le está gritando 5 voltios al ESP32 por los cables de datos. Por eso lo conectamos a 5 y después medimos esos dos cables con el téster: si ahí hay 5 voltios, ponemos un traductor de voltaje en el medio."
 
 ---
 

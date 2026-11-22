@@ -1005,7 +1005,27 @@ interface Componente {
   anim: (id: string, placa: Placa) => string
 }
 
-const COMPONENTES: Record<string, Componente> = {
+/**
+ * LA ACLARACIÓN DEL LCD EN ESP32, para el chat.
+ *
+ * El plano es uno solo y lo decidió el owner (2026-11-22): el LCD va a VIN (5 V), GND,
+ * SDA y SCL, como lo dibuja este tool y como lo indican las fichas del INET. Antes la
+ * hoja dibujaba eso y, en el mismo recuadro, decía «Nunca mochila a 5V con SDA/SCL
+ * directo al ESP32»: el tool prohibía lo que entregaba como instrucción de cableado.
+ *
+ * No dice «mochila»: es como le dicen al adaptador I2C quienes ya lo conocen, y al
+ * docente que lo ve por primera vez no le dice nada (lo marcó el owner). Se lo nombra
+ * por lo que se ve: la plaquita soldada atrás del display.
+ *
+ * Lo que queda es la aclaración que las fichas del INET ya traían, y NO afirma que sea
+ * seguro: nadie lo midió con un módulo en la mano. Manda a medir, y dice qué va si da mal.
+ * Va al chat porque las advertencias de componente viven sólo en la hoja, y el modelo
+ * recibía la tabla bajo «usá estos pines, no inventes otros» y nada más.
+ */
+const ACLARACION_LCD_ESP32 =
+  "📟 LCD en ESP32: va a VIN (5V), que es lo que el display necesita para verse (a 3.3V queda sin contraste). Aclaración para contarle al docente: el adaptador I2C (la plaquita que el display trae soldada atrás) puede dejar SDA y SCL en 5V, y GPIO21/22 son pines de 3.3V. Que mida SDA y SCL con el téster (LCD alimentado, ESP32 apagado): si marcan cerca de 5V, entre el display y el ESP32 va un conversor de nivel bidireccional I2C."
+
+export const COMPONENTES: Record<string, Componente> = {
   led: {
     tag: "wokwi-led",
     etiqueta: "LED",
@@ -1138,12 +1158,12 @@ const COMPONENTES: Record<string, Componente> = {
     ],
     advertencia: {
       esp32:
-        "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32). ¡OJO con los 5V! La mochila I2C tiene sus pull-ups a su propio VCC: alimentada a 5V pone SDA y SCL en 5V, y GPIO21/22 NO toleran 5V. Opciones: alimentarla a 3.3V (segura, con menos contraste) o 5V + conversor de nivel bidireccional en SDA/SCL (el divisor de resistencias NO sirve: I2C es bidireccional). Nunca mochila a 5V con SDA/SCL directo al ESP32.",
+        "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32) y se alimenta de VIN (5V): a 3.3V el display queda sin contraste. ACLARACIÓN: el adaptador I2C (la plaquita que el display trae soldada atrás) tiene sus pull-ups a su propio VCC, así que alimentado a 5V puede dejar SDA y SCL en 5V, y GPIO21/22 son pines de 3.3V. Medí SDA y SCL con el téster, con el LCD alimentado y el ESP32 apagado: si marcan cerca de 5V, entre el display y el ESP32 va un conversor de nivel bidireccional I2C (el divisor de resistencias NO sirve: I2C es bidireccional).",
       // En el UNO desaparece TODO el problema de niveles del ESP32: la mochila y la
       // placa hablan el mismo idioma. Lo que sí hay que decir es el costo oculto del
       // bus, que en el ESP32 no existe: A4 y A5 dejan de estar disponibles como
       // entradas analógicas, y quedan A0-A3 para sensores.
-      uno: "el LCD por I2C usa SDA=A4 y SCL=A5, que en el UNO son fijos. La mochila y la placa trabajan a la misma tensión, así que van directo: sin conversor y sin nada en el medio. El costo es que A4 y A5 dejan de servir como entradas analógicas mientras el display esté conectado: te quedan A0 a A3 para sensores. Si no muestra nada pero la luz de fondo prende, es el contraste (el potenciómetro azul de la mochila) o la dirección: 0x27 en las del PCF8574 y 0x3F en las del PCF8574A. Librería: LiquidCrystal_I2C.",
+      uno: "el LCD por I2C usa SDA=A4 y SCL=A5, que en el UNO son fijos. El adaptador I2C (la plaquita que el display trae soldada atrás) y la placa trabajan a la misma tensión, así que van directo: sin conversor y sin nada en el medio. El costo es que A4 y A5 dejan de servir como entradas analógicas mientras el display esté conectado: te quedan A0 a A3 para sensores. Si no muestra nada pero la luz de fondo prende, es el contraste (el potenciómetro azul de ese adaptador) o la dirección: 0x27 en las del PCF8574 y 0x3F en las del PCF8574A. Librería: LiquidCrystal_I2C.",
     },
     anim: (id, placa) => `const l=document.getElementById('${id}');const m=["Hola Tecnia Bot!","Escuela tecnica","${placa.etiqueta}"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
   },
@@ -2191,6 +2211,8 @@ ${filas.join("\n")}
   if (hay5V && placa.avisoCincoVolt) advertencias.add(placa.avisoCincoVolt)
   avisosGpio.forEach((a) => advertencias.add(a))
   const notas = [...notasGpio]
+  // Ver ACLARACION_LCD_ESP32. En el UNO no va: la mochila y la placa trabajan a la misma tensión.
+  if (placa.id === "esp32" && pedidos.some((p) => p.tipo === "lcd")) notas.push(ACLARACION_LCD_ESP32)
   for (const choque of avisosI2cRepetido(pedidos, placa)) {
     advertencias.add(choque)
     notas.push(choque)
