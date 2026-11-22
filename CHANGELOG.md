@@ -4,6 +4,25 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+### Nuevo
+
+- **Podés vincular Tecnia Bot con tu cuenta de Tecnia Lab.** Es para docentes, con la cuenta que ya tenés en la plataforma. Pedíselo al bot ("quiero vincular Tecnia Bot con mi cuenta de Tecnia Lab"): se abre el navegador, entrás con tu cuenta y escribís en la página el código de seis números que te muestra el bot. La contraseña se escribe sólo en el navegador, nunca en el chat.
+- **Tu memoria de progreso puede viajar con vos.** Con la cuenta vinculada podés pedirle al bot que guarde en tu cuenta la memoria de esta compu ("guardá mi memoria en mi cuenta") y que la traiga en otra ("traé mi memoria"). Sólo lo hace cuando se lo pedís. Si en la cuenta y en la compu hay memorias distintas, te muestra las dos y elegís vos: nunca pisa una sin preguntar.
+- **Desde tu perfil en la plataforma, pestaña "Tecnia Bot",** ves qué recuerda el bot de vos y en qué compus está vinculado, y podés cortarle el acceso a cualquiera o borrar la memoria.
+- **Cerrar la sesión desde el bot** ("cerrá mi sesión de Tecnia Lab") la cierra en la plataforma y la borra de la compu. El bot te dice por separado qué pasó en cada lado.
+
+### Qué hay que saber
+
+- **En una compu de aula no se vincula.** Si el perfil de la compu está en modo aula, el bot no deja vincular una cuenta: esa compu la usan muchos chicos y la cuenta de un docente quedaría al alcance del que se siente después.
+- **Cerrar la sesión no borra la memoria guardada en tu cuenta.** Sigue ahí para la próxima vez. Si querés borrarla, se hace desde tu perfil en la plataforma.
+- **Si desinstalás Tecnia Bot eligiendo borrar los datos personales, se borra también la sesión guardada en la compu.** Eso no la cierra en la plataforma: el desinstalador te avisa que entres a tu perfil y cortes el acceso de esa compu.
+- **El código de seis números sirve una sola vez y por cinco minutos.** Si lo escribís mal o tardás, hay que pedirle al bot que vincule de nuevo: sale un código distinto.
+- **En una Windows recién estrenada, el navegador puede mostrar primero su pantalla de bienvenida.** La página de vincular está en esa misma ventana: hay que pasar la bienvenida.
+
+### Qué no se probó
+
+Una notebook de aula y Windows 10. El vínculo se probó de punta a punta contra la plataforma real en Linux y en una máquina virtual con Windows 11. En esa Windows, la página que aparece al volver del navegador y el aviso al cerrar la sesión no se vieron con esta versión: se probaron con una anterior, y los cambios posteriores sólo en Linux.
+
 ## [0.4.11] — 2026-11-21
 
 **En Windows, Tecnia Bot ya no abre una ventana negra. Y si la computadora ya tenía otro OpenCode, el instalador lo reemplaza por el que usa Tecnia Bot, sin dejarte sin ninguno si la descarga falla.**

@@ -641,8 +641,10 @@ test("2.4 · los datos personales que el .iss busca en el disco son los que unin
       `el .iss busca «${nombre}» y uninstall.ps1 no lo arma con Join-Path $ConfigDir: los dos archivos dejaron de hablar de lo mismo`)
   }
   // Y al revés: todo `tecnia-*.md|json` personal que uninstall.ps1 borra, el .iss lo busca.
-  const personales = [...uninstall.matchAll(/^\$(?:Perfil|Memoria|Cargas)File\s*=\s*Join-Path \$ConfigDir "([^"]+)"/gm)].map((m) => m[1])
-  assert.ok(personales.length >= 3, "no encontré en uninstall.ps1 los tres archivos de datos personales")
+  // `Sesion` es la sesión de la cuenta de Tecnia Lab (tecnia-sesion.json): una credencial
+  // del docente. Sin ella en esta lista, sacar su FileExists del .iss no ponía nada rojo.
+  const personales = [...uninstall.matchAll(/^\$(?:Perfil|Memoria|Cargas|Sesion)File\s*=\s*Join-Path \$ConfigDir "([^"]+)"/gm)].map((m) => m[1])
+  assert.ok(personales.length >= 4, "no encontré en uninstall.ps1 los cuatro archivos de datos personales")
   for (const nombre of personales) assert.ok(buscados.includes(nombre), `uninstall.ps1 borra «${nombre}» y el .iss no comprueba que se haya ido`)
 })
 

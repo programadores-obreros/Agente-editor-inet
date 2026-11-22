@@ -260,6 +260,10 @@ jobs:
             else { Write-Host "  OK   opencode.json: default_agent tecnia-bot, modelo $modelo" }
           }
           if (-not (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\agent\tecnia-bot.md"))) { $fallas += "falta .config\opencode\agent\tecnia-bot.md" }
+          # La carpeta del vinculo con Tecnia Lab: tool\cuenta.ts la importa con ..\plataforma\. Es el unico
+          # lugar donde se mira en el disco real que el instalador la copio; los tests solo leen las listas.
+          if (-not (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\plataforma\cuenta.ts"))) { $fallas += "falta .config\opencode\plataforma\cuenta.ts" }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\tool\cuenta.ts"))) { $fallas += "falta .config\opencode\tool\cuenta.ts" }
 
           $pio = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
           if (-not (Test-Path $pio)) { $fallas += "no existe $pio" }
@@ -397,6 +401,7 @@ jobs:
             Write-Host "  OK   opencode.json se borro (solo tenia lo nuestro)"
           }
           if (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\agent\tecnia-bot.md")) { Write-Host "::error::agent\tecnia-bot.md sigue instalado"; exit 1 }
+          if (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\plataforma\cuenta.ts")) { Write-Host "::error::plataforma\cuenta.ts sigue instalado"; exit 1 }
 
       # El transcript del bootstrap (Start-Transcript, al lado del repo). Si algo
       # fallo, es lo primero que hay que leer; se sube siempre, no solo en fallo.
@@ -448,6 +453,8 @@ jobs:
           echo "  OK   $pv"
           cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
           [ -f "$cfg/agent/tecnia-bot.md" ] || falla "falta el agente en $cfg/agent"
+          [ -f "$cfg/plataforma/cuenta.ts" ] || falla "falta la carpeta del vinculo con Tecnia Lab en $cfg/plataforma"
+          [ -f "$cfg/tool/cuenta.ts" ] || falla "falta el tool cuenta en $cfg/tool"
           [ -f "$cfg/tecnia-bot.manifest" ] || falla "falta el manifest en $cfg"
           agente="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("default_agent",""))' "$cfg/opencode.json")" || falla "opencode.json no parsea"
           [ "$agente" = "tecnia-bot" ] || falla "default_agent es [$agente], no tecnia-bot"
@@ -492,6 +499,7 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::uninstall.sh devolvio $rc"; exit 1; fi
           cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
           if [ -f "$cfg/agent/tecnia-bot.md" ]; then echo "::error::el agente sigue instalado"; exit 1; fi
+          if [ -e "$cfg/plataforma" ]; then echo "::error::la carpeta plataforma sigue instalada"; exit 1; fi
           if [ ! -f "$cfg/tecnia-perfil.md" ]; then echo "::error::--conservar borro el perfil"; exit 1; fi
           echo "  OK   la capa salio y el perfil se conservo"
 
@@ -528,6 +536,7 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::install.sh devolvio $rc en macOS (se esperaba 0)"; exit 1; fi
           cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
           [ -f "$cfg/agent/tecnia-bot.md" ] || { echo "::error::falta el agente en $cfg/agent"; exit 1; }
+          [ -f "$cfg/plataforma/cuenta.ts" ] || { echo "::error::falta la carpeta del vinculo con Tecnia Lab en $cfg/plataforma"; exit 1; }
           agente="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("default_agent",""))' "$cfg/opencode.json")" || { echo "::error::opencode.json no parsea"; exit 1; }
           [ "$agente" = "tecnia-bot" ] || { echo "::error::default_agent es [$agente]"; exit 1; }
           modo="$(stat -f %Lp "$cfg/tecnia-perfil.md")"
@@ -557,6 +566,7 @@ jobs:
           if [ "$rc" -ne 0 ]; then echo "::error::uninstall.sh devolvio $rc"; exit 1; fi
           cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
           if [ -f "$cfg/agent/tecnia-bot.md" ]; then echo "::error::el agente sigue instalado"; exit 1; fi
+          if [ -e "$cfg/plataforma" ]; then echo "::error::la carpeta plataforma sigue instalada"; exit 1; fi
           if [ ! -f "$cfg/tecnia-perfil.md" ]; then echo "::error::--conservar borro el perfil"; exit 1; fi
           echo "  OK   la capa salio y el perfil se conservo"
 
