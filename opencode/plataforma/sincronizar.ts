@@ -88,11 +88,18 @@ export function decirMemoria(memoria: MemoriaDocente): string {
   ].join("\n")
 }
 
+/** Ver el comentario largo de la misma función en opencode/tool/perfil.ts: es una copia. */
+function normalizarModo(crudo: string): string {
+  const limpio = crudo.trim()
+  const m = limpio.toLowerCase().match(/^(aula|grupo|personal)(?![a-záéíóúñ])/)
+  return m ? m[1]! : limpio
+}
+
 function modoDelPerfil(carpeta: string): string {
   const ruta = join(carpeta, "tecnia-perfil.md")
   if (!existsSync(ruta)) return ""
   try {
-    return readFileSync(ruta, "utf8").match(/^-\s*Modo:\s*(.*)$/m)?.[1]?.trim() ?? ""
+    return normalizarModo(readFileSync(ruta, "utf8").match(/^-\s*Modo:\s*(.*)$/m)?.[1] ?? "")
   } catch {
     return ""
   }

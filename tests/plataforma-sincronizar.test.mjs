@@ -343,6 +343,35 @@ test("traer: la plataforma no contesta → no toca la compu", async () => {
 
 // ─── cuándo no se sincroniza ────────────────────────────────────────────────
 
+// TCH-04 (auditoría del 2026-11-22): `=== "aula"` exacto, con un perfil que se edita a
+// mano. Mutación: `normalizarModo(...)` → sin normalizar.
+for (const modo of ["Aula", "AULA", "aula (compartida)"]) {
+  test(`«- Modo: ${modo}» escrito a mano también es modo aula: no sube ni trae`, async () => {
+    ponerEnCompu(SEMAFORO)
+    enCuenta = { memoria: DADO, version: 1 }
+    writeFileSync(join(carpeta, "tecnia-perfil.md"), `# Perfil\n\n- Modo: ${modo}\n`)
+    const s = sincronizador()
+    assert.match(await s.subir(false), /modo aula/)
+    assert.match(await s.traer(false), /modo aula/)
+    assert.deepEqual(pedidos, [])
+  })
+}
+
+// Las tres lecturas del modo (perfil.ts, cuenta.ts y sincronizar.ts) son copias: los
+// tools no se importan entre sí. Si una se separa, el modo aula vale en un lado y no en
+// otro. Mutación: cambiar una letra de `normalizarModo` en cualquiera de los tres.
+test("normalizarModo es la misma, letra por letra, en perfil.ts, cuenta.ts y sincronizar.ts", () => {
+  const cuerpo = (ruta) => {
+    const m = [...readFileSync(join(REPO, ruta), "utf8").matchAll(/^(?:export )?function normalizarModo\(crudo: string\): string \{\n([\s\S]*?)\n\}$/gm)]
+    assert.equal(m.length, 1, `${ruta}: esperaba una sola normalizarModo y hay ${m.length}`)
+    return m[0][1]
+  }
+  const dePerfil = cuerpo("opencode/tool/perfil.ts")
+  assert.match(dePerfil, /aula\|grupo\|personal/)
+  assert.equal(cuerpo("opencode/plataforma/cuenta.ts"), dePerfil, "cuenta.ts normaliza el modo distinto que perfil.ts")
+  assert.equal(cuerpo("opencode/plataforma/sincronizar.ts"), dePerfil, "sincronizar.ts normaliza el modo distinto que perfil.ts")
+})
+
 test("modo aula: no sube ni trae, y no le habla a la plataforma", async () => {
   ponerEnCompu(SEMAFORO)
   enCuenta = { memoria: DADO, version: 1 }
