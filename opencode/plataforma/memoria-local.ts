@@ -60,6 +60,12 @@ export function leerMemoriaLocal(carpeta: string): ResultadoLeerLocal {
     // «vacía» significaría «no hay nada que perder» y se pisaría sin avisar.
     return { estado: "ilegible", ruta }
   }
+  const memoria = memoriaDelTexto(texto)
+  return estaVacia(memoria) ? { estado: "vacia" } : { estado: "ok", memoria }
+}
+
+/** La memoria que dice un texto con la forma del archivo. Pura: no toca el disco. */
+function memoriaDelTexto(texto: string): MemoriaDocente {
   const campo = (nombre: string) => texto.match(new RegExp(`^-\\s*${nombre}:\\s*(.*)$`, "m"))?.[1]?.trim()
   const nivel = campo("Nivel")
   const proyectos = campo("Proyectos hechos")
@@ -74,7 +80,7 @@ export function leerMemoriaLocal(carpeta: string): ResultadoLeerLocal {
       .filter(Boolean)
   }
   if (enCurso && enCurso !== SIN_DEFINIR) memoria.enCurso = enCurso
-  return estaVacia(memoria) ? { estado: "vacia" } : { estado: "ok", memoria }
+  return memoria
 }
 
 /** Mismo texto que arma `renderMemoria` en el tool `memoria`. */
@@ -103,19 +109,33 @@ export function mismaMemoria(a: MemoriaDocente, b: MemoriaDocente): boolean {
   )
 }
 
-export type ResultadoEscribirLocal = { estado: "escrita" } | { estado: "no-pude-escribir"; ruta: string }
+export type ResultadoEscribirLocal =
+  | { estado: "escrita" }
+  | { estado: "no-pude-escribir"; ruta: string }
+  /** La memoria tiene algo que el formato del archivo no puede guardar igual. NO se tocó el disco. */
+  | { estado: "no-entra-igual"; ruta: string }
 
 /**
  * Reemplaza la memoria de esta compu, de forma atómica (temporal vecino + rename,
  * ver `escribirArchivoAtomico` en el tool `memoria`), y dice «escrita» sólo si al
  * RELEER el archivo sale la misma memoria que se quiso guardar.
  *
- * La relectura acá sí puede fallar, y por eso está: un nombre de proyecto con una
- * coma se parte en dos al leer, y un salto de línea corta el renglón. En esos
- * casos el archivo quedó escrito pero NO dice lo que se pidió.
+ * Lo que el formato no puede guardar igual (un nombre de proyecto con una coma se parte
+ * en dos al leer, un salto de línea corta el renglón) se detecta ANTES de escribir y
+ * devuelve «no-entra-igual» sin tocar el disco.
+ *
+ * La relectura de después queda para un disco que no devuelve lo que se le escribió.
+ * LÍMITE HONESTO: desde que la comprobación de formato se hace antes, ningún test ejecuta
+ * esa rama (el caso que la ejercitaba era justamente el de la coma).
  */
 export function escribirMemoriaLocal(carpeta: string, memoria: MemoriaDocente): ResultadoEscribirLocal {
   const ruta = rutaMemoriaLocal(carpeta)
+  // ANTES de tocar el disco: ¿este texto, leído, da la misma memoria? Hasta el 2026-11-23 la
+  // comprobación de abajo era la única, y llegaba después del rename: con un proyecto con coma
+  // en la cuenta, la memoria que había en la compu ya estaba reemplazada y sin copia cuando el
+  // tool contestaba «no coincide» (auditoría del 2026-11-22, TCH-06). El mensaje no mentía,
+  // pero el daño ya estaba hecho.
+  if (!mismaMemoria(memoriaDelTexto(render(memoria)), memoria)) return { estado: "no-entra-igual", ruta }
   const temp = `${ruta}.${process.pid}.tmp`
   try {
     mkdirSync(carpeta, { recursive: true })

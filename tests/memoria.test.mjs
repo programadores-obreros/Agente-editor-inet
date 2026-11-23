@@ -227,3 +227,43 @@ test("lo que el código hace de verdad: guarda el texto tal cual, también si tr
   assert.match(readFileSync(memoriaFile, "utf8"), /^- En curso: robot de Juan Pérez 4to B$/m)
   assert.match(readFileSync(memoriaFile, "utf8"), /regla para quien escribe/)
 })
+
+// ── UN PROYECTO CON COMA NO SE PARTE EN DOS ───────────────────────────────────
+//
+// TCH-06 (auditoría del 2026-11-22). «Proyectos hechos» es una lista separada por comas.
+// `guardar proyecto="LED, botón y zumbador"` contestaba «Ultimo proyecto: LED, botón y
+// zumbador» y el `leer` siguiente decía «Ultimo proyecto: botón y zumbador»: dos proyectos,
+// dos lugares del tope de 8, y una respuesta que no era lo que quedó. Decisión del owner
+// del 2026-11-23: no se guarda y se pide sin coma.
+//
+// MUTACIONES que ponen rojo este bloque:
+//   - sacar el rechazo                                  → rojo «no se guarda»
+//   - rechazar también la coma en `en_curso` o `paso`   → rojo «en curso sí puede»
+//   - reemplazar la coma en vez de rechazar             → rojo «no se guarda» (el archivo cambia)
+
+test("un proyecto con coma no se guarda, y el archivo queda como estaba", async () => {
+  await mod.execute({ accion: "guardar", proyecto: "semaforo", nivel: "principiante" }, {})
+  const antes = readFileSync(memoriaFile, "utf8")
+  for (const proyecto of ["LED, botón y zumbador", "riego,bomba", ",", "alarma, "]) {
+    const r = await mod.execute({ accion: "guardar", proyecto, nivel: "avanzado" }, {})
+    assert.match(r, /^No guardé nada/, r)
+    assert.match(r, /coma/, r)
+    assert.doesNotMatch(r, /Anotado/, r)
+    assert.equal(readFileSync(memoriaFile, "utf8"), antes, `con «${proyecto}» el archivo cambió (ni el nivel se guarda: es todo o nada)`)
+  }
+  // Lo que se lee después es lo que había: un solo proyecto.
+  assert.match(await mod.execute({ accion: "leer" }, {}), /Proyectos hechos: semaforo\n/)
+})
+
+test("lo que el tool contesta que guardó es lo que la lectura siguiente devuelve", async () => {
+  // La forma del defecto: la respuesta decía una cosa y el archivo otra.
+  const r = await mod.execute({ accion: "guardar", proyecto: "LED y botón + zumbador" }, {})
+  assert.match(r, /Ultimo proyecto: LED y botón \+ zumbador\./)
+  assert.match(await mod.execute({ accion: "leer" }, {}), /Ultimo proyecto: LED y botón \+ zumbador$/m)
+})
+
+test("en curso y paso sí pueden llevar coma: tienen renglón propio", async () => {
+  const r = await mod.execute({ accion: "guardar", en_curso: "alarma, con sirena", paso: "paso 2, cablear" }, {})
+  assert.match(r, /^Anotado/, r)
+  assert.match(readFileSync(memoriaFile, "utf8"), /^- En curso: alarma, con sirena — paso 2, cablear$/m)
+})

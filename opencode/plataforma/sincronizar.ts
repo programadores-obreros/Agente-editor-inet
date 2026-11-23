@@ -219,6 +219,9 @@ export function crearSincronizador(deps: DependenciasSincronizar): {
 
     const escrito = local.escribirMemoriaLocal(deps.carpeta, enCuenta.memoria)
     mostrado = null
+    if (escrito.estado === "no-entra-igual") {
+      return `No toqué la memoria de esta compu: la de la cuenta tiene algo que este archivo no puede guardar igual (por ejemplo el nombre de un proyecto con una coma, que acá separa un proyecto del siguiente). La memoria que había en esta compu sigue como estaba. Corregí ese nombre en la plataforma y volvé a traer.`
+    }
     if (escrito.estado !== "escrita") {
       return `No pude dejar en esta compu la memoria de la cuenta (${escrito.ruta}): la escribí, la releí y no coincide, o no se pudo escribir. Revisá ese archivo antes de seguir.`
     }
