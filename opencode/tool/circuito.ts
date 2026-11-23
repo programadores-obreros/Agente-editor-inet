@@ -139,6 +139,19 @@ interface Plantilla {
 // El modelo de IA NO calcula nada: solo nombra componentes. El código arma todo.
 // ============================================================================
 
+/** Los colores de LED que se dibujan, en el orden en que se reparten por posición.
+ * Una sola lista para el dibujo (`wokwi`) y para el nombre que se lee en la tabla. */
+const COLORES_LED = [
+  { wokwi: "red", nombre: "rojo" },
+  { wokwi: "yellow", nombre: "amarillo" },
+  { wokwi: "green", nombre: "verde" },
+] as const
+
+/** El color que le toca al LED que ocupa el lugar `i` del circuito (la lista da la vuelta). */
+function colorDeLed(i: number): (typeof COLORES_LED)[number] {
+  return COLORES_LED[i % COLORES_LED.length] ?? COLORES_LED[0]
+}
+
 const CABLE = {
   rojo: "#e74c3c",
   marron: "#5d4037",
@@ -994,6 +1007,9 @@ interface Componente {
   voltaje: "3.3V" | "5V"
   interactivo?: boolean
   attrs?: (i: number) => string
+  /** Cómo se llama ESTA unidad en la tabla, cuando el nombre de la pieza a secas no
+   * alcanza para distinguirla (el LED, que sale de un color distinto según su lugar). */
+  nombreEnTabla?: (i: number) => string
   pines: Pin[]
   advertencia: Aviso
   /**
@@ -1039,7 +1055,11 @@ export const COMPONENTES: Record<string, Componente> = {
     // 5 mm que SÍ andan a 3,3 V con 220 Ω (el verde común es GaP, ~2,1 V; el verde
     // InGaN del SKILL es otra pieza, la de alto brillo), y de paso es el orden del
     // semáforo, que es el proyecto de 3 LEDs que más se pide.
-    attrs: (i) => `color="${["red", "yellow", "green"][i % 3]}"`,
+    attrs: (i) => `color="${colorDeLed(i).wokwi}"`,
+    // El color va también en el NOMBRE con que la pieza aparece en la tabla (CIR-05): la
+    // tabla decía «LED / LED / LED» y el modelo no podía saber cuál era el rojo para
+    // escribir el código. Sale de la misma lista que el dibujo, así que no pueden diferir.
+    nombreEnTabla: (i) => `LED ${colorDeLed(i).nombre}`,
     pines: [
       { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "{0} (con {R})" },
       { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
@@ -2171,13 +2191,14 @@ ${conex}
     const dots = def.pines
       .map((pin) => `<span class="dot" style="background:${pin.color}"></span>`)
       .join("")
-    filasTabla.push(`      <tr><td>${def.etiqueta}</td><td>${dots}</td><td>${resumen}</td></tr>`)
+    const nombreEnTabla = def.nombreEnTabla ? def.nombreEnTabla(i) : def.etiqueta
+    filasTabla.push(`      <tr><td>${nombreEnTabla}</td><td>${dots}</td><td>${resumen}</td></tr>`)
 
     // La MISMA tabla, en texto plano, para devolvérsela al modelo (FIX auditoría A).
     // Se arma acá y no aparte para que no puedan divergir: si algún día la fila de la
     // hoja cambia, esta línea cambia con ella.
     conexiones.push(
-      `${def.etiqueta}: ` + def.pines.map((pin) => `${pin.nombre} → ${etiquetaDe(pin, pines)}`).join(", "),
+      `${nombreEnTabla}: ` + def.pines.map((pin) => `${pin.nombre} → ${etiquetaDe(pin, pines)}`).join(", "),
     )
 
     if (id !== gobernado) {
@@ -2872,6 +2893,22 @@ const PRESET_COMPONENTES: Record<string, string[]> = {
 }
 
 /**
+ * Pines propios de un preset, cuando el circuito es el de un proyecto que ya trae su
+ * pinout. Van en el orden de PRESET_COMPONENTES.
+ *
+ * CIR-05 (auditoría de código del 2026-11-22; decisión del owner del 2026-11-23): el
+ * semáforo se repartía con el pool automático y salía rojo=GPIO4, amarillo=GPIO5,
+ * verde=GPIO18, mientras la ficha impresa, el .ino y `semaforo-protoboard` dicen
+ * verde=16, amarillo=17, rojo=18 (tecniabot-web/pinouts.json, «01-semaforizacion»).
+ * Los LEDs salen rojo, amarillo, verde por posición: de ahí el orden 18, 17, 16.
+ * No se lee pinouts.json en ejecución: tests/circuito.test.mjs compara este preset
+ * contra ese archivo, color por color.
+ */
+const PRESET_PINES: Record<string, number[]> = {
+  semaforo: [18, 17, 16],
+}
+
+/**
  * Animación propia de un preset, para cuando la suma de las animaciones sueltas NO
  * representa el circuito que el preset promete.
  *
@@ -3240,7 +3277,8 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       if (!tipos) {
         return `No tengo ese circuito todavía. Disponibles: ${Object.keys(PRESET_COMPONENTES).join(", ")}.`
       }
-      const pedidos = tipos.map((t) => ({ tipo: t }))
+      const pinesDelPreset = PRESET_PINES[args.circuito]
+      const pedidos: Pedido[] = tipos.map((t, i) => (pinesDelPreset?.[i] === undefined ? { tipo: t } : { tipo: t, gpio: pinesDelPreset[i] }))
       // Hoy ningún preset usa piezas pb-*, pero el día que se agregue uno (riego,
       // calefacción) el guard tiene que estar acá también: es la misma página vacía.
       const faltaPreset = faltanPiezasDibujadas(pedidos)
