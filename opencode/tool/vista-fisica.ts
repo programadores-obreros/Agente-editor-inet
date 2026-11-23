@@ -53,6 +53,13 @@ export interface ServidorYServicioVistaFisica {
  * tool no cachea la IR").
  */
 const registroServidores = new Map<string, Promise<ServidorYServicioVistaFisica>>()
+/**
+ * Las claves (directorio, idProyecto) para las que ESTE proceso ya le pidió al navegador
+ * que abra una pestaña y el pedido no falló. Antes «ya estaba abierta» se decidía por si
+ * el servidor estaba levantado: si la primera apertura fallaba, todas las llamadas
+ * siguientes decían «ya estaba abierta… No abrí otra pestaña» y se negaban a reintentar.
+ */
+const pestanasPedidas = new Set<string>()
 
 function claveDeServidor(directorioDatos: string, idProyecto: string): string {
   return `${directorioDatos}::${idProyecto}`
@@ -144,38 +151,77 @@ export async function obtenerServidorVistaFisica(directorioActivo: string, idPro
     // Si falló levantar el servidor (ej. puerto/FS), no dejar la entrada rota
     // para siempre en el Map: la próxima invocación reintenta desde cero.
     registroServidores.delete(clave)
+    pestanasPedidas.delete(clave)
     throw error
   }
 }
 
+/** Lo que se puede saber de un intento de abrir el navegador. NO existe "abierta": ver abajo. */
+export type Apertura = "pedida" | "fallo"
+
+/** Cuánto se espera al lanzador (`xdg-open`, `open`, `cmd /c start`) para ver si termina con error. */
+export const ESPERA_DEL_LANZADOR_MS = 1_500
+
+type ProcesoLanzado = { exited: Promise<number>; unref?: () => void }
+
 /**
- * Abre una URL en el navegador por defecto del sistema, sin bloquear la tool
- * (proceso detached, best-effort). Devuelve `true` si lo lanzó sin excepción,
- * `false` si falló (nunca rompe la tool).
+ * Le pide al sistema que abra una URL en el navegador por defecto.
  *
- * CITA: misma lógica mínima que `opencode/tool/circuito.ts::abrirEnNavegador`
- * (líneas 48-65), replicada acá porque los tools de este repo no se importan
- * entre sí (mismo criterio que ya documenta `comoUrl` en
- * circuito.ts/ficha.ts/imprimible.ts/ayuda.ts: "cuatro copias de seis líneas es
- * más barato que inventar una capa de infraestructura para esto"). A
- * diferencia de `circuito.ts`, acá NUNCA hace falta `comoUrl` — esa función
- * arma una URL `file://` a partir de una ruta de archivo, y acá la URL YA es
+ * QUÉ SE PUEDE AFIRMAR Y QUÉ NO. Antes devolvía `true` con sólo que el lanzamiento no
+ * tirara una excepción, y la tool contestaba «Vista física abierta en el navegador».
+ * Pero `xdg-open` puede arrancar y terminar con error (sin navegador por defecto, una
+ * sesión sin escritorio): la tool afirmaba «abierta» sin que se abriera nada
+ * (auditoría del 2026-11-22, VIS-03). Ahora se espera un momento al lanzador:
+ *
+ *  - no se pudo lanzar, o terminó con un código distinto de 0 → "fallo";
+ *  - terminó en 0, o sigue corriendo pasada la espera          → "pedida".
+ *
+ * "pedida" NO es "abierta": que el lanzador termine bien no prueba que haya aparecido
+ * una ventana, y desde acá no hay forma de comprobarlo. Por eso la tool nunca dice
+ * «abierta»: dice que lo pidió y deja la URL.
+ *
+ * CITA: misma lógica mínima que `opencode/tool/circuito.ts::abrirEnNavegador`,
+ * replicada acá porque los tools de este repo no se importan entre sí. A diferencia de
+ * `circuito.ts`, acá NUNCA hace falta `comoUrl`: la URL YA es
  * `http://127.0.0.1:<puerto>/`, servida por `servidor-proyecto.ts`.
+ *
+ * `lanzar` y `esperaMs` son inyectables para probar las tres salidas sin abrir nada.
  */
-function abrirEnNavegador(url: string): boolean {
+export async function abrirEnNavegador(
+  url: string,
+  lanzar: (cmd: string[]) => ProcesoLanzado = (cmd) => Bun.spawn(cmd, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }),
+  esperaMs: number = ESPERA_DEL_LANZADOR_MS,
+): Promise<Apertura> {
+  const cmd =
+    process.platform === "win32"
+      ? ["cmd", "/c", "start", "", url]
+      : process.platform === "darwin"
+        ? ["open", url]
+        : ["xdg-open", url]
+  let proc: ProcesoLanzado
   try {
-    const cmd =
-      process.platform === "win32"
-        ? ["cmd", "/c", "start", "", url]
-        : process.platform === "darwin"
-          ? ["open", url]
-          : ["xdg-open", url]
-    const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
-    proc.unref()
-    return true
+    proc = lanzar(cmd)
   } catch {
-    return false
+    return "fallo"
   }
+  let reloj: ReturnType<typeof setTimeout> | undefined
+  const pasoLaEspera = new Promise<"sigue">((listo) => {
+    reloj = setTimeout(() => listo("sigue"), esperaMs)
+  })
+  let como: number | "sigue"
+  try {
+    como = await Promise.race([proc.exited, pasoLaEspera])
+  } catch {
+    return "fallo"
+  } finally {
+    if (reloj !== undefined) clearTimeout(reloj)
+    try {
+      proc.unref?.()
+    } catch {
+      /* ya terminó */
+    }
+  }
+  return como === "sigue" || como === 0 ? "pedida" : "fallo"
 }
 
 /** `Snapshot` (composicion-raiz.ts) nunca declara `vista` en su tipo estático — ver la
@@ -202,7 +248,7 @@ export function debeAbrirNuevaPestana(yaAbiertoEnEsteProceso: boolean, reabrir: 
 /** Texto para cuando `debeAbrirNuevaPestana` da `false` — nombra la URL ya abierta y
  * cómo forzar otra pestaña igual. */
 export function mensajeYaAbierta(url: string): string {
-  return `La vista física ya estaba abierta en esta sesión: ${url}. No abrí otra pestaña (pasá reabrir:true si igual querés abrir una nueva).`
+  return `En esta sesión ya le pedí al navegador que abra la vista física: ${url}. No pedí otra pestaña (pasá reabrir:true si no la ves o si querés abrir una nueva).`
 }
 
 /**
@@ -218,7 +264,7 @@ export function resumenDelProyecto(snapshot: SnapshotConVista, conocimiento: Pic
   const catalogo: Catalogo = conocimiento.catalogo
   const proyecto = snapshot.proyecto
   if (!proyecto.placa && proyecto.componentes.length === 0) {
-    return "Abrí la vista, pero el proyecto está VACÍO: todavía no tiene placa ni componentes."
+    return "El proyecto está VACÍO: todavía no tiene placa ni componentes."
   }
 
   const nombrePlaca = proyecto.placa ? ((catalogo.tienePlaca(proyecto.placa) ? conocimiento.nombre("placa", proyecto.placa) : undefined) ?? proyecto.placa) : "sin placa"
@@ -268,7 +314,7 @@ La respuesta siempre incluye un resumen del proyecto (vacío, o placa/piezas/pin
     // si hace falta) — por eso la consulta al Map va PRIMERO.
     const directorioDatos = directorioDeDatos(ctx.directory)
     const claveServidor = claveDeServidor(directorioDatos, idProyecto)
-    const yaAbiertoEnEsteProceso = registroServidores.has(claveServidor)
+    const yaAbiertoEnEsteProceso = registroServidores.has(claveServidor) && pestanasPedidas.has(claveServidor)
 
     // Fix H5 (red-team Phase 2 Slice 1): si otro proceso (otra sesión de OpenCode)
     // ya tiene este proyecto abierto, obtenerServidorVistaFisica (vía
@@ -299,8 +345,13 @@ La respuesta siempre incluye un resumen del proyecto (vacío, o placa/piezas/pin
       return `${mensajeYaAbierta(servidor.url)} ${resumen}`
     }
 
-    const abierto = abrirEnNavegador(servidor.url)
-    const mensajeApertura = abierto ? `Vista física abierta en el navegador: ${servidor.url}` : `No pude abrir el navegador solo. Abrí esta URL a mano: ${servidor.url}`
+    const apertura = await abrirEnNavegador(servidor.url)
+    if (apertura === "pedida") pestanasPedidas.add(claveServidor)
+    else pestanasPedidas.delete(claveServidor)
+    const mensajeApertura =
+      apertura === "pedida"
+        ? `Le pedí al navegador que abra la vista física: ${servidor.url} — no puedo comprobar que la ventana haya aparecido: si no se abrió, abrí esa dirección a mano.`
+        : `No pude abrir el navegador solo. Abrí esta URL a mano: ${servidor.url}`
     return `${mensajeApertura} ${resumen}`
   },
 })

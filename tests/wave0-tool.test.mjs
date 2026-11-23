@@ -372,22 +372,120 @@ test("resumenDelProyecto (función pura): vacío vs. armado, sin pasar por HTTP/
   }
 })
 
-test("Pestañas: con el servidor de este (directorio, idProyecto) YA levantado en este proceso, una segunda llamada NO abre otra pestaña salvo reabrir:true", async () => {
+// ── LA VISTA FÍSICA NO DICE «ABIERTA» SIN PODER SABERLO ───────────────────────────────
+//
+// Auditoría de código del 2026-11-22 (VIS-03 y una omisión hallada por QA).
+//
+// 1. La tool contestaba «Vista física abierta en el navegador» con sólo que el
+//    lanzamiento no tirara una excepción. `xdg-open` puede arrancar y terminar con error
+//    (sin navegador por defecto, sesión sin escritorio): decía «abierta» sin abrir nada.
+// 2. «Ya estaba abierta» se decidía por si el servidor estaba levantado en el proceso, no
+//    por si se había abierto una pestaña. Si la primera apertura fallaba, todas las
+//    llamadas siguientes decían «ya estaba abierta… No abrí otra pestaña» y se negaban a
+//    reintentar: un OK falso que quedaba pegado toda la sesión.
+//
+// EL TEST QUE ESTABA ACÁ CONSAGRABA EL DEFECTO 2, y por eso se reescribió. Corría sin
+// `Bun` (o sea, con la apertura fallando siempre) y exigía que la SEGUNDA llamada dijera
+// «ya estaba abierta». Probaba, sin querer, que después de no poder abrir el navegador la
+// tool afirmara que estaba abierto.
+//
+// Ahora el lanzador es un `Bun.spawn` falso que el test controla: no se abre ningún
+// navegador de verdad, y se ejercen las tres salidas (terminó bien, terminó con error, no
+// se pudo lanzar).
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - `como === "sigue" || como === 0` → `true` (no mirar cómo terminó el lanzador)
+//   - volver a «ya abierto» = el servidor está levantado (sin mirar `pestanasPedidas`)
+//   - no anotar la pestaña cuando el pedido salió bien
+//   - volver al texto «Vista física abierta en el navegador»
+//
+// LÍMITE HONESTO: que el lanzador termine en 0 no prueba que haya aparecido una ventana, y
+// desde la tool no se puede comprobar. Por eso el mensaje dice «le pedí», no «abrí».
+
+const { abrirEnNavegador } = await import(join(REPO, "opencode/tool/vista-fisica.ts"))
+
+/** Un `Bun.spawn` que no abre nada: cada lanzamiento termina como diga `comoTermina`. */
+function conLanzadorFalso(comoTermina, fn) {
+  const original = globalThis.Bun
+  const lanzados = []
+  globalThis.Bun = {
+    spawn(cmd) {
+      lanzados.push(cmd)
+      const r = comoTermina()
+      if (r instanceof Error) throw r
+      return { exited: r === "no-termina" ? new Promise(() => {}) : Promise.resolve(r), unref() {} }
+    },
+  }
+  return Promise.resolve(fn(lanzados)).finally(() => {
+    if (original === undefined) delete globalThis.Bun
+    else globalThis.Bun = original
+  })
+}
+
+test("abrirEnNavegador: «pedida» si el lanzador termina bien o sigue corriendo; «fallo» si termina mal o no se puede lanzar", async () => {
+  const proc = (exited) => () => ({ exited, unref() {} })
+  assert.equal(await abrirEnNavegador("http://127.0.0.1:1/", proc(Promise.resolve(0)), 50), "pedida")
+  assert.equal(await abrirEnNavegador("http://127.0.0.1:1/", proc(new Promise(() => {})), 30), "pedida", "un lanzador que sigue vivo pasada la espera no es una falla")
+  assert.equal(await abrirEnNavegador("http://127.0.0.1:1/", proc(Promise.resolve(3)), 50), "fallo", "xdg-open terminó con error y se lo dio por abierto")
+  assert.equal(await abrirEnNavegador("http://127.0.0.1:1/", proc(Promise.resolve(1)), 50), "fallo")
+  assert.equal(await abrirEnNavegador("http://127.0.0.1:1/", () => { throw new Error("no existe xdg-open") }, 50), "fallo")
+  assert.equal(await abrirEnNavegador("http://127.0.0.1:1/", proc(Promise.reject(new Error("se rompió"))), 50), "fallo")
+})
+
+test("Pestañas: si el pedido al navegador salió bien, una segunda llamada NO pide otra pestaña salvo reabrir:true", async () => {
   const dirActivo = nuevoDir("wave0-pestanas")
   const idProyecto = nuevoIdProyecto()
   try {
-    const primera = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
-    assert.doesNotMatch(primera, /ya estaba abierta/i, `la primera vez tiene que intentar abrir: ${primera}`)
+    await conLanzadorFalso(() => 0, async (lanzados) => {
+      const primera = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
+      assert.match(primera, /Le pedí al navegador que abra la vista física: http:\/\/127\.0\.0\.1:\d+\//, primera)
+      assert.doesNotMatch(primera, /abierta en el navegador/i, `afirma que quedó abierta, y no lo puede saber: ${primera}`)
+      assert.match(primera, /no puedo comprobar/i, primera)
+      assert.equal(lanzados.length, 1)
 
-    const segunda = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
-    assert.match(segunda, /ya estaba abierta/i, `mismo (directorio, idProyecto) en el MISMO proceso: no tendría que abrir otra pestaña: ${segunda}`)
+      const segunda = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
+      assert.match(segunda, /ya le pedí al navegador/i, `mismo (directorio, idProyecto) en el MISMO proceso: no tendría que pedir otra pestaña: ${segunda}`)
+      assert.equal(lanzados.length, 1, "pidió otra pestaña sin que se lo pidieran")
 
-    const forzada = await vistaFisica.execute({ idProyecto, reabrir: true }, { directory: dirActivo })
-    assert.doesNotMatch(forzada, /ya estaba abierta/i, `con reabrir:true tiene que forzar la apertura igual: ${forzada}`)
+      const forzada = await vistaFisica.execute({ idProyecto, reabrir: true }, { directory: dirActivo })
+      assert.doesNotMatch(forzada, /ya le pedí al navegador/i, `con reabrir:true tiene que pedirla igual: ${forzada}`)
+      assert.equal(lanzados.length, 2, "con reabrir:true no pidió otra pestaña")
+    })
   } finally {
     await cerrarVistaFisica(dirActivo, idProyecto)
   }
 })
+
+for (const [caso, comoTermina] of [
+  ["el lanzador termina con error", () => 3],
+  ["no se puede lanzar", () => new Error("ENOENT xdg-open")],
+]) {
+  test(`Pestañas: si ${caso}, lo dice, y la llamada siguiente vuelve a intentar en vez de decir que ya estaba`, async () => {
+    const dirActivo = nuevoDir("wave0-pestanas-falla")
+    const idProyecto = nuevoIdProyecto()
+    try {
+      await conLanzadorFalso(comoTermina, async (lanzados) => {
+        const primera = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
+        assert.match(primera, /No pude abrir el navegador solo\. Abrí esta URL a mano: http:\/\/127\.0\.0\.1:\d+\//, primera)
+        assert.doesNotMatch(primera, /Le pedí al navegador|abierta en el navegador/i, `dio por pedida una apertura que falló: ${primera}`)
+        // El resumen no puede decir «abrí la vista» en el mismo texto que «no pude abrir».
+        assert.doesNotMatch(primera, /Abrí la vista/, primera)
+
+        const segunda = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
+        assert.doesNotMatch(segunda, /ya le pedí al navegador|ya estaba abierta/i, `después de no poder abrir, dice que ya estaba: ${segunda}`)
+        assert.match(segunda, /No pude abrir el navegador solo/, segunda)
+        assert.equal(lanzados.length, 2, "no volvió a intentar")
+      })
+      // Y cuando el navegador vuelve a andar, se abre sin pedir `reabrir`.
+      await conLanzadorFalso(() => 0, async () => {
+        const tercera = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
+        assert.match(tercera, /Le pedí al navegador que abra la vista física/, tercera)
+      })
+    } finally {
+      await cerrarVistaFisica(dirActivo, idProyecto)
+    }
+  })
+}
 
 test("debeAbrirNuevaPestana (función pura, F-05 continuación): nunca reabre salvo reabrir:true", () => {
   assert.equal(debeAbrirNuevaPestana(false, undefined), true, "primera vez (nunca estuvo abierto en este proceso): abre")
