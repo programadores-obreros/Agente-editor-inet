@@ -387,8 +387,12 @@ fi
 # queda a la vista en la terminal— y el script sale distinto de 0.
 echo ""
 if [ -z "$OPENCODE_FALTA" ] && [ -z "$PIO_FALTA" ] && [ -z "$PLACAS_FALTA" ] && [ "$CAPA" = "ok" ]; then
-  echo "  ✅ ¡Todo listo! Abrí una terminal en cualquier carpeta, escribí 'opencode',"
-  echo "     apretá Tab y elegí 'tecnia-bot'."
+  # El MISMO comando que dice install.sh al terminar. Hasta el 2026-11-23 este cierre decía
+  # «escribí 'opencode'» y el de install.sh, que corre un rato antes, «escribí 'tecnia-bot'».
+  # Este es lo último que queda en pantalla, y con 'opencode' a secas no se carga a la placa:
+  # quien le hacía caso se encontraba con un «NO SE CARGÓ» en el primer intento.
+  echo "  ✅ ¡Todo listo! Abrí una terminal en la carpeta del proyecto, escribí 'tecnia-bot',"
+  echo "     apretá Tab y elegí 'tecnia-bot'. (Con 'opencode' a secas anda todo menos cargar a la placa.)"
   echo ""
   echo "  🔑 La API key de Google es opcional. Sin key, Tecnia Bot usa Big Pickle, el modelo"
   echo "     gratuito de OpenCode (gratis por tiempo limitado; OpenCode puede usar el chat"

@@ -78,6 +78,8 @@ export interface HerramientasDeCarga {
   readonly configuracion?: EntornoDeConfiguracion
   /** De dónde sale la marca del lanzador (ciclo 4). En producción, `LANZAMIENTO_REAL`; los tests la inyectan. */
   readonly lanzador?: Lanzamiento
+  /** En qué sistema corre. En producción, `process.platform`; los tests la inyectan. */
+  readonly plataforma?: string
 }
 
 /** Lo que se usa del `ctx` de OpenCode. `ask` no se llama desde acá: lo llama `preguntarChecklist`. */
@@ -514,8 +516,25 @@ export function porQueNoVieneDelLanzador(l: Lanzamiento): string | null {
 }
 
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */
-export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion" | "lanzador">): ResultadoDeCarga | null {
-  // Ciclo 4: antes que todo, que OpenCode se haya abierto con el lanzador (revisión previa).
+export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion" | "lanzador" | "plataforma">): ResultadoDeCarga | null {
+  // LA PLATAFORMA, ANTES QUE EL LANZADOR. Esta carga sólo está habilitada en Linux, y el
+  // lanzador `tecnia-bot` sólo lo instala install.sh. Mirando primero el lanzador, en Windows y
+  // en Mac la respuesta era siempre SIN_LANZADOR: «cerrá OpenCode y abrí Tecnia Bot escribiendo
+  // `tecnia-bot`», un comando que ahí no existe. El motivo verdadero estaba más abajo y no se
+  // alcanzaba nunca (encontrado el 2026-11-23, al preparar una prueba en Windows).
+  // NO CAMBIA A QUIÉN SE LE PERMITE CARGAR: las dos ramas rechazan. Cambia cuál se dice.
+  const plataforma = h.plataforma ?? process.platform
+  if (plataforma !== "linux") {
+    const sistema = plataforma === "win32" ? "Windows" : plataforma === "darwin" ? "macOS" : plataforma
+    return no(
+      "PLATAFORMA_NO_HABILITADA",
+      `NO SE CARGÓ — en esta versión, cargar a la placa el programa generado desde el proyecto físico sólo está habilitado en Linux, y esta compu es ${sistema}. ` +
+        "No hay otro camino para cargar ESTE programa desde acá: la tool `platformio` tampoco carga la carpeta del programa generado. " +
+        "Lo que sí funciona en esta compu: armar el proyecto, generar el programa y compilarlo. " +
+        "Decíselo así al docente; no le pidas que cierre ni que abra nada de otra forma, porque no cambia el resultado.",
+    )
+  }
+  // Ciclo 4: antes que todo lo demás, que OpenCode se haya abierto con el lanzador (revisión previa).
   const sinLanzador = porQueNoVieneDelLanzador(h.lanzador ?? LANZAMIENTO_REAL)
   if (sinLanzador) {
     return no(
