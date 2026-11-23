@@ -33,7 +33,7 @@
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, symlinkSync } from "node:fs"
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync, chmodSync, symlinkSync, existsSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join, dirname } from "node:path"
@@ -175,6 +175,45 @@ test("uninstall.ps1: 'Perfil y memoria borrados' cuelga de una RELECTURA con Tes
   assert.match(fracaso, /Anotar-Pendiente/, "el fracaso no queda anotado para el resumen final")
 })
 
+// ── 4b. uninstall.ps1: la sesión de Tecnia Lab ──────────────────────────────
+//
+// Estático, como el resto de los tests de uninstall.ps1: en Linux no hay PowerShell.
+// La mitad funcional de esto está más abajo, contra uninstall.sh, que es el mismo
+// diseño. Lo que acá NO se prueba es que el .ps1 corra: eso es la VM.
+// Mutaciones: sacar el `-not` de `$SesionQuedo`, poner el mensaje de éxito fuera del
+// `if`, o reemplazar Borrar-YVerificar por un Remove-Item suelto → rojo.
+test("uninstall.ps1: 'Sesion de Tecnia Lab borrada' cuelga de la relectura, y dice que en la plataforma sigue abierta", () => {
+  assert.match(PS, /\$SesionFile\s*=\s*Join-Path \$ConfigDir "tecnia-sesion\.json"/, "no conoce el archivo de la sesión")
+  const exito = [...PS.matchAll(/^[ \t]*Write-Host "[^"]*Sesion de Tecnia Lab borrada[^"]*"/gm)]
+  assert.equal(exito.length, 1, `esperaba UNA afirmación de "Sesion de Tecnia Lab borrada" y encontré ${exito.length}`)
+
+  const iRelee = PS.indexOf("$SesionQuedo = -not (Borrar-YVerificar $SesionFile)")
+  assert.ok(iRelee >= 0, "la sesión no se borra con Borrar-YVerificar (que relee con Test-Path)")
+  const iGuarda = PS.indexOf("if (-not $SesionQuedo) {", iRelee)
+  assert.ok(iGuarda > iRelee && iGuarda < exito[0].index, "el mensaje de éxito no cuelga de lo que dijo la relectura")
+  assert.doesNotMatch(PS.slice(iGuarda, exito[0].index), /\}/,
+    "entre la guarda y el mensaje se cierra un bloque: el mensaje quedó afuera de la verificación")
+
+  const iFracaso = PS.indexOf("NO PUDE BORRAR la sesion de Tecnia Lab")
+  assert.ok(iFracaso > exito[0].index, "no hay rama de fracaso para la sesión")
+  // Entre el éxito y el fracaso: el aviso de que borrar acá no cierra del otro lado, y el `else`.
+  const entre = PS.slice(exito[0].index, iFracaso)
+  assert.match(entre, /en la plataforma sigue abierta/, "no avisa que la sesión sigue abierta en la plataforma")
+  assert.match(entre, /\} else \{/, "el fracaso no está en la rama contraria al éxito")
+  const fracaso = PS.slice(iFracaso, iFracaso + 600)
+  assert.match(fracaso, /Write-Host "\s+\$SesionFile"/, "el fracaso no dice DÓNDE quedó la sesión")
+  assert.match(fracaso, /a mano/, "el fracaso no le dice qué hacer")
+  assert.match(fracaso, /Anotar-Pendiente "sesion de Tecnia Lab en \$SesionFile"/, "el fracaso no queda anotado para el resumen final")
+
+  // Y sólo se toca si existe y si el docente dijo que sí (o -Borrar): -Conservar no la borra.
+  const iBloque = PS.indexOf("if (Test-Path $SesionFile) {")
+  assert.ok(iBloque >= 0 && iBloque < iRelee, "el bloque de la sesión no está condicionado a que el archivo exista")
+  const antes = PS.slice(iBloque, iRelee)
+  assert.match(antes, /\$quitarSesion = \[bool\]\$Borrar/)
+  assert.match(antes, /if \(-not \$Borrar -and -not \$Conservar\) \{\s*\$quitarSesion = Preguntar-SiNo/)
+  assert.match(antes, /if \(\$quitarSesion\) \{\s*$/, "se borra sin mirar la decisión del docente")
+})
+
 test("uninstall.ps1: la key se relee después de escribir, y la variable de entorno también", () => {
   const exito = [...PS.matchAll(/^[ \t]*Write-Host "[^"]*Key de Google quitada[^"]*"/gm)]
   assert.equal(exito.length, 1, `esperaba UNA afirmación de "Key de Google quitada" y encontré ${exito.length}`)
@@ -223,9 +262,9 @@ test("ninguna afirmación de borrado de los uninstall.* llega sin una relectura 
         `${archivo}:${i + 1} afirma un borrado y en las 30 líneas de arriba no hay ninguna relectura: ${linea.trim()}`)
     }
   }
-  // El conteo: perfil, key y "desinstalado" en cada uno de los dos scripts.
-  assert.equal(encontradas.length, 6,
-    `esperaba 6 afirmaciones de borrado (perfil, key y el "desinstalado" final, en los dos scripts) y encontré ` +
+  // El conteo: perfil, sesión de Tecnia Lab, key y "desinstalado", en cada uno de los dos scripts.
+  assert.equal(encontradas.length, 8,
+    `esperaba 8 afirmaciones de borrado (perfil, sesión, key y el "desinstalado" final, en los dos scripts) y encontré ` +
       `${encontradas.length}:\n${encontradas.join("\n")}`)
 })
 
@@ -288,9 +327,9 @@ function armarEscuela({ auth, bom = false, herramientas = [] }) {
   return base
 }
 
-function desinstalar(base) {
+function desinstalar(base, modo = "--borrar") {
   try {
-    return execFileSync(bash, [join(REPO, "install", "uninstall.sh"), "--borrar"], {
+    return execFileSync(bash, [join(REPO, "install", "uninstall.sh"), modo], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -461,3 +500,192 @@ test(
     }
   },
 )
+
+// ── 8. La limpieza de la config no puede cortar el desinstalador ─────────────
+//
+// `unmerge_via_python` corría pelado bajo `set -e`. Con un opencode.json de sólo
+// lectura python3 tiraba una traza, el script moría AHÍ —antes de las preguntas
+// por los datos personales— y la docente nunca llegaba a que le ofrecieran quitar
+// su key ni el perfil del aula. Y con un opencode.json que no parsea pasaba lo
+// contrario y era igual de malo: se lo salteaba EN SILENCIO y el cierre decía
+// «Listo. Tecnia Bot desinstalado.» con el agente por defecto y las rutas de
+// instructions todavía adentro.
+//
+// Los dos se prueban corriendo uninstall.sh de verdad, con el archivo en ese
+// estado en el disco.
+//
+// MUTACIONES que ponen rojo este archivo (exit code 1):
+//   - en la rama `JSON_TOOL = python3`, `unmerge_python_y_anotar` →
+//     `unmerge_via_python` (pelado, como antes)   → rojo el de sólo lectura
+//   - borrar `if oc is ILEGIBLE:` + `sin_limpiar += 20` (dejando `if oc is not None`)
+//                                                 → rojo el del JSON roto
+//   - en decidir(), `conservar) return 1` → `conservar) return 0`
+//                                                 → rojos los dos de --conservar
+
+/** Una escuela con la config de OpenCode mergeada y los datos personales en disco. */
+function armarEscuelaCompleta(herramientas, opencodeJson) {
+  const base = armarEscuela({
+    auth: '{"google":{"type":"api","key":"AIzaSECRETO"},"anthropic":{"type":"api","key":"OTRA"}}',
+    herramientas,
+  })
+  const cfg = join(base, "cfg", "opencode")
+  const rutas = {
+    opencode: join(cfg, "opencode.json"),
+    perfil: join(cfg, "tecnia-perfil.md"),
+    memoria: join(cfg, "tecnia-memoria.md"),
+    cargas: join(cfg, "tecnia-cargas.json"),
+    agente: join(cfg, "agent", "tecnia-bot.md"),
+  }
+  writeFileSync(rutas.perfil, "- Nombre: una docente\n")
+  writeFileSync(rutas.memoria, "- Nivel: inicial\n")
+  writeFileSync(rutas.cargas, '{"sal":"00","placas":{}}')
+  writeFileSync(rutas.opencode, opencodeJson ?? JSON.stringify({
+    default_agent: "tecnia-bot",
+    model: "anthropic/claude", // lo del docente: por esto el archivo NO se borra entero
+    agent: { "tecnia-bot": { model: "opencode/big-pickle" } },
+    instructions: [rutas.perfil, rutas.memoria],
+  }))
+  return { base, ...rutas }
+}
+
+test(
+  "FUNCIONAL: opencode.json de sólo lectura → el desinstalador NO se corta: igual quita la key y los datos, y dice que la config quedó pendiente",
+  { skip: !puedeCorrer || !python3 || esRoot },
+  () => {
+    const e = armarEscuelaCompleta(["python3"])
+    const original = readFileSync(e.opencode, "utf8")
+    chmodSync(e.opencode, 0o444)
+    try {
+      const salida = desinstalar(e.base)
+      assert.doesNotMatch(salida, /el script salió con código/, `el desinstalador se cortó a la mitad:\n${salida}`)
+      assert.doesNotMatch(salida, /Traceback/, `le tira una traza de Python a la docente:\n${salida}`)
+      // Lo que venía DESPUÉS del punto donde antes se moría:
+      assert.equal(existsSync(e.perfil), false, `no llegó a borrar el perfil del aula:\n${salida}`)
+      assert.equal(existsSync(e.memoria), false, "no llegó a borrar la memoria del aula")
+      assert.doesNotMatch(authDe(e.base), /AIzaSECRETO/, `no llegó a quitar la key de Google:\n${salida}`)
+      assert.match(authDe(e.base), /OTRA/, "se llevó puesta otra credencial")
+      // Y lo que no pudo hacer, dicho:
+      assert.equal(readFileSync(e.opencode, "utf8"), original, "el archivo era de sólo lectura y cambió: revisar el test")
+      assert.match(salida, /PARCIALMENTE/, `dijo «Listo» con la config sin limpiar:\n${salida}`)
+      assert.ok(salida.slice(salida.indexOf("PARCIALMENTE")).includes(e.opencode), `el resumen no dice qué archivo quedó sin limpiar:\n${salida}`)
+    } finally {
+      chmodSync(e.opencode, 0o644)
+      rmSync(e.base, { recursive: true, force: true })
+    }
+  },
+)
+
+test(
+  "FUNCIONAL: opencode.json que no parsea → no se saltea en silencio: queda como pendiente en el resumen",
+  { skip: !puedeCorrer || !python3 },
+  () => {
+    const roto = '{ "default_agent": "tecnia-bot", esto no es JSON\n'
+    const e = armarEscuelaCompleta(["python3"], roto)
+    try {
+      const salida = desinstalar(e.base)
+      assert.doesNotMatch(salida, /el script salió con código/, salida)
+      assert.equal(readFileSync(e.opencode, "utf8"), roto, "pisó una config que no pudo leer")
+      assert.doesNotMatch(salida, /==> Listo\. Tecnia Bot desinstalado\./, `dijo «Listo» y adentro de opencode.json sigue default_agent: tecnia-bot:\n${salida}`)
+      assert.match(salida, /PARCIALMENTE/, salida)
+      assert.ok(salida.slice(salida.indexOf("PARCIALMENTE")).includes(e.opencode), `el resumen no nombra el archivo:\n${salida}`)
+    } finally {
+      rmSync(e.base, { recursive: true, force: true })
+    }
+  },
+)
+
+// ── 9. --conservar CONSERVA ──────────────────────────────────────────────────
+//
+// Todos los funcionales de arriba usan --borrar. La otra mitad de la promesa
+// —`--conservar` (y el silencio: sin terminal nadie contesta) deja el perfil, la
+// memoria, el registro de cargas y la key— no tenía una sola ejecución: cambiando
+// `conservar) return 1` por `return 0` en decidir(), la suite entera seguía verde
+// con un desinstalador que borraba los datos de un aula sin que nadie lo pidiera.
+for (const [herramienta, real] of [["python3", python3], ["jq", jq]]) {
+  test(
+    `FUNCIONAL: uninstall.sh --conservar (con ${herramienta}) deja perfil, memoria, registro de cargas y la key, byte a byte`,
+    { skip: !puedeCorrer || !real },
+    () => {
+      const e = armarEscuelaCompleta([herramienta])
+      const antes = {
+        perfil: readFileSync(e.perfil),
+        memoria: readFileSync(e.memoria),
+        cargas: readFileSync(e.cargas),
+        auth: readFileSync(join(e.base, "data", "opencode", "auth.json")),
+      }
+      try {
+        const salida = desinstalar(e.base, "--conservar")
+        assert.doesNotMatch(salida, /el script salió con código/, salida)
+        for (const [nombre, ruta] of [["perfil", e.perfil], ["memoria", e.memoria], ["cargas", e.cargas]]) {
+          assert.ok(existsSync(ruta), `--conservar BORRÓ ${nombre}:\n${salida}`)
+          assert.ok(readFileSync(ruta).equals(antes[nombre]), `--conservar cambió ${nombre}`)
+        }
+        assert.ok(readFileSync(join(e.base, "data", "opencode", "auth.json")).equals(antes.auth), `--conservar tocó auth.json:\n${salida}`)
+        assert.match(salida, /La key de Google se conserva/, salida)
+        assert.match(salida, /Se conservan en /, salida)
+        assert.doesNotMatch(salida, /borrados|Key de Google quitada/, `afirma un borrado con --conservar:\n${salida}`)
+        // Y lo que SÍ es del programa se fue: conservar los datos no es no desinstalar.
+        assert.equal(existsSync(e.agente), false, "no desinstaló la capa")
+        const oc = JSON.parse(readFileSync(e.opencode, "utf8"))
+        assert.equal(oc.default_agent, undefined, "dejó a tecnia-bot como agente por defecto")
+        assert.equal(oc.model, "anthropic/claude", "se llevó puesta la config del docente")
+        assert.match(salida, /==> Listo\. Tecnia Bot desinstalado\./, salida)
+      } finally {
+        rmSync(e.base, { recursive: true, force: true })
+      }
+    },
+  )
+}
+
+// ─── Sesión de Tecnia Lab (tecnia-sesion.json) ──────────────────────────────
+// El archivo trae el token del vínculo con la cuenta del docente, su nombre y su
+// email. Misma regla que la key de Google: lo que el script dice y lo que quedó
+// en el disco tienen que coincidir, y borrar acá NO es cerrar en la plataforma.
+
+const SESION = '{"token":"TOKENSECRETO","cuenta":{"nombre":"Ana","email":"ana@escuela.test"},"base":"https://x.test"}\n'
+const sesionDe = (base) => join(base, "cfg", "opencode", "tecnia-sesion.json")
+
+test("FUNCIONAL: con sesión de Tecnia Lab → la borra, lo dice, y avisa que en la plataforma sigue abierta", { skip: !puedeCorrer }, () => {
+  const base = armarEscuela({ auth: "{}" })
+  try {
+    writeFileSync(sesionDe(base), SESION)
+    const salida = desinstalar(base)
+    assert.ok(!existsSync(sesionDe(base)), `la sesión sigue en disco:\n${salida}`)
+    assert.match(salida, /Sesión de Tecnia Lab borrada/, `borró la sesión y no lo dice:\n${salida}`)
+    assert.match(salida, /en la plataforma sigue abierta/, `no avisa que la sesión sigue abierta del otro lado:\n${salida}`)
+    assert.doesNotMatch(salida, /TOKENSECRETO/, "el token salió por la pantalla")
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test("FUNCIONAL: la sesión no se puede borrar → NO dice que la borró, dice dónde quedó y termina PARCIALMENTE", { skip: !puedeCorrer }, () => {
+  const base = armarEscuela({ auth: "{}" })
+  try {
+    // Un directorio con ese nombre: `rm -f` no lo saca, igual que un archivo tomado.
+    mkdirSync(sesionDe(base))
+    writeFileSync(join(sesionDe(base), "adentro"), SESION)
+    const salida = desinstalar(base)
+    assert.ok(existsSync(sesionDe(base)), "el escenario no se armó: la sesión se pudo borrar")
+    assert.doesNotMatch(salida, /Sesión de Tecnia Lab borrada/, `AFIRMA haber borrado la sesión y sigue ahí:\n${salida}`)
+    assert.match(salida, /NO PUDE BORRAR la sesión de Tecnia Lab/, `se calla que la sesión quedó:\n${salida}`)
+    // Dos asserts que al principio eran más flojos y dejaban vivas dos mutaciones:
+    // "la ruta aparece en algún lado" lo cumplía el resumen final aunque el aviso no
+    // la dijera, y "dice PARCIALMENTE" lo cumplía el auth.json ilegible de esta
+    // escuela (sin jq ni python3) aunque la sesión no se anotara como pendiente.
+    assert.ok(salida.includes(`SIGUE EN ESTA COMPUTADORA.\n        ${sesionDe(base)}\n`), `el aviso no dice DÓNDE quedó la sesión:\n${salida}`)
+    assert.match(salida, /PARCIALMENTE/, `el resumen final dice que salió todo bien:\n${salida}`)
+    assert.ok(salida.includes(`    - sesión de Tecnia Lab en ${sesionDe(base)}\n`), `la sesión no figura en lo que quedó sin borrar:\n${salida}`)
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})
+
+test("FUNCIONAL: sin sesión de Tecnia Lab → el script no la nombra", { skip: !puedeCorrer }, () => {
+  const base = armarEscuela({ auth: "{}" })
+  try {
+    assert.doesNotMatch(desinstalar(base), /Tecnia Lab/)
+  } finally {
+    rmSync(base, { recursive: true, force: true })
+  }
+})

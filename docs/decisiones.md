@@ -201,10 +201,22 @@ Listo, termino de instalarse. Abriendo...
 
 ### Dos decisiones adentro de esto
 
-**La marca la maneja Inno, no el bootstrap.** Inno corre sus entradas de `[Run]`
-en orden y con `waituntilterminated`, así que el borrado ocurre igual si el
-bootstrap termina en 0, en 1, o se cae. Si la manejara el propio bootstrap, un
-fallo dejaría la marca puesta y el lanzador esperando de gusto.
+**La marca la maneja Inno, no el bootstrap.** El borrado tiene que ocurrir igual
+si el bootstrap termina en 0, en 1, o se cae. Si la manejara el propio bootstrap,
+un fallo dejaría la marca puesta y el lanzador esperando de gusto.
+
+> **Actualización (instalador posterior a la 0.4.8): la marca ya no pasa por
+> `[Run]`.** Cuando se tomó esta decisión la borraba una entrada de `[Run]`
+> puesta después de la del bootstrap. Hoy todo vive en `[Code]`, en
+> `CurStepChanged`: la marca se crea en `ssInstall` (eso ya lo contaba D-04) y se
+> borra en `ssPostInstall`, en el `finally` que envuelve a `CorrerElBootstrap` —
+> o sea, salga el bootstrap con 0, con 1, no se haya podido lanzar o reviente el
+> propio script de Inno. `DeinitializeSetup` sigue de red por si se cancela antes.
+>
+> Se mudó junto con el bootstrap, que dejó `[Run]` por otro motivo: una entrada
+> `waituntilterminated` **espera pero no mira el código de salida**, y por eso el
+> asistente decía "quedó instalado" con el bootstrap caído. La decisión de fondo
+> no cambió: la maneja Inno, no el bootstrap.
 
 **La espera mira la marca, no si `opencode` ya existe.** OpenCode se instala en
 el paso 2 de 4: arrancar ahí da un OpenCode pelado, sin Tecnia Bot. Ese es
@@ -217,7 +229,10 @@ alguien que no puede hacer nada al respecto no es una opción.
 ### Cuándo revisar esto
 
 - Si alguien reporta que el lanzador esperó y **nunca** abrió. Sería marca
-  huérfana: querría decir que Inno no llegó a correr su tercera entrada.
+  huérfana: querría decir que Inno murió antes de borrarla (se cortó la luz, lo
+  mató el antivirus). El lanzador actual ya contempla ese caso: si la marca está
+  y comprueba que el instalador no está corriendo, no espera los 20 minutos;
+  dice *"la instalación anterior no terminó"* y manda a "Reparar Tecnia Bot".
 - Si los 20 minutos resultan cortos en alguna escuela real. Antes de subirlos:
   medir cuánto tarda de verdad ahí.
 
@@ -503,10 +518,12 @@ A una docente bloqueada se le dice: sacar la key en
 que la pide por consola. **`/clave` y `/actualizar` NO sirven ahí**: son comandos que
 pasan por el modelo, y el modelo es justamente lo que está caído.
 
-> ⚠️ Al mandar a alguien a «Reparar Tecnia Bot» hay que avisarle que **pegue la key y
-> apriete Enter, nada más**. El bug del NUL de `install/install.ps1:200` sigue vivo: una
-> flecha o una tecla de función durante los 60 s de espera graba un `\u0000` como key y la
-> deja peor que antes.
+> ⚠️ Al mandar a alguien a «Reparar Tecnia Bot» había que avisarle que **pegue la key y
+> apriete Enter, nada más**, por el bug del NUL de `install/install.ps1`: una flecha o una
+> tecla de función durante los 60 s de espera grababa un `\u0000` como key y la dejaba
+> peor que antes. **Ese bug está arreglado en el instalador posterior a la 0.4.8**: la
+> lectura descarta las teclas que no son caracteres y hay un chequeo de forma antes de
+> probar o guardar. En una 0.4.8 o anterior el aviso sigue valiendo.
 
 ### Cuándo volver sobre esto
 

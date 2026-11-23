@@ -366,8 +366,23 @@ test("diagnostico en Windows (simulado): Get-CimInstance en UTF-8, y lee el CH34
 // `finally` para no filtrarle la plataforma falsa a los tests que corren
 // despues (node --test comparte el módulo entero).
 
+// ESTOS DOS AYUDANTES NO RESTAURABAN NADA, y el comentario de arriba decía que sí. Devolvían lo
+// que devuelve `Object.defineProperty`, que es el objeto `process`, no el descriptor de antes;
+// el `finally` de cada test hacía `defineProperty(process, "platform", process)`, que no cambia
+// nada. La plataforma falsa quedaba puesta para todos los tests siguientes del archivo.
+// No se notaba mientras cada línea del producto tenía su copia: en una quedaba «darwin» y en
+// la otra «win32», y ningún test de después dependía de la diferencia. Al unir las dos líneas
+// (2026-11-23) un test que lee `/dev/ttyUSB0` corrió con «win32» puesto y se puso rojo: lo
+// encontré sondeando `process.platform` adentro de ese test.
+// Ahora devuelven el descriptor ORIGINAL, que es lo que el `finally` necesita.
+function conPlataforma(valor) {
+  const original = Object.getOwnPropertyDescriptor(process, "platform")
+  Object.defineProperty(process, "platform", { value: valor, configurable: true })
+  return original
+}
+
 function comoDarwin() {
-  return Object.defineProperty(process, "platform", { value: "darwin", configurable: true })
+  return conPlataforma("darwin")
 }
 
 test("puertoValido(): acepta las formas reales de las tres plataformas", () => {
@@ -463,7 +478,7 @@ test("monitor en macOS con puerto malicioso: RECHAZA y no lanza osascript ni nad
 // Ningun valor de aca se ejecuta: `Bun.spawn` es el falso de arriba.
 
 function comoWin32() {
-  return Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+  return conPlataforma("win32")
 }
 
 test("monitor en Windows con puerto valido: lanza cmd /c start con el MISMO argv de antes del cambio", async () => {
@@ -840,4 +855,344 @@ test("los instaladores dicen lo mismo que el bot: /actualizar no baja, y el pend
   assert.doesNotMatch(ps1, /\$core = Split-Path/, "install.ps1 vuelve a sacar el core de la ruta de pio.exe")
   assert.match(sh, /core="\$\{PLATFORMIO_CORE_DIR:-\$HOME\/\.platformio\}"/)
   assert.match(readFileSync(join(REPO, "install/diagnostico.ps1"), "utf8"), /function Core-PlatformIO \{[\s\S]{0,400}-PathType Container/)
+})
+
+// ── NO AFIRMAR LO QUE NO SE MIDIÓ: LA CARPETA Y LA LISTA DE PUERTOS ────────────
+//
+// Dos OK falsos (bueno: dos diagnósticos falsos) que encontró la auditoría de
+// código del 2026-11-22, ejecutando el tool sobre el Bun real con un pio falso.
+//
+// PIO-01. `run()` convertía CUALQUIER excepción de `Bun.spawn` en «command not
+// found» con código 127, y Bun tira ENOENT también cuando la CARPETA no existe.
+// Con PlatformIO instalado y un `project_path` mal escrito, el tool contestaba
+// «PlatformIO no esta instalado… Instalalo VOS ahora: action "reparar"», y el
+// diagnóstico «PlatformIO: NO encontrado». Mandaba a reinstalar (minutos, una
+// descarga) por un error de tipeo. El pio no había sido llamado ni una vez.
+//
+// PIO-05. Nadie miraba el código de salida de `pio device list`. Si fallaba
+// (timeout, cancelación, pyserial roto: los tres dejan la salida vacía), el tool
+// afirmaba «No encuentro ninguna placa conectada» y el diagnóstico «Ninguno — no
+// hay ni siquiera un puerto serie». No había medido que no hay placa: no había
+// podido listar. Y con una salida que es JSON pero no una lista, tiraba un
+// TypeError sin atajar.
+//
+// POR QUÉ LOS TESTS DE ARRIBA NO LO VEÍAN: `ctx.directory` es siempre una carpeta
+// que existe, y el guion de `device list` siempre devuelve una lista válida con
+// código 0. Y el `Bun.spawn` falso de este archivo NO falla con una carpeta
+// inexistente, como sí hace el de verdad: por eso acá se mira que el tool ni
+// siquiera llegue a lanzar nada.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - sacar el chequeo de la carpeta del principio de execute     → rojos «no existe» y «es un ARCHIVO»
+//   - `resolve(ctx.directory, args.project_path)` → sin resolver  → rojo «relativo»
+//   - en diagnostico, usar la carpeta pedida aunque no exista     → rojo «diagnostico con carpeta inexistente»
+//   - en run(), devolver 127 ante cualquier excepción             → rojo «existe y no se puede ejecutar»
+//   - en run(), devolver CODIGO_NO_LANZO ante cualquier excepción → rojo el contrapeso de «pio que no existe»
+//   - en listarPuertos, sacar `if (r.code !== 0)`                 → rojos los dos de «código 1 habiendo impreso una lista vacía»
+//   - en listarPuertos, sacar `Array.isArray`                     → rojos los de «no es una lista»
+//   - en diagnostico, tratar «no pude listar» como lista vacía    → rojo el de diagnostico
+//
+// LÍMITE HONESTO: esto corre contra un `Bun.spawn` guionado. Que el Bun de verdad
+// tire ENOENT con una carpeta inexistente lo midió la auditoría sobre Bun 1.4.4;
+// acá no se vuelve a medir.
+
+const SIN_INSTALAR = /PlatformIO no esta instalado/
+
+test("compile con una carpeta de proyecto que no existe: lo dice, y NO culpa a la instalación", async () => {
+  const noExiste = join(OUT, "no-existe", "proyecto")
+  const r = await mod.default.execute({ action: "compile", project_path: noExiste }, ctx)
+  assert.doesNotMatch(r, SIN_INSTALAR, `culpó a la instalación por una carpeta que no existe:\n${r}`)
+  assert.doesNotMatch(r, /reparar/i, "mandó a reparar (minutos y una descarga) por un error de ruta")
+  assert.ok(r.includes(noExiste), `no nombra la carpeta que buscó:\n${r}`)
+  assert.match(r, /no existe/i)
+  assert.deepEqual(lanzados(), [], "no hay nada que lanzar en una carpeta que no existe")
+})
+
+test("flash y monitor con una carpeta que es un ARCHIVO: lo dicen, sin lanzar nada", async () => {
+  const archivo = join(OUT, "soy-un-archivo.ini")
+  writeFileSync(archivo, "[env:uno]\n")
+  for (const action of ["flash", "monitor", "both"]) {
+    spawns = []
+    const r = await mod.default.execute({ action, project_path: archivo }, ctx)
+    assert.doesNotMatch(r, SIN_INSTALAR, `${action}: culpó a la instalación:\n${r}`)
+    assert.match(r, /no es una carpeta/i, `${action}: no dice que la ruta no es una carpeta:\n${r}`)
+    assert.deepEqual(lanzados(), [], `${action}: lanzó algo`)
+  }
+})
+
+test("un project_path relativo se resuelve contra la carpeta de la sesión, no contra la del proceso", async () => {
+  mkdirSync(join(OUT, "proy-relativo"), { recursive: true })
+  const r = await mod.default.execute({ action: "compile", project_path: "proy-relativo" }, ctx)
+  assert.match(r, /Compilacion exitosa/, r)
+  const compilacion = spawns.find((s) => s.cmd.join(" ").includes(" run"))
+  assert.equal(compilacion.opts.cwd, join(OUT, "proy-relativo"), "compiló en otra carpeta que la que se le pidió")
+})
+
+test("diagnostico con una carpeta que no existe: informa PlatformIO igual, y avisa de la carpeta", async () => {
+  const noExiste = join(OUT, "tampoco-existe")
+  const r = await mod.default.execute({ action: "diagnostico", project_path: noExiste }, ctx)
+  assert.doesNotMatch(r, /NO encontrado|Falta instalar PlatformIO/, `dijo que falta PlatformIO por una carpeta que no existe:\n${r}`)
+  assert.match(r, /\*\*PlatformIO:\*\* OK/, r)
+  assert.ok(r.includes(noExiste) && /no existe/i.test(r), `no avisa de la carpeta:\n${r}`)
+  for (const s of spawns) assert.ok(existsSync(s.opts.cwd), `lanzó ${s.cmd.join(" ")} en una carpeta que no existe (${s.opts.cwd})`)
+})
+
+test("un pio que existe y no se puede ejecutar no es «no está instalado»", async () => {
+  guion = () => Object.assign(new Error("EACCES: permission denied, posix_spawn '/x/pio'"), { code: "EACCES" })
+  const r = await mod.default.execute({ action: "compile" }, ctx)
+  assert.doesNotMatch(r, SIN_INSTALAR, `dijo que no está instalado cuando lo que falló fue ejecutarlo:\n${r}`)
+  assert.match(r, /no lo pude ejecutar/i, r)
+  assert.match(r, /EACCES/, "no deja el motivo que dio el sistema")
+})
+
+test("pio que no existe, con el error tal cual lo tira Bun: sigue siendo «no esta instalado» (contrapeso)", async () => {
+  // Medido en Bun 1.4.4 (Linux): con el nombre pelado y fuera del PATH, el mensaje es
+  // «Executable not found in $PATH» y NO dice ENOENT; lo que lo dice es `code`. Y un error
+  // sin `code` (o con uno que no se midió) tampoco puede pasar por «está y no lo pude
+  // ejecutar»: ante la duda, el caso común.
+  for (const error of [
+    Object.assign(new Error('Executable not found in $PATH: "pio"'), { code: "ENOENT" }),
+    Object.assign(new Error("ENOENT: no such file or directory, posix_spawn '/x/pio'"), { code: "ENOENT" }),
+    new Error("algo que no se sabe qué es"),
+    Object.assign(new Error("un código que nadie midió"), { code: "EWHATEVER" }),
+  ]) {
+    guion = () => error
+    const r = await mod.default.execute({ action: "compile" }, ctx)
+    assert.match(r, SIN_INSTALAR, `con «${error.message}» dejó de decir que no está instalado:\n${r}`)
+    assert.doesNotMatch(r, /no lo pude ejecutar/i)
+  }
+})
+
+for (const [caso, lista] of [
+  ["sale con código 1 y sin salida", { code: 1, stdout: "", stderr: "ImportError: No module named serial\n" }],
+  // Con una lista VÁLIDA y vacía en la salida: lo único que dice que falló es el código.
+  // Sin este caso, sacar la mirada al código de salida dejaba todo en verde, porque el de
+  // arriba (salida vacía) lo atrapa la rama de «no es una lista».
+  ["sale con código 1 habiendo impreso una lista vacía", { code: 1, stdout: "[]", stderr: "Error: se cortó a mitad\n" }],
+  ["devuelve `null`", { stdout: "null" }],
+  ["devuelve un objeto en vez de una lista", { stdout: '{"error":"algo"}' }],
+  ["no devuelve nada", { stdout: "" }],
+]) {
+  test(`flash cuando \`pio device list\` ${caso}: «no pude ver los puertos», no «ninguna placa»`, async () => {
+    escenario()
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").includes("device list") ? lista : base(cmd))
+    const r = await mod.default.execute({ action: "flash" }, ctx)
+    assert.doesNotMatch(r, /No encuentro ninguna placa conectada/, `afirmó que no hay placa sin haber podido listar:\n${r}`)
+    assert.match(r, /No pude ver los puertos/, r)
+    assert.match(r, /no sé si hay una placa/i, r)
+    assert.equal(indice("--target upload"), -1, "intentó cargar sin puerto")
+  })
+
+  test(`diagnostico cuando \`pio device list\` ${caso}: no afirma «ninguna placa conectada»`, async () => {
+    escenario()
+    const base = guion
+    guion = (cmd) => (cmd.join(" ").includes("device list") ? lista : base(cmd))
+    const r = await mod.default.execute({ action: "diagnostico" }, ctx)
+    assert.doesNotMatch(r, /Ninguna placa conectada|no hay ni siquiera un puerto serie|Listo/, `afirmó algo sobre las placas sin haber podido listar:\n${r}`)
+    assert.match(r, /\*\*Puertos que veo:\*\*\nNo pude verlos/, r)
+    assert.match(r, /no sé si hay una placa/i, r)
+  })
+}
+
+test("flash cuando la lista sale bien y vacía: ahí SÍ es «no encuentro ninguna placa» (contrapeso)", async () => {
+  escenario({ lista: [] })
+  const r = await mod.default.execute({ action: "flash" }, ctx)
+  assert.match(r, /No encuentro ninguna placa conectada/)
+  assert.doesNotMatch(r, /No pude ver los puertos/)
+})
+
+test("flash cuando la lista no es JSON pero nombra un puerto: se sigue leyendo, como antes", async () => {
+  // El camino viejo de respaldo: versiones de pio que no entienden --json-output.
+  escenario()
+  const base = guion
+  guion = (cmd) => (cmd.join(" ").includes("device list") ? { stdout: "/dev/ttyUSB0\n----\nHardware ID: n/a\n" } : base(cmd))
+  const r = await mod.default.execute({ action: "flash" }, ctx)
+  assert.doesNotMatch(r, /No pude ver los puertos/, r)
+  assert.match(r, /Veo un puerto serie \(\/dev\/ttyUSB0\), pero no es una placa/, r)
+})
+
+// ── `reparar` Y `diagnostico` NO DICEN «LISTO» SIN HABER MIRADO ───────────────
+//
+// Auditoría de código del 2026-11-22 (PIO-02 y PIO-07), reproducido por QA.
+//
+// `reparar` corre el instalador y después miraba UNA sola cosa: si quedó un `pio`.
+// No leía con qué código había terminado el instalador. Entonces:
+//   - instalador INCOMPLETO o con error, pero con un pio en el disco → «Listo:
+//     PlatformIO quedo instalado. Ya se puede compilar y cargar codigo a la placa»;
+//   - pio de antes + instalador que falla → «La reparacion corrio… no hizo falta
+//     bajarlo de nuevo», como si hubiera salido bien;
+//   - corte por tiempo o cancelación → «corrio pero sigue sin instalarse», con las
+//     dos causas habituales de algo que no había terminado.
+// Es la pata que faltaba del arreglo del instalador: ahora el bootstrap devuelve
+// «incompleto» cuando faltan las herramientas de las placas, y esto no lo leía.
+//
+// `diagnostico` decía «Estado general: Listo para usar» con sólo ver que pio contesta
+// y que hay una placa enchufada. Sin las herramientas de las placas, la primera
+// compilación baja más de 1 GB y se corta a los 3 minutos.
+//
+// NINGÚN TEST EJECUTABA ESTAS RAMAS: tests/prompt.test.mjs sólo lee el texto fuente.
+//
+// Windows está SIMULADO (process.platform pisado), como en el resto de este archivo,
+// con un PowerShell guionado. Que haya o no un pio se decide con `Bun.which`.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - `result.code === 0 && pioAhora` → `pioAhora`              → rojos «incompleto», «falla» y «pio de antes»
+//   - sacar la rama de CODIGO_TIMEOUT                           → rojo «se corta por tiempo»
+//   - sacar la rama de CODIGO_CANCELADO                         → rojo «la cancelan»
+//   - sacar la rama de CODIGO_BOOTSTRAP_INCOMPLETO              → rojo «incompleto»
+//   - CODIGO_BOOTSTRAP_INCOMPLETO = 3                           → rojos «incompleto» y «mismo número»
+//   - en diagnostico, sacar la rama de herramientas faltantes   → rojo «faltan las herramientas»
+//   - paquetesDePlacasQueFaltan devuelve siempre []             → rojo «faltan las herramientas»
+//   - sacar un paquete de PAQUETES_DE_LAS_PLACAS                → rojos «faltan las herramientas» y «misma lista»
+
+async function reparar({ pioAntes, pioDespues, bootstrap, abortar }) {
+  const original = Object.getOwnPropertyDescriptor(process, "platform")
+  const lad = process.env.LOCALAPPDATA
+  const whichOriginal = globalThis.Bun.which
+  const appData = join(OUT, "localappdata")
+  mkdirSync(join(appData, "TecniaBot", "install"), { recursive: true })
+  writeFileSync(join(appData, "TecniaBot", "install", "bootstrap.ps1"), "# de prueba\n")
+  let hayPio = pioAntes
+  Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+  process.env.LOCALAPPDATA = appData
+  globalThis.Bun.which = (nombre) => (hayPio && (nombre === "pio" || nombre === "platformio") ? "C:\\x\\pio.exe" : null)
+  const ctrl = new AbortController()
+  guion = (cmd) => {
+    if (cmd[0] !== "powershell") return {}
+    hayPio = pioDespues // lo que el instalador dejó
+    if (abortar) queueMicrotask(() => ctrl.abort())
+    return typeof bootstrap === "function" ? bootstrap() : bootstrap
+  }
+  try {
+    return await mod.default.execute({ action: "reparar" }, { ...ctx, abort: ctrl.signal })
+  } finally {
+    Object.defineProperty(process, "platform", original)
+    if (lad === undefined) delete process.env.LOCALAPPDATA
+    else process.env.LOCALAPPDATA = lad
+    globalThis.Bun.which = whichOriginal
+  }
+}
+const LISTO = /Listo: PlatformIO quedo instalado|Ya se puede compilar y cargar/
+const SALIO_BIEN = /no hizo falta bajarlo de nuevo/
+
+test("reparar con el instalador terminando en 0 y un pio nuevo: ahí sí «Listo» (contrapeso)", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: { code: 0, stdout: "  LISTO! Abri una terminal\n" } })
+  assert.match(r, /Listo: PlatformIO quedo instalado\. Ya se puede compilar y cargar/, r)
+  assert.match(r, /LISTO! Abri una terminal/, "no pega lo que dijo el instalador")
+})
+
+test("reparar con el instalador INCOMPLETO (código 2): no dice «Listo» aunque haya quedado un pio", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: { code: 2, stdout: "  [!]  Placas       FALTAN las herramientas de ESP32 y Arduino UNO\n  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:\n" } })
+  assert.doesNotMatch(r, LISTO, `el instalador terminó incompleto y el tool dijo que ya se puede compilar y cargar:\n${r}`)
+  assert.match(r, /INCOMPLETO/, r)
+  assert.match(r, /PlatformIO quedo instalado\./, "no dice qué pasó con PlatformIO")
+  assert.match(r, /FALTAN las herramientas de ESP32/, "no pega lo que dijo el instalador, que es donde está qué falta")
+  assert.match(r, /No le digas que ya esta todo listo/i, r)
+})
+
+test("reparar con el instalador que FALLA (código 1) dejando un pio: no dice «Listo»", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: { code: 1, stdout: "  [X]  OpenCode     NO ARRANCA.\n" } })
+  assert.doesNotMatch(r, LISTO, `el instalador falló y el tool dijo listo:\n${r}`)
+  assert.match(r, /LA REPARACION FALLO/, r)
+  assert.match(r, /codigo 1/, "no dice con qué código terminó")
+  assert.match(r, /NO ARRANCA/, "no pega lo que dijo el instalador")
+})
+
+test("reparar con un pio de antes y el instalador que falla: no lo cuenta como que salió bien", async () => {
+  const r = await reparar({ pioAntes: true, pioDespues: true, bootstrap: { code: 1, stdout: "  [X]  algo\n" } })
+  assert.doesNotMatch(r, SALIO_BIEN, `con el instalador fallando dijo que no hizo falta bajarlo de nuevo:\n${r}`)
+  assert.match(r, /LA REPARACION FALLO/, r)
+  assert.match(r, /ya estaba instalado de antes/, "no aclara que el pio que hay es el de antes")
+  // Contrapeso: con el instalador en 0, la frase de «ya estaba» sigue saliendo.
+  const bien = await reparar({ pioAntes: true, pioDespues: true, bootstrap: { code: 0, stdout: "  LISTO!\n" } })
+  assert.match(bien, SALIO_BIEN, bien)
+})
+
+test("reparar que se corta por tiempo: dice que no terminó, no que «corrió»", async () => {
+  process.env.TECNIA_PIO_TIMEOUT_MS = "40"
+  try {
+    const r = await reparar({ pioAntes: false, pioDespues: false, bootstrap: COLGADO })
+    assert.match(r, /LA REPARACION NO TERMINO/, r)
+    assert.doesNotMatch(r, /La reparacion corrio|Las dos causas habituales|Microsoft Store/, `le dio las causas de una falla a algo que no terminó:\n${r}`)
+    assert.doesNotMatch(r, LISTO)
+    assert.match(r, /volve a correrla/i, "no dice que se puede volver a intentar")
+  } finally {
+    delete process.env.TECNIA_PIO_TIMEOUT_MS
+  }
+})
+
+test("reparar que la cancelan: dice que se canceló, no que «corrió»", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: COLGADO, abortar: true })
+  assert.match(r, /Se cancelo la reparacion/, r)
+  assert.doesNotMatch(r, /La reparacion corrio|Las dos causas habituales/, r)
+  assert.doesNotMatch(r, LISTO, "la cancelaron a mitad y dijo listo porque ya había un pio")
+})
+
+test("reparar con el instalador en 0 pero SIN pio, y con falla sin pio: «sigue sin instalarse»", async () => {
+  for (const code of [0, 1]) {
+    const r = await reparar({ pioAntes: false, pioDespues: false, bootstrap: { code, stdout: "  algo dijo\n" } })
+    assert.doesNotMatch(r, LISTO, `código ${code} sin pio: dijo listo`)
+    assert.match(r, /PlatformIO sigue sin instalarse/, r)
+    assert.match(r, /Las dos causas habituales/, "perdió las dos causas habituales, que acá sí corresponden")
+  }
+})
+
+test("el código de «incompleto» del tool es el mismo número que usa bootstrap.ps1", () => {
+  const ps1 = readFileSync(join(REPO, "install/bootstrap.ps1"), "utf8")
+  const m = ps1.match(/^\$CodigoDegradado\s*=\s*(\d+)\s*$/m)
+  assert.ok(m, "no encontré $CodigoDegradado en bootstrap.ps1")
+  assert.equal(mod.CODIGO_BOOTSTRAP_INCOMPLETO, Number(m[1]), "el tool lee otro código que el que el instalador devuelve cuando queda incompleto")
+})
+
+test("la lista de herramientas de las placas del tool es la misma que la de los instaladores", () => {
+  const ps1 = readFileSync(join(REPO, "install/bootstrap.ps1"), "utf8").replace(/^\s*#.*$/gm, "")
+  const m = ps1.match(/^\$PaquetesPlacas = @\(([^)\n]*)\)$/m)
+  assert.ok(m, "no encontré $PaquetesPlacas en bootstrap.ps1")
+  assert.deepEqual([...mod.PAQUETES_DE_LAS_PLACAS].sort(), [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]).sort())
+})
+
+async function diagnosticoConCore(paquetes, lista) {
+  const core = join(OUT, `core-diag-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(core, { recursive: true })
+  for (const p of paquetes) mkdirSync(join(core, "packages", p), { recursive: true })
+  process.env.PLATFORMIO_CORE_DIR = core
+  try {
+    escenario({ lista })
+    return { core, r: await mod.default.execute({ action: "diagnostico" }, ctx) }
+  } finally {
+    delete process.env.PLATFORMIO_CORE_DIR
+    rmSync(core, { recursive: true, force: true })
+  }
+}
+
+test("diagnostico con placa pero sin las herramientas de las placas: no dice «Listo para usar»", async () => {
+  for (const [caso, paquetes] of [["ninguna", []], ["sólo las de ESP32", ["toolchain-xtensa-esp32", "framework-arduinoespressif32"]]]) {
+    const { core, r } = await diagnosticoConCore(paquetes, [CH340])
+    assert.doesNotMatch(r, /Listo para usar|Listo — veo/, `con ${caso} dijo listo para usar:\n${r}`)
+    assert.match(r, /faltan las herramientas de las placas/i, r)
+    assert.match(r, /\*\*Herramientas de las placas[^\n]*FALTAN/, r)
+    assert.ok(r.includes("toolchain-atmelavr") && r.includes("framework-arduino-avr"), `no nombra las que faltan:\n${r}`)
+    assert.ok(r.includes(join(core, "packages")), "no dice en qué carpeta las buscó")
+    assert.match(r, /action: "reparar"/, "no ofrece bajarlas desde el bot")
+  }
+})
+
+test("diagnostico con placa y con las herramientas: «Listo para usar» (contrapeso)", async () => {
+  const { r } = await diagnosticoConCore(["toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr"], [CH340])
+  assert.match(r, /\*\*Estado general:\*\* Listo para usar/, r)
+  assert.match(r, /\*\*Herramientas de las placas[^\n]*OK/, r)
+})
+
+test("diagnostico sin placa: el estado sigue siendo «ninguna placa», y las herramientas se informan aparte", async () => {
+  const { r } = await diagnosticoConCore([], [])
+  assert.match(r, /Ninguna placa conectada/, r)
+  assert.match(r, /\*\*Herramientas de las placas[^\n]*FALTAN/, "sin placa no informa el estado de las herramientas")
+})
+
+// Va último a propósito. Si algún test de arriba pisa `process.platform` y no lo devuelve,
+// este se pone rojo acá en vez de romper, sin explicación, a otro test más abajo.
+// Mutación que lo pone rojo: que `conPlataforma` devuelva lo que devuelve defineProperty.
+test("al terminar el archivo, process.platform es el de la máquina (nadie dejó una plataforma falsa)", () => {
+  assert.equal(process.platform, os.platform())
 })

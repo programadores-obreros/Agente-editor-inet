@@ -22,6 +22,9 @@ function perfilPath(): string {
 }
 
 const SIN_DEFINIR = "(sin definir)"
+// Los únicos modos con los que se guarda el nombre o el género de alguien. «(sin definir)»
+// y cualquier texto escrito a mano que no sea uno de estos tres no es un modo elegido.
+const MODOS_ELEGIBLES = new Set(["personal", "grupo", "aula"])
 
 interface Persona {
   nombre: string
@@ -56,6 +59,41 @@ function parsearPersonas(texto: string): Persona[] {
   return personas
 }
 
+/**
+ * El modo tal como lo entiende el código, aunque en el archivo esté escrito de otra forma.
+ *
+ * El perfil se puede editar a mano (su encabezado lo dice), y las comparaciones eran
+ * `=== "aula"` exactas. Con «- Modo: Aula», «AULA» o «aula (compartida)» dejaba de ser
+ * modo aula: `perfil` guardaba el nombre del alumno y `cuenta` dejaba vincular la cuenta
+ * del docente en una compu compartida por los chicos (auditoría del 2026-11-22, TCH-04).
+ *
+ * Se reconoce la palabra al principio, sin importar mayúsculas ni lo que siga. NO se
+ * adivina por parecido: «aulas» o «jaula» no son el modo aula, y un texto que no es
+ * ninguno de los tres se devuelve tal cual.
+ *
+ * Está copiada en perfil.ts, plataforma/cuenta.ts y plataforma/sincronizar.ts, porque los
+ * tools no se importan entre sí. Que las tres sean iguales letra por letra lo custodia
+ * tests/plataforma-sincronizar.test.mjs.
+ */
+function normalizarModo(crudo: string): string {
+  const limpio = crudo.trim()
+  const m = limpio.toLowerCase().match(/^(aula|grupo|personal)(?![a-záéíóúñ])/)
+  return m ? m[1]! : limpio
+}
+
+/**
+ * Los campos de texto libre van en UN renglón. El archivo se lee por renglones y se carga
+ * como instrucciones en cada sesión: un nombre con un salto de línea adentro agregaba
+ * renglones propios («Ana\n- Modo: aula» dejaba un segundo «- Modo:»). Devuelve el nombre
+ * del primer campo que no cumple, o null.
+ */
+function campoConSaltoDeLinea(campos: Record<string, unknown>): string | null {
+  for (const [nombre, valor] of Object.entries(campos)) {
+    if (typeof valor === "string" && /[\r\n\u2028\u2029]/.test(valor)) return nombre
+  }
+  return null
+}
+
 // Lee el perfil del disco. Si no existe o no se puede leer, devuelve todo
 // "(sin definir)" (nunca rompe: es dato del usuario, se trata con cuidado).
 function leerPerfil(): Perfil {
@@ -80,7 +118,7 @@ function leerPerfil(): Perfil {
   const rol = texto.match(/^-\s*Rol:\s*(.*)$/m)?.[1]?.trim()
   const genero = texto.match(/^-\s*Género:\s*(.*)$/m)?.[1]?.trim()
   const placa = texto.match(/^-\s*Placa preferida:\s*(.*)$/m)?.[1]?.trim()
-  if (modo) perfil.modo = modo
+  if (modo) perfil.modo = normalizarModo(modo)
   if (nombre) perfil.nombre = nombre
   if (rol) perfil.rol = rol
   if (genero) perfil.genero = genero
@@ -178,7 +216,7 @@ export default tool({
 
 Acciones:
 - leer: devuelve el perfil actual (modo y, segun el modo, la persona o la lista de personas).
-- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque). En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre, el genero y la placa se ignoran (solo se guarda el rol).
+- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque): mientras la compu no tenga un modo elegido, NO se guarda el nombre ni el genero de nadie. En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre, el genero y la placa se ignoran (solo se guarda el rol).
 
 La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la variante incluida si la placa tiene (ej: 'Educabot Bhoot v1.0', 'Mis Ladrillos R10 v1.1'). El catalogo es la unica lista de placas: este tool guarda lo que le pasan, no valida contra una lista propia.`,
   args: {
@@ -257,6 +295,10 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
     }
 
     // accion === "guardar": leemos lo actual, mergeamos y reescribimos.
+    const roto = campoConSaltoDeLinea({ nombre: args.nombre, persona: args.persona, placa: args.placa })
+    if (roto) {
+      return `No guardé nada: '${roto}' vino con un salto de línea adentro, y en el perfil cada dato va en un solo renglón. Pasámelo de nuevo en un solo renglón.`
+    }
     const actual = leerPerfil()
     if (args.modo) actual.modo = args.modo
     if (args.rol) actual.rol = args.rol
@@ -264,9 +306,26 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
     // ignora en silencio, y la respuesta le recuerda al modelo que la pregunte.
     if (args.placa && actual.modo !== "aula") actual.placa = args.placa
 
+    // Sin un modo ELEGIDO no se escribe el nombre ni el género de nadie. Toda instalación
+    // nueva arranca con «- Modo: (sin definir)», y hasta el 2026-11-23 ese estado se
+    // trataba como «personal»: en la notebook del aula recién instalada, que el nombre de
+    // un alumno no fuera a disco dependía sólo de que el modelo obedeciera el prompt y
+    // preguntara el modo primero. Decisión del owner (TCH-04): lo impide el código.
+    // No se guarda NADA de la llamada (ni el rol ni la placa que vinieran con ella): una
+    // respuesta «guardé una parte» es más fácil de leer mal que «no guardé nada».
+    // Lo que ya estaba en el archivo no se toca: no se borra un nombre de una instalación
+    // vieja, anterior a los modos.
+    if (!MODOS_ELEGIBLES.has(actual.modo) && (args.nombre?.trim() || args.persona?.trim() || args.genero)) {
+      return "No guardé nada: todavía no sé de quién es esta compu, y sin eso no guardo el nombre ni el género de nadie. Preguntale al usuario si la compu es del aula (la usan muchos), de un grupo chico conocido, o personal, y volvé a llamarme pasando también 'modo'."
+    }
+
     if (actual.modo === "grupo") {
       // Guardamos POR persona (upsert). El nombre "plano" no se usa en grupo.
       const quien = (args.persona || args.nombre || "").trim()
+      // En la lista de personas la barra separa las columnas: adentro de un dato la rompe.
+      if (quien.includes("|") || (args.placa ?? "").includes("|")) {
+        return "No guardé nada: en modo grupo el nombre y la placa no pueden llevar la barra «|», que es la que separa las columnas de cada persona. Pasámelos sin la barra."
+      }
       if (quien) {
         upsertPersona(actual.personas, quien, {
           rol: args.rol,
@@ -283,7 +342,8 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
       actual.genero = SIN_DEFINIR
       actual.placa = SIN_DEFINIR
     } else {
-      // personal (o todavia sin definir): campos "planos" de una sola persona.
+      // personal: campos "planos" de una sola persona. (Sin modo elegido no se llega
+      // acá con nombre ni género: lo corta la guarda de arriba.)
       if (args.nombre && args.nombre.trim()) actual.nombre = args.nombre.trim()
       if (args.genero) actual.genero = args.genero
     }
@@ -303,6 +363,11 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
       return quien
         ? `Anotado. En esta compu (grupo) me acuerdo de ${quien} y del resto. Cuando arranque una sesión pregunto quién está usándola.`
         : "Modo grupo guardado. Al arrancar voy a preguntar quién está usando la compu."
+    }
+    if (!MODOS_ELEGIBLES.has(actual.modo)) {
+      // Se guardó el rol o la placa, pero no hay a quién reconocer: decir «ya te reconozco»
+      // sería afirmar algo que no pasó.
+      return "Guardé eso. Todavía falta saber de quién es esta compu: preguntale al usuario si es del aula, de un grupo chico conocido, o personal, y guardá el 'modo'."
     }
     return "Listo, me lo guardo. La próxima ya te reconozco y no te lo pregunto de nuevo."
   },

@@ -6,8 +6,8 @@ Ejecutá el tool `clave` con `accion: "estado"`. Sin preguntar antes: el docente
 pidió ver su key al escribir `/clave`.
 
 El tool lee las credenciales de esta compu, **prueba la key contra Google** y
-devuelve uno de cuatro resultados: anda, cuota agotada, no sirve, o no se pudo
-probar.
+devuelve uno de cinco resultados: anda, cuota agotada, no sirve, el modelo ya no
+está, o no se pudo probar.
 
 ## NUNCA repitas la key en el chat
 

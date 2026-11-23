@@ -66,6 +66,65 @@ function hasta(texto, i, corte) {
   return m ? resto.slice(0, m.index + 1) : resto
 }
 
+// ── Recortar por una marca que NO ESTÁ no puede pasar en silencio ─────────────
+//
+// POR QUÉ EXISTEN `desdeMarca` Y `entreMarcas`. `texto.slice(texto.indexOf(X))` no
+// falla cuando X no está: `indexOf` da -1 y `slice` hace OTRA cosa sin avisar.
+//
+//   slice(-1)      → el último carácter del archivo
+//   slice(i, -1)   → desde i hasta el final (menos un carácter): el resto del archivo
+//   slice(0, -1)   → el archivo entero
+//
+// Las tres mordieron acá. Un test recortaba la sección `[Run]` hasta
+// `indexOf("[UninstallRun]")`, sección que ya no existía: medía el resto del
+// archivo y pasaba por casualidad. El de la cura del BOM recortaba hasta
+// `indexOf("$authData = $null")`, texto que tampoco existía: medía install.ps1
+// entero. Y un `doesNotMatch` sobre un recorte así es peor todavía, porque un
+// recorte de un carácter no contiene nada prohibido: pasa siempre.
+//
+// Al revisar el resto del archivo (2026-11-15) quedaban nueve recortes con el
+// `indexOf` metido adentro del `slice`, sin nada que mirara el -1. Hoy las nueve
+// marcas existen (medido con una precarga que anota cada `slice` que recibe -1:
+// en este archivo, cero), así que ninguno estaba midiendo mal; pero el día que una
+// marca se renombre, cada uno iba a seguir de largo. Ahora explotan nombrando la
+// marca. Mutaciones del producto que lo prueban, anotadas arriba de cada test.
+
+/**
+ * Dónde está `marca` (un texto o una expresión regular) en `texto`, buscando desde
+ * `desde`. Si no está, el test explota: nunca devuelve -1.
+ */
+function posicion(texto, marca, desde = 0) {
+  let i
+  if (marca instanceof RegExp) {
+    const rel = texto.slice(desde).search(marca)
+    i = rel < 0 ? -1 : desde + rel
+  } else {
+    i = texto.indexOf(marca, desde)
+  }
+  assert.ok(i >= 0, `no encontré la marca «${marca}»: el test no puede recortar a ciegas (¿se renombró?)`)
+  return i
+}
+
+/**
+ * Una etiqueta de un .cmd, ENTERA y sola en su renglón.
+ *
+ * Buscar el texto ":esperando" encuentra también ":esperandox": lo probó la
+ * mutación que renombra la etiqueta, que con la primera versión de estos helpers
+ * (un `indexOf` del texto) seguía dando exit code 0.
+ */
+const etiqueta = (nombre) => new RegExp(`^:${nombre}[ \\t]*\\r?$`, "m")
+
+/** `texto` desde `marca` hasta el final. */
+function desdeMarca(texto, marca) {
+  return texto.slice(posicion(texto, marca))
+}
+
+/** `texto` desde `inicio` hasta `fin` (sin incluirlo). `fin` se busca DESPUÉS de `inicio`. */
+function entreMarcas(texto, inicio, fin) {
+  const i = posicion(texto, inicio)
+  return texto.slice(i, posicion(texto, fin, i + 1))
+}
+
 function bloqueTrasInstalar(comando) {
   const i = codigo.indexOf(comando)
   assert.ok(i > 0, `no encontré "${comando}" en bootstrap.ps1`)
@@ -76,7 +135,7 @@ function bloqueTrasInstalar(comando) {
 }
 
 test("después de instalar OpenCode se verifica que quedó", () => {
-  const bloque = bloqueTrasInstalar("scoop install opencode")
+  const bloque = bloqueTrasInstalar("scoop install $ManifiestoOpenCode")
   assert.match(bloque, /Test-OpenCode/, "se imprime [OK] sin comprobar nada")
 })
 
@@ -135,7 +194,7 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   // texto, no una tercera reinstalación.
   const instalaciones = codigo
     .split("\n")
-    .filter((l) => /scoop install opencode/.test(l) && !/Write-Host/.test(l)).length
+    .filter((l) => /scoop install \$ManifiestoOpenCode/.test(l) && !/Write-Host/.test(l)).length
   // El TECHO, que es lo que este test vino a poner.
   // Tres ramas, cada una corre a lo sumo UNA vez por corrida: el intento normal, UNA
   // reparación, y el cambio a la versión fijada cuando en el disco hay otra (Scoop la
@@ -168,12 +227,93 @@ test("repara solo, UNA vez, sin preguntarle nada al docente", () => {
   //
   // La regla: EL INSTALADOR PUEDE FALLAR, PERO NO PUEDE ROMPER.
   const comandos = codigo.split("\n").filter((l) => !/Write-Host/.test(l))
+  //
+  // LA 0.4.11 VUELVE A SACAR UN OPENCODE, Y ESTE GUARD CAMBIA DE FORMA, NO DE REGLA.
+  // Con un OpenCode 2.x puesto por el docente, Scoop contesta "already installed" a
+  // nuestro manifest y Tecnia Bot quedaba sobre el 2.x. Se decidió sacarlo (2026-11-21).
+  // Lo que hace que NO sea el incidente de arriba es el ORDEN, y eso es lo que se exige:
+  //
+  //   1. hay UN solo `scoop uninstall`, y está dentro de Quitar-OpenCodeAjeno;
+  //   2. antes, en esa función, se bajó la versión fijada (`scoop download`) y se
+  //      comprobó EN EL DISCO que el zip está y que su sha256 es el del manifest;
+  //      si no, la función vuelve sin sacar nada;
+  //   3. tampoco se saca con OpenCode abierto.
+  //
+  // Medido en la VM: con el zip en el cache, sacar e instalar anda con la red cortada.
   const destructivos = comandos.filter((l) => /scoop uninstall|Remove-Item.*scoop|rm .*scoop/i.test(l))
   assert.deepEqual(
     destructivos.map((l) => l.trim()),
-    [],
-    "el instalador desinstala o borra algo: puede dejar la máquina peor de como estaba",
+    ["try { scoop uninstall opencode *>&1 | Out-Null } catch { }"],
+    "el instalador desinstala o borra algo fuera del único lugar permitido",
   )
+  const iq = codigo.indexOf("function Quitar-OpenCodeAjeno {")
+  const quitar = codigo.slice(iq, codigo.indexOf("\n}", iq))
+  assert.ok(iq > 0 && quitar.includes("scoop uninstall opencode"), "el único uninstall no está en Quitar-OpenCodeAjeno")
+  const pos = (t) => quitar.indexOf(t)
+  const abierto = pos("if (@(Get-OpenCodeAbiertos).Count -gt 0) {")
+  const baja = pos("scoop download $ManifiestoOpenCode")
+  const comprueba = pos("if (-not (Test-OpenCodeFijadoEnCache)) {")
+  const saca = pos("scoop uninstall opencode")
+  assert.ok(abierto > 0 && baja > abierto && comprueba > baja && saca > comprueba, "el orden no es: nadie lo usa → bajar → comprobar en el disco → sacar")
+  // Entre la comprobación y el uninstall hay un `return $false`: si el zip no está, no se saca nada.
+  // Se pide el `return $false` DENTRO del bloque de la comprobación. La primera versión lo buscaba
+  // en todo el tramo hasta el uninstall, y cuando se agregó la segunda mirada (que tiene su
+  // propio `return $false`) borrar éste dejaba el test en verde: mutante vivo, y era justo
+  // el que reproduce el incidente de la notebook sin OpenCode.
+  assert.match(
+    quitar,
+    /if \(-not \(Test-OpenCodeFijadoEnCache\)\) \{\n\s*\$script:MotivoNoCambio = "[^"\n]*"\n\s*return \$false\n\s*\}/,
+    "si la fijada no quedó bajada, igual saca el OpenCode que había",
+  )
+  assert.match(quitar.slice(abierto, baja), /return \$false/, "saca un OpenCode que está abierto")
+  // EL SERVICIO DE FONDO DEL 2.x (`opencode serve --service`) no cuenta como abierto: queda
+  // vivo mucho después de cerrar el programa y el cambio no se haría nunca. Pero se cierra
+  // DESPUÉS de comprobar la descarga (si no se va a cambiar, no se le toca nada al docente)
+  // y antes de sacar se vuelve a mirar que no quede NINGÚN opencode vivo.
+  const cierra = pos("foreach ($p in @(Get-OpenCodeAbiertos -Servicio)) {")
+  const remira = pos("if ($quedan -gt 0) {")
+  assert.ok(cierra > comprueba && remira > cierra && saca > remira, "el orden no es: comprobar la descarga → cerrar el servicio de fondo → volver a mirar → sacar")
+  assert.match(quitar.slice(remira, saca), /return \$false/, "saca aunque quedó un OpenCode vivo")
+  assert.match(quitar, /\$quedan = @\(Get-Process opencode -ErrorAction SilentlyContinue\)\.Count/, "la segunda mirada no cuenta todos los procesos de OpenCode")
+  const ia = codigo.indexOf("function Get-OpenCodeAbiertos {")
+  const abiertos = codigo.slice(ia, codigo.indexOf("\n}", ia))
+  assert.match(abiertos, /if \(\$Servicio\) \{ return @\(\$todos \| Where-Object \{ \$_\.CommandLine -match 'serve\\s\+--service' \}\) \}/, "no reconoce el servicio de fondo por su línea de comando")
+  assert.match(abiertos, /return @\(\$todos \| Where-Object \{ \$_\.CommandLine -notmatch 'serve\\s\+--service' \}\)/, "trata como servicio de fondo a una ventana que alguien está usando")
+  // La comprobación mira el archivo y su hash; no le cree al exit de Scoop.
+  const ic = codigo.indexOf("function Test-OpenCodeFijadoEnCache {")
+  const cache = codigo.slice(ic, codigo.indexOf("\n}", ic))
+  assert.match(cache, /Get-FileHash -LiteralPath \$f\.FullName -Algorithm SHA256/, "no calcula el sha256 del zip bajado")
+  assert.match(cache, /if \(\$hashes -contains \$h\) \{ return \$true \}/, "da por bueno un zip cuyo hash no es el del manifest")
+  assert.match(cache, /-Filter "opencode#\$OpenCodeVersion#\*"/, "no busca el zip de la versión fijada")
+  assert.match(cache, /return \$false\s*$/, "si no encontró el zip, no devuelve falso")
+  // LO QUE MARCÓ LA SEGUNDA REVISIÓN, que estos asserts no cubrían:
+  // Sólo vale el zip de la arquitectura de ESTA compu. Antes se aceptaba el hash de
+  // cualquiera de las dos del manifest: un zip arm64 en el cache de una x64 daba luz verde.
+  assert.match(cache, /\$arq = if \(@\(\$env:PROCESSOR_ARCHITEW6432, \$env:PROCESSOR_ARCHITECTURE\) -contains "ARM64"\) \{ "arm64" \} else \{ "64bit" \}/, "no decide qué arquitectura le toca a esta compu")
+  assert.match(cache, /if \(\$mf\.architecture\.\$arq\.hash\) \{ \$hashes \+= /, "acepta el hash de otra arquitectura")
+  assert.doesNotMatch(cache, /architecture\.PSObject\.Properties/, "junta los hashes de todas las arquitecturas")
+  assert.match(cache, /if \(\$hashes\.Count -eq 0\) \{ return \$false \}/, "sin hash en el manifest daría por bueno cualquier cosa")
+  assert.match(cache, /^function Test-OpenCodeFijadoEnCache \{\n\s*try \{[\s\S]*\} catch \{ \}\n\s*return \$false$/, "una excepción al leer el manifest o el cache corta el instalador")
+  // Después de pedir el uninstall se RELEE el disco: si Scoop no lo sacó, no se sigue.
+  assert.match(quitar.slice(saca), /if \(Test-Path \(Join-Path \$OpenCodeAppDir "current"\)\) \{\n\s*\$script:MotivoNoCambio = "[^"\n]*"\n\s*return \$false\n\s*\}/, "da por sacado un OpenCode sin mirar si sigue ahí")
+  assert.match(quitar, /Stop-Process -Id \$p\.ProcessId -Force -ErrorAction Stop/, "no cierra el servicio de fondo")
+  // Queda anotado QUÉ se sacó, y si después no hay OpenCode el cierre lo dice y manda a
+  // Reparar (que instala desde el zip ya bajado). Sin eso el cierre callaba lo que el
+  // instalador había hecho.
+  assert.match(quitar, /\$script:OpenCodeQuitado = \$habia\n\s*return \$true/, "no anota qué OpenCode sacó")
+  assert.match(
+    codigo,
+    /if \(\$script:OpenCodeQuitado\) \{\n\s*Write-Host "  ESTE INSTALADOR SACO EL OPENCODE QUE HABIA[^\n]*\n\s*Write-Host "[^"\n]*no hace falta internet\."\n\s*Write-Host "    Para instalarlo:  menu inicio -> Reparar Tecnia Bot"/,
+    "si sacó el OpenCode que había y no pudo instalar el suyo, el cierre no lo dice",
+  )
+  // El resultado de Quitar-OpenCodeAjeno se usa, y se la llama desde un solo lugar: la rama
+  // "hay otra versión y la fijada no está en el disco".
+  const llamadas = codigo.split("\n").filter((l) => /Quitar-OpenCodeAjeno/.test(l) && !/^function /.test(l) && !/Write-Host/.test(l))
+  assert.deepEqual(llamadas.map((l) => l.trim()), ["if ([bool](Quitar-OpenCodeAjeno $instalada)) {"], "se llama a Quitar-OpenCodeAjeno desde otro lado, o se ignora lo que devuelve")
+  const iRama = codigo.indexOf("la bajo antes de tocar nada")
+  const iLlamada = codigo.indexOf("if ([bool](Quitar-OpenCodeAjeno $instalada)) {")
+  const iInstala = codigo.indexOf("$salidaInst = scoop install $ManifiestoOpenCode", iLlamada)
+  assert.ok(iRama > 0 && iLlamada > iRama && iInstala > iLlamada && iInstala - iLlamada < 900, "la instalación no sigue inmediatamente al reemplazo, en la misma rama")
 
   // Y no puede preguntarle nada: el instalador también corre en silencio
   // (/VERYSILENT), donde un prompt no espera respuesta, cuelga para siempre.
@@ -193,7 +333,7 @@ test("si OpenCode falla, la capa educativa SE INSTALA IGUAL", () => {
   //
   // La capa NO depende de OpenCode para instalarse: es copia de archivos, sin
   // red. El dia que OpenCode se arregle, el bot ya tiene que estar ahi.
-  const paso2 = codigo.indexOf("scoop install opencode")
+  const paso2 = codigo.indexOf("scoop install $ManifiestoOpenCode")
   const paso4 = codigo.indexOf("install.ps1")
   assert.ok(paso2 > 0 && paso4 > paso2, "no encontré los pasos en orden")
 
@@ -295,9 +435,9 @@ test("la marca se pone al EMPEZAR la instalación, no al llegar a [Run]", () => 
   // segundos, y en esa ventana el docente abre el lanzador VIEJO.
   //
   // ssInstall se dispara al apretar "Instalar" y antes de copiar un solo archivo.
-  const code = issCodigo.slice(issCodigo.indexOf("[Code]"))
+  const code = desdeMarca(issCodigo, "[Code]")
   assert.match(code, /CurStepChanged/, "no hay hook de paso de instalación")
-  const hook = code.slice(code.indexOf("procedure CurStepChanged"))
+  const hook = desdeMarca(code, "procedure CurStepChanged")
   assert.match(hook, /CurStep = ssInstall\b/, "la marca no se pone al EMPEZAR la instalación")
   assert.match(hook, /\.instalando/, "el hook no crea la marca")
 })
@@ -306,15 +446,34 @@ test("la marca se borra al terminar, y también si se cancela", () => {
   // Sobre `issCodigo` y no sobre `iss`: los comentarios del .iss citan la marca
   // para explicar por qué existe, y un indexOf sobre el archivo crudo encuentra la
   // CITA. Es la misma trampa que ya mordió en bootstrap.ps1 y en urls.test.mjs.
-  const run = issCodigo.slice(issCodigo.indexOf("[Run]"), issCodigo.indexOf("[UninstallRun]"))
-  const bootstrap = run.indexOf("bootstrap.ps1")
-  const borra = run.indexOf(".instalando")
-  assert.ok(borra > bootstrap, "la marca no se borra después del bootstrap")
-  assert.match(run.slice(borra - 120, borra + 60), /del /, "esa mención no la borra")
+  //
+  // ESTE TEST MIRABA LA FORMA VIEJA, y se reescribió cuando el bootstrap se mudó.
+  // Antes buscaba, dentro de [Run], una entrada con `bootstrap.ps1` seguida de un
+  // `cmd /c del ...\.instalando`. Las dos entradas se fueron de [Run]: el bootstrap
+  // ahora lo lanza [Code] con Exec (para poder LEER su código de salida, que una
+  // entrada con `waituntilterminated` espera pero no mira), y el borrado de la marca
+  // se mudó con él. Lo que se quería medir no cambió —que la marca se borre DESPUÉS
+  // del bootstrap y pase lo que pase—; cambió dónde vive.
+  //
+  // De paso, el recorte viejo terminaba en `indexOf("[UninstallRun]")`, sección que
+  // ya no existe: daba -1 y `slice(i, -1)` devolvía el resto del archivo. Pasaba por
+  // casualidad.
+  //
+  // Y el recorte nuevo tenía el mismo defecto que el viejo, un renglón más abajo:
+  // terminaba en `code.indexOf("procedure CurPageChanged")` sin mirar el -1. Si esa
+  // rutina se renombra, `slice(i, -1)` vuelve a ser «el resto del archivo».
+  // Mutación: renombrar `procedure CurPageChanged` en el .iss → antes exit 0, ahora 1.
+  const code = desdeMarca(issCodigo, "[Code]")
+  const hook = entreMarcas(code, "procedure CurStepChanged", "procedure CurPageChanged")
+  const post = desdeMarca(hook, "CurStep = ssPostInstall")
+  // try / bootstrap / finally / borrar la marca: en ESE orden, y adentro del finally.
+  assert.match(post, /try\s+CorrerElBootstrap;\s+finally\s+if MarcaInstalando <> '' then\s+DeleteFile\(MarcaInstalando\);\s+end;/,
+    "la marca no se borra en un `finally` después del bootstrap: si el bootstrap falla, queda puesta")
+  // Y que la marca que se borra sea la misma que se puso.
+  assert.match(hook, /MarcaInstalando := ExpandConstant\('\\\.instalando'\)/, "MarcaInstalando no apunta a la marca .instalando")
   // Si se cancela a mitad, sin esto la marca queda puesta y el lanzador espera
   // 20 minutos de gusto.
-  const code = issCodigo.slice(issCodigo.indexOf("[Code]"))
-  assert.match(code, /DeinitializeSetup/, "no hay limpieza para el caso de cancelar")
+  assert.match(code, /procedure DeinitializeSetup[\s\S]*?DeleteFile\(MarcaInstalando\)/, "no hay limpieza para el caso de cancelar")
 })
 
 test("el .exe declara su versión en las propiedades del archivo", () => {
@@ -343,7 +502,7 @@ test("el lanzador muestra la versión, incluso cuando falla", () => {
 
   // La de "no se encontró" no puede mandar a reinstalar sin avisar que quizá el
   // instalador está corriendo justo ahora: ese consejo rompió una máquina real.
-  const sinOpenCode = cmd.slice(cmd.indexOf(":sinopencode"))
+  const sinOpenCode = desdeMarca(cmd, etiqueta("sinopencode"))
   assert.match(sinOpenCode, /esperalo|esta corriendo/i, "sigue empujando a instalar dos veces")
 
   // Y la de "no arranca" tiene que mandar al diagnóstico, que es lo único que
@@ -370,7 +529,18 @@ test("el lanzador NO arranca apenas aparece opencode", () => {
   // OpenCode se instala en el paso 2 de 4. Arrancar ahí da un OpenCode pelado,
   // sin Tecnia Bot — que es exactamente el otro síntoma que ya se reportó.
   // Por eso la espera mira la marca, no la presencia de opencode.
-  const espera = cmd.slice(cmd.indexOf(":esperando"), cmd.indexOf("LSS"))
+  //
+  // ESTE ERA EL RECORTE MÁS PELIGROSO DEL ARCHIVO: un `doesNotMatch` sobre
+  // `cmd.slice(cmd.indexOf(":esperando"), cmd.indexOf("LSS"))`. Si cualquiera de las
+  // dos marcas falta, el recorte queda vacío (o de un carácter), y un texto vacío no
+  // contiene nada prohibido: el test pasa SIEMPRE. Ahora las dos marcas tienen que
+  // estar (la etiqueta, a principio de línea) y el recorte tiene un piso.
+  // Mutación: renombrar la etiqueta `:esperando` a `:esperandox` en el .cmd → antes
+  // exit 0, ahora 1 (y con la primera versión del arreglo, que buscaba el texto de la
+  // etiqueta con `indexOf`, seguía en 0: por eso `etiqueta()` pide el renglón entero).
+  const espera = entreMarcas(cmdCodigo, etiqueta("esperando"), "LSS")
+  // El piso: el bucle de espera tiene que estar entero adentro del recorte.
+  assert.match(espera, /\.instalando|%MARCA%/, "el recorte de la espera no contiene la marca que mira: no es el bucle")
   assert.doesNotMatch(espera, /where opencode/, "sale antes de que termine la capa educativa")
 })
 
@@ -395,39 +565,155 @@ test("el lanzador NO arranca apenas aparece opencode", () => {
 
 const instalarPs1 = readFileSync(join(REPO, "install/install.ps1"), "utf8")
 
-test("ningún archivo JSON se escribe con Set-Content (que mete BOM)", () => {
-  /*
-   * `Set-Content -Encoding UTF8` está permitido sólo para archivos que lee
-   * PowerShell, donde el BOM no molesta. Hoy eso es únicamente el manifest.
-   * Cualquier otro destino tiene que ir por WriteAllText.
-   */
-  const PERMITIDOS = ["$Manifest"]
+// ── POR QUÉ SE REESCRIBIERON LOS TRES TESTS DE ABAJO: ERAN HUECOS ─────────────
+//
+// Los tres existían y los tres daban verde con el bug adentro. Medido por
+// mutación sobre install/install.ps1 antes de tocarlos (exit code de
+// `node --test tests/instalador.test.mjs`, sin pipe):
+//
+//   (a) la cura del BOM con `[System.Text.Encoding]::UTF8` (que EMITE BOM) en vez
+//       de `(New-Object System.Text.UTF8Encoding $false)`             → 0, VERDE
+//   (a') lo mismo en la escritura del temporal de Escribir-TextoAtomico, que es
+//       por donde hoy se guarda la key                                → 0, VERDE
+//   (b) esa escritura del temporal cambiada por
+//       `$texto | Out-File -FilePath $temporal -Encoding utf8`        → 0, VERDE
+//   (b') el guardado de la key cambiado por
+//       `... | Out-File -FilePath $AuthFile -Encoding utf8`           → 0, VERDE
+//
+// Por qué eran huecos, uno por uno:
+//
+//   1. «ningún JSON se escribe con Set-Content» buscaba UN verbo con UNA forma de
+//      escribirlo (`Set-Content -Path $var ... -Encoding UTF8`). `Out-File`,
+//      `Add-Content`, o el mismo Set-Content con `-LiteralPath`, pasaban de largo.
+//      Prohibía una manera de equivocarse, no el error.
+//   2. «las credenciales se escriben sin BOM» pedía que la línea dijera
+//      `WriteAllText`. WriteAllText con `[System.Text.Encoding]::UTF8` ES
+//      WriteAllText y mete BOM igual: lo que decide es el TERCER argumento, y
+//      nadie lo miraba. Además filtraba por líneas que nombraran `$AuthFile`, y la
+//      key hoy se escribe por Escribir-TextoAtomico, que escribe en `$temporal`:
+//      la escritura que más importa había quedado fuera del test.
+//   3. «CURA un auth.json con BOM» recortaba hasta `indexOf("$authData = $null")`,
+//      texto que ya no existe en install.ps1: daba -1 y `slice(0, -1)` devolvía EL
+//      ARCHIVO ENTERO. Los tres `assert.match` se cumplían con cualquier
+//      ReadAllBytes / 0xEF…0xBF / WriteAllText de cualquier parte del script. Y el
+//      `assert.ok(i > 0)` que estaba al final no protegía ese recorte: miraba otro
+//      índice.
+//
+// Ahora se enumeran TODAS las primitivas de escritura del script (no una), se mira
+// el argumento de codificación (no el nombre del método), y la cura se recorta por
+// llaves balanceadas con un assert que explota si la cabecera no está.
+//
+// Mutaciones que ahora dan ROJO (exit code 1 en este archivo; cada una se aplicó
+// con un script que hace assert de que el texto a reemplazar existe, y se comprobó
+// con `git diff --stat` antes de correr): (a), (a'), (b), (b'), y además
+//   (b'') la cura cambiada por `$texto | Out-File -FilePath $AuthFile -Encoding utf8`
+//   (c)  borrar la línea que reescribe el archivo en la cura
+//   (c') neutralizar la detección con `if ($false) {`
+//   (d)  que la cura decodifique desde el byte 0 (`GetString($bytes, 0, ...)`): el
+//        U+FEFF queda adentro del texto y se vuelve a escribir como EF BB BF.
+//
+// LÍMITE HONESTO: esto es forma, no conducta. En esta máquina no hay PowerShell,
+// así que ninguno de estos tests EJECUTA install.ps1. Que el archivo salga sin BOM
+// de verdad sólo se puede medir en Windows (CI, job `windows`).
 
-  const culpables = []
-  for (const m of instalarPs1.matchAll(/Set-Content\s+-Path\s+(\$\w+)[^\r\n]*-Encoding\s+UTF8/g)) {
-    if (!PERMITIDOS.includes(m[1])) culpables.push(m[1])
+/** install.ps1 sin comentarios: los comentarios citan `Set-Content` para explicar el bug. */
+const instalarCodigo = instalarPs1.replace(/^\s*#.*$/gm, "")
+
+/** El único tercer argumento aceptado para escribir algo que lee un runtime de JS. */
+const SIN_BOM = "(New-Object System.Text.UTF8Encoding $false)"
+
+/** Toda forma que tiene PowerShell de dejar bytes en un archivo. */
+const PRIMITIVA_DE_ESCRITURA =
+  /\b(?:Set-Content|Add-Content|Out-File|Tee-Object|Export-Clixml|Export-Csv)\b|\b(?:WriteAllText|WriteAllBytes|WriteAllLines|AppendAllText|AppendAllLines|OpenWrite|CreateText)\s*\(|StreamWriter|FileStream/
+
+/** Las líneas de install.ps1 (sin comentarios) que escriben un archivo. */
+function lineasQueEscriben() {
+  return instalarCodigo
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => PRIMITIVA_DE_ESCRITURA.test(l))
+}
+
+/** Un bloque `cabecera ... }` de PowerShell, contando llaves. Explota si no está. */
+function bloquePs(texto, cabecera) {
+  const i = texto.indexOf(cabecera)
+  assert.ok(i >= 0, `install.ps1 ya no tiene «${cabecera}»: el test no puede recortar a ciegas`)
+  const abre = texto.indexOf("{", i)
+  assert.ok(abre >= 0, `«${cabecera}» no abre llave`)
+  let nivel = 0
+  for (let j = abre; j < texto.length; j++) {
+    if (texto[j] === "{") nivel++
+    else if (texto[j] === "}" && --nivel === 0) return texto.slice(i, j + 1)
   }
+  assert.fail(`«${cabecera}» no cierra llave`)
+}
+
+test("ningún archivo JSON se escribe con BOM: se miran TODAS las escrituras y su codificación", () => {
+  /*
+   * Lo único que puede escribir con otra cosa que UTF-8 sin BOM es lo que NO lee un
+   * runtime de JavaScript. Hoy son dos líneas, y van enteras: si mañana cambia el
+   * destino o la codificación de alguna, alguien tiene que mirarla y decidir.
+   *   - el manifest lo lee PowerShell, que saca el BOM solo;
+   *   - el platformio.ini de precalentado es ASCII puro y lo lee PlatformIO.
+   */
+  const PERMITIDAS = [
+    "Set-Content -Path $Manifest -Value $manifestLines -Encoding UTF8",
+    'Set-Content -Path (Join-Path $proj "platformio.ini") -Value $IniPlacas -Encoding ASCII',
+  ]
+  const escrituras = lineasQueEscriben()
+  // El piso: si el filtro deja de encontrar escrituras, el test no puede quedar verde
+  // por no haber mirado nada.
+  assert.ok(escrituras.length >= 6, `sólo encontré ${escrituras.length} escrituras en install.ps1: el filtro dejó de ver`)
+  for (const permitida of PERMITIDAS) {
+    assert.ok(escrituras.includes(permitida), `la excepción «${permitida}» ya no existe tal cual: revisá la lista`)
+  }
+  const culpables = escrituras.filter((l) => {
+    if (PERMITIDAS.includes(l)) return false
+    // Tiene que ser WriteAllText(<destino>, <texto>, SIN_BOM) y nada más en la línea.
+    return !(l.startsWith("[System.IO.File]::WriteAllText(") && l.endsWith(", " + SIN_BOM + ")"))
+  })
   assert.deepEqual(
     culpables,
     [],
-    "estos archivos van a salir con BOM y JSON.parse los va a rechazar en silencio: " +
-      culpables.join(", ") +
-      " — usá [System.IO.File]::WriteAllText(..., (New-Object System.Text.UTF8Encoding $false))",
+    "estas escrituras pueden salir con BOM (o no declaran la codificación) y JSON.parse las rechaza en silencio — " +
+      "usá [System.IO.File]::WriteAllText(..., " + SIN_BOM + ")",
   )
+  // Y la redirección, que también escribe (en PowerShell 5.1, en UTF-16 con BOM).
+  const redirecciones = instalarCodigo
+    .split(/\r?\n/)
+    .filter((l) => !/Write-Host/.test(l) && /(?:^|[^-=<>2&|])>{1,2}\s*["$(]/.test(l))
+    .map((l) => l.trim())
+  assert.deepEqual(redirecciones, [], "hay una redirección a archivo: en PowerShell 5.1 escribe UTF-16 con BOM")
 })
 
-test("el archivo de credenciales se escribe sin BOM", () => {
-  // El caso concreto, nombrado. Si alguien renombra la variable, el test de
-  // arriba sigue cubriendo la regla; éste cubre el archivo que más duele.
-  const i = instalarPs1.indexOf("$AuthFile")
-  assert.ok(i > 0, "no encontré dónde se escribe el archivo de credenciales")
-  const escrituras = [...instalarPs1.matchAll(/([^\r\n]*\$AuthFile[^\r\n]*)/g)]
-    .map((m) => m[1])
-    .filter((l) => /Set-Content|WriteAllText/.test(l))
-  assert.ok(escrituras.length > 0, "no se escribe el archivo de credenciales")
-  for (const l of escrituras) {
-    assert.match(l, /WriteAllText/, `las credenciales se escriben con BOM:\n  ${l.trim()}`)
-  }
+test("el archivo de credenciales se escribe sin BOM, por los DOS caminos que lo escriben", () => {
+  const escrituras = lineasQueEscriben()
+  // Camino 1: la única escritura directa sobre auth.json es la cura.
+  const directas = escrituras.filter((l) => l.includes("$AuthFile"))
+  assert.deepEqual(
+    directas,
+    ["[System.IO.File]::WriteAllText($AuthFile, $texto, " + SIN_BOM + ")"],
+    "cambió la escritura directa de auth.json (tiene que ser sólo la cura, y sin BOM)",
+  )
+  // Camino 2: todo lo demás va por Escribir-TextoAtomico, y ESA función escribe sin BOM.
+  const fn = bloquePs(instalarCodigo, "function Escribir-TextoAtomico(")
+  const escriturasFn = fn.split(/\r?\n/).map((l) => l.trim()).filter((l) => PRIMITIVA_DE_ESCRITURA.test(l))
+  assert.deepEqual(
+    escriturasFn,
+    ["[System.IO.File]::WriteAllText($temporal, $texto, " + SIN_BOM + ")"],
+    "Escribir-TextoAtomico ya no escribe el temporal en UTF-8 sin BOM: por ahí pasa la key",
+  )
+  // Y que la key de verdad pase por ahí: si el guardado dejara de usarla, lo de
+  // arriba mediría una función que nadie llama.
+  const usos = instalarCodigo.split(/\r?\n/).filter((l) => /^\s*(?:try \{ )?Escribir-TextoAtomico \$AuthFile /.test(l))
+  assert.ok(usos.length >= 2, `esperaba al menos dos escrituras de auth.json por Escribir-TextoAtomico (purga y guardado) y hay ${usos.length}`)
+  assert.ok(usos.some((l) => l.includes("$candidato")), "el guardado de la key ya no pasa por Escribir-TextoAtomico")
+  // Ninguna línea le pasa auth.json por un pipe o por una redirección a otra cosa.
+  const raras = instalarCodigo
+    .split(/\r?\n/)
+    .filter((l) => /\|\s*[\w-]+[^|]*\$AuthFile/.test(l) || />\s*\$AuthFile/.test(l))
+    .map((l) => l.trim())
+  assert.deepEqual(raras, [], "auth.json recibe la salida de un pipe o de una redirección")
 })
 
 test("el instalador CURA un auth.json que ya venía con BOM", () => {
@@ -440,12 +726,27 @@ test("el instalador CURA un auth.json que ya venía con BOM", () => {
   //
   // Arreglar la ESCRITURA no alcanzaba: las máquinas ya infectadas seguían
   // infectadas. Hay que mirar los bytes, que es lo único que ve OpenCode.
-  const i = instalarPs1.indexOf("$AuthFile")
-  const bloque = instalarPs1.slice(0, instalarPs1.indexOf("$authData = $null"))
-  assert.match(bloque, /ReadAllBytes/, "lee el archivo como texto: así el BOM es invisible")
-  assert.match(bloque, /0xEF.*0xBB.*0xBF/s, "no busca la firma del BOM")
-  assert.match(bloque, /WriteAllText/, "detecta el BOM pero no lo saca")
-  assert.ok(i > 0)
+  const cura = bloquePs(instalarCodigo, "if (Test-Path $AuthFile) {")
+  assert.match(cura, /\$bytes = \[System\.IO\.File\]::ReadAllBytes\(\$AuthFile\)/,
+    "lee el archivo como texto: así el BOM es invisible")
+  // La detección, entera: los tres bytes de la firma y que el archivo los tenga.
+  const deteccion = "if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {"
+  const conBom = bloquePs(cura, deteccion)
+  // Se decodifica SALTEANDO los tres bytes: desde 0, el U+FEFF queda en el texto y
+  // WriteAllText lo vuelve a escribir como EF BB BF, con cualquier codificación.
+  assert.match(conBom, /\$texto = \[System\.Text\.Encoding\]::UTF8\.GetString\(\$bytes, 3, \$bytes\.Length - 3\)/,
+    "no saltea los tres bytes del BOM al decodificar")
+  // Y se REESCRIBE, adentro de la rama que detectó el BOM y sin BOM.
+  const reescritura = "[System.IO.File]::WriteAllText($AuthFile, $texto, " + SIN_BOM + ")"
+  assert.ok(conBom.includes(reescritura), "detecta el BOM pero no reescribe el archivo sin BOM")
+  assert.ok(conBom.indexOf(reescritura) > conBom.indexOf("GetString($bytes, 3"),
+    "reescribe antes de haber sacado el BOM del texto")
+  // La cura va ANTES de leer las credenciales: si no, la decisión de «ya está
+  // configurado» se toma sobre el archivo envenenado.
+  const iCura = instalarCodigo.indexOf(cura)
+  const iLectura = instalarCodigo.indexOf("$lecturaAuth = Leer-AuthJson $AuthFile")
+  assert.ok(iLectura >= 0, "install.ps1 ya no lee las credenciales con `$lecturaAuth = Leer-AuthJson $AuthFile`")
+  assert.ok(iCura >= 0 && iCura < iLectura, "la cura del BOM corre después de leer las credenciales")
 })
 
 test("el lanzador COMPLETA la instalación si quedó a medias", () => {
@@ -457,7 +758,7 @@ test("el lanzador COMPLETA la instalación si quedó a medias", () => {
   // docente no tiene por qué saber eso ni tipear un comando de PowerShell: el
   // lanzador lo hace solo en el primer doble clic.
   assert.match(cmd, /:reparar/, "no hay camino de reparación")
-  const rep = cmd.slice(cmd.indexOf(":reparar"), cmd.indexOf(":completo"))
+  const rep = entreMarcas(cmd, etiqueta("reparar"), etiqueta("completo"))
   assert.match(rep, /bootstrap\.ps1/, "no completa la instalación")
 
   // UNA vez, no en bucle: reintentar para siempre en la máquina de alguien es
@@ -510,8 +811,10 @@ test("el lanzador NO repara mientras hay una instalación en curso", () => {
   // bootstrap lanzado desde el .cmd.
   //
   // Con 20 máquinas compartiendo la red, pasar el techo no es raro: es lo normal.
-  const rep = cmdCodigo.slice(cmdCodigo.indexOf(":reparar"))
-  const antesDeLanzar = rep.slice(0, rep.indexOf("bootstrap.ps1"))
+  // Mutación: que `:reparar` ya no lance bootstrap.ps1 → antes este recorte era
+  // «toda la sección menos un carácter» y los dos asserts de abajo se cumplían con
+  // texto de cualquier parte; ahora explota nombrando la marca que falta.
+  const antesDeLanzar = entreMarcas(cmdCodigo, etiqueta("reparar"), "bootstrap.ps1")
   assert.match(antesDeLanzar, /if exist "%MARCA%"/,
     "entra a reparar sin mirar si hay una instalación corriendo")
   assert.match(antesDeLanzar, /exit \/b/,

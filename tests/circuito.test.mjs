@@ -2523,11 +2523,15 @@ test("wokwi: cada pin que el tool puede repartir existe en la pieza de esa placa
     // Definitions: SENSOR_VP = pin físico 5 = GPIO36; SENSOR_VN = pin 8 = GPIO39) y
     // escrito con la cita en `skills/esp32`, que es donde vive un dato de hardware.
     //
-    // GPIO0/37/38 SIGUEN siendo huecos, y por un motivo distinto: pasan por
-    // `motivoRechazo` pero no salen a ningún pin del header de la DevKit v1. GPIO37 y
-    // GPIO38 son SENSOR_CAPP/SENSOR_CAPN y el módulo WROOM no los expone; GPIO0 es
-    // strapping y tampoco tiene agujero. Ésos no se pueden "mapear": no están.
-    esp32: ["GPIO0", "GPIO37", "GPIO38"],
+    // GPIO0 SIGUE siendo un hueco: pasa por `motivoRechazo` pero no sale a ningún pin
+    // del header de la DevKit v1 (es strapping y no tiene agujero). No se puede
+    // "mapear": no está.
+    //
+    // GPIO37 y GPIO38 ESTABAN acá por el mismo motivo (SENSOR_CAPP/SENSOR_CAPN, el
+    // módulo WROOM no los expone). Desde el 2026-11-22 el tool ya no los reparte: los
+    // rechaza diciendo que no salen a ningún pin de la placa. Antes «led:37» se dibujaba
+    // con «Listo!». Salieron de esta lista porque dejaron de ser un pin repartible.
+    esp32: ["GPIO0"],
     uno: [],
   }
 
@@ -2765,4 +2769,322 @@ test("signals: los GPIO que Wokwi NO marca pwm son los solo-entrada del tool", (
   for (const p of esp.poolDigital) {
     assert.ok(!sinPwm.includes(p.n), `GPIO${p.n} está en el pool digital del ESP32 y Wokwi dice que no hace PWM`)
   }
+})
+
+// ── «LISTO!» SIN HABER MIRADO: cuatro validaciones que faltaban ───────────────
+//
+// Auditoría de código del 2026-11-22 (CIR-03, CIR-04, CIR-06, PRM-10), ejecutando el
+// tool y reproducido por QA. En los cuatro casos el tool contestaba «Listo!» y
+// entregaba una hoja que en la mesa del alumno no funciona:
+//
+//  - Un pin analógico pedido a mano se aceptaba aunque ese GPIO no tuviera conversor:
+//    «potenciometro:23» salía «GPIO23 (analógico)», y ahí analogRead no mide nada. El
+//    reparto automático siempre usó pines con ADC; el agujero era sólo el pin a mano.
+//  - GPIO37 y GPIO38 figuraban como válidos. Existen en el chip, pero no salen a
+//    ningún pin del DevKit de las escuelas: el alumno no los va a encontrar.
+//  - La palabra «shield» salteaba el rechazo de placa desconocida. «mega con sensor
+//    shield» se dibujaba como Arduino UNO, con una nota que decía «como no me dijiste
+//    sobre qué placa va»: sí lo había dicho.
+//  - Los chequeos de instalación miraban sólo que el archivo existiera. Con la
+//    biblioteca de piezas en 0 bytes (copia cortada, antivirus) salía «Listo!» y una
+//    página con la tabla y ninguna pieza; con la plantilla vacía, un HTML de 0 bytes.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - sacar el chequeo de ADC de motivoRechazo                   → rojo «sin conversor»
+//   - sacar 32 del conjunto con ADC                              → rojo el contrapeso de «sin conversor»
+//   - volver a poner 37 y 38 en GPIO_VALIDOS (y sacar su aviso)   → rojo «no salen a ningún pin»
+//   - vaciar la lista de otras placas de shieldDe                → rojo «otra placa con shield»
+//   - agregar «uno» a esa lista                                  → rojo el contrapeso de shield
+//   - no aceptar la etiqueta de la placa                          → rojo «la etiqueta que el tool imprime»
+//   - volver a `existsSync` en cualquiera de los tres chequeos   → rojo el de 0 bytes que corresponde
+//
+// LÍMITE HONESTO: qué pines tienen ADC y cuáles salen al header no se midió en una
+// placa; sale de skills/esp32/SKILL.md, que es la fuente del repo.
+
+test("ESP32: un pin analógico pedido a mano tiene que tener conversor (ADC)", async () => {
+  for (const [pedido, gpio] of [["potenciometro:23", "GPIO23"], ["ldr:5", "GPIO5"], ["joystick:23", "GPIO23"], ["potenciometro:18", "GPIO18"]]) {
+    const { r, html } = await gen({ componentes: pedido }, "adc-" + pedido.replace(":", "-"))
+    assert.ok(!pinesAsignados(html).includes(gpio), `«${pedido}»: dejó el sensor analógico en ${gpio}, que no tiene ADC: analogRead no mide nada`)
+    assert.match(r, /no puede leer un valor analógico/i, `«${pedido}»: lo reasignó sin avisarlo en la respuesta:\n${r}`)
+  }
+  // Contrapeso: los que SÍ tienen conversor se respetan. 34 y 32 son ADC1; 4 es ADC2.
+  for (const [pedido, gpio] of [["potenciometro:34", "GPIO34"], ["potenciometro:32", "GPIO32"], ["ldr:4", "GPIO4"]]) {
+    const { r, html } = await gen({ componentes: pedido }, "adc-ok-" + pedido.replace(":", "-"))
+    assert.ok(pinesAsignados(html).includes(gpio), `«${pedido}»: le sacó un pin que sí tiene ADC`)
+    assert.doesNotMatch(r, /no puede leer un valor analógico/i)
+  }
+})
+
+test("ESP32: GPIO37 y GPIO38 no salen a ningún pin del DevKit, y se dice", async () => {
+  for (const pedido of ["led:37", "led:38", "boton:37", "potenciometro:38"]) {
+    const gpio = "GPIO" + pedido.split(":")[1]
+    const { r, html } = await gen({ componentes: pedido }, "sinpin-" + pedido.replace(":", "-"))
+    assert.ok(!pinesAsignados(html).includes(gpio), `«${pedido}»: dibujó algo en ${gpio}, que el alumno no va a encontrar en la placa`)
+    assert.match(r, /no sale a ningún pin/i, `«${pedido}»: no explica por qué lo cambió:\n${r}`)
+  }
+})
+
+test("una placa que no se sabe dibujar no pasa por decir «shield»", async () => {
+  for (const placa of ["mega con sensor shield", "arduino mega 2560 + sensor shield v5", "nano con shield", "esp8266 con shield", "Leonardo + Sensor Shield"]) {
+    const nombre = "otra-placa-" + placa.replace(/[^a-z0-9]+/gi, "-")
+    const { r, html } = await gen({ componentes: "led", placa }, nombre)
+    assert.match(r, /No sé DIBUJAR/, `«${placa}»: generó un circuito de otra placa:\n${r.slice(0, 300)}`)
+    assert.equal(html, "", `«${placa}»: dejó un archivo escrito`)
+    assert.doesNotMatch(r, /asumí el Arduino UNO/, `«${placa}»: dice que no le dijeron la placa, y sí se la dijeron`)
+  }
+  // Contrapeso: el shield a secas sigue cayendo en UNO, avisándolo; y con la placa nombrada, también anda.
+  const solo = await gen({ componentes: "led", placa: "sensor shield v5" }, "shield-solo")
+  assert.ok(solo.r.startsWith("Listo"), solo.r.slice(0, 200))
+  assert.match(solo.r, /asumí el Arduino UNO/)
+  for (const placa of ["uno con sensor shield", "esp32 con sensor shield"]) {
+    const { r } = await gen({ componentes: "led", placa }, "shield-" + placa.split(" ")[0])
+    assert.ok(r.startsWith("Listo"), `«${placa}»: ${r.slice(0, 200)}`)
+  }
+})
+
+test("placa: se acepta también la etiqueta que el propio tool imprime", async () => {
+  for (const [placa, tag] of [["Arduino UNO", "wokwi-arduino-uno"], ["ESP32 DevKit", "wokwi-esp32-devkit-v1"], ["  esp32 devkit ", "wokwi-esp32-devkit-v1"]]) {
+    const { r, html } = await gen({ componentes: "led", placa }, "etiqueta-" + placa.trim().replace(/\s+/g, "-"))
+    assert.ok(r.startsWith("Listo"), `«${placa}»: ${r.slice(0, 200)}`)
+    assert.ok(html.includes(tag), `«${placa}»: dibujó otra placa`)
+  }
+  // Contrapeso: una etiqueta parecida de otra placa sigue rebotando.
+  const { r } = await gen({ componentes: "led", placa: "Arduino Mega" }, "etiqueta-mega")
+  assert.match(r, /No sé DIBUJAR/)
+})
+
+test("instalación dañada: un archivo de 0 bytes no es un archivo instalado", async () => {
+  const cfg = join(os.tmpdir(), "tecniabot-test-cfg-vacio")
+  const web = join(cfg, "opencode", "tecniabot-web")
+  const previo = process.env.XDG_CONFIG_HOME
+  const armar = (vacios) => {
+    rmSync(web, { recursive: true, force: true })
+    mkdirSync(web, { recursive: true })
+    writeFileSync(join(web, "wokwi-bundle.js"), vacios.includes("bundle") ? "" : "/*stub*/")
+    writeFileSync(join(web, "componentes-extra.js"), vacios.includes("extra") ? "" : "/*stub*/")
+    for (const p of Object.values(PLANTILLAS)) {
+      if (vacios.includes("plantillas")) writeFileSync(join(web, p), "")
+      else copyFileSync(join(REPO, "opencode/tecniabot-web", p), join(web, p))
+    }
+  }
+  process.env.XDG_CONFIG_HOME = cfg
+  try {
+    for (const [que, vacios, args] of [
+      ["la biblioteca de piezas", ["bundle"], { circuito: "led-esp32" }],
+      ["las piezas dibujadas", ["extra"], { componentes: "higrometro, relay, bomba" }],
+      ["la plantilla de protoboard", ["plantillas"], { circuito: "semaforo-protoboard" }],
+    ]) {
+      armar(vacios)
+      const { r, html } = await gen(args, "vacio-" + vacios[0])
+      assert.ok(!r.startsWith("Listo"), `con ${que} en 0 bytes contestó «Listo!»:\n${r.slice(0, 200)}`)
+      assert.match(r, /vac[ií]/i, `con ${que} en 0 bytes no dice que el archivo está vacío:\n${r}`)
+      assert.match(r, /Reinstal/i, r)
+      assert.equal(html, "", `con ${que} en 0 bytes escribió un archivo igual`)
+    }
+    // Contrapeso: con los tres archivos con contenido, los mismos pedidos generan.
+    armar([])
+    for (const [args, n] of [[{ circuito: "led-esp32" }, "a"], [{ componentes: "higrometro, relay, bomba" }, "b"], [{ circuito: "semaforo-protoboard" }, "c"]]) {
+      const { r } = await gen(args, "lleno-" + n)
+      assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+    }
+  } finally {
+    process.env.XDG_CONFIG_HOME = previo
+    rmSync(cfg, { recursive: true, force: true })
+  }
+})
+
+// ── EL LCD EN ESP32: UNA SOLA VOZ ─────────────────────────────────────────────
+//
+// Auditoría de código del 2026-11-22 (CIR-02, el único hallazgo que quedó en
+// severidad alta), reproducido por QA. La hoja que genera el tool para un LCD en
+// ESP32 traía tres afirmaciones que no podían ser ciertas a la vez:
+//
+//   - la tabla y el dibujo: «VIN (5V) · GND · GPIO21 · GPIO22»;
+//   - la advertencia del componente, en el mismo recuadro: «Nunca mochila a 5V con
+//     SDA/SCL directo al ESP32»;
+//   - el aviso de la placa: «los componentes de 5V (servo, PIR, HC-SR04, LCD) van a VIN».
+//
+// O sea: el tool entregaba como instrucción de cableado justo lo que su propio texto
+// prohibía. Y al chat sólo llegaba la tabla, bajo «usá estos pines, no inventes otros».
+//
+// LA DECISIÓN (owner, 2026-11-22): el plano es el que es. El LCD va a 5 V, GND, SDA y
+// SCL, como lo dibuja el tool y como lo indican las fichas del INET (proyectos 04, 05
+// y 12), con una ACLARACIÓN. La aclaración es la que esas fichas ya traían: el adaptador I2C
+// puede dejar el bus en 5 V, se mide con el téster, y si marca cerca de 5 V va un
+// conversor de nivel. Lo que se saca es el «nunca», que contradecía al dibujo.
+//
+// QUÉ NO AFIRMA NINGUNO DE ESTOS TEXTOS: que conectarlo directo sea seguro. Nadie lo
+// midió con un módulo en la mano. Por eso la aclaración manda a medir.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - volver a «Nunca mochila a 5V con SDA/SCL directo al ESP32» en el tool → rojo «no se contradice»
+//   - volver a «Lo que no se hace nunca» en el skill                        → rojo «dicen lo mismo»
+//   - cambiar el destino de VCC del LCD a 3.3V                               → rojos «no se contradice» y «dicen lo mismo»
+//   - sacar la aclaración de las notas del chat                             → rojo «llega al chat»
+//   - mandar la aclaración también con Arduino UNO                           → rojo «llega al chat»
+//   - sacar de la hoja que se mide con el téster, o el conversor            → rojos «no se contradice» y «dicen lo mismo»
+//   - sacar del skill la instrucción de medir                                → rojo «dicen lo mismo»
+
+const PROHIBE_LO_QUE_DIBUJA = /nunca[^.\n]{0,40}mochila[^.\n]{0,20}5\s?V|no se hace nunca[^\n]{0,40}mochila a 5\s?V/i
+
+test("LCD en ESP32: la hoja no prohíbe lo mismo que dibuja, y trae la aclaración", async () => {
+  for (const args of [{ circuito: "lcd-esp32" }, { componentes: "lcd" }, { circuito: "estacion-meteo" }]) {
+    const nombre = "lcd-voz-" + (args.circuito ?? "libre")
+    const { r, html } = await gen(args, nombre)
+    assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+    // El plano: 5 V, GND y el bus I2C.
+    assert.match(r, /LCD I2C: VCC → VIN \(5V\), GND → GND, SDA → GPIO21, SCL → GPIO22/, `${nombre}: cambió el plano del LCD:\n${r}`)
+    // La hoja no dice «nunca» sobre lo que dibuja…
+    assert.doesNotMatch(html, PROHIBE_LO_QUE_DIBUJA, `${nombre}: la hoja dibuja el LCD a 5V con SDA/SCL directo y en el mismo recuadro dice que eso no se hace nunca`)
+    // …y sí trae la aclaración entera: por qué, cómo se comprueba y qué va si da mal.
+    assert.match(html, /pull-ups/i, `${nombre}: la aclaración no dice por qué`)
+    assert.match(html, /téster/i, `${nombre}: la aclaración no manda a medir`)
+    assert.match(html, /conversor de nivel bidireccional/i, `${nombre}: la aclaración no dice qué va si el bus marca 5V`)
+    assert.match(html, /divisor de resistencias NO sirve/i, `${nombre}: perdió el aviso de que el divisor no sirve en I2C`)
+  }
+})
+
+test("LCD en ESP32: la aclaración llega al chat, y con Arduino UNO no aparece", async () => {
+  // Las advertencias de componente van sólo a la hoja. El modelo recibía la tabla bajo
+  // «usá estos pines, no inventes otros» y nada más: no tenía qué contarle al docente.
+  const esp = await gen({ componentes: "lcd, led" }, "lcd-chat-esp32")
+  assert.match(esp.r, /LCD en ESP32/i, `la aclaración del LCD no llegó al chat:\n${esp.r}`)
+  assert.match(esp.r, /téster/i, esp.r)
+  assert.match(esp.r, /conversor de nivel/i, esp.r)
+  assert.equal(esp.r.match(/LCD en ESP32/gi).length, 1, "la aclaración salió repetida")
+  // «Mochila» es como le dicen al adaptador I2C quienes ya lo conocen: al docente que lo ve
+  // por primera vez no le dice nada (lo marcó el owner al leer el texto). En lo que llega
+  // al chat y a la hoja se lo nombra por lo que se ve. Mutación: volver a «la mochila I2C».
+  assert.doesNotMatch(esp.r, /mochila/i, `la aclaración del chat dice «mochila»:\n${esp.r}`)
+  assert.match(esp.r, /adaptador I2C \(la plaquita que el display trae soldada atrás\)/, esp.r)
+  for (const placa of ["esp32", "uno"]) {
+    assert.doesNotMatch(ns.COMPONENTES.lcd.advertencia[placa], /mochila/i, `la advertencia de la hoja (${placa}) dice «mochila»`)
+  }
+
+  // En el UNO el adaptador I2C y la placa trabajan a la misma tensión: no hay nada que aclarar.
+  const uno = await gen({ componentes: "lcd, led", placa: "uno" }, "lcd-chat-uno")
+  assert.ok(uno.r.startsWith("Listo"), uno.r.slice(0, 200))
+  assert.doesNotMatch(uno.r, /LCD en ESP32|conversor de nivel/i, `con Arduino UNO salió la aclaración del ESP32:\n${uno.r}`)
+
+  // Y sin LCD tampoco.
+  const sin = await gen({ componentes: "led, servo" }, "lcd-chat-sin")
+  assert.doesNotMatch(sin.r, /LCD en ESP32/i)
+})
+
+test("LCD en ESP32: el tool, el skill de seguridad y las fichas del INET dicen lo mismo", () => {
+  const { COMPONENTES } = ns
+  const lcd = COMPONENTES?.lcd
+  assert.ok(lcd, "`COMPONENTES` dejó de exportarse o perdió el LCD: este invariante se quedó sin red")
+  const vcc = lcd.pines.find((p) => p.nombre === "VCC")
+  assert.equal(vcc.destino, "V5", "el LCD ya no se alimenta de 5V: revisá el skill, las fichas y este test, que parten de ese plano")
+
+  const skill = readFileSync(join(REPO, "opencode/skills/checklist-seguridad/SKILL.md"), "utf8")
+  assert.doesNotMatch(skill, PROHIBE_LO_QUE_DIBUJA, "el skill de seguridad dice que NUNCA se conecta como el tool lo dibuja")
+  assert.doesNotMatch(skill, /no hay respuesta simple/i, "el skill sigue diciendo que el LCD en ESP32 no tiene respuesta, y el tool le da una")
+  // Las tres fuentes mandan a medir y nombran el conversor.
+  const fuentes = {
+    "el tool": lcd.advertencia.esp32,
+    "el skill checklist-seguridad": skill,
+    "la ficha 04": readFileSync(join(REPO, "opencode/skills/proyectos-inet/proyectos/04-invernadero.md"), "utf8"),
+    "la ficha 12": readFileSync(join(REPO, "opencode/skills/proyectos-inet/proyectos/12-calefaccion.md"), "utf8"),
+  }
+  for (const [quien, texto] of Object.entries(fuentes)) {
+    // La frase entera, no la palabra «téster» suelta: el skill la nombra en otros lados, y
+    // con la palabra sola este renglón pasaba aunque se le sacara la instrucción de medir.
+    assert.match(texto, /SDA y SCL con el t[eé]ster/i, `${quien} no manda a medir SDA y SCL con el téster`)
+    assert.match(texto, /conversor de nivel bidireccional/i, `${quien} no nombra el conversor de nivel`)
+  }
+  // El contrapeso: lo que en Arduino UNO sigue siendo cierto no se tocó.
+  assert.match(lcd.advertencia.uno, /sin conversor/i)
+})
+
+// ── CIR-05 · EL SEMÁFORO DEL DIBUJO ES EL DE LA FICHA ─────────────────────────
+//
+// Auditoría de código del 2026-11-22, reproducido por QA. pinouts.json se declara la
+// fuente de los pines de los proyectos INET («TODO deriva de aca»): verde=GPIO16,
+// amarillo=GPIO17, rojo=GPIO18, que es lo que dice la ficha impresa y el .ino. Este
+// tool no lo leía:
+//   - el preset `semaforo` dibujaba rojo=GPIO4, amarillo=GPIO5, verde=GPIO18;
+//   - la receta que el prompt mandaba usar («led:16, led:17, led:18») ponía bien los
+//     pines y al revés los colores, porque el color sale por POSICIÓN (rojo, amarillo,
+//     verde): GPIO16 quedaba rojo y GPIO18 verde;
+//   - la tabla que vuelve al chat decía «LED / LED / LED», así que el modelo no podía
+//     saber cuál era cuál para escribir el código.
+// El 2026-11-23 el owner decidió que el dibujo siga a la ficha.
+//
+// MUTACIONES que ponen rojo este bloque (ver el commit):
+//   - sacar los pines del preset                         → rojo «el preset»
+//   - dos pines del preset cambiados entre sí            → rojo «el preset»
+//   - la tabla vuelve a decir «LED» a secas              → rojos «el preset», «la receta» y «el nombre»
+//   - el nombre del color con otro orden que el dibujo   → rojo «el nombre que se lee es el color que se dibuja»
+//   - volver a «led:16, led:17, led:18» en el prompt     → rojo «la receta del prompt»
+//   - volver al orden viejo en el skill                  → rojo «la receta del skill»
+
+const PINOUTS = JSON.parse(readFileSync(join(REPO, "opencode/tecniabot-web/pinouts.json"), "utf8"))
+/** { verde: "GPIO16", amarillo: "GPIO17", rojo: "GPIO18" }, leído de la fuente. */
+const SEMAFORO_DE_LA_FICHA = Object.fromEntries(PINOUTS["01-semaforizacion"].esp32.inicial.filter((p) => p.tipo === "senal").map((p) => [p.rol, p.pin]))
+
+/** De la respuesta del tool, qué GPIO le tocó a cada LED, por el color que DICE la tabla. */
+function ledsDeLaTabla(respuesta) {
+  return [...respuesta.matchAll(/^.*?LED (rojo|amarillo|verde): Ánodo \(\+\) → (GPIO\d+)/gm)].map((m) => [m[1], m[2]])
+}
+
+test("CIR-05: la medición no está vacía (la ficha dice 16, 17 y 18)", () => {
+  assert.deepEqual(SEMAFORO_DE_LA_FICHA, { verde: "GPIO16", amarillo: "GPIO17", rojo: "GPIO18" })
+})
+
+test("CIR-05: el preset semaforo dibuja los pines de la ficha, color por color", async () => {
+  const { r, html } = await gen({ circuito: "semaforo" }, "cir05-preset")
+  assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+  const leds = ledsDeLaTabla(r)
+  assert.equal(leds.length, 3, `no encontré tres LEDs con color en la respuesta:\n${r}`)
+  assert.deepEqual(Object.fromEntries(leds), SEMAFORO_DE_LA_FICHA)
+  // Y en la hoja: ni rastro de los pines viejos.
+  assert.doesNotMatch(html, /GPIO\s*(4|5)\b/, "el preset sigue dibujando GPIO4 o GPIO5")
+  // Forzar 16 y 17 no puede venir con un aviso de «te lo cambié»: son los de la ficha.
+  assert.doesNotMatch(r, /le asigné otro|no pude usar/i, r)
+})
+
+test("CIR-05: el nombre que se lee en la tabla es el color que se dibuja", async () => {
+  const EN_CASTELLANO = { red: "rojo", yellow: "amarillo", green: "verde" }
+  for (const [args, nombre] of [[{ circuito: "semaforo" }, "a"], [{ circuito: "alarma" }, "b"], [{ componentes: "led, led, led, led, led" }, "c"], [{ componentes: "boton, led" }, "d"]]) {
+    const { r, html } = await gen(args, `cir05-color-${nombre}`)
+    const dibujados = [...html.matchAll(/<wokwi-led id="[^"]+" color="(\w+)"/g)].map((m) => EN_CASTELLANO[m[1]])
+    const leidos = ledsDeLaTabla(r).map(([color]) => color)
+    assert.ok(dibujados.length > 0, `no hay LEDs en ${JSON.stringify(args)}`)
+    assert.deepEqual(leidos, dibujados, `${JSON.stringify(args)}: la tabla dice ${leidos} y el dibujo muestra ${dibujados}`)
+    // La tabla de la hoja dice lo mismo que el texto que vuelve al chat.
+    const enLaHoja = [...html.matchAll(/<tr><td>LED (rojo|amarillo|verde)<\/td>/g)].map((m) => m[1])
+    assert.deepEqual(enLaHoja, dibujados)
+    assert.doesNotMatch(r, /^\s*(?:[-•*] )?LED: /m, `quedó un LED sin color en la respuesta:\n${r}`)
+  }
+})
+
+/** Ejecuta una receta `componentes` y devuelve { color: [GPIO…] } según la tabla. */
+async function coloresDeLaReceta(receta, nombre) {
+  const { r } = await gen({ componentes: receta }, nombre)
+  assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+  const porColor = {}
+  for (const [color, gpio] of ledsDeLaTabla(r)) (porColor[color] ??= []).push(gpio)
+  return porColor
+}
+
+test("CIR-05: la receta del semáforo que da el prompt sale con los colores de la ficha", async () => {
+  const prompt = readFileSync(join(REPO, "opencode/agent/tecnia-bot.md"), "utf8")
+  const receta = prompt.match(/forzá los pines de la ficha[^\n]*?`"((?:led:\d+(?:, )?){3})"`/)?.[1]
+  assert.ok(receta, "no encontré en el prompt la receta de tres LEDs con sus pines")
+  assert.deepEqual(await coloresDeLaReceta(receta, "cir05-receta-prompt"), { rojo: ["GPIO18"], amarillo: ["GPIO17"], verde: ["GPIO16"] }, `la receta «${receta}» del prompt no da el semáforo de la ficha`)
+})
+
+test("CIR-05: la receta de semaforización del skill sale con los colores de la tabla del proyecto", async () => {
+  const skill = readFileSync(join(REPO, "opencode/skills/circuitos-visuales/SKILL.md"), "utf8")
+  const receta = skill.match(/componentes: "((?:led:\d+(?:, )?){6})"/)?.[1]
+  assert.ok(receta, "no encontré en el skill la receta de seis LEDs")
+  // La verdad de los dos semáforos: la tabla de cableado del proyecto.
+  const ficha = readFileSync(join(REPO, "opencode/skills/proyectos-inet/proyectos/01-semaforizacion.md"), "utf8")
+  const esperado = {}
+  for (const m of ficha.matchAll(/^\| Semáforo \d · (verde|amarillo|rojo) \| pin \d+ \| GPIO (\d+) \|$/gm)) (esperado[m[1]] ??= []).push(`GPIO${m[2]}`)
+  assert.equal(Object.values(esperado).flat().length, 6, `no pude leer los seis pines de la ficha: ${JSON.stringify(esperado)}`)
+  const obtenido = await coloresDeLaReceta(receta, "cir05-receta-skill")
+  for (const color of ["rojo", "amarillo", "verde"]) assert.deepEqual([...obtenido[color]].sort(), [...esperado[color]].sort(), `${color}: la receta «${receta}» no coincide con la ficha`)
 })

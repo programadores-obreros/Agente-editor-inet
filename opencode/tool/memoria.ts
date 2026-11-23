@@ -72,12 +72,19 @@ function ultimoProyecto(memoria: Memoria): string {
 
 // Arma el markdown legible (mismo formato que crea el instalador). El encabezado
 // deja EXPLICITO que es memoria de la maquina, no de una persona.
+// El encabezado decía «NO guarda datos personales de ningun alumno», como si el código lo
+// garantizara. No lo garantiza: guarda cualquier texto («robot de Juan Pérez 4to B» entra
+// sin más), y un programa no puede reconocer un nombre propio en texto libre. Decisión del
+// owner del 2026-11-23 (TCH-05): el texto dice lo que es, una regla para quien escribe.
+// El MISMO encabezado está en plataforma/memoria-local.ts, install.sh e install.ps1;
+// tests/memoria.test.mjs exige que los cuatro sean iguales.
 function renderMemoria(memoria: Memoria): string {
   const proyectos = memoria.proyectos.length ? memoria.proyectos.join(", ") : SIN_DEFINIR
   return `# Memoria de ESTA compu (no de una persona)
 <!-- Progreso pedagogico de esta maquina/grupo. Lo mantiene Tecnia Bot.
-     NO guarda datos personales de ningun alumno (ni nombre ni nada que identifique
-     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos. -->
+     Aca NO van datos personales de ningun alumno (ni nombre ni nada que identifique
+     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos.
+     Es una regla para quien escribe: el archivo guarda el texto que le pasen, sin revisarlo. -->
 
 - Nivel: ${memoria.nivel || SIN_DEFINIR}
 - Proyectos hechos: ${proyectos}
@@ -131,7 +138,7 @@ function escribirArchivoAtomico(ruta: string, contenido: string): void {
 }
 
 export default tool({
-  description: `Memoria de progreso de ESTA computadora/grupo (NO es un perfil personal: no guarda nombre ni datos de ningun alumno). Recuerda entre sesiones el nivel, los proyectos hechos, el ultimo proyecto y el proyecto EN CURSO (uno guiado paso a paso), para adaptar como explicas y retomar exacto donde quedaron.
+  description: `Memoria de progreso de ESTA computadora/grupo (NO es un perfil personal. NO le pases el nombre ni ningun dato de un alumno, tampoco adentro del nombre de un proyecto: guarda el texto tal cual, sin revisarlo). Recuerda entre sesiones el nivel, los proyectos hechos, el ultimo proyecto y el proyecto EN CURSO (uno guiado paso a paso), para adaptar como explicas y retomar exacto donde quedaron.
 
 Acciones:
 - leer: devuelve el progreso guardado (nivel, proyectos hechos, ultimo, y si hay un proyecto en curso con su paso). Usalo al arrancar para saber por donde venian en esta compu.
@@ -143,7 +150,7 @@ Acciones:
     proyecto: tool.schema
       .string()
       .optional()
-      .describe("Nombre del proyecto que acaban de TERMINAR (ej: 'semaforo con 3 LEDs'). Se agrega a la lista sin duplicar y limpia el 'en curso'. Solo para accion 'guardar'."),
+      .describe("Nombre del proyecto que acaban de TERMINAR (ej: 'semaforo con 3 LEDs'). SIN COMAS (la coma separa un proyecto del siguiente: usa 'y' o '+'). Se agrega a la lista sin duplicar y limpia el 'en curso'. Solo para accion 'guardar'."),
     en_curso: tool.schema
       .string()
       .optional()
@@ -176,6 +183,27 @@ Acciones:
 
     // accion === "guardar": leemos lo actual, mergeamos y reescribimos.
     // El juicio (dedup, tope, orden) es del TS, no del modelo.
+    //
+    // LOS CAMPOS LIBRES VAN EN UN RENGLÓN. El archivo se lee por renglones y se carga como
+    // instrucciones en cada sesión: un proyecto con un salto de línea adentro agregaba
+    // renglones propios («semáforo\n- Nivel: avanzado\n## Instrucción» quedaba escrito
+    // así), y en una compu de aula lo leía todo el que viniera después (auditoría del
+    // 2026-11-22, TCH-05). No se limpia en silencio: se rechaza y se dice.
+    for (const [campo, valor] of [["proyecto", args.proyecto], ["en_curso", args.en_curso], ["paso", args.paso]] as const) {
+      if (typeof valor === "string" && /[\r\n\u2028\u2029]/.test(valor)) {
+        return `No guardé nada: '${campo}' vino con un salto de línea adentro, y en la memoria cada dato va en un solo renglón. Pasámelo de nuevo en un solo renglón.`
+      }
+    }
+    // UN PROYECTO CON COMA SE PARTE EN DOS. «Proyectos hechos» es una lista separada por
+    // comas: «LED, botón y zumbador» se guardaba, el tool contestaba «Ultimo proyecto: LED,
+    // botón y zumbador», y la lectura siguiente decía «botón y zumbador»: dos proyectos y
+    // dos lugares del tope (auditoría del 2026-11-22, TCH-06). Decisión del owner del
+    // 2026-11-23: no se guarda y se pide sin coma, igual que con los saltos de línea. No se
+    // reemplaza la coma en silencio: lo guardado tiene que ser lo que se pidió.
+    // Sólo `proyecto` va a esa lista; `en_curso` y `paso` tienen renglón propio.
+    if (typeof args.proyecto === "string" && args.proyecto.includes(",")) {
+      return "No guardé nada: el nombre del proyecto trae una coma, y en la memoria la coma separa un proyecto del siguiente (quedaría partido en dos). Pasámelo de nuevo sin coma, por ejemplo con «y» o con «+»."
+    }
     const actual = leerMemoria()
     if (args.nivel) actual.nivel = args.nivel
     // Proyecto guiado EN CURSO: guardamos proyecto + paso mientras avanzan.

@@ -4,6 +4,142 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ## [Unreleased]
 
+### Nuevo
+
+- **Podés vincular Tecnia Bot con tu cuenta de Tecnia Lab.** Es para docentes, con la cuenta que ya tenés en la plataforma. Pedíselo al bot ("quiero vincular Tecnia Bot con mi cuenta de Tecnia Lab"): se abre el navegador, entrás con tu cuenta y escribís en la página el código de seis números que te muestra el bot. La contraseña se escribe sólo en el navegador, nunca en el chat.
+- **Tu memoria de progreso puede viajar con vos.** Con la cuenta vinculada podés pedirle al bot que guarde en tu cuenta la memoria de esta compu ("guardá mi memoria en mi cuenta") y que la traiga en otra ("traé mi memoria"). Sólo lo hace cuando se lo pedís. Si en la cuenta y en la compu hay memorias distintas, te muestra las dos y elegís vos: nunca pisa una sin preguntar.
+- **Desde tu perfil en la plataforma, pestaña "Tecnia Bot",** ves qué recuerda el bot de vos y en qué compus está vinculado, y podés cortarle el acceso a cualquiera o borrar la memoria.
+- **Cerrar la sesión desde el bot** ("cerrá mi sesión de Tecnia Lab") la cierra en la plataforma y la borra de la compu. El bot te dice por separado qué pasó en cada lado.
+
+### Arreglado
+
+- **El instalador ya no dice "listo" si no pudo bajar las herramientas de las placas.** Al instalar se bajan el compilador y las librerías de ESP32 y Arduino UNO, que pesan más de 1 GB. Si esa descarga fallaba (sin buena red, o con menos de 3 GB libres), el instalador avisaba en el medio y terminaba igual con "LISTO!" en Windows y "¡Todo listo!" en Linux y macOS. Te enterabas en clase, en la primera compilación. Ahora, al terminar, busca esas herramientas en el disco: si faltan, cierra diciendo que Tecnia Bot quedó instalado pero incompleto, nombra cuáles faltan y en qué carpeta las buscó, y te dice cómo bajarlas ("Reparar Tecnia Bot" en Windows, o volver a correr el instalador en Linux y macOS, con buena red).
+- **La hoja para imprimir ya no pierde los pines.** Cuando una conexión traía más de una flecha o dos puntos, la hoja se quedaba con el principio y tiraba el resto. "LED: Ánodo (+) → GPIO4 (con 220Ω), Cátodo (−) → GND" salía impreso como "LED | Ánodo (+)", sin el número de pin, y "GPIO18 → 220Ω → LED rojo" salía sin el LED. Es la hoja que el alumno lleva a la mesa. Ahora cada conexión llega entera: el nombre del componente en la primera columna y todo lo demás en la segunda.
+- **La hoja para imprimir te dice siempre dónde quedó guardada.** Antes, si el navegador no llegaba a abrirse, el bot decía igual "te la abrí" y no había forma de encontrarla.
+- **El bot ya no te manda a reinstalar PlatformIO por una carpeta mal escrita.** Si la carpeta del proyecto no existía, o era un archivo, el bot contestaba "PlatformIO no está instalado" y proponía repararlo, que son varios minutos y una descarga. Ahora dice que no encuentra la carpeta y cuál buscó. Y si PlatformIO está pero no se puede ejecutar, lo dice con el motivo en vez de darlo por no instalado.
+- **El bot ya no dice "no hay ninguna placa conectada" cuando en realidad no pudo mirar.** Si la lista de puertos USB fallaba o tardaba demasiado, el bot afirmaba que no había placa y vos revisabas un cable que estaba bien. Ahora distingue: "no encuentro ninguna placa" sólo cuando pudo mirar y no hay, y "no pude ver los puertos" cuando no pudo.
+- **El circuito ya no pone un sensor analógico en un pin que no puede leerlo.** Si pedías a mano, por ejemplo, el potenciómetro en GPIO23 del ESP32, el bot lo dibujaba ahí y decía "listo": ese pin no tiene conversor analógico y la lectura no mide nada. Ahora lo pasa a un pin que sí sirve y te dice por qué. Lo mismo con GPIO37 y GPIO38, que existen en el chip pero no salen a ningún pin de la placa.
+- **"Mega con sensor shield" ya no sale dibujado como un Arduino UNO.** Si nombrabas una placa que el bot no sabe dibujar junto con la palabra "shield", armaba el circuito de un UNO y decía que no le habías dicho la placa. Ahora te dice que esa placa no la dibuja. Y acepta que le escribas "Arduino UNO" o "ESP32 DevKit", que antes rebotaba.
+- **Con la instalación dañada, el circuito lo dice en vez de entregarte una página vacía.** Si la biblioteca de piezas había quedado en cero bytes, el bot decía "listo" y la página mostraba la tabla sin ninguna pieza.
+- **El modo aula ya no depende de cómo esté escrito.** Si alguien editaba el perfil a mano y ponía "Aula" o "AULA" en vez de "aula", la compu dejaba de contar como compartida: el bot guardaba el nombre del alumno y dejaba vincular la cuenta del docente. Ahora los reconoce igual.
+- **El perfil y la memoria no aceptan datos partidos en varios renglones.** Son archivos que el bot lee en cada sesión, renglón por renglón. Un dato con un salto de línea adentro podía agregar renglones que no eran suyos. Ahora el bot no lo guarda y te pide que se lo pases en un solo renglón.
+- **El bot ya no te dice que sólo dibuja circuitos para ESP32.** Hace rato que dibuja también el Arduino UNO, pero una instrucción vieja le hacía contestar que con un UNO había que armar el cableado a mano. Ahora te pregunta la placa y dibuja la tuya. Lo que sigue igual: los circuitos ya armados (el semáforo, la estación meteorológica) son sólo de ESP32, y hay componentes que en UNO todavía no se dibujan.
+- **Textos que decían una cosa mientras el bot hacía otra.** La ayuda prometía abrir el circuito solo, y ya no se abre sin que lo pidas. Si el manual no está instalado, el bot lo dice en vez de mandarte a abrir un archivo que no existe. Y el diagnóstico, cuando falta PlatformIO, te ofrece instalarlo desde el bot en vez de mandarte sólo al menú inicio.
+- **El LCD en ESP32 ya no trae un cartel que contradice al dibujo.** El circuito lo conecta a 5 V, GND, SDA y SCL, y en la misma hoja decía que eso no se hace nunca. Ahora el plano y el texto dicen lo mismo: va a 5 V, con una aclaración. El adaptador que el display trae soldado atrás puede dejar los dos cables de datos en 5 V, y esos pines del ESP32 son de 3,3 V. Por eso el bot te pide medirlos con el téster y, si marcan cerca de 5 V, poner un conversor de nivel en el medio. La aclaración ahora también te llega por el chat, no sólo en la hoja.
+- **"Reparar" ya no dice "listo" si la reparación no salió bien.** Cuando le pedías al bot que reparara, después sólo miraba si PlatformIO estaba en el disco. Si el instalador terminaba incompleto o con un error, igual contestaba "listo, ya se puede compilar y cargar". Ahora lee cómo terminó el instalador: dice "listo" sólo si terminó bien, y si quedó incompleto, falló, se cortó por tiempo o lo cancelaste, te lo dice con esas palabras.
+- **El diagnóstico ya no dice "listo para usar" si faltan las herramientas de las placas.** Lo decía con sólo ver PlatformIO y una placa enchufada, aunque la primera compilación tuviera que bajar más de 1 GB. Ahora informa si las herramientas de ESP32 y Arduino UNO están, y si faltan te ofrece bajarlas.
+
+### Qué hay que saber
+
+- **En una compu de aula no se vincula.** Si el perfil de la compu está en modo aula, el bot no deja vincular una cuenta: esa compu la usan muchos chicos y la cuenta de un docente quedaría al alcance del que se siente después.
+- **Cerrar la sesión no borra la memoria guardada en tu cuenta.** Sigue ahí para la próxima vez. Si querés borrarla, se hace desde tu perfil en la plataforma.
+- **Si desinstalás Tecnia Bot eligiendo borrar los datos personales, se borra también la sesión guardada en la compu.** Eso no la cierra en la plataforma: el desinstalador te avisa que entres a tu perfil y cortes el acceso de esa compu.
+- **El código de seis números sirve una sola vez y por cinco minutos.** Si lo escribís mal o tardás, hay que pedirle al bot que vincule de nuevo: sale un código distinto.
+- **En una Windows recién estrenada, el navegador puede mostrar primero su pantalla de bienvenida.** La página de vincular está en esa misma ventana: hay que pasar la bienvenida.
+
+### Qué no se probó
+
+Una notebook de aula y Windows 10. El vínculo se probó de punta a punta contra la plataforma real en Linux y en una máquina virtual con Windows 11. En esa Windows, la página que aparece al volver del navegador y el aviso al cerrar la sesión no se vieron con esta versión: se probaron con una anterior, y los cambios posteriores sólo en Linux.
+
+El aviso de las herramientas de las placas se probó ejecutando el instalador de Linux con descargas que fallan. En Windows no se probó una descarga que falla: sólo la instalación limpia, que es la que corre en la verificación automática.
+
+## [0.4.11] — 2026-11-21
+
+**En Windows, Tecnia Bot ya no abre una ventana negra. Y si la computadora ya tenía otro OpenCode, el instalador lo reemplaza por el que usa Tecnia Bot, sin dejarte sin ninguno si la descarga falla.**
+
+### Si ya tenés instalada la 0.4.10
+
+Bajá este instalador y corrélo encima: no hace falta desinstalar nada. **"Reparar Tecnia Bot" no alcanza**, porque usa los archivos de la versión que ya tenés instalada.
+
+### Corregido
+
+- **Windows: la primera vez que abrís Tecnia Bot ya no queda la ventana en negro.** Al abrirlo por primera vez, OpenCode baja unos archivos de internet y no muestra nada hasta terminar. Con buena conexión eran unos 20 segundos; con la red de la escuela filtrada, o con el reloj de la computadora atrasado, la ventana quedaba negra entre uno y dos minutos, sin un cartel, y se repetía cada vez que la abrías hasta que una vez lograba bajar. Ahora esos archivos los deja puestos el instalador. Medido en una máquina virtual con Windows 11: abrir sin internet pasó de 71 segundos a 1.
+- **Windows: si esos archivos no se pudieron bajar, el instalador lo dice.** La lista final tiene una línea nueva, "Arranque". Si quedó en amarillo, la instalación cierra como incompleta y avisa que la primera apertura va a necesitar internet y puede tardar; "Reparar Tecnia Bot" lo completa cuando haya conexión.
+- **Windows: si la computadora ya tenía otro OpenCode, el instalador lo reemplaza por el de Tecnia Bot.** Hasta la 0.4.10, si ya había un OpenCode instalado con Scoop (por ejemplo la versión 2.x), Tecnia Bot quedaba funcionando sobre ese: con otro logo, sin el plugin de idioma y fuera de lo que se probó. Ahora el instalador primero baja el OpenCode de Tecnia Bot y comprueba que llegó entero; recién después saca el que había e instala el suyo. Si no pudo bajarlo, o si ese OpenCode está abierto en una ventana, no saca nada y el cierre dice por qué.
+- **Windows: la base de datos de otro OpenCode ya no deja la ventana en negro.** Un OpenCode 2.x deja una base de datos que el de Tecnia Bot (1.18.18) no puede leer. Con esa base en la computadora, Tecnia Bot abría una ventana negra que no avanzaba nunca: en la prueba pasaron más de cuatro minutos sin una línea. Ahora el instalador la aparta: le cambia el nombre, con la fecha, y la deja en la misma carpeta. No la borra, y el cierre dice dónde quedó. Si no la puede apartar (por ejemplo, con OpenCode abierto), cierra como "ASÍ NO ABRE" y dice qué archivo renombrar.
+- **Windows: el cierre ya no manda a "Reparar" cuando Reparar no arregla lo que falta.**
+- **Windows: la instalación ya no muestra un error en rojo cuando todo va bien.** En una computadora donde Tecnia Bot se instalaba por primera vez, la ventana de instalación mostraba en el medio varios renglones rojos ("No se encuentra la ruta de acceso..."). No era una falla: era una revisión interna que miraba una carpeta antes de crearla. La instalación seguía y terminaba bien, pero asustaba.
+- **Windows: al terminar de instalar se ve Tecnia Bot, no el navegador.** En la última pantalla del instalador, la casilla "Visitar la web de Tecnia Bot" ahora viene destildada. Con las dos tildadas, en una computadora recién estrenada el navegador abría su pantalla de bienvenida a pantalla completa y tapaba la ventana de Tecnia Bot. Si querés ver los primeros pasos, tildala o entrá a tecnialab.net.ar/tecnia-bot.
+
+### Qué cambia para peor, y hay que saberlo
+
+- **La instalación tarda alrededor de un minuto más.** Es el tiempo que antes se esperaba con la pantalla en negro.
+- **Si ya tenías un OpenCode instalado con Scoop, este instalador te lo saca.** Tecnia Bot necesita su versión y Scoop no deja tener las dos. Tus conversaciones de ese OpenCode no se borran: quedan en la misma carpeta con otro nombre, pero ya no las vas a ver desde el programa. Si volvés a instalar tu OpenCode, Tecnia Bot vuelve a quedar sobre ese y hay que correr "Reparar Tecnia Bot".
+- **Si se corta internet a mitad de la instalación, el instalador tarda más en terminar** (un minuto y medio en vez de 20 segundos en la prueba), porque intenta bajar esos archivos antes de rendirse. Nunca espera más de 3 minutos por esto.
+
+### Qué no se probó
+
+Una notebook de aula con esta versión. En Windows 10 la probó una persona del equipo y funcionó; las pruebas automáticas y las de máquina virtual fueron todas en Windows 11. Tampoco se probó en una computadora que tenga la aplicación de escritorio de OpenCode (queda pendiente). El instalador con su asistente se probó en una máquina virtual con Windows 11, pantalla por pantalla y con el teclado; no se probó el aviso de SmartScreen que aparece al bajarlo de internet, ni el botón Cancelar. El reemplazo se probó con un OpenCode 2.3.2 instalado por Scoop: no se probó con la aplicación de escritorio de OpenCode, ni con otras versiones, ni en computadoras con procesador ARM o sin AVX2. Queda un caso sin resolver: si después de sacar el OpenCode que había la instalación del nuevo falla, la computadora queda sin OpenCode hasta correr "Reparar Tecnia Bot" (que lo instala desde lo ya bajado, sin internet); el instalador lo avisa, pero no se pudo provocar en la prueba. Tampoco está probado que la ventana negra del aula del 17 de noviembre haya sido por esto: es una de las tres condiciones que la producen en la máquina virtual.
+
+## [0.4.10] — 2026-11-17
+
+**Instalar Tecnia Bot en Windows vuelve a funcionar. Desde el 11 de noviembre el instalador no podía bajar OpenCode y terminaba en "OpenCode NO ARRANCA", en cualquier computadora nueva. No era tu computadora ni tu red.**
+
+### Corregido
+
+- **Windows: el instalador vuelve a poder instalar OpenCode.** Tecnia Bot se prueba con una versión puntual de OpenCode (la 1.18.18) y el instalador se la pedía a Scoop, el programa que usa para bajar las dependencias. El 11 de noviembre Scoop pasó a ofrecer OpenCode 2 y dejó de poder entregar la 1.18.18: la descarga daba "(404) No se encontró" y la instalación terminaba con "OpenCode NO ARRANCA". Pasó en un aula, con los docentes delante. Ahora el instalador trae escrito de dónde se baja esa versión y con qué verificación, así que lo que cambie Scoop ya no lo afecta.
+- **Windows: nunca se instala OpenCode 2 por las dudas.** OpenCode 2 no es compatible con esta versión de Tecnia Bot. Si la versión probada no se puede bajar, el instalador lo dice y no pone otra en su lugar.
+- **Windows: los carteles ya no mandan a escribir un comando que no funciona.** El diagnóstico y la guía de instalación manual recomendaban `scoop install opencode@1.18.18`, que es justo lo que dejó de andar.
+
+### Si te quedó "OpenCode NO ARRANCA" con la 0.4.9
+
+Bajá este instalador y corrélo encima: no hace falta desinstalar nada. **"Reparar Tecnia Bot" no alcanza**, porque usa los archivos de la versión que ya tenés instalada, que es la que falla.
+
+### Qué cambia para peor, y hay que saberlo
+
+- **Si la computadora ya tiene otra versión de OpenCode, queda esa.** La 0.4.9 instalaba la versión probada al lado de la que hubiera. Scoop no permite hacer eso con el camino nuevo, así que el instalador deja la que estaba, te dice cuál es y avisa que no es la probada. No desinstala nada.
+
+### Qué no se probó
+
+Una notebook de aula, y una computadora que ya tuviera otra versión de OpenCode instalada.
+
+## [0.4.9] — 2026-11-16
+
+**El instalador ya no dice "listo" si no lo comprobó — en Windows y en Linux. Se probó en una máquina virtual y en las pruebas automáticas; todavía no en un aula: qué sí y qué no está dicho abajo, con el mismo tamaño de letra.**
+
+### Corregido
+
+- **Windows: la última pantalla del instalador dice cómo quedó de verdad.** Antes decía "¡Tecnia Bot quedó instalado!" siempre, aunque por detrás no se hubiera instalado nada: en una notebook real la instalación murió a los 2,4 segundos y la pantalla salió en verde igual. Ahora hay tres finales: **quedó instalado**, **quedó instalado pero incompleto** (el bot abre y falta algo: PlatformIO, Node, la versión probada de OpenCode o parte de la configuración) y **NO quedó instalado**. En los dos últimos la salida es la misma y no hace falta volver a bajar nada: menú inicio → **"Reparar Tecnia Bot"**. Si la instalación falló, ya no ofrece la casilla "Abrir Tecnia Bot ahora".
+- **Windows: si una descarga está bloqueada, la instalación sigue con el resto.** Antes una descarga que fallaba podía cortar todo antes de llegar a Tecnia Bot. Ahora instala lo que puede (la única sin la que no puede seguir es Scoop, y lo dice) y cierra con un resumen, una línea por cosa (OpenCode, PlatformIO, Node, Tecnia Bot), que dice qué **comprobó** que anda.
+- **Windows: "Reparar Tecnia Bot" es la salida ante casi todo, y los carteles lo dicen.** Los avisos de que falta algo, de una instalación que se cortó a la mitad o de una key de Google que no sirve mandaban a "volver a correr el instalador" o a escribir `/clave` adentro del bot — y con la key muerta el bot no contesta, así que `/clave` tampoco. Ahora todos mandan a Reparar.
+- **Windows: una key que no se pudo probar ya no pisa a la que estaba guardada.** Con la red de la escuela filtrada, pegar mal una key nueva borraba la que andaba, y encima el instalador decía "no se tocó nada". Ahora, si no puede llegar a Google y ya había una key, deja la que estaba y lo dice.
+- **Windows: usuarios con tilde o ñ.** En una cuenta llamada `Dirección` o `Muñoz`, cada "Reparar" agregaba a la configuración una copia rota de dos rutas. Ahora lee la configuración bien y saca las copias que dejaron las versiones anteriores.
+- **Windows: el desinstalador avisa si no pudo borrar, y dice todo lo que deja.** Si elegías borrar los datos personales (perfil, memoria del aula, key) y el borrado fallaba —lo típico: Tecnia Bot abierto—, no avisaba: te ibas convencido de que los datos de los alumnos ya no estaban. Ahora vuelve a mirar el disco y, si algo quedó, un cartel dice **qué archivos siguen en la compu y dónde**. Borra los datos personales aunque la instalación estuviera a medias. Y ya no borra a ciegas la carpeta del programa: saca lo suyo, y si adentro hay algo que no puso el instalador (un proyecto guardado ahí por error) no lo toca y te avisa.
+- **Windows: los proyectos se guardan en tu carpeta Documentos de verdad.** Si Windows la tiene en OneDrive, ahí. Antes podía crear una carpeta "Documents" suelta, y el docente abría Documentos y sus proyectos no estaban. Si Tecnia Bot no puede entrar a la carpeta de proyectos, no abre y lo explica, para que nada termine adentro de la carpeta del programa.
+- **Windows y Linux: `/actualizar` reemplaza la copia en vez de copiar encima.** Antes los archivos que una versión nueva eliminaba quedaban en la compu para siempre. Ahora la copia queda igual a la versión publicada, y si algo falla a la mitad vuelve atrás y te dice si quedó como estaba. Si actualizó pero no pudo escribir parte de la configuración, dice **"actualizado CON AVISOS"** en vez de "actualizado".
+- **Linux: el instalador instala Tecnia Bot aunque falle una dependencia.** Sin `curl` o sin `python3` cortaba antes de llegar a Tecnia Bot, y en otros casos terminaba con "¡Todo listo!" sin OpenCode instalado. Ahora instala lo que puede y cierra con el mismo tipo de resumen que Windows; "¡Todo listo!" sale sólo si comprobó las tres cosas.
+- **Linux: no dice "instalado" si no pudo escribir la configuración.** Dice **"instalado CON AVISOS"** y lista qué falta, al final, que es lo que queda a la vista.
+- **Linux: no se instala con `sudo`.** Corrido con `sudo` (lo que sale por reflejo) instalaba para otro usuario o dejaba archivos que después no se podían actualizar ni borrar. Ahora se niega, explica por qué y no toca nada.
+- **Linux: la key de Google queda mejor guardada.** Ya no pasa por la línea de comandos, donde otro usuario de la misma compu podía verla, y los archivos con el perfil, la memoria y la key nacen legibles sólo por su dueño.
+- **El reporte de "Diagnostico de Tecnia Bot" tapa las credenciales y avisa qué datos lleva** (tu usuario de Windows, el nombre de la compu, rutas de carpetas), para que lo leas antes de mandarlo. No lleva tu API key.
+
+### Agregado
+
+- **Linux: el instalador mira el permiso del puerto de la placa.** Sin ese permiso, cargar el programa falla con "Permission denied" en plena clase. Antes había que averiguar a mano a qué grupo sumarse; ahora el instalador lo revisa y escribe **el comando exacto para tu compu** (no lo corre: hace falta tu contraseña).
+- **Linux: actualizar en una red que bloquea GitHub.** `install/update.sh` puede tomar la versión nueva de un servidor de la escuela o de un pendrive (`TECNIA_UPDATE_ESPEJO`), con las mismas verificaciones.
+- **Para quien instala en muchas máquinas: códigos de salida.** El `.exe` en modo silencioso termina con `0` (bien), `21` (instalado pero incompleto) o `20` (no quedó usable); antes devolvía `0` siempre. Los de cada script están en [`docs/codigos-de-salida-instalador.md`](docs/codigos-de-salida-instalador.md).
+- **Guía de macOS, que dice la verdad** ([`docs/instalacion-macos.md`](docs/instalacion-macos.md)): qué hace falta, cómo instalar y, sobre todo, qué no está probado.
+
+### Documentación
+
+- **macOS deja de figurar como plataforma probada.** El README lo listaba a la par de Windows y Linux, y Tecnia Bot nunca se instaló en una Mac. Ahora dice "sin probar".
+- Las guías de [Windows](docs/instalacion-windows.md) y [Linux](docs/instalacion-linux.md) cuentan el instalador que hay: qué instala de verdad (también Python y Node, que no figuraban), cuándo pide la key (cada vez que se corre a mano, no "una sola vez"), y cómo desinstalar y qué queda en la compu.
+- La guía de Chromebook mandaba a correr un script que no instala OpenCode ni PlatformIO. Corregido.
+
+### Lo que NO se probó
+
+Esto va con la misma claridad que lo de arriba, porque un "arreglado" que nadie vio andar es una promesa, no un hecho:
+
+- **En Windows se probó en la máquina virtual, no en un aula.** El 15 de noviembre de 2026, en Windows 10 Pro 22H2 con un usuario sin permisos de administrador y el `.exe` compilado ahí: actualizar encima de la 0.4.7, las tres pantallas finales (bien, incompleto y "NO quedó instalado"), una instalación con la descarga de PlatformIO bloqueada, desinstalar eligiendo "No" y eligiendo "Sí" (con "Sí" se fueron la carpeta del programa, el perfil, la memoria y la key), reinstalar, el lanzador con una instalación cortada y con Documentos en una carpeta de red, el actualizador contra el release publicado (un archivo que el release no trae desapareció de la copia y de la configuración), el guardado de la key con Google inalcanzable, y la configuración en una carpeta con tilde. **No se probó:** una notebook de aula con la red de una escuela, `/actualizar` escrito adentro del bot (se probó el script que lanza), un procesador sin AVX2, ni cargar código a una placa. Antes de recomendarla en un aula hay que correr [`docs/prueba-rc.md`](docs/prueba-rc.md) en una notebook real.
+- **En Linux se probó en las pruebas automáticas, no a mano.** En un Ubuntu de GitHub, el instalador bajó e instaló OpenCode y PlatformIO de verdad y se verificó en el disco lo que dejó; y sin `curl` ni `wget`, instaló Tecnia Bot igual y lo avisó. **No se probó:** una instalación hecha por una persona en su computadora, otra distribución (Debian, Mint, Fedora, Manjaro), con `sudo` real, ni el chequeo del puerto **con una placa conectada**.
+- **macOS: sólo la prueba automática.** El 16 de noviembre de 2026 el instalador corrió por primera vez en una Mac (la de GitHub: macOS 26.7.2, procesador Apple, con Xcode y Python ya instalados) y pasó: instalar la capa, bajar OpenCode y PlatformIO, desinstalar. Ninguna persona lo instaló en una Mac real, ni en una sin herramientas de desarrollo, ni con procesador Intel; tampoco se abrió el bot ni se cargó a una placa.
+- **Chromebook: nada**, igual que antes.
+
+### Interno
+
+- `.gitattributes` nuevo: fija los finales de línea, y el lanzador de Windows viaja en CRLF lo compile quien lo compile. Antes dependía de la máquina que armaba el `.exe`.
+- Documentos de operación puestos al día con el código: `prueba-rc.md`, `prueba-desinstalador-vm.md`, `rollback.md`, `publicar-release.md`, `decisiones.md` (D-03), `key-de-google.md`.
+
 ## [0.4.8] — 2026-10-24
 
 **Antes de cargar un circuito nuevo, el docente confirma el checklist en un cartel, y el bot revisa los pines del código.**

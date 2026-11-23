@@ -25,8 +25,9 @@ cat /etc/os-release 2>/dev/null | head -2
 echo "── 2. Disco libre ──"
 df -h ~ | tail -1
 
-echo "── 3. Python ──"
+echo "── 3. Python y curl ──"
 python3 --version 2>&1 || echo "FALTA python3"
+command -v curl >/dev/null 2>&1 && curl --version | head -1 || echo "FALTA curl"
 
 echo "── 4. La placa ──"
 lsusb 2>/dev/null || echo "lsusb no está: sudo apt install usbutils"
@@ -45,7 +46,8 @@ paso ayudás a las escuelas que vengan después.
 |---|---|
 | `x86_64` o `aarch64` | Las dos andan. OpenCode y PlatformIO tienen binarios para ambas |
 | Menos de **3 GB libres** | No va a entrar el toolchain. Ampliá el disco de Linux desde Configuración |
-| `FALTA python3` | `sudo apt install python3` |
+| `FALTA python3` | `sudo apt install python3`. Sin Python el instalador no puede poner PlatformIO, que es lo que carga el programa a la placa |
+| `FALTA curl` | `sudo apt install curl`. Sin `curl` el instalador no puede poner OpenCode, que es donde se abre Tecnia Bot |
 | **`NINGUNA placa visible`** con la placa enchufada | Es el problema grande — seguí leyendo |
 | `ModemManager` activo | Te va a robar el puerto serie al cargar. `sudo systemctl stop ModemManager` |
 
@@ -99,10 +101,20 @@ Es la **misma instalación de Linux**, sin nada especial:
 ```bash
 git clone https://github.com/programadores-obreros/Agente-editor-inet.git tecnia-bot
 cd tecnia-bot
-bash install/install.sh
+bash install/bootstrap.sh
 ```
 
-Y después, el permiso del puerto serie:
+Ojo con el nombre: es `bootstrap.sh`, **sin `sudo`**. Esta guía decía
+`install/install.sh`, y ese script copia sólo la capa de Tecnia Bot: no instala
+OpenCode ni PlatformIO, así que quien la siguió al pie de la letra se quedó sin
+dónde abrir el bot. `bootstrap.sh` instala las tres cosas y al final dice, una
+por una, cuáles comprobó que andan. El detalle está en la
+[guía de Linux](instalacion-linux.md).
+
+Y después, el permiso del puerto serie. El instalador lo mira y, si falta, te
+escribe el comando exacto para tu equipo (buscá la línea que empieza con
+`[FALTA] Puerto serie`). En el Linux de una Chromebook lo esperable es este, pero
+**hacele caso al que te muestre el instalador**:
 
 ```bash
 sudo usermod -a -G dialout $USER
