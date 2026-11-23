@@ -122,6 +122,7 @@ se implemente Gate 5):
 | `CONEXION_DUPLICADA` (Phase 1.1, E2-01) | blocking | estructural / operacion | **RECHAZO** | `validar-estructural.ts` (Gate 4) / `operaciones.ts` (Gate 5, categoría `operacion`) |
 | `AUTOCONEXION_INVALIDA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
 | `CONEXION_DUPLICADA_AL_CARGAR` (Phase 1.1, E2-01) | blocking | estructural | **RECHAZO** | `cargador.ts` (Gate 2) |
+| `CONDICION_SIN_EFECTO` (NUC-01, 2026-11-23) | **warning** | tecnica | **REPRESENTABLE** | `validar-tecnico.ts`: una condición sobre un estado de 0 o 1 que se cumple siempre o nunca (`datos.desenlace`). No bloquea |
 | `UMBRAL_FUERA_DE_RANGO` (Phase 1.2, REA-02) | **warning** | tecnica | **REPRESENTABLE** | `validar-tecnico.ts` (Gate 4, continuo, reusa `estaFueraDeRango` de `catalogo.ts`) |
 | `PIN_FLASH_RESERVADO` (gate final de hardening, D1) | **blocking** | tecnica | **REPRESENTABLE** | `catalogo.ts` (`evaluarRestriccionesPin`) |
 | `PIN_STRAPPING` (gate final de hardening, D2/D3) | **warning** (sólo GPIO12) / **info** (GPIO0, GPIO2, GPIO15) | tecnica | **REPRESENTABLE** | `catalogo.ts` (`evaluarRestriccionesPin`) |

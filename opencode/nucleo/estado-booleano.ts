@@ -45,3 +45,46 @@ export function valorBooleanoDeCondicion(cuando: (Pick<CuandoComportamiento, "um
   if (cuando.comparador === COMPARADOR_DE.falso) return "falso"
   return undefined
 }
+
+export type DesenlaceBooleano = "siempre" | "nunca" | "decide"
+
+/**
+ * Qué pasa con «estado <comparador> <umbral>» cuando el estado sólo puede valer 0 o 1
+ * (NUC-01, auditoría de código del 2026-11-22; decisión del owner del 2026-11-23).
+ *
+ * La tríada es la misma que la de una temperatura, así que se puede escribir «< 5»
+ * (cierto con 0 y con 1) o «>= 2» (falso con los dos). Esas reglas no dependen del
+ * sensor: el actuador queda siempre igual, y el programa generado compila y hace otra
+ * cosa que lo que el alumno pidió.
+ *
+ *   "siempre" — cierta con 0 y con 1
+ *   "nunca"   — falsa con 0 y con 1
+ *   "decide"  — separa el 0 del 1. Acá caen las dos canónicas y también las formas raras
+ *               pero equivalentes («> 0», «<= 0.5»): no son un error.
+ *
+ * Lo que no se puede evaluar (comparador desconocido, umbral que no es un número) da
+ * "decide": esta función no adivina, y esos casos ya tienen su propio motivo.
+ */
+export function desenlaceDeCondicionBooleana(comparador: unknown, umbral: unknown): DesenlaceBooleano {
+  if (typeof umbral !== "number" || Number.isNaN(umbral)) return "decide"
+  const cumple = (estado: 0 | 1): boolean | undefined => {
+    switch (comparador) {
+      case ">":
+        return estado > umbral
+      case ">=":
+        return estado >= umbral
+      case "<":
+        return estado < umbral
+      case "<=":
+        return estado <= umbral
+      default:
+        return undefined
+    }
+  }
+  const conCero = cumple(0)
+  const conUno = cumple(1)
+  if (conCero === undefined || conUno === undefined) return "decide"
+  if (conCero && conUno) return "siempre"
+  if (!conCero && !conUno) return "nunca"
+  return "decide"
+}

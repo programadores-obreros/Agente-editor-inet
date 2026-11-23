@@ -39,6 +39,7 @@ import type { Proyecto, Componente } from "./ir.ts"
 import type { Catalogo, ComponenteCatalogo, Cantidad, Magnitud, Unidad } from "./catalogo.ts"
 import { asignarPin, evaluarRequisito, evaluarRestriccionesPin, propagarMagnitud, estaFueraDeRango, tipoDePiezaEnSerie } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
+import { MAGNITUD_BOOLEANA, desenlaceDeCondicionBooleana } from "./estado-booleano.ts"
 
 export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly Motivo[] {
   const motivos: Motivo[] = []
@@ -196,6 +197,26 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
     // comportamiento del estudiante NUNCA se toca (ni se clampa, ni se reinterpreta):
     // sólo se diagnostica, mismo criterio que `PIN_OCUPADO`/`MAGNITUD_INCOMPATIBLE`
     // de este mismo archivo.
+    // NUC-01 (decisión del owner del 2026-11-23): una condición sobre un estado de 0 o 1
+    // que se cumple SIEMPRE o NUNCA no depende del sensor. Se avisa y no se bloquea,
+    // mismo criterio que el rango de abajo: es un diagnóstico del ESTADO (vale por
+    // cualquier puerta: operación, recarga, proyecto inicial), el comportamiento del
+    // estudiante no se toca y `derivarReadiness` no lo mira. La capacidad booleana no
+    // declara rango, así que UMBRAL_FUERA_DE_RANGO nunca la alcanzaba.
+    if (capacidadReal.magnitud === MAGNITUD_BOOLEANA) {
+      const desenlace = desenlaceDeCondicionBooleana(cuando.comparador, propagacion.valor.valor)
+      if (desenlace !== "decide") {
+        motivos.push({
+          codigo: "CONDICION_SIN_EFECTO",
+          categoria: "tecnica",
+          severidad: "warning",
+          clasificacion: "representable",
+          entidad: { tipo: "comportamiento", id: comportamiento.id },
+          datos: { desenlace, sensor: sensor.id, comparador: cuando.comparador, umbral: cuando.umbral.valor },
+        })
+      }
+    }
+
     if (estaFueraDeRango(propagacion.valor.valor, capacidadReal.rango)) {
       motivos.push({
         codigo: "UMBRAL_FUERA_DE_RANGO",

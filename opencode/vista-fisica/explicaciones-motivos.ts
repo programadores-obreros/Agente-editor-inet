@@ -124,6 +124,15 @@ const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
   // (CK-REQ-N1) a través de `datos` (`snapshot-a-vista.ts::datosDeCondicionNumerica`); sin ellos,
   // no hay explicación. No afirman consecuencias físicas ni presentan el rango del catálogo como
   // un dato verificado: sólo qué no coincide y qué revisar.
+  // NUC-01 (2026-11-23): textos NUEVOS, pendientes de aprobación del owner. No afirman qué
+  // va a hacer el actuador (eso depende de la acción de la regla): sólo que la condición
+  // no depende del sensor.
+  CONDICION_SIN_EFECTO: (datos, nombres) =>
+    datos.desenlace === "siempre"
+      ? `Esta condición se cumple siempre, esté como esté el ${nombreDe(datos, "sensor", nombres)}: la regla no depende de él. Revisá la comparación.`
+      : datos.desenlace === "nunca"
+        ? `Esta condición no se cumple nunca, esté como esté el ${nombreDe(datos, "sensor", nombres)}: la regla no va a hacer nada. Revisá la comparación.`
+        : null,
   UMBRAL_FUERA_DE_RANGO: (datos, nombres) =>
     textos(datos, ["etiquetaCapacidad", "cantidadGuardada", "rangoEnTexto", "sensorDeRegla"])
       ? `El rango declarado en el catálogo para la lectura de ${campo(datos, "etiquetaCapacidad")} del ${nombreDe(datos, "sensorDeRegla", nombres)} es ${campo(datos, "rangoEnTexto")}. ${campo(datos, "cantidadGuardada")} queda fuera de ese rango: revisá el número de la regla.`
