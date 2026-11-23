@@ -2997,3 +2997,94 @@ test("LCD en ESP32: el tool, el skill de seguridad y las fichas del INET dicen l
   // El contrapeso: lo que en Arduino UNO sigue siendo cierto no se tocó.
   assert.match(lcd.advertencia.uno, /sin conversor/i)
 })
+
+// ── CIR-05 · EL SEMÁFORO DEL DIBUJO ES EL DE LA FICHA ─────────────────────────
+//
+// Auditoría de código del 2026-11-22, reproducido por QA. pinouts.json se declara la
+// fuente de los pines de los proyectos INET («TODO deriva de aca»): verde=GPIO16,
+// amarillo=GPIO17, rojo=GPIO18, que es lo que dice la ficha impresa y el .ino. Este
+// tool no lo leía:
+//   - el preset `semaforo` dibujaba rojo=GPIO4, amarillo=GPIO5, verde=GPIO18;
+//   - la receta que el prompt mandaba usar («led:16, led:17, led:18») ponía bien los
+//     pines y al revés los colores, porque el color sale por POSICIÓN (rojo, amarillo,
+//     verde): GPIO16 quedaba rojo y GPIO18 verde;
+//   - la tabla que vuelve al chat decía «LED / LED / LED», así que el modelo no podía
+//     saber cuál era cuál para escribir el código.
+// El 2026-11-23 el owner decidió que el dibujo siga a la ficha.
+//
+// MUTACIONES que ponen rojo este bloque (ver el commit):
+//   - sacar los pines del preset                         → rojo «el preset»
+//   - dos pines del preset cambiados entre sí            → rojo «el preset»
+//   - la tabla vuelve a decir «LED» a secas              → rojos «el preset», «la receta» y «el nombre»
+//   - el nombre del color con otro orden que el dibujo   → rojo «el nombre que se lee es el color que se dibuja»
+//   - volver a «led:16, led:17, led:18» en el prompt     → rojo «la receta del prompt»
+//   - volver al orden viejo en el skill                  → rojo «la receta del skill»
+
+const PINOUTS = JSON.parse(readFileSync(join(REPO, "opencode/tecniabot-web/pinouts.json"), "utf8"))
+/** { verde: "GPIO16", amarillo: "GPIO17", rojo: "GPIO18" }, leído de la fuente. */
+const SEMAFORO_DE_LA_FICHA = Object.fromEntries(PINOUTS["01-semaforizacion"].esp32.inicial.filter((p) => p.tipo === "senal").map((p) => [p.rol, p.pin]))
+
+/** De la respuesta del tool, qué GPIO le tocó a cada LED, por el color que DICE la tabla. */
+function ledsDeLaTabla(respuesta) {
+  return [...respuesta.matchAll(/^.*?LED (rojo|amarillo|verde): Ánodo \(\+\) → (GPIO\d+)/gm)].map((m) => [m[1], m[2]])
+}
+
+test("CIR-05: la medición no está vacía (la ficha dice 16, 17 y 18)", () => {
+  assert.deepEqual(SEMAFORO_DE_LA_FICHA, { verde: "GPIO16", amarillo: "GPIO17", rojo: "GPIO18" })
+})
+
+test("CIR-05: el preset semaforo dibuja los pines de la ficha, color por color", async () => {
+  const { r, html } = await gen({ circuito: "semaforo" }, "cir05-preset")
+  assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+  const leds = ledsDeLaTabla(r)
+  assert.equal(leds.length, 3, `no encontré tres LEDs con color en la respuesta:\n${r}`)
+  assert.deepEqual(Object.fromEntries(leds), SEMAFORO_DE_LA_FICHA)
+  // Y en la hoja: ni rastro de los pines viejos.
+  assert.doesNotMatch(html, /GPIO\s*(4|5)\b/, "el preset sigue dibujando GPIO4 o GPIO5")
+  // Forzar 16 y 17 no puede venir con un aviso de «te lo cambié»: son los de la ficha.
+  assert.doesNotMatch(r, /le asigné otro|no pude usar/i, r)
+})
+
+test("CIR-05: el nombre que se lee en la tabla es el color que se dibuja", async () => {
+  const EN_CASTELLANO = { red: "rojo", yellow: "amarillo", green: "verde" }
+  for (const [args, nombre] of [[{ circuito: "semaforo" }, "a"], [{ circuito: "alarma" }, "b"], [{ componentes: "led, led, led, led, led" }, "c"], [{ componentes: "boton, led" }, "d"]]) {
+    const { r, html } = await gen(args, `cir05-color-${nombre}`)
+    const dibujados = [...html.matchAll(/<wokwi-led id="[^"]+" color="(\w+)"/g)].map((m) => EN_CASTELLANO[m[1]])
+    const leidos = ledsDeLaTabla(r).map(([color]) => color)
+    assert.ok(dibujados.length > 0, `no hay LEDs en ${JSON.stringify(args)}`)
+    assert.deepEqual(leidos, dibujados, `${JSON.stringify(args)}: la tabla dice ${leidos} y el dibujo muestra ${dibujados}`)
+    // La tabla de la hoja dice lo mismo que el texto que vuelve al chat.
+    const enLaHoja = [...html.matchAll(/<tr><td>LED (rojo|amarillo|verde)<\/td>/g)].map((m) => m[1])
+    assert.deepEqual(enLaHoja, dibujados)
+    assert.doesNotMatch(r, /^\s*(?:[-•*] )?LED: /m, `quedó un LED sin color en la respuesta:\n${r}`)
+  }
+})
+
+/** Ejecuta una receta `componentes` y devuelve { color: [GPIO…] } según la tabla. */
+async function coloresDeLaReceta(receta, nombre) {
+  const { r } = await gen({ componentes: receta }, nombre)
+  assert.ok(r.startsWith("Listo"), r.slice(0, 200))
+  const porColor = {}
+  for (const [color, gpio] of ledsDeLaTabla(r)) (porColor[color] ??= []).push(gpio)
+  return porColor
+}
+
+test("CIR-05: la receta del semáforo que da el prompt sale con los colores de la ficha", async () => {
+  const prompt = readFileSync(join(REPO, "opencode/agent/tecnia-bot.md"), "utf8")
+  const receta = prompt.match(/forzá los pines de la ficha[^\n]*?`"((?:led:\d+(?:, )?){3})"`/)?.[1]
+  assert.ok(receta, "no encontré en el prompt la receta de tres LEDs con sus pines")
+  assert.deepEqual(await coloresDeLaReceta(receta, "cir05-receta-prompt"), { rojo: ["GPIO18"], amarillo: ["GPIO17"], verde: ["GPIO16"] }, `la receta «${receta}» del prompt no da el semáforo de la ficha`)
+})
+
+test("CIR-05: la receta de semaforización del skill sale con los colores de la tabla del proyecto", async () => {
+  const skill = readFileSync(join(REPO, "opencode/skills/circuitos-visuales/SKILL.md"), "utf8")
+  const receta = skill.match(/componentes: "((?:led:\d+(?:, )?){6})"/)?.[1]
+  assert.ok(receta, "no encontré en el skill la receta de seis LEDs")
+  // La verdad de los dos semáforos: la tabla de cableado del proyecto.
+  const ficha = readFileSync(join(REPO, "opencode/skills/proyectos-inet/proyectos/01-semaforizacion.md"), "utf8")
+  const esperado = {}
+  for (const m of ficha.matchAll(/^\| Semáforo \d · (verde|amarillo|rojo) \| pin \d+ \| GPIO (\d+) \|$/gm)) (esperado[m[1]] ??= []).push(`GPIO${m[2]}`)
+  assert.equal(Object.values(esperado).flat().length, 6, `no pude leer los seis pines de la ficha: ${JSON.stringify(esperado)}`)
+  const obtenido = await coloresDeLaReceta(receta, "cir05-receta-skill")
+  for (const color of ["rojo", "amarillo", "verde"]) assert.deepEqual([...obtenido[color]].sort(), [...esperado[color]].sort(), `${color}: la receta «${receta}» no coincide con la ficha`)
+})

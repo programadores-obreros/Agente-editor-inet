@@ -73,8 +73,12 @@ Si dejás que reparta solo, el circuito le va a mostrar al alumno pines distinto
 **La regla, entonces: si el circuito es de un proyecto del INET, pasale el pinout de la ficha con la sintaxis `componente:GPIO`.**
 
 ```
-componentes: "led:16, led:17, led:18, led:19, led:21, led:22"   ← semaforización, pinout de la ficha
+componentes: "led:18, led:17, led:16, led:22, led:21, led:19"   ← semaforización, pinout de la ficha
 ```
+
+**Ojo con el orden.** Los LEDs se dibujan rojo, amarillo, verde por posición, y vuelta a empezar. Por eso la lista va rojo-amarillo-verde de cada semáforo (18, 17, 16 y 22, 21, 19), no en orden de número: con `led:16, led:17, led:18` los pines quedan bien y los colores al revés que en la ficha. La tabla que devuelve el tool dice el color de cada LED: leela antes de escribir el código.
+
+Para un solo semáforo no hace falta la receta: el preset `semaforo` ya sale con los pines de la ficha.
 
 GPIO16 y GPIO17 **SÍ son válidos**: solo los saltea el reparto automático. Forzados a mano el tool los acepta sin chistar. Si le pasás uno que no existe o uno de flash, no te deja: avisa y te asigna uno seguro.
 
