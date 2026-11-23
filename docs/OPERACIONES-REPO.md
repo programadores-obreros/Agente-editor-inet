@@ -2,14 +2,20 @@
 
 ## Publicar una versión
 
-El procedimiento completo está en [`docs/publicar-release.md`](docs/publicar-release.md):
+El procedimiento completo está en [`docs/publicar-release.md`](publicar-release.md):
 qué número le toca, los cuatro archivos que se tocan y por qué los demás no, y las dos
 trampas —que el tag va sobre el commit de merge y **pegado** a él, y que las notas del
 release son lo que termina leyendo el docente en el sitio público—.
 
-Las otras dos puntas: [`docs/prueba-rc.md`](docs/prueba-rc.md) para probar el `.exe` en
-una notebook real antes de publicar, y [`docs/rollback.md`](docs/rollback.md) para
+Las otras dos puntas: [`docs/prueba-rc.md`](prueba-rc.md) para probar el `.exe` en
+una notebook real antes de publicar, y [`docs/rollback.md`](rollback.md) para
 cuando ya salió y salió mal.
+
+Si el release toca el instalador, los códigos de salida de cada script y del
+`.exe` están juntos en
+[`docs/codigos-de-salida-instalador.md`](codigos-de-salida-instalador.md): es lo que
+mira quien despliega en muchas máquinas, y hay que mantenerlo al día con los
+encabezados de `install/*` y de `installer/tecnia-bot.iss`.
 
 **No pegues las notas a mano.** El workflow las saca del `CHANGELOG` con
 `scripts/notas-release.mjs` y **falla si no encuentra la sección de esa versión**: hasta

@@ -2,12 +2,13 @@
 import { tool } from "@opencode-ai/plugin"
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { isAbsolute, join, resolve, win32 } from "node:path"
 import { argvDeCargaHeredada, lanzarCarga } from "../carga/ejecutar.ts"
 import { identificar, PUERTO_WINDOWS, puertoValido } from "../carga/identidad.ts"
 import {
   CODIGO_CANCELADO,
+  CODIGO_NO_LANZO,
   CODIGO_TIMEOUT,
   describirDuracion,
   pioBin,
@@ -35,6 +36,7 @@ import {
 export {
   CODIGO_CANCELADO,
   CODIGO_NO_LANZADO,
+  CODIGO_NO_LANZO,
   CODIGO_TIMEOUT,
   pioBin,
   pioCandidatos,
@@ -47,6 +49,27 @@ export {
   traducirError,
 } from "../carga/proceso.ts"
 export { CHIPS_USB, identificar, puertoValido } from "../carga/identidad.ts"
+
+// Lo que sigue lo sumó la línea publicada (0.4.x) en este mismo lugar. No es de procesos:
+// por eso queda acá y no en carga/proceso.ts.
+/**
+ * Con que codigo termina `install\bootstrap.ps1` cuando Tecnia Bot quedo instalado pero
+ * INCOMPLETO (falta PlatformIO, las herramientas de las placas, Node...). Es el
+ * `$CodigoDegradado` de ese script; que sean el mismo numero lo custodia
+ * tests/platformio-execute.test.mjs.
+ */
+export const CODIGO_BOOTSTRAP_INCOMPLETO = 2
+/**
+ * Las carpetas de `<core>/packages` que hacen falta para compilar para las dos placas
+ * que el instalador deja preparadas (ESP32 DevKit y Arduino UNO). Es la MISMA lista que
+ * bajan install.ps1 / install.sh y que comprueban bootstrap.ps1 / bootstrap.sh: las ata
+ * tests/placas-herramientas.test.mjs.
+ */
+export const PAQUETES_DE_LAS_PLACAS = ["toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr"]
+/** Las de PAQUETES_DE_LAS_PLACAS que no estan en el disco. */
+export function paquetesDePlacasQueFaltan(core: string = coreDir(), existe: (ruta: string) => boolean = existsSync): string[] {
+  return PAQUETES_DE_LAS_PLACAS.filter((p) => !existe(join(core, "packages", p)))
+}
 
 /**
  * Como se consiguen las herramientas de la placa: el camino que de verdad las BAJA.
@@ -351,18 +374,91 @@ async function placasSinDriver(cwd: string, signal?: AbortSignal) {
   return r.code === 0 ? leerDispositivosConProblema(r.stdout) : []
 }
 
-async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string; hwid?: string } | { error: string }> {
-  const result = await run(["pio", "device", "list", "--json-output"], cwd, signal)
+type ListaDePuertos = { ok: true; devices: Device[] } | { ok: false; motivo: string }
 
-  let devices: Device[] = []
-  try {
-    devices = JSON.parse(result.stdout) as Device[]
-  } catch {
-    const isWindows = process.platform === "win32"
-    const pattern = isWindows ? /COM\d+/g : /\/dev\/tty(?:USB|ACM)\d+/g
-    const matches = result.stdout.match(pattern) ?? []
-    devices = matches.map((port) => ({ port }))
+/**
+ * Los puertos que ve PlatformIO, O POR QUE NO SE PUDIERON VER. Son dos respuestas distintas.
+ *
+ * Antes nadie miraba el codigo de salida de `pio device list`. Si fallaba -un timeout, una
+ * cancelacion, pyserial roto: los tres dejan la salida vacia- la lista quedaba en cero y el
+ * tool AFIRMABA "No encuentro ninguna placa conectada", y el diagnostico "Ninguno - no hay
+ * ni siquiera un puerto serie". No habia medido que no hay placa: no habia podido listar. El
+ * docente revisaba el cable de una placa que estaba bien enchufada. Y con una salida que es
+ * JSON pero no una lista (`null`), tiraba un TypeError sin atajar.
+ *
+ * "Lista vacia" sale SOLO de un `pio device list` que termino bien y contesto `[]`.
+ */
+async function listarPuertos(cwd: string, signal?: AbortSignal): Promise<ListaDePuertos> {
+  const r = await run(["pio", "device", "list", "--json-output"], cwd, signal)
+  if (r.code === CODIGO_TIMEOUT) return { ok: false, motivo: "PlatformIO no contesto a tiempo" }
+  if (r.code === CODIGO_CANCELADO) return { ok: false, motivo: "se cancelo antes de terminar" }
+  if (r.code !== 0) {
+    const primera = r.stderr.trim().split("\n")[0]?.trim().slice(0, 200) ?? ""
+    return { ok: false, motivo: `\`pio device list\` fallo (codigo ${r.code})${primera ? `: ${primera}` : ""}` }
   }
+  try {
+    const parsed: unknown = JSON.parse(r.stdout)
+    if (Array.isArray(parsed)) return { ok: true, devices: parsed as Device[] }
+  } catch {
+    /* no es JSON: se prueba el respaldo de abajo */
+  }
+  // Respaldo para un pio que no entiende --json-output: se leen los nombres de puerto del
+  // texto. Si no nombra ninguno, no hay forma de saber que hay: no se pudo leer.
+  const pattern = process.platform === "win32" ? /COM\d+/g : /\/dev\/tty(?:USB|ACM)\d+/g
+  const matches = r.stdout.match(pattern) ?? []
+  if (matches.length > 0) return { ok: true, devices: matches.map((port) => ({ port })) }
+  return { ok: false, motivo: "PlatformIO contesto algo que no es una lista de puertos" }
+}
+
+/** Si dos formas de escribir un puerto nombran el mismo. En Windows «COM3» y «com3» son el
+ * mismo; en Mac cada puerto existe como `/dev/cu.X` y `/dev/tty.X`. En el resto se compara
+ * exacto: no se adivina por parecido. */
+export function mismoPuerto(a: string | undefined, b: string | undefined, plataforma: string = process.platform): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false
+  const normal = (x: string) => {
+    const limpio = x.trim()
+    if (plataforma === "win32") return limpio.toLowerCase()
+    if (plataforma === "darwin") return limpio.replace(/^\/dev\/tty\./, "/dev/cu.")
+    return limpio
+  }
+  return normal(a) !== "" && normal(a) === normal(b)
+}
+
+/**
+ * Qué placa hay en un puerto que se indicó A MANO (PIO-04, auditoría de código del
+ * 2026-11-22; decisión del owner del 2026-11-23).
+ *
+ * La identidad de la placa sólo se obtenía al autodetectar. Con `port` se cargaba a ciegas:
+ * el cartel de «otra placa u otro proyecto en esta placa» no aparecía nunca, y el registro
+ * de la compu no se enteraba de la carga. Y es este mismo tool el que manda a usar `port`
+ * cuando hay varias placas enchufadas.
+ *
+ * Devuelve el hwid si `pio device list` nombra ese puerto y de su hwid sale una identidad;
+ * si no, por qué no se pudo, para que el cartel lo diga. Nunca frena la carga: quien decide
+ * es la persona, con el cartel.
+ */
+async function placaDelPuerto(puerto: string, cwd: string, signal?: AbortSignal): Promise<{ hwid: string } | { porQueNo: string }> {
+  const puertos = await listarPuertos(cwd, signal)
+  if (!puertos.ok) return { porQueNo: `no pude ver los puertos USB (${puertos.motivo})` }
+  // `puerto` es texto libre que escribió el modelo y va a un cartel: en un solo renglón.
+  const escrito = puerto.replace(/[\x00-\x1f\x7f\u2028\u2029]+/g, " ").trim().slice(0, 120)
+  // Una lista con una entrada nula (JSON raro de pio) no puede tirar acá.
+  const hallado = puertos.devices.find((d) => !!d && mismoPuerto(d.port, puerto))
+  if (!hallado) return { porQueNo: `${escrito} no aparece entre los puertos que veo` }
+  if (!hallado.hwid || !identidadDePlaca(hallado.hwid)) return { porQueNo: `lo que hay en ${escrito} no dice qué placa es` }
+  return { hwid: hallado.hwid }
+}
+
+async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string; hwid?: string } | { error: string }> {
+  const puertos = await listarPuertos(cwd, signal)
+  if (!puertos.ok) {
+    return {
+      error:
+        `No pude ver los puertos USB: ${puertos.motivo}. No sé si hay una placa conectada: no es que no la encuentre, es que no pude mirar.` +
+        ` Probá de nuevo; si sigue igual, corré \`/diagnostico\`.`,
+    }
+  }
+  const devices = puertos.devices
 
   /*
    * SÓLO PLACAS, y nunca "lo que haya".
@@ -2428,6 +2524,17 @@ interface CargasGlobal {
   placas: Record<string, string>
 }
 
+/**
+ * Lo que se anota cuando una carga terminó bien en una placa que NO se pudo reconocer
+ * (puerto a mano, ver placaDelPuerto). No es un hash: no puede coincidir con ninguna placa.
+ *
+ * Una carga así es una carga cuyo destino no se sabe. Si se la anotara como «sin placa»
+ * (lo que hacía la primera versión de PIO-04), el aviso SIGUIENTE se callaba: el proyecto
+ * quedaba sin placa con qué comparar, y el registro de la compu seguía diciendo que cada
+ * placa tenía lo de antes. Lo encontró la revisión independiente del 2026-11-23.
+ */
+const PLACA_SIN_RECONOCER = "sin-reconocer"
+
 const rutaUltimaCarga = (cwd: string) => join(cwd, ".pio", "tecnia", "ultima-carga.json")
 const rutaCargasGlobal = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode", "tecnia-cargas.json")
 
@@ -2501,10 +2608,10 @@ const idDePlaca = (cargas: CargasGlobal, ident: { modelo: string; serie: string 
  * huella del proyecto, pero SI el registro de la placa: ahora en esa placa esta
  * este proyecto.
  */
-function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, hwid: string | undefined): boolean {
+function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, hwid: string | undefined, sinReconocer = false): boolean {
   const cargas = leerCargasGlobal()
   const ident = identidadDePlaca(hwid)
-  const placaFisica = ident ? idDePlaca(cargas, ident) : null
+  const placaFisica = ident ? idDePlaca(cargas, ident) : sinReconocer ? PLACA_SIN_RECONOCER : null
   let ok = true
   if (a && a.incompleto.length === 0) {
     try {
@@ -2514,7 +2621,17 @@ function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, hwid: strin
       ok = false
     }
   }
-  if (placaFisica) {
+  if (placaFisica === PLACA_SIN_RECONOCER) {
+    // No se sabe en cuál de las placas conocidas cayó esta carga: lo que el registro decía
+    // de CADA una deja de ser un dato. La próxima carga en cualquiera de ellas pregunta una
+    // vez, y con esa carga vuelve a quedar anotada.
+    try {
+      for (const id of Object.keys(cargas.placas)) cargas.placas[id] = PLACA_SIN_RECONOCER
+      if (Object.keys(cargas.placas).length > 0) writeFileSync(rutaCargasGlobal(), JSON.stringify(cargas, null, 2))
+    } catch {
+      /* sin el registro global solo se pierde el aviso de "otro proyecto" */
+    }
+  } else if (placaFisica) {
     try {
       cargas.placas[placaFisica] = hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
       mkdirSync(join(rutaCargasGlobal(), ".."), { recursive: true })
@@ -2737,7 +2854,8 @@ export function agenteQueNoPuedeCargar(ctx: unknown): string | null {
  *
  * La clave combina la huella, el proyecto (rutaNormalizada) y la placa fisica:
  * "Allow always" vale para ese cambio, en ese proyecto, en esa placa. Si no hay
- * con que identificar la placa (puerto explicito, hwid desconocido) o el
+ * con que identificar la placa (hwid desconocido, o puerto a mano que no se pudo
+ * reconocer: ver `sinReconocer` y placaDelPuerto) o el
  * analisis esta incompleto, `always` va vacio y la pregunta lleva
  * MARCA_SIEMPRE_PREGUNTA.
  *
@@ -2750,6 +2868,8 @@ export function pedidoDeCarga(
   cwd: string,
   hwid: string | undefined,
   cargas: CargasGlobal = leerCargasGlobal(),
+  /** Con el puerto indicado a mano y sin poder reconocer la placa: por qué no se pudo. */
+  sinReconocer?: string,
 ): { pedido?: PedidoChecklist; aviso?: string } {
   if (!a || bloqueoAntesDeCargar(a)) return {}
   const ident = identidadDePlaca(hwid)
@@ -2777,21 +2897,38 @@ export function pedidoDeCarga(
      * puede comparar: "no se sabe" pregunta UNA vez, y despues de esa carga queda
      * todo anotado con la sal de ahora.
      */
-    const noSeSabe = !!previa?.placaFisica && previa.marcaSal !== marcaDeSal(cargas)
+    // La ultima carga de ESTE proyecto fue en una placa que no se pudo reconocer.
+    const ultimaSinReconocer = previa?.placaFisica === PLACA_SIN_RECONOCER
+    const noSeSabe = ultimaSinReconocer || (!!previa?.placaFisica && previa.marcaSal !== marcaDeSal(cargas))
     const otraPlaca = !noSeSabe && !!previa?.placaFisica && previa.placaFisica !== placaFisica
     const registro = cargas.placas[placaFisica]
+    // Hubo una carga sin reconocer despues de la ultima vez que se supo que tenia ESTA placa.
+    const placaDudosa = registro === PLACA_SIN_RECONOCER
     const otroProyecto = !!registro && registro !== hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
     if (!noSeSabe && !otraPlaca && otroProyecto && !ident.serie) {
       aviso =
         "\n\nOjo: en una placa de este modelo lo último que se cargó fue OTRO proyecto. Esta placa no tiene número de serie, así que no sé si es la misma: " +
         "si lo es, el circuito que tiene conectado puede no ser el de este código. Contáselo al docente."
     } else if (noSeSabe || otraPlaca || otroProyecto) {
-      if (noSeSabe) motivos.push("No puedo saber si es la misma placa de la última carga: el registro de cargas de esta compu se borró o cambió, o el proyecto viene de otra compu.")
+      if (ultimaSinReconocer) motivos.push("La última carga de este proyecto fue con un puerto a mano que no pude reconocer: no sé en qué placa quedó.")
+      else if (noSeSabe) motivos.push("No puedo saber si es la misma placa de la última carga: el registro de cargas de esta compu se borró o cambió, o el proyecto viene de otra compu.")
       if (otraPlaca) motivos.push("La última carga de este proyecto fue en OTRA placa.")
-      if (otroProyecto) motivos.push("En esta placa lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.")
-      dePlaca = noSeSabe ? "No puedo saber si es la misma placa" : "Otra placa u otro proyecto en esta placa"
+      if (placaDudosa) motivos.push("Hace poco hubo una carga con un puerto a mano que no pude reconocer: pudo haber sido en esta placa, así que no sé qué tiene cargado ni si el circuito conectado es el de este código.")
+      else if (otroProyecto) motivos.push("En esta placa lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.")
+      // El titulo dice lo mas concreto que se sabe: «otra placa» es un hecho, «no se que tiene» no.
+      dePlaca = noSeSabe ? "No puedo saber si es la misma placa" : placaDudosa && !otraPlaca ? "No puedo saber qué tiene esta placa" : "Otra placa u otro proyecto en esta placa"
       if (!detalle) detalle = `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`
     }
+  }
+  /*
+   * Puerto a mano y placa sin reconocer (PIO-04): no se puede comparar con la ultima
+   * carga ni mirar que tenia esa placa, asi que se pregunta. Mismo criterio que el resto
+   * del cartel de placa: solo si el codigo maneja algun pin, y nunca guarda "always".
+   */
+  if (sinReconocer && !incompleto && a.huella.entradas.length > 0 && !dePlaca) {
+    motivos.push(`Me indicaste el puerto a mano y no pude reconocer qué placa hay ahí: ${sinReconocer}. No puedo saber si es la misma placa de la última carga ni si tenía otro proyecto.`)
+    dePlaca = "No puedo saber qué placa es"
+    if (!detalle) detalle = `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`
   }
   if (motivos.length === 0) return aviso ? { aviso } : {}
   /*
@@ -2985,7 +3122,33 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
       .describe("Ruta al proyecto PlatformIO. Por defecto usa el directorio actual."),
   },
   async execute(args, ctx) {
-    const cwd = args.project_path ?? ctx.directory
+    /*
+     * LA CARPETA SE MIRA ANTES DE LANZAR NADA.
+     *
+     * Bun tira ENOENT al lanzar un proceso en una carpeta que no existe, igual que cuando
+     * no existe el programa. Con PlatformIO instalado y un `project_path` mal escrito (o
+     * un proyecto que todavia no se creo), el tool contestaba "PlatformIO no esta
+     * instalado... llama a reparar": mandaba a reinstalar, minutos y una descarga, por un
+     * error de ruta. Y el diagnostico decia "PlatformIO: NO encontrado".
+     *
+     * Una ruta relativa se resuelve contra la carpeta de la sesion, no contra la del
+     * proceso de OpenCode, que es otra.
+     */
+    const carpetaPedida = args.project_path ? resolve(ctx.directory, args.project_path) : ctx.directory
+    let problemaDeCarpeta: string | null = null
+    try {
+      if (!statSync(carpetaPedida).isDirectory()) {
+        problemaDeCarpeta = `\`${carpetaPedida}\` no es una carpeta: es un archivo. Pasame la carpeta que tiene adentro el platformio.ini.`
+      }
+    } catch {
+      problemaDeCarpeta = `\`${carpetaPedida}\` no existe. Fijate si la ruta esta bien escrita y si el proyecto ya se creo.`
+    }
+    // `reparar` no usa la carpeta del proyecto. `diagnostico` informa del entorno igual,
+    // corriendo en una carpeta que si existe, y avisa de la carpeta en su reporte.
+    if (problemaDeCarpeta && args.action !== "reparar" && args.action !== "diagnostico") {
+      return `No encuentro la carpeta del proyecto: ${problemaDeCarpeta}\n\nNo es un problema de PlatformIO ni de la instalacion: no hay que instalar nada.`
+    }
+    const cwd = problemaDeCarpeta ? (existsSync(homedir()) ? homedir() : tmpdir()) : carpetaPedida
     const signal = ctx.abort
     const envFlag = args.environment ? ["-e", args.environment] : []
 
@@ -3071,6 +3234,14 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
       if (check.code === 127 || check.stderr.includes("command not found") || check.stderr.includes("is not recognized")) {
         return pioNoEncontrado()
       }
+      if (check.code === CODIGO_NO_LANZO) {
+        return (
+          "PlatformIO esta en esta compu, pero no lo pude ejecutar.\n\n" +
+          `${check.stderr}\n\n` +
+          "No es que falte instalarlo: algo impide lanzarlo (permisos, un antivirus, un archivo dañado). " +
+          "Corre `/diagnostico` para ver el detalle."
+        )
+      }
     }
 
     switch (args.action) {
@@ -3136,8 +3307,8 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           timeoutLargoMs(),
         )
 
-        // 127 es lo que devuelve run() cuando ni siquiera pudo lanzar el proceso.
-        if (result.code === 127) {
+        // 127 y CODIGO_NO_LANZO son lo que devuelve run() cuando ni siquiera pudo lanzar el proceso.
+        if (result.code === 127 || result.code === CODIGO_NO_LANZO) {
           return (
             "NO PUDE CORRER LA REPARACION: no se pudo lanzar PowerShell desde aca.\n\n" +
             (pioAntes
@@ -3159,14 +3330,66 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           .slice(-25)
           .join("\n")
 
-        if (pioAhora) {
+        /*
+         * SE LEE COMO TERMINO EL INSTALADOR, y no solo si despues hay un pio.
+         *
+         * Antes lo unico que se miraba era si `pio` existia al final. Con eso:
+         *  - el instalador terminaba en INCOMPLETO o en falla, quedaba un pio en el
+         *    disco, y esto contestaba "Listo: PlatformIO quedo instalado. Ya se puede
+         *    compilar y cargar";
+         *  - si ya habia un pio y el instalador fallaba, contestaba "La reparacion
+         *    corrio... no hizo falta bajarlo de nuevo", como si hubiera salido bien;
+         *  - si se cortaba por tiempo o la cancelaban, contestaba "corrio pero sigue
+         *    sin instalarse" y ofrecia las dos causas habituales de algo que no habia
+         *    terminado.
+         * "Listo" sale SOLO con el instalador terminando en 0, que es cuando el
+         * comprobo todo (desde la 0.4.12, tambien las herramientas de las placas).
+         * Encontrado ejecutando el tool (auditoria del 2026-11-22, PIO-02).
+         */
+        const bloque = "\n\n```\n" + salida + "\n```"
+        const estadoDePio = pioAhora
+          ? pioAntes
+            ? "PlatformIO ya estaba instalado de antes."
+            : "PlatformIO quedo instalado."
+          : "PlatformIO sigue sin estar instalado."
+
+        if (result.code === CODIGO_TIMEOUT) {
+          return (
+            `LA REPARACION NO TERMINO: se corto a los ${describirDuracion(timeoutLargoMs())} y no se como quedo. ` +
+            `${estadoDePio} No la des por hecha: con buena red, volve a correrla (lo que ya bajo no se baja de nuevo). ` +
+            "Si se vuelve a cortar, menu inicio -> 'Diagnostico de Tecnia Bot'."
+          )
+        }
+        if (result.code === CODIGO_CANCELADO) {
+          return `Se cancelo la reparacion antes de que terminara, asi que no se como quedo. ${estadoDePio} Para completarla, volve a pedirla.`
+        }
+
+        if (result.code === 0 && pioAhora) {
           // Se distingue "lo instale" de "ya estaba", porque no son lo mismo para
           // el que pregunta. Decir "listo, lo instale" cuando no se instalo nada
           // hace que la proxima vez que algo falle, la reparacion parezca hecha.
           const encabezado = pioAntes
             ? "La reparacion corrio. PlatformIO ya estaba instalado, asi que no hizo falta bajarlo de nuevo."
             : "Listo: PlatformIO quedo instalado. Ya se puede compilar y cargar codigo a la placa."
-          return encabezado + "\n\n```\n" + salida + "\n```"
+          return encabezado + bloque
+        }
+
+        if (result.code === CODIGO_BOOTSTRAP_INCOMPLETO) {
+          return (
+            `La reparacion corrio, pero el instalador avisa que Tecnia Bot quedo INCOMPLETO. ${estadoDePio}\n\n` +
+            "Esto es lo que dijo el instalador - leelo y contale al usuario que falta, con sus palabras. No le digas que ya esta todo listo:" +
+            bloque
+          )
+        }
+
+        if (pioAhora) {
+          // Hay un pio, pero el instalador no termino bien: no se sabe si ese pio anda.
+          return (
+            `LA REPARACION FALLO: el instalador termino con un error (codigo ${result.code}). ${estadoDePio} ` +
+            "Que el programa este en el disco no quiere decir que haya quedado andando.\n\n" +
+            "Esto es lo que dijo el instalador - leelo y contale al usuario que dice, con sus palabras:" +
+            bloque
+          )
         }
 
         return (
@@ -3199,21 +3422,30 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         if (bloqueo) return bloqueo
         let puerto = args.port
         let hwid: string | undefined
+        let sinReconocer: string | undefined
         if (!puerto) {
           const detected = await detectPort(cwd, signal)
           if ("error" in detected) return detected.error
           puerto = detected.port
           hwid = detected.hwid
+        } else {
+          // Puerto a mano: se busca que placa hay AHI (ver placaDelPuerto).
+          const placa = await placaDelPuerto(puerto, cwd, signal)
+          if ("hwid" in placa) hwid = placa.hwid
+          else sinReconocer = placa.porQueNo
+          // Si se cancelo mientras se miraban los puertos, no se le muestra un cartel a
+          // quien ya cancelo, ni se carga.
+          if (signal?.aborted) return "Se cancelo la accion antes de cargar. No se cargo nada."
         }
         // Un solo cartel, ya con la placa (ver pedidoDeCarga).
-        const carga = pedidoDeCarga(analisis, previa, cwd, hwid)
+        const carga = pedidoDeCarga(analisis, previa, cwd, hwid, undefined, sinReconocer)
         if (carga.pedido) {
           const no = await preguntarChecklist(ctx, carga.pedido)
           if (no) return no
         }
         const result = await cargar(puerto)
         if (result.code === 0) {
-          const anotada = guardarUltimaCarga(cwd, analisis, hwid)
+          const anotada = guardarUltimaCarga(cwd, analisis, hwid, sinReconocer !== undefined)
           return `Codigo cargado exitosamente en ${puerto}.` + avisosTrasCargar(analisis) + (carga.aviso ?? "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
@@ -3234,21 +3466,30 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         if (bloqueo) return `La compilacion fue bien. ${bloqueo}`
         let puerto = args.port
         let hwid: string | undefined
+        let sinReconocer: string | undefined
         if (!puerto) {
           const detected = await detectPort(cwd, signal)
           if ("error" in detected) return detected.error
           puerto = detected.port
           hwid = detected.hwid
+        } else {
+          // Puerto a mano: se busca que placa hay AHI (ver placaDelPuerto).
+          const placa = await placaDelPuerto(puerto, cwd, signal)
+          if ("hwid" in placa) hwid = placa.hwid
+          else sinReconocer = placa.porQueNo
+          // Si se cancelo mientras se miraban los puertos, no se le muestra un cartel a
+          // quien ya cancelo, ni se carga.
+          if (signal?.aborted) return "Se cancelo la accion antes de cargar. No se cargo nada."
         }
         // Un solo cartel, ya con la placa (ver pedidoDeCarga).
-        const carga = pedidoDeCarga(analisis, previa, cwd, hwid)
+        const carga = pedidoDeCarga(analisis, previa, cwd, hwid, undefined, sinReconocer)
         if (carga.pedido) {
           const no = await preguntarChecklist(ctx, carga.pedido)
           if (no) return `La compilacion fue bien. ${no}`
         }
         const flash = await cargar(puerto)
         if (flash.code === 0) {
-          const anotada = guardarUltimaCarga(cwd, analisis, hwid)
+          const anotada = guardarUltimaCarga(cwd, analisis, hwid, sinReconocer !== undefined)
           return `Compilacion y carga exitosa en ${puerto}.` + avisosTrasCargar(analisis) + (carga.aviso ?? "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return (
@@ -3394,16 +3635,17 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
         let dispositivosText = "No disponible (PlatformIO no instalado)"
         let placas = 0
 
-        if (pioOk) {
-          const devResult = await run(["pio", "device", "list", "--json-output"], cwd, signal)
-          let devices: Device[] = []
-          try {
-            devices = JSON.parse(devResult.stdout) as Device[]
-          } catch {
-            devices = []
-          }
+        // Por que no se pudo listar, o null si se pudo. Ver listarPuertos().
+        let noPudeListar: string | null = null
 
-          if (devices.length === 0) {
+        if (pioOk) {
+          const lista = await listarPuertos(cwd, signal)
+          const devices = lista.ok ? lista.devices : []
+
+          if (!lista.ok) {
+            noPudeListar = lista.motivo
+            dispositivosText = `No pude verlos: ${lista.motivo}`
+          } else if (devices.length === 0) {
             dispositivosText = "Ninguno — no hay ni siquiera un puerto serie"
           } else {
             dispositivosText = devices
@@ -3418,14 +3660,46 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
           }
         }
 
+        /*
+         * "LISTO PARA USAR" ES UNA PROMESA SOBRE COMPILAR, y antes se decia mirando solo
+         * que pio contestara y que hubiera una placa enchufada. Sin las herramientas de las
+         * placas, la primera compilacion tiene que bajar mas de 1 GB y se corta a los 3
+         * minutos: el reporte decia "Listo para usar" justo en el estado en que `compile`
+         * iba a fallar (auditoria del 2026-11-22, PIO-07). Y es el diagnostico que el
+         * mensaje de timeout manda a correr.
+         */
+        const faltanHerramientas = pioOk ? paquetesDePlacasQueFaltan() : []
+        const herramientasText = !pioOk
+          ? "No disponible (PlatformIO no instalado)"
+          : faltanHerramientas.length === 0
+            ? `OK — estan en ${coreDir()}`
+            : `FALTAN (${faltanHerramientas.join(", ")}) en ${join(coreDir(), "packages")}`
+
         let estado = placas === 1 ? "Listo para usar" : `Listo — veo ${placas} placas conectadas`
         if (!pioOk) {
           // Sin link a la documentacion oficial: ver pioNoEncontrado(). La
           // reparacion de Tecnia Bot es volver a correr SU instalador.
+          //
+          // MISMO ORDEN QUE pioNoEncontrado(): primero reparar desde el bot, y el menu
+          // inicio como plan B. Antes este texto daba el menu inicio como unico arreglo
+          // (tambien en Linux, donde ese acceso no existe), y /diagnostico le ordena al
+          // modelo "pasa el texto del tool": le llegaba al docente la instruccion vieja.
+          // Lo ata tests/coherencia-prompt.test.mjs.
           estado =
-            "Falta instalar PlatformIO. Se arregla con 'Reparar Tecnia Bot', en el menu " +
-            "inicio: lo instala solo. NO hay que instalar VS Code " +
-            "ni nada aparte. Si aun asi falta, es la red: correr 'Diagnostico de Tecnia Bot'."
+            "Falta instalar PlatformIO. Lo puedo instalar yo: llama a este mismo tool con action: \"reparar\" " +
+            "(avisale antes al usuario que tarda unos minutos). NO hay que instalar VS Code ni nada aparte. " +
+            "Plan B, solo si la reparacion desde aca no pudo correr: menu inicio -> 'Reparar Tecnia Bot' " +
+            "(en Linux/Mac, el tool devuelve el comando exacto). " +
+            "Si aun asi falta, es la red: correr 'Diagnostico de Tecnia Bot'."
+        } else if (noPudeListar) {
+          estado =
+            "PlatformIO esta, pero **no pude ver los puertos USB**, así que no sé si hay una placa conectada. " +
+            "No es que no la encuentre: no pude mirar. Probá `/diagnostico` de nuevo; si sigue igual, 'Reparar Tecnia Bot' del menu inicio."
+        } else if (placas > 0 && faltanHerramientas.length > 0) {
+          estado =
+            `PlatformIO esta y veo ${placas === 1 ? "la placa" : `${placas} placas`}, pero **faltan las herramientas de las placas**: ` +
+            "la primera compilacion va a intentar bajarlas (mas de 1 GB) y, sin buena red, se corta a los 3 minutos. " +
+            "Con buena red las puedo bajar yo: llama a este mismo tool con action: \"reparar\" (en Linux/Mac, el tool devuelve el comando exacto)."
         } else if (placas === 0) {
           /*
            * ANTES DE DECIR "no hay nada", PREGUNTARLE A WINDOWS.
@@ -3459,9 +3733,11 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
 **PlatformIO:** ${pioText}
 
 **Sistema operativo:** ${os}
-
+${problemaDeCarpeta ? `\n**Carpeta del proyecto:** ${problemaDeCarpeta}\n` : ""}
 **Puertos que veo:**
 ${dispositivosText}
+
+**Herramientas de las placas (ESP32 y Arduino UNO):** ${herramientasText}
 
 **Estado general:** ${estado}`
       }

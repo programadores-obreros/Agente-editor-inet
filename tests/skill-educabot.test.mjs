@@ -130,7 +130,7 @@ test("(f) los datos del Libro de actividades: tercer pin PWM y VIN en E3/E4/E6, 
 test("(g) la dirección del LCD: 0x27 sin avisar, y el «hasta hoy» queda escrito", () => {
   // Salió de probar el bot con un display en el puerto IIC del Bhoot. Avisaba SIEMPRE
   // que "si no muestra nada es que usa la 0x3F". El dato era correcto y el aviso
-  // sobraba: en los kits de Educabot vistos hasta hoy la mochila fue siempre 0x27.
+  // sobraba: en los kits de Educabot vistos hasta hoy el adaptador I2C fue siempre el de 0x27.
   // Un aviso sobre algo que no pasa nunca entrena al docente a ignorar los avisos.
   //
   // Pero "siempre" acá es una costumbre OBSERVADA, no una garantía: el propio bloque
@@ -141,7 +141,7 @@ test("(g) la dirección del LCD: 0x27 sin avisar, y el «hasta hoy» queda escri
   assert.match(skill, /sin preguntar y sin avisar/i, "no dice que con el kit se pone 0x27 y se sigue, sin aviso preventivo")
 
   // El discriminador tiene que ser MIRAR el chip, no probar direcciones a ciegas.
-  assert.match(skill, /PCF8574A/, "no dice cómo distinguir las dos mochilas mirando el chip")
+  assert.match(skill, /PCF8574A/, "no dice cómo distinguir los dos adaptadores I2C mirando el chip")
   assert.match(skill, /una sola letra/i, "no explica que la diferencia visible es la A final")
 
   // Y la trampa: el síntoma «luz sí, letras no» también lo da un LCD a 3,3 V. Acá no

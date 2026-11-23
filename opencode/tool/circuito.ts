@@ -139,6 +139,19 @@ interface Plantilla {
 // El modelo de IA NO calcula nada: solo nombra componentes. El código arma todo.
 // ============================================================================
 
+/** Los colores de LED que se dibujan, en el orden en que se reparten por posición.
+ * Una sola lista para el dibujo (`wokwi`) y para el nombre que se lee en la tabla. */
+const COLORES_LED = [
+  { wokwi: "red", nombre: "rojo" },
+  { wokwi: "yellow", nombre: "amarillo" },
+  { wokwi: "green", nombre: "verde" },
+] as const
+
+/** El color que le toca al LED que ocupa el lugar `i` del circuito (la lista da la vuelta). */
+function colorDeLed(i: number): (typeof COLORES_LED)[number] {
+  return COLORES_LED[i % COLORES_LED.length] ?? COLORES_LED[0]
+}
+
 const CABLE = {
   rojo: "#e74c3c",
   marron: "#5d4037",
@@ -330,8 +343,20 @@ export const POOL_DIGITAL = [4, 5, 18, 19, 23, 25, 26, 27, 33, 13, 14, 15, 2]
 const POOL_ANALOGICO = [34, 35, 36, 39, 32, 33]
 
 // Validación de GPIO manual (el alumno puede forzar un pin con "led:5").
-// GPIOs que EXISTEN en el ESP32 DevKit.
-export const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 37, 38, 39])
+// GPIOs que EXISTEN en el ESP32 DevKit, o sea: que tienen un pin en la placa.
+export const GPIO_VALIDOS = new Set([0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39])
+// GPIO37 y GPIO38 existen en el CHIP pero no salen a ningún pin del módulo WROOM que
+// tienen las escuelas (skills/esp32). Estaban en GPIO_VALIDOS: «led:37» se dibujaba con
+// «Listo!» en un pin que el alumno no iba a encontrar en la placa. Van aparte, y no
+// simplemente afuera de la lista, para poder decir POR QUÉ: «no existe» sería falso.
+export const GPIO_SIN_PIN_EN_LA_PLACA = new Set([37, 38])
+// Los GPIO del DevKit que tienen conversor analógico. ADC1 (32 a 39) y ADC2 (0, 2, 4,
+// 12 a 15, 25 a 27): skills/esp32/SKILL.md. Un pin analógico pedido a mano se aceptaba
+// con sólo existir: «potenciometro:23» salía «GPIO23 (analógico)», y ahí analogRead no
+// mide nada. El reparto automático (POOL_ANALOGICO) siempre usó sólo ADC1.
+// Los de ADC2 se aceptan aunque no se pueden leer con WiFi encendido: eso depende del
+// programa, no del circuito, y lo explica el skill esp32.
+export const GPIO_CON_ADC = new Set([32, 33, 34, 35, 36, 39, 0, 2, 4, 12, 13, 14, 15, 25, 26, 27])
 // GPIO6–11 están cableados a la memoria flash SPI: usarlos CUELGA/rompe la placa.
 export const GPIO_FLASH = new Set([6, 7, 8, 9, 10, 11])
 // Pines "strapping": funcionan, pero pueden complicar el arranque si tienen algo conectado.
@@ -583,6 +608,9 @@ const SHIELDS: ReadonlyArray<{
  * nombra ninguna, el default es UNO, porque el shield de las escuelas es formato UNO
  * ("no entra en un ESP32", `skills/placas`) — pero eso se AVISA, no se asume en silencio.
  */
+const OTRAS_PLACAS_CON_NOMBRE =
+  /\b(?:mega|nano|leonardo|due|pro\s*mini|esp8266|esp-?01|nodemcu|wemos|d1\s*mini|pico|raspberry|stm32|blue\s*pill|attiny|teensy|micro\s*:?\s*bit|bhoot|educablocks|mis\s*ladrillos)\b/i
+
 function shieldDe(
   texto: string,
 ): {
@@ -598,6 +626,21 @@ function shieldDe(
   const nombrada = (Object.keys(PLACAS) as PlacaId[]).find((id) =>
     new RegExp(`\\b${id}\\b`, "i").test(texto),
   )
+  /*
+   * SI NOMBRA OTRA PLACA, NO ES "NO ME DIJO CUÁL".
+   *
+   * «mega con sensor shield», «nano con shield» y «esp8266 con shield» no nombran ni
+   * `uno` ni `esp32`, así que caían al default y salían dibujados como Arduino UNO, con
+   * una nota que decía «como no me dijiste sobre qué placa va». Sí lo había dicho. Es el
+   * mismo bug de arriba —darle al docente una placa que no es la suya— para cualquier
+   * placa que no sea las dos que dibujamos. Devolver `null` hace que el pedido siga por
+   * el camino de siempre y rebote con «No sé DIBUJAR…», que es la verdad.
+   *
+   * Es una lista de las placas que se nombran en las escuelas, no un análisis del texto:
+   * si aparece una que no está acá, el comportamiento es el de antes (UNO, avisándolo).
+   * Se eligió ese lado a propósito: equivocarse rebotando un pedido válido es peor.
+   */
+  if (nombrada === undefined && OTRAS_PLACAS_CON_NOMBRE.test(texto)) return null
   /*
    * La VERSIÓN del shield, si el docente la dijo.
    *
@@ -632,6 +675,34 @@ const ESP32_WOKWI_PIN = new Map<number, string>([
 
 /** Los GPIO de la columna IZQUIERDA de la pieza: su masa más cercana es `GND.2`. */
 const ESP32_WOKWI_IZQUIERDA = new Set([12, 13, 14, 25, 26, 27, 32, 33, 34, 35, 36, 39])
+
+/**
+ * El id de la placa a partir de lo que escribieron: el id («uno») o la etiqueta que
+ * el propio tool imprime («Arduino UNO», «ESP32 DevKit»), sin importar mayúsculas ni
+ * espacios de más. Antes sólo valía el id: el tool rebotaba como «no sé dibujar» el
+ * nombre exacto con el que él mismo rotula la hoja. Cualquier otra cosa se devuelve
+ * tal cual y cae al rechazo: NO se adivina por parecido («arduino mega» no es «uno»).
+ */
+function idDePlacaPorNombre(texto: string): string {
+  const limpio = texto.trim().toLowerCase().replace(/\s+/g, " ")
+  const porEtiqueta = Object.values(PLACAS).find((p) => p.etiqueta.toLowerCase() === limpio)
+  return porEtiqueta ? porEtiqueta.id : limpio
+}
+
+/**
+ * ¿El archivo está y TIENE algo adentro? Los chequeos de instalación eran `existsSync`,
+ * y un archivo de 0 bytes existe: con la biblioteca de piezas vacía (copia cortada,
+ * antivirus, un marcador de OneDrive) el tool contestaba «Listo!» y salía una página
+ * con la tabla y ninguna pieza; con la plantilla vacía, un HTML de 0 bytes.
+ */
+function instalado(ruta: string): "ok" | "falta" | "vacio" {
+  try {
+    return statSync(ruta).size > 0 ? "ok" : "vacio"
+  } catch {
+    return "falta"
+  }
+}
+const ESTA_VACIO = "está instalado pero VACÍO (0 bytes): la instalación quedó a medias o algo lo dañó. Reinstalá Tecnia Bot con el instalador."
 
 export const PLACAS: Record<PlacaId, Placa> = {
   esp32: {
@@ -677,9 +748,13 @@ export const PLACAS: Record<PlacaId, Placa> = {
       const g = p.n
       if (GPIO_FLASH.has(g))
         return `⚠️ GPIO${g} está cableado a la memoria flash del ESP32 (GPIO6 a GPIO11): usarlo cuelga la placa. Le asigné un pin seguro.`
+      if (GPIO_SIN_PIN_EN_LA_PLACA.has(g))
+        return `⚠️ GPIO${g} existe en el chip del ESP32 pero no sale a ningún pin de la placa (pasa con GPIO37 y GPIO38): no hay dónde conectarlo. Le asigné un pin que sí está en la placa.`
       if (!GPIO_VALIDOS.has(g)) return `⚠️ GPIO${g} no existe en el ESP32. Le asigné un pin válido.`
       if (GPIO_UART_USB.has(g))
         return `⚠️ GPIO${g} es el puerto serie del USB (GPIO1=TX, GPIO3=RX): con algo conectado ahí la placa no acepta la carga del programa. Le asigné otro pin.`
+      if (clase === "analogico" && !GPIO_CON_ADC.has(g))
+        return `⚠️ GPIO${g} no puede leer un valor analógico: en el ESP32 no todos los pines tienen conversor (ADC), y ése no lo tiene. Con ${etiqueta} ahí la lectura no mediría nada. Le asigné un pin analógico (los mejores son GPIO34, 35, 36, 39, 32 y 33).`
       if (clase !== "analogico" && GPIO_SOLO_ENTRADA.has(g))
         return `⚠️ GPIO${g} es SOLO ENTRADA en el ESP32 (34, 35, 36 y 39): no puede encender nada ni tiene pull-up interno, así que ${etiqueta} ahí no funcionaría nunca. Le asigné un pin que sí sirve. Esos cuatro son ideales para sensores analógicos.`
       return null
@@ -942,6 +1017,9 @@ interface Componente {
   voltaje: "3.3V" | "5V"
   interactivo?: boolean
   attrs?: (i: number) => string
+  /** Cómo se llama ESTA unidad en la tabla, cuando el nombre de la pieza a secas no
+   * alcanza para distinguirla (el LED, que sale de un color distinto según su lugar). */
+  nombreEnTabla?: (i: number) => string
   pines: Pin[]
   advertencia: Aviso
   /**
@@ -953,7 +1031,27 @@ interface Componente {
   anim: (id: string, placa: Placa) => string
 }
 
-const COMPONENTES: Record<string, Componente> = {
+/**
+ * LA ACLARACIÓN DEL LCD EN ESP32, para el chat.
+ *
+ * El plano es uno solo y lo decidió el owner (2026-11-22): el LCD va a VIN (5 V), GND,
+ * SDA y SCL, como lo dibuja este tool y como lo indican las fichas del INET. Antes la
+ * hoja dibujaba eso y, en el mismo recuadro, decía «Nunca mochila a 5V con SDA/SCL
+ * directo al ESP32»: el tool prohibía lo que entregaba como instrucción de cableado.
+ *
+ * No dice «mochila»: es como le dicen al adaptador I2C quienes ya lo conocen, y al
+ * docente que lo ve por primera vez no le dice nada (lo marcó el owner). Se lo nombra
+ * por lo que se ve: la plaquita soldada atrás del display.
+ *
+ * Lo que queda es la aclaración que las fichas del INET ya traían, y NO afirma que sea
+ * seguro: nadie lo midió con un módulo en la mano. Manda a medir, y dice qué va si da mal.
+ * Va al chat porque las advertencias de componente viven sólo en la hoja, y el modelo
+ * recibía la tabla bajo «usá estos pines, no inventes otros» y nada más.
+ */
+const ACLARACION_LCD_ESP32 =
+  "📟 LCD en ESP32: va a VIN (5V), que es lo que el display necesita para verse (a 3.3V queda sin contraste). Aclaración para contarle al docente: el adaptador I2C (la plaquita que el display trae soldada atrás) puede dejar SDA y SCL en 5V, y GPIO21/22 son pines de 3.3V. Que mida SDA y SCL con el téster (LCD alimentado, ESP32 apagado): si marcan cerca de 5V, entre el display y el ESP32 va un conversor de nivel bidireccional I2C."
+
+export const COMPONENTES: Record<string, Componente> = {
   led: {
     tag: "wokwi-led",
     etiqueta: "LED",
@@ -967,7 +1065,11 @@ const COMPONENTES: Record<string, Componente> = {
     // 5 mm que SÍ andan a 3,3 V con 220 Ω (el verde común es GaP, ~2,1 V; el verde
     // InGaN del SKILL es otra pieza, la de alto brillo), y de paso es el orden del
     // semáforo, que es el proyecto de 3 LEDs que más se pide.
-    attrs: (i) => `color="${["red", "yellow", "green"][i % 3]}"`,
+    attrs: (i) => `color="${colorDeLed(i).wokwi}"`,
+    // El color va también en el NOMBRE con que la pieza aparece en la tabla (CIR-05): la
+    // tabla decía «LED / LED / LED» y el modelo no podía saber cuál era el rojo para
+    // escribir el código. Sale de la misma lista que el dibujo, así que no pueden diferir.
+    nombreEnTabla: (i) => `LED ${colorDeLed(i).nombre}`,
     pines: [
       { nombre: "Ánodo (+)", color: CABLE.naranja, clase: "digital", rol: "{0} (con {R})" },
       { nombre: "Cátodo (−)", color: CABLE.marron, clase: "fijo", destino: "GND" },
@@ -1086,12 +1188,12 @@ const COMPONENTES: Record<string, Componente> = {
     ],
     advertencia: {
       esp32:
-        "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32). ¡OJO con los 5V! La mochila I2C tiene sus pull-ups a su propio VCC: alimentada a 5V pone SDA y SCL en 5V, y GPIO21/22 NO toleran 5V. Opciones: alimentarla a 3.3V (segura, con menos contraste) o 5V + conversor de nivel bidireccional en SDA/SCL (el divisor de resistencias NO sirve: I2C es bidireccional). Nunca mochila a 5V con SDA/SCL directo al ESP32.",
-      // En el UNO desaparece TODO el problema de niveles del ESP32: la mochila y la
+        "el LCD por I2C usa SDA=GPIO21 y SCL=GPIO22 (fijos en el ESP32) y se alimenta de VIN (5V): a 3.3V el display queda sin contraste. ACLARACIÓN: el adaptador I2C (la plaquita que el display trae soldada atrás) tiene sus pull-ups a su propio VCC, así que alimentado a 5V puede dejar SDA y SCL en 5V, y GPIO21/22 son pines de 3.3V. Medí SDA y SCL con el téster, con el LCD alimentado y el ESP32 apagado: si marcan cerca de 5V, entre el display y el ESP32 va un conversor de nivel bidireccional I2C (el divisor de resistencias NO sirve: I2C es bidireccional).",
+      // En el UNO desaparece TODO el problema de niveles del ESP32: el adaptador I2C y la
       // placa hablan el mismo idioma. Lo que sí hay que decir es el costo oculto del
       // bus, que en el ESP32 no existe: A4 y A5 dejan de estar disponibles como
       // entradas analógicas, y quedan A0-A3 para sensores.
-      uno: "el LCD por I2C usa SDA=A4 y SCL=A5, que en el UNO son fijos. La mochila y la placa trabajan a la misma tensión, así que van directo: sin conversor y sin nada en el medio. El costo es que A4 y A5 dejan de servir como entradas analógicas mientras el display esté conectado: te quedan A0 a A3 para sensores. Si no muestra nada pero la luz de fondo prende, es el contraste (el potenciómetro azul de la mochila) o la dirección: 0x27 en las del PCF8574 y 0x3F en las del PCF8574A. Librería: LiquidCrystal_I2C.",
+      uno: "el LCD por I2C usa SDA=A4 y SCL=A5, que en el UNO son fijos. El adaptador I2C (la plaquita que el display trae soldada atrás) y la placa trabajan a la misma tensión, así que van directo: sin conversor y sin nada en el medio. El costo es que A4 y A5 dejan de servir como entradas analógicas mientras el display esté conectado: te quedan A0 a A3 para sensores. Si no muestra nada pero la luz de fondo prende, es el contraste (el potenciómetro azul de ese adaptador) o la dirección: 0x27 en las del PCF8574 y 0x3F en las del PCF8574A. Librería: LiquidCrystal_I2C.",
     },
     anim: (id, placa) => `const l=document.getElementById('${id}');const m=["Hola Tecnia Bot!","Escuela tecnica","${placa.etiqueta}"];let i=0;setInterval(()=>{i=(i+1)%m.length;if(l)l.text=m[i];},1800);`,
   },
@@ -2099,13 +2201,14 @@ ${conex}
     const dots = def.pines
       .map((pin) => `<span class="dot" style="background:${pin.color}"></span>`)
       .join("")
-    filasTabla.push(`      <tr><td>${def.etiqueta}</td><td>${dots}</td><td>${resumen}</td></tr>`)
+    const nombreEnTabla = def.nombreEnTabla ? def.nombreEnTabla(i) : def.etiqueta
+    filasTabla.push(`      <tr><td>${nombreEnTabla}</td><td>${dots}</td><td>${resumen}</td></tr>`)
 
     // La MISMA tabla, en texto plano, para devolvérsela al modelo (FIX auditoría A).
     // Se arma acá y no aparte para que no puedan divergir: si algún día la fila de la
     // hoja cambia, esta línea cambia con ella.
     conexiones.push(
-      `${def.etiqueta}: ` + def.pines.map((pin) => `${pin.nombre} → ${etiquetaDe(pin, pines)}`).join(", "),
+      `${nombreEnTabla}: ` + def.pines.map((pin) => `${pin.nombre} → ${etiquetaDe(pin, pines)}`).join(", "),
     )
 
     if (id !== gobernado) {
@@ -2139,6 +2242,8 @@ ${filas.join("\n")}
   if (hay5V && placa.avisoCincoVolt) advertencias.add(placa.avisoCincoVolt)
   avisosGpio.forEach((a) => advertencias.add(a))
   const notas = [...notasGpio]
+  // Ver ACLARACION_LCD_ESP32. En el UNO no va: el adaptador I2C y la placa trabajan a la misma tensión.
+  if (placa.id === "esp32" && pedidos.some((p) => p.tipo === "lcd")) notas.push(ACLARACION_LCD_ESP32)
   for (const choque of avisosI2cRepetido(pedidos, placa)) {
     advertencias.add(choque)
     notas.push(choque)
@@ -2173,7 +2278,7 @@ ${filasTabla.join("\n")}`
  * palabra. En el papel se ve impecable —es literalmente cómo se cablea el I2C, todos
  * en paralelo— y por eso es de los que más engañan: el bus está bien, lo que está mal
  * es que los dos módulos vienen de fábrica con la MISMA dirección (el SSD1306 en
- * 0x3C, la mochila del LCD en 0x27, el MPU6050 en 0x68). El ESP32 no tiene forma de
+ * 0x3C, el adaptador I2C del LCD en 0x27, el MPU6050 en 0x68). El ESP32 no tiene forma de
  * hablarle a uno sin hablarle al otro: en la práctica anda uno solo, o ninguno.
  *
  * Se avisa y no se corta: el circuito es armable —cambiándole la dirección a uno, que
@@ -2521,8 +2626,12 @@ function sugerenciaQueEntra(crudo: Pedido[], placa: Placa): string {
  */
 function faltanPiezasDibujadas(pedidos: Pedido[]): string | null {
   const dibujadas = pedidos.filter((p) => componenteDe(p.tipo).tag.startsWith("pb-"))
-  if (dibujadas.length === 0 || existsSync(extraPath())) return null
+  const estado = dibujadas.length === 0 ? "ok" : instalado(extraPath())
+  if (estado === "ok") return null
   const nombres = [...new Set(dibujadas.map((p) => componenteDe(p.tipo).etiqueta))].join(", ")
+  if (estado === "vacio") {
+    return `El archivo de piezas dibujadas (componentes-extra.js) ${ESTA_VACIO} Este circuito lo necesita para: ${nombres}.`
+  }
   return `Me falta el archivo de piezas dibujadas (componentes-extra.js) y este circuito lo necesita para: ${nombres}. Si lo genero igual te sale una página con la tabla de conexiones y NINGUNA pieza dibujada, así que no lo genero. Reinstalá Tecnia Bot con el instalador (es el que copia la biblioteca visual) y pedímelo de nuevo. Mientras tanto puedo armarte circuitos con las piezas que sí tengo: led, servo, buzzer, potenciómetro, botón, ultrasónico, DHT22, PIR, LCD, OLED y varias más.`
 }
 
@@ -2794,6 +2903,22 @@ const PRESET_COMPONENTES: Record<string, string[]> = {
 }
 
 /**
+ * Pines propios de un preset, cuando el circuito es el de un proyecto que ya trae su
+ * pinout. Van en el orden de PRESET_COMPONENTES.
+ *
+ * CIR-05 (auditoría de código del 2026-11-22; decisión del owner del 2026-11-23): el
+ * semáforo se repartía con el pool automático y salía rojo=GPIO4, amarillo=GPIO5,
+ * verde=GPIO18, mientras la ficha impresa, el .ino y `semaforo-protoboard` dicen
+ * verde=16, amarillo=17, rojo=18 (tecniabot-web/pinouts.json, «01-semaforizacion»).
+ * Los LEDs salen rojo, amarillo, verde por posición: de ahí el orden 18, 17, 16.
+ * No se lee pinouts.json en ejecución: tests/circuito.test.mjs compara este preset
+ * contra ese archivo, color por color.
+ */
+const PRESET_PINES: Record<string, number[]> = {
+  semaforo: [18, 17, 16],
+}
+
+/**
  * Animación propia de un preset, para cuando la suma de las animaciones sueltas NO
  * representa el circuito que el preset promete.
  *
@@ -2945,7 +3070,7 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
         ? "esp32"
         : typeof args.placa === "string"
           ? args.placa.trim()
-            ? (shieldPedido?.base ?? args.placa.trim().toLowerCase())
+            ? (shieldPedido?.base ?? idDePlacaPorNombre(args.placa))
             : "esp32" // string vacío o de puros espacios = "no me la dijeron"
           : PLACA_INVALIDA
     const placaBase = (PLACAS as Record<string, Placa | undefined>)[idPlaca]
@@ -2984,9 +3109,11 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
     }
 
     const bundle = bundlePath()
-    if (!existsSync(bundle)) {
+    const estadoBundle = instalado(bundle)
+    if (estadoBundle === "falta") {
       return "No encontré la biblioteca de piezas (wokwi-bundle.js). Reinstalá Tecnia Bot con el instalador para que copie la biblioteca visual."
     }
+    if (estadoBundle === "vacio") return `El archivo de la biblioteca de piezas (wokwi-bundle.js) ${ESTA_VACIO}`
     // El navegador bloquea que un file:// cargue otro file:// de otra carpeta (security origin).
     // Por eso copiamos el bundle AL LADO del HTML y lo referenciamos con ruta relativa.
     const scriptSrc = "wokwi-bundle.js"
@@ -3145,9 +3272,11 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       // reales pinchados en la placa + jumpers). Se lee del asset instalado.
       const def = PLANTILLAS_PROTOBOARD[args.circuito]
       const plantillaFile = def ? plantillaPath(def.archivo) : ""
-      if (!def || !existsSync(plantillaFile)) {
+      const estadoPlantilla = def ? instalado(plantillaFile) : "falta"
+      if (!def || estadoPlantilla === "falta") {
         return "No encontré la plantilla del circuito en protoboard. Reinstalá Tecnia Bot con el instalador."
       }
+      if (estadoPlantilla === "vacio") return `El archivo de la plantilla del circuito en protoboard ${ESTA_VACIO}`
       const nom = nombreSeguro(args.nombre_archivo, args.circuito)
       pedidoNoUsado = nom.pedidoNoUsado
       base = nom.nombre
@@ -3165,7 +3294,8 @@ PROYECTOS DEL INET: para riego usá "higrometro, relay, bomba" (movés la humeda
       if (!tipos) {
         return `No tengo ese circuito todavía. Disponibles: ${Object.keys(PRESET_COMPONENTES).join(", ")}.`
       }
-      const pedidos = tipos.map((t) => ({ tipo: t }))
+      const pinesDelPreset = PRESET_PINES[args.circuito]
+      const pedidos: Pedido[] = tipos.map((t, i) => (pinesDelPreset?.[i] === undefined ? { tipo: t } : { tipo: t, gpio: pinesDelPreset[i] }))
       // Hoy ningún preset usa piezas pb-*, pero el día que se agregue uno (riego,
       // calefacción) el guard tiene que estar acá también: es la misma página vacía.
       const faltaPreset = faltanPiezasDibujadas(pedidos)

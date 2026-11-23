@@ -220,6 +220,17 @@ export const CODIGO_TIMEOUT = 124
 export const CODIGO_CANCELADO = 130
 /** Lo que devuelve `run()` cuando ni siquiera pudo lanzar el proceso (el binario no está). */
 export const CODIGO_NO_LANZADO = 127
+/**
+ * Lo que devuelve `run()` cuando el programa EXISTE pero no se pudo lanzar (sin permiso de
+ * ejecucion, por ejemplo). Es el codigo de las shells para "encontrado pero no ejecutable".
+ * No es lo mismo que 127 ("no esta"): mandar a reinstalar algo que esta instalado no lo arregla.
+ *
+ * Viene de la línea publicada (0.4.x, PIO-01 de la auditoría del 2026-11-22), donde `run()`
+ * vivía en tool/platformio.ts. Al unir las dos líneas se trajo acá, que es donde está `run()`.
+ */
+export const CODIGO_NO_LANZO = 126
+/** Los errores de lanzamiento que quieren decir "el programa esta, pero no se pudo ejecutar". */
+const EXISTE_Y_NO_SE_PUDO_LANZAR = new Set(["EACCES", "EPERM", "ENOEXEC", "ETXTBSY"])
 
 /*
  * ═══════════════════════════════════════════════════════════════════════════
@@ -431,7 +442,22 @@ export async function run(
   let proc: ReturnType<typeof lanzar>
   try {
     proc = lanzar()
-  } catch {
+  } catch (error) {
+    // NO TODA EXCEPCION ES "NO ESTA INSTALADO". Antes cualquiera salia como 127 y
+    // "command not found", y el tool contestaba "PlatformIO no esta instalado... llama a
+    // reparar" tambien cuando pio estaba y lo que fallaba era ejecutarlo.
+    //
+    // Se distingue SOLO lo que el sistema dice sin ambiguedad que es "esta y no lo pude
+    // lanzar". Todo lo demas sigue siendo 127, como siempre: es el caso comun (pio no
+    // esta) y no se arriesga por un codigo de error que no se midio. MEDIDO en Bun 1.4.4
+    // sobre Linux: programa que no existe -> code "ENOENT" (con el nombre pelado el mensaje
+    // es "Executable not found in $PATH" y NO dice ENOENT: por eso se mira `code` y no el
+    // texto); sin permiso de ejecucion, o una carpeta -> code "EACCES". En Windows no se midio.
+    const codigo = String((error as { code?: unknown } | null)?.code ?? "")
+    if (EXISTE_Y_NO_SE_PUDO_LANZAR.has(codigo)) {
+      const motivo = error instanceof Error ? error.message : String(error)
+      return { code: CODIGO_NO_LANZO, stdout: "", stderr: `No se pudo lanzar ${cmd[0]}: ${motivo}` }
+    }
     return { code: CODIGO_NO_LANZADO, stdout: "", stderr: "command not found" }
   }
   // Ciclo 5: cuándo arrancó el hijo de la carga, para que el barrido por marca no cuente como

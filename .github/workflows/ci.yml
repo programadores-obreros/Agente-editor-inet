@@ -260,6 +260,10 @@ jobs:
             else { Write-Host "  OK   opencode.json: default_agent tecnia-bot, modelo $modelo" }
           }
           if (-not (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\agent\tecnia-bot.md"))) { $fallas += "falta .config\opencode\agent\tecnia-bot.md" }
+          # La carpeta del vinculo con Tecnia Lab: tool\cuenta.ts la importa con ..\plataforma\. Es el unico
+          # lugar donde se mira en el disco real que el instalador la copio; los tests solo leen las listas.
+          if (-not (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\plataforma\cuenta.ts"))) { $fallas += "falta .config\opencode\plataforma\cuenta.ts" }
+          if (-not (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\tool\cuenta.ts"))) { $fallas += "falta .config\opencode\tool\cuenta.ts" }
 
           $pio = Join-Path $env:USERPROFILE ".platformio\penv\Scripts\pio.exe"
           if (-not (Test-Path $pio)) { $fallas += "no existe $pio" }
@@ -295,6 +299,89 @@ jobs:
           & $pio run -d ejemplos\_test-librerias -e esp32dev
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      # USUARIO CON TILDE. Medido en la VM win10 el 2026-11-15 con el install.ps1
+      # publicado en la 0.4.8: con la config en una carpeta "Direccion310" con tilde,
+      # "instructions" de opencode.json pasaba de 2 entradas a 4 y a 6 en tres
+      # corridas, porque el script releia su propio UTF-8 como ANSI. Aca se corre DOS
+      # veces y se cuenta. La "o" con tilde se arma con [char]0xF3 para no depender de
+      # la codepage con la que el runner lea este archivo.
+      - name: install.ps1 dos veces con la config en una carpeta con tilde no duplica instructions
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ps51 = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          $base = Join-Path $env:RUNNER_TEMP ("Direcci" + [string][char]0xF3 + "n310")
+          New-Item -ItemType Directory -Force -Path (Join-Path $base "config"), (Join-Path $base "data") | Out-Null
+          $env:XDG_CONFIG_HOME = Join-Path $base "config"
+          $env:XDG_DATA_HOME = Join-Path $base "data"
+          $env:TECNIA_SIN_PROMPT = "1"
+          $oc = Join-Path $base "config\opencode\opencode.json"
+          foreach ($vuelta in 1, 2) {
+            & $ps51 -NoProfile -ExecutionPolicy Bypass -File install\install.ps1
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::install.ps1 (vuelta $vuelta) devolvio $LASTEXITCODE"; exit 1 }
+            if (-not (Test-Path $oc)) { Write-Host "::error::no quedo $oc"; exit 1 }
+            $j = [System.IO.File]::ReadAllText($oc, (New-Object System.Text.UTF8Encoding $false)) | ConvertFrom-Json
+            $ins = @($j.instructions | Where-Object { $_ })
+            Write-Host "  vuelta ${vuelta}: instructions = $($ins.Count)"
+            if ($ins.Count -ne 2) { Write-Host "::error::instructions tiene $($ins.Count) entradas en la vuelta $vuelta (tienen que ser 2)"; exit 1 }
+            foreach ($r in $ins) { if (-not (Test-Path -LiteralPath $r)) { Write-Host "::error::instructions apunta a un archivo que no existe: $r"; exit 1 } }
+          }
+          Write-Host "  OK   la config en una carpeta con tilde no se duplica"
+
+      # EL DESINSTALADOR Y LOS DATOS PERSONALES. Hasta la 0.4.8, "-Borrar" sin manifest
+      # salia con 0 sin borrar nada, y con opencode.json de solo lectura moria antes de
+      # llegar a los datos (medido en la VM). Se corre en la misma carpeta con tilde,
+      # sin tocar el perfil real del runner. Contrato de uninstall.ps1 (su encabezado):
+      # 0 = todo borrado, 3 = parcial. La "key" es un texto cualquiera: no es una key.
+      - name: uninstall.ps1 borra los datos personales cuando se pide, aun sin manifest, y los conserva cuando no
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ps51 = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+          $base = Join-Path $env:RUNNER_TEMP ("Direcci" + [string][char]0xF3 + "n310")
+          $env:XDG_CONFIG_HOME = Join-Path $base "config"
+          $env:XDG_DATA_HOME = Join-Path $base "data"
+          $env:TECNIA_SIN_PROMPT = "1"
+          $cfg = Join-Path $base "config\opencode"
+          $auth = Join-Path $base "data\opencode\auth.json"
+          $sinBom = New-Object System.Text.UTF8Encoding $false
+          function Sembrar {
+            New-Item -ItemType Directory -Force -Path (Split-Path $auth -Parent) | Out-Null
+            [System.IO.File]::WriteAllText($auth, '{"google":{"type":"api","key":"TEXTO-DE-PRUEBA-NO-ES-UNA-KEY"},"otro":{"type":"api","key":"x"}}', $sinBom)
+            & $ps51 -NoProfile -ExecutionPolicy Bypass -File install\install.ps1
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::install.ps1 (sembrar) devolvio $LASTEXITCODE"; exit 1 }
+            foreach ($f in "tecnia-perfil.md", "tecnia-memoria.md", "tecnia-bot.manifest") { if (-not (Test-Path (Join-Path $cfg $f))) { Write-Host "::error::la siembra no dejo $f"; exit 1 } }
+          }
+          function Estado {
+            $a = [System.IO.File]::ReadAllText($auth, $sinBom) | ConvertFrom-Json
+            return @{ perfil = (Test-Path (Join-Path $cfg "tecnia-perfil.md")); memoria = (Test-Path (Join-Path $cfg "tecnia-memoria.md")); google = ($null -ne $a.google); otro = ($null -ne $a.otro) }
+          }
+          function Exigir($que, $cond) { if (-not $cond) { Write-Host "::error::$que"; exit 1 }; Write-Host "  OK   $que" }
+
+          Write-Host "== -Borrar, camino normal"
+          Sembrar
+          & $ps51 -NoProfile -ExecutionPolicy Bypass -File install\uninstall.ps1 -Borrar
+          $rc = $LASTEXITCODE; $e = Estado
+          Exigir "borrar: sale con 0 (salio $rc)" ($rc -eq 0)
+          Exigir "borrar: el perfil y la memoria ya no estan" ((-not $e.perfil) -and (-not $e.memoria))
+          Exigir "borrar: la key de Google salio de auth.json y la otra credencial sigue" ((-not $e.google) -and $e.otro)
+
+          Write-Host "== -Borrar SIN manifest"
+          Sembrar
+          Remove-Item (Join-Path $cfg "tecnia-bot.manifest") -Force
+          & $ps51 -NoProfile -ExecutionPolicy Bypass -File install\uninstall.ps1 -Borrar
+          $rc = $LASTEXITCODE; $e = Estado
+          Exigir "sin manifest: sale con 3, parcial (salio $rc)" ($rc -eq 3)
+          Exigir "sin manifest: el perfil y la memoria se borraron igual" ((-not $e.perfil) -and (-not $e.memoria))
+          Exigir "sin manifest: la key de Google salio igual" (-not $e.google)
+
+          Write-Host "== -Conservar"
+          Sembrar
+          & $ps51 -NoProfile -ExecutionPolicy Bypass -File install\uninstall.ps1 -Conservar
+          $rc = $LASTEXITCODE; $e = Estado
+          Exigir "conservar: sale con 0 (salio $rc)" ($rc -eq 0)
+          Exigir "conservar: el perfil y la memoria SIGUEN" ($e.perfil -and $e.memoria)
+          Exigir "conservar: la key de Google SIGUE" ($e.google -and $e.otro)
+          Exigir "conservar: el agente si se desinstalo" (-not (Test-Path (Join-Path $cfg "agent\tecnia-bot.md")))
+
       # -Conservar: no pregunta por los datos personales (los deja). Despues no
       # tiene que quedar rastro nuestro en opencode.json ni el agente instalado.
       - name: uninstall.ps1 -Conservar deja opencode.json sin rastro de tecnia-bot
@@ -314,6 +401,7 @@ jobs:
             Write-Host "  OK   opencode.json se borro (solo tenia lo nuestro)"
           }
           if (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\agent\tecnia-bot.md")) { Write-Host "::error::agent\tecnia-bot.md sigue instalado"; exit 1 }
+          if (Test-Path (Join-Path $env:USERPROFILE ".config\opencode\plataforma\cuenta.ts")) { Write-Host "::error::plataforma\cuenta.ts sigue instalado"; exit 1 }
 
       # El transcript del bootstrap (Start-Transcript, al lado del repo). Si algo
       # fallo, es lo primero que hay que leer; se sube siempre, no solo en fallo.
@@ -326,6 +414,161 @@ jobs:
             instalacion.log
             instalacion-*.log
           if-no-files-found: ignore
+
+  # LINUX DE VERDAD. Los tests de Node ejecutan los .sh, pero con la red cortada y
+  # sin bajar OpenCode ni PlatformIO. Este job hace lo que hace un docente: corre
+  # bootstrap.sh en una maquina limpia, con Internet, y despues mira el disco.
+  # Hasta la auditoria del 2026-11-15 bootstrap.sh no se habia ejecutado en ningun
+  # test ni en ningun CI. Codigos de bootstrap.sh (su encabezado): 0 todo
+  # comprobado, 3 la capa quedo pero falta una dependencia.
+  linux-real:
+    name: Instalador real (Linux, bootstrap.sh de punta a punta)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: bootstrap.sh de punta a punta (OpenCode + PlatformIO + capa)
+        env:
+          TECNIA_SIN_PROMPT: "1"
+        run: |
+          set -u
+          rc=0
+          bash install/bootstrap.sh || rc=$?
+          echo "bootstrap.sh salio con $rc"
+          if [ "$rc" -ne 0 ]; then echo "::error::bootstrap.sh devolvio $rc (se esperaba 0)"; exit 1; fi
+
+      - name: Verificar en el disco lo que dejo bootstrap.sh
+        run: |
+          set -u
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          falla() { echo "::error::$1"; exit 1; }
+          v="$(opencode --version 2>&1)" || falla "opencode --version no contesta: $v"
+          echo "  OK   opencode --version = $v"
+          esperada="$(tr -d '[:space:]' < install/OPENCODE_VERSION)"
+          [ "$v" = "$esperada" ] || falla "OpenCode es $v y install/OPENCODE_VERSION dice $esperada"
+          pio="$HOME/.platformio/penv/bin/pio"
+          [ -x "$pio" ] || falla "no esta $pio"
+          pv="$("$pio" --version 2>&1)" || falla "pio --version no contesta: $pv"
+          echo "  OK   $pv"
+          cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+          [ -f "$cfg/agent/tecnia-bot.md" ] || falla "falta el agente en $cfg/agent"
+          [ -f "$cfg/plataforma/cuenta.ts" ] || falla "falta la carpeta del vinculo con Tecnia Lab en $cfg/plataforma"
+          [ -f "$cfg/tool/cuenta.ts" ] || falla "falta el tool cuenta en $cfg/tool"
+          [ -f "$cfg/tecnia-bot.manifest" ] || falla "falta el manifest en $cfg"
+          agente="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("default_agent",""))' "$cfg/opencode.json")" || falla "opencode.json no parsea"
+          [ "$agente" = "tecnia-bot" ] || falla "default_agent es [$agente], no tecnia-bot"
+          echo "  OK   la capa esta publicada y Tecnia Bot es el agente por defecto"
+
+      # LA FALLA REAL: sin curl ni wget no se puede bajar OpenCode ni PlatformIO.
+      # Hasta la 0.4.8, con `set -e` el script moria ahi SIN instalar la capa, contra
+      # su propio comentario. Se arma un PATH con todo lo del sistema menos esos dos
+      # (no se simula ningun resultado: los programas de verdad no estan) y un HOME
+      # nuevo. Tiene que salir con 3 y dejar la capa.
+      - name: bootstrap.sh sin curl ni wget instala la capa igual y sale con 3
+        env:
+          TECNIA_SIN_PROMPT: "1"
+        run: |
+          set -u
+          bin="$RUNNER_TEMP/bin-sin-descargador"; mkdir -p "$bin"
+          for d in /usr/local/bin /usr/bin /bin; do
+            for f in "$d"/*; do
+              n="$(basename "$f")"
+              case "$n" in curl|wget|opencode|pio|platformio) continue ;; esac
+              # -L ademas de -e: en el runner hay enlaces rotos en /usr/bin (por ejemplo
+              # grub-ntldr-img). Para `-e` un enlace roto "no existe", asi que al
+              # encontrarlo de nuevo en /bin se intentaba crear otra vez y `ln` cortaba
+              # el paso con "Already exists". Fue lo unico rojo de la primera corrida.
+              if [ ! -e "$bin/$n" ] && [ ! -L "$bin/$n" ]; then ln -s "$f" "$bin/$n"; fi
+            done
+          done
+          if PATH="$bin" command -v curl >/dev/null 2>&1; then echo "::error::la precondicion no se cumple: sigue habiendo curl"; exit 1; fi
+          casa="$RUNNER_TEMP/casa-sin-red"; mkdir -p "$casa"
+          rc=0
+          HOME="$casa" XDG_CONFIG_HOME= XDG_DATA_HOME= PATH="$bin" bash install/bootstrap.sh || rc=$?
+          echo "bootstrap.sh salio con $rc"
+          if [ "$rc" -ne 3 ]; then echo "::error::bootstrap.sh sin descargador devolvio $rc (se esperaba 3: capa instalada, faltan dependencias)"; exit 1; fi
+          if [ ! -f "$casa/.config/opencode/agent/tecnia-bot.md" ]; then echo "::error::sin descargador la capa NO quedo instalada"; exit 1; fi
+          echo "  OK   sin curl ni wget la capa quedo instalada y el codigo es 3"
+
+      - name: uninstall.sh --conservar saca la capa
+        run: |
+          set -u
+          rc=0
+          bash install/uninstall.sh --conservar || rc=$?
+          if [ "$rc" -ne 0 ]; then echo "::error::uninstall.sh devolvio $rc"; exit 1; fi
+          cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+          if [ -f "$cfg/agent/tecnia-bot.md" ]; then echo "::error::el agente sigue instalado"; exit 1; fi
+          if [ -e "$cfg/plataforma" ]; then echo "::error::la carpeta plataforma sigue instalada"; exit 1; fi
+          if [ ! -f "$cfg/tecnia-perfil.md" ]; then echo "::error::--conservar borro el perfil"; exit 1; fi
+          echo "  OK   la capa salio y el perfil se conservo"
+
+  # MACOS, POR PRIMERA VEZ. El README anuncio macOS durante meses y nunca hubo una
+  # sola ejecucion en una Mac: ni runner, ni bitacora. Este job es la primera
+  # evidencia. Se corre con el /bin/bash del sistema (3.2), que es el que tiene una
+  # Mac recien sacada de la caja. Si se pone rojo, eso ES informacion: no se le pone
+  # continue-on-error.
+  macos:
+    name: Instalador real (macOS, bash 3.2 del sistema)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Que maquina es (lo que despues hay que citar como evidencia)
+        run: |
+          sw_vers
+          uname -m
+          /bin/bash --version | head -1
+          command -v python3 && python3 --version
+          xcode-select -p || echo "xcode-select -p fallo: no hay Command Line Tools"
+          command -v jq || echo "no hay jq"
+          command -v curl
+
+      - name: install.sh con el bash 3.2 del sistema (solo la capa)
+        env:
+          TECNIA_SIN_PROMPT: "1"
+        run: |
+          set -u
+          rc=0
+          /bin/bash install/install.sh || rc=$?
+          echo "install.sh salio con $rc"
+          if [ "$rc" -ne 0 ]; then echo "::error::install.sh devolvio $rc en macOS (se esperaba 0)"; exit 1; fi
+          cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+          [ -f "$cfg/agent/tecnia-bot.md" ] || { echo "::error::falta el agente en $cfg/agent"; exit 1; }
+          [ -f "$cfg/plataforma/cuenta.ts" ] || { echo "::error::falta la carpeta del vinculo con Tecnia Lab en $cfg/plataforma"; exit 1; }
+          agente="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("default_agent",""))' "$cfg/opencode.json")" || { echo "::error::opencode.json no parsea"; exit 1; }
+          [ "$agente" = "tecnia-bot" ] || { echo "::error::default_agent es [$agente]"; exit 1; }
+          modo="$(stat -f %Lp "$cfg/tecnia-perfil.md")"
+          [ "$modo" = "600" ] || { echo "::error::tecnia-perfil.md nacio con modo $modo (tiene que ser 600)"; exit 1; }
+          echo "  OK   la capa quedo instalada en macOS, con el perfil en 600"
+
+      - name: bootstrap.sh de punta a punta en macOS (OpenCode + PlatformIO + capa)
+        env:
+          TECNIA_SIN_PROMPT: "1"
+        run: |
+          set -u
+          rc=0
+          /bin/bash install/bootstrap.sh || rc=$?
+          echo "bootstrap.sh salio con $rc"
+          if [ "$rc" -ne 0 ]; then echo "::error::bootstrap.sh devolvio $rc en macOS (se esperaba 0)"; exit 1; fi
+          export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$PATH"
+          v="$(opencode --version 2>&1)" || { echo "::error::opencode --version no contesta: $v"; exit 1; }
+          echo "  OK   opencode --version = $v"
+          pv="$("$HOME/.platformio/penv/bin/pio" --version 2>&1)" || { echo "::error::pio --version no contesta: $pv"; exit 1; }
+          echo "  OK   $pv"
+
+      - name: uninstall.sh --conservar saca la capa en macOS
+        run: |
+          set -u
+          rc=0
+          /bin/bash install/uninstall.sh --conservar || rc=$?
+          if [ "$rc" -ne 0 ]; then echo "::error::uninstall.sh devolvio $rc"; exit 1; fi
+          cfg="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+          if [ -f "$cfg/agent/tecnia-bot.md" ]; then echo "::error::el agente sigue instalado"; exit 1; fi
+          if [ -e "$cfg/plataforma" ]; then echo "::error::la carpeta plataforma sigue instalada"; exit 1; fi
+          if [ ! -f "$cfg/tecnia-perfil.md" ]; then echo "::error::--conservar borro el perfil"; exit 1; fi
+          echo "  OK   la capa salio y el perfil se conservo"
 
   skills:
     name: Frontmatter de las skills (YAML)

@@ -95,6 +95,62 @@ jobs:
           if ($ver -notmatch '^\d+\.\d+\.\d+$') { Write-Host "::error::install\OPENCODE_VERSION instalado dice '$ver'"; exit 1 }
           Write-Host "  OK   OpenCode fijado en $ver"
 
+      # LA INSTALACION QUE HACE UN DOCENTE. El smoke test de arriba usa /skipdeps=1,
+      # que saltea justo lo dificil (Scoop, OpenCode, Python, PlatformIO, Node y la
+      # capa): con eso solo, un .exe que no instala nada daba verde. Aca se corre el
+      # .exe entero y se mira el disco. Contrato del .exe (encabezado del .iss):
+      # 0 = todo comprobado, 21 = instalado pero incompleto, 20 = el bootstrap fallo.
+      - name: Instalacion real del .exe (con dependencias) y verificacion en disco
+        shell: powershell
+        timeout-minutes: 40
+        run: |
+          $ErrorActionPreference = "Stop"
+          $exe = "installer\dist\Instalar-Tecnia-Bot.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          Write-Host "El instalador salio con $($p.ExitCode)"
+          $app = "$env:LOCALAPPDATA\TecniaBot"
+          if (Test-Path "$app\instalacion.log") { Get-Content "$app\instalacion.log" | Select-Object -Last 25 }
+          if ($p.ExitCode -ne 0) { Write-Host "::error::El .exe salio con $($p.ExitCode) (0 = bien, 21 = incompleto, 20 = fallo el bootstrap)"; exit 1 }
+          if (Test-Path "$app\.instalando") { Write-Host "::error::quedo la marca .instalando despues de instalar"; exit 1 }
+          $cfg = Join-Path $env:USERPROFILE ".config\opencode"
+          if (-not (Test-Path "$cfg\agent\tecnia-bot.md")) { Write-Host "::error::la capa NO quedo publicada en $cfg"; exit 1 }
+          if (-not (Test-Path "$cfg\plataforma\cuenta.ts")) { Write-Host "::error::la carpeta del vinculo con Tecnia Lab NO quedo publicada en $cfg"; exit 1 }
+          $oc = [System.IO.File]::ReadAllText("$cfg\opencode.json", (New-Object System.Text.UTF8Encoding $false)) | ConvertFrom-Json
+          if ($oc.default_agent -ne "tecnia-bot") { Write-Host "::error::default_agent es [$($oc.default_agent)]"; exit 1 }
+          $oce = Join-Path $env:USERPROFILE "scoop\apps\opencode\current\opencode.exe"
+          $v = (& $oce --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::opencode --version no contesta: $v"; exit 1 }
+          Write-Host "  OK   capa publicada, agente por defecto, OpenCode $v"
+          # El lanzador tiene que viajar en CRLF (lo fija .gitattributes): cmd.exe pierde
+          # etiquetas con LF, y hasta la 0.4.8 la VM probaba un lanzador en LF mientras
+          # el release lo publicaba en CRLF.
+          $b = [System.IO.File]::ReadAllBytes("$app\abrir-tecnia-bot.cmd")
+          $cr = @($b | Where-Object { $_ -eq 13 }).Count; $lf = @($b | Where-Object { $_ -eq 10 }).Count
+          if ($lf -eq 0 -or $cr -ne $lf) { Write-Host "::error::el lanzador instalado no esta en CRLF (CR=$cr LF=$lf)"; exit 1 }
+          Write-Host "  OK   el lanzador instalado esta en CRLF (CR=$cr LF=$lf)"
+
+      # Y SE DESINSTALA COMO LO HACE WINDOWS. Ningun CI habia corrido nunca
+      # unins000.exe. En silencio conserva los datos personales (no hay nadie para
+      # contestar el cartel), asi que eso es lo que se mira.
+      - name: Desinstalar con unins000.exe y verificar en disco
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          $app = "$env:LOCALAPPDATA\TecniaBot"
+          $cfg = Join-Path $env:USERPROFILE ".config\opencode"
+          if (-not (Test-Path "$cfg\tecnia-perfil.md")) { Write-Host "::error::precondicion: no hay perfil antes de desinstalar"; exit 1 }
+          $p = Start-Process -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          Write-Host "El desinstalador salio con $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { Write-Host "::error::unins000.exe salio con $($p.ExitCode)"; exit 1 }
+          # unins000.exe se copia a %TEMP% y sigue ahi un instante: se espera al proceso, no a un reloj.
+          $tope = (Get-Date).AddSeconds(60)
+          while ((Get-Process | Where-Object { $_.Name -like "_iu14D2N*" }) -and (Get-Date) -lt $tope) { Start-Sleep -Milliseconds 300 }
+          if (Test-Path "$cfg\agent\tecnia-bot.md") { Write-Host "::error::el agente sigue publicado despues de desinstalar"; exit 1 }
+          if (Test-Path "$cfg\tecnia-bot.manifest") { Write-Host "::error::el manifest sigue despues de desinstalar"; exit 1 }
+          foreach ($resto in "install", "opencode", "abrir-tecnia-bot.cmd", "VERSION") { if (Test-Path "$app\$resto") { Write-Host "::error::quedo $resto en la carpeta del programa"; exit 1 } }
+          if (-not (Test-Path "$cfg\tecnia-perfil.md")) { Write-Host "::error::la desinstalacion silenciosa borro el perfil (tenia que conservarlo)"; exit 1 }
+          Write-Host "  OK   se fue lo del programa y el perfil se conservo"
+
       # Sin esto nadie puede verificar que el .exe que bajo es el que publicamos.
       # Importa mas de lo que parece: el instalador NO ESTA FIRMADO, asi que la
       # unica forma de comprobar que no lo tocaron en el camino es comparar el

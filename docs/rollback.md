@@ -46,7 +46,7 @@ costo: conviene agotar otras opciones antes.
 
 ## Qué hacer, en orden
 
-### 1. Que el docente instale la versión vieja (30 segundos)
+### 1. Que el docente desinstale Tecnia Bot e instale la versión vieja
 
 Es lo primero y casi siempre alcanza. Los releases viejos **no se borran**:
 
@@ -54,7 +54,30 @@ Es lo primero y casi siempre alcanza. Los releases viejos **no se borran**:
 https://github.com/programadores-obreros/Agente-editor-inet/releases/tag/v0.3.69
 ```
 
-Bajar el `.exe` de ahí e instalarlo encima. No hace falta desinstalar nada.
+Son dos pasos, en este orden:
+
+1. Menú inicio → **"Desinstalar Tecnia Bot"**. Cuando pregunte por los datos
+   personales, **"No"**: así se conservan el perfil, la memoria del aula y la key.
+2. Bajar el `.exe` de esa dirección e instalarlo.
+
+**Hay que desinstalar primero; instalar el `.exe` viejo encima no alcanza.** Este
+documento decía las dos cosas a la vez —"no hace falta desinstalar nada" y, tres
+renglones más abajo, "desinstalá primero"—, y la que vale es la segunda. Un
+`.exe` viejo no sabe limpiar los archivos que sumó una versión más nueva: copia
+lo suyo arriba y deja mezcladas piezas de las dos versiones. El instalador
+**actual** borra su copia de `opencode` antes de copiar (`[InstallDelete]` en
+`installer/tecnia-bot.iss`), pero eso protege cuando el `.exe` que
+se corre es uno que ya trae esa línea — y en un rollback el que se corre es el
+viejo, que no la tiene.
+
+"Desinstalar Tecnia Bot" saca sólo Tecnia Bot. **No** toca OpenCode, Scoop,
+Python ni PlatformIO, así que no es el "empezar limpio" que se desaconseja más
+abajo.
+
+Un costo a tener presente: volver a la 0.4.8 o a una anterior devuelve el
+instalador de antes de la reparación. Su última pantalla dice "quedó instalado"
+siempre, haya salido como haya salido, y su desinstalador no avisa si el borrado
+de los datos personales falló.
 
 **Nota (Phase 2, packaging, D14/INST-1=D):** para volver a una versión
 anterior, desinstalá primero. Un `.exe` viejo no sabe limpiar las piezas que
@@ -79,8 +102,25 @@ irreversible y no hace falta.
 Y cubre también a los que actualizan desde el bot: `/actualizar` instala lo que
 GitHub marca como **Latest** (nunca `main` ni prereleases) y compara la versión
 instalada con ese tag, no con "mayor o menor". Después de este paso, quien corra
-`/actualizar` —tenga la rota o una intermedia— queda en la v0.3.69. Es la misma
-salida que el paso 1, sin bajar el `.exe`.
+`/actualizar` —tenga la rota o una intermedia— queda con la capa de la v0.3.69.
+
+**No es lo mismo que el paso 1**, y antes este documento decía que sí. Lo que
+hace `/actualizar` hoy (`install/update.ps1`):
+
+- Baja el fuente de ese release, verifica que sea esa versión y **reemplaza**
+  las carpetas `opencode\` e `install\` de la copia del programa: no copia
+  encima, así que no quedan archivos de la versión rota mezclados. Después corre
+  el instalador de la capa **del release al que se volvió**.
+- **No cambia** OpenCode, Python, PlatformIO ni Node: quedan en la versión que
+  dejó la rota. Si lo que se rompió fue la versión fijada de alguno de esos,
+  `/actualizar` no lo arregla: hace falta el paso 1.
+- **No cambia** el desinstalador ni los accesos directos, que son del `.exe`. Y
+  el lanzador (`abrir-tecnia-bot.cmd`) no lo reemplaza mientras haya una ventana
+  de Tecnia Bot abierta con él: avisa y lo deja.
+- `/actualizar` lo atiende el modelo. **Si la versión rota dejó al bot sin
+  contestar, `/actualizar` tampoco contesta.** Ahí queda el paso 1, o correr el
+  actualizador a mano: `powershell -NoProfile -ExecutionPolicy Bypass -File
+  "%LOCALAPPDATA%\TecniaBot\install\update.ps1"`.
 
 ### 3. Recién ahí, revertir el código
 
@@ -96,15 +136,19 @@ sobre `main` publicado le rompe el clon a cualquiera que ya haya bajado.
 
 - **No borrar el release viejo.** Es la única salida rápida que tiene el docente.
 - **No `git push --force` a `main`.** El repo es público.
-- **No desinstalar nada de la máquina del docente para "empezar limpio".** La
-  regla del instalador vale también acá: PUEDE FALLAR, PERO NO PUEDE ROMPER.
-  Una notebook que andaba quedó sin OpenCode por un `scoop uninstall` puesto con
-  buena intención.
+- **No desinstalar OpenCode, Scoop, Python ni PlatformIO de la máquina del
+  docente para "empezar limpio".** La regla del instalador vale también acá:
+  PUEDE FALLAR, PERO NO PUEDE ROMPER. Una notebook que andaba quedó sin OpenCode
+  por un `scoop uninstall` puesto con buena intención. ("Desinstalar Tecnia Bot",
+  el del paso 1, es otra cosa: saca sólo Tecnia Bot.)
 
 ## Cómo saber si la nueva está bien, sin esperar a que se queje alguien
 
 CI corre un smoke test de instalación silenciosa en cada tag. Si ese falla, el
-`.exe` ni se adjunta al release y no hay nada que revertir:
+`.exe` ni se adjunta al release y no hay nada que revertir. Ojo con lo que ese
+test mide: instala con `/skipdeps=1`, o sea que comprueba que el `.exe` copia
+los archivos y crea el acceso directo, **no** que OpenCode y PlatformIO se
+instalen. Eso lo corre aparte el job "Instalador real" de `ci.yml`.
 
 ```bash
 gh run list --workflow=build-installer.yml --limit 3
@@ -112,9 +156,14 @@ gh run list --workflow=build-installer.yml --limit 3
 
 Y en una máquina de verdad, lo mínimo:
 
-1. El acceso directo abre y el bot responde.
-2. Pedirle una ficha de nombre compuesto: **«dame la de corriente alterna»**.
-   Es lo que arregló esta versión — si contesta que no la encuentra, volvió el bug.
-3. Pedirle un circuito y confirmar que **no** abre el navegador solo.
-4. Menú inicio → "Diagnostico de Tecnia Bot": tiene que dejar el `.txt` y
+1. La última pantalla del instalador dice **"¡Tecnia Bot quedó instalado!"** (y
+   no "incompleto" ni "NO quedó instalado").
+2. El acceso directo abre y el bot responde.
+3. Probar **lo que esa versión dice que arregló**: está en su entrada del
+   `CHANGELOG`. (Acá había un paso fijo —pedir la ficha «de corriente alterna»—
+   que era lo que arreglaba la v0.3.69. Quedó escrito como si valiera para todas.)
+4. Pedirle un circuito y confirmar que **no** abre el navegador solo.
+5. Menú inicio → "Diagnostico de Tecnia Bot": tiene que dejar el `.txt` y
    decir dónde quedó.
+
+El guion completo, con hardware, es [`prueba-rc.md`](prueba-rc.md).

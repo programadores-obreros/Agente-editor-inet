@@ -47,8 +47,16 @@ test("bootstrap.ps1 instala OpenCode FIJANDO la versión, nunca 'la última'", (
     [],
     "hay un `scoop install opencode` sin versión: esa PC se lleva la última que haya ese día",
   )
-  const fijados = ps1.split("\n").filter((l) => !/Write-Host/.test(l) && /scoop install opencode@\$OpenCodeVersion/.test(l))
-  assert.ok(fijados.length >= 1, "ningún `scoop install opencode@$OpenCodeVersion`: el bootstrap no instala la versión fijada")
+  // DESDE LA 0.4.10 LA FIJADA SE INSTALA DESDE EL MANIFEST PROPIO, no con
+  // `opencode@<ver>`. Este test exigía al menos un `scoop install
+  // opencode@$OpenCodeVersion`, y eso era exactamente lo que se rompió el
+  // 2026-11-11: Scoop regenera la URL con la plantilla ACTUAL del bucket, el bucket
+  // pasó a la 2.x en npm, y la 1.18.18 dio 404 en todas las instalaciones nuevas.
+  // El test estaba verde ese día: custodiaba la forma del comando, no que la
+  // versión se pudiera bajar. El detalle del manifest lo mira
+  // tests/opencode-manifest.test.mjs.
+  const fijados = ps1.split("\n").filter((l) => !/Write-Host/.test(l) && /scoop install \$ManifiestoOpenCode\b/.test(l))
+  assert.ok(fijados.length >= 1, "ningún `scoop install $ManifiestoOpenCode`: el bootstrap no instala la versión fijada")
 })
 
 test("bootstrap.ps1 lee la versión de install/OPENCODE_VERSION, relativo a sí mismo, y corta si falta", () => {
@@ -68,8 +76,14 @@ test("bootstrap.ps1 no cambia de versión desinstalando: como mucho `scoop reset
   // La regla de siempre: puede fallar, pero no puede romper. `scoop reset
   // app@ver` sólo mueve el junction 'current' y rehace los shims (libexec/
   // scoop-reset.ps1); si la versión no está, dice "isn't installed" y no toca nada.
+  //
+  // DESDE LA 0.4.11 HAY UN `scoop uninstall`, UNO SOLO, y este test cambió con él. Scoop no
+  // instala nuestro manifest al lado de otra versión ("already installed"), así que con el
+  // OpenCode 2.x de un docente no había forma de llegar a la fijada. Se saca el que había,
+  // pero la regla sigue en pie porque ANTES se baja la fijada y se comprueba en el disco.
+  // El orden lo cuida tests/instalador.test.mjs ("repara solo, UNA vez...").
   const comandos = ps1.split("\n").filter((l) => !/Write-Host/.test(l))
-  assert.deepEqual(comandos.filter((l) => /scoop uninstall/.test(l)), [], "hay un scoop uninstall")
+  assert.equal(comandos.filter((l) => /scoop uninstall/.test(l)).length, 1, "tiene que haber un único scoop uninstall (el de Quitar-OpenCodeAjeno)")
   const resets = comandos.filter((l) => /scoop reset opencode@\$OpenCodeVersion/.test(l))
   assert.ok(resets.length >= 1, "no hay `scoop reset opencode@$OpenCodeVersion` para activar la fijada cuando ya está en disco")
 })
@@ -195,14 +209,37 @@ test("bootstrap.ps1 captura TODOS los streams de scoop hold/reset (*>&1), no sol
 // Notebook real (2026-09-06): tenia 1.18.19 -> 1.18.29 por auto-update y NUNCA la fijada.
 // El bootstrap decia "se deja como esta" y el pin no servia para nada. `scoop install
 // opencode@<ver>` con otra version instalada la pone AL LADO y cambia current: no borra nada.
-test("bootstrap.ps1 instala la version fijada al lado cuando no esta en el disco, y verifica que arranca", () => {
-  const i = ps1.indexOf("no esta en el disco: la instalo al lado")
+//
+//
+// 0.4.10: LA RAMA SIGUE, PERO HOY NO CAMBIA LA VERSIÓN, Y LO DICE. `opencode@<ver>` dejó
+// de poder bajar una 1.x (el bucket pasó a la 2.x), y con el manifest propio Scoop NO
+// instala "al lado": con otra versión activa contesta "already installed" y sale con 0.
+// Se conserva la rama entera —releer la versión, ejecutar OpenCode, probar el baseline,
+// marcar la falla— porque es lo que hace que el resultado se lea del disco y no del
+// comando. Lo que cambió es el consejo final: ya no manda a correr un comando que da 404.
+test("bootstrap.ps1: con otra version activa y la fijada fuera del disco, intenta desde el manifest y relee lo que quedo", () => {
+  const i = ps1.indexOf("no esta en el disco: la bajo antes de tocar nada")
   assert.ok(i > 0, "no existe la rama 'la fijada no esta en el disco'")
-  const rama = ps1.slice(i, i + 2500)
-  assert.match(rama, /scoop install opencode@\$OpenCodeVersion \*>&1/, "no instala la fijada (o no captura todos los streams)")
+  const rama = ps1.slice(i, i + 3200)
+  assert.match(rama, /scoop install \$ManifiestoOpenCode \*>&1/, "no instala desde el manifest (o no captura todos los streams)")
   assert.match(rama, /Get-OpenCodeVersionInstalada/, "no relee la version tras instalar")
   assert.match(rama, /Test-OpenCode\)/, "no comprueba que OpenCode CORRA despues de instalar")
-  assert.doesNotMatch(rama, /Se deja como esta/, "sigue dejando la version que haya")
+  assert.doesNotMatch(rama, /Se deja como esta/, "sigue dejando la version que haya sin decirlo")
+  // El consejo: dice qué versión queda y NO manda a tipear la forma que da 404.
+  assert.match(rama, /Queda la \$quedo, que arranca/, "cuando no pudo cambiar de versión no dice cuál queda")
+  assert.doesNotMatch(rama, /opencode@\$OpenCodeVersion"/, "le sigue aconsejando al docente `scoop install opencode@<ver>`, que da 404")
+})
+
+test("bootstrap.ps1 NUNCA le pega `@<version>` a la ruta del manifest (Scoop instalaría el del bucket)", () => {
+  // lib/manifest.ps1 de Scoop, generate_user_manifest: si la versión pedida coincide con
+  // la del archivo devuelve `manifest_path $app $bucket` con $bucket vacío, que
+  // Find-BucketDirectory resuelve a 'main'. O sea: `scoop install ruta.json@1.18.18`
+  // instala el opencode.json DEL BUCKET (hoy 2.x). Es un arreglo "obvio" que rompe todo.
+  assert.doesNotMatch(ps1, /\$ManifiestoOpenCode@/, "hay un `$ManifiestoOpenCode@...`")
+  assert.doesNotMatch(ps1, /ManifiestoOpenCode\)?"?@\$?OpenCodeVersion/, "la ruta del manifest lleva la versión pegada")
+  // Y ya no queda ninguna instalación por el bucket con versión, que es la que da 404.
+  const porBucket = ps1.split("\n").filter((l) => !/Write-Host/.test(l) && /scoop install opencode@/.test(l))
+  assert.deepEqual(porBucket.map((l) => l.trim()), [], "queda un `scoop install opencode@...`: depende de la plantilla del bucket y hoy da 404")
 })
 
 test("el lanzador reintenta una vez antes de decir que OpenCode no arranca", () => {
@@ -226,11 +263,27 @@ test("bootstrap.ps1: si Scoop dice 'already installed' al instalar la fijada, la
 // El shim de Scoop fallo dos veces con el binario sano. Antes de declarar "no arranca",
 // Test-OpenCode le pregunta al binario real y, si contesta, repara el shim.
 test("Test-OpenCode prueba el binario real si el shim falla, y repara el shim", () => {
+  // ESTE RECORTE ESTABA ROTO Y NADIE LO VEÍA. El último assert cortaba la función
+  // en `fn.indexOf("return $false")`, pero `fn` era una ventana fija de 3000
+  // caracteres y Test-OpenCode creció: el `return $false` quedó AFUERA de la
+  // ventana, `indexOf` daba -1 y `slice(0, -1)` devolvía la ventana entera menos un
+  // carácter. Medido el 2026-11-15 con una precarga que anota cada `slice` que
+  // recibe -1: `slice(0,-1) len=3000`, en esta línea. No daba un verde falso por
+  // casualidad (la ventana no tenía el `Test-Path`), pero medía «los primeros 3000
+  // caracteres», no «la función». Ahora se toma la función entera, contando llaves.
   const i = ps1.indexOf("function Test-OpenCode {")
-  const fn = ps1.slice(i, i + 3000)
+  assert.ok(i >= 0, "bootstrap.ps1 no define Test-OpenCode")
+  let fin = -1
+  for (let j = ps1.indexOf("{", i), nivel = 0; j < ps1.length; j++) {
+    if (ps1[j] === "{") nivel++
+    else if (ps1[j] === "}" && --nivel === 0) { fin = j + 1; break }
+  }
+  assert.ok(fin > i, "Test-OpenCode no cierra llave")
+  const fn = ps1.slice(i, fin)
   assert.match(fn, /& \$BinOpenCode --version/, "no prueba el binario real")
   assert.match(fn, /Reparar-Shim/, "no repara el shim cuando el binario anda")
-  assert.doesNotMatch(fn.slice(0, fn.indexOf("return $false")), /Test-Path \$BinOpenCode/, "decide por 'el archivo esta' en vez de ejecutarlo")
+  assert.match(fn, /return \$false\s*\n(?:\s*\}\s*(?:finally\s*\{[^}]*\}\s*)?)*$/, "la función no termina devolviendo $false cuando nada contestó")
+  assert.doesNotMatch(fn, /Test-Path \$BinOpenCode/, "decide por 'el archivo esta' en vez de ejecutarlo")
 })
 
 // Inno Setup 6.7.0 activa RedirectionGuard por defecto y la heredan los hijos: el bootstrap
