@@ -23,6 +23,9 @@ import { join, dirname, isAbsolute } from "node:path"
 import { fileURLToPath } from "node:url"
 import os from "node:os"
 
+/** La plataforma de la máquina, leída antes de que ningún test la pise. Ver el último test. */
+const PLATAFORMA_REAL = process.platform
+
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = join(os.tmpdir(), "tecniabot-platformio-execute-test")
 const HOME_FALSO = join(OUT, "home")
@@ -357,8 +360,21 @@ test("diagnostico en Windows (simulado): Get-CimInstance en UTF-8, y lee el CH34
 // `finally` para no filtrarle la plataforma falsa a los tests que corren
 // despues (node --test comparte el módulo entero).
 
+// ESTE AYUDANTE NO RESTAURABA NADA, y el comentario de arriba decía que sí. Devolvía lo que
+// devuelve `Object.defineProperty`, que es el objeto `process`, no el descriptor de antes; el
+// `finally` de cada test hacía `defineProperty(process, "platform", process)`, que no cambia
+// nada. «darwin» quedaba puesto para todos los tests siguientes del archivo.
+// Se descubrió el 2026-11-23 al unir esta línea con la de intención, que tiene un ayudante
+// igual para «win32»: juntos, un test que lee `/dev/ttyUSB0` corrió con «win32» y se puso rojo.
+// Ahora devuelve el descriptor ORIGINAL, que es lo que el `finally` necesita.
+function conPlataforma(valor) {
+  const original = Object.getOwnPropertyDescriptor(process, "platform")
+  Object.defineProperty(process, "platform", { value: valor, configurable: true })
+  return original
+}
+
 function comoDarwin() {
-  return Object.defineProperty(process, "platform", { value: "darwin", configurable: true })
+  return conPlataforma("darwin")
 }
 
 test("puertoValido(): acepta las formas reales de las tres plataformas", () => {
@@ -1093,4 +1109,18 @@ test("diagnostico sin placa: el estado sigue siendo «ninguna placa», y las her
   const { r } = await diagnosticoConCore([], [])
   assert.match(r, /Ninguna placa conectada/, r)
   assert.match(r, /\*\*Herramientas de las placas[^\n]*FALTAN/, "sin placa no informa el estado de las herramientas")
+})
+
+// Va último a propósito. Si algún test de arriba pisa `process.platform` y no lo devuelve,
+// este se pone rojo acá en vez de romper, sin explicación, a otro test más abajo.
+//
+// POR QUÉ COMPARA CONTRA `PLATAFORMA_REAL` Y NO CONTRA `os.platform()`. Mi primera versión
+// hacía `assert.equal(process.platform, os.platform())` y era un adorno: `os.platform()` LEE
+// `process.platform`, así que con la plataforma falsa puesta comparaba «darwin» con «darwin».
+// Lo descubrí porque lo corrí contra el ayudante viejo esperando rojo y dio verde. La
+// plataforma real hay que guardarla ANTES de que corra ningún test (arriba, al cargar el archivo).
+//
+// Mutación que lo pone rojo (probada): que `conPlataforma` devuelva lo que devuelve defineProperty.
+test("al terminar el archivo, process.platform es el de la máquina (nadie dejó una plataforma falsa)", () => {
+  assert.equal(process.platform, PLATAFORMA_REAL)
 })
