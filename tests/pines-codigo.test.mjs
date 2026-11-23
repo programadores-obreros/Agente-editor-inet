@@ -2043,3 +2043,146 @@ test("la leyenda distingue cuando 'Allow always' no se puede guardar, con la mis
   assert.match(tsx, /Allow always = igual vuelve a preguntar la próxima vez/)
   assert.match(tsx, /\.endsWith\(MARCA_SIEMPRE_PREGUNTA\) \? LEYENDA_SIEMPRE : LEYENDA_CHECKLIST/)
 })
+
+// ── PIO-04 · CON EL PUERTO A MANO, EL AVISO DE «OTRA PLACA» NO SE APAGA ───────
+//
+// Auditoría de código del 2026-11-22, reproducido por QA con una placa con número de
+// serie y dos proyectos A y B. Con autodetección, cargar B sobre la placa que tenía A
+// muestra el cartel «Otra placa u otro proyecto en esta placa». Con `port` a mano: 0
+// carteles, «Codigo cargado exitosamente», y el registro de la compu ni se enteraba
+// (seguía diciendo que la placa tenía B). Y es el propio tool el que manda a usar
+// `port` cuando hay varias placas enchufadas: en un aula, justo ahí, el aviso quedaba
+// apagado siempre.
+//
+// La causa: la identidad de la placa (el hwid) sólo se obtenía al autodetectar. Con el
+// puerto a mano se cargaba «a ciegas» aunque `pio device list` supiera qué había ahí.
+//
+// Decisión del owner (2026-11-23): con el puerto a mano se busca qué placa hay en ESE
+// puerto y se compara como siempre; si no se puede reconocer, se pregunta.
+//
+// MUTACIONES que ponen rojo este bloque (ver el commit):
+//   - no buscar el hwid del puerto a mano                       → rojos 1, 2, 5 y 6
+//   - no preguntar cuando no se reconoce                        → rojos 3 y 4
+//   - preguntar SIEMPRE con puerto a mano                       → rojo 2
+//   - comparar puertos sin ignorar mayúsculas (COM3 / com3)     → rojo «mismoPuerto»
+//   - el cartel de «no reconozco» sin su título                 → rojo 3
+//   - sólo arreglar `flash` y no `both`                         → rojo 5
+
+const flashA = (dir, extra = {}) => ejecutarOC({ action: "flash", project_path: dir, ...extra })
+
+test("PIO-04 · 1: la secuencia de la auditoría — B en la placa, se carga A con el puerto a mano, y pregunta", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  const A = proyecto("esp32dev", RELE_26)
+  const B = proyecto("esp32dev", CON_BUZZER)
+  humano = "allow"
+  await flashA(A)
+  await flashA(B) // la placa queda con B
+  const antes = carteles.length
+  const r = await flashA(A, { port: CP2102_A.port })
+  assert.equal(carteles.length, antes + 1, `con el puerto a mano no preguntó: ${r}`)
+  assert.match(carteles.at(-1).permission, /otro proyecto en esta placa/i)
+  assert.match(r, /Codigo cargado exitosamente/)
+  // Y el registro se entera: la placa ahora tiene A, así que B vuelve a preguntar.
+  const antes2 = carteles.length
+  await flashA(B)
+  assert.equal(carteles.length, antes2 + 1, "la carga con puerto a mano no quedó anotada en el registro de la placa")
+})
+
+test("PIO-04 · 2: mismo proyecto, misma placa, puerto a mano: reconocida, NO pregunta de más", async () => {
+  // El contrapeso: «preguntar siempre que haya puerto a mano» también pondría verde el
+  // caso 1, y en un aula sería un cartel en cada carga.
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A, CP2102_B] })
+  const A = proyecto("esp32dev", RELE_26)
+  humano = "allow"
+  await flashA(A, { port: CP2102_A.port })
+  assert.equal(carteles.length, 1, "la primera vez pregunta por el circuito nuevo")
+  await flashA(A, { port: CP2102_A.port })
+  await flashA(A, { port: CP2102_A.port })
+  assert.equal(carteles.length, 1, "misma placa y mismo proyecto: no hay nada que preguntar")
+  // Y la otra placa, por su puerto, sí es otra placa.
+  await flashA(A, { port: CP2102_B.port })
+  assert.equal(carteles.length, 2)
+  assert.match(carteles.at(-1).permission, /otra placa/i)
+})
+
+test("PIO-04 · 3: un puerto que no está entre los que se ven: pregunta cada vez, y lo dice", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  const A = proyecto("esp32dev", RELE_26)
+  humano = "always"
+  for (const vuelta of [1, 2, 3]) {
+    const r = await flashA(A, { port: "/dev/ttyUSB7" })
+    assert.equal(carteles.length, vuelta, `vuelta ${vuelta}: ${r}`)
+    assert.deepEqual(carteles.at(-1).always, [], "«Allow always» no puede valer para una placa que no se sabe cuál es")
+    assert.ok(carteles.at(-1).permission.endsWith(mod.MARCA_SIEMPRE_PREGUNTA))
+    assert.match(carteles.at(-1).metadata.motivo, /\/dev\/ttyUSB7/)
+    assert.match(carteles.at(-1).metadata.motivo, /no (?:pude|puedo) (?:reconocer|saber)/i)
+    // El TÍTULO del cartel, que es lo que la persona lee primero. En la primera vuelta
+    // manda «Cambió» (el circuito es nuevo) y lo de la placa va detrás; en las otras no
+    // cambió nada, y el título tiene que decir por qué se pregunta. Sin esto, sacar el
+    // título dejaba un cartel sin nombre y este test seguía en verde.
+    assert.match(carteles.at(-1).permission, /no puedo saber qué placa es/i, carteles.at(-1).permission)
+  }
+})
+
+test("PIO-04 · 4: si no se pueden listar los puertos, con el puerto a mano pregunta y dice por qué", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  const A = proyecto("esp32dev", RELE_26)
+  humano = "allow"
+  await flashA(A) // primera carga, con todo andando
+  const conLista = guion
+  guion = (cmd) => (cmd.join(" ").includes("device list") ? { code: 1, stderr: "pyserial roto\n" } : conLista(cmd))
+  try {
+    const antes = carteles.length
+    const r = await flashA(A, { port: CP2102_A.port })
+    assert.equal(carteles.length, antes + 1, r)
+    assert.match(carteles.at(-1).metadata.motivo, /no pude ver los puertos/i)
+    assert.match(r, /Codigo cargado exitosamente/, "que no se pueda reconocer la placa no impide cargar: el docente decide")
+  } finally {
+    guion = conLista
+  }
+})
+
+test("PIO-04 · 5: lo mismo por `both` (compilar y cargar)", async () => {
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A] })
+  const A = proyecto("esp32dev", RELE_26)
+  const B = proyecto("esp32dev", CON_BUZZER)
+  humano = "allow"
+  await ejecutarOC({ action: "both", project_path: A })
+  await ejecutarOC({ action: "both", project_path: B })
+  const antes = carteles.length
+  await ejecutarOC({ action: "both", project_path: A, port: CP2102_A.port })
+  assert.equal(carteles.length, antes + 1)
+  assert.match(carteles.at(-1).permission, /otro proyecto en esta placa/i)
+})
+
+test("PIO-04 · 6: cargar con el puerto a mano ya no borra de qué placa era el proyecto", async () => {
+  // Lo que la auditoría anotó como omisión: tras una carga con puerto a mano el proyecto
+  // quedaba sin placa anotada, y la carga siguiente en OTRA placa no avisaba.
+  nuevaInstancia()
+  escenario({ placas: [CP2102_A, CP2102_B] })
+  const A = proyecto("esp32dev", RELE_26)
+  humano = "allow"
+  await flashA(A, { port: CP2102_A.port })
+  escenario({ placas: [CP2102_B] })
+  const antes = carteles.length
+  await flashA(A) // autodetecta la B
+  assert.equal(carteles.length, antes + 1)
+  assert.match(carteles.at(-1).permission, /otra placa/i)
+})
+
+test("PIO-04 · mismoPuerto: COM3 y com3 son el mismo en Windows; en Linux y Mac se compara exacto, salvo cu./tty.", () => {
+  assert.equal(mod.mismoPuerto("COM3", "com3", "win32"), true)
+  assert.equal(mod.mismoPuerto("COM3", "COM30", "win32"), false)
+  assert.equal(mod.mismoPuerto("/dev/ttyUSB0", "/dev/ttyUSB0", "linux"), true)
+  assert.equal(mod.mismoPuerto("/dev/ttyUSB0", "/dev/ttyusb0", "linux"), false)
+  assert.equal(mod.mismoPuerto("/dev/ttyUSB0", "/dev/ttyUSB01", "linux"), false)
+  assert.equal(mod.mismoPuerto("/dev/cu.usbserial-14140", "/dev/tty.usbserial-14140", "darwin"), true)
+  assert.equal(mod.mismoPuerto("/dev/cu.usbserial-14140", "/dev/cu.usbserial-14141", "darwin"), false)
+  assert.equal(mod.mismoPuerto(" /dev/ttyUSB0 ", "/dev/ttyUSB0", "linux"), true, "un espacio de más al escribirlo no lo hace otro puerto")
+  assert.equal(mod.mismoPuerto(undefined, "/dev/ttyUSB0", "linux"), false)
+})

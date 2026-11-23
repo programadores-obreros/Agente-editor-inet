@@ -935,6 +935,42 @@ async function listarPuertos(cwd: string, signal?: AbortSignal): Promise<ListaDe
   return { ok: false, motivo: "PlatformIO contesto algo que no es una lista de puertos" }
 }
 
+/** Si dos formas de escribir un puerto nombran el mismo. En Windows «COM3» y «com3» son el
+ * mismo; en Mac cada puerto existe como `/dev/cu.X` y `/dev/tty.X`. En el resto se compara
+ * exacto: no se adivina por parecido. */
+export function mismoPuerto(a: string | undefined, b: string | undefined, plataforma: string = process.platform): boolean {
+  if (typeof a !== "string" || typeof b !== "string") return false
+  const normal = (x: string) => {
+    const limpio = x.trim()
+    if (plataforma === "win32") return limpio.toLowerCase()
+    if (plataforma === "darwin") return limpio.replace(/^\/dev\/tty\./, "/dev/cu.")
+    return limpio
+  }
+  return normal(a) !== "" && normal(a) === normal(b)
+}
+
+/**
+ * Qué placa hay en un puerto que se indicó A MANO (PIO-04, auditoría de código del
+ * 2026-11-22; decisión del owner del 2026-11-23).
+ *
+ * La identidad de la placa sólo se obtenía al autodetectar. Con `port` se cargaba a ciegas:
+ * el cartel de «otra placa u otro proyecto en esta placa» no aparecía nunca, y el registro
+ * de la compu no se enteraba de la carga. Y es este mismo tool el que manda a usar `port`
+ * cuando hay varias placas enchufadas.
+ *
+ * Devuelve el hwid si `pio device list` nombra ese puerto y de su hwid sale una identidad;
+ * si no, por qué no se pudo, para que el cartel lo diga. Nunca frena la carga: quien decide
+ * es la persona, con el cartel.
+ */
+async function placaDelPuerto(puerto: string, cwd: string, signal?: AbortSignal): Promise<{ hwid: string } | { porQueNo: string }> {
+  const puertos = await listarPuertos(cwd, signal)
+  if (!puertos.ok) return { porQueNo: `no pude ver los puertos USB (${puertos.motivo})` }
+  const hallado = puertos.devices.find((d) => mismoPuerto(d.port, puerto))
+  if (!hallado) return { porQueNo: `${puerto} no aparece entre los puertos que veo` }
+  if (!hallado.hwid || !identidadDePlaca(hallado.hwid)) return { porQueNo: `lo que hay en ${puerto} no dice qué placa es` }
+  return { hwid: hallado.hwid }
+}
+
 async function detectPort(cwd: string, signal?: AbortSignal): Promise<{ port: string; hwid?: string } | { error: string }> {
   const puertos = await listarPuertos(cwd, signal)
   if (!puertos.ok) {
@@ -3332,6 +3368,8 @@ export function pedidoDeCarga(
   cwd: string,
   hwid: string | undefined,
   cargas: CargasGlobal = leerCargasGlobal(),
+  /** Con el puerto indicado a mano y sin poder reconocer la placa: por qué no se pudo. */
+  sinReconocer?: string,
 ): { pedido?: PedidoChecklist; aviso?: string } {
   if (!a || bloqueoAntesDeCargar(a)) return {}
   const ident = identidadDePlaca(hwid)
@@ -3374,6 +3412,16 @@ export function pedidoDeCarga(
       dePlaca = noSeSabe ? "No puedo saber si es la misma placa" : "Otra placa u otro proyecto en esta placa"
       if (!detalle) detalle = `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`
     }
+  }
+  /*
+   * Puerto a mano y placa sin reconocer (PIO-04): no se puede comparar con la ultima
+   * carga ni mirar que tenia esa placa, asi que se pregunta. Mismo criterio que el resto
+   * del cartel de placa: solo si el codigo maneja algun pin, y nunca guarda "always".
+   */
+  if (sinReconocer && !incompleto && a.huella.entradas.length > 0 && !dePlaca) {
+    motivos.push(`Me indicaste el puerto a mano y no pude reconocer qué placa hay ahí: ${sinReconocer}. No puedo saber si es la misma placa de la última carga ni si tenía otro proyecto.`)
+    dePlaca = "No puedo saber qué placa es"
+    if (!detalle) detalle = `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`
   }
   if (motivos.length === 0) return aviso ? { aviso } : {}
   /*
@@ -3853,14 +3901,20 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         if (bloqueo) return bloqueo
         let puerto = args.port
         let hwid: string | undefined
+        let sinReconocer: string | undefined
         if (!puerto) {
           const detected = await detectPort(cwd, signal)
           if ("error" in detected) return detected.error
           puerto = detected.port
           hwid = detected.hwid
+        } else {
+          // Puerto a mano: se busca que placa hay AHI (ver placaDelPuerto).
+          const placa = await placaDelPuerto(puerto, cwd, signal)
+          if ("hwid" in placa) hwid = placa.hwid
+          else sinReconocer = placa.porQueNo
         }
         // Un solo cartel, ya con la placa (ver pedidoDeCarga).
-        const carga = pedidoDeCarga(analisis, previa, cwd, hwid)
+        const carga = pedidoDeCarga(analisis, previa, cwd, hwid, undefined, sinReconocer)
         if (carga.pedido) {
           const no = await preguntarChecklist(ctx, carga.pedido)
           if (no) return no
@@ -3888,14 +3942,20 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         if (bloqueo) return `La compilacion fue bien. ${bloqueo}`
         let puerto = args.port
         let hwid: string | undefined
+        let sinReconocer: string | undefined
         if (!puerto) {
           const detected = await detectPort(cwd, signal)
           if ("error" in detected) return detected.error
           puerto = detected.port
           hwid = detected.hwid
+        } else {
+          // Puerto a mano: se busca que placa hay AHI (ver placaDelPuerto).
+          const placa = await placaDelPuerto(puerto, cwd, signal)
+          if ("hwid" in placa) hwid = placa.hwid
+          else sinReconocer = placa.porQueNo
         }
         // Un solo cartel, ya con la placa (ver pedidoDeCarga).
-        const carga = pedidoDeCarga(analisis, previa, cwd, hwid)
+        const carga = pedidoDeCarga(analisis, previa, cwd, hwid, undefined, sinReconocer)
         if (carga.pedido) {
           const no = await preguntarChecklist(ctx, carga.pedido)
           if (no) return `La compilacion fue bien. ${no}`
