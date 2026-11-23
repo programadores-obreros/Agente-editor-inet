@@ -386,7 +386,7 @@ test("Engine directo, POST /api/operaciones (servidor real en 127.0.0.1:0), snap
       method: "POST",
       // Origin: fix H3 (red-team, servidor-proyecto.ts) -- `fetch()` de Node no lo
       // agrega solo, se pasa explicito con el mismo origen que `servidor.url`.
-      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin },
+      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin, "X-Tecnia-Token": servidor.token },
       body: JSON.stringify({ idOperacion: "crosspath-post-1", actor: "navegador", baseRevision: revisionAntes, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "senal", pin: "GPIO12" } }),
     })
     assert.equal(respuesta.status, 200)

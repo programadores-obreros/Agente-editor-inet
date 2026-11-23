@@ -342,16 +342,16 @@ La respuesta siempre incluye un resumen del proyecto (vacío, o placa/piezas/pin
     }
 
     if (!debeAbrirNuevaPestana(yaAbiertoEnEsteProceso, args.reabrir)) {
-      return `${mensajeYaAbierta(servidor.url)} ${resumen}`
+      return `${mensajeYaAbierta(servidor.urlParaAbrir)} ${resumen}`
     }
 
-    const apertura = await abrirEnNavegador(servidor.url)
+    const apertura = await abrirEnNavegador(servidor.urlParaAbrir)
     if (apertura === "pedida") pestanasPedidas.add(claveServidor)
     else pestanasPedidas.delete(claveServidor)
     const mensajeApertura =
       apertura === "pedida"
-        ? `Le pedí al navegador que abra la vista física: ${servidor.url} — no puedo comprobar que la ventana haya aparecido: si no se abrió, abrí esa dirección a mano.`
-        : `No pude abrir el navegador solo. Abrí esta URL a mano: ${servidor.url}`
+        ? `Le pedí al navegador que abra la vista física: ${servidor.urlParaAbrir} — no puedo comprobar que la ventana haya aparecido: si no se abrió, abrí esa dirección a mano.`
+        : `No pude abrir el navegador solo. Abrí esta URL a mano: ${servidor.urlParaAbrir}`
     return `${mensajeApertura} ${resumen}`
   },
 })

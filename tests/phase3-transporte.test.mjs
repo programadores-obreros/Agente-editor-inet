@@ -59,7 +59,7 @@ async function preparar() {
   const servidor = await iniciarServidor({ servicio: espiado })
   return { servicio, servidor, led, pulsador, directorio, idProyecto, llamadas: () => llamadas }
 }
-const post = (ctx, cuerpo) => solicitud(ctx.servidor.url, "/api/operaciones", { metodo: "POST", cuerpo, cabeceras: { Origin: `http://127.0.0.1:${ctx.servidor.puerto}` } })
+const post = (ctx, cuerpo) => solicitud(ctx.servidor.url, "/api/operaciones", { metodo: "POST", cuerpo, cabeceras: { Origin: `http://127.0.0.1:${ctx.servidor.puerto}`, "X-Tecnia-Token": ctx.servidor.token } })
 const reglaCompleta = (ctx) => ({ cuando: { sensor: ctx.pulsador, ...TRIADA }, entonces: { actuador: ctx.led, accion: "encender" } })
 async function cerrar(ctx) {
   await ctx.servidor.cerrar()
@@ -190,7 +190,7 @@ test("T4a Origin ajeno y Content-Type no JSON se rechazan ANTES que la lista bla
     const s = sobre("SetPlaca", { placa: "arduino-uno" }, ctx.servicio.snapshot().revision)
     let r = await solicitud(ctx.servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: s, cabeceras: { Origin: "http://evil.example" } })
     assert.equal(r.estado, 403)
-    r = await solicitud(ctx.servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: JSON.stringify(s), cabeceras: { Origin: `http://127.0.0.1:${ctx.servidor.puerto}`, "Content-Type": "text/plain" } })
+    r = await solicitud(ctx.servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: JSON.stringify(s), cabeceras: { Origin: `http://127.0.0.1:${ctx.servidor.puerto}`, "X-Tecnia-Token": ctx.servidor.token, "Content-Type": "text/plain" } })
     assert.equal(r.estado, 415)
   } finally {
     await cerrar(ctx)

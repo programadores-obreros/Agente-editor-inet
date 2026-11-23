@@ -120,7 +120,7 @@ async function modoServidorHappy() {
     const n = snapshotAntes.revision
     const rPost = await fetch(new URL("/api/operaciones", servidor.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin },
+      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin, "X-Tecnia-Token": servidor.token },
       body: JSON.stringify({ idOperacion: "pkg-op-post", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO16" } }),
     })
     const cuerpoPost = await rPost.json()

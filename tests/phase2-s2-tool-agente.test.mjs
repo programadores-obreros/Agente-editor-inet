@@ -375,7 +375,7 @@ test("T-AG-05: pulsador en GPIO34 da el MISMO PIN_SIN_PULLUP_INTERNO (código+se
       const idPulsador = s.snapshot().proyecto.componentes[0].id
       const rPost = await fetch(new URL("/api/operaciones", servidor.url), {
         method: "POST",
-        headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin },
+        headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin, "X-Tecnia-Token": servidor.token },
         body: JSON.stringify({ idOperacion: "c", actor: "navegador", baseRevision: 2, tipo: "AsignarPin", payload: { componente: idPulsador, terminal: "senal", pin: "GPIO34" } }),
       })
       const cuerpo = await rPost.json()
