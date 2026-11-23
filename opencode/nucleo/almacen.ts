@@ -98,17 +98,19 @@ export function crearAlmacen(deps: DependenciasAlmacen): Almacen {
     // (`tests/nucleo-almacen.test.mjs`): cargar lo persistido y re-guardarlo sin
     // tocar nada sigue siendo un no-op, no una "colisión".
     //
-    // Límite conocido, documentado (no un descuido): la detección es por REVISIÓN,
-    // no por contenido — si dos documentos DISTINTOS con el mismo id coincidieran en
-    // la MISMA revisión sin ser canónicamente idénticos, esto los distingue bien
-    // (rechaza), pero si un escritor externo reescribiera el archivo con la MISMA
-    // revisión y contenido apenas distinto de forma maliciosa, esta defensa alcanza
-    // igual (revisión no coincide con la esperada O contenido no es idéntico) — el
-    // único caso que esta defensa NO cubre es una modificación externa que preserve
-    // tanto la revisión N esperada COMO el contenido exacto, lo cual no tiene sentido
-    // como "colisión" real. Ver `DECISIONS.md` (nota agregada a las dos entradas
-    // "fuera de Fase 1" — esto NO reabre `Almacen.list()` ni una detección GENERAL de
-    // modificación externa: el alcance es sólo la colisión de escritura por id).
+    // Límite conocido, documentado (no un descuido): la detección es por REVISIÓN, no
+    // por contenido. Lo que eso cubre y lo que no, comprobado ejecutándolo:
+    //  - si lo que hay en disco tiene OTRA revisión que la esperada (N-1), se rechaza
+    //    con CONFLICTO_REVISION_EN_ALMACEN. Es el caso de dos motores sobre el mismo id;
+    //  - si un escritor externo reescribe el archivo conservando la MISMA revisión y
+    //    cambiándole el contenido, esto NO lo detecta: el commit siguiente lo pisa sin
+    //    avisar, y esa edición se pierde.
+    // Este comentario decía lo contrario del segundo punto («esta defensa alcanza…»),
+    // y era falso: la condición de abajo sólo mira la revisión (auditoría del 2026-11-22,
+    // NUC-08). Se corrigió el comentario, no el comportamiento. Ver `DECISIONS.md` (nota
+    // agregada a las dos entradas "fuera de Fase 1" — esto NO reabre `Almacen.list()` ni
+    // una detección GENERAL de modificación externa: el alcance es sólo la colisión de
+    // escritura por id). Lo deja escrito tests/almacen-temporal-y-edicion-externa.test.mjs.
     if (fs.existsSync(destino)) {
       let contenidoExistente: string
       try {
@@ -140,6 +142,17 @@ export function crearAlmacen(deps: DependenciasAlmacen): Almacen {
     try {
       fs.writeFileSync(temporal, contenido)
     } catch {
+      // UNA ESCRITURA QUE FALLA PUEDE HABER DEJADO MEDIO ARCHIVO. Un disco que se llena
+      // escribe una parte y recién ahí falla. Antes este camino devolvía PERSIST_FAILED
+      // sin borrar nada, y `<id>.json.tmp-…` quedaba para siempre en la carpeta de
+      // proyectos: ni la falla siguiente ni un reintento que saliera bien lo limpiaban
+      // (auditoría del 2026-11-22, NUC-07). Mismo trato que el rename de abajo.
+      try {
+        fs.unlinkSync(temporal)
+      } catch {
+        // best-effort: puede que ni se haya creado, o que tampoco se deje borrar. El
+        // destino nunca se tocó, así que el proyecto guardado sigue intacto igual.
+      }
       return { ok: false, motivo: motivoPersistFailed("fallo al escribir el temporal") }
     }
 
