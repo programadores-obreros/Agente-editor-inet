@@ -173,6 +173,24 @@ export const CODIGO_CANCELADO = 130
  * No es lo mismo que 127 ("no esta"): mandar a reinstalar algo que esta instalado no lo arregla.
  */
 export const CODIGO_NO_LANZO = 126
+/**
+ * Con que codigo termina `install\bootstrap.ps1` cuando Tecnia Bot quedo instalado pero
+ * INCOMPLETO (falta PlatformIO, las herramientas de las placas, Node...). Es el
+ * `$CodigoDegradado` de ese script; que sean el mismo numero lo custodia
+ * tests/platformio-execute.test.mjs.
+ */
+export const CODIGO_BOOTSTRAP_INCOMPLETO = 2
+/**
+ * Las carpetas de `<core>/packages` que hacen falta para compilar para las dos placas
+ * que el instalador deja preparadas (ESP32 DevKit y Arduino UNO). Es la MISMA lista que
+ * bajan install.ps1 / install.sh y que comprueban bootstrap.ps1 / bootstrap.sh: las ata
+ * tests/placas-herramientas.test.mjs.
+ */
+export const PAQUETES_DE_LAS_PLACAS = ["toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr"]
+/** Las de PAQUETES_DE_LAS_PLACAS que no estan en el disco. */
+export function paquetesDePlacasQueFaltan(core: string = coreDir(), existe: (ruta: string) => boolean = existsSync): string[] {
+  return PAQUETES_DE_LAS_PLACAS.filter((p) => !existe(join(core, "packages", p)))
+}
 /** Los errores de lanzamiento que quieren decir "el programa esta, pero no se pudo ejecutar". */
 const EXISTE_Y_NO_SE_PUDO_LANZAR = new Set(["EACCES", "EPERM", "ENOEXEC", "ETXTBSY"])
 
@@ -3743,14 +3761,66 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           .slice(-25)
           .join("\n")
 
-        if (pioAhora) {
+        /*
+         * SE LEE COMO TERMINO EL INSTALADOR, y no solo si despues hay un pio.
+         *
+         * Antes lo unico que se miraba era si `pio` existia al final. Con eso:
+         *  - el instalador terminaba en INCOMPLETO o en falla, quedaba un pio en el
+         *    disco, y esto contestaba "Listo: PlatformIO quedo instalado. Ya se puede
+         *    compilar y cargar";
+         *  - si ya habia un pio y el instalador fallaba, contestaba "La reparacion
+         *    corrio... no hizo falta bajarlo de nuevo", como si hubiera salido bien;
+         *  - si se cortaba por tiempo o la cancelaban, contestaba "corrio pero sigue
+         *    sin instalarse" y ofrecia las dos causas habituales de algo que no habia
+         *    terminado.
+         * "Listo" sale SOLO con el instalador terminando en 0, que es cuando el
+         * comprobo todo (desde la 0.4.12, tambien las herramientas de las placas).
+         * Encontrado ejecutando el tool (auditoria del 2026-11-22, PIO-02).
+         */
+        const bloque = "\n\n```\n" + salida + "\n```"
+        const estadoDePio = pioAhora
+          ? pioAntes
+            ? "PlatformIO ya estaba instalado de antes."
+            : "PlatformIO quedo instalado."
+          : "PlatformIO sigue sin estar instalado."
+
+        if (result.code === CODIGO_TIMEOUT) {
+          return (
+            `LA REPARACION NO TERMINO: se corto a los ${describirDuracion(timeoutLargoMs())} y no se como quedo. ` +
+            `${estadoDePio} No la des por hecha: con buena red, volve a correrla (lo que ya bajo no se baja de nuevo). ` +
+            "Si se vuelve a cortar, menu inicio -> 'Diagnostico de Tecnia Bot'."
+          )
+        }
+        if (result.code === CODIGO_CANCELADO) {
+          return `Se cancelo la reparacion antes de que terminara, asi que no se como quedo. ${estadoDePio} Para completarla, volve a pedirla.`
+        }
+
+        if (result.code === 0 && pioAhora) {
           // Se distingue "lo instale" de "ya estaba", porque no son lo mismo para
           // el que pregunta. Decir "listo, lo instale" cuando no se instalo nada
           // hace que la proxima vez que algo falle, la reparacion parezca hecha.
           const encabezado = pioAntes
             ? "La reparacion corrio. PlatformIO ya estaba instalado, asi que no hizo falta bajarlo de nuevo."
             : "Listo: PlatformIO quedo instalado. Ya se puede compilar y cargar codigo a la placa."
-          return encabezado + "\n\n```\n" + salida + "\n```"
+          return encabezado + bloque
+        }
+
+        if (result.code === CODIGO_BOOTSTRAP_INCOMPLETO) {
+          return (
+            `La reparacion corrio, pero el instalador avisa que Tecnia Bot quedo INCOMPLETO. ${estadoDePio}\n\n` +
+            "Esto es lo que dijo el instalador - leelo y contale al usuario que falta, con sus palabras. No le digas que ya esta todo listo:" +
+            bloque
+          )
+        }
+
+        if (pioAhora) {
+          // Hay un pio, pero el instalador no termino bien: no se sabe si ese pio anda.
+          return (
+            `LA REPARACION FALLO: el instalador termino con un error (codigo ${result.code}). ${estadoDePio} ` +
+            "Que el programa este en el disco no quiere decir que haya quedado andando.\n\n" +
+            "Esto es lo que dijo el instalador - leelo y contale al usuario que dice, con sus palabras:" +
+            bloque
+          )
         }
 
         return (
@@ -3987,6 +4057,21 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
           }
         }
 
+        /*
+         * "LISTO PARA USAR" ES UNA PROMESA SOBRE COMPILAR, y antes se decia mirando solo
+         * que pio contestara y que hubiera una placa enchufada. Sin las herramientas de las
+         * placas, la primera compilacion tiene que bajar mas de 1 GB y se corta a los 3
+         * minutos: el reporte decia "Listo para usar" justo en el estado en que `compile`
+         * iba a fallar (auditoria del 2026-11-22, PIO-07). Y es el diagnostico que el
+         * mensaje de timeout manda a correr.
+         */
+        const faltanHerramientas = pioOk ? paquetesDePlacasQueFaltan() : []
+        const herramientasText = !pioOk
+          ? "No disponible (PlatformIO no instalado)"
+          : faltanHerramientas.length === 0
+            ? `OK — estan en ${coreDir()}`
+            : `FALTAN (${faltanHerramientas.join(", ")}) en ${join(coreDir(), "packages")}`
+
         let estado = placas === 1 ? "Listo para usar" : `Listo — veo ${placas} placas conectadas`
         if (!pioOk) {
           // Sin link a la documentacion oficial: ver pioNoEncontrado(). La
@@ -4007,6 +4092,11 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
           estado =
             "PlatformIO esta, pero **no pude ver los puertos USB**, así que no sé si hay una placa conectada. " +
             "No es que no la encuentre: no pude mirar. Probá `/diagnostico` de nuevo; si sigue igual, 'Reparar Tecnia Bot' del menu inicio."
+        } else if (placas > 0 && faltanHerramientas.length > 0) {
+          estado =
+            `PlatformIO esta y veo ${placas === 1 ? "la placa" : `${placas} placas`}, pero **faltan las herramientas de las placas**: ` +
+            "la primera compilacion va a intentar bajarlas (mas de 1 GB) y, sin buena red, se corta a los 3 minutos. " +
+            "Con buena red las puedo bajar yo: llama a este mismo tool con action: \"reparar\" (en Linux/Mac, el tool devuelve el comando exacto)."
         } else if (placas === 0) {
           /*
            * ANTES DE DECIR "no hay nada", PREGUNTARLE A WINDOWS.
@@ -4043,6 +4133,8 @@ Vas a ver los datos de la placa en ${puerto} a ${baud} baudios${origenBaud}. Par
 ${problemaDeCarpeta ? `\n**Carpeta del proyecto:** ${problemaDeCarpeta}\n` : ""}
 **Puertos que veo:**
 ${dispositivosText}
+
+**Herramientas de las placas (ESP32 y Arduino UNO):** ${herramientasText}
 
 **Estado general:** ${estado}`
       }
