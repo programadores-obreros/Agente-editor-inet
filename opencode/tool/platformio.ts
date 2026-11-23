@@ -965,9 +965,12 @@ export function mismoPuerto(a: string | undefined, b: string | undefined, plataf
 async function placaDelPuerto(puerto: string, cwd: string, signal?: AbortSignal): Promise<{ hwid: string } | { porQueNo: string }> {
   const puertos = await listarPuertos(cwd, signal)
   if (!puertos.ok) return { porQueNo: `no pude ver los puertos USB (${puertos.motivo})` }
-  const hallado = puertos.devices.find((d) => mismoPuerto(d.port, puerto))
-  if (!hallado) return { porQueNo: `${puerto} no aparece entre los puertos que veo` }
-  if (!hallado.hwid || !identidadDePlaca(hallado.hwid)) return { porQueNo: `lo que hay en ${puerto} no dice qué placa es` }
+  // `puerto` es texto libre que escribió el modelo y va a un cartel: en un solo renglón.
+  const escrito = puerto.replace(/[\x00-\x1f\x7f\u2028\u2029]+/g, " ").trim().slice(0, 120)
+  // Una lista con una entrada nula (JSON raro de pio) no puede tirar acá.
+  const hallado = puertos.devices.find((d) => !!d && mismoPuerto(d.port, puerto))
+  if (!hallado) return { porQueNo: `${escrito} no aparece entre los puertos que veo` }
+  if (!hallado.hwid || !identidadDePlaca(hallado.hwid)) return { porQueNo: `lo que hay en ${escrito} no dice qué placa es` }
   return { hwid: hallado.hwid }
 }
 
@@ -3046,6 +3049,17 @@ interface CargasGlobal {
   placas: Record<string, string>
 }
 
+/**
+ * Lo que se anota cuando una carga terminó bien en una placa que NO se pudo reconocer
+ * (puerto a mano, ver placaDelPuerto). No es un hash: no puede coincidir con ninguna placa.
+ *
+ * Una carga así es una carga cuyo destino no se sabe. Si se la anotara como «sin placa»
+ * (lo que hacía la primera versión de PIO-04), el aviso SIGUIENTE se callaba: el proyecto
+ * quedaba sin placa con qué comparar, y el registro de la compu seguía diciendo que cada
+ * placa tenía lo de antes. Lo encontró la revisión independiente del 2026-11-23.
+ */
+const PLACA_SIN_RECONOCER = "sin-reconocer"
+
 const rutaUltimaCarga = (cwd: string) => join(cwd, ".pio", "tecnia", "ultima-carga.json")
 const rutaCargasGlobal = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode", "tecnia-cargas.json")
 
@@ -3119,10 +3133,10 @@ const idDePlaca = (cargas: CargasGlobal, ident: { modelo: string; serie: string 
  * huella del proyecto, pero SI el registro de la placa: ahora en esa placa esta
  * este proyecto.
  */
-function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, hwid: string | undefined): boolean {
+function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, hwid: string | undefined, sinReconocer = false): boolean {
   const cargas = leerCargasGlobal()
   const ident = identidadDePlaca(hwid)
-  const placaFisica = ident ? idDePlaca(cargas, ident) : null
+  const placaFisica = ident ? idDePlaca(cargas, ident) : sinReconocer ? PLACA_SIN_RECONOCER : null
   let ok = true
   if (a && a.incompleto.length === 0) {
     try {
@@ -3132,7 +3146,17 @@ function guardarUltimaCarga(cwd: string, a: AnalisisProyecto | null, hwid: strin
       ok = false
     }
   }
-  if (placaFisica) {
+  if (placaFisica === PLACA_SIN_RECONOCER) {
+    // No se sabe en cuál de las placas conocidas cayó esta carga: lo que el registro decía
+    // de CADA una deja de ser un dato. La próxima carga en cualquiera de ellas pregunta una
+    // vez, y con esa carga vuelve a quedar anotada.
+    try {
+      for (const id of Object.keys(cargas.placas)) cargas.placas[id] = PLACA_SIN_RECONOCER
+      if (Object.keys(cargas.placas).length > 0) writeFileSync(rutaCargasGlobal(), JSON.stringify(cargas, null, 2))
+    } catch {
+      /* sin el registro global solo se pierde el aviso de "otro proyecto" */
+    }
+  } else if (placaFisica) {
     try {
       cargas.placas[placaFisica] = hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
       mkdirSync(join(rutaCargasGlobal(), ".."), { recursive: true })
@@ -3355,7 +3379,8 @@ export function agenteQueNoPuedeCargar(ctx: unknown): string | null {
  *
  * La clave combina la huella, el proyecto (rutaNormalizada) y la placa fisica:
  * "Allow always" vale para ese cambio, en ese proyecto, en esa placa. Si no hay
- * con que identificar la placa (puerto explicito, hwid desconocido) o el
+ * con que identificar la placa (hwid desconocido, o puerto a mano que no se pudo
+ * reconocer: ver `sinReconocer` y placaDelPuerto) o el
  * analisis esta incompleto, `always` va vacio y la pregunta lleva
  * MARCA_SIEMPRE_PREGUNTA.
  *
@@ -3397,19 +3422,26 @@ export function pedidoDeCarga(
      * puede comparar: "no se sabe" pregunta UNA vez, y despues de esa carga queda
      * todo anotado con la sal de ahora.
      */
-    const noSeSabe = !!previa?.placaFisica && previa.marcaSal !== marcaDeSal(cargas)
+    // La ultima carga de ESTE proyecto fue en una placa que no se pudo reconocer.
+    const ultimaSinReconocer = previa?.placaFisica === PLACA_SIN_RECONOCER
+    const noSeSabe = ultimaSinReconocer || (!!previa?.placaFisica && previa.marcaSal !== marcaDeSal(cargas))
     const otraPlaca = !noSeSabe && !!previa?.placaFisica && previa.placaFisica !== placaFisica
     const registro = cargas.placas[placaFisica]
+    // Hubo una carga sin reconocer despues de la ultima vez que se supo que tenia ESTA placa.
+    const placaDudosa = registro === PLACA_SIN_RECONOCER
     const otroProyecto = !!registro && registro !== hash(`${cargas.sal}|${rutaNormalizada(cwd)}`)
     if (!noSeSabe && !otraPlaca && otroProyecto && !ident.serie) {
       aviso =
         "\n\nOjo: en una placa de este modelo lo último que se cargó fue OTRO proyecto. Esta placa no tiene número de serie, así que no sé si es la misma: " +
         "si lo es, el circuito que tiene conectado puede no ser el de este código. Contáselo al docente."
     } else if (noSeSabe || otraPlaca || otroProyecto) {
-      if (noSeSabe) motivos.push("No puedo saber si es la misma placa de la última carga: el registro de cargas de esta compu se borró o cambió, o el proyecto viene de otra compu.")
+      if (ultimaSinReconocer) motivos.push("La última carga de este proyecto fue con un puerto a mano que no pude reconocer: no sé en qué placa quedó.")
+      else if (noSeSabe) motivos.push("No puedo saber si es la misma placa de la última carga: el registro de cargas de esta compu se borró o cambió, o el proyecto viene de otra compu.")
       if (otraPlaca) motivos.push("La última carga de este proyecto fue en OTRA placa.")
-      if (otroProyecto) motivos.push("En esta placa lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.")
-      dePlaca = noSeSabe ? "No puedo saber si es la misma placa" : "Otra placa u otro proyecto en esta placa"
+      if (placaDudosa) motivos.push("Hace poco hubo una carga con un puerto a mano que no pude reconocer: pudo haber sido en esta placa, así que no sé qué tiene cargado ni si el circuito conectado es el de este código.")
+      else if (otroProyecto) motivos.push("En esta placa lo último que se cargó fue OTRO proyecto: el circuito que está conectado puede no ser el de este código.")
+      // El titulo dice lo mas concreto que se sabe: «otra placa» es un hecho, «no se que tiene» no.
+      dePlaca = noSeSabe ? "No puedo saber si es la misma placa" : placaDudosa && !otraPlaca ? "No puedo saber qué tiene esta placa" : "Otra placa u otro proyecto en esta placa"
       if (!detalle) detalle = `Lo que maneja este código: ${a.huella.entradas.map((e) => describirEntrada(e, a.familia)).join(", ")}.`
     }
   }
@@ -3912,6 +3944,9 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           const placa = await placaDelPuerto(puerto, cwd, signal)
           if ("hwid" in placa) hwid = placa.hwid
           else sinReconocer = placa.porQueNo
+          // Si se cancelo mientras se miraban los puertos, no se le muestra un cartel a
+          // quien ya cancelo, ni se carga.
+          if (signal?.aborted) return "Se cancelo la accion antes de cargar. No se cargo nada."
         }
         // Un solo cartel, ya con la placa (ver pedidoDeCarga).
         const carga = pedidoDeCarga(analisis, previa, cwd, hwid, undefined, sinReconocer)
@@ -3921,7 +3956,7 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         }
         const result = await cargar(puerto)
         if (result.code === 0) {
-          const anotada = guardarUltimaCarga(cwd, analisis, hwid)
+          const anotada = guardarUltimaCarga(cwd, analisis, hwid, sinReconocer !== undefined)
           return `Codigo cargado exitosamente en ${puerto}.` + avisosTrasCargar(analisis) + (carga.aviso ?? "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return noTermino(result, "cargar el codigo") ?? `Error al cargar el codigo:\n\n${explicarFalla(result)}`
@@ -3953,6 +3988,9 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
           const placa = await placaDelPuerto(puerto, cwd, signal)
           if ("hwid" in placa) hwid = placa.hwid
           else sinReconocer = placa.porQueNo
+          // Si se cancelo mientras se miraban los puertos, no se le muestra un cartel a
+          // quien ya cancelo, ni se carga.
+          if (signal?.aborted) return "Se cancelo la accion antes de cargar. No se cargo nada."
         }
         // Un solo cartel, ya con la placa (ver pedidoDeCarga).
         const carga = pedidoDeCarga(analisis, previa, cwd, hwid, undefined, sinReconocer)
@@ -3962,7 +4000,7 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
         }
         const flash = await cargar(puerto)
         if (flash.code === 0) {
-          const anotada = guardarUltimaCarga(cwd, analisis, hwid)
+          const anotada = guardarUltimaCarga(cwd, analisis, hwid, sinReconocer !== undefined)
           return `Compilacion y carga exitosa en ${puerto}.` + avisosTrasCargar(analisis) + (carga.aviso ?? "") + (anotada ? "" : NO_PUDE_ANOTAR)
         }
         return (
