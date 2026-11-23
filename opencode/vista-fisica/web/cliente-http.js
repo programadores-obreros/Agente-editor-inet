@@ -10,11 +10,21 @@ export function descripcionDeMotivos(motivos) {
   return motivos.map((m) => m.codigo).join(", ")
 }
 
+/** El token de la sesión viene en el fragmento de la dirección (`#t=...`), que es como la tool le
+ * pasa la página al navegador: el fragmento no viaja al servidor ni queda en un `Referer`.
+ * `null` si la dirección no lo trae (alguien abrió la dirección pelada). */
+export function tokenDeLaDireccion(fragmento) {
+  const hallado = /(?:^#|&)t=([A-Za-z0-9_-]+)(?:&|$)/.exec(typeof fragmento === "string" ? fragmento : "")
+  return hallado ? hallado[1] : null
+}
+
+export const SIN_PERMISO = "Esta pestaña no puede cambiar el proyecto: se abrió sin la llave de la sesión. Pedile a Tecnia Bot que abra la vista de nuevo."
+
 /**
  * @param {{ fetch: Function, aplicarSnapshot: (snapshot: object) => void, repintar: () => void,
- *   mostrarEstado: (texto: string | null) => void }} dependencias
+ *   mostrarEstado: (texto: string | null) => void, token?: string | null }} dependencias
  */
-export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEstado }) {
+export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEstado, token = null }) {
   async function cargarSnapshot() {
     const respuesta = await fetch("/api/proyecto")
     aplicarSnapshot(await respuesta.json())
@@ -27,9 +37,17 @@ export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEsta
   async function enviarSobre(sobre, { repintarAhora }) {
     const respuesta = await fetch("/api/operaciones", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: token ? { "Content-Type": "application/json", "X-Tecnia-Token": token } : { "Content-Type": "application/json" },
       body: JSON.stringify(sobre),
     })
+    if (respuesta.status === 403) {
+      // El servidor no aceptó la llave de la sesión (o la página no la tiene). El cuerpo es texto,
+      // no un snapshot: no hay nada que aplicar. Se dice qué pasa y se repinta desde lo último que
+      // SÍ vino del servidor, para que el control no quede mostrando un cambio que no se hizo.
+      mostrarEstado(SIN_PERMISO)
+      repintar()
+      return { resultado: { ok: false, rechazadoPor: "transporte", motivos: [{ codigo: "SIN_TOKEN_DE_SESION" }] }, snapshot: null }
+    }
     const cuerpo = await respuesta.json()
     aplicarSnapshot(cuerpo.snapshot)
 

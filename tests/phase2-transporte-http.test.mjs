@@ -190,7 +190,7 @@ test("POST /api/operaciones con base N: ok, revision N+1, y el GET posterior mue
   try {
     const n = servicio.snapshot().revision
     const sobre = { idOperacion: "browser-op-1", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor) } })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token } })
     assert.equal(r.estado, 200)
     const cuerpo = json(r)
     assert.equal(cuerpo.resultado.ok, true)
@@ -215,7 +215,7 @@ test("POST /api/operaciones fuerza actor:'navegador' — un actor:'agente' manda
   try {
     const n = servicio.snapshot().revision
     const sobre = { idOperacion: "browser-op-actor", actor: "agente", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor) } })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token } })
     const cuerpo = json(r)
     // Si el servidor hubiera respetado actor:"agente" tal cual, esto seguiría siendo
     // válido igual (es uno de los dos valores aceptados) — la prueba real de que se
@@ -242,7 +242,7 @@ test("POST /api/operaciones con base vieja da BASE_REVISION_DESACTUALIZADA, sin 
     assert.equal(revisionReal, n + 1)
 
     const sobreStale = { idOperacion: "browser-op-stale", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO18" } }
-    const rHttp = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobreStale, cabeceras: { Origin: origenPropio(servidor) } })
+    const rHttp = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobreStale, cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token } })
     assert.equal(rHttp.estado, 200) // rechazo de DOMINIO, no de transporte
     const cuerpo = json(rHttp)
     assert.equal(cuerpo.resultado.ok, false)
@@ -261,7 +261,7 @@ test("POST /api/operaciones con JSON invalido da 400, sin cambios en disco", asy
   const servidor = await iniciarServidor({ servicio })
   try {
     const revisionAntes = servicio.snapshot().revision
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: "{ esto no es json ][", cabeceras: { "Content-Type": "application/json", Origin: origenPropio(servidor) } })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: "{ esto no es json ][", cabeceras: { "Content-Type": "application/json", Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token } })
     assert.equal(r.estado, 400)
     assert.equal(servicio.snapshot().revision, revisionAntes)
   } finally {
@@ -278,7 +278,7 @@ test("POST /api/operaciones con forma invalida (JSON valido, sobre incorrecto) d
     const revisionAntes = servicio.snapshot().revision
     // Un array en la raíz: `esObjetoPlano` lo rechaza (nunca "el sobre es un objeto
     // plano" para un array) — motor.ts, SOBRE_OPERACION_INVALIDO.
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: [1, 2, 3], cabeceras: { Origin: origenPropio(servidor) } })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: [1, 2, 3], cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token } })
     assert.equal(r.estado, 200)
     const cuerpo = json(r)
     assert.equal(cuerpo.resultado.ok, false)
@@ -297,7 +297,7 @@ test("POST /api/operaciones con cuerpo mas grande que el limite da 400, sin camb
   try {
     const revisionAntes = servicio.snapshot().revision
     const relleno = "x".repeat(300 * 1024) // > 256 KiB, el limite documentado
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: JSON.stringify({ relleno }), cabeceras: { Origin: origenPropio(servidor) } })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: JSON.stringify({ relleno }), cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token } })
     assert.equal(r.estado, 400)
     assert.equal(servicio.snapshot().revision, revisionAntes)
   } finally {
@@ -322,7 +322,7 @@ test("SSE: un POST aceptado produce EXACTAMENTE un evento revision N+1; un recha
     const r1 = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: { idOperacion: "sse-1", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } },
-      cabeceras: { Origin: origenPropio(servidor) },
+      cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token },
     })
     assert.equal(json(r1).resultado.ok, true)
     const evento1 = await coleccion.siguienteEvento()
@@ -334,7 +334,7 @@ test("SSE: un POST aceptado produce EXACTAMENTE un evento revision N+1; un recha
     const rStale = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: { idOperacion: "sse-stale", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO18" } },
-      cabeceras: { Origin: origenPropio(servidor) },
+      cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token },
     })
     assert.equal(json(rStale).resultado.ok, false)
 
@@ -344,7 +344,7 @@ test("SSE: un POST aceptado produce EXACTAMENTE un evento revision N+1; un recha
     const r2 = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: { idOperacion: "sse-2", actor: "navegador", baseRevision: n + 1, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: "GPIO18" } },
-      cabeceras: { Origin: origenPropio(servidor) },
+      cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token },
     })
     assert.equal(json(r2).resultado.ok, true)
     const evento2 = await coleccion.siguienteEvento()
@@ -590,7 +590,7 @@ test("H3: POST /api/operaciones con Content-Type: text/plain da 415, sin cambios
     const r = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: sobre,
-      cabeceras: { "Content-Type": "text/plain", Origin: origenPropio(servidor) },
+      cabeceras: { "Content-Type": "text/plain", Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token },
     })
     assert.equal(r.estado, 415)
     assert.equal(servicio.snapshot().revision, revisionAntes, "un Content-Type simple (sin preflight) no puede ejecutar la operacion")
@@ -610,7 +610,7 @@ test("H3: POST /api/operaciones con Content-Type application/json;charset=utf-8 
     const r = await solicitud(servidor.url, "/api/operaciones", {
       metodo: "POST",
       cuerpo: sobre,
-      cabeceras: { "Content-Type": "application/json;charset=utf-8", Origin: origenPropio(servidor) },
+      cabeceras: { "Content-Type": "application/json;charset=utf-8", Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token },
     })
     assert.equal(r.estado, 200)
     assert.equal(json(r).resultado.ok, true)
@@ -627,7 +627,7 @@ test("H3: el POST valido de la pagina real (Content-Type application/json + Orig
   try {
     const n = servicio.snapshot().revision
     const sobre = { idOperacion: "browser-op-valido", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idComponente, terminal: "anodo", pin: GPIO_Y } }
-    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor) } })
+    const r = await solicitud(servidor.url, "/api/operaciones", { metodo: "POST", cuerpo: sobre, cabeceras: { Origin: origenPropio(servidor), "X-Tecnia-Token": servidor.token } })
     assert.equal(r.estado, 200)
     const cuerpo = json(r)
     assert.equal(cuerpo.resultado.ok, true)

@@ -16,7 +16,7 @@ import { planDePintado, interpretarNumero, estadoDelGrupo, aplicarEleccionAlGrup
 export { interpretarNumero }
 import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
-import { crearClienteHttp } from "./cliente-http.js"
+import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 import { dibujarCableado } from "./cableado.js"
 
@@ -590,6 +590,9 @@ const cliente = crearClienteHttp({
   },
   repintar: () => repintar(),
   mostrarEstado: (texto) => mostrarEstado(texto),
+  // La llave de la sesión viene en el fragmento de la dirección; se deja ahí para que recargar
+  // la página (F5) no la pierda.
+  token: enNavegador ? tokenDeLaDireccion(location.hash) : null,
 })
 const cargarSnapshot = () => cliente.cargarSnapshot()
 const enviarSobre = (sobre, opciones) => cliente.enviarSobre(sobre, opciones)

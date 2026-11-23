@@ -456,6 +456,47 @@ test("Pestañas: si el pedido al navegador salió bien, una segunda llamada NO p
   }
 })
 
+// VIS-04 (2026-11-23): el servidor sólo acepta cambios con el token de la sesión, y la única
+// forma en que la página lo recibe es la dirección que esta tool le pasa al navegador. Si la
+// tool abriera la dirección pelada, la vista se vería bien y NINGÚN cambio entraría.
+// Mutación que lo pone rojo: `abrirEnNavegador(servidor.url)` en vez de `servidor.urlParaAbrir`,
+// o dejar `servidor.url` en cualquiera de los tres mensajes.
+test("la tool abre la vista con la llave de la sesión, y la dirección que deja escrita también sirve", async () => {
+  const dirActivo = nuevoDir("wave0-llave")
+  const idProyecto = nuevoIdProyecto()
+  const CON_LLAVE = /http:\/\/127\.0\.0\.1:(\d+)\/#t=([A-Za-z0-9_-]{43})(?![A-Za-z0-9_-])/
+  const postear = (puerto, llave) =>
+    fetch(`http://127.0.0.1:${puerto}/api/operaciones`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: `http://127.0.0.1:${puerto}`, ...(llave ? { "X-Tecnia-Token": llave } : {}) },
+      body: JSON.stringify({ idOperacion: `llave-${puerto}-${llave ? "con" : "sin"}`, actor: "navegador", baseRevision: -1, tipo: "AsignarPin", payload: {} }),
+    })
+  try {
+    await conLanzadorFalso(() => 0, async (lanzados) => {
+      const primera = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
+      const lanzada = lanzados[0].at(-1)
+      const [, puerto, llave] = CON_LLAVE.exec(lanzada) ?? []
+      assert.ok(llave, `al navegador se le pasó una dirección sin la llave: ${lanzada}`)
+      // La llave que viajó es la que el servidor acepta: sin ella 403, con ella el pedido
+      // llega al Engine (200; que la operación de prueba se rechace por su forma no importa).
+      assert.equal((await postear(puerto, null)).status, 403)
+      assert.equal((await postear(puerto, llave)).status, 200)
+      // Y la dirección que queda escrita en el chat es la misma: si el docente la abre a mano, anda.
+      assert.ok(primera.includes(lanzada), primera)
+      const segunda = await vistaFisica.execute({ idProyecto }, { directory: dirActivo })
+      assert.match(segunda, /ya le pedí al navegador/i)
+      assert.ok(segunda.includes(lanzada), `el mensaje de «ya abierta» deja una dirección sin llave: ${segunda}`)
+    })
+    await conLanzadorFalso(() => 3, async () => {
+      const fallida = await vistaFisica.execute({ idProyecto, reabrir: true }, { directory: dirActivo })
+      assert.match(fallida, /No pude abrir el navegador/i, fallida)
+      assert.match(fallida, CON_LLAVE, `la dirección para abrir a mano no trae la llave: ${fallida}`)
+    })
+  } finally {
+    await cerrarVistaFisica(dirActivo, idProyecto)
+  }
+})
+
 for (const [caso, comoTermina] of [
   ["el lanzador termina con error", () => 3],
   ["no se puede lanzar", () => new Error("ENOENT xdg-open")],

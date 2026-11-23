@@ -101,7 +101,7 @@ test("T6b paso 6: DOS PRODUCTORES, UNA VERDAD — la regla armada por el navegad
   const post = (cuerpo) =>
     new Promise((resolve, reject) => {
       const texto = JSON.stringify(cuerpo)
-      const req = http.request({ hostname: "127.0.0.1", port: servidor.puerto, path: "/api/operaciones", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(texto), Origin: `http://127.0.0.1:${servidor.puerto}` } }, (res) => {
+      const req = http.request({ hostname: "127.0.0.1", port: servidor.puerto, path: "/api/operaciones", method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(texto), Origin: `http://127.0.0.1:${servidor.puerto}`, "X-Tecnia-Token": servidor.token } }, (res) => {
         const t = []
         res.on("data", (x) => t.push(x))
         res.on("end", () => resolve(JSON.parse(Buffer.concat(t).toString("utf8"))))

@@ -19,6 +19,7 @@
 // escanea únicamente `opencode/nucleo/**`.
 
 import http from "node:http"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -233,8 +234,47 @@ function validarOrigenYContentType(req: http.IncomingMessage, res: http.ServerRe
   return true
 }
 
-async function manejarOperaciones(req: http.IncomingMessage, res: http.ServerResponse, servicio: ServicioDeProyecto, origenesPermitidos: ReadonlySet<string>): Promise<void> {
+/** El header donde la página manda el token de la sesión. Un header propio (no una
+ * cookie ni un parámetro de la URL del POST) no lo puede poner un `<form>` ni un POST
+ * «simple» de otra página. */
+export const CABECERA_TOKEN = "x-tecnia-token"
+
+/**
+ * Token por sesión (VIS-04, auditoría de código del 2026-11-22; decisión del owner del
+ * 2026-11-23). El `Origin` frena a otra PÁGINA, porque un navegador no deja falsificarlo;
+ * pero un programa que no es un navegador manda el `Origin` que quiera, y con eso podía
+ * cambiar pines y reglas del proyecto de cualquiera que tuviera la vista abierta en esa
+ * máquina. El token nace con el servidor, viaja sólo en la dirección que se le pasa al
+ * navegador (`urlParaAbrir`) y hay que presentarlo en cada cambio.
+ *
+ * QUÉ PROTEGE Y QUÉ NO, sin exagerar:
+ *   - SÍ: de otro usuario del sistema operativo en la misma máquina, y de cualquier
+ *     pedido hecho a ciegas contra el puerto.
+ *   - NO: de un programa que corre con el MISMO usuario. Ese puede leer la dirección de
+ *     la línea de comandos del lanzador o del historial del navegador, y además puede
+ *     editar el archivo del proyecto directamente, sin pasar por acá.
+ *   - NO protege las LECTURAS (`/api/proyecto`, `/api/eventos`): quien conoce el puerto
+ *     puede ver el proyecto. Sólo se cierran los cambios.
+ *
+ * Comparación en tiempo constante: no le regala a quien prueba tokens cuántos
+ * caracteres acertó.
+ */
+function tokenValido(req: http.IncomingMessage, token: string): boolean {
+  const recibido = req.headers[CABECERA_TOKEN]
+  if (typeof recibido !== "string") return false
+  const a = Buffer.from(recibido)
+  const b = Buffer.from(token)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+async function manejarOperaciones(req: http.IncomingMessage, res: http.ServerResponse, servicio: ServicioDeProyecto, origenesPermitidos: ReadonlySet<string>, token: string): Promise<void> {
   if (!validarOrigenYContentType(req, res, origenesPermitidos)) return
+  // Después de Origin y Content-Type (sus respuestas 403/415 no cambian) y ANTES de leer
+  // el cuerpo: sin token no se gasta memoria en un cuerpo ni se toca el Engine.
+  if (!tokenValido(req, token)) {
+    responderTexto(res, 403, "Token no valido")
+    return
+  }
   const cuerpo = await leerCuerpo(req, LIMITE_BYTES_OPERACION)
   if (!cuerpo.ok) {
     // Error de TRANSPORTE (nunca de dominio) — mismo criterio que JSON inválido: 400,
@@ -312,8 +352,16 @@ export interface OpcionesServidor {
 }
 
 export interface ServidorProyecto {
+  /** La base del servidor (`http://127.0.0.1:<puerto>/`), SIN el token. */
   readonly url: string
   readonly puerto: number
+  /** El token de esta sesión: hay que mandarlo en `CABECERA_TOKEN` para cambiar algo. */
+  readonly token: string
+  /** La dirección que se le pasa al navegador: `url` con el token en el fragmento
+   * (`#t=...`). El fragmento nunca viaja al servidor ni en un `Referer`; lo lee la
+   * página y lo manda en el header. Abrir `url` a secas deja ver el proyecto, pero los
+   * cambios se rechazan. */
+  readonly urlParaAbrir: string
   /** Cierra el listener HTTP y TODAS las conexiones SSE abiertas (desuscribiéndolas
    * del servicio) — nunca deja un cliente colgado ni un listener fantasma en
    * `servicio.suscribir`. Resuelve cuando el puerto ya está liberado. */
@@ -339,6 +387,8 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
 
   const clientesSSE = new Set<ClienteSSE>()
   let puerto = 0
+  // 32 bytes del generador del sistema: no se adivina ni se deriva del puerto o del pid.
+  const token = randomBytes(32).toString("base64url")
 
   const server = http.createServer((req, res) => {
     void manejarRequest(req, res)
@@ -399,7 +449,7 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
       // Mismo criterio que `hostsPermitidos` arriba: las dos formas de loopback que
       // un navegador puede mandar como Origin de una página same-origin.
       const origenesPermitidos = new Set([`http://127.0.0.1:${puerto}`, `http://localhost:${puerto}`])
-      return manejarOperaciones(req, res, servicio, origenesPermitidos)
+      return manejarOperaciones(req, res, servicio, origenesPermitidos, token)
     }
 
     if (ruta === "/api/eventos") {
@@ -439,7 +489,7 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
         await cerrado
       }
 
-      resolve({ url, puerto, cerrar })
+      resolve({ url, puerto, token, urlParaAbrir: `${url}#t=${token}`, cerrar })
     })
   })
 }

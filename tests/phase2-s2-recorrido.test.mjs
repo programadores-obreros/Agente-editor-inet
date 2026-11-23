@@ -141,7 +141,7 @@ test("recorrido §1, pasos 4-11: el agente arma ESP32+LED+pulsador por la tool, 
 
     const rPost = await fetch(new URL("/api/operaciones", servidor.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin },
+      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin, "X-Tecnia-Token": servidor.token },
       body: JSON.stringify({ idOperacion: "nav-1", actor: "navegador", baseRevision: n, tipo: "AsignarPin", payload: { componente: idPulsador, terminal: "senal", pin: "GPIO16" } }),
     })
     assert.equal(rPost.status, 200)
@@ -206,7 +206,7 @@ test("recorrido §1, pasos 4-11: el agente arma ESP32+LED+pulsador por la tool, 
     const revisionAntesDeCorregir = servicio.snapshot().revision
     const rCorregir = await fetch(new URL("/api/operaciones", servidor.url), {
       method: "POST",
-      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin },
+      headers: { "Content-Type": "application/json", Origin: new URL(servidor.url).origin, "X-Tecnia-Token": servidor.token },
       body: JSON.stringify({
         idOperacion: "nav-corregir",
         actor: "navegador",

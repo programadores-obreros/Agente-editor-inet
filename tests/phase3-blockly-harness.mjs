@@ -69,7 +69,7 @@ export async function montarApp(ctx) {
   let contadorId = 0
   let vista
   const repintar = () => vista.repintar(app.snapshot, { deshabilitado: app.controlador.opciones().operacionPendiente })
-  const cliente = crearClienteHttp({ fetch: fetchContado, aplicarSnapshot: (s) => { app.snapshot = s }, repintar, mostrarEstado: (t) => app.estados.push(t), })
+  const cliente = crearClienteHttp({ fetch: fetchContado, aplicarSnapshot: (s) => { app.snapshot = s }, repintar, mostrarEstado: (t) => app.estados.push(t), token: ctx.servidor.token })
   app.controlador = crearControladorReglas({
     obtenerSnapshot: () => app.snapshot,
     enviar: ({ tipo, payload, baseRevision }) => cliente.enviarSobre({ idOperacion: `bl-${contadorId++}`, actor: "navegador", baseRevision, tipo, payload }, { repintarAhora: false }),
