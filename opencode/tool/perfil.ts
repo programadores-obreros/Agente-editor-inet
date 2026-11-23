@@ -22,6 +22,9 @@ function perfilPath(): string {
 }
 
 const SIN_DEFINIR = "(sin definir)"
+// Los únicos modos con los que se guarda el nombre o el género de alguien. «(sin definir)»
+// y cualquier texto escrito a mano que no sea uno de estos tres no es un modo elegido.
+const MODOS_ELEGIBLES = new Set(["personal", "grupo", "aula"])
 
 interface Persona {
   nombre: string
@@ -213,7 +216,7 @@ export default tool({
 
 Acciones:
 - leer: devuelve el perfil actual (modo y, segun el modo, la persona o la lista de personas).
-- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque). En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre, el genero y la placa se ignoran (solo se guarda el rol).
+- guardar: persiste datos. Pasa 'modo' apenas lo sepas (preguntalo al primer arranque): mientras la compu no tenga un modo elegido, NO se guarda el nombre ni el genero de nadie. En 'grupo' pasa 'persona' (el nombre) junto con rol/genero/placa. En 'personal' pasa 'nombre'/'genero'/rol/placa. En 'aula' el nombre, el genero y la placa se ignoran (solo se guarda el rol).
 
 La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la variante incluida si la placa tiene (ej: 'Educabot Bhoot v1.0', 'Mis Ladrillos R10 v1.1'). El catalogo es la unica lista de placas: este tool guarda lo que le pasan, no valida contra una lista propia.`,
   args: {
@@ -303,6 +306,19 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
     // ignora en silencio, y la respuesta le recuerda al modelo que la pregunte.
     if (args.placa && actual.modo !== "aula") actual.placa = args.placa
 
+    // Sin un modo ELEGIDO no se escribe el nombre ni el género de nadie. Toda instalación
+    // nueva arranca con «- Modo: (sin definir)», y hasta el 2026-11-23 ese estado se
+    // trataba como «personal»: en la notebook del aula recién instalada, que el nombre de
+    // un alumno no fuera a disco dependía sólo de que el modelo obedeciera el prompt y
+    // preguntara el modo primero. Decisión del owner (TCH-04): lo impide el código.
+    // No se guarda NADA de la llamada (ni el rol ni la placa que vinieran con ella): una
+    // respuesta «guardé una parte» es más fácil de leer mal que «no guardé nada».
+    // Lo que ya estaba en el archivo no se toca: no se borra un nombre de una instalación
+    // vieja, anterior a los modos.
+    if (!MODOS_ELEGIBLES.has(actual.modo) && (args.nombre?.trim() || args.persona?.trim() || args.genero)) {
+      return "No guardé nada: todavía no sé de quién es esta compu, y sin eso no guardo el nombre ni el género de nadie. Preguntale al usuario si la compu es del aula (la usan muchos), de un grupo chico conocido, o personal, y volvé a llamarme pasando también 'modo'."
+    }
+
     if (actual.modo === "grupo") {
       // Guardamos POR persona (upsert). El nombre "plano" no se usa en grupo.
       const quien = (args.persona || args.nombre || "").trim()
@@ -326,7 +342,8 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
       actual.genero = SIN_DEFINIR
       actual.placa = SIN_DEFINIR
     } else {
-      // personal (o todavia sin definir): campos "planos" de una sola persona.
+      // personal: campos "planos" de una sola persona. (Sin modo elegido no se llega
+      // acá con nombre ni género: lo corta la guarda de arriba.)
       if (args.nombre && args.nombre.trim()) actual.nombre = args.nombre.trim()
       if (args.genero) actual.genero = args.genero
     }
@@ -346,6 +363,11 @@ La 'placa' se escribe como la nombra el catalogo del skill \`placas\`, con la va
       return quien
         ? `Anotado. En esta compu (grupo) me acuerdo de ${quien} y del resto. Cuando arranque una sesión pregunto quién está usándola.`
         : "Modo grupo guardado. Al arrancar voy a preguntar quién está usando la compu."
+    }
+    if (!MODOS_ELEGIBLES.has(actual.modo)) {
+      // Se guardó el rol o la placa, pero no hay a quién reconocer: decir «ya te reconozco»
+      // sería afirmar algo que no pasó.
+      return "Guardé eso. Todavía falta saber de quién es esta compu: preguntale al usuario si es del aula, de un grupo chico conocido, o personal, y guardá el 'modo'."
     }
     return "Listo, me lo guardo. La próxima ya te reconozco y no te lo pregunto de nuevo."
   },

@@ -161,10 +161,8 @@ test("atomico: si la escritura falla en el medio, el perfil VIEJO sobrevive inta
 // tool guardaba el nombre del alumno y `cuenta` dejaba vincular la cuenta del
 // docente en una compu compartida por los chicos.
 //
-// QUÉ NO ARREGLA ESTO, a propósito: con el modo «(sin definir)» —que es como queda
-// toda instalación nueva— el tool sigue guardando el nombre. Que eso cambie es una
-// decisión del owner (perfil.ts lo trata como «personal o todavía sin definir»), y
-// hoy lo único que lo impide es que el modelo obedezca el prompt y pregunte el modo.
+// El modo «(sin definir)» —como queda toda instalación nueva— se trata más abajo, en
+// «SIN MODO ELEGIDO NO SE GUARDA EL NOMBRE DE NADIE».
 //
 // MUTACIONES que ponen rojo este bloque (exit code 1):
 //   - en leerPerfil, `normalizarModo(modo)` → `modo`              → rojos los dos de «escrito a mano»
@@ -196,15 +194,82 @@ test("grupo y personal escritos a mano con mayúsculas también se reconocen", a
   assert.match(readFileSync(perfilFile, "utf8"), /^- Modo: personal\n- Nombre: Marta$/m)
 })
 
+// Este test decía, hasta el 2026-11-23, que con «aulas» o «(sin definir)» el nombre SÍ
+// se guardaba: era la forma de probar que no se había tomado por aula. Con la decisión
+// de abajo el nombre ya no se guarda sin modo elegido, así que el contrapeso se mide
+// con lo que el modo aula hace y los demás no: borrar la placa.
 test("un modo que no es ninguno de los tres NO se convierte en aula por parecido (contrapeso)", async () => {
   // «aulas», «jaula» o «en el aula no» no son el modo aula: no se adivina.
   for (const modo of ["aulas", "jaula", "(sin definir)", "escuela"]) {
     perfilAMano(modo)
-    await mod.execute({ accion: "guardar", nombre: "Marta" }, {})
+    const r = await mod.execute({ accion: "guardar", rol: "docente", placa: "Arduino UNO" }, {})
     const g = readFileSync(perfilFile, "utf8")
-    assert.match(g, /^- Nombre: Marta$/m, `«${modo}» se tomó por modo aula`)
+    assert.match(g, /^- Placa preferida: Arduino UNO$/m, `«${modo}» se tomó por modo aula (que no guarda la placa)`)
+    assert.doesNotMatch(r, /Compu del aula/, r)
     assert.ok(g.includes(`- Modo: ${modo}\n`), `«${modo}» se reescribió como otro modo`)
   }
+})
+
+// ── SIN MODO ELEGIDO NO SE GUARDA EL NOMBRE DE NADIE ──────────────────────────
+//
+// TCH-04, la parte que quedaba. Toda instalación nueva arranca con «- Modo: (sin
+// definir)» y el tool trataba ese estado como «personal»: en la notebook del aula
+// recién instalada, lo único que impedía guardar el nombre de un alumno era que el
+// modelo obedeciera el prompt y preguntara el modo primero. El 2026-11-23 el owner
+// decidió que lo impida el código.
+//
+// MUTACIONES que ponen rojo este bloque:
+//   - sacar la guarda entera                                   → rojos los tres primeros
+//   - dejar la guarda sólo para `nombre` (olvidar género o persona) → rojo el primero
+//   - mover la guarda ANTES de `if (args.modo) actual.modo = ...`   → rojo «en la misma llamada»
+//   - sumar "(sin definir)" a MODOS_ELEGIBLES                  → rojos los dos primeros
+//   - que la guarda corte también sin nombre ni género         → rojo «rol y placa»
+//   - sacar la respuesta propia del caso sin modo              → rojo «rol y placa»
+
+test("sin modo elegido: no se guarda el nombre, ni el género, ni nada de esa llamada", async () => {
+  const sinArchivo = "una compu donde nunca se escribió el perfil"
+  for (const modo of ["(sin definir)", "", "escuela", "aulas", sinArchivo]) {
+    for (const args of [{ nombre: "Tomás" }, { genero: "varón" }, { persona: "Tomás" }, { nombre: "Tomás", genero: "varón", rol: "alumno", placa: "ESP32 DevKit" }]) {
+      if (existsSync(perfilFile)) rmSync(perfilFile)
+      if (modo !== sinArchivo) perfilAMano(modo)
+      const antes = existsSync(perfilFile) ? readFileSync(perfilFile, "utf8") : null
+      const r = await mod.execute({ accion: "guardar", ...args }, {})
+      const despues = existsSync(perfilFile) ? readFileSync(perfilFile, "utf8") : null
+      assert.equal(despues, antes, `con el modo ${JSON.stringify(modo)} y ${JSON.stringify(args)} el archivo cambió`)
+      assert.match(r, /^No guardé nada/, r)
+      assert.match(r, /'modo'/, "la respuesta tiene que decir cómo seguir: pasar el modo")
+      assert.doesNotMatch(r, /Listo|te reconozco/, r)
+    }
+  }
+})
+
+test("sin modo elegido: lo que ya estaba en el archivo no se borra", async () => {
+  // Una instalación anterior a los modos puede tener nombre y no tener modo.
+  writeFileSync(perfilFile, "# Perfil\n\n- Nombre: Marta\n- Rol: docente\n- Género: mujer\n- Placa preferida: Arduino UNO\n")
+  const antes = readFileSync(perfilFile, "utf8")
+  const r = await mod.execute({ accion: "guardar", nombre: "Otra persona" }, {})
+  assert.match(r, /^No guardé nada/, r)
+  assert.equal(readFileSync(perfilFile, "utf8"), antes)
+  assert.match(await mod.execute({ accion: "leer" }, {}), /Nombre: Marta/)
+})
+
+test("el modo y el nombre en la misma llamada: se guardan los dos", async () => {
+  perfilAMano("(sin definir)")
+  const r = await mod.execute({ accion: "guardar", modo: "personal", nombre: "Marta", genero: "mujer" }, {})
+  assert.match(readFileSync(perfilFile, "utf8"), /^- Modo: personal\n- Nombre: Marta$/m)
+  assert.match(r, /^Listo/, r)
+})
+
+test("sin modo elegido: el rol y la placa, que no identifican a nadie, se siguen guardando", async () => {
+  perfilAMano("(sin definir)")
+  const r = await mod.execute({ accion: "guardar", rol: "docente", placa: "Arduino UNO" }, {})
+  const g = readFileSync(perfilFile, "utf8")
+  assert.match(g, /^- Rol: docente$/m)
+  assert.match(g, /^- Placa preferida: Arduino UNO$/m)
+  assert.doesNotMatch(r, /^No guardé/, r)
+  // No hay nombre guardado: «la próxima ya te reconozco» sería mentira.
+  assert.doesNotMatch(r, /te reconozco/, r)
+  assert.match(r, /'modo'/, r)
 })
 
 // ── LOS CAMPOS LIBRES VAN EN UN SOLO RENGLÓN ──────────────────────────────────
