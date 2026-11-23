@@ -150,7 +150,7 @@ Acciones:
     proyecto: tool.schema
       .string()
       .optional()
-      .describe("Nombre del proyecto que acaban de TERMINAR (ej: 'semaforo con 3 LEDs'). Se agrega a la lista sin duplicar y limpia el 'en curso'. Solo para accion 'guardar'."),
+      .describe("Nombre del proyecto que acaban de TERMINAR (ej: 'semaforo con 3 LEDs'). SIN COMAS (la coma separa un proyecto del siguiente: usa 'y' o '+'). Se agrega a la lista sin duplicar y limpia el 'en curso'. Solo para accion 'guardar'."),
     en_curso: tool.schema
       .string()
       .optional()
@@ -193,6 +193,16 @@ Acciones:
       if (typeof valor === "string" && /[\r\n\u2028\u2029]/.test(valor)) {
         return `No guardé nada: '${campo}' vino con un salto de línea adentro, y en la memoria cada dato va en un solo renglón. Pasámelo de nuevo en un solo renglón.`
       }
+    }
+    // UN PROYECTO CON COMA SE PARTE EN DOS. «Proyectos hechos» es una lista separada por
+    // comas: «LED, botón y zumbador» se guardaba, el tool contestaba «Ultimo proyecto: LED,
+    // botón y zumbador», y la lectura siguiente decía «botón y zumbador»: dos proyectos y
+    // dos lugares del tope (auditoría del 2026-11-22, TCH-06). Decisión del owner del
+    // 2026-11-23: no se guarda y se pide sin coma, igual que con los saltos de línea. No se
+    // reemplaza la coma en silencio: lo guardado tiene que ser lo que se pidió.
+    // Sólo `proyecto` va a esa lista; `en_curso` y `paso` tienen renglón propio.
+    if (typeof args.proyecto === "string" && args.proyecto.includes(",")) {
+      return "No guardé nada: el nombre del proyecto trae una coma, y en la memoria la coma separa un proyecto del siguiente (quedaría partido en dos). Pasámelo de nuevo sin coma, por ejemplo con «y» o con «+»."
     }
     const actual = leerMemoria()
     if (args.nivel) actual.nivel = args.nivel
