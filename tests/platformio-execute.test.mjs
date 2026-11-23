@@ -23,6 +23,9 @@ import { join, dirname, isAbsolute } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import os from "node:os"
 
+/** La plataforma de la máquina, leída antes de que ningún test la pise. Ver el último test. */
+const PLATAFORMA_REAL = process.platform
+
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = join(os.tmpdir(), "tecniabot-platformio-execute-test")
 const HOME_FALSO = join(OUT, "home")
@@ -1192,7 +1195,14 @@ test("diagnostico sin placa: el estado sigue siendo «ninguna placa», y las her
 
 // Va último a propósito. Si algún test de arriba pisa `process.platform` y no lo devuelve,
 // este se pone rojo acá en vez de romper, sin explicación, a otro test más abajo.
-// Mutación que lo pone rojo: que `conPlataforma` devuelva lo que devuelve defineProperty.
+//
+// POR QUÉ COMPARA CONTRA `PLATAFORMA_REAL` Y NO CONTRA `os.platform()`. Mi primera versión
+// hacía `assert.equal(process.platform, os.platform())` y era un adorno: `os.platform()` LEE
+// `process.platform`, así que con la plataforma falsa puesta comparaba «darwin» con «darwin».
+// Lo descubrí porque lo corrí contra el ayudante viejo esperando rojo y dio verde. La
+// plataforma real hay que guardarla ANTES de que corra ningún test (arriba, al cargar el archivo).
+//
+// Mutación que lo pone rojo (probada): que `conPlataforma` devuelva lo que devuelve defineProperty.
 test("al terminar el archivo, process.platform es el de la máquina (nadie dejó una plataforma falsa)", () => {
-  assert.equal(process.platform, os.platform())
+  assert.equal(process.platform, PLATAFORMA_REAL)
 })
