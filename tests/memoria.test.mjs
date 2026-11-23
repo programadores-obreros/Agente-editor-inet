@@ -76,7 +76,10 @@ test("guardar: el nivel (enum) se persiste", async () => {
   assert.match(r, /Nivel:\s*intermedio/i)
 })
 
-test("privacidad: el archivo NO guarda nombre ni datos personales", async () => {
+// Este test se llamaba «el archivo NO guarda nombre ni datos personales». Nunca probó eso:
+// mira que el encabezado diga «no de una persona» y que no exista un campo «Nombre:».
+// Lo que el código hace con un dato personal en texto libre está más abajo.
+test("privacidad: la memoria no tiene un campo para el nombre", async () => {
   await mod.execute({ accion: "guardar", proyecto: "semaforo", nivel: "principiante" }, {})
   const guardado = readFileSync(memoriaFile, "utf8")
   assert.match(guardado, /no de una persona/i, "el encabezado deja explicito que no es personal")
@@ -176,4 +179,51 @@ test("memoria: un campo libre con un salto de línea no se guarda, y el archivo 
   const r = await mod.execute({ accion: "guardar", en_curso: "estación meteorológica", paso: "paso 3: conectar el DHT22" }, {})
   assert.doesNotMatch(r, /No guardé nada/i, r)
   assert.match(readFileSync(memoriaFile, "utf8"), /^- En curso: estación meteorológica — paso 3: conectar el DHT22$/m)
+})
+
+// ── LA MEMORIA NO PROMETE LO QUE NO COMPRUEBA ─────────────────────────────────
+//
+// TCH-05, la parte que quedaba. El encabezado del archivo y la descripción de la tool
+// decían «NO guarda datos personales de ningun alumno», como una garantía del código.
+// El código guarda cualquier texto. El 2026-11-23 el owner decidió corregir el texto:
+// es una regla para el bot, no algo que el programa comprueba.
+//
+// MUTACIONES que ponen rojo este bloque:
+//   - volver a «NO guarda datos personales» en cualquiera de las cuatro copias → rojo «las cuatro copias»
+//   - cambiar una sola copia del encabezado                                    → rojo «las cuatro copias»
+//   - sacar de la descripción el pedido de no pasar datos de alumnos           → rojo «la descripción»
+//   - que la tool rechace o recorte el texto libre                             → rojo «guarda el texto tal cual»
+
+const ENCABEZADO = /<!-- Progreso pedagogico[\s\S]*?-->/
+
+test("el encabezado es el mismo en las cuatro copias y no promete que el código filtra", () => {
+  const copias = ["opencode/tool/memoria.ts", "opencode/plataforma/memoria-local.ts", "install/install.sh", "install/install.ps1"].map((ruta) => {
+    const hallado = readFileSync(join(REPO, ruta), "utf8").match(ENCABEZADO)
+    assert.ok(hallado, `no encontré el encabezado de la memoria en ${ruta}`)
+    return [ruta, hallado[0]]
+  })
+  for (const [ruta, texto] of copias) {
+    assert.equal(texto, copias[0][1], `el encabezado de ${ruta} no es igual al de ${copias[0][0]}`)
+    assert.doesNotMatch(texto, /NO guarda datos personales/i, `${ruta} sigue prometiendo que el código no guarda datos personales`)
+    assert.match(texto, /regla para quien escribe/i, ruta)
+    assert.match(texto, /sin revisarlo/i, ruta)
+    // install.ps1 se lee en PowerShell 5.1: el encabezado va sin acentos en las cuatro.
+    assert.match(texto, /^[\x00-\x7F]*$/, `${ruta}: el encabezado tiene un carácter que no es ASCII`)
+  }
+})
+
+test("la descripción de la tool le pide al bot que no pase datos de alumnos, y dice por qué", () => {
+  const fuente = readFileSync(join(REPO, "opencode/tool/memoria.ts"), "utf8")
+  const descripcion = fuente.slice(fuente.indexOf("description: `"), fuente.indexOf("args: {"))
+  assert.doesNotMatch(descripcion, /no guarda nombre ni datos/i)
+  assert.match(descripcion, /NO le pases el nombre ni ningun dato de un alumno/)
+  assert.match(descripcion, /sin revisarlo/)
+})
+
+test("lo que el código hace de verdad: guarda el texto tal cual, también si trae un nombre", async () => {
+  // Este test no dice que esté bien: deja escrito qué hace, para que el texto de arriba
+  // no vuelva a prometer otra cosa. Si un día el código filtra, este test se cambia a propósito.
+  await mod.execute({ accion: "guardar", en_curso: "robot de Juan Pérez 4to B" }, {})
+  assert.match(readFileSync(memoriaFile, "utf8"), /^- En curso: robot de Juan Pérez 4to B$/m)
+  assert.match(readFileSync(memoriaFile, "utf8"), /regla para quien escribe/)
 })

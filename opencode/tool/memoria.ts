@@ -72,12 +72,19 @@ function ultimoProyecto(memoria: Memoria): string {
 
 // Arma el markdown legible (mismo formato que crea el instalador). El encabezado
 // deja EXPLICITO que es memoria de la maquina, no de una persona.
+// El encabezado decía «NO guarda datos personales de ningun alumno», como si el código lo
+// garantizara. No lo garantiza: guarda cualquier texto («robot de Juan Pérez 4to B» entra
+// sin más), y un programa no puede reconocer un nombre propio en texto libre. Decisión del
+// owner del 2026-11-23 (TCH-05): el texto dice lo que es, una regla para quien escribe.
+// El MISMO encabezado está en plataforma/memoria-local.ts, install.sh e install.ps1;
+// tests/memoria.test.mjs exige que los cuatro sean iguales.
 function renderMemoria(memoria: Memoria): string {
   const proyectos = memoria.proyectos.length ? memoria.proyectos.join(", ") : SIN_DEFINIR
   return `# Memoria de ESTA compu (no de una persona)
 <!-- Progreso pedagogico de esta maquina/grupo. Lo mantiene Tecnia Bot.
-     NO guarda datos personales de ningun alumno (ni nombre ni nada que identifique
-     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos. -->
+     Aca NO van datos personales de ningun alumno (ni nombre ni nada que identifique
+     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos.
+     Es una regla para quien escribe: el archivo guarda el texto que le pasen, sin revisarlo. -->
 
 - Nivel: ${memoria.nivel || SIN_DEFINIR}
 - Proyectos hechos: ${proyectos}
@@ -131,7 +138,7 @@ function escribirArchivoAtomico(ruta: string, contenido: string): void {
 }
 
 export default tool({
-  description: `Memoria de progreso de ESTA computadora/grupo (NO es un perfil personal: no guarda nombre ni datos de ningun alumno). Recuerda entre sesiones el nivel, los proyectos hechos, el ultimo proyecto y el proyecto EN CURSO (uno guiado paso a paso), para adaptar como explicas y retomar exacto donde quedaron.
+  description: `Memoria de progreso de ESTA computadora/grupo (NO es un perfil personal. NO le pases el nombre ni ningun dato de un alumno, tampoco adentro del nombre de un proyecto: guarda el texto tal cual, sin revisarlo). Recuerda entre sesiones el nivel, los proyectos hechos, el ultimo proyecto y el proyecto EN CURSO (uno guiado paso a paso), para adaptar como explicas y retomar exacto donde quedaron.
 
 Acciones:
 - leer: devuelve el progreso guardado (nivel, proyectos hechos, ultimo, y si hay un proyecto en curso con su paso). Usalo al arrancar para saber por donde venian en esta compu.

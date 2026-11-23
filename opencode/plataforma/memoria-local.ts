@@ -82,8 +82,9 @@ function render(memoria: MemoriaDocente): string {
   const proyectos = memoria.proyectos.length ? memoria.proyectos.join(", ") : SIN_DEFINIR
   return `# Memoria de ESTA compu (no de una persona)
 <!-- Progreso pedagogico de esta maquina/grupo. Lo mantiene Tecnia Bot.
-     NO guarda datos personales de ningun alumno (ni nombre ni nada que identifique
-     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos. -->
+     Aca NO van datos personales de ningun alumno (ni nombre ni nada que identifique
+     a un menor): en las PCs de escuela una cuenta la comparten muchos chicos.
+     Es una regla para quien escribe: el archivo guarda el texto que le pasen, sin revisarlo. -->
 
 - Nivel: ${memoria.nivel ?? SIN_DEFINIR}
 - Proyectos hechos: ${proyectos}
