@@ -130,10 +130,13 @@ test("borrador entre comillas rescatado: se le sacan las comillas", () => {
   assert.equal(r.texto, "Che, se desconectó la placa. ¿La reconectás?")
 })
 
-test("la regla del prompt recitada en la misma línea NO se rescata", () => {
-  // "Remember the rule: <regla en español>" es el modelo leyendo el prompt en voz alta.
+// Este test se llamaba «…recitada en la misma línea NO se rescata» y exigía "" para el primer
+// caso. El 2026-11-23 el owner decidió conservar el español que viene detrás de los dos
+// puntos (TCH-01, más abajo), ACEPTANDO este costo: una regla recitada en español se queda.
+// Lo que no cambia: si la regla viene entre comillas y después está la respuesta, no vuelve.
+test("la regla del prompt recitada en la misma línea: en español se queda (costo aceptado); entre comillas y con respuesta, no", () => {
   const r = limpiar("Now let's compile the project.\nRemember the rule: compilar es control de calidad nuestro, lo hacemos directamente.")
-  assert.equal(r.texto, "")
+  assert.equal(r.texto, "compilar es control de calidad nuestro, lo hacemos directamente.")
   const r2 = limpiar('The upload was fine. Remember the rule: "decí en UNA línea qué vas a hacer y esperá."\nVoy a cargar el programa a la placa.')
   assert.equal(r2.texto, "Voy a cargar el programa a la placa.")
 })
@@ -600,8 +603,9 @@ test("misma línea: 'Let me explain: <respuesta en español>' no queda vacío", 
     ["Let's tell the user: ¡Compiló sin errores!", "¡Compiló sin errores!"],
   ])
     assert.equal(limpiar(t).texto, queda, t)
-  // El prompt recitado no vuelve nunca, aunque no quede nada.
-  assert.equal(limpiar("Now let's compile the project.\nRemember the rule: compilar es control de calidad nuestro.").texto, "")
+  // Hasta el 2026-11-23 acá se exigía "": «el prompt recitado no vuelve nunca». Cambió con
+  // la decisión de TCH-01 (ver el bloque de abajo): se queda, y el inglés de alrededor se va.
+  assert.equal(limpiar("Now let's compile the project.\nRemember the rule: compilar es control de calidad nuestro.").texto, "compilar es control de calidad nuestro.")
 })
 
 test("restos cosméticos: 'Thinking:' y una interjección pegada al plan se van", () => {
@@ -717,4 +721,72 @@ test("4b: dos palabras del taller seguidas ('serial monitor') no cuentan como re
     limpiar(`"${u}"\n\nYou can open the serial monitor from the tools menu, and then you have to set the baud rate to the same value that is in your code.`, { ultimoUsuario: u }).texto,
     "",
   )
+})
+
+// ---------------------------------------------------------------------------
+// TCH-01 · EL ESPAÑOL QUE VIENE DETRÁS DE LOS DOS PUNTOS NO SE PIERDE
+// ---------------------------------------------------------------------------
+//
+// Auditoría de código del 2026-11-22, reproducido por QA con el plugin real. Cuando el
+// modelo escribe el plan y la frase en UN MISMO renglón («Let's warn the user: NO conectes…»)
+// y DESPUÉS viene más español, el filtro borraba todo el renglón, español incluido. Se
+// perdieron así 4 avisos de seguridad de 8 probados, y al docente no se le avisaba.
+// (Si ese renglón era todo el texto, el español ya se conservaba: lo cuida el test «misma
+// línea: 'Let me explain…' no queda vacío».)
+//
+// Decisión del owner (2026-11-23): conservar el español. Prefiere que se cuele una frase de
+// más a que se pierda un aviso de seguridad.
+//
+// MUTACIONES que ponen rojo este bloque (ver el commit):
+//   - volver a la condición vieja del rescate en la misma línea     → rojo «los cuatro avisos»
+//   - exigir 2+ funcionales españolas sin la segunda vía            → rojo «los cuatro avisos» (el de 220 V)
+//   - rescatar también lo de un rótulo de andamio                   → rojo «lo que NO se rescata» (y el de 'Tone:' de la ronda 5)
+//   - rescatar también la salida copiada de una tool                → rojo «lo que NO se rescata»
+//   - rescatar aunque repita la respuesta                           → rojo «un borrador que repite»
+//   - rescatar con cualquier señal de español (una palabra)         → rojo «misma línea: un borrador con una sola funcional» (ronda 5)
+
+test("TCH-01: los cuatro avisos de seguridad que se perdían ahora llegan, y el plan en inglés se va", () => {
+  for (const [texto, queda] of [
+    [
+      "Let's warn the user: NO conectes la batería de 12 V directo al pin, podés quemar la placa.\n\nAntes de dar corriente revisá la polaridad.",
+      "NO conectes la batería de 12 V directo al pin, podés quemar la placa.\n\nAntes de dar corriente revisá la polaridad.",
+    ],
+    [
+      "I'll tell the user: nunca conectes 220 V a la placa.\n\nPara eso hace falta un relé y un adulto que sepa.",
+      "nunca conectes 220 V a la placa.\n\nPara eso hace falta un relé y un adulto que sepa.",
+    ],
+    [
+      "The tool reported an error. Let's warn the user: desenchufá el cargador antes de tocar los cables.\n\nDespués revisamos el cableado juntos.",
+      "desenchufá el cargador antes de tocar los cables.\n\nDespués revisamos el cableado juntos.",
+    ],
+    [
+      "Let me warn them: el LED no tiene resistencia y se puede quemar.\n\nAgregale una de 220 ohm en serie.",
+      "el LED no tiene resistencia y se puede quemar.\n\nAgregale una de 220 ohm en serie.",
+    ],
+  ]) {
+    const r = limpiar(texto)
+    assert.equal(r.texto, queda, texto)
+    assert.doesNotMatch(r.texto, /let's|i'll|the user|warn them/i, "quedó el plan en inglés")
+  }
+})
+
+test("TCH-01: el inglés que sigue en esa misma línea se va; el español se queda", () => {
+  assert.equal(
+    limpiar("Let's warn the user: NO conectes la batería de 12 V directo al pin. I should also check the wiring.\n\nRevisá la polaridad.").texto,
+    "NO conectes la batería de 12 V directo al pin.\n\nRevisá la polaridad.",
+  )
+})
+
+test("TCH-01: un borrador que repite la respuesta que viene después no se duplica", () => {
+  // No es una pérdida: lo mismo queda dicho una vez.
+  assert.equal(limpiar("Let's tell the user: ya compiló sin errores.\n\nYa compiló sin errores. ¿Lo cargo a la placa?").texto, "Ya compiló sin errores. ¿Lo cargo a la placa?")
+})
+
+test("TCH-01: lo que NO se rescata en la misma línea, a propósito", () => {
+  // Un rótulo de andamio describe cómo responder; no es algo dicho al docente.
+  assert.equal(limpiar("Let's plan the answer.\n- Tone: cálido y con voseo para el docente.\n\nChe, ya compiló.").texto, "Che, ya compiló.")
+  // La salida copiada de una tool no es algo que el modelo le dice al docente (y volvía cortada).
+  assert.equal(limpiar("The tool reported: Listo! Circuito generado en la carpeta del proyecto.\n\nYa te armé el circuito del semáforo.").texto, "Ya te armé el circuito del semáforo.")
+  // LÍMITE CONOCIDO: un aviso de una palabra no tiene señal suficiente y se sigue perdiendo.
+  assert.equal(limpiar("Let's warn the user: ¡Cuidado!\n\nRevisá la polaridad antes de dar corriente.").texto, "Revisá la polaridad antes de dar corriente.")
 })

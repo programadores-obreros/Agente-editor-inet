@@ -18,7 +18,7 @@
 import { test, before, after, beforeEach } from "node:test"
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -330,7 +330,42 @@ test("traer: un proyecto con coma no se puede guardar igual en el archivo → NO
   enCuenta = { memoria: { proyectos: ["Luz, cámara"] }, version: 1 }
   const r = await sincronizador().traer(false)
   assert.doesNotMatch(r, /Traje/)
-  assert.match(r, /no coincide/)
+  assert.match(r, /No toqué la memoria de esta compu/)
+  assert.match(r, /coma/)
+  assert.equal(existsSync(archivo()), false, "la compu no tenía memoria y ahora tiene un archivo con el proyecto partido")
+})
+
+// TCH-06 (auditoría del 2026-11-22). El test de arriba sólo probaba la compu SIN memoria
+// previa, y ahí no se ve el daño: con una memoria ya guardada, `traer` con reemplazar la
+// pisaba, la releía, veía que no coincidía y RECIÉN ENTONCES avisaba. El mensaje no mentía,
+// pero la memoria anterior ya se había perdido, sin copia. Ahora se comprueba antes.
+// Mutaciones que lo ponen rojo: sacar la comprobación previa de escribirMemoriaLocal; que
+// la comprobación previa compare contra otra cosa que la memoria pedida.
+test("traer: si la memoria de la cuenta no entra igual, la que había en la compu NO se toca", async () => {
+  for (const proyectos of [["LED, botón y zumbador"], ["Semáforo", "Riego, con bomba"], ["Alarma\ncon salto"]]) {
+    ponerEnCompu(SEMAFORO)
+    const antes = readFileSync(archivo(), "utf8")
+    enCuenta = { memoria: { nivel: "avanzado", proyectos }, version: 7 }
+    await sincronizador().traer(false) // primero muestra las dos
+    const s = sincronizador()
+    await s.traer(false)
+    const r = await s.traer(true)
+    assert.doesNotMatch(r, /Traje/, r)
+    assert.match(r, /No toqué la memoria de esta compu/, r)
+    assert.equal(readFileSync(archivo(), "utf8"), antes, `con ${JSON.stringify(proyectos)} en la cuenta se pisó la memoria de la compu`)
+    assert.deepEqual(readdirSync(dirname(archivo())).filter((f) => f.endsWith(".tmp")), [], "quedó un temporal")
+  }
+})
+
+test("traer: el contrapeso — una memoria sin comas en los nombres se trae como siempre", async () => {
+  ponerEnCompu(SEMAFORO)
+  enCuenta = { memoria: { nivel: "avanzado", proyectos: ["LED y botón", "Riego con bomba"], enCurso: "Alarma, paso 2" }, version: 7 }
+  const s = sincronizador()
+  await s.traer(false)
+  const r = await s.traer(true)
+  assert.match(r, /Traje a esta compu/, r)
+  // «En curso» tiene renglón propio: ahí la coma no rompe nada.
+  assert.match(readFileSync(archivo(), "utf8"), /^- En curso: Alarma, paso 2$/m)
 })
 
 test("traer: la plataforma no contesta → no toca la compu", async () => {
