@@ -98,8 +98,18 @@ const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
     `El ${nombreDe(datos, "componente", nombres)} necesita la resistencia interna (pull-up) del pin, y ${campo(datos, "pin")} no la tiene: es sólo de entrada. Elegí otro pin.`,
   PIN_OCUPADO: (datos, nombres) =>
     `${campo(datos, "pin")} ya lo está usando otro componente (${nombreDe(datos, "ocupadoPor", nombres)}). Cada pin puede tener una sola conexión de señal.`,
-  REQUISITO_INSATISFECHO: (datos, nombres) =>
-    `Al ${nombreDe(datos, "componente", nombres)} le falta algo que necesita para funcionar sin riesgo (${campo(datos, "requisito")} en ${campo(datos, "terminal")}).`,
+  REQUISITO_INSATISFECHO: (datos, nombres) => {
+    // NUC-03 (2026-11-23): hay una resistencia conectada pero no sirve para ESTA pieza.
+    // Los dos textos de `causa` son NUEVOS y quedan pendientes de aprobación del owner;
+    // el de abajo es el aprobado y no cambia.
+    if (datos.causa === "compartida") {
+      return `Al ${nombreDe(datos, "componente", nombres)} le falta su propia resistencia: la que tiene conectada la comparte con otra pieza (${nombreDe(datos, "compartidaCon", nombres)}). Cada una lleva la suya.`
+    }
+    if (datos.causa === "puenteada") {
+      return `La resistencia del ${nombreDe(datos, "componente", nombres)} no está limitando nada: tiene las dos patas en el mismo lugar. Tiene que ir con una pata de cada lado.`
+    }
+    return `Al ${nombreDe(datos, "componente", nombres)} le falta algo que necesita para funcionar sin riesgo (${campo(datos, "requisito")} en ${campo(datos, "terminal")}).`
+  },
   PIN_STRAPPING: (datos) => `${campo(datos, "pin")} participa del arranque de la placa: puede molestar al encenderla.`,
   // CK-CG1 (R4): texto PROPUESTO para revisión de producto; el código estructurado es la verdad.
   PIN_STRAPPING_PULLUP_EXTERNO: (datos, nombres) =>

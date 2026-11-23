@@ -37,7 +37,7 @@
 
 import type { Proyecto, Componente } from "./ir.ts"
 import type { Catalogo, ComponenteCatalogo, Cantidad, Magnitud, Unidad } from "./catalogo.ts"
-import { asignarPin, evaluarRequisito, evaluarRestriccionesPin, propagarMagnitud, estaFueraDeRango } from "./catalogo.ts"
+import { asignarPin, evaluarRequisito, evaluarRestriccionesPin, propagarMagnitud, estaFueraDeRango, tipoDePiezaEnSerie } from "./catalogo.ts"
 import type { Motivo } from "./motivos.ts"
 
 export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly Motivo[] {
@@ -125,6 +125,7 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
     for (const m of evaluarRequisito(compCatalogo, conectadosPorTerminal)) {
       motivos.push(m.entidad ? m : { ...m, entidad: { tipo: "componente", id: componente.id } })
     }
+    motivos.push(...requisitosSinPiezaPropia(proyecto, componente, compCatalogo, catalogo))
   }
 
   // Phase 1.1 (hallazgo externo E1-03): capacidad/magnitud/unidad de cada
@@ -208,6 +209,92 @@ export function validarTecnico(proyecto: Proyecto, catalogo: Catalogo): readonly
   }
 
   return motivos
+}
+
+/**
+ * La pieza en serie tiene que ser PROPIA del componente (NUC-03, auditoría de código del
+ * 2026-11-22; decisión del owner del 2026-11-23: una resistencia en serie por LED).
+ *
+ * `evaluarRequisito` sólo contesta «¿hay alguna resistencia conectada a este terminal?».
+ * Con eso, una sola resistencia entre los ánodos de dos LEDs dejaba los dos «listos», y
+ * una resistencia con sus dos patas en el mismo ánodo también, aunque no limite nada.
+ *
+ * Acá se mira la topología, que `evaluarRequisito` no puede ver porque no camina la IR.
+ * Una pieza NO cumple el requisito de este componente si:
+ *   - «compartida»: también está conectada al terminal de OTRO componente que pide una
+ *     pieza de ese tipo en serie;
+ *   - «puenteada»: tiene dos patas distintas en este mismo terminal, o sus patas unidas
+ *     entre sí. En los dos casos la corriente no pasa por ella.
+ * Alcanza con UNA pieza sana. Si no hay ninguna pieza conectada no se dice nada acá: ese
+ * motivo ya lo emitió `evaluarRequisito`, y dos motivos por la misma falta confunden.
+ *
+ * Es por DATO, nunca por id de componente: vale para cualquier componente que declare
+ * `resistencia-serie`, no sólo para el LED.
+ *
+ * LÍMITES, a propósito: no mira el VALOR de la pieza (la IR no tiene un campo declarado
+ * para eso: `propiedades` es una bolsa libre), ni adónde va su otro extremo si alguien lo
+ * conectó a una pieza que no pide resistencia (eso es `validarConexion`, deuda declarada
+ * en COMPONENT-CATALOG.md).
+ */
+function requisitosSinPiezaPropia(proyecto: Proyecto, componente: Componente, compCatalogo: ComponenteCatalogo, catalogo: Catalogo): readonly Motivo[] {
+  const motivos: Motivo[] = []
+  for (const req of compCatalogo.requisitos) {
+    if (req.tipo !== "resistencia-serie" || req.enTerminal === undefined) continue
+    const terminal = req.enTerminal
+    const tipoEsperado = tipoDePiezaEnSerie(req)
+
+    // Las piezas del tipo pedido conectadas a ESTE terminal, y por cuáles de sus patas.
+    const patasPorPieza = new Map<string, Set<string>>()
+    for (const cx of proyecto.conexiones) {
+      for (const [aca, alla] of [[cx.desde, cx.hasta], [cx.hasta, cx.desde]] as const) {
+        if (aca.componente !== componente.id || aca.terminal !== terminal || alla.componente === componente.id) continue
+        if (proyecto.componentes.find((c) => c.id === alla.componente)?.tipo !== tipoEsperado) continue
+        let patas = patasPorPieza.get(alla.componente)
+        if (!patas) patasPorPieza.set(alla.componente, (patas = new Set()))
+        patas.add(alla.terminal)
+      }
+    }
+    if (patasPorPieza.size === 0) continue
+
+    let primerDefecto: { causa: "compartida" | "puenteada"; pieza: string; compartidaCon?: string } | null = null
+    let hayUnaSana = false
+    for (const [pieza, patas] of patasPorPieza) {
+      const puenteada = patas.size > 1 || proyecto.conexiones.some((cx) => cx.desde.componente === pieza && cx.hasta.componente === pieza && cx.desde.terminal !== cx.hasta.terminal)
+      const compartidaCon = puenteada ? undefined : otroQueLaPideEnSerie(proyecto, catalogo, pieza, tipoEsperado, componente.id)
+      if (!puenteada && compartidaCon === undefined) {
+        hayUnaSana = true
+        break
+      }
+      primerDefecto ??= puenteada ? { causa: "puenteada", pieza } : { causa: "compartida", pieza, compartidaCon }
+    }
+    if (hayUnaSana || primerDefecto === null) continue
+
+    motivos.push({
+      codigo: "REQUISITO_INSATISFECHO",
+      categoria: "componente",
+      severidad: "blocking",
+      clasificacion: "representable",
+      entidad: { tipo: "componente", id: componente.id },
+      // Los cuatro primeros campos son los mismos que emite `evaluarRequisito` (los leen la
+      // vista y la tool); `causa`, `pieza` y `compartidaCon` dicen por qué no alcanza.
+      datos: { componente: compCatalogo.id, requisito: req.tipo, terminal, esperado: tipoEsperado, ...primerDefecto },
+    })
+  }
+  return motivos
+}
+
+/** El id de OTRO componente (distinto de `salvo`) que tiene a `pieza` conectada en un
+ * terminal donde pide una pieza de `tipoPieza` en serie. `undefined` si no hay ninguno. */
+function otroQueLaPideEnSerie(proyecto: Proyecto, catalogo: Catalogo, pieza: string, tipoPieza: string, salvo: string): string | undefined {
+  for (const cx of proyecto.conexiones) {
+    for (const [aca, alla] of [[cx.desde, cx.hasta], [cx.hasta, cx.desde]] as const) {
+      if (aca.componente !== pieza || alla.componente === pieza || alla.componente === salvo) continue
+      const otro = proyecto.componentes.find((c) => c.id === alla.componente)
+      const pide = otro && catalogo.obtenerComponente(otro.tipo)?.requisitos.some((r) => r.tipo === "resistencia-serie" && r.enTerminal === alla.terminal && tipoDePiezaEnSerie(r) === tipoPieza)
+      if (pide) return alla.componente
+    }
+  }
+  return undefined
 }
 
 /** Para cada terminal de `componente`, qué TIPOS de catálogo tiene conectados
