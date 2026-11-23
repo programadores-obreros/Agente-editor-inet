@@ -25,6 +25,7 @@
 //   - evaluar con un solo valor (0 o 1) en vez de los dos        → rojo la tabla
 //   - aplicar el chequeo a magnitudes no booleanas               → rojo «una temperatura»
 //   - `>=` evaluado como `>`                                     → rojo la tabla
+//   - evaluar en double en vez de en float                       → rojo la tabla
 //
 // Corre con: node --test tests/condicion-booleana-que-no-decide.test.mjs
 
@@ -59,6 +60,13 @@ test("la tabla: con 0 y con 1, qué pasa con cada comparación", () => {
   ]
   for (const [comparador, umbral, esperado] of casos) {
     assert.equal(desenlaceDeCondicionBooleana(comparador, umbral), esperado, `estado ${comparador} ${umbral}`)
+  }
+  // EN LA PRECISIÓN DEL PROGRAMA, no en la de JavaScript. El C++ generado compara en float:
+  // «1.00000001f» ES «1.0f». Mi primera versión evaluaba en double y avisaba «siempre» para
+  // «< 1.00000001», cuando en la placa esa regla decide; y callaba ante «> 0.99999999», que
+  // en la placa no se cumple nunca. Lo encontró la revisión independiente compilando.
+  for (const [comparador, umbral, esperado] of [["<", 1.00000001, "decide"], [">=", 1.0000000000000002, "decide"], [">", 0.99999999, "nunca"], ["<=", 0.9999999999999998, "siempre"]]) {
+    assert.equal(desenlaceDeCondicionBooleana(comparador, umbral), esperado, `estado ${comparador} ${umbral} (en float)`)
   }
   // Lo que no se puede evaluar no se adivina: no es «siempre» ni «nunca».
   for (const [comparador, umbral] of [["==", 1], [undefined, 1], [">", Number.NaN], [">", undefined], [">", "1"]]) {
@@ -104,6 +112,8 @@ for (const tipo of ["pulsador", "interruptor"]) {
       assert.equal(aviso.entidad.tipo, "comportamiento")
       assert.equal(aviso.datos.desenlace, desenlace)
       assert.equal(aviso.datos.sensor, p.sensor)
+      assert.equal(aviso.datos.comparador, comparador)
+      assert.equal(aviso.datos.umbral, valor)
       assert.equal(p.listo, true, `${tipo} ${comparador} ${valor}: el aviso no puede sacar el «listo» (decisión del owner)`)
     }
   })

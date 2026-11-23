@@ -131,7 +131,7 @@ const PLANTILLAS: Readonly<Record<string, Plantilla>> = {
     datos.desenlace === "siempre"
       ? `Esta condición se cumple siempre, esté como esté el ${nombreDe(datos, "sensor", nombres)}: la regla no depende de él. Revisá la comparación.`
       : datos.desenlace === "nunca"
-        ? `Esta condición no se cumple nunca, esté como esté el ${nombreDe(datos, "sensor", nombres)}: la regla no va a hacer nada. Revisá la comparación.`
+        ? `Esta condición no se cumple nunca, esté como esté el ${nombreDe(datos, "sensor", nombres)}: la regla no depende de él. Revisá la comparación.`
         : null,
   UMBRAL_FUERA_DE_RANGO: (datos, nombres) =>
     textos(datos, ["etiquetaCapacidad", "cantidadGuardada", "rangoEnTexto", "sensorDeRegla"])

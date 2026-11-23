@@ -67,16 +67,22 @@ export type DesenlaceBooleano = "siempre" | "nunca" | "decide"
  */
 export function desenlaceDeCondicionBooleana(comparador: unknown, umbral: unknown): DesenlaceBooleano {
   if (typeof umbral !== "number" || Number.isNaN(umbral)) return "decide"
+  // El programa generado compara en `float` (codegen/emision.ts::flotante escribe el umbral
+  // con sufijo `f`), no en el double de JavaScript. Cerca de 1 no es lo mismo: «< 1.00000001»
+  // es «siempre» en double y «< 1.0f» en la placa, que decide. Se evalúa con la precisión
+  // que va a correr, para que el aviso hable del programa real. Lo marcó la revisión
+  // independiente, compilando la comparación.
+  const comoEnLaPlaca = Math.fround(umbral)
   const cumple = (estado: 0 | 1): boolean | undefined => {
     switch (comparador) {
       case ">":
-        return estado > umbral
+        return estado > comoEnLaPlaca
       case ">=":
-        return estado >= umbral
+        return estado >= comoEnLaPlaca
       case "<":
-        return estado < umbral
+        return estado < comoEnLaPlaca
       case "<=":
-        return estado <= umbral
+        return estado <= comoEnLaPlaca
       default:
         return undefined
     }
