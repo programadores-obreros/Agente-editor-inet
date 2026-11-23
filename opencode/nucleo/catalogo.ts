@@ -392,12 +392,19 @@ export function construirCatalogo(datos: DatosCatalogo, hasher: (texto: string) 
  * no esté acá: nunca se finge una validación que el motor no hace. */
 export const TIPOS_DE_REQUISITO_CON_EVALUADOR: ReadonlySet<Requisito["tipo"]> = new Set(["resistencia-serie"])
 
+/** Qué tipo de pieza pide un requisito «resistencia-serie». Una sola definición: la usan
+ * `evaluarRequisito` (¿hay alguna?) y `validar-tecnico.ts` (¿es propia de este componente?),
+ * y si cada una tuviera su propio valor por defecto podrían no coincidir. */
+export function tipoDePiezaEnSerie(req: Requisito): string {
+  return typeof req.spec.tipoComponente === "string" ? req.spec.tipoComponente : "resistencia"
+}
+
 export function evaluarRequisito(catalogoComponente: ComponenteCatalogo, conectadosPorTerminal: Readonly<Record<string, readonly string[]>>): readonly Motivo[] {
   const motivos: Motivo[] = []
   for (const req of catalogoComponente.requisitos) {
     switch (req.tipo) {
       case "resistencia-serie": {
-        const tipoEsperado = typeof req.spec.tipoComponente === "string" ? req.spec.tipoComponente : "resistencia"
+        const tipoEsperado = tipoDePiezaEnSerie(req)
         const conectados = (req.enTerminal ? conectadosPorTerminal[req.enTerminal] : undefined) ?? []
         if (!conectados.includes(tipoEsperado)) {
           motivos.push({

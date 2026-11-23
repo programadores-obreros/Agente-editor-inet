@@ -107,7 +107,7 @@ se implemente Gate 5):
 |---|---|---|---|---|
 | `PIN_OCUPADO` | blocking | tecnica | **REPRESENTABLE** | `validar-tecnico.ts` (Gate 4) |
 | `CAPACIDAD_PIN_INCOMPATIBLE` | blocking | tecnica | **REPRESENTABLE** | `catalogo.ts` (`asignarPin`) |
-| `REQUISITO_INSATISFECHO` | blocking | componente | **REPRESENTABLE** | `catalogo.ts` (`evaluarRequisito`) |
+| `REQUISITO_INSATISFECHO` | blocking | componente | **REPRESENTABLE** | `catalogo.ts` (`evaluarRequisito`: no hay ninguna pieza) y `validar-tecnico.ts` (`requisitosSinPiezaPropia`: la hay, pero está compartida o puenteada; `datos.causa`) |
 | `MAGNITUD_INCOMPATIBLE` | blocking | semantica | **REPRESENTABLE** | `catalogo.ts` (`propagarMagnitud`) |
 | `UNIDAD_CONVERTIDA` | info | semantica | n/a (éxito documentado) | `catalogo.ts` (`propagarMagnitud`/`reemplazarSensor`) |
 | `RANGO_INCOMPATIBLE_AL_REEMPLAZAR` | warning | semantica | **REPRESENTABLE** | `catalogo.ts` (`reemplazarSensor`, rama C) |
@@ -164,6 +164,11 @@ existente, nunca una clasificación nueva del catálogo — ver `OPERATIONS.md` 
   real todavía de una incompatibilidad eléctrica que el brief pida rechazar a este
   nivel (auto-conexión/duplicado exacto quedan para Gate 4/5, ya anotados como puntos
   abiertos en `DECISIONS.md` desde Gate 1).
+- Desde el 2026-11-23 (NUC-03, decisión del owner) la pieza en serie tiene que ser PROPIA
+  del componente: una resistencia conectada también al ánodo de otro LED, o con sus dos
+  patas en el mismo lugar, no cumple el requisito. Lo mira `validar-tecnico.ts`, que camina
+  la IR; `evaluarRequisito` sigue siendo una regla pura. No se mira el VALOR de la pieza: la
+  IR no tiene un campo declarado para eso.
 - `evaluarRequisito` sólo implementa la rama `resistencia-serie` a fondo — los otros
   tres tipos de requisito (`capacidad-pin`, `resistencia-pull`, `componente-auxiliar`)
   existen en el vocabulario del tipo pero ningún componente shippeado los declara
