@@ -134,7 +134,8 @@ async function main() {
   sembrarSiHaceFalta(servicio)
 
   const servidor = await iniciarServidor({ servicio })
-  console.log(`Vista física — ${servidor.url}`)
+  // Con la llave de la sesión: sin ella la vista se ve, pero ningún cambio entra.
+  console.log(`Vista física — ${servidor.urlParaAbrir}`)
 
   if (args.unaVez) {
     console.log(JSON.stringify(servicio.snapshot(), null, 2))

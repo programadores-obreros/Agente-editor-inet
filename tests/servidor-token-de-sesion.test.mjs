@@ -6,7 +6,11 @@
 // manda el `Origin` que quiera. El 2026-11-23 el owner decidió sumar un token por sesión.
 //
 // QUÉ PROTEGE Y QUÉ NO (sin exagerar; está igual en servidor-proyecto.ts):
-//   - SÍ: de otro usuario del sistema operativo en la misma máquina y de pedidos a ciegas.
+//   - SÍ: de pedidos a ciegas contra el puerto.
+//   - A MEDIAS: de otro usuario del sistema operativo. En Linux la línea de comandos del
+//     lanzador, que lleva la dirección con el token, la puede leer cualquier usuario
+//     mientras el lanzador viva. Lo marcó la revisión independiente; mi primera versión
+//     de este encabezado decía que protegía de otro usuario sin más.
 //   - NO: de un programa del MISMO usuario, que puede leer la dirección con el token o
 //     editar el archivo del proyecto directamente.
 //   - NO cierra las lecturas: `/api/proyecto` y `/api/eventos` siguen abiertas. Hay un
@@ -25,6 +29,8 @@
 //   - exigir el token también en las lecturas                     → rojo «las lecturas»
 //   - el cliente no manda el header                               → rojo «el cliente manda la llave»
 //   - el cliente trata el 403 como una respuesta normal           → rojo «sin llave, el cliente lo dice»
+//   - el cliente le atribuye a la llave cualquier 403             → rojo «un 403 que NO es por la llave»
+//   - exigir el token en /api/eventos                             → rojo «las lecturas»
 //   - la tool abre `servidor.url` en vez de `urlParaAbrir`        → rojo «la tool» (en wave0-tool)
 //
 // Corre con: node --test tests/servidor-token-de-sesion.test.mjs
@@ -164,6 +170,16 @@ test("las lecturas siguen abiertas sin token (límite declarado, no descuido)", 
     const r = await fetch(new URL("/api/proyecto", servidor.url))
     assert.equal(r.status, 200)
     assert.equal(typeof (await r.json()).revision, "number")
+    // /api/eventos también: se abre el stream sin token y contesta 200. (La primera versión
+    // de este test decía fijar «las lecturas» y sólo pedía /api/proyecto.)
+    const estadoEventos = await new Promise((resolve, reject) => {
+      const req = http.get({ hostname: "127.0.0.1", port: servidor.puerto, path: "/api/eventos" }, (res) => {
+        resolve(res.statusCode)
+        req.destroy()
+      })
+      req.on("error", reject)
+    })
+    assert.equal(estadoEventos, 200)
     const pagina = await fetch(servidor.url)
     assert.equal(pagina.status, 200)
     assert.ok(!(await pagina.text()).includes(servidor.token), "la página servida trae el token adentro: cualquiera que la pida lo lee")
@@ -177,6 +193,30 @@ test("tokenDeLaDireccion: lee «#t=…» y no inventa", () => {
   for (const sin of ["", "#", "#t=", "#x=abc", "#ot=abc", "t=abc", "#t=a b", undefined, null]) {
     assert.equal(tokenDeLaDireccion(sin), null, JSON.stringify(sin))
   }
+})
+
+test("un 403 que NO es por la llave no se le atribuye a la llave", async () => {
+  // El servidor también contesta 403 por Origin o por Host. Decirle al alumno «se abrió sin
+  // la llave» en ese caso sería nombrar una causa que no se midió.
+  await conServidor("token-otro-403", async ({ servicio, servidor, led }) => {
+    const estados = []
+    let repintadas = 0
+    const cliente = crearClienteHttp({
+      fetch: (ruta, opciones = {}) => fetch(new URL(ruta, servidor.url), { ...opciones, headers: { ...opciones.headers, Origin: "http://evil.example.com" } }),
+      aplicarSnapshot: () => assert.fail("no hay snapshot que aplicar en un 403"),
+      repintar: () => repintadas++,
+      mostrarEstado: (t) => estados.push(t),
+      token: servidor.token,
+    })
+    const cuerpo = await cliente.enviarSobre(cambiarPin(servicio, led), { repintarAhora: true })
+    assert.equal(cuerpo.resultado.ok, false)
+    assert.equal(cuerpo.resultado.motivos[0].codigo, "PEDIDO_RECHAZADO_POR_EL_SERVIDOR")
+    assert.equal(estados.length, 1)
+    assert.notEqual(estados[0], SIN_PERMISO)
+    assert.match(estados[0], /no aceptó/i)
+    assert.equal(repintadas, 1)
+    assert.equal(pinDelLed(servicio, led), GPIO_X)
+  })
 })
 
 // El cliente de la página, con el servidor REAL detrás: `fetch` relativo resuelto contra
@@ -215,6 +255,7 @@ test("sin llave, el cliente lo dice con palabras y no rompe la página", async (
       const cuerpo = await p.cliente.enviarSobre(cambiarPin(servicio, led), { repintarAhora: true })
       assert.equal(cuerpo.resultado.ok, false)
       assert.deepEqual(p.estados, [SIN_PERMISO])
+      assert.equal(cuerpo.resultado.motivos[0].codigo, "SIN_TOKEN_DE_SESION")
       assert.match(SIN_PERMISO, /Tecnia Bot/, "el texto tiene que decir cómo seguir")
       assert.equal(p.snapshot(), antes, "el cliente pisó el último snapshot bueno con el cuerpo de un 403")
       assert.equal(p.repintadas(), repintadasAntes + 1, "tiene que repintar: el control no puede quedar mostrando un cambio que no se hizo")

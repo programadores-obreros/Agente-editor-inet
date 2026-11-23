@@ -41,12 +41,15 @@ export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEsta
       body: JSON.stringify(sobre),
     })
     if (respuesta.status === 403) {
-      // El servidor no aceptó la llave de la sesión (o la página no la tiene). El cuerpo es texto,
-      // no un snapshot: no hay nada que aplicar. Se dice qué pasa y se repinta desde lo último que
-      // SÍ vino del servidor, para que el control no quede mostrando un cambio que no se hizo.
-      mostrarEstado(SIN_PERMISO)
+      // El servidor rechazó el pedido antes de tocar el proyecto. El cuerpo es texto, no un
+      // snapshot: no hay nada que aplicar. Se dice qué pasa y se repinta desde lo último que SÍ
+      // vino del servidor, para que el control no quede mostrando un cambio que no se hizo.
+      // El 403 puede ser por la llave o por otro chequeo (Origin, Host): sólo se nombra la llave
+      // si el servidor dijo que fue la llave.
+      const porLaLlave = /token/i.test(await respuesta.text())
+      mostrarEstado(porLaLlave ? SIN_PERMISO : "El servidor no aceptó el cambio (403). Pedile a Tecnia Bot que abra la vista de nuevo.")
       repintar()
-      return { resultado: { ok: false, rechazadoPor: "transporte", motivos: [{ codigo: "SIN_TOKEN_DE_SESION" }] }, snapshot: null }
+      return { resultado: { ok: false, rechazadoPor: "transporte", motivos: [{ codigo: porLaLlave ? "SIN_TOKEN_DE_SESION" : "PEDIDO_RECHAZADO_POR_EL_SERVIDOR" }] }, snapshot: null }
     }
     const cuerpo = await respuesta.json()
     aplicarSnapshot(cuerpo.snapshot)

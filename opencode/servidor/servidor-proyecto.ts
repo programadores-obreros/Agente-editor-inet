@@ -248,13 +248,25 @@ export const CABECERA_TOKEN = "x-tecnia-token"
  * navegador (`urlParaAbrir`) y hay que presentarlo en cada cambio.
  *
  * QUÉ PROTEGE Y QUÉ NO, sin exagerar:
- *   - SÍ: de otro usuario del sistema operativo en la misma máquina, y de cualquier
- *     pedido hecho a ciegas contra el puerto.
+ *   - SÍ: de cualquier pedido hecho a ciegas contra el puerto.
+ *   - A MEDIAS: de OTRO usuario del sistema operativo en la misma máquina. La dirección
+ *     con el token se le pasa al lanzador (xdg-open, open, start) como argumento, y en
+ *     Linux la línea de comandos de un proceso la puede leer cualquier usuario
+ *     (`/proc/<pid>/cmdline`, salvo que /proc esté montado con hidepid). Mientras viva el
+ *     lanzador —o el navegador, si arrancó con esa dirección— otro usuario que esté
+ *     mirando puede leer el token. Lo marcó la revisión independiente del 2026-11-23; no
+ *     se midió con un segundo usuario real, ni en Windows o macOS.
  *   - NO: de un programa que corre con el MISMO usuario. Ese puede leer la dirección de
  *     la línea de comandos del lanzador o del historial del navegador, y además puede
  *     editar el archivo del proyecto directamente, sin pasar por acá.
  *   - NO protege las LECTURAS (`/api/proyecto`, `/api/eventos`): quien conoce el puerto
  *     puede ver el proyecto. Sólo se cierran los cambios.
+ *
+ * DÓNDE QUEDA EL TOKEN, además de la memoria de este proceso: en la línea de comandos del
+ * lanzador, en la barra y el historial del navegador, y en el texto que devuelve la tool
+ * `vista-fisica` (o sea, en el contexto del modelo y en lo que OpenCode guarde de la
+ * sesión). Es un token de una sesión local: sólo sirve contra 127.0.0.1 en esta máquina
+ * y muere con el proceso.
  *
  * Comparación en tiempo constante: no le regala a quien prueba tokens cuántos
  * caracteres acertó.
