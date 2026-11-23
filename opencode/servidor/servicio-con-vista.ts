@@ -186,7 +186,30 @@ export function obtenerServicioDeProyectoConVista(opciones: OpcionesServicioConV
   asegurarLimpiezaAlSalir()
   candadosPropios.set(clave, { rutaLock, contenido })
 
-  const base = obtenerServicioDeProyecto({ ...opciones, directorio, calcularVista: vistaDeProyectoConCatalogoReal })
+  /*
+   * SI EL SERVICIO NO SE PUEDE CONSTRUIR, EL CANDADO SE SUELTA.
+   *
+   * El candado ya está tomado y anotado como propio. Si `obtenerServicioDeProyecto`
+   * tiraba (el archivo del proyecto cortado, o con la forma mal), el error salía, pero
+   * el `.lock` quedaba en disco con el pid de ESTE proceso y sin ningún wrapper
+   * registrado. La llamada siguiente no encontraba wrapper, intentaba tomar el candado
+   * de nuevo y lo veía ocupado por un proceso vivo —él mismo—: «ya está abierto en otro
+   * proceso (pid …) — cerralo ahí». Mandaba a buscar una ventana que no existe, tapaba
+   * la causa real, y arreglar el archivo no alcanzaba hasta cerrar OpenCode.
+   * (Auditoría del 2026-11-22, VIS-02. Es el «defecto H-01» que nombra
+   * `carga/puertos.ts`.)
+   *
+   * El error se vuelve a tirar TAL CUAL: quien llama tiene que seguir viendo por qué no
+   * se pudo abrir. Lo custodia tests/servicio-candado-proyecto-roto.test.mjs.
+   */
+  let base: ServicioDeProyecto
+  try {
+    base = obtenerServicioDeProyecto({ ...opciones, directorio, calcularVista: vistaDeProyectoConCatalogoReal })
+  } catch (error) {
+    candadosPropios.delete(clave)
+    liberarCandadoSiPropio(rutaLock, contenido)
+    throw error
+  }
 
   const wrapper: ServicioDeProyecto = {
     snapshot: () => base.snapshot(),

@@ -125,8 +125,8 @@ export function reservarPuerto(puerto: string, dueno: string): Reserva {
   // DESDE ACÁ EL CANDADO YA ESTÁ TOMADO EN DISCO. Si algo falla antes de entregarle
   // `liberar()` a quien llama, nadie más podría soltarlo: quedaría tomado hasta que el
   // proceso termine, y toda carga a ese puerto daría PUERTO_OCUPADO sin que haya ninguna
-  // en curso. (Es el defecto H-01 de `servicio-con-vista.ts`, que toma su candado y
-  // después construye algo que puede lanzar.) Acá se suelta en el acto y no se carga.
+  // en curso. (Era el defecto H-01 de `servicio-con-vista.ts`, arreglado el 2026-11-22: tomaba su candado y
+  // después construía algo que puede lanzar, sin soltarlo.) Acá se suelta en el acto y no se carga.
   try {
     propios.set(ruta, reserva)
     asegurarLimpiezaAlSalir()
