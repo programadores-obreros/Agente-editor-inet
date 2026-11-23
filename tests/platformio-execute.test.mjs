@@ -916,3 +916,181 @@ test("flash cuando la lista no es JSON pero nombra un puerto: se sigue leyendo, 
   assert.doesNotMatch(r, /No pude ver los puertos/, r)
   assert.match(r, /Veo un puerto serie \(\/dev\/ttyUSB0\), pero no es una placa/, r)
 })
+
+// ── `reparar` Y `diagnostico` NO DICEN «LISTO» SIN HABER MIRADO ───────────────
+//
+// Auditoría de código del 2026-11-22 (PIO-02 y PIO-07), reproducido por QA.
+//
+// `reparar` corre el instalador y después miraba UNA sola cosa: si quedó un `pio`.
+// No leía con qué código había terminado el instalador. Entonces:
+//   - instalador INCOMPLETO o con error, pero con un pio en el disco → «Listo:
+//     PlatformIO quedo instalado. Ya se puede compilar y cargar codigo a la placa»;
+//   - pio de antes + instalador que falla → «La reparacion corrio… no hizo falta
+//     bajarlo de nuevo», como si hubiera salido bien;
+//   - corte por tiempo o cancelación → «corrio pero sigue sin instalarse», con las
+//     dos causas habituales de algo que no había terminado.
+// Es la pata que faltaba del arreglo del instalador: ahora el bootstrap devuelve
+// «incompleto» cuando faltan las herramientas de las placas, y esto no lo leía.
+//
+// `diagnostico` decía «Estado general: Listo para usar» con sólo ver que pio contesta
+// y que hay una placa enchufada. Sin las herramientas de las placas, la primera
+// compilación baja más de 1 GB y se corta a los 3 minutos.
+//
+// NINGÚN TEST EJECUTABA ESTAS RAMAS: tests/prompt.test.mjs sólo lee el texto fuente.
+//
+// Windows está SIMULADO (process.platform pisado), como en el resto de este archivo,
+// con un PowerShell guionado. Que haya o no un pio se decide con `Bun.which`.
+//
+// MUTACIONES que ponen rojo este bloque (exit code 1):
+//   - `result.code === 0 && pioAhora` → `pioAhora`              → rojos «incompleto», «falla» y «pio de antes»
+//   - sacar la rama de CODIGO_TIMEOUT                           → rojo «se corta por tiempo»
+//   - sacar la rama de CODIGO_CANCELADO                         → rojo «la cancelan»
+//   - sacar la rama de CODIGO_BOOTSTRAP_INCOMPLETO              → rojo «incompleto»
+//   - CODIGO_BOOTSTRAP_INCOMPLETO = 3                           → rojos «incompleto» y «mismo número»
+//   - en diagnostico, sacar la rama de herramientas faltantes   → rojo «faltan las herramientas»
+//   - paquetesDePlacasQueFaltan devuelve siempre []             → rojo «faltan las herramientas»
+//   - sacar un paquete de PAQUETES_DE_LAS_PLACAS                → rojos «faltan las herramientas» y «misma lista»
+
+async function reparar({ pioAntes, pioDespues, bootstrap, abortar }) {
+  const original = Object.getOwnPropertyDescriptor(process, "platform")
+  const lad = process.env.LOCALAPPDATA
+  const whichOriginal = globalThis.Bun.which
+  const appData = join(OUT, "localappdata")
+  mkdirSync(join(appData, "TecniaBot", "install"), { recursive: true })
+  writeFileSync(join(appData, "TecniaBot", "install", "bootstrap.ps1"), "# de prueba\n")
+  let hayPio = pioAntes
+  Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+  process.env.LOCALAPPDATA = appData
+  globalThis.Bun.which = (nombre) => (hayPio && (nombre === "pio" || nombre === "platformio") ? "C:\\x\\pio.exe" : null)
+  const ctrl = new AbortController()
+  guion = (cmd) => {
+    if (cmd[0] !== "powershell") return {}
+    hayPio = pioDespues // lo que el instalador dejó
+    if (abortar) queueMicrotask(() => ctrl.abort())
+    return typeof bootstrap === "function" ? bootstrap() : bootstrap
+  }
+  try {
+    return await mod.default.execute({ action: "reparar" }, { ...ctx, abort: ctrl.signal })
+  } finally {
+    Object.defineProperty(process, "platform", original)
+    if (lad === undefined) delete process.env.LOCALAPPDATA
+    else process.env.LOCALAPPDATA = lad
+    globalThis.Bun.which = whichOriginal
+  }
+}
+const LISTO = /Listo: PlatformIO quedo instalado|Ya se puede compilar y cargar/
+const SALIO_BIEN = /no hizo falta bajarlo de nuevo/
+
+test("reparar con el instalador terminando en 0 y un pio nuevo: ahí sí «Listo» (contrapeso)", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: { code: 0, stdout: "  LISTO! Abri una terminal\n" } })
+  assert.match(r, /Listo: PlatformIO quedo instalado\. Ya se puede compilar y cargar/, r)
+  assert.match(r, /LISTO! Abri una terminal/, "no pega lo que dijo el instalador")
+})
+
+test("reparar con el instalador INCOMPLETO (código 2): no dice «Listo» aunque haya quedado un pio", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: { code: 2, stdout: "  [!]  Placas       FALTAN las herramientas de ESP32 y Arduino UNO\n  Tecnia Bot quedo instalado y abre, PERO INCOMPLETO:\n" } })
+  assert.doesNotMatch(r, LISTO, `el instalador terminó incompleto y el tool dijo que ya se puede compilar y cargar:\n${r}`)
+  assert.match(r, /INCOMPLETO/, r)
+  assert.match(r, /PlatformIO quedo instalado\./, "no dice qué pasó con PlatformIO")
+  assert.match(r, /FALTAN las herramientas de ESP32/, "no pega lo que dijo el instalador, que es donde está qué falta")
+  assert.match(r, /No le digas que ya esta todo listo/i, r)
+})
+
+test("reparar con el instalador que FALLA (código 1) dejando un pio: no dice «Listo»", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: { code: 1, stdout: "  [X]  OpenCode     NO ARRANCA.\n" } })
+  assert.doesNotMatch(r, LISTO, `el instalador falló y el tool dijo listo:\n${r}`)
+  assert.match(r, /LA REPARACION FALLO/, r)
+  assert.match(r, /codigo 1/, "no dice con qué código terminó")
+  assert.match(r, /NO ARRANCA/, "no pega lo que dijo el instalador")
+})
+
+test("reparar con un pio de antes y el instalador que falla: no lo cuenta como que salió bien", async () => {
+  const r = await reparar({ pioAntes: true, pioDespues: true, bootstrap: { code: 1, stdout: "  [X]  algo\n" } })
+  assert.doesNotMatch(r, SALIO_BIEN, `con el instalador fallando dijo que no hizo falta bajarlo de nuevo:\n${r}`)
+  assert.match(r, /LA REPARACION FALLO/, r)
+  assert.match(r, /ya estaba instalado de antes/, "no aclara que el pio que hay es el de antes")
+  // Contrapeso: con el instalador en 0, la frase de «ya estaba» sigue saliendo.
+  const bien = await reparar({ pioAntes: true, pioDespues: true, bootstrap: { code: 0, stdout: "  LISTO!\n" } })
+  assert.match(bien, SALIO_BIEN, bien)
+})
+
+test("reparar que se corta por tiempo: dice que no terminó, no que «corrió»", async () => {
+  process.env.TECNIA_PIO_TIMEOUT_MS = "40"
+  try {
+    const r = await reparar({ pioAntes: false, pioDespues: false, bootstrap: COLGADO })
+    assert.match(r, /LA REPARACION NO TERMINO/, r)
+    assert.doesNotMatch(r, /La reparacion corrio|Las dos causas habituales|Microsoft Store/, `le dio las causas de una falla a algo que no terminó:\n${r}`)
+    assert.doesNotMatch(r, LISTO)
+    assert.match(r, /volve a correrla/i, "no dice que se puede volver a intentar")
+  } finally {
+    delete process.env.TECNIA_PIO_TIMEOUT_MS
+  }
+})
+
+test("reparar que la cancelan: dice que se canceló, no que «corrió»", async () => {
+  const r = await reparar({ pioAntes: false, pioDespues: true, bootstrap: COLGADO, abortar: true })
+  assert.match(r, /Se cancelo la reparacion/, r)
+  assert.doesNotMatch(r, /La reparacion corrio|Las dos causas habituales/, r)
+  assert.doesNotMatch(r, LISTO, "la cancelaron a mitad y dijo listo porque ya había un pio")
+})
+
+test("reparar con el instalador en 0 pero SIN pio, y con falla sin pio: «sigue sin instalarse»", async () => {
+  for (const code of [0, 1]) {
+    const r = await reparar({ pioAntes: false, pioDespues: false, bootstrap: { code, stdout: "  algo dijo\n" } })
+    assert.doesNotMatch(r, LISTO, `código ${code} sin pio: dijo listo`)
+    assert.match(r, /PlatformIO sigue sin instalarse/, r)
+    assert.match(r, /Las dos causas habituales/, "perdió las dos causas habituales, que acá sí corresponden")
+  }
+})
+
+test("el código de «incompleto» del tool es el mismo número que usa bootstrap.ps1", () => {
+  const ps1 = readFileSync(join(REPO, "install/bootstrap.ps1"), "utf8")
+  const m = ps1.match(/^\$CodigoDegradado\s*=\s*(\d+)\s*$/m)
+  assert.ok(m, "no encontré $CodigoDegradado en bootstrap.ps1")
+  assert.equal(mod.CODIGO_BOOTSTRAP_INCOMPLETO, Number(m[1]), "el tool lee otro código que el que el instalador devuelve cuando queda incompleto")
+})
+
+test("la lista de herramientas de las placas del tool es la misma que la de los instaladores", () => {
+  const ps1 = readFileSync(join(REPO, "install/bootstrap.ps1"), "utf8").replace(/^\s*#.*$/gm, "")
+  const m = ps1.match(/^\$PaquetesPlacas = @\(([^)\n]*)\)$/m)
+  assert.ok(m, "no encontré $PaquetesPlacas en bootstrap.ps1")
+  assert.deepEqual([...mod.PAQUETES_DE_LAS_PLACAS].sort(), [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1]).sort())
+})
+
+async function diagnosticoConCore(paquetes, lista) {
+  const core = join(OUT, `core-diag-${Math.random().toString(36).slice(2)}`)
+  mkdirSync(core, { recursive: true })
+  for (const p of paquetes) mkdirSync(join(core, "packages", p), { recursive: true })
+  process.env.PLATFORMIO_CORE_DIR = core
+  try {
+    escenario({ lista })
+    return { core, r: await mod.default.execute({ action: "diagnostico" }, ctx) }
+  } finally {
+    delete process.env.PLATFORMIO_CORE_DIR
+    rmSync(core, { recursive: true, force: true })
+  }
+}
+
+test("diagnostico con placa pero sin las herramientas de las placas: no dice «Listo para usar»", async () => {
+  for (const [caso, paquetes] of [["ninguna", []], ["sólo las de ESP32", ["toolchain-xtensa-esp32", "framework-arduinoespressif32"]]]) {
+    const { core, r } = await diagnosticoConCore(paquetes, [CH340])
+    assert.doesNotMatch(r, /Listo para usar|Listo — veo/, `con ${caso} dijo listo para usar:\n${r}`)
+    assert.match(r, /faltan las herramientas de las placas/i, r)
+    assert.match(r, /\*\*Herramientas de las placas[^\n]*FALTAN/, r)
+    assert.ok(r.includes("toolchain-atmelavr") && r.includes("framework-arduino-avr"), `no nombra las que faltan:\n${r}`)
+    assert.ok(r.includes(join(core, "packages")), "no dice en qué carpeta las buscó")
+    assert.match(r, /action: "reparar"/, "no ofrece bajarlas desde el bot")
+  }
+})
+
+test("diagnostico con placa y con las herramientas: «Listo para usar» (contrapeso)", async () => {
+  const { r } = await diagnosticoConCore(["toolchain-xtensa-esp32", "framework-arduinoespressif32", "toolchain-atmelavr", "framework-arduino-avr"], [CH340])
+  assert.match(r, /\*\*Estado general:\*\* Listo para usar/, r)
+  assert.match(r, /\*\*Herramientas de las placas[^\n]*OK/, r)
+})
+
+test("diagnostico sin placa: el estado sigue siendo «ninguna placa», y las herramientas se informan aparte", async () => {
+  const { r } = await diagnosticoConCore([], [])
+  assert.match(r, /Ninguna placa conectada/, r)
+  assert.match(r, /\*\*Herramientas de las placas[^\n]*FALTAN/, "sin placa no informa el estado de las herramientas")
+})
