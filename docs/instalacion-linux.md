@@ -73,7 +73,7 @@ El instalador cierra diciendo lo que **comprobó**, no lo que intentó.
 **Si todo quedó bien:**
 
 ```
-✅ ¡Todo listo! Abrí una terminal en cualquier carpeta, escribí 'opencode', ...
+✅ ¡Todo listo! Abrí una terminal en la carpeta del proyecto, escribí 'tecnia-bot', ...
 ```
 
 Sale únicamente si comprobó las tres cosas: que OpenCode contesta, que

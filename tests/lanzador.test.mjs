@@ -112,3 +112,24 @@ test("instalador y desinstalador conocen al lanzador (y la marca del desinstalad
   const uninstall = readFileSync(join(REPO, "install", "uninstall.sh"), "utf8")
   assert.ok(uninstall.includes(`= "${segundaLinea}" ]`), "el desinstalador no reconoce al lanzador por su segunda línea")
 })
+
+// ── LOS DOS CIERRES DE LINUX DICEN EL MISMO COMANDO ───────────────────────────
+//
+// install.sh termina diciendo «escribí 'tecnia-bot'». bootstrap.sh, que lo llama y cierra
+// después, decía «escribí 'opencode'». Lo último que queda en pantalla es lo de bootstrap, y
+// con `opencode` a secas la carga a la placa se rechaza (SIN_LANZADOR). Lo marcó la revisión
+// independiente de la unión de las dos líneas (2026-11-23).
+//
+// LÍMITE HONESTO: es una guarda de FORMA sobre el texto de los scripts. Y sólo mira Linux: en
+// Windows no hay lanzador, y ahí `opencode` es lo correcto.
+// Mutación que lo pone rojo: volver a «escribí 'opencode'» en el cierre de bootstrap.sh.
+test("los cierres de install.sh y de bootstrap.sh mandan a abrir con el mismo comando, el lanzador", () => {
+  const sinComentarios = (ruta) => readFileSync(join(REPO, ruta), "utf8").replace(/^\s*#.*$/gm, "")
+  for (const ruta of ["install/install.sh", "install/bootstrap.sh"]) {
+    const texto = sinComentarios(ruta)
+    assert.match(texto, /escrib[ií] 'tecnia-bot'/, `${ruta} no dice que se abre con 'tecnia-bot'`)
+    assert.doesNotMatch(texto, /escrib[ií] 'opencode'/, `${ruta} manda a abrir con 'opencode', que no permite cargar a la placa`)
+    assert.match(texto, /Con 'opencode' a secas anda todo menos cargar a la placa/, `${ruta} no avisa qué pasa con 'opencode' a secas`)
+  }
+  assert.match(readFileSync(join(REPO, "docs/instalacion-linux.md"), "utf8"), /escribí 'tecnia-bot'/)
+})
