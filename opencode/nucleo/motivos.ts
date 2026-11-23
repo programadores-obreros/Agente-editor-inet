@@ -338,6 +338,9 @@
 // `validar-tecnico.ts` (Gate 4, validación CONTINUA de `proyecto.comportamientos`,
 // el mismo bucle que ya emite `CAPACIDAD_INEXISTENTE_EN_CATALOGO`/
 // `MAGNITUD_INCOMPATIBLE`):
+// - `CONDICION_SIN_EFECTO` (NUC-01, 2026-11-23) — la condición de un `ComportamientoRegla`
+//   sobre una capacidad de magnitud `estadoBooleano` se cumple con 0 y con 1 («siempre»)
+//   o con ninguno de los dos («nunca»): `datos.desenlace`. Warning, no bloquea.
 // - `UMBRAL_FUERA_DE_RANGO` — el `umbral` de un `ComportamientoRegla` tiene magnitud/
 //   unidad COMPATIBLE con la capacidad real del sensor vigente (si no lo fuera, ya se
 //   reportó arriba con `MAGNITUD_INCOMPATIBLE` — nunca se duplica), pero el valor
