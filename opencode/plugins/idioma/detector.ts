@@ -85,9 +85,11 @@
 //    segmento, salvo que repita lo que ya queda (el texto incluido, o una
 //    oración con 70 % o más de sus bigramas, sin contar placa/pin/LED…): ahí
 //    era un borrador de la respuesta que viene después y la duplicaría. La
-//    salida de una tool copiada ("The tool reported:") no se rescata. La cita en la
-//    misma línea ("Remember the rule: compilar es control de calidad…") no se
-//    rescata nunca: es el modelo recitando el prompt.
+//    salida de una tool copiada ("The tool reported:") en líneas propias no se
+//    rescata. Lo que viene en español en la MISMA línea de una entrada del plan
+//    se rescata siempre, salvo que repita lo que queda (ver el paso 4d): ahí
+//    puede haber un aviso de seguridad, y perderlo es peor que dejar pasar una
+//    regla recitada.
 //
 // Textos de más de MAX_TEXTO caracteres vuelven sin tocar: ninguna fuga real
 // es tan larga, y un filtro no puede demorar la respuesta.
@@ -124,6 +126,10 @@ export interface Segmento {
   citaDeAndamio: boolean
   /** La voz se la cedió un informe de tool ("The tool reported:"): es salida copiada, no un borrador. */
   citaDeInforme: boolean
+  /** true si la voz se la cedió un rótulo de andamio del plan ("Tone:", "Key points:"). */
+  citaDeRotulo: boolean
+  /** true si la voz se la cedió la salida copiada de una tool ("The tool reported:"). */
+  citaDeTool: boolean
   /** Empieza con un ítem de etiqueta inglesa ("1. Enthusiastic confirmation:"). */
   etiqueta: boolean
   soloCita: boolean
@@ -629,6 +635,8 @@ function segmentar(t: string): Segmento[] {
       citaEnBloque: false,
       citaDeAndamio: false,
       citaDeInforme: false,
+      citaDeRotulo: false,
+      citaDeTool: false,
       etiqueta: false,
       soloCita: false,
       lineaDeCita: false,
@@ -743,6 +751,18 @@ const COGNADOS = new Set(
 const palabraAjena = (w: string) => /^[a-z]{4,}$/.test(w) && !ES.has(w) && !COGNADOS.has(w) && !DOMINIO.has(w)
 const PREGUNTA_EN_ESPANOL = /\bqu[eé]\s+(?:significa|es|son|quiere\s+decir)\b/i
 
+/**
+ * ¿Lo que una entrada del plan presentó en su MISMA línea es español? Alcanza con 2
+ * funcionales españolas. Con una sola también, si la frase tiene cuatro palabras o más (que
+ * no tenga más inglés que español ya lo exige el filtro de arriba, `s.en <= s.es`): «nunca conectes 220 V a la placa» tiene una sola funcional de la
+ * lista («la») y era uno de los avisos de seguridad que se perdían. «Hola profe.» no pasa:
+ * dos palabras no alcanzan para saber qué es.
+ */
+function esEspanolEnLaMismaLinea(s: Segmento): boolean {
+  if (s.es >= 2) return true
+  return s.es >= 1 && (s.texto.match(/[\p{L}\p{N}]+/gu) ?? []).length >= 4
+}
+
 /** Segmenta y decide qué se borra. Exportado para los tests y la evaluación del corpus. */
 export function analizar(original: string, opciones: Opciones = {}): Segmento[] {
   const t = original.replace(/\r\n?/g, "\n")
@@ -780,6 +800,8 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
     andamio: boolean
     soloCitas: boolean
     informe: boolean
+    rotulo: boolean
+    tool: boolean
   } | null = null
   for (const s of textos) {
     if (cesion) {
@@ -796,6 +818,8 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
         s.citaEnBloque = cesion.modo === "bloque"
         s.citaDeAndamio = cesion.andamio
         s.citaDeInforme = cesion.informe
+        s.citaDeRotulo = cesion.rotulo
+        s.citaDeTool = cesion.tool
         if (cesion.parrafoCitado < 0) cesion.parrafoCitado = s.parrafo
         continue
       }
@@ -819,6 +843,9 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
         andamio: s.marca && s.etiqueta,
         // La salida de una tool copiada o el prompt recitado no se rescatan nunca.
         informe: INFORME_DE_TOOL.test(s.texto) || RECITA_REGLA.test(s.texto),
+        // "Tone:", "Key points:": lo que sigue describe CÓMO responder, no es la respuesta.
+        rotulo: ANDAMIO.test(s.texto),
+        tool: INFORME_DE_TOOL.test(s.texto),
       }
     }
   }
@@ -979,18 +1006,42 @@ export function analizar(original: string, opciones: Opciones = {}): Segmento[] 
   // - lo que REPITE la respuesta que queda: el texto entero incluido en ella,
   //   o alguna oración con el 70 % o más de sus bigramas en ella (sin contar
   //   placa/pin/LED/cable…, que están en todas las respuestas).
-  // Lo presentado en la MISMA línea ("Let me explain: el PWM prende…") se
-  // rescata si es de una etiqueta de ítem, o si sin él no quedaría nada en
-  // español; y en los dos casos con 2+ funcionales españolas.
-  const quedaEspanol = textos.some((s) => !s.quitado && s.propio === "es")
+  //
+  // Lo presentado en la MISMA línea ("Let me explain: el PWM prende…", "Let's warn the
+  // user: NO conectes la batería de 12 V directo al pin") se rescata SIEMPRE que sea
+  // español, salvo que repita lo que queda.
+  //
+  // Hasta el 2026-11-23 se rescataba sólo si lo presentaba una etiqueta de ítem o si sin él
+  // no quedaba nada en español, y nunca detrás de "Remember the rule:" o "The tool
+  // reported:". La auditoría de código del 2026-11-22 (TCH-01, reproducido por QA) perdió
+  // así 4 avisos de seguridad de 8 probados: «NO conectes la batería de 12 V directo al
+  // pin», «desenchufá el cargador antes de tocar los cables», «el LED no tiene resistencia y
+  // se puede quemar», «nunca conectes 220 V a la placa». Se perdían cuando después venía
+  // más español, y al docente no se le avisaba.
+  //
+  // Decisión del owner (2026-11-23): conservar el español. Es la regla de oro de este
+  // archivo aplicada a su propio caso: borrar español es peor que dejar pasar una fuga.
+  // EL COSTO, aceptado: una regla del prompt recitada en español en la misma línea
+  // ("Remember the rule: compilar es control de calidad…") ahora se queda, salvo que la
+  // respuesta la repita.
+  //
+  // TRES COSAS QUE SIGUEN SIN RESCATARSE en la misma línea, y por qué:
+  // - lo que presenta un rótulo de andamio ("- Tone: cálido y con voseo.", "Key points:
+  //   …"): describe cómo responder, no es algo dicho al docente;
+  // - la salida copiada de una tool ("The tool reported: Listo! Circuito generado…"): no es
+  //   algo que el modelo le dice al docente, y volvía cortada por la mitad;
+  // - un segmento con muy poca señal de español ("1. Greeting: Hola profe."). Un aviso de
+  //   una o dos palabras ("¡Cuidado!") cae acá y se pierde igual: es un límite conocido.
   const rescatables = textos.filter(
     (s) =>
       s.quitado &&
       s.citado &&
-      !s.citaDeInforme &&
       s.en <= s.es &&
       !eco.has(s) &&
-      (s.citaEnBloque || ((s.citaDeAndamio || !quedaEspanol) && s.es >= 2)),
+      // En líneas propias: como siempre (y nunca la salida de una tool ni el prompt recitado).
+      // En la MISMA línea: lo que es español (ver `esEspanolEnLaMismaLinea`), salvo lo que
+      // presenta un rótulo de andamio o la salida copiada de una tool. Ver arriba.
+      (s.citaEnBloque ? !s.citaDeInforme : esEspanolEnLaMismaLinea(s) && !s.citaDeRotulo && !s.citaDeTool),
   )
   if (rescatables.length > 0) {
     const restoTexto = textos
