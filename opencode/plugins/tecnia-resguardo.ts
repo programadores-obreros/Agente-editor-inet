@@ -16,21 +16,46 @@
 //
 // Si ya había un `fetch` puesto (otro plugin, o el docente), se lo envuelve en
 // vez de pisarlo.
+//
+// SÓLO SI SE USA GOOGLE. Medido en 1.18.18: crear `provider.google` en la
+// configuración de alguien que no tiene key de Google hace que `opencode models`
+// le liste 25 modelos de Google como disponibles (sin el plugin: ninguno). Por
+// eso el resguardo se pone únicamente si la configuración ya nombra a Google:
+// una sección `provider.google`, o un `model` que empieza con `google/` (el del
+// agente o el general; el instalador lo escribe cuando hay key). Lo que queda
+// afuera: quien no tiene nada de eso y elige un modelo de Google a mano desde
+// la TUI en esa sesión.
+//
+// El resguardo sólo mira los pedidos `:streamGenerateContent`; el resto pasa
+// sin tocar.
+//
+// De este archivo sólo sale el `default`: un export suelto que sea función lo
+// tomaría el cargador viejo de OpenCode por otro plugin. Por eso `usaGoogle`
+// vive en resguardo/google.ts.
 // ============================================================================
 import type { Plugin, PluginModule } from "@opencode-ai/plugin"
-import { conResguardo, esperaPorDefecto, REINTENTOS_POR_DEFECTO, type Buscar } from "./resguardo/google.ts"
+import {
+  conResguardo,
+  esperaPorDefecto,
+  REINTENTOS_POR_DEFECTO,
+  usaGoogle,
+  type Buscar,
+  type ConProveedores,
+} from "./resguardo/google.ts"
 
 const SERVICIO = "tecnia-resguardo"
 
-type ConProveedores = { provider?: Record<string, { options?: Record<string, unknown> } | undefined> }
-
 const server: Plugin = async ({ client }) => {
   const anotar = (message: string, extra?: Record<string, unknown>) => {
-    void client.app.log({ body: { service: SERVICIO, level: "warn", message, extra } }).catch(() => {})
+    // Un registro que falla no puede voltear la respuesta: se descarta el fallo, también si es síncrono.
+    try {
+      void client.app.log({ body: { service: SERVICIO, level: "warn", message, extra } }).catch(() => {})
+    } catch {}
   }
   return {
     config: async (config) => {
       const cfg = config as ConProveedores
+      if (!usaGoogle(cfg)) return
       cfg.provider ??= {}
       const google = (cfg.provider.google ??= {})
       const opciones = (google.options ??= {})
