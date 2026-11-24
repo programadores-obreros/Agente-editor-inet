@@ -31,9 +31,17 @@
 //    que dijo Google, sin hablar de saturación.
 // 3. Cualquiera de los dos cuando YA salió algo visible. No se puede repetir
 //    (se duplicaría el texto, o la herramienta correría dos veces). Si lo
-//    visible fue texto, agrega un aviso de respuesta cortada. Si fue una
-//    llamada a herramienta, cierra sin aviso: OpenCode la va a ejecutar y el
-//    turno sigue solo, así que "mandá de nuevo tu mensaje" sería falso.
+//    visible fue texto (u otra parte que no es una llamada), agrega un aviso
+//    de respuesta cortada. Si fue una llamada a herramienta (`functionCall`),
+//    cierra sin aviso: OpenCode la va a ejecutar y el turno sigue solo, así
+//    que "mandá de nuevo tu mensaje" sería falso.
+// 4. Un reintento que vuelve con un error HTTP: si es 503 cuenta como otro
+//    intento; si es otro (cuota, key, pedido inválido) se corta ahí con el
+//    aviso de error, igual que en 2.
+//
+// EL AVISO SÓLO SE ESCRIBE EN LA CONVERSACIÓN. El pedido del título de la
+// charla pasa por este mismo `fetch` (no lleva herramientas): ahí se cierra
+// sin texto, para que el aviso no termine siendo el título.
 //
 // QUÉ DEJA PASAR SIN TOCAR: un prompt bloqueado (`promptFeedback.blockReason`)
 // es una respuesta completa de Google, no un corte. Y lo que no se entiende
@@ -140,27 +148,51 @@ type Trozo = {
   usageMetadata?: Uso
 }
 
-/** Lo que trae un trozo: nada que se vea, texto, o una llamada a herramienta (u otra parte que no es texto). */
-function loVisible(partes: readonly Parte[]): "nada" | "texto" | "accion" {
-  let hay: "nada" | "texto" | "accion" = "nada"
-  for (const p of partes) {
+type Visible = "nada" | "texto" | "llamada"
+
+/**
+ * Lo que trae un trozo: nada que se vea, algo que se ve, o una llamada a herramienta.
+ * - Pensamiento (`thought: true`) sin llamada: nada.
+ * - `functionCall`, venga como venga: llamada. Es lo único que OpenCode ejecuta solo.
+ * - Texto no vacío, o cualquier otra parte (datos, código): se ve. Entra todo en "texto"
+ *   porque el final es el mismo: no se repite y se avisa que quedó cortado.
+ */
+function loVisible(partes: unknown): Visible {
+  let hay: Visible = "nada"
+  if (!Array.isArray(partes)) return hay
+  for (const p of partes as (Parte | null)[]) {
+    if (p === null || typeof p !== "object") continue
+    if (p.functionCall !== undefined) return "llamada"
     if (p.thought === true) continue
-    const claves = Object.keys(p).filter((k) => k !== "thoughtSignature")
-    if (claves.length === 1 && claves[0] === "text") {
-      if (typeof p.text === "string" && p.text.length > 0 && hay === "nada") hay = "texto"
-    } else if (claves.length > 0) hay = "accion"
+    const otras = Object.keys(p).filter((k) => k !== "thoughtSignature" && k !== "thought" && k !== "text")
+    if (otras.length > 0 || (typeof p.text === "string" && p.text.length > 0)) hay = "texto"
   }
   return hay
 }
 
 /** El JSON de un evento SSE: junta sus líneas `data:` e ignora `event:`, `id:` y comentarios. */
 function datosDelEvento(evento: string): string | null {
-  const lineas = evento.split(/\r?\n|\r/).filter((l) => l.startsWith("data:"))
+  // Un BOM pegado al principio del evento (lo puede agregar un proxy) no cambia qué línea es.
+  const lineas = evento.replace(/^\uFEFF/, "").split(SALTO).filter((l) => l.startsWith("data:"))
   if (lineas.length === 0) return null
   return lineas.map((l) => l.slice("data:".length).replace(/^ /, "")).join("\n")
 }
 
+/** Un salto de línea de SSE: \r\n, \n o \r suelto. Un evento termina con dos seguidos. */
+const SALTO = /\r\n|\n|\r/
+const FIN_DE_EVENTO = /\r\n\r\n|\n\n|\r\r/
+
 const esSaturacion = (e: NonNullable<Trozo["error"]>) => e.code === 503 || e.status === "UNAVAILABLE"
+
+/** El `error.message` del cuerpo de un error HTTP de Google, si se puede leer. */
+async function mensajeDeErrorHttp(respuesta: Response): Promise<string | undefined> {
+  try {
+    const cuerpo = (await respuesta.json()) as { error?: { message?: unknown } } | null
+    return typeof cuerpo?.error?.message === "string" ? cuerpo.error.message : undefined
+  } catch {
+    return undefined
+  }
+}
 
 type Fin =
   | { como: "bien" }
@@ -174,6 +206,12 @@ export function conResguardo(base: Buscar, opciones: OpcionesDeResguardo): Busca
   // Si el hook `config` corre dos veces sobre la misma configuración no se apilan resguardos.
   if ((base as { [YA_ENVUELTO]?: true })[YA_ENVUELTO]) return base
   const esperar = opciones.esperar ?? esperarDeVerdad
+  // Un registro que falla no puede voltear la respuesta.
+  const anotar = (mensaje: string, extra?: Record<string, unknown>) => {
+    try {
+      opciones.anotar?.(mensaje, extra)
+    } catch {}
+  }
   const resguardado: Buscar = async (input, init) => {
     const primera = await base(input, init)
     // Sólo el stream de generación, y sólo si se puede repetir. Un error HTTP se devuelve tal cual:
@@ -183,7 +221,9 @@ export function conResguardo(base: Buscar, opciones: OpcionesDeResguardo): Busca
 
     const codificar = new TextEncoder()
     const senal = init?.signal
-    let visible: "nada" | "texto" | "accion" = "nada"
+    // El pedido de la conversación lleva la lista de herramientas; el del título, no.
+    const esConversacion = typeof init?.body === "string" && init.body.includes('"tools"')
+    let visible: Visible = "nada"
     let ultimoUso: Uso | undefined
     let lectorActual: ReadableStreamDefaultReader<Uint8Array> | null = null
     let abandonado = false
@@ -199,7 +239,7 @@ export function conResguardo(base: Buscar, opciones: OpcionesDeResguardo): Busca
         for (;;) {
           const { done, value } = await lector.read()
           pendiente += done ? decodificar.decode() : decodificar.decode(value, { stream: true })
-          const eventos = pendiente.split(/\r?\n\r?\n/)
+          const eventos = pendiente.split(FIN_DE_EVENTO)
           pendiente = done ? "" : (eventos.pop() ?? "")
           for (const evento of eventos) {
             if (evento.trim().length === 0) continue
@@ -227,8 +267,8 @@ export function conResguardo(base: Buscar, opciones: OpcionesDeResguardo): Busca
             }
             if (json.usageMetadata !== undefined) ultimoUso = json.usageMetadata
             const candidato = json.candidates?.[0]
-            const hay = loVisible(candidato?.content?.parts ?? [])
-            if (hay === "accion" || (hay === "texto" && visible === "nada")) visible = hay
+            const hay = loVisible(candidato?.content?.parts)
+            if (hay === "llamada" || (hay === "texto" && visible === "nada")) visible = hay
             if (typeof candidato?.finishReason === "string") cerrado = true
             // Un prompt bloqueado es una respuesta completa de Google, no un corte.
             if (json.promptFeedback?.blockReason !== undefined && json.promptFeedback.blockReason !== null) cerrado = true
@@ -246,7 +286,9 @@ export function conResguardo(base: Buscar, opciones: OpcionesDeResguardo): Busca
     const cuerpo = new ReadableStream<Uint8Array>({
       async start(salida) {
         const cerrarCon = (texto: string) => {
-          salida.enqueue(codificar.encode(trozoDeCierre(texto, ultimoUso)))
+          // En un pedido sin herramientas (el del título de la charla) el aviso no se escribe:
+          // OpenCode usaría su primera línea como título. Se cierra sin texto.
+          salida.enqueue(codificar.encode(trozoDeCierre(esConversacion ? texto : "", ultimoUso)))
           salida.close()
         }
         let respuesta: Response | null = primera
@@ -261,14 +303,14 @@ export function conResguardo(base: Buscar, opciones: OpcionesDeResguardo): Busca
             if (fin.como === "bien") return salida.close()
             intentos++
             if (fin.como !== "saturado") todosSaturados = false
-            opciones.anotar?.("Google no terminó la respuesta", {
+            anotar("Google no terminó la respuesta", {
               intentos,
               visible,
               como: fin.como,
               ...(fin.como === "error" ? { codigo: fin.codigo, mensaje: fin.mensaje } : {}),
             })
             // Ya hay una llamada a herramienta: OpenCode la ejecuta y el turno sigue. Sin aviso.
-            if (visible === "accion") return cerrarCon("")
+            if (visible === "llamada") return cerrarCon("")
             if (visible === "texto") return cerrarCon(AVISO_CORTADO)
             if (fin.como === "error") return cerrarCon(avisoDeError(fin.codigo, fin.mensaje))
             if (intentos > opciones.reintentos) {
@@ -277,15 +319,26 @@ export function conResguardo(base: Buscar, opciones: OpcionesDeResguardo): Busca
             await esperar(opciones.esperaMs(intentos), senal)
             if (abandonado) return
             respuesta = await base(input, init)
-            // Si el consumidor se fue mientras el reintento viajaba no hace falta un corte aparte:
-            // `volcar` falla en su primer `enqueue` y su `finally` cancela este cuerpo. (Había un
-            // chequeo explícito acá; por mutación se vio que ningún test lo distinguía de esto.)
-            if (!respuesta.ok || !respuesta.body) {
-              opciones.anotar?.("el reintento no trajo un stream", { estado: respuesta.status })
-              // Un 503 por HTTP también es saturación; cualquier otro estado no.
-              sinStream = respuesta.status === 503 ? { como: "saturado" } : { como: "sin-cierre" }
+            // El consumidor se fue mientras el reintento viajaba: este cuerpo nuevo no lo va a leer
+            // nadie. `cancel()` ya corrió contra el lector viejo, y si el cuerpo llega callado
+            // `volcar` nunca haría un `enqueue` que lo frene. (Se había sacado este chequeo porque
+            // ningún test lo distinguía; la segunda revisión mostró el caso que sí.)
+            if (abandonado) {
               void respuesta.body?.cancel().catch(() => {})
-              respuesta = null
+              return
+            }
+            if (!respuesta.ok || !respuesta.body) {
+              anotar("el reintento no trajo un stream", { estado: respuesta.status })
+              if (respuesta.ok || respuesta.status === 503) {
+                // Un 503 por HTTP también es saturación: cuenta como otro intento y se sigue.
+                sinStream = respuesta.status === 503 ? { como: "saturado" } : { como: "sin-cierre" }
+                void respuesta.body?.cancel().catch(() => {})
+                respuesta = null
+              } else {
+                // Cuota (429), key rechazada (401/403), pedido inválido (400)…: repetir no lo arregla.
+                const mensaje = await mensajeDeErrorHttp(respuesta)
+                return cerrarCon(avisoDeError(respuesta.status, mensaje))
+              }
             }
           }
         } catch (error) {
