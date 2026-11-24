@@ -36,6 +36,7 @@ import { compararHuellas, hashearArchivos, type HuellaDeArtefacto } from "./arte
 import { argvDeCargaCompilando, lanzarCarga } from "./ejecutar.ts"
 import { leerSalidaEsptool, TEXTO_CARGA_SIN_VERIFICAR, veredictoDeCarga } from "./esptool.ts"
 import { descubrir, elegirPuerto, hashDePlacaFisica, mismaIdentidad, type PlacaDetectada } from "./identidad.ts"
+import { leerProcesosDeWindows, partirLineaDeComandoWindows, porQueNoVieneDelLanzadorEnWindows, rutaDelLanzadorEnWindows, type ProcesoWindows } from "./procesos-windows.ts"
 import { CODIGO_CANCELADO, CODIGO_NO_LANZADO, CODIGO_TIMEOUT, describirDuracion, ErrorDeCarga, recortarSalida, timeoutCarga, traducirError, type Run, type RunResult } from "./proceso.ts"
 import { reservarPuerto } from "./puertos.ts"
 import { guardarBanco, leerBanco, leerCargasGlobal, type Banco } from "./registro.ts"
@@ -80,6 +81,10 @@ export interface HerramientasDeCarga {
   readonly lanzador?: Lanzamiento
   /** En qué sistema corre. En producción, `process.platform`; los tests la inyectan. */
   readonly plataforma?: string
+  /** Sólo Windows: la foto de procesos (quién abrió a quién y con qué línea). En producción, `leerProcesosDeWindows`; los tests la inyectan. */
+  readonly procesosDeWindows?: () => readonly ProcesoWindows[] | null
+  /** Sólo Windows: dónde está el lanzador instalado. En producción, `rutaDelLanzadorEnWindows()`; los tests la inyectan. */
+  readonly rutaDelLanzadorEnWindows?: string
 }
 
 /** Lo que se usa del `ctx` de OpenCode. `ask` no se llama desde acá: lo llama `preguntarChecklist`. */
@@ -129,10 +134,10 @@ const no = (codigo: string, resultado: string, extra: Record<string, unknown> = 
  * rechaza si nombra `"server"`; las demás fuentes de configuración (carpetas `.opencode`
  * de más arriba, `OPENCODE_CONFIG`, configuración administrada) NO se miran.
  *
- * PLATAFORMAS: medido sólo en Linux (`/proc/self/cmdline`). En macOS y Windows no hay una
- * forma verificada de leer la línea de comando real: ahí la carga falla cerrada con
- * `PLATAFORMA_NO_HABILITADA` (pendiente: Windows por CIM `Win32_Process.CommandLine`, sin
- * probar).
+ * PLATAFORMAS: en Linux, `/proc/self/cmdline`. En Windows, la línea de comando de este proceso
+ * según `Win32_Process` (`procesos-windows.ts`, MEDIDO en una notebook real el 2026-11-23),
+ * partida con las reglas de `CommandLineToArgvW`. En macOS no hay una forma verificada: ahí la
+ * carga falla cerrada con `PLATAFORMA_NO_HABILITADA`.
  */
 
 /** Las banderas de aprobación automática, sin los guiones. `--x`, `--x=valor` y camelCase cuentan; `--no-x` no. */
@@ -165,7 +170,20 @@ export function banderaDeAprobacionAutomatica(argv: readonly unknown[] = [...pro
 
 export type LecturaDeLineaDeComando = { ok: true; argv: string[] } | { ok: false; codigo: "PLATAFORMA_NO_HABILITADA" | "LINEA_DE_COMANDO_ILEGIBLE"; detalle: string }
 
-/** La línea de comando REAL de este proceso. Sólo Linux (medido); en el resto falla cerrado. */
+/**
+ * La línea de comando REAL de este proceso en Windows, sacada de la foto de procesos. Si la
+ * foto no está, no trae este proceso o Windows no entrega su línea, no se carga.
+ */
+export function lineaDeComandoEnWindows(procesos: readonly ProcesoWindows[] | null, pid: number = process.pid): LecturaDeLineaDeComando {
+  if (procesos === null) return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "Windows no contestó la lista de procesos" }
+  const este = procesos.filter((p) => p.pid === pid)
+  if (este.length !== 1 || typeof este[0]!.linea !== "string") return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "Windows no entregó la línea de comando de este proceso" }
+  const argv = partirLineaDeComandoWindows(este[0]!.linea)
+  if (argv.length === 0 || argv[0] === "") return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "la línea de comando del proceso vino vacía" }
+  return { ok: true, argv }
+}
+
+/** La línea de comando REAL de este proceso en Linux. En Windows es `lineaDeComandoEnWindows`; en el resto falla cerrado. */
 export function leerLineaDeComandoReal(plataforma: NodeJS.Platform = process.platform, leer: (ruta: string) => Buffer = (r) => readFileSync(r)): LecturaDeLineaDeComando {
   if (plataforma !== "linux") return { ok: false, codigo: "PLATAFORMA_NO_HABILITADA", detalle: `en ${plataforma} todavía no hay una forma verificada de leer cómo se abrió OpenCode` }
   try {
@@ -439,7 +457,9 @@ function revisarOpencodeDeHome(ruta: string): string | null {
  * escriba `TECNIA_LANZADOR=$$ exec opencode` en una terminal la falsifica. Protege contra el
  * caso real: abrir OpenCode sin pasar por la revisión previa (a mano, desde otro programa, o
  * con una configuración que después se borró). Las revisiones de la tool siguen como segunda
- * capa. Sólo Linux (`/proc`); en el resto falla cerrado.
+ * capa. Esto es Linux (`/proc`). En Windows `cmd` no hace `exec` y no se puede leer el entorno
+ * de otro proceso: la prueba equivalente es `porQueNoVieneDelLanzadorEnWindows`
+ * (`procesos-windows.ts`). En el resto falla cerrado.
  */
 
 /** De dónde sale la marca del lanzador. Inyectable para probar. */
@@ -516,26 +536,58 @@ export function porQueNoVieneDelLanzador(l: Lanzamiento): string | null {
 }
 
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */
-export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion" | "lanzador" | "plataforma">): ResultadoDeCarga | null {
-  // LA PLATAFORMA, ANTES QUE EL LANZADOR. Esta carga sólo está habilitada en Linux, y el
-  // lanzador `tecnia-bot` sólo lo instala install.sh. Mirando primero el lanzador, en Windows y
-  // en Mac la respuesta era siempre SIN_LANZADOR: «cerrá OpenCode y abrí Tecnia Bot escribiendo
+export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion" | "lanzador" | "plataforma" | "procesosDeWindows" | "rutaDelLanzadorEnWindows">): ResultadoDeCarga | null {
+  // LA PLATAFORMA, ANTES QUE EL LANZADOR. Esta carga está habilitada en Linux y en Windows; el
+  // lanzador `tecnia-bot` sólo lo instala install.sh. Mirando primero el lanzador, en Mac la
+  // respuesta era siempre SIN_LANZADOR: «cerrá OpenCode y abrí Tecnia Bot escribiendo
   // `tecnia-bot`», un comando que ahí no existe. El motivo verdadero estaba más abajo y no se
   // alcanzaba nunca (encontrado el 2026-11-23, al preparar una prueba en Windows).
-  // NO CAMBIA A QUIÉN SE LE PERMITE CARGAR: las dos ramas rechazan. Cambia cuál se dice.
+  //
+  // WINDOWS se habilitó después de esa prueba (ver `procesos-windows.ts`): el camino nuevo
+  // armaba, dibujaba, generaba y compilaba, y no podía llegar a la placa en el sistema que usan
+  // las escuelas. No se aflojó nada: en Windows se exigen las MISMAS dos cosas que en Linux
+  // (que OpenCode venga del lanzador con su revisión previa, y que su línea de comando real no
+  // abra un servidor ni apruebe sola), averiguadas por el camino que Windows ofrece.
   const plataforma = h.plataforma ?? process.platform
-  if (plataforma !== "linux") {
-    const sistema = plataforma === "win32" ? "Windows" : plataforma === "darwin" ? "macOS" : plataforma
+  if (plataforma !== "linux" && plataforma !== "win32") {
+    const sistema = plataforma === "darwin" ? "macOS" : plataforma
     return no(
       "PLATAFORMA_NO_HABILITADA",
-      `NO SE CARGÓ — en esta versión, cargar a la placa el programa generado desde el proyecto físico sólo está habilitado en Linux, y esta compu es ${sistema}. ` +
+      `NO SE CARGÓ — en esta versión, cargar a la placa el programa generado desde el proyecto físico sólo está habilitado en Linux y en Windows, y esta compu es ${sistema}. ` +
         "No hay otro camino para cargar ESTE programa desde acá: la tool `platformio` tampoco carga la carpeta del programa generado. " +
         "Lo que sí funciona en esta compu: armar el proyecto, generar el programa y compilarlo. " +
         "Decíselo así al docente; no le pidas que cierre ni que abra nada de otra forma, porque no cambia el resultado.",
     )
   }
   // Ciclo 4: antes que todo lo demás, que OpenCode se haya abierto con el lanzador (revisión previa).
-  const sinLanzador = porQueNoVieneDelLanzador(h.lanzador ?? LANZAMIENTO_REAL)
+  const lanzador = h.lanzador ?? LANZAMIENTO_REAL
+  // En Windows las dos comprobaciones (lanzador y línea de comando) salen de UNA foto de procesos.
+  let procesos: readonly ProcesoWindows[] | null = null
+  if (plataforma === "win32") {
+    // La marca es barata y la foto no (arranca PowerShell): sin marca no hace falta sacarla.
+    if (lanzador.marca !== undefined) procesos = (h.procesosDeWindows ?? leerProcesosDeWindows)()
+    const sinLanzadorEnWindows = porQueNoVieneDelLanzadorEnWindows({ marca: lanzador.marca, pid: lanzador.pid, procesos, rutaDelLanzador: h.rutaDelLanzadorEnWindows ?? rutaDelLanzadorEnWindows() })
+    if (sinLanzadorEnWindows) {
+      // El lanzador de Windows abre igual cuando su revisión no da limpio (sin la marca). Si la
+      // causa es algo de la carpeta, decir sólo "abrilo desde el ícono" manda al docente a dar
+      // vueltas: lo abrió desde el ícono. Se mira acá con la MISMA revisión para nombrar la causa.
+      // No cambia el veredicto: las dos ramas rechazan.
+      const causa = configuracionDeOpenCodeQueNoSeAdmite(ctx.directory, h.configuracion ?? ENTORNO_DE_CONFIGURACION_REAL)
+      if (causa) {
+        return no(
+          "CONFIGURACION_DE_PROYECTO",
+          `NO SE CARGÓ — encontré configuración de OpenCode que podría aprobar el cartel de la carga sin que nadie lo vea: ${causa}. ` +
+            "Para cargar, hay que quitarla (o abrir Tecnia Bot en otra carpeta que no la tenga), cerrar Tecnia Bot y volver a abrirlo desde su acceso directo.",
+        )
+      }
+      return no(
+        "SIN_LANZADOR",
+        `NO SE CARGÓ — ${sinLanzadorEnWindows}. Para cargar a la placa, cerrá esta ventana y abrí Tecnia Bot desde su acceso directo (el ícono del escritorio o del menú inicio): ` +
+          "así se revisa la carpeta antes de abrir. Todo lo demás (explicar, armar el proyecto, compilar) funciona igual.",
+      )
+    }
+  }
+  const sinLanzador = plataforma === "win32" ? null : porQueNoVieneDelLanzador(lanzador)
   if (sinLanzador) {
     return no(
       "SIN_LANZADOR",
@@ -547,10 +599,10 @@ export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<Herramientas
   if (agente) return no("AGENTE_NO_AUTORIZADO", `NO SE CARGÓ — ${agente}`)
 
   // Fuente principal: la línea de comando REAL. Si no se puede leer, no se carga.
-  const lectura = (h.lineaDeComando ?? leerLineaDeComandoReal)()
+  const lectura = h.lineaDeComando ? h.lineaDeComando() : plataforma === "win32" ? lineaDeComandoEnWindows(procesos, lanzador.pid) : leerLineaDeComandoReal()
   if (!lectura.ok) {
     return lectura.codigo === "PLATAFORMA_NO_HABILITADA"
-      ? no(lectura.codigo, `NO SE CARGÓ — en esta versión experimental la carga a la placa sólo está habilitada en Linux (${lectura.detalle}).`)
+      ? no(lectura.codigo, `NO SE CARGÓ — en esta compu la carga a la placa no está habilitada (${lectura.detalle}).`)
       : no(lectura.codigo, `NO SE CARGÓ — no pude comprobar cómo se abrió OpenCode (${lectura.detalle}), y sin eso no se carga.`)
   }
   const rechazo = porQueElLanzamientoNoPermiteCargar(lectura.argv)

@@ -1,5 +1,10 @@
-// En Windows o en Mac, `programa cargar` dice por qué no carga. No manda a escribir un
-// comando que en esa compu no existe.
+// En Mac, `programa cargar` dice por qué no carga. No manda a escribir un comando que en esa
+// compu no existe.
+//
+// ACTUALIZACIÓN (2026-11-23, después de la prueba en la notebook del owner): WINDOWS YA NO
+// ESTÁ ACÁ. La carga se habilitó en Windows con la misma exigencia que en Linux
+// (`tests/carga-en-windows.test.mjs`). Lo de abajo cuenta cómo era cuando Windows también
+// rechazaba por plataforma; sigue valiendo, tal cual, para macOS.
 //
 // POR QUÉ EXISTE ESTE ARCHIVO. La carga del programa generado desde el proyecto físico sólo
 // está habilitada en Linux: el control que la autoriza lee de /proc cómo se abrió OpenCode, y
@@ -20,10 +25,10 @@
 // motivos se dice primero cuando valen los dos.
 //
 // MUTACIONES que ponen rojo este archivo (ver el commit):
-//   - mirar la plataforma después del lanzador (el orden viejo)      → rojo «Windows» y «Mac»
-//   - que el mensaje mande a escribir `tecnia-bot`                   → rojo «Windows» y «Mac»
+//   - mirar la plataforma después del lanzador (el orden viejo)      → rojo «Mac»
+//   - que el mensaje mande a escribir `tecnia-bot`                   → rojo «Mac»
 //   - aplicar el rechazo por plataforma también en Linux             → rojo «en Linux nada cambia»
-//   - no decir que `platformio` tampoco carga esa carpeta            → rojo «Windows»
+//   - no decir que `platformio` tampoco carga esa carpeta            → rojo «Mac»
 //
 // Corre con: node --test tests/carga-en-otra-plataforma.test.mjs
 
@@ -53,7 +58,7 @@ function herramientas({ plataforma, conLanzador }) {
 }
 const ctx = { directory: VACIA, agent: "tecnia-bot" }
 
-for (const [plataforma, nombre] of [["win32", "Windows"], ["darwin", "macOS"]]) {
+for (const [plataforma, nombre] of [["darwin", "macOS"]]) {
   test(`${nombre}: dice que la carga del programa generado es sólo en Linux, y no manda a abrir con tecnia-bot`, () => {
     // En esas plataformas nunca hay lanzador: es el caso real.
     const r = porQueNoSePuedeCargar(ctx, herramientas({ plataforma, conLanzador: false }))
@@ -62,7 +67,7 @@ for (const [plataforma, nombre] of [["win32", "Windows"], ["darwin", "macOS"]]) 
     assert.equal(r.codigo, "PLATAFORMA_NO_HABILITADA", `contestó ${r.codigo}: ${r.resultado}`)
     assert.match(r.resultado, /^NO SE CARGÓ/)
     assert.match(r.resultado, new RegExp(nombre), r.resultado)
-    assert.match(r.resultado, /Linux/, r.resultado)
+    assert.match(r.resultado, /Linux y en Windows/, r.resultado)
     assert.doesNotMatch(r.resultado, /escribiendo `tecnia-bot`|abrí Tecnia Bot escribiendo|cerrá OpenCode/, `manda a hacer algo que en ${nombre} no existe:\n${r.resultado}`)
     assert.doesNotMatch(r.resultado, /lanzador/, r.resultado)
     // El modelo no puede concluir que hay otro camino: `platformio` rechaza esa carpeta.
@@ -88,5 +93,5 @@ test("sin inyectar la plataforma se usa la de la máquina", () => {
   const h = herramientas({ plataforma: "linux", conLanzador: false })
   delete h.plataforma
   const r = porQueNoSePuedeCargar(ctx, h)
-  assert.equal(r?.codigo, process.platform === "linux" ? "SIN_LANZADOR" : "PLATAFORMA_NO_HABILITADA")
+  assert.equal(r?.codigo, process.platform === "linux" || process.platform === "win32" ? "SIN_LANZADOR" : "PLATAFORMA_NO_HABILITADA")
 })
