@@ -339,7 +339,53 @@ function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, deps: 
   // Phase 3: las reglas salen de la MISMA proyección del servidor que usa la vista
   // (`ModeloDeVista.reglas`) — ningún segundo cálculo acá.
   const reglas = (vista?.reglas ?? []).map((r) => ({ id: r.id, texto: r.texto, completa: r.completa, faltan: r.faltan, frase: r.frase }))
-  return { accion: "leer" as const, idProyecto, revision: snapshot.revision, componentes, reglas, motivos }
+  return { accion: "leer" as const, idProyecto, revision: snapshot.revision, ...avisoDeProyectoArmado(componentes, reglas), componentes, reglas, motivos }
+}
+
+/**
+ * Si el proyecto ya tiene piezas, `leer` lo dice ARRIBA de todo, con sus nombres.
+ *
+ * Por qué existe (notebook real, 2026-11-24): con un proyecto ya armado el docente pidió otra
+ * cosa, con otro sensor, y el agente le sumó la pieza nueva encima y quitó una regla que
+ * estorbaba, sin decir nada. El prompt no hablaba del caso y el dato estaba, pero perdido entre
+ * 17.000 caracteres de vocabulario. Un proyecto sin piezas ni reglas no agrega el campo: no hay
+ * nada que preguntar. (Este archivo no nombra piezas concretas: lo custodia un test.)
+ */
+function avisoDeProyectoArmado(componentes: readonly { readonly nombre: string }[], reglas: readonly { readonly texto: string | null }[]) {
+  // "Vacío" es lo mismo acá que en `vaciar`: sin piezas Y sin reglas (una regla incompleta puede
+  // existir sin ninguna pieza).
+  if (componentes.length === 0 && reglas.length === 0) return {}
+  return {
+    proyectoArmado: {
+      piezas: componentes.map((c) => c.nombre),
+      reglas: reglas.map((r) => r.texto ?? "(una regla incompleta)"),
+      queHacer:
+        "YA HAY UN PROYECTO ARMADO. Si lo que te piden habla de estas piezas, o ya te dijeron en esta charla que siguen con este proyecto, seguí sobre él. " +
+        "Si es OTRO proyecto, NO le sumes piezas ni le quites nada todavía: preguntá primero, UNA sola vez, nombrando lo que hay, si seguimos con este proyecto o empezamos uno nuevo. " +
+        "Para empezar de nuevo: avisá que el actual se borra (no queda copia) y, con el sí, usá la acción `vaciar`. " +
+        "Y nunca quites ni pises una regla o una pieza que nadie nombró sin decirlo y preguntar antes.",
+    },
+  }
+}
+
+/** Por qué el Engine rechazó el vaciado, en palabras si las hay y si no con su código: nunca un
+ * "rechazado" mudo (el prompt le pide al agente que cuente el motivo). Se mira primero lo que
+ * bloquea: un lote de vaciado siempre trae avisos informativos de cada regla quitada. */
+function motivoDelRechazo(motivos: readonly { readonly severidad?: string; readonly explicacion?: string | null; readonly codigo: string }[]): string {
+  const principal = motivos.find((m) => m.severidad === "blocking") ?? motivos[0]
+  return principal?.explicacion ?? principal?.codigo ?? "rechazado por el Project Engine"
+}
+
+/** Las operaciones que dejan el proyecto sin reglas, sin cables y sin piezas, en UNA transacción.
+ * Lo único que el Project Engine exige es que las piezas vayan AL FINAL: una pieza con una regla o
+ * con un cable no se puede quitar (REMOCION_CON_DEPENDIENTES). Entre reglas y cables el orden da
+ * igual (medido las dos veces). La placa no se toca. */
+function operacionesParaVaciar(proyecto: Proyecto): readonly OperacionCruda[] {
+  return [
+    ...proyecto.comportamientos.map((c) => ({ tipo: "QuitarComportamiento", payload: { comportamiento: c.id } })),
+    ...proyecto.conexiones.map((c) => ({ tipo: "Desconectar", payload: { conexion: c.id } })),
+    ...proyecto.componentes.map((c) => ({ tipo: "QuitarComponente", payload: { componente: c.id } })),
+  ]
 }
 
 /**
@@ -375,12 +421,13 @@ export default tool({
 
 Para no adivinar ids: llamá \`leer\` primero: trae el vocabulario válido (placas, componentes, terminales, ejemplos).
 
-Tres \`accion\`:
+Cuatro \`accion\`:
 - \`leer\`: snapshot resumido — revisión, componentes (id/tipo/nombre/rol/pines/descripcionPines) y los motivos vigentes con su explicación en texto llano, MÁS \`vocabulario\` (placas/componentes/terminales/operaciones de ejemplo, derivados del catálogo real) y \`condicionesNumericas\` (los comparadores, y para cada sensor del proyecto y cada tipo del catálogo sus capacidades medibles con etiqueta, magnitud, unidades, unidad canónica, rango y si se pueden usar: los datos para armar una regla con un número, nunca escritos a mano), y \`generabilidad\` (por placa, componente, capacidad y acción: si llega hoy a un programa compilable con \`programa\`, en qué placas —\`generableEn\`— y, si no, el \`CODEGEN_*\` o el problema de admisión que lo impide).
 - \`simular\`: dry-run — nunca persiste, nunca sube la revisión, sólo anticipa qué pasaría.
 - \`aplicar\`: commitea de verdad, todo o nada (una transacción atómica: o entran TODAS las operaciones del lote, o ninguna).
+- \`vaciar\`: EMPEZAR DE NUEVO. Quita TODAS las reglas, los cables y las piezas del proyecto en una sola transacción (todo o nada) y deja la placa como estaba. Sólo pide \`baseRevision\`; las operaciones las arma la tool a partir de lo que hay, no las mandes vos. **No guarda copia: lo que había se pierde.** Usala SÓLO después de que la persona haya dicho que sí a empezar de nuevo, habiéndole avisado que el proyecto actual se borra.
 
-Toda salida empieza con un campo \`resultado\` (texto llano inequívoco): "SÓLO LECTURA" para \`leer\`, "SIMULACIÓN" para un \`simular\` resuelto, "APLICADO — revisión X→Y" para un \`aplicar\` que entró, o "NO SE APLICÓ NADA — <motivo>" para cualquier rechazo (de transporte, del Engine, o stale). Nunca afirmes una acción que no veas confirmada en esa línea.
+Toda salida empieza con un campo \`resultado\` (texto llano inequívoco): "SÓLO LECTURA" para \`leer\`, "VACIADO — revisión X→Y" para un \`vaciar\` que entró, "SIMULACIÓN" para un \`simular\` resuelto, "APLICADO — revisión X→Y" para un \`aplicar\` que entró, o "NO SE APLICÓ NADA — <motivo>" para cualquier rechazo (de transporte, del Engine, o stale). Nunca afirmes una acción que no veas confirmada en esa línea.
 
 \`simular\`/\`aplicar\` necesitan:
 - \`baseRevision\`: la revisión que leíste con \`leer\` justo antes — si alguien más (el alumno desde el navegador, u otra llamada tuya) ya cambió el proyecto, la operación se rechaza con un motivo claro en vez de pisar ese cambio. Nunca inventes este número ni lo copies de una llamada vieja: si no lo tenés a mano, llamá \`leer\` primero.
@@ -388,11 +435,11 @@ Toda salida empieza con un campo \`resultado\` (texto llano inequívoco): "SÓLO
 
 Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez de pisarlo.`,
   args: {
-    accion: tool.schema.enum(["leer", "simular", "aplicar"]).describe("'leer' para ver el estado actual; 'simular' para un dry-run (no persiste); 'aplicar' para commitear de verdad."),
+    accion: tool.schema.enum(["leer", "simular", "aplicar", "vaciar"]).describe("'leer' para ver el estado actual; 'simular' para un dry-run (no persiste); 'aplicar' para commitear de verdad; 'vaciar' para empezar de nuevo (quita todo; no guarda copia)."),
     baseRevision: tool.schema
       .number()
       .optional()
-      .describe("Obligatorio para 'simular'/'aplicar': la revisión que leíste con 'leer' justo antes. Nunca la inventes ni la completes vos — si no la tenés, llamá 'leer' primero."),
+      .describe("Obligatorio para 'simular'/'aplicar'/'vaciar': la revisión que leíste con 'leer' justo antes. Nunca la inventes ni la completes vos — si no la tenés, llamá 'leer' primero."),
     operaciones: tool.schema
       .array(tool.schema.unknown())
       .optional()
@@ -414,14 +461,14 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
     // catch envolvente es la red de seguridad para cualquier otra cosa inesperada.
     try {
       // Fix N-01 (NOTE, defensa en profundidad, mismo informe): el schema zod del
-      // harness YA restringe `accion` a `leer`/`simular`/`aplicar` — este chequeo es
+      // harness YA restringe `accion` a `leer`/`simular`/`aplicar`/`vaciar` — este chequeo es
       // para quien invoque `execute()` directo (bypaseando zod, mismo criterio que
       // motiva la whitelist de `tipo`/R-6 más abajo): un valor desconocido se rechaza
       // EXPLÍCITO, nunca cae en el dry-run por el default implícito del ternario de
       // más abajo (`args.accion === "aplicar" ? ... : ...`).
-      if (args.accion !== "leer" && args.accion !== "simular" && args.accion !== "aplicar") {
+      if (args.accion !== "leer" && args.accion !== "simular" && args.accion !== "aplicar" && args.accion !== "vaciar") {
         return JSON.stringify(
-          { resultado: "NO SE APLICÓ NADA — acción desconocida (usá 'leer', 'simular' o 'aplicar')", accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ACCION_DESCONOCIDA" },
+          { resultado: "NO SE APLICÓ NADA — acción desconocida (usá 'leer', 'simular', 'aplicar' o 'vaciar')", accion: args.accion, idProyecto: args.idProyecto ?? null, ok: false, rechazadoPor: "tool", codigo: "ACCION_DESCONOCIDA" },
           null,
           2,
         )
@@ -504,6 +551,43 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
         )
       }
       const baseRevision = args.baseRevision
+
+      // ── 'vaciar': empezar de nuevo. Las operaciones NO vienen del agente: salen del proyecto
+      // vigente. Sigue siendo transporte: son operaciones existentes, por el mismo Engine, en UNA
+      // transacción; si `baseRevision` quedó vieja, el Engine la rechaza como a cualquier otra.
+      // No pasa por el tope de MAXIMO_OPERACIONES: ese tope es para lo que escribe el agente. ──
+      if (args.accion === "vaciar") {
+        const antes = servicio.snapshot() as SnapshotConVista
+        const paraVaciar = operacionesParaVaciar(antes.proyecto)
+        if (paraVaciar.length === 0) {
+          return JSON.stringify(
+            { resultado: "NO SE APLICÓ NADA — el proyecto ya está vacío, no hay nada que quitar (podés armar el proyecto nuevo sobre él)", accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "PROYECTO_YA_VACIO", baseRevision, revisionActual: antes.revision },
+            null,
+            2,
+          )
+        }
+        const vaciado = servicio.aplicarTransaccion(construirSobres(paraVaciar, baseRevision))
+        const despues = servicio.snapshot() as SnapshotConVista
+        const motivosDelVaciado = deps.explicarMotivosConCatalogoReal(vaciado.motivos, proyectoParaExplicar(vaciado, despues)).map(proyectarMotivoParaAgente)
+        // Se afirma lo que se VE después, no lo que se pidió: el proyecto releído tiene que estar vacío.
+        // Este chequeo NO tiene test: el Engine es todo o nada y no encontré forma de que acepte el
+        // lote y deje algo (una revisión independiente tampoco). Queda como cinturón: si un día el
+        // Engine cambia, acá no se dice VACIADO de más.
+        const quedoVacio = despues.proyecto.componentes.length === 0 && despues.proyecto.conexiones.length === 0 && despues.proyecto.comportamientos.length === 0
+        const stale = vaciado.motivos.some((m) => m.codigo === "BASE_REVISION_DESACTUALIZADA")
+        const resultadoDelVaciado =
+          vaciado.ok && quedoVacio
+            ? `VACIADO — revisión ${vaciado.baseRevision}→${vaciado.revisionActual}: se quitaron ${antes.proyecto.componentes.length} pieza(s), ${antes.proyecto.conexiones.length} cable(s) y ${antes.proyecto.comportamientos.length} regla(s). La placa quedó como estaba. No se guardó copia de lo anterior.`
+            : stale
+              ? "NO SE APLICÓ NADA — el proyecto cambió; volvé a leer"
+              : `NO SE APLICÓ NADA — ${vaciado.ok ? "el proyecto no quedó vacío después de vaciarlo (releé con 'leer' y contá lo que hay)" : motivoDelRechazo(motivosDelVaciado)}`
+        return JSON.stringify(
+          { resultado: resultadoDelVaciado, accion: args.accion, idProyecto, ok: vaciado.ok && quedoVacio, baseRevision: vaciado.baseRevision, revisionActual: vaciado.revisionActual, motivos: motivosDelVaciado },
+          null,
+          2,
+        )
+      }
+
       const operacionesCrudas = args.operaciones
       if (!operacionesCrudas || operacionesCrudas.length === 0) {
         const snapshotActual = servicio.snapshot() as SnapshotConVista
