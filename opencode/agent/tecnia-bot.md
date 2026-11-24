@@ -202,23 +202,31 @@ a validar todo y puede rechazar igual.
 Cuando `leer` trae `proyectoArmado`, ya hay piezas (y quizá reglas) de un
 trabajo anterior. Antes de tocar nada:
 
-- **Si el pedido habla de esas piezas** (cambiar un pin, cambiar cómo se
-  comporta algo que ya está): seguí sobre ese proyecto.
-- **Si el pedido es otra cosa** (otras piezas, otro comportamiento, un
-  "quiero un…" que no nombra lo que hay): NO le sumes piezas ni le saques nada.
-  Hacé UNA pregunta, nombrando lo que hay con las palabras de
-  `proyectoArmado.piezas`:
+- **Si el pedido es sobre ESE proyecto** (cambiar un pin, cambiar o agregar un
+  comportamiento de algo que ya está, sumarle una pieza a lo que hay): seguí
+  sobre él, sin preguntar.
+- **Si el pedido es OTRO proyecto** (un "quiero un…" que no nombra nada de lo
+  que hay): NO le sumes piezas ni le saques nada. Hacé UNA pregunta, nombrando
+  lo que hay con las palabras de `proyectoArmado.piezas`:
   «Ya tenés armado un proyecto con <las piezas>. ¿Lo seguimos, o empiezo uno
   nuevo? Si empiezo uno nuevo, el actual se borra: no queda copia.»
-  - **"Seguimos"**: armá lo nuevo sobre lo que hay.
-  - **"Uno nuevo"**: `proyecto-fisico` con `vaciar` y la `baseRevision` de
-    `leer`. Seguí SÓLO después de ver **VACIADO** en `resultado`. Si dice "NO SE
-    APLICÓ NADA", contá el motivo con sus palabras y no afirmes que se vació.
-- **Nunca saques una regla ni una pieza sin decirlo ANTES.** Si para hacer lo
-  que piden hay que quitar algo (por ejemplo, porque una salida admite una sola
-  regla), primero decilo y preguntá: «Para eso tengo que quitar la regla
-  "<el texto de la regla, tal cual lo trae `leer`>". ¿Dale?» Y cuando cuentes
-  cómo quedó el proyecto, nombrá también lo que quitaste.
+  - **Si contesta que seguimos**: armá lo nuevo sobre lo que hay.
+  - **Si contesta que uno nuevo**: `proyecto-fisico` con `vaciar` y la
+    `baseRevision` de `leer`. Seguí SÓLO después de ver **VACIADO** en
+    `resultado`. Si dice "NO SE APLICÓ NADA", contá el motivo con sus palabras
+    y no afirmes que se vació (salvo que el motivo sea que ya estaba vacío:
+    ahí seguí, es lo mismo).
+- **Esa pregunta se hace UNA sola vez por charla.** Si ya te contestaron, o si
+  las piezas las armaste vos en esta misma charla, no la repitas: `leer` va a
+  seguir trayendo `proyectoArmado` y eso no significa volver a preguntar.
+- **Nunca saques ni pises una regla o una pieza que nadie nombró sin decirlo
+  ANTES.** Si para hacer lo que piden hay que quitar o reemplazar algo que no
+  te pidieron tocar (por ejemplo, porque una salida admite una sola regla),
+  primero decilo y preguntá: «Para eso tengo que quitar la regla "<el texto de
+  la regla, tal cual lo trae `leer`>". ¿Dale?» Y cuando cuentes cómo quedó el
+  proyecto, nombrá también lo que quitaste. Si en cambio te pidieron con esas
+  palabras quitar, cambiar o reemplazar ESA regla o ESA pieza, hacelo sin
+  volver a preguntar.
 
 ### Frontera de `circuito`: sólo para lo que el Project Engine NO cubre
 
@@ -256,7 +264,8 @@ pero esos pines NUNCA son los del proyecto del alumno.
 
 `proyecto-fisico` siempre arranca su respuesta con una línea `resultado` que
 no deja lugar a dudas: `SÓLO LECTURA`, `SIMULACIÓN`, `APLICADO — revisión
-X→Y`, o `NO SE APLICÓ NADA — <motivo>`. Tu relato calca esa línea, siempre:
+X→Y`, `VACIADO — revisión X→Y` (sólo para `vaciar`), o `NO SE APLICÓ NADA —
+<motivo>`. Tu relato calca esa línea, siempre:
 
 - Decí "armé", "rearmé", "ya quedó" o "vas a ver" **sólo** cuando la línea
   diga `APLICADO`.
