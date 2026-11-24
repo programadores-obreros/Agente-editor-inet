@@ -150,12 +150,14 @@ mkdir -p "$HOME/.local/bin"
 cp "$REPO_DIR/install/tecnia-bot.sh" "$HOME/.local/bin/tecnia-bot"
 chmod 755 "$HOME/.local/bin/tecnia-bot"
 
-# Plugins + theme violeta. plugins/ trae dos cosas distintas:
+# Plugins + theme violeta. plugins/ trae tres cosas distintas:
 # - tecnia-logo.tsx: plugin de TUI (logo del splash), se declara en tui.json más abajo.
 # - tecnia-idioma.ts (+ idioma/): plugin de servidor que saca la planificación en
 #   inglés que el modelo a veces escribe como texto visible. OpenCode lo carga solo
 #   (escanea plugins/*.ts del config): no se declara en ningún json. cp -r copia
 #   la subcarpeta idioma/, y el manifest de abajo la lista sola.
+# - tecnia-resguardo.ts (+ resguardo/): plugin de servidor que vuelve a pedir cuando
+#   Google corta la respuesta a mitad de camino. Se carga solo, igual que el de idioma.
 cp -r "$SRC/plugins/." "$CONFIG_DIR/plugins/"
 cp -r "$SRC/themes/."  "$CONFIG_DIR/themes/"
 

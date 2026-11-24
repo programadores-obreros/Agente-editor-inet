@@ -42,11 +42,12 @@ test("exporta SÓLO default { id, server }, como pide OpenCode a un plugin de ar
   assert.equal("tui" in mod.default, false)
 })
 
-test("en plugins/ el único .ts/.js de primer nivel es el plugin: el detector va en una subcarpeta", () => {
+test("en plugins/ los únicos .ts/.js de primer nivel son plugins: el detector va en una subcarpeta", () => {
   // OpenCode carga como plugin todo `plugins/*.{ts,js}`. Un .ts suelto sin `server`
   // rompería la carga; tecnia-logo.tsx es de la TUI y el glob no lo toca.
   const cargables = readdirSync(PLUGINS).filter((f) => /\.(ts|js)$/.test(f))
-  assert.deepEqual(cargables, ["tecnia-idioma.ts"])
+  // tecnia-resguardo.ts es el otro plugin de servidor (tests/resguardo-google.test.mjs).
+  assert.deepEqual(cargables.sort(), ["tecnia-idioma.ts", "tecnia-resguardo.ts"])
 })
 
 // ---------------------------------------------------------------------------
