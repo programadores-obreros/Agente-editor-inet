@@ -519,7 +519,7 @@ if ($plog) {
   Get-Content $plog.FullName -EA SilentlyContinue | Select-Object -Last 8 | ForEach-Object { Linea-DeLog $_ }
 }
 
-Titulo "Node -- solo lo necesita el skill de diagramas de arquitectura"
+Titulo "Node -- lo necesitan la carga del programa generado y los diagramas de arquitectura"
 # POR QUE ESTA SECCION EXISTE. El aviso del instalador, cuando Node no queda
 # instalado, mandaba a correr /diagnostico -- y /diagnostico no sabia nada de Node
 # (cero menciones, contra 69 de python y platformio). Mandar a una docente a correr
@@ -529,6 +529,11 @@ Titulo "Node -- solo lo necesita el skill de diagramas de arquitectura"
 #
 # Node NO es de "Lo que tiene que estar", a proposito: si falta, el bot arranca igual
 # y se pierde UN skill de veinte. Por eso vive en su propia seccion y lo dice.
+#
+# DESDE LA CARGA EN WINDOWS ESO YA NO ES TODO. El lanzador (abrir-tecnia-bot.cmd)
+# revisa la carpeta con Node antes de abrir, y sin esa revision el bot arranca igual
+# pero NO carga a la placa el programa generado desde un proyecto fisico. El titulo
+# decia "solo lo necesita el skill de diagramas": dejo de ser cierto y se corrigio.
 #
 # Y OJO CON COMO SE BUSCA: nodejs-lts NO crea shims. Su manifiesto usa
 # `env_add_path: ["bin", "."]`, asi que Scoop agrega las carpetas de la app al PATH de
