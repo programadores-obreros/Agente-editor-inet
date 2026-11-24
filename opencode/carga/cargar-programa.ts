@@ -36,7 +36,7 @@ import { compararHuellas, hashearArchivos, type HuellaDeArtefacto } from "./arte
 import { argvDeCargaCompilando, lanzarCarga } from "./ejecutar.ts"
 import { leerSalidaEsptool, TEXTO_CARGA_SIN_VERIFICAR, veredictoDeCarga } from "./esptool.ts"
 import { descubrir, elegirPuerto, hashDePlacaFisica, mismaIdentidad, type PlacaDetectada } from "./identidad.ts"
-import { leerProcesosDeWindows, partirLineaDeComandoWindows, porQueNoVieneDelLanzadorEnWindows, rutaDelLanzadorEnWindows, type ProcesoWindows } from "./procesos-windows.ts"
+import { consejoSegunElLanzador, leerProcesosDeWindows, porQueNoVieneDelLanzadorEnWindows, rutaDelLanzadorEnWindows, soloElPrograma, type ProcesoWindows } from "./procesos-windows.ts"
 import { CODIGO_CANCELADO, CODIGO_NO_LANZADO, CODIGO_TIMEOUT, describirDuracion, ErrorDeCarga, recortarSalida, timeoutCarga, traducirError, type Run, type RunResult } from "./proceso.ts"
 import { reservarPuerto } from "./puertos.ts"
 import { guardarBanco, leerBanco, leerCargasGlobal, type Banco } from "./registro.ts"
@@ -83,6 +83,8 @@ export interface HerramientasDeCarga {
   readonly plataforma?: string
   /** Sólo Windows: la foto de procesos (quién abrió a quién y con qué línea). En producción, `leerProcesosDeWindows`; los tests la inyectan. */
   readonly procesosDeWindows?: () => readonly ProcesoWindows[] | null
+  /** Sólo Windows: de dónde se lee `TECNIA_SIN_MARCA`. En producción, `process.env`; los tests lo inyectan. */
+  readonly entornoDelLanzador?: NodeJS.ProcessEnv
   /** Sólo Windows: dónde está el lanzador instalado. En producción, `rutaDelLanzadorEnWindows()`; los tests la inyectan. */
   readonly rutaDelLanzadorEnWindows?: string
 }
@@ -136,7 +138,8 @@ const no = (codigo: string, resultado: string, extra: Record<string, unknown> = 
  *
  * PLATAFORMAS: en Linux, `/proc/self/cmdline`. En Windows, la línea de comando de este proceso
  * según `Win32_Process` (`procesos-windows.ts`, MEDIDO en una notebook real el 2026-11-23),
- * partida con las reglas de `CommandLineToArgvW`. En macOS no hay una forma verificada: ahí la
+ * que tiene que ser el programa y nada más: en Windows la línea es una sola cadena que cada
+ * programa parte a su manera, así que no se interpreta. En macOS no hay una forma verificada: ahí la
  * carga falla cerrada con `PLATAFORMA_NO_HABILITADA`.
  */
 
@@ -168,7 +171,7 @@ export function banderaDeAprobacionAutomatica(argv: readonly unknown[] = [...pro
   return null
 }
 
-export type LecturaDeLineaDeComando = { ok: true; argv: string[] } | { ok: false; codigo: "PLATAFORMA_NO_HABILITADA" | "LINEA_DE_COMANDO_ILEGIBLE"; detalle: string }
+export type LecturaDeLineaDeComando = { ok: true; argv: string[] } | { ok: false; codigo: "PLATAFORMA_NO_HABILITADA" | "LINEA_DE_COMANDO_ILEGIBLE" | "LINEA_CON_OPCIONES"; detalle: string }
 
 /**
  * La línea de comando REAL de este proceso en Windows, sacada de la foto de procesos. Si la
@@ -178,9 +181,11 @@ export function lineaDeComandoEnWindows(procesos: readonly ProcesoWindows[] | nu
   if (procesos === null) return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "Windows no contestó la lista de procesos" }
   const este = procesos.filter((p) => p.pid === pid)
   if (este.length !== 1 || typeof este[0]!.linea !== "string") return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "Windows no entregó la línea de comando de este proceso" }
-  const argv = partirLineaDeComandoWindows(este[0]!.linea)
-  if (argv.length === 0 || argv[0] === "") return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "la línea de comando del proceso vino vacía" }
-  return { ok: true, argv }
+  if (este[0]!.linea.trim() === "") return { ok: false, codigo: "LINEA_DE_COMANDO_ILEGIBLE", detalle: "la línea de comando del proceso vino vacía" }
+  // En Windows la línea NO se parte ni se interpreta (ver `soloElPrograma`): o es el programa solo, o no se carga.
+  const programa = soloElPrograma(este[0]!.linea)
+  if (programa === null) return { ok: false, codigo: "LINEA_CON_OPCIONES", detalle: "OpenCode se abrió con opciones en su línea de comando, y en Windows la carga sólo se hace desde Tecnia Bot abierto sin ninguna" }
+  return { ok: true, argv: [programa] }
 }
 
 /** La línea de comando REAL de este proceso en Linux. En Windows es `lineaDeComandoEnWindows`; en el resto falla cerrado. */
@@ -536,7 +541,7 @@ export function porQueNoVieneDelLanzador(l: Lanzamiento): string | null {
 }
 
 /** Pasos 1 y 2. `null` si se puede seguir. Va ANTES de abrir el proyecto. */
-export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion" | "lanzador" | "plataforma" | "procesosDeWindows" | "rutaDelLanzadorEnWindows">): ResultadoDeCarga | null {
+export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<HerramientasDeCarga, "agenteQueNoPuedeCargar" | "lineaDeComando" | "configuracion" | "lanzador" | "plataforma" | "procesosDeWindows" | "rutaDelLanzadorEnWindows" | "entornoDelLanzador">): ResultadoDeCarga | null {
   // LA PLATAFORMA, ANTES QUE EL LANZADOR. Esta carga está habilitada en Linux y en Windows; el
   // lanzador `tecnia-bot` sólo lo instala install.sh. Mirando primero el lanzador, en Mac la
   // respuesta era siempre SIN_LANZADOR: «cerrá OpenCode y abrí Tecnia Bot escribiendo
@@ -566,7 +571,7 @@ export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<Herramientas
   if (plataforma === "win32") {
     // La marca es barata y la foto no (arranca PowerShell): sin marca no hace falta sacarla.
     if (lanzador.marca !== undefined) procesos = (h.procesosDeWindows ?? leerProcesosDeWindows)()
-    const sinLanzadorEnWindows = porQueNoVieneDelLanzadorEnWindows({ marca: lanzador.marca, pid: lanzador.pid, procesos, rutaDelLanzador: h.rutaDelLanzadorEnWindows ?? rutaDelLanzadorEnWindows() })
+    const sinLanzadorEnWindows = porQueNoVieneDelLanzadorEnWindows({ marca: lanzador.marca, pid: lanzador.pid, procesos, rutaDelLanzador: h.rutaDelLanzadorEnWindows ?? rutaDelLanzadorEnWindows(), entorno: h.entornoDelLanzador })
     if (sinLanzadorEnWindows) {
       // El lanzador de Windows abre igual cuando su revisión no da limpio (sin la marca). Si la
       // causa es algo de la carpeta, decir sólo "abrilo desde el ícono" manda al docente a dar
@@ -580,6 +585,10 @@ export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<Herramientas
             "Para cargar, hay que quitarla (o abrir Tecnia Bot en otra carpeta que no la tenga), cerrar Tecnia Bot y volver a abrirlo desde su acceso directo.",
         )
       }
+      // El lanzador pudo no haber revisado por algo que no es la carpeta (falta Node, falta el
+      // archivo de la revisión). Lo cuenta en `TECNIA_SIN_MARCA`; sólo cambia el consejo.
+      const consejo = lanzador.marca === undefined ? consejoSegunElLanzador((h.entornoDelLanzador ?? process.env).TECNIA_SIN_MARCA) : null
+      if (consejo) return no("SIN_LANZADOR", `NO SE CARGÓ — Tecnia Bot se abrió sin poder revisar la carpeta, y sin esa revisión no se carga a la placa. ${consejo} Todo lo demás (explicar, armar el proyecto, compilar) funciona igual.`)
       return no(
         "SIN_LANZADOR",
         `NO SE CARGÓ — ${sinLanzadorEnWindows}. Para cargar a la placa, cerrá esta ventana y abrí Tecnia Bot desde su acceso directo (el ícono del escritorio o del menú inicio): ` +
@@ -601,6 +610,7 @@ export function porQueNoSePuedeCargar(ctx: ContextoDeCarga, h: Pick<Herramientas
   // Fuente principal: la línea de comando REAL. Si no se puede leer, no se carga.
   const lectura = h.lineaDeComando ? h.lineaDeComando() : plataforma === "win32" ? lineaDeComandoEnWindows(procesos, lanzador.pid) : leerLineaDeComandoReal()
   if (!lectura.ok) {
+    if (lectura.codigo === "LINEA_CON_OPCIONES") return no(lectura.codigo, `NO SE CARGÓ — ${lectura.detalle}. ${ABRIR_NORMALMENTE}`)
     return lectura.codigo === "PLATAFORMA_NO_HABILITADA"
       ? no(lectura.codigo, `NO SE CARGÓ — en esta compu la carga a la placa no está habilitada (${lectura.detalle}).`)
       : no(lectura.codigo, `NO SE CARGÓ — no pude comprobar cómo se abrió OpenCode (${lectura.detalle}), y sin eso no se carga.`)

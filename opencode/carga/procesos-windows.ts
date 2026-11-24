@@ -43,6 +43,8 @@ export interface ProcesoWindows {
   readonly ppid: number
   /** El nombre de la imagen, como lo da Windows (`cmd.exe`). */
   readonly nombre: string
+  /** La ruta REAL del ejecutable (`ExecutablePath`); `null` si Windows no la entrega. No sale de la línea de comando, que la escribe quien lanza. */
+  readonly ruta: string | null
   /** La línea de comando entera; `null` si Windows no la entrega (procesos del sistema o de otro usuario). */
   readonly linea: string | null
   /** Cuándo arrancó (FILETIME en UTC); `null` si Windows no lo entrega. */
@@ -59,7 +61,7 @@ export const CONSULTA_DE_PROCESOS = [
   "$ErrorActionPreference = 'Stop'",
   "$ProgressPreference = 'SilentlyContinue'",
   "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
-  "$p = @(Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ pid = [string]$_.ProcessId; ppid = [string]$_.ParentProcessId; nombre = [string]$_.Name; linea = $_.CommandLine; creado = $(if ($_.CreationDate) { [string]$_.CreationDate.ToFileTimeUtc() } else { $null }) } })",
+  "$p = @(Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ pid = [string]$_.ProcessId; ppid = [string]$_.ParentProcessId; nombre = [string]$_.Name; ruta = $_.ExecutablePath; linea = $_.CommandLine; creado = $(if ($_.CreationDate) { [string]$_.CreationDate.ToFileTimeUtc() } else { $null }) } })",
   "ConvertTo-Json -InputObject $p -Compress -Depth 2",
 ].join("\n")
 
@@ -90,12 +92,13 @@ export function interpretarProcesos(texto: string): ProcesoWindows[] | null {
     const ppid = enteroDePid(o.ppid)
     if (pid === null || ppid === null || typeof o.nombre !== "string") return null
     if (o.linea !== null && typeof o.linea !== "string") return null
+    if (o.ruta !== null && typeof o.ruta !== "string") return null
     let creado: bigint | null = null
     if (o.creado !== null) {
       if (typeof o.creado !== "string" || !/^\d{1,20}$/.test(o.creado)) return null
       creado = BigInt(o.creado)
     }
-    salida.push({ pid, ppid, nombre: o.nombre, linea: o.linea as string | null, creado })
+    salida.push({ pid, ppid, nombre: o.nombre, ruta: o.ruta as string | null, linea: o.linea as string | null, creado })
   }
   return salida
 }
@@ -103,14 +106,24 @@ export function interpretarProcesos(texto: string): ProcesoWindows[] | null {
 /** Cómo se corre PowerShell. Inyectable para probar sin Windows. */
 export type CorrerPowerShell = (ejecutable: string, args: string[]) => { status: number | null; stdout: string }
 
+/** La carpeta de Windows según el entorno (`SystemRoot`), o `C:\Windows` si no es una ruta. */
+export function raizDeWindows(entorno: NodeJS.ProcessEnv = process.env): string {
+  const raiz = entorno.SystemRoot ?? entorno.SYSTEMROOT ?? entorno.windir
+  return raiz && win32.isAbsolute(raiz) ? raiz : "C:\\Windows"
+}
+
 /**
  * El PowerShell de Windows por su ruta ENTERA (`%SystemRoot%\System32\WindowsPowerShell\v1.0`),
  * no por el PATH: de esta consulta depende que se permita cargar, y un `powershell.exe` puesto
- * antes en el PATH contestaría lo que quisiera.
+ * antes en el PATH (o en la carpeta de proyectos) contestaría lo que quisiera.
+ *
+ * LO QUE ESTO NO CUBRE, dicho como es: `SystemRoot` y `LOCALAPPDATA` también son variables
+ * heredadas. Quien abra OpenCode con esas variables cambiadas a propósito elige qué PowerShell
+ * contesta y qué `.cmd` cuenta como lanzador. En Linux `/proc` no depende del entorno: acá la
+ * garantía es más débil en ese punto. Cubre el accidente (un PATH raro), no al que lo arma.
  */
 export function rutaDePowerShell(entorno: NodeJS.ProcessEnv = process.env): string {
-  const raiz = entorno.SystemRoot ?? entorno.SYSTEMROOT ?? entorno.windir
-  return win32.join(raiz && win32.isAbsolute(raiz) ? raiz : "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+  return win32.join(raizDeWindows(entorno), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
 }
 
 const correrDeVerdad: CorrerPowerShell = (ejecutable, args) => {
@@ -166,26 +179,71 @@ export function rutaDelLanzadorEnWindows(entorno: NodeJS.ProcessEnv = process.en
   return win32.join(local && win32.isAbsolute(local) ? local : win32.join(home, "AppData", "Local"), "TecniaBot", "abrir-tecnia-bot.cmd")
 }
 
+/** Parte una línea en su primer elemento (el programa) y el resto, con la regla de Windows para el programa: hasta la comilla que cierra, o hasta el primer blanco. */
+export function programaYResto(linea: string): { programa: string; resto: string } {
+  const t = linea.replace(/^[ \t]+/, "")
+  if (t.startsWith('"')) {
+    const cierre = t.indexOf('"', 1)
+    return cierre < 0 ? { programa: t.slice(1), resto: "" } : { programa: t.slice(1, cierre), resto: t.slice(cierre + 1) }
+  }
+  const m = t.match(/^[^ \t]*/)!
+  return { programa: m[0], resto: t.slice(m[0].length) }
+}
+
+/** Caracteres que `cmd` trata como algo más que texto cuando NO van entre comillas. */
+const ESPECIAL_PARA_CMD = /[\s&()^%!,;=|<>"]/
+
 /**
- * ¿Esta línea de comando es `cmd.exe` corriendo EXACTAMENTE el lanzador instalado, y nada más?
+ * ¿Este proceso es el `cmd.exe` de Windows corriendo EXACTAMENTE el lanzador instalado, y nada más?
  *
- * La forma medida (acceso directo del escritorio y del menú inicio) es
- * `"C:\Windows\system32\cmd.exe" /C ""<ruta>\abrir-tecnia-bot.cmd""`. `cmd` no parte su línea
- * como un programa común, así que no se la interpreta: se le sacan las comillas y tiene que
- * quedar `…cmd.exe /c <ruta del lanzador>`, sin nada antes, en el medio ni después. Una línea
- * con `&`, con otra opción o con argumentos para el lanzador no pasa. Comillas adentro de una
- * ruta no puede haber: Windows no las admite en nombres de archivo.
+ * Tres cosas, las tres:
+ *   1. la imagen REAL del proceso (`ExecutablePath`, no lo que diga su línea) es
+ *      `%SystemRoot%\System32\cmd.exe` (o el de `SysWOW64`, que es el mismo `cmd` lanzado por un
+ *      programa de 32 bits). Un `cmd.exe` de otra carpeta no cuenta;
+ *   2. después del programa viene `/c` y nada antes (ni `/k`, ni `/v:on`, ni `/d`);
+ *   3. lo que sigue a `/c` es la ruta del lanzador y NADA más, en una de las formas en que `cmd`
+ *      corre una sola ruta: `""ruta""` (la medida: acceso directo del escritorio y del menú
+ *      inicio), `"ruta"`, o `ruta` sin comillas SÓLO si no tiene espacios ni caracteres que
+ *      `cmd` interprete. Con un usuario «Juan Perez» o «Tom&Jerry», la forma sin comillas no
+ *      corre el lanzador (cmd correría `C:\Users\Juan` o `C:\Users\Tom`), y por eso no se acepta.
+ *
+ * La primera versión de esta función le sacaba TODAS las comillas a la línea y miraba el final.
+ * La revisión independiente mostró que así pasaban `C:\Temp\cmd.exe /c …`, `cmd.exe -x \cmd /c …`
+ * y las formas sin comillas con espacios. Ninguna es un accidente, pero la función decía
+ * «exactamente» y no lo era.
  */
-export function esElLanzadorInstalado(p: Pick<ProcesoWindows, "nombre" | "linea">, rutaDelLanzador: string): boolean {
-  if (p.nombre.toLowerCase() !== "cmd.exe" || typeof p.linea !== "string") return false
-  const limpia = p.linea.replace(/"/g, "").trim()
-  const m = limpia.match(/^(?:[a-z]:\\(?:[^\\/:*?<>|\r\n]+\\)*)?cmd(?:\.exe)?\s+\/c\s+(.+)$/i)
+export function esElLanzadorInstalado(p: Pick<ProcesoWindows, "nombre" | "ruta" | "linea">, rutaDelLanzador: string, entorno: NodeJS.ProcessEnv = process.env): boolean {
+  if (typeof p.linea !== "string" || typeof p.ruta !== "string") return false
+  const raiz = raizDeWindows(entorno)
+  const imagen = p.ruta.toLowerCase()
+  if (imagen !== win32.join(raiz, "System32", "cmd.exe").toLowerCase() && imagen !== win32.join(raiz, "SysWOW64", "cmd.exe").toLowerCase()) return false
+  const m = programaYResto(p.linea).resto.match(/^[ \t]+\/c[ \t]+(.*)$/i)
   if (!m) return false
-  return m[1]!.trim().toLowerCase() === rutaDelLanzador.toLowerCase()
+  const cola = m[1]!.replace(/[ \t]+$/, "")
+  let ruta: string
+  if (cola.length >= 4 && cola.startsWith('""') && cola.endsWith('""')) ruta = cola.slice(2, -2)
+  else if (cola.length >= 2 && cola.startsWith('"') && cola.endsWith('"')) ruta = cola.slice(1, -1)
+  else if (!ESPECIAL_PARA_CMD.test(cola)) ruta = cola
+  else return false
+  // Una comilla que haya quedado adentro no necesita un chequeo aparte: la ruta del lanzador no
+  // tiene comillas (Windows no las admite en nombres de archivo), así que nunca va a ser igual.
+  return ruta.toLowerCase() === rutaDelLanzador.toLowerCase()
 }
 
 /** El valor que `abrir-tecnia-bot.cmd` le pone a `TECNIA_LANZADOR` cuando su revisión dio limpio. */
 export const MARCA_DEL_LANZADOR_EN_WINDOWS = "lanzador-cmd"
+
+/**
+ * Por qué el lanzador NO dejó la marca, según él mismo (`TECNIA_SIN_MARCA`). Sirve sólo para
+ * elegir el texto: sin esto, a un docente sin Node se le contestaba «abrilo desde el acceso
+ * directo», que es de donde lo abrió, y no tenía cómo salir (hallazgo de la revisión
+ * independiente). No habilita nada: un valor que no esté en esta lista se ignora.
+ */
+export function consejoSegunElLanzador(motivo: string | undefined): string | null {
+  if (motivo === "sin-node") return "El lanzador de Tecnia Bot no encontró Node, que es con lo que revisa la carpeta antes de abrir. Hay que abrir «Reparar Tecnia Bot» desde el menú inicio y, cuando termine, volver a abrir Tecnia Bot."
+  if (motivo === "sin-revision") return "A la instalación de Tecnia Bot le falta el archivo con el que revisa la carpeta antes de abrir. Hay que abrir «Reparar Tecnia Bot» desde el menú inicio y, cuando termine, volver a abrir Tecnia Bot."
+  return null
+}
 
 export interface LanzamientoEnWindows {
   /** `TECNIA_LANZADOR` de este proceso. */
@@ -194,6 +252,8 @@ export interface LanzamientoEnWindows {
   /** La foto de procesos, o `null` si no se pudo sacar. */
   readonly procesos: readonly ProcesoWindows[] | null
   readonly rutaDelLanzador: string
+  /** De dónde sale `SystemRoot` para ubicar el `cmd.exe` verdadero. Por defecto, `process.env`. */
+  readonly entorno?: NodeJS.ProcessEnv
 }
 
 /**
@@ -208,80 +268,30 @@ export function porQueNoVieneDelLanzadorEnWindows(l: LanzamientoEnWindows): stri
   if (l.procesos === null) return "no pude comprobar cómo se abrió OpenCode"
   const ancestros = ancestrosEnWindows(l.pid, l.procesos)
   if (ancestros === null) return "no pude comprobar cómo se abrió OpenCode"
-  return ancestros.some((a) => esElLanzadorInstalado(a, l.rutaDelLanzador)) ? null : "OpenCode no se abrió con el acceso directo de Tecnia Bot"
+  return ancestros.some((a) => esElLanzadorInstalado(a, l.rutaDelLanzador, l.entorno)) ? null : "OpenCode no se abrió con el acceso directo de Tecnia Bot"
 }
 
 /**
- * Parte una línea de comando de Windows en sus argumentos, con las reglas de
- * `CommandLineToArgvW` (las que usa un programa común para armar su `argv`):
- *   - el PRIMER elemento (el programa) va hasta la comilla que cierra si empieza con comilla,
- *     o hasta el primer espacio si no; ahí las barras invertidas no escapan nada;
- *   - en el resto, espacios y tabs separan salvo entre comillas; `2n` barras antes de una
- *     comilla son `n` barras y la comilla abre o cierra; `2n+1` barras son `n` barras y una
- *     comilla literal; barras que no van antes de una comilla son literales; dos comillas
- *     seguidas adentro de comillas son una comilla literal.
- * Pura. La usa `porQueElLanzamientoNoPermiteCargar`, que rechaza todo lo que no reconoce: un
- * caso raro mal partido termina en un rechazo, no en un permiso.
+ * La línea de comando de OpenCode en Windows: el programa y NADA más.
+ *
+ * POR QUÉ TAN ESTRICTO. En Linux `/proc/self/cmdline` entrega los argumentos YA partidos, tal
+ * cual los ve el programa. En Windows un proceso tiene una sola cadena y cada programa la parte
+ * con sus reglas. La primera versión de este módulo traía un partidor con las reglas del
+ * runtime de C y le pasaba el resultado a `porQueElLanzamientoNoPermiteCargar`. La revisión
+ * independiente encontró el agujero: con `--prompt "a"" --port=4096"` ese partidor veía UN
+ * valor de `--prompt`, y con la regla de `CommandLineToArgvW` el programa vería `--port=4096`
+ * aparte. Cuál de las dos usa el binario de OpenCode no se midió. Un control que depende de
+ * adivinar cómo parte la línea otro programa no es un control.
+ *
+ * El lanzador abre OpenCode SIN argumentos (`"%OC%"`, medido: la línea es sólo la ruta entre
+ * comillas). Entonces en Windows no se interpreta nada: si después del programa hay algo que
+ * no sea espacio, no se carga. Es más estricto que Linux (que admite `--agent`, `--model`…),
+ * y es a propósito.
+ *
+ * Devuelve el programa, o `null` si la línea trae algo más (o está vacía).
  */
-export function partirLineaDeComandoWindows(linea: string): string[] {
-  const salida: string[] = []
-  let i = 0
-  const n = linea.length
-  const esBlanco = (c: string | undefined) => c === " " || c === "\t"
-  while (i < n && esBlanco(linea[i])) i++
-  if (i >= n) return salida
-  // El programa.
-  let programa = ""
-  if (linea[i] === '"') {
-    i++
-    while (i < n && linea[i] !== '"') programa += linea[i++]
-    if (i < n) i++
-  } else {
-    while (i < n && !esBlanco(linea[i])) programa += linea[i++]
-  }
-  salida.push(programa)
-  // Los argumentos.
-  for (;;) {
-    while (i < n && esBlanco(linea[i])) i++
-    if (i >= n) break
-    let actual = ""
-    let entreComillas = false
-    for (;;) {
-      if (i >= n) break
-      const c = linea[i]!
-      if (!entreComillas && esBlanco(c)) break
-      if (c === "\\") {
-        let barras = 0
-        while (i < n && linea[i] === "\\") {
-          barras++
-          i++
-        }
-        if (i < n && linea[i] === '"') {
-          actual += "\\".repeat(Math.floor(barras / 2))
-          if (barras % 2 === 1) {
-            actual += '"'
-            i++
-          }
-          // con barras pares la comilla queda sin consumir: la trata la vuelta que sigue
-        } else {
-          actual += "\\".repeat(barras)
-        }
-        continue
-      }
-      if (c === '"') {
-        if (entreComillas && linea[i + 1] === '"') {
-          actual += '"'
-          i += 2
-          continue
-        }
-        entreComillas = !entreComillas
-        i++
-        continue
-      }
-      actual += c
-      i++
-    }
-    salida.push(actual)
-  }
-  return salida
+export function soloElPrograma(linea: string): string | null {
+  const { programa, resto } = programaYResto(linea)
+  if (programa === "" || !/^[ \t]*$/.test(resto)) return null
+  return programa
 }

@@ -148,8 +148,8 @@ function fotoDePs(): Proceso[] | null {
  * de `terminarArbol` no podía confirmar NUNCA que una carga cancelada había terminado: la foto
  * se pedía con `ps`, que en Windows no existe. Windows no tiene zombis.
  */
-function fotoDeWindows(): Proceso[] | null {
-  const procesos = leerProcesosDeWindows()
+export function fotoDeWindows(leer: () => ReturnType<typeof leerProcesosDeWindows> = leerProcesosDeWindows): Proceso[] | null {
+  const procesos = leer()
   return procesos === null ? null : procesos.map((p) => ({ pid: p.pid, ppid: p.ppid, zombi: false }))
 }
 
