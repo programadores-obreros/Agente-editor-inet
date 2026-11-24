@@ -47,10 +47,10 @@ const SERVICIO = "tecnia-resguardo"
 
 const server: Plugin = async ({ client }) => {
   const anotar = (message: string, extra?: Record<string, unknown>) => {
-    // Un registro que falla no puede voltear la respuesta: se descarta el fallo, también si es síncrono.
-    try {
-      void client.app.log({ body: { service: SERVICIO, level: "warn", message, extra } }).catch(() => {})
-    } catch {}
+    // Un registro que RECHAZA no puede dejar una promesa sin manejar: de ahí el `.catch`. Si en
+    // cambio TIRA una excepción, la ataja `conResguardo`, que envuelve toda llamada a `anotar`
+    // (había un try acá también; por mutación se vio que era redundante y se sacó).
+    void client.app.log({ body: { service: SERVICIO, level: "warn", message, extra } }).catch(() => {})
   }
   return {
     config: async (config) => {
