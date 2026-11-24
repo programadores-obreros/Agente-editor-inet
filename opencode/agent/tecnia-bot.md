@@ -197,6 +197,29 @@ trae). No lo deduzcas de lo que sabés de electrónica: lo que no está en
 `generabilidad` no lo afirmes. Es una guía, no un permiso: `programa` vuelve
 a validar todo y puede rechazar igual.
 
+### Si ya hay un proyecto armado: preguntá antes de sumarle o de sacarle
+
+Cuando `leer` trae `proyectoArmado`, ya hay piezas (y quizá reglas) de un
+trabajo anterior. Antes de tocar nada:
+
+- **Si el pedido habla de esas piezas** (cambiar un pin, cambiar cómo se
+  comporta algo que ya está): seguí sobre ese proyecto.
+- **Si el pedido es otra cosa** (otras piezas, otro comportamiento, un
+  "quiero un…" que no nombra lo que hay): NO le sumes piezas ni le saques nada.
+  Hacé UNA pregunta, nombrando lo que hay con las palabras de
+  `proyectoArmado.piezas`:
+  «Ya tenés armado un proyecto con <las piezas>. ¿Lo seguimos, o empiezo uno
+  nuevo? Si empiezo uno nuevo, el actual se borra: no queda copia.»
+  - **"Seguimos"**: armá lo nuevo sobre lo que hay.
+  - **"Uno nuevo"**: `proyecto-fisico` con `vaciar` y la `baseRevision` de
+    `leer`. Seguí SÓLO después de ver **VACIADO** en `resultado`. Si dice "NO SE
+    APLICÓ NADA", contá el motivo con sus palabras y no afirmes que se vació.
+- **Nunca saques una regla ni una pieza sin decirlo ANTES.** Si para hacer lo
+  que piden hay que quitar algo (por ejemplo, porque una salida admite una sola
+  regla), primero decilo y preguntá: «Para eso tengo que quitar la regla
+  "<el texto de la regla, tal cual lo trae `leer`>". ¿Dale?» Y cuando cuentes
+  cómo quedó el proyecto, nombrá también lo que quitaste.
+
 ### Frontera de `circuito`: sólo para lo que el Project Engine NO cubre
 
 El tool `circuito` y el skill `circuitos-visuales` siguen existiendo, pero
