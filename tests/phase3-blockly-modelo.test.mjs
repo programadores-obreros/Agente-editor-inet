@@ -118,22 +118,48 @@ test("T1 regla inválida (pulsador como salida): el motivo llano del servidor vi
   c.servicio.cerrar()
 })
 
-test("T1 varias reglas: hayVarias y se proyecta la primera (límite de UI = 1)", async () => {
+// HISTORIA (2026-11-24). Este test decía "se proyecta la primera (límite de UI = 1)" y sólo miraba
+// `m.regla.id === v.reglas[0].id`. Protegía el límite, no al docente: en la notebook real, con dos
+// reglas, los bloques mostraron la VIEJA mientras se acababa de pedir otra. El dueño levantó el
+// límite. Ahora se exige que estén TODAS, en orden y cada una con SUS valores (si la segunda
+// saliera con los valores de la primera, comparar sólo ids no lo vería).
+test("T1 varias reglas: se proyectan TODAS, en el orden del proyecto y cada una con sus valores", async () => {
   const proyectar = await cargar()
   const c = preparar()
   set(c, CANONICA(c))
   set(c, { cuando: { sensor: c.pulsador } })
   const v = vistaDe(c)
+  assert.equal(v.reglas.length, 2)
   const m = proyectar(v)
   assert.equal(m.hayVarias, true)
-  assert.equal(m.regla.id, v.reglas[0].id)
+  assert.deepEqual(m.reglas.map((r) => r.id), v.reglas.map((r) => r.id))
+  assert.equal(m.regla, m.reglas[0], "`regla` es la primera de `reglas`, no otra copia")
+  const valores = (r) => r.campos.map((f) => f.valor)
+  assert.deepEqual(valores(m.reglas[0]), valores(proyectar({ ...v, reglas: [v.reglas[0]] }).regla))
+  assert.deepEqual(valores(m.reglas[1]), valores(proyectar({ ...v, reglas: [v.reglas[1]] }).regla))
+  assert.notDeepEqual(valores(m.reglas[0]), valores(m.reglas[1]), "el caso tiene que distinguir una regla de la otra")
+  assert.equal(m.reglas[0].completa, true)
+  assert.equal(m.reglas[1].completa, false)
+  c.servicio.cerrar()
+})
+
+test("T1 sin reglas y con slots: UNA regla vacía para armar la primera; con una regla, una sola", async () => {
+  const proyectar = await cargar()
+  const c = preparar()
+  const vacio = proyectar(vistaDe(c))
+  assert.equal(vacio.reglas.length, 1)
+  assert.equal(vacio.reglas[0].id, null)
+  set(c, CANONICA(c))
+  const una = proyectar(vistaDe(c))
+  assert.equal(una.reglas.length, 1)
+  assert.equal(una.hayVarias, false)
   c.servicio.cerrar()
 })
 
 test("T1 sin opcionesRegla ni reglas: regla null, nada que pintar, sin crash", async () => {
   const proyectar = await cargar()
-  assert.deepEqual(proyectar({}), { regla: null, hayVarias: false })
-  assert.deepEqual(proyectar({ reglas: [], opcionesRegla: { slots: [] } }), { regla: null, hayVarias: false })
+  assert.deepEqual(proyectar({}), { reglas: [], regla: null, hayVarias: false })
+  assert.deepEqual(proyectar({ reglas: [], opcionesRegla: { slots: [] } }), { reglas: [], regla: null, hayVarias: false })
 })
 
 test("T1 pura y estable: misma entrada, misma salida; no muta la entrada; sin parche en las opciones", async () => {

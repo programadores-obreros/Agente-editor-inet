@@ -7,24 +7,34 @@
 // constructor de operaciones). Nada de slots ni clases nombrados acá: el orden y los textos
 // fijos los dicta el servidor.
 //
-// Límite de UI = una regla: se proyecta la primera; `hayVarias` avisa de que hay más.
+// SE PROYECTAN TODAS LAS REGLAS (2026-11-24). Antes el límite de UI era una: se proyectaba
+// `reglas[0]` y un renglón avisaba "se muestra la primera". En la notebook real eso mostró la
+// regla VIEJA mientras el docente acababa de pedir otra (el pedido nuevo va al final de la lista),
+// o sea que los bloques decían una cosa y el proyecto otra. El dueño levantó el límite (decisión
+// D4 / OD-3, ver DECISIONS.md). `regla` queda como la PRIMERA de `reglas`, para quien mira una
+// sola (proyecto sin reglas o con una); el adaptador y el panel recorren `reglas`.
 
 import { valorActualDe, estadoDelGrupo } from "./plan-de-pintado.js"
 
 /**
  * @param {{ reglas?: readonly object[], opcionesRegla?: { slots?: readonly object[] } }} vista
  *   el campo `vista` del snapshot, tal cual llega serializado.
- * @returns {{ regla: null | { id: string | null, campos: readonly object[], completa: boolean,
- *   faltan: readonly string[], avanzada: boolean, aviso: string | null, motivos: readonly string[] },
- *   hayVarias: boolean }}
+ * @returns {{ reglas: readonly ReglaLogica[], regla: null | ReglaLogica, hayVarias: boolean }}
+ *   `reglas`: una por regla del proyecto, en su orden; sin ninguna, UNA vacía (`id: null`) para
+ *   armar la primera. `regla` es `reglas[0] ?? null`.
+ * @typedef {{ id: string | null, campos: readonly object[], completa: boolean,
+ *   faltan: readonly string[], avanzada: boolean, aviso: string | null, motivos: readonly string[] }} ReglaLogica
  */
 export function proyectarModeloLogico(vista, borrador = null) {
-  const reglas = vista?.reglas ?? []
+  const existentes = vista?.reglas ?? []
   const slots = vista?.opcionesRegla?.slots ?? []
-  const hayVarias = reglas.length > 1
-  if (slots.length === 0) return { regla: null, hayVarias }
+  const hayVarias = existentes.length > 1
+  if (slots.length === 0) return { reglas: [], regla: null, hayVarias }
+  const reglas = existentes.length > 0 ? existentes.map((existente) => proyectarRegla(existente, slots, borrador)) : [proyectarRegla(null, slots, borrador)]
+  return { reglas, regla: reglas[0], hayVarias }
+}
 
-  const existente = reglas[0] ?? null
+function proyectarRegla(existente, slots, borrador) {
   const frase = existente ? existente.frase : {}
   // Numeric Conditions S1: si la regla trae sus propios slots (dependen de la entrada elegida), se usan ésos.
   const definiciones = (existente && existente.slots) ?? slots
@@ -61,19 +71,16 @@ export function proyectarModeloLogico(vista, borrador = null) {
   })
   const avisoServidor = existente ? (existente.aviso ?? null) : null
   return {
-    regla: {
-      id: existente ? existente.id : null,
-      campos,
-      completa: existente ? existente.completa === true : false,
-      faltan: existente ? [...(existente.faltan ?? [])] : [],
-      // El servidor avisa de una condición que la vista no sabe armar: ese aviso ES la señal.
-      avanzada: avisoServidor !== null,
-      aviso: avisoServidor,
-      ayuda: existente ? (existente.ayuda ?? null) : null,
-      // Numeric Conditions S2: hay partes elegidas que todavía no se guardaron.
-      sinEnviar: Object.keys(partes).length > 0,
-      motivos: existente ? existente.motivos.map((m) => m.explicacion).filter((t) => typeof t === "string" && t !== "") : [],
-    },
-    hayVarias,
+    id: existente ? existente.id : null,
+    campos,
+    completa: existente ? existente.completa === true : false,
+    faltan: existente ? [...(existente.faltan ?? [])] : [],
+    // El servidor avisa de una condición que la vista no sabe armar: ese aviso ES la señal.
+    avanzada: avisoServidor !== null,
+    aviso: avisoServidor,
+    ayuda: existente ? (existente.ayuda ?? null) : null,
+    // Numeric Conditions S2: hay partes elegidas que todavía no se guardaron.
+    sinEnviar: Object.keys(partes).length > 0,
+    motivos: existente ? existente.motivos.map((m) => m.explicacion).filter((t) => typeof t === "string" && t !== "") : [],
   }
 }
