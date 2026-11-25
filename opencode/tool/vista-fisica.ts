@@ -122,6 +122,26 @@ async function cargarServidor(): Promise<{
 }
 
 /**
+ * Sección «Código» de la ventana (2026-11-24): el generador se carga APARTE y también perezoso.
+ *
+ * Aparte, porque si falta `codegen/` la vista tiene que abrir igual, sin esa sección: el montaje
+ * y las reglas no dependen del generador. Por eso NO va en el `Promise.all` de `cargarServidor`
+ * (ahí una carpeta que falta tira abajo la vista entera, con un mensaje que no la nombra).
+ *
+ * El generador es el MISMO que usa la tool `programa` para compilar y cargar
+ * (`codegen/programa.ts::generarPrograma`), con el mismo conocimiento: para una revisión dada, lo
+ * que se ve en la ventana son los mismos bytes que van a la placa.
+ */
+async function cargarProgramaDe(conocimiento: ModuloConocimientoActivo["CONOCIMIENTO_ACTIVO"]): Promise<((snapshot: Snapshot) => unknown) | null> {
+  try {
+    const [modCodegen, modPrograma] = await Promise.all([import("../codegen/programa.ts"), import("../vista-fisica/programa-para-vista.ts")])
+    return (snapshot) => modPrograma.programaParaVista(modCodegen.generarPrograma(snapshot.proyecto, conocimiento))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Obtiene (o levanta, la primera vez en este proceso) el servidor de la vista
  * física para una carpeta de trabajo activa — función interna EXPORTADA para
  * que `tests/phase2-e2e.test.mjs` pueda verificar "la tool y el navegador
@@ -138,9 +158,10 @@ export async function obtenerServidorVistaFisica(directorioActivo: string, idPro
   if (existente) return existente
 
   const promesa = (async (): Promise<ServidorYServicioVistaFisica> => {
-    const { obtenerServicioDeProyectoConVista, iniciarServidor } = await cargarServidor()
+    const { obtenerServicioDeProyectoConVista, iniciarServidor, conocimiento } = await cargarServidor()
     const servicio = obtenerServicioDeProyectoConVista({ directorio: directorioDatos, idProyecto })
-    const servidor = await iniciarServidor({ servicio })
+    const programaDe = await cargarProgramaDe(conocimiento)
+    const servidor = await iniciarServidor({ servicio, ...(programaDe ? { programaDe } : {}) })
     return { servidor, servicio }
   })()
 

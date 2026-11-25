@@ -18,6 +18,7 @@ import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
+import { crearPanelCodigo } from "./vista-codigo.js"
 import { dibujarCableado } from "./cableado.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
@@ -413,6 +414,7 @@ let elementoConexion = null
 /** Panel "Vista lógica" (Phase 3, vertical #2): su contenedor NO está en `contenedores`, así que
  * `repintar()` nunca lo reemplaza; se crea una vez más abajo, con el mismo controlador de la frase. */
 let panelVistaLogica = null
+let panelCodigo = null
 
 if (enNavegador) {
   contenedores = {
@@ -552,6 +554,8 @@ function repintar() {
   restaurarFocoRegla(secciones.reglas)
   // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
   panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado" })
+  // El código se pide al servidor por la revisión de ESTE snapshot (sólo si cambió) y nunca se arma acá.
+  void panelCodigo?.actualizar(ultimoSnapshot, { conectado: estadoConexion === "conectado" })
 }
 
 /** Physical View UX #1: la instrucción `cableado` del último repintado y el redibujo
@@ -650,6 +654,11 @@ if (enNavegador) {
     elementoEstado: document.getElementById("vista-logica-estado"),
     botonQuitar: document.getElementById("vista-logica-quitar"),
     controlador: controladorReglas,
+  })
+  panelCodigo = crearPanelCodigo({
+    fetch: (...argumentos) => fetch(...argumentos),
+    elementoCodigo: document.getElementById("vista-codigo-texto"),
+    elementoAviso: document.getElementById("vista-codigo-aviso"),
   })
 }
 
