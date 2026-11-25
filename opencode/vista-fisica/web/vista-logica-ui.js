@@ -54,11 +54,13 @@ export function crearVistaLogica({ Blockly, contenedor, controlador, media, mens
   }
 }
 
+export const TEXTO_QUITAR_CON_VARIAS = "Hay más de una regla: para quitar una, usá su botón «Quitar regla» en la sección Reglas."
+
 const MENSAJE_SIN_BLOCKLY = "La vista lógica no está disponible en esta página. La frase editable de arriba sigue funcionando."
 
 /**
  * Panel de la página (T9): el contenedor de Blockly se inyecta UNA vez, de forma perezosa, en el primer
- * repintado; los textos (motivos, aviso, "varias reglas") y el botón "Quitar regla" salen del modelo,
+ * repintado; los textos (motivos y avisos de cada regla) y el botón "Quitar regla" salen del modelo,
  * siempre desde el snapshot autoritativo. Sin Blockly (asset ausente) muestra un mensaje llano y no
  * toca nada más. Los elementos son opacos: sólo `textContent`, `disabled` y `addEventListener`.
  */
@@ -78,10 +80,17 @@ export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elemento
       }
       vista ??= crearVistaLogica({ Blockly, contenedor: lienzo, controlador, alError: () => mostrarEstado(MENSAJE_NO_SE_PUDO_GUARDAR), ...(media === undefined ? {} : { media }) })
       const modelo = vista.repintar(snapshot, { deshabilitado })
-      const lineas = modelo.regla ? [...(modelo.regla.sinEnviar ? [TEXTO_SIN_ENVIAR] : []), ...modelo.regla.motivos, ...(modelo.regla.aviso ? [modelo.regla.aviso] : []), ...(modelo.regla.ayuda ? [modelo.regla.ayuda] : [])] : []
-      if (modelo.hayVarias) lineas.push("Se muestra la primera regla; las demás están en la sección Reglas.")
+      // Los textos de CADA regla. Con varias, cada renglón dice de cuál es (por su lugar en el
+      // lienzo, de arriba abajo): un motivo suelto no se sabría a qué bloque atribuir.
+      const lineas = []
+      modelo.reglas.forEach((regla, i) => {
+        const propias = [...(regla.sinEnviar ? [TEXTO_SIN_ENVIAR] : []), ...regla.motivos, ...(regla.aviso ? [regla.aviso] : []), ...(regla.ayuda ? [regla.ayuda] : [])]
+        for (const linea of propias) lineas.push(modelo.hayVarias ? `Regla ${i + 1}: ${linea}` : linea)
+      })
+      if (modelo.hayVarias) lineas.push(TEXTO_QUITAR_CON_VARIAS)
       elementoTexto.textContent = lineas.join("\n")
-      botonQuitar.disabled = deshabilitado || !modelo.regla || modelo.regla.id === null
+      // El botón quita LA regla del lienzo: con varias no hay una sola, así que no se ofrece.
+      botonQuitar.disabled = deshabilitado || modelo.reglas.length !== 1 || modelo.reglas[0].id === null
       return modelo
     },
     mostrarEstado,
