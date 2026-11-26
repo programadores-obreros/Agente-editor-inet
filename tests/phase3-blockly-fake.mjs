@@ -2,7 +2,7 @@
 // la API real 13.3.0; mismo comportamiento relevante: con los eventos deshabilitados no se dispara nada.
 
 export function fabricarBlockly() {
-  const reg = { svgResizes: [], inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false }
+  const reg = { svgResizes: [], inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false, altoDeBloque: null }
   class FieldDropdown {
     constructor(opciones) { this.opciones = opciones; this.valor = opciones[0][1]; this.habilitado = true }
     getValue() { return this.valor }
@@ -65,7 +65,11 @@ export function fabricarBlockly() {
           b.setFieldValue = (v, n) => b.campos[n].setValue(v)
           b.setDeletable = (v) => { b.deletable = v }
           b.setMovable = (v) => { b.movable = v }
-          b.moveBy = () => {}
+          // Varias reglas (2026-11-24): se anota dónde se ubicó cada bloque, y con `reg.altoDeBloque`
+          // el bloque informa su alto como la API real (`getHeightWidth`); sin eso no existe el método.
+          b.movimientos = []
+          b.moveBy = (x, y) => { b.movimientos.push([x, y]) }
+          if (reg.altoDeBloque !== null) b.getHeightWidth = () => ({ height: reg.altoDeBloque, width: 300 })
           b.initSvg = () => { b.svg = true }
           b.render = () => { b.renderizado = true }
           bloques.push(b)

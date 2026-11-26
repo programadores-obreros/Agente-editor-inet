@@ -235,6 +235,91 @@ test("T3 quitar(): llama a alQuitar con el id de la regla; sin regla en la IR no
   assert.deepEqual(llamadas.quitar, [{ reglaId: "beh-3" }])
 })
 
+// ── varias reglas (2026-11-24): un par por regla ───────────────────────────────────────────────
+// Los campos de dos reglas se llaman igual. Lo que estos tests custodian es que NADA se resuelva
+// por nombre de campo suelto: ni el valor que se pinta ni la regla a la que se atribuye una edición.
+const OTRA = ["cmp-1", null, "cmp-0", null]
+const ETIQ = ["Pulsador", "presionado", "LED", "encendido"]
+const varias = (...reglas) => ({ reglas, regla: reglas[0] ?? null, hayVarias: reglas.length > 1 })
+const regla = (id, valores) => modelo(valores, { id, etiquetas: ETIQ }).regla
+const valoresDelPar = (mientras) => ["s0", "s1", "s2", "s3"].map((s) => (mientras.campos[s] ?? mientras.hijo.campos[s]).getValue())
+
+test("T3 dos reglas: dos pares, cada uno con los valores de SU regla (no los de la otra)", async () => {
+  const { adaptador, reg } = await montar()
+  adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
+  const tops = reg.ws.getTopBlocks()
+  assert.equal(tops.length, 2)
+  assert.equal(reg.ws.bloques.length, 4)
+  assert.deepEqual(valoresDelPar(tops[0]), COMPLETO)
+  const S = SENT(tops[1].campos.s0)
+  assert.deepEqual(valoresDelPar(tops[1]), ["cmp-1", S, "cmp-0", S])
+})
+
+test("T3 dos reglas: van apiladas, la segunda debajo de la primera según el alto que informa Blockly", async () => {
+  const { adaptador, reg } = await montar()
+  reg.altoDeBloque = 120
+  adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
+  const [a, b] = reg.ws.getTopBlocks()
+  assert.deepEqual(a.movimientos, [[16, 16]])
+  assert.deepEqual(b.movimientos, [[16, 16 + 120 + 16]], "debajo del primero: su borde + su alto + la separación")
+})
+
+test("T3 dos reglas: sin alto informado no se enciman (se usa un alto estimado)", async () => {
+  const { adaptador, reg } = await montar()
+  adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
+  const [a, b] = reg.ws.getTopBlocks()
+  assert.equal(a.movimientos[0][1], 16)
+  assert.ok(b.movimientos[0][1] > 16 + 60, `la segunda quedó en y=${b.movimientos[0][1]}`)
+})
+
+test("T3 dos reglas: editar un campo de la SEGUNDA manda el id de la segunda (y el de la primera, el de la primera)", async () => {
+  const { adaptador, reg, llamadas } = await montar()
+  adaptador.pintar(varias(regla("beh-1", ["cmp-1", null, "cmp-0", null]), regla("beh-2", ["cmp-1", null, "cmp-0", null])))
+  const [a, b] = reg.ws.getTopBlocks()
+  b.campos.s1.setValue("presionado")
+  assert.deepEqual(llamadas.editar, [{ reglaId: "beh-2", slot: "s1", valor: "presionado" }])
+  a.hijo.campos.s3.setValue("encendido")
+  assert.deepEqual(llamadas.editar[1], { reglaId: "beh-1", slot: "s3", valor: "encendido" })
+})
+
+test("T3 dos reglas: repintar con valores nuevos no reconstruye y cada par toma los de su lugar", async () => {
+  const { adaptador, reg } = await montar()
+  adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
+  const creados = reg.bloquesCreados
+  adaptador.pintar(varias(regla("beh-1", OTRA), regla("beh-2", COMPLETO)))
+  assert.equal(reg.bloquesCreados, creados)
+  const tops = reg.ws.getTopBlocks()
+  assert.deepEqual(valoresDelPar(tops[1]), COMPLETO)
+  assert.equal(valoresDelPar(tops[0])[1], SENT(tops[0].campos.s0))
+})
+
+test("T3 de dos reglas a una: se reconstruye y queda un solo par (no quedan bloques de la regla que se fue)", async () => {
+  const { adaptador, reg, llamadas } = await montar()
+  adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
+  adaptador.pintar(varias(regla("beh-2", OTRA)))
+  assert.equal(reg.ws.bloques.length, 2)
+  reg.ws.getTopBlocks()[0].campos.s1.setValue("presionado")
+  assert.deepEqual(llamadas.editar, [{ reglaId: "beh-2", slot: "s1", valor: "presionado" }])
+})
+
+test("T3 quitar() con dos reglas no quita ninguna; con una, quita ésa", async () => {
+  const { adaptador, llamadas } = await montar()
+  adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
+  adaptador.quitar()
+  assert.deepEqual(llamadas.quitar, [], "con dos no hay 'la' regla: quitar la primera sería quitar una que nadie eligió")
+  adaptador.pintar(varias(regla("beh-2", OTRA)))
+  adaptador.quitar()
+  assert.deepEqual(llamadas.quitar, [{ reglaId: "beh-2" }])
+})
+
+test("T3 el lienzo admite barra vertical y rueda: con varias reglas hay que poder llegar a todas", async () => {
+  const { reg } = await montar()
+  const { move } = reg.inyecciones[0].opciones
+  assert.equal(move.scrollbars.vertical, true)
+  assert.equal(move.wheel, true)
+  assert.equal(move.drag, false, "los bloques no se arrastran: el lugar lo decide el modelo")
+})
+
 test("T3 pintar(modelo con regla null) vacía el workspace", async () => {
   const { adaptador, reg } = await montar()
   adaptador.pintar(modelo(COMPLETO, { etiquetas: ["Pulsador", "presionado", "LED", "encendido"] }))

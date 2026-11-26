@@ -1559,3 +1559,31 @@ Decisiones congeladas:
 - **OPEN-7:** se retira el aviso genérico; varias reglas sobre actuadores distintos son válidas sin aviso.
 - Sin prioridades, sin semántica de orden, sin "la última gana". Sin cambio de IR, `schemaVersion` ni
   catálogo.
+
+## Vista lógica: se muestran todas las reglas — reapertura de D4 / OD-3 (2026-11-24)
+
+**Qué decía:** D4 (vertical #2) fijó el workspace de bloques "para una sola regla", y OD-3 mantuvo el
+límite de UI en una regla. Con Multi-Rule Safety (2026-10-04) el proyecto pasó a admitir varias reglas
+sobre salidas distintas y la sección "Reglas" ya las pintaba todas; los bloques siguieron mostrando
+`reglas[0]` con un renglón "Se muestra la primera regla".
+
+**Qué pasó:** en la notebook real del dueño (2026-11-24, instalador de prueba 3), con dos reglas
+(pulsador → LED y DHT22 > 35 °C → LED 2), la Vista Lógica mostró la regla vieja mientras el pedido
+recién hecho era la otra: una regla nueva va al final de la lista, así que la primera es siempre la más
+antigua. Los bloques decían una cosa y el proyecto otra.
+
+**Decisión (dueño, 2026-11-24):** se levanta el límite **en la Vista Lógica**: un par «mientras … hacer
+…» por regla, apilados en el orden del proyecto.
+
+**Lo que NO cambia:**
+
+- La IR, `schemaVersion`, el catálogo y el Project Engine. Es sólo `vista-fisica/web/`.
+- Blockly sigue siendo capa de presentación descartable: nada se serializa, sin toolbox, sin arrastre.
+- Un único dueño por actuador (Multi-Rule Safety): dos reglas sobre la misma salida siguen dando
+  `MULTIPLES_AUTORIDADES_ACTUADOR`, y ahora el motivo se lee junto a su regla ("Regla 2: …").
+- **"Agregar regla" desde el navegador sigue saliendo sólo sin reglas** (la otra mitad de OD-3,
+  `plan-de-pintado.js`). La segunda regla sigue naciendo por el agente. Queda como paso aparte.
+
+**Consecuencia aceptada:** el botón "Quitar regla" de la Vista Lógica sólo actúa cuando hay UNA regla.
+Con varias queda deshabilitado y un renglón manda al botón de cada regla en la sección "Reglas": antes
+quitaba la primera, que podía no ser la que el docente estaba mirando.

@@ -6,7 +6,14 @@
 // workspace, ni ids de bloque), no hay generadores de código ni toolbox. Un workspace nuevo
 // pintado desde el mismo modelo da exactamente los mismos campos.
 //
-// Forma fija: un bloque contenedor «mientras» con UN bloque de acción encastrado, y un dropdown
+// UN PAR POR REGLA, apilados de arriba abajo en el orden del modelo (2026-11-24; antes se dibujaba
+// sólo la primera regla). Los campos de dos reglas se llaman igual (el nombre del campo es su
+// slot), así que NADA se resuelve por nombre de campo suelto: cada edición se atribuye por el
+// bloque que la originó (`evento.blockId`) y cada valor se pinta en el bloque de SU regla. Pintar
+// por nombre recorriendo todos los bloques escribiría el valor de una regla en la otra: un OK
+// falso en pantalla.
+//
+// Forma fija de cada par: un bloque contenedor «mientras» con UN bloque de acción encastrado, y un dropdown
 // por campo del modelo (los campos se reparten por índice: la primera mitad en el contenedor y el
 // resto en la acción; la forma fija de 4 campos queda 2+2). Los nombres de campo, los textos fijos y las opciones los dicta el
 // modelo (que viene del servidor); acá no se nombra ninguno.
@@ -15,6 +22,14 @@ const TIPO_MIENTRAS = "tecnia_mientras"
 const TIPO_HACER = "tecnia_hacer"
 const SENTINELA = "__sin_valor__"
 const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:" }
+// Lugar de los pares en el lienzo. El alto de un par lo dice Blockly después de dibujarlo; si la
+// API no lo informa (la de prueba), se usa el estimado.
+const MARGEN = 16
+const SEPARACION = 16
+const ALTO_ESTIMADO_DEL_PAR = 96
+
+/** Las reglas a dibujar. Un modelo viejo que sólo trae `regla` vale como lista de una. */
+const reglasDe = (modelo) => modelo.reglas ?? (modelo.regla ? [modelo.regla] : [])
 
 /** Opciones del dropdown: centinela primero, luego las del servidor y, si el valor actual no es
  * una de ellas (p. ej. una condición que la vista no sabe armar), el valor actual con su etiqueta. */
@@ -60,7 +75,8 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     readOnly: false,
     trashcan: false,
     zoom: { controls: false, wheel: false, pinch: false },
-    move: { scrollbars: { horizontal: true, vertical: false }, drag: false, wheel: false },
+    // Con varias reglas el lienzo puede no alcanzar: barra vertical y rueda para llegar a todas.
+    move: { scrollbars: { horizontal: true, vertical: true }, drag: false, wheel: true },
   })
 
   // Blockly mide su contenedor: tras inyectar (y tras cada pintado) hay que avisarle, o queda en tamaño 0.
@@ -70,20 +86,25 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   medir()
 
   let destruido = false
-  let modeloActual = null
+  /** Un elemento por regla dibujada: la regla del modelo y sus dos bloques. */
+  let pares = []
   let firmaActual = null
+  const parDelBloque = (idBloque) => pares.find((p) => p.mientras.id === idBloque || p.hacer.id === idBloque) ?? null
 
   const alCambiarCampo = (evento) => {
-    if (destruido || modeloActual === null) return
+    if (destruido || pares.length === 0) return
     if (evento.type !== Blockly.Events.BLOCK_CHANGE || evento.isUiEvent || evento.element !== "field") return
-    const campo = modeloActual.regla.campos.find((c) => c.slot === evento.name)
+    // La regla sale del BLOQUE que cambió, nunca del nombre del campo (se repite entre reglas).
+    const par = parDelBloque(evento.blockId)
+    if (!par) return
+    const campo = par.regla.campos.find((c) => c.slot === evento.name)
     if (!campo) return
     const valor = evento.newValue
     // Numeric Conditions S1: un campo de número manda lo que se escribió; si es lo mismo que se
     // lee (o quedó vacío), no es una edición. El controlador lo interpreta y el Engine decide.
     if (campo.tipo === "numero") {
       if (valor === (campo.etiquetaActual ?? "") || String(valor).trim() === "") return
-      alEditar({ reglaId: modeloActual.regla.id, slot: campo.slot, valor })
+      alEditar({ reglaId: par.regla.id, slot: campo.slot, valor })
       return
     }
     if (valor === SENTINELA) {
@@ -92,7 +113,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
       return
     }
     if (valor === campo.valor) return
-    alEditar({ reglaId: modeloActual.regla.id, slot: campo.slot, valor })
+    alEditar({ reglaId: par.regla.id, slot: campo.slot, valor })
   }
   workspace.addChangeListener(alCambiarCampo)
 
@@ -107,7 +128,8 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     }
   }
 
-  function construir(campos) {
+  /** Dibuja el par de UNA regla con su borde superior en `y`; devuelve sus bloques y su alto. */
+  function construir(campos, y) {
     const contenedorBloque = workspace.newBlock(TIPO_MIENTRAS)
     const accion = workspace.newBlock(TIPO_HACER)
     // Si el servidor dice en qué bloque va cada campo (`grupo`), se respeta; si no, la forma fija
@@ -134,34 +156,55 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
       bloque.initSvg()
       bloque.render()
     }
-    if (typeof contenedorBloque.moveBy === "function") contenedorBloque.moveBy(16, 16)
+    if (typeof contenedorBloque.moveBy === "function") contenedorBloque.moveBy(MARGEN, y)
+    const medida = typeof contenedorBloque.getHeightWidth === "function" ? contenedorBloque.getHeightWidth() : null
+    const alto = medida && Number.isFinite(medida.height) && medida.height > 0 ? medida.height : ALTO_ESTIMADO_DEL_PAR
+    return { mientras: contenedorBloque, hacer: accion, alto }
   }
+
+  const firmaDeCampos = (campos) => campos.map((c) => [c.slot, c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)])
 
   function pintar(modelo, { deshabilitado = false } = {}) {
     if (destruido) return
     Blockly.Events.disable()
     try {
-      modeloActual = modelo.regla ? modelo : null
-      if (!modelo.regla) {
+      const reglas = reglasDe(modelo)
+      if (reglas.length === 0) {
         workspace.clear()
+        pares = []
         firmaActual = null
         return
       }
-      const campos = modelo.regla.campos
-      const firma = JSON.stringify(campos.map((c) => [c.slot, c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)]))
+      // La firma es la FORMA de cada par, en orden (no el id de la regla: una regla que recién
+      // nace pasa de `null` a su id sin que cambie un solo bloque). Si cambia cuántas hay o la
+      // forma de alguna, se redibuja todo; si no, cada par toma los valores de la regla de su lugar.
+      const firma = JSON.stringify(reglas.map((r) => firmaDeCampos(r.campos)))
       if (firma !== firmaActual) {
         firmaActual = null
+        pares = []
         workspace.clear()
-        construir(campos)
+        let y = MARGEN
+        const nuevos = []
+        for (const regla of reglas) {
+          const par = construir(regla.campos, y)
+          nuevos.push({ regla, mientras: par.mientras, hacer: par.hacer })
+          y += par.alto + SEPARACION
+        }
+        pares = nuevos
         firmaActual = firma
+      } else {
+        // Mismos bloques, modelo nuevo: cada par pasa a apuntar a la regla recién llegada.
+        pares = pares.map((par, i) => ({ ...par, regla: reglas[i] }))
       }
-      const bloques = workspace.getAllBlocks()
-      for (const campo of campos) {
-        for (const bloque of bloques) {
-          const f = bloque.getField(campo.slot)
-          if (!f) continue
-          bloque.setFieldValue(campo.tipo === "numero" ? (campo.etiquetaActual ?? "") : (campo.valor ?? SENTINELA), campo.slot)
-          if (typeof f.setEnabled === "function") f.setEnabled(!deshabilitado)
+      for (const par of pares) {
+        for (const campo of par.regla.campos) {
+          // Sólo los dos bloques de ESTA regla: el mismo nombre de campo existe en las demás.
+          for (const bloque of [par.mientras, par.hacer]) {
+            const f = bloque.getField(campo.slot)
+            if (!f) continue
+            bloque.setFieldValue(campo.tipo === "numero" ? (campo.etiquetaActual ?? "") : (campo.valor ?? SENTINELA), campo.slot)
+            if (typeof f.setEnabled === "function") f.setEnabled(!deshabilitado)
+          }
         }
       }
       if (typeof workspace.resize === "function") workspace.resize()
@@ -171,9 +214,10 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     }
   }
 
+  /** Quita LA regla dibujada. Con varias no elige ninguna (no hay "la" regla): eso se hace en la sección Reglas. */
   function quitar() {
-    if (destruido || modeloActual === null || modeloActual.regla.id === null) return
-    alQuitar({ reglaId: modeloActual.regla.id })
+    if (destruido || pares.length !== 1 || pares[0].regla.id === null) return
+    alQuitar({ reglaId: pares[0].regla.id })
   }
 
   function destruir() {

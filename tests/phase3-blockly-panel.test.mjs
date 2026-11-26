@@ -133,14 +133,46 @@ test("T9 condición avanzada: el aviso del servidor se muestra como texto (no s�
   c.servicio.cerrar()
 })
 
-test("T9 varias reglas: se avisa que se muestra sólo la primera (Multi-Rule Safety: sin el aviso genérico de contradicciones)", async () => {
+// HISTORIA (2026-11-24). Este test exigía el renglón "Se muestra la primera regla": fijaba el límite
+// de una regla en los bloques. Con el límite levantado, lo que hay que ver es que estén los dos
+// pares, que ya no se diga que falta alguna, y que el botón único no quite una regla al azar.
+test("T9 varias reglas: un par de bloques por regla, sin aviso de 'se muestra la primera', y el botón único no quita ninguna", async () => {
   const c = preparar()
   set(c, { cuando: { sensor: c.pulsador } })
   set(c, { entonces: { actuador: c.led, accion: "encender" } })
   const m = await montar(c)
   m.panel.repintar(m.estado.snapshot, { deshabilitado: false })
-  assert.match(m.el.texto.textContent, /Se muestra la primera regla/)
+  assert.equal(m.reg.ws.getTopBlocks().length, 2, "dos reglas: dos pares")
+  assert.doesNotMatch(m.el.texto.textContent, /Se muestra la primera regla/)
   assert.doesNotMatch(m.el.texto.textContent, /no analiza si se contradicen/, "OPEN-7: el aviso genérico se retiró")
+  assert.match(m.el.texto.textContent, /para quitar una, usá su botón «Quitar regla» en la sección Reglas/)
+  assert.equal(m.el.quitar.disabled, true, "con dos reglas no hay 'la' regla que quitar")
+  m.el.quitar.disparar("click")
+  assert.deepEqual(m.enviadas, [], "y aunque le lleguen un click, no manda nada")
+  c.servicio.cerrar()
+})
+
+test("T9 varias reglas: el motivo de una regla dice de cuál es (por su lugar en el lienzo)", async () => {
+  const c = preparar()
+  set(c, { cuando: { sensor: c.pulsador } })
+  set(c, { cuando: { sensor: c.pulsador, ...CONDICION }, entonces: { actuador: c.pulsador, accion: "encender" } })
+  const m = await montar(c)
+  m.panel.repintar(m.estado.snapshot, { deshabilitado: false })
+  const motivo = m.estado.snapshot.vista.reglas[1].motivos.map((x) => x.explicacion).find((t) => typeof t === "string" && t)
+  assert.ok(motivo, "el caso necesita un motivo en la SEGUNDA regla")
+  assert.ok(m.el.texto.textContent.split("\n").includes(`Regla 2: ${motivo}`), m.el.texto.textContent)
+  assert.ok(!SIN_IR.test(m.el.texto.textContent))
+  c.servicio.cerrar()
+})
+
+test("T9 una sola regla: los textos van sin 'Regla N:' y el botón la quita", async () => {
+  const c = preparar()
+  set(c, { cuando: { sensor: c.pulsador, ...CONDICION }, entonces: { actuador: c.pulsador, accion: "encender" } })
+  const m = await montar(c)
+  m.panel.repintar(m.estado.snapshot, { deshabilitado: false })
+  assert.doesNotMatch(m.el.texto.textContent, /Regla \d+:/)
+  assert.doesNotMatch(m.el.texto.textContent, /Hay más de una regla/)
+  assert.equal(m.el.quitar.disabled, false)
   c.servicio.cerrar()
 })
 
@@ -160,6 +192,8 @@ test("T9 index.html: sección 'Vista lógica' con encabezado y etiqueta visibles
   assert.match(html, /<h2>Vista lógica<\/h2>/)
   for (const id of ["vista-logica-lienzo", "vista-logica-texto", "vista-logica-estado", "vista-logica-quitar"]) assert.match(html, new RegExp(`id="${id}"`))
   assert.match(html, /Quitar regla/)
+  assert.match(html, /Son las mismas reglas de arriba/, "el texto fijo ya no promete 'la misma regla': puede haber varias")
+  assert.doesNotMatch(html, /Es la misma regla de arriba/)
   assert.match(html, /min-height:\s*\d+px/)
   assert.ok(!/<link[^>]+stylesheet/i.test(html))
   // la sección es hermana de "Reglas" dentro de <main>
