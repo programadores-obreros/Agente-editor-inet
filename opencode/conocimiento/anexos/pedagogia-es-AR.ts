@@ -90,7 +90,7 @@ export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "sa
  * Textos fijos de la ventana «vista física» que no dependen de una pieza ni de una placa.
  * Viajan en el snapshot (`vista.textos`): el navegador los muestra, nunca los redacta.
  *
- * TEXTO PENDIENTE DE APROBACIÓN DEL DUEÑO (2026-11-26): todos los de esta tabla.
+ * Textos aprobados por el dueño el 2026-11-26, todos los de esta tabla.
  */
 export const TEXTOS_DE_LA_VENTANA = {
   /** Se cambió un pin en la ventana y el pedido no llegó (Tecnia Bot cerrado, red cortada). */
