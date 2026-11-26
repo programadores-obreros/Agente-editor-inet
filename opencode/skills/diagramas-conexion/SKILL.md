@@ -15,7 +15,7 @@ El 80% de los errores de los alumnos son de **cableado**, no de código (polarid
 |---------|---------------|
 | **Dibujo ASCII** | SIEMPRE en el chat/terminal. Es lo que el alumno ve al instante, sin abrir nada. |
 | **Tabla de colores de cable** | SIEMPRE, junto al dibujo. Se entiende hasta impresa en papel. |
-| **Diagrama Mermaid** | SOLO cuando generás un archivo `.md` (guía, TP). Se renderiza en GitHub/VS Code, NO en la terminal. |
+| **Diagrama Mermaid** | SOLO cuando el docente te pide un archivo `.md`. Se renderiza en GitHub/VS Code, NO en la terminal. Una guía o un TP para los alumnos no es un `.md`: es una página del tool `pagina` (skill `paginas`), y ahí las conexiones van en una tabla. |
 
 Para una respuesta normal en el chat: **dibujo ASCII + tabla de colores**. El Mermaid agregalo únicamente si estás escribiendo un archivo que se va a leer en GitHub o VS Code.
 
@@ -73,7 +73,7 @@ Reglas del dibujo ASCII:
 
 ## Formato 3: Diagrama Mermaid (SOLO para archivos .md)
 
-Usalo únicamente cuando escribís un archivo que se va a leer en GitHub o VS Code (una guía, un TP). En la terminal NO se renderiza, así que ahí va el ASCII.
+Usalo únicamente cuando escribís un archivo `.md` que se va a leer en GitHub o VS Code, porque el docente lo pidió así. En la terminal NO se renderiza, así que ahí va el ASCII. Una guía o un TP para repartir se arma con el tool `pagina` (skill `paginas`): la página no dibuja Mermaid, las conexiones van en su tabla.
 
 ```mermaid
 flowchart LR
@@ -107,7 +107,7 @@ Cuando el circuito lo amerite, agregá una nota de seguridad:
 ## Resumen del flujo
 
 1. En el chat → **dibujo ASCII + tabla de colores** + advertencias.
-2. En un archivo .md (guía/TP) → agregá también el **Mermaid**.
+2. En un archivo `.md` que el docente pidió → agregá también el **Mermaid**. Una guía o un TP para repartir → tool `pagina`, con las conexiones en tabla.
 3. SIEMPRE los colores de cable (🔴 positivo, ⚫ GND, colores = señal): el alumno aprende el estándar real.
 
 ## Por qué así y no con un simulador o una imagen

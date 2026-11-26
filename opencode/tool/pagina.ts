@@ -695,6 +695,32 @@ export async function pedirAlNavegador(
 
 const plural = (n: number, uno: string, varios: string): string => `${n} ${n === 1 ? uno : varios}`
 
+/**
+ * Qué decir cuando no se pudo escribir la página, en llano y con qué hacer.
+ *
+ * NO se copia el texto de la excepción: todo lo que devuelve la tool lo lee el modelo,
+ * y el mensaje crudo del sistema («EACCES: permission denied, open '…'») viene en
+ * inglés, con jerga y con rutas que no son la del archivo. El modelo lo repite tal
+ * cual o lo «traduce» inventando. Se mira sólo el código del error, que es un dato y
+ * no un texto, y se elige una de cuatro frases escritas acá.
+ */
+export function explicarFallaDeEscritura(e: unknown): string {
+  const codigo = (e as { code?: unknown } | null)?.code
+  switch (codigo) {
+    case "EACCES":
+    case "EPERM":
+    case "EROFS":
+      return "La carpeta de trabajo no me deja guardar archivos: falta permiso. Contáselo así al docente: hay que darle permiso de escritura a esa carpeta, o trabajar en otra."
+    case "ENOSPC":
+    case "EDQUOT":
+      return "El disco está lleno. Contáselo así al docente: hay que liberar espacio y volver a pedirla."
+    case "EISDIR":
+      return "En esa ruta hay una carpeta con el mismo nombre que la página. Llamá de nuevo con otro título."
+    default:
+      return "El sistema no me dejó escribir el archivo y no dijo por qué. Probá una vez más; si vuelve a fallar, contale al docente que la página no se pudo guardar en esa carpeta."
+  }
+}
+
 const EJEMPLO = '{"titulo":"Cómo cuidar la placa","bloques":[{"tipo":"texto","texto":"Desconectá el USB antes de tocar los cables."}]}'
 
 export default tool({
@@ -744,7 +770,7 @@ export default tool({
     try {
       await Bun.write(archivo, html)
     } catch (e) {
-      return `No pude guardar la página en \`${archivo}\` (${e instanceof Error ? e.message : "error"}). No hay nada para mostrarle al docente.`
+      return `No pude guardar la página en \`${archivo}\`. ${explicarFallaDeEscritura(e)} No hay nada para mostrarle al docente todavía.`
     }
     // RELECTURA. Que la escritura no tire una excepción no prueba que el archivo esté
     // entero (disco lleno, carpeta sincronizada que lo pisa, antivirus). Se vuelve a leer
