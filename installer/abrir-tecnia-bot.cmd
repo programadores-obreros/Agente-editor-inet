@@ -490,6 +490,78 @@ if errorlevel 9 if not errorlevel 10 (
   echo.
 )
 
+rem -- LA REVISION PREVIA A LA CARGA A LA PLACA ---------------------------------
+rem
+rem Es el equivalente en Windows de install\tecnia-bot.sh. Cargar a la placa el
+rem programa generado desde un proyecto fisico exige saber que Tecnia Bot se abrio
+rem pasando por esta revision; sin eso el bot arma, dibuja y compila, pero no
+rem carga. Hasta el 2026-11-23 esto existia solo en Linux: en la primera prueba en
+rem una notebook Windows real el camino nuevo llego hasta compilar y no pudo
+rem llegar a la placa.
+rem
+rem Por que antes de abrir y no cuando se pide la carga: una configuracion de
+rem OpenCode en la carpeta del proyecto o mas arriba puede aprobar sola el cartel
+rem de la carga, y OpenCode la guarda en memoria al arrancar. Revisar el disco
+rem recien cuando se pide la carga no alcanza (medido en OpenCode 1.18.18).
+rem
+rem Los tres pasos, en el mismo orden que el lanzador de Linux:
+rem   1. limpiar el entorno: se saca TODA variable OPENCODE_* salvo
+rem      OPENCODE_DISABLE_CLAUDE_CODE (que solo apaga una lectura), y se fija
+rem      OPENCODE_DISABLE_PROJECT_CONFIG=1;
+rem   2. revisar la carpeta con la MISMA revision que usa la tool
+rem      (carga\revisar-lanzamiento.ts, que corre con Node);
+rem   3. solo si dio limpio, dejar la marca TECNIA_LANZADOR. Si no, se abre IGUAL
+rem      pero sin la marca: el bot funciona entero salvo la carga a la placa, y
+rem      cuando se la pidan va a decir por que.
+rem
+rem La marca se BORRA antes de empezar: si este archivo se corre desde una consola
+rem que ya la tenia puesta (de otra apertura, o escrita a mano), no vale.
+rem
+rem La tool no confia solo en la marca: comprueba ademas que un proceso de mas
+rem arriba sea cmd corriendo este mismo archivo instalado (procesos-windows.ts).
+rem
+rem ESTO TAMPOCO ES UN PORTERO: pase lo que pase aca -- que no haya Node, que
+rem falte el archivo de la revision, que la carpeta tenga algo raro -- Tecnia Bot
+rem abre. Por eso en este tramo no hay ni un exit ni un salto. Lo unico que cambia
+rem es si queda o no la marca.
+rem
+rem El "for" lee la salida de "set OPENCODE_" y usa solo el NOMBRE de cada
+rem variable (lo que esta antes del primer signo igual): el valor no se interpreta.
+rem
+rem NODE SE BUSCA POR SU RUTA, NO POR SU NOMBRE. Escribir "node" a secas hace que
+rem cmd lo busque PRIMERO en la carpeta actual, que aca es la de los proyectos de
+rem los alumnos: un node.exe o un node.bat dejado ahi contestaria "todo limpio"
+rem sin revisar nada, y un .bat encima se llevaria el control y Tecnia Bot no
+rem abriria. Se usa el que instala Tecnia Bot con Scoop; si no esta, el primer
+rem node.exe del PATH (la forma con el signo de pesos y PATH busca solo en el
+rem PATH, no en la carpeta actual, y solo ese nombre exacto). Ademas, en la
+rem ventana que espero a que termine la instalacion el PATH todavia es el viejo y
+rem "node" no se encontraria aunque este recien instalado.
+rem
+rem SI NO SE PUDO REVISAR, SE DICE POR QUE. TECNIA_SIN_MARCA le cuenta a la tool
+rem el motivo, para que cuando pidan la carga no conteste "abrilo desde el
+rem acceso directo" a alguien que lo abrio desde el acceso directo. Es solo un
+rem texto para el mensaje: no habilita nada.
+set "TECNIA_LANZADOR="
+set "TECNIA_SIN_MARCA="
+for /f "tokens=1 delims==" %%V in ('set OPENCODE_ 2^>nul') do if /i not "%%V"=="OPENCODE_DISABLE_CLAUDE_CODE" set "%%V="
+set "OPENCODE_DISABLE_PROJECT_CONFIG=1"
+set "REVISION=%OCCFG%\carga\revisar-lanzamiento.ts"
+set "NODO="
+if exist "%USERPROFILE%\scoop\apps\nodejs-lts\current\node.exe" set "NODO=%USERPROFILE%\scoop\apps\nodejs-lts\current\node.exe"
+if not defined NODO for %%I in (node.exe) do set "NODO=%%~$PATH:I"
+set "REVISADO="
+set "NODE_NO_WARNINGS=1"
+if defined NODO if exist "%REVISION%" "%NODO%" "%REVISION%" >nul 2>nul && set "REVISADO=1"
+set "NODE_NO_WARNINGS="
+if defined REVISADO set "TECNIA_LANZADOR=lanzador-cmd"
+if not defined REVISADO set "TECNIA_SIN_MARCA=carpeta"
+if not exist "%REVISION%" set "TECNIA_SIN_MARCA=sin-revision"
+if not defined NODO set "TECNIA_SIN_MARCA=sin-node"
+if "%TECNIA_SIN_MARCA%"=="carpeta" echo   Aviso: en esta carpeta la carga a la placa queda deshabilitada. El resto funciona.
+if "%TECNIA_SIN_MARCA%"=="sin-revision" echo   Aviso: falta un archivo de Tecnia Bot y la carga a la placa queda deshabilitada. Abri "Reparar Tecnia Bot" en el menu inicio.
+if "%TECNIA_SIN_MARCA%"=="sin-node" echo   Aviso: no se encontro Node y la carga a la placa queda deshabilitada. Abri "Reparar Tecnia Bot" en el menu inicio.
+
 echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
 echo.
 "%OC%"

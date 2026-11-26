@@ -56,6 +56,7 @@
 import { spawnSync } from "node:child_process"
 import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs"
 import { basename, isAbsolute, relative } from "node:path"
+import { leerProcesosDeWindows } from "./procesos-windows.ts"
 
 /** Cuánto se espera después de SIGKILL antes de declarar que NO se pudo confirmar. */
 export const TOPE_KILL_MS = 2_000
@@ -140,6 +141,16 @@ function fotoDePs(): Proceso[] | null {
     if (m) salida.push({ pid: Number(m[1]), ppid: Number(m[2]), zombi: m[3]!.startsWith("Z") })
   }
   return salida
+}
+
+/**
+ * Windows: la foto sale de `Win32_Process` (`procesos-windows.ts`). Sin esto la rama de Windows
+ * de `terminarArbol` no podía confirmar NUNCA que una carga cancelada había terminado: la foto
+ * se pedía con `ps`, que en Windows no existe. Windows no tiene zombis.
+ */
+export function fotoDeWindows(leer: () => ReturnType<typeof leerProcesosDeWindows> = leerProcesosDeWindows): Proceso[] | null {
+  const procesos = leer()
+  return procesos === null ? null : procesos.map((p) => ({ pid: p.pid, ppid: p.ppid, zombi: false }))
 }
 
 const dentroDe = (hijo: string, padre: string) => {
@@ -286,7 +297,7 @@ export function conMarcaEnProc(marca: string, desde?: number, lector: LectorDePr
 export function sistemaReal(plataforma: NodeJS.Platform = process.platform): Sistema {
   return {
     plataforma,
-    foto: () => (plataforma === "linux" ? (fotoDeProc() ?? fotoDePs()) : fotoDePs()),
+    foto: () => (plataforma === "linux" ? (fotoDeProc() ?? fotoDePs()) : plataforma === "win32" ? fotoDeWindows() : fotoDePs()),
     referencian: (carpeta) => (plataforma === "linux" ? referencianEnProc(carpeta) : null),
     conMarca: (marca, desde) => (plataforma === "linux" ? conMarcaEnProc(marca, desde) : null),
     senal: (pid, senal) => {
