@@ -150,9 +150,18 @@ export type ExtremoCableVista =
       /** Physical View UX #1: a qué terminal de potencia de la placa va ese riel, resuelto
        * por `ComponentKnowledge.resolverDestino` (D-05: físicamente conectable, nunca un
        * GPIO asignable), con su etiqueta pedagógica y los pines de la pieza Wokwi de la
-       * placa que lo representan. `null` si no hay placa o no resuelve. */
-      readonly potencia: { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[] } | null
+       * placa que lo representan. `null` si no hay placa o no resuelve.
+       *
+       * `rol` (2026-11-26) es el rol SEMÁNTICO de ese terminal de potencia, tal cual lo declara
+       * la placa en el núcleo (`nucleo/placas.ts::TerminalPotencia.rol`): `tierra` o
+       * `alimentacion`. Es lo que usa la ventana para dibujar el cable (alimentación en rojo,
+       * tierra en negro y punteado). El navegador NUNCA lo deduce del nombre del pin: «GND» o
+       * «3V3» son rótulos de una placa, no una regla. */
+      readonly potencia: { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[]; readonly rol: RolDePotencia } | null
     }
+
+/** Rol de un terminal de potencia de la placa (`nucleo/placas.ts::TerminalPotencia["rol"]`). */
+export type RolDePotencia = "tierra" | "alimentacion"
 
 export interface CableVista {
   readonly id: string
@@ -215,6 +224,48 @@ export interface ModeloDeVista {
    * controlador → salida → otras), con sus textos del anexo de pedagogía. `otras` sólo
    * aparece si hay alguna pieza ahí. Vacío si el proyecto no tiene placa ni piezas. */
   readonly zonas: readonly ZonaVista[]
+  /** Textos fijos de la ventana (anexo de pedagogía). El navegador los muestra tal cual. */
+  readonly textos: TextosVista
+  /** Lo primero que se lee en la ventana: qué hace el circuito y cómo está. Todo ya en palabras. */
+  readonly resumen: ResumenVista
+  /** Cómo leer los cables del esquema, armado para ESTA placa. Vacío si no hay placa. */
+  readonly leyenda: readonly EntradaDeLeyendaVista[]
+}
+
+/** Textos de la ventana que no salen de una pieza ni de una regla (anexo de pedagogía). */
+export interface TextosVista {
+  /** Aviso cuando un cambio de pin no llegó al servidor (se cortó la conexión). */
+  readonly cambioDePinNoGuardado: string
+  /** Lo que dice la sección «Avisos» cuando no hay ninguno. */
+  readonly sinAvisos: string
+  /** Etiqueta de texto de cada severidad (`Motivo.severidad` → «Hay que corregir», «Atención», «Dato»).
+   * El aviso se LEE por esta etiqueta; el color sólo acompaña. */
+  readonly severidad: Readonly<Record<string, string>>
+}
+
+/**
+ * El resumen de arriba de la ventana (2026-11-26). Se arma ENTERO en el servidor: el navegador no
+ * decide qué estado es, no redacta frases y no arma plurales.
+ */
+export interface ResumenVista {
+  /** `clave` es el estado que deriva el núcleo (`Readiness`), para que el CSS lo distinga; `texto`
+   * es cómo se le dice al alumno. Mismo orden de precedencia de siempre: listo, inválido, incompleto. */
+  readonly estado: { readonly clave: "listo" | "incompleto" | "invalido"; readonly texto: string }
+  /** Una entrada por regla, en el orden del proyecto. Una regla que todavía no se lee como oración
+   * lleva `sinTerminar: true` y un texto que lo dice. Sin reglas: UNA entrada que lo dice. Nunca vacío. */
+  readonly reglas: readonly { readonly texto: string; readonly sinTerminar: boolean }[]
+  /** Si el proyecto tiene alguna regla. Sin reglas, la única entrada de `reglas` es la frase que lo
+   * dice y no se numera: un «1» al lado se leería como si fuera la regla 1. Una regla sin terminar
+   * SÍ es una regla (va numerada). */
+  readonly hayReglas: boolean
+  /** Cuántos avisos hay (`motivos.length`) y la frase ya armada, con su singular y su plural. */
+  readonly avisos: { readonly cantidad: number; readonly texto: string }
+}
+
+/** Una línea de la leyenda de cables. `rol` es el mismo dato que lleva el cable dibujado. */
+export interface EntradaDeLeyendaVista {
+  readonly rol: "senal" | RolDePotencia
+  readonly texto: string
 }
 
 /** `id` = valor (nunca se muestra); `etiqueta` = nombre humano con ordinal estable ("LED 2"). */

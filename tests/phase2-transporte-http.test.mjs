@@ -32,6 +32,7 @@ import assert from "node:assert/strict"
 import http from "node:http"
 import { join } from "node:path"
 import { REPO, nuevoDir, nuevoIdProyecto, GPIO_X, GPIO_Y } from "./phase2-helpers.mjs"
+import { recursosDe } from "./ventana-helpers.mjs"
 
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { iniciarServidor } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
@@ -436,6 +437,37 @@ test("GET / referencia un asset de la lista blanca que define <wokwi-esp32-devki
       algunoDefineLosElementos,
       "ninguno de los assets que index.html referencia define <wokwi-esp32-devkit-v1>/<wokwi-led> — falta cargar el bundle Wokwi (customElements.define nunca corre, los tags quedan indefinidos)",
     )
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+// AGREGADO EL 2026-11-26. La prueba de arriba sólo sigue los `<script src>`. Desde el rediseño
+// la página carga además una hoja de estilos (`<link rel="stylesheet" href>`): si queda fuera de
+// la lista blanca, o sale con tipo de contenido de JavaScript (que era lo que este servidor le
+// ponía a todo lo que no fuera `.svg`), `nosniff` hace que el navegador la descarte y la página
+// queda sin diseño sin que ningún test se entere.
+test("GET /: toda hoja de estilos que la página carga se sirve (200) como text/css, con nosniff", async () => {
+  const dir = nuevoDir("http-index-hojas")
+  const { servicio } = prepararServicioConLed(dir, nuevoIdProyecto())
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const rHtml = await solicitud(servidor.url, "/")
+    assert.equal(rHtml.estado, 200)
+    for (const href of recursosDe(rHtml.cuerpo).hojas) {
+      assert.ok(typeof href === "string" && href.startsWith("/assets/"), `la página carga una hoja que no es de /assets/: ${href}`)
+      const rHoja = await solicitud(servidor.url, href)
+      assert.equal(rHoja.estado, 200, `${href} está referenciada por index.html pero el servidor la da 404 (fuera de la lista blanca)`)
+      assert.match(rHoja.cabeceras["content-type"], /^text\/css\b/, `${href} no sale como hoja de estilos`)
+      assert.equal(rHoja.cabeceras["x-content-type-options"], "nosniff")
+      assert.ok(rHoja.cuerpo.length > 0)
+    }
+    // La hoja compartida se sirve aunque la página todavía no la cargue: es la misma para todas.
+    const rSistema = await solicitud(servidor.url, "/assets/sistema.css")
+    assert.equal(rSistema.estado, 200)
+    assert.match(rSistema.cabeceras["content-type"], /^text\/css\b/)
+    assert.doesNotMatch(rSistema.cabeceras["content-type"], /javascript/)
   } finally {
     await servidor.cerrar()
     servicio.cerrar()

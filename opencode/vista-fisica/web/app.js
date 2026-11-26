@@ -20,6 +20,9 @@ import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 import { crearPanelCodigo } from "./vista-codigo.js"
 import { dibujarCableado } from "./cableado.js"
+import { conectarNavegacion } from "./navegacion.js"
+import { conectarTema } from "./tema.js"
+import { conectarImpresion } from "./impresion.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -423,6 +426,12 @@ if (enNavegador) {
     controles: document.getElementById("controles"),
     reglas: document.getElementById("reglas"),
     motivos: document.getElementById("motivos"),
+    // 2026-11-26: la leyenda de cables y el resumen de arriba (raíces nuevas de `pintar.js`).
+    leyenda: document.getElementById("leyenda-cables"),
+    resumen: document.getElementById("resumen-reglas"),
+    resumenEstado: document.getElementById("resumen-estado"),
+    resumenAvisos: document.getElementById("resumen-avisos"),
+    contadorAvisos: document.getElementById("contador-avisos"),
   }
   elementoRevision = document.getElementById("revision")
   elementoReadiness = document.getElementById("readiness")
@@ -543,13 +552,21 @@ function restaurarFoco(raizControles, focoAnterior) {
  */
 export function repintarCabecera({ snapshot, elementoRevision, elementoReadiness, panelCodigo, conectado }) {
   elementoRevision.textContent = `revisión: ${snapshot.revision}`
-  const readiness = snapshot.vista ? snapshot.vista.readiness : snapshot.validacion.readiness
-  elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
+  // El panel de código va ACÁ, antes de cualquier otra cosa que pueda cortar o tirar.
   try {
     void panelCodigo?.actualizar(snapshot, { conectado })
   } catch {
     /* la sección «Código» falló: el resto de la página se pinta igual */
   }
+  // El estado del proyecto (2026-11-26): el servidor lo manda ya decidido y en palabras
+  // (`vista.resumen.estado`). Acá sólo se copia el texto y se deja la clave como dato para el
+  // color. Antes este mismo lugar elegía entre «listo», «inválido» e «incompleto» con un `if`.
+  // Sin resumen (un snapshot sin vista: no debería pasar en producción) no hay estado que
+  // afirmar: se deja la raya, nunca el estado de un snapshot anterior.
+  const estado = snapshot.vista?.resumen?.estado ?? null
+  elementoReadiness.textContent = estado ? estado.texto : "—"
+  if (estado) elementoReadiness.setAttribute("data-readiness", estado.clave)
+  else elementoReadiness.removeAttribute("data-readiness")
 }
 
 function repintar() {
@@ -586,13 +603,17 @@ function repintar() {
  * a dibujar desde la MISMA instrucción (nunca se decide nada nuevo acá). */
 let ultimoCableado = null
 let cableadoProgramado = false
+/** Mientras se imprime, el esquema está achicado para el papel (`impresion.js`): no se vuelve a
+ * medir ni a dibujar hasta que termine. */
+let imprimiendo = false
 
 function programarCableado() {
-  if (!enNavegador || cableadoProgramado) return
+  if (!enNavegador || cableadoProgramado || imprimiendo) return
   cableadoProgramado = true
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       cableadoProgramado = false
+      if (imprimiendo) return // se pidió antes de empezar a imprimir: se redibuja al terminar
       const piezas = piezasDelCircuito()
       if (piezas) dibujarCableado(document, piezas, ultimoCableado)
     }),
@@ -639,25 +660,41 @@ function valorServidorDe(componenteId, terminalId) {
  * llegó primero" sigue siendo honesto para un conflicto REAL con otro actor — F-11
  * sólo cierra los conflictos FALSOS que generaba un POST por tecla). La diferencia:
  * ahora quien decide CUÁNDO llamar a esta función es `coalescerGpio`, nunca
- * directamente el `change` del `<select>`. */
-async function enviarCambioGpio({ componenteId, terminalId, valor }) {
-  if (!ultimoSnapshot) return
-  const sobre = {
-    idOperacion: siguienteIdOperacion(),
-    actor: "navegador", // el servidor lo fuerza de todos modos (servidor-proyecto.ts)
-    baseRevision: ultimoSnapshot.revision,
-    tipo: "AsignarPin",
-    payload: { componente: componenteId, terminal: terminalId, pin: valor },
-  }
+ * directamente el `change` del `<select>`.
+ *
+ * Es una fábrica con todo inyectado para poder probarla EJECUTÁNDOLA (2026-11-26): si la red
+ * falla, el aviso que se muestra es el que mandó el servidor en el último snapshot
+ * (`vista.textos.cambioDePinNoGuardado`); el repintado desde ese snapshot lo hace
+ * `cliente-http.js::enviarSobre`. La promesa se rechaza igual: el coalescer libera su turno con
+ * éxito o con rechazo, y la frase queda desbloqueada por el `finally`. */
+export function crearEnvioDeCambioGpio({ obtenerSnapshot, enviarSobre, siguienteIdOperacion, marcarOperacionExterna }) {
+  return async function enviarCambioGpio({ componenteId, terminalId, valor }) {
+    const snapshot = obtenerSnapshot()
+    if (!snapshot) return
+    const sobre = {
+      idOperacion: siguienteIdOperacion(),
+      actor: "navegador", // el servidor lo fuerza de todos modos (servidor-proyecto.ts)
+      baseRevision: snapshot.revision,
+      tipo: "AsignarPin",
+      payload: { componente: componenteId, terminal: terminalId, pin: valor },
+    }
 
-  // Una operación de GPIO en vuelo también bloquea la frase (a lo sumo UNA operación global).
-  controladorReglas.marcarOperacionExterna(true)
-  try {
-    await enviarSobre(sobre, { repintarAhora: true })
-  } finally {
-    controladorReglas.marcarOperacionExterna(false)
+    // Una operación de GPIO en vuelo también bloquea la frase (a lo sumo UNA operación global).
+    marcarOperacionExterna(true)
+    try {
+      await enviarSobre(sobre, { repintarAhora: true, avisoSiFalla: snapshot.vista?.textos?.cambioDePinNoGuardado ?? MENSAJE_NO_SE_PUDO_GUARDAR })
+    } finally {
+      marcarOperacionExterna(false)
+    }
   }
 }
+
+const enviarCambioGpio = crearEnvioDeCambioGpio({
+  obtenerSnapshot: () => ultimoSnapshot,
+  enviarSobre: (sobre, opciones) => enviarSobre(sobre, opciones),
+  siguienteIdOperacion: () => siguienteIdOperacion(),
+  marcarOperacionExterna: (valor) => controladorReglas.marcarOperacionExterna(valor),
+})
 
 /** La frase: un `SetComportamiento`/`QuitarComportamiento` por cambio, con `baseRevision` del
  * ÚLTIMO snapshot autoritativo (nunca optimista). */
@@ -727,6 +764,24 @@ const coalescerGpio = crearCoalescerCambiosGpio({ enviar: enviarCambioGpio, obte
  * vuelo" + "sólo el último valor"). */
 function manejarCambioGpio({ componenteId, terminalId, valor }) {
   coalescerGpio.registrarCambio(componenteId, terminalId, valor)
+}
+
+// La sección activa de la navegación (presentación pura: no toca el proyecto ni la red).
+if (enNavegador) conectarNavegacion(document, window)
+// El botón de tema claro / oscuro (el tema inicial ya lo puso `tema-inicial.js`, antes de pintar).
+if (enNavegador) conectarTema(document, window)
+// Imprimir / guardar como PDF: se prepara el esquema para el papel y se pausa el redibujo de los
+// cables mientras dura; al terminar se vuelven a dibujar con las medidas de pantalla.
+if (enNavegador) {
+  conectarImpresion(document, window, {
+    alEmpezar: () => {
+      imprimiendo = true
+    },
+    alTerminar: () => {
+      imprimiendo = false
+      programarCableado()
+    },
+  })
 }
 
 // SSE: cualquier commit (de este navegador o de otro actor, ej. la tool) dispara un

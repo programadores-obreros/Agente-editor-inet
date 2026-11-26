@@ -631,9 +631,9 @@ if [ -n "${TECNIA_SIN_PROMPT:-}" ]; then
   # key guardada se deja la que esta. Saltear la pregunta NUNCA borra nada.
   echo ""
   if [ "$TIENE_GOOGLE" = "1" ]; then
-    echo "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta nada y se deja la key de Google que ya estaba."
+    echo "  [i] La instalacion no pregunta la key de Google: se deja la que ya estaba guardada, y abajo se prueba."
   else
-    echo "  [i] TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key."
+    echo "  [i] La instalacion no pregunta la key de Google: se sigue sin key, con el modelo gratuito Big Pickle. Para poner una, escribi /clave adentro de Tecnia Bot."
   fi
 elif [ "$TIENE_GOOGLE" = "1" ]; then
   # EL CAMINO NUEVO. El texto nombra la cuota por PROYECTO porque es lo que mas

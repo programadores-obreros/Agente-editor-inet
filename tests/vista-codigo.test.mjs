@@ -107,27 +107,31 @@ test("programa para la vista: con el proyecto del caso, el código es el main.cp
   servicio.cerrar()
 })
 
-test("programa para la vista: proyecto que todavía no cierra → sin código, manda a Motivos, sin códigos internos", () => {
+// 2026-11-26: la sección «Motivos» de la ventana pasó a llamarse «Avisos» (rediseño). Estas dos
+// pruebas miraban la palabra «Motivos»; se cambió la palabra y nada más. En la segunda había que
+// cambiarla sí o sí: `doesNotMatch(…, /Motivos/)` con el texto ya renombrado habría quedado verde
+// para siempre, aunque el mensaje volviera a mandar al docente a una sección vacía.
+test("programa para la vista: proyecto que todavía no cierra → sin código, manda a Avisos, sin códigos internos", () => {
   const servicio = proyectoDelCaso({ listo: false })
   const generado = generarPrograma(servicio.snapshot().proyecto, K)
   assert.equal(generado.ok, false)
   assert.equal(generado.error.codigo, "CODEGEN_PROYECTO_NO_LISTO")
   const p = programaParaVista(generado)
   assert.deepEqual(p, { ok: false, porQue: TODAVIA_NO_ESTA_LISTO })
-  assert.match(p.porQue, /Motivos/)
+  assert.match(p.porQue, /«Avisos»/)
   servicio.cerrar()
 })
 
 // Lo vio la revisión: con el proyecto recién empezado (sin placa) el generador también dice "no
 // listo", pero la sección Motivos está VACÍA. Mandar al docente ahí era mentirle.
-test("programa para la vista: no listo y sin ningún motivo que frene → NO manda a Motivos", () => {
+test("programa para la vista: no listo y sin ningún motivo que frene → NO manda a Avisos", () => {
   const servicio = obtenerServicioDeProyectoConVista({ directorio: nuevoDir("vista-codigo-vacio"), idProyecto: nuevoIdProyecto("vista-codigo-vacio") })
   const generado = generarPrograma(servicio.snapshot().proyecto, K)
   assert.equal(generado.ok, false)
   assert.equal(generado.error.codigo, "CODEGEN_PROYECTO_NO_LISTO")
   assert.deepEqual(servicio.snapshot().vista.motivos, [], "el caso: Motivos está vacío")
   assert.deepEqual(programaParaVista(generado), { ok: false, porQue: TODAVIA_FALTA_ARMAR })
-  assert.doesNotMatch(TODAVIA_FALTA_ARMAR, /Motivos/)
+  assert.doesNotMatch(TODAVIA_FALTA_ARMAR, /Avisos|Motivos/)
   servicio.cerrar()
   // Un motivo que sólo informa (no frena) tampoco alcanza para mandar a Motivos.
   const soloInforma = { ok: false, error: { codigo: "CODEGEN_PROYECTO_NO_LISTO", datos: { motivos: [{ codigo: "PIN_STRAPPING", severidad: "info" }] } } }
@@ -499,16 +503,34 @@ test("panel: desconectada con un programa a la vista → avisa que puede no ser 
 
 // ═══ 4. la página y el enganche ═══════════════════════════════════════════════════════════════
 
-test("index.html: sección «Código» después de la Vista lógica, con su <pre> oculto de entrada y su aviso", () => {
-  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
-  assert.match(html, /<h2>Código<\/h2>/)
-  assert.match(html, /<pre id="vista-codigo-texto"[^>]*\bhidden\b/)
-  assert.match(html, /id="vista-codigo-aviso"/)
-  assert.ok(html.indexOf("<h2>Vista lógica</h2>") < html.indexOf("<h2>Código</h2>"))
-  assert.ok(html.indexOf("<h2>Código</h2>") < html.indexOf("<h2>Motivos</h2>"))
-  // El texto fijo se ve también sin programa: no puede hablar de "estas líneas" ni prometer una
-  // relación regla → bloque → líneas que la página todavía no muestra.
-  assert.match(html, /<p id="vista-codigo-etiqueta">Es el programa que sale del montaje y de las reglas de arriba\.<\/p>/)
+// REESCRITO EL 2026-11-26 (rediseño de la ventana). Esta prueba buscaba los títulos literales del
+// HTML viejo (`<h2>Código</h2>`, `<h2>Vista lógica</h2>`, `<h2>Motivos</h2>`) y el párrafo exacto
+// de la etiqueta. Los títulos cambiaron («Mirá el programa», «Con bloques», «Avisos») y ya no son
+// `<h2>` pelados, así que se reescribió conservando lo que custodiaba, que era cuatro cosas:
+//   1. la sección del programa existe y tiene título;
+//   2. el <pre> arranca oculto y hay un lugar para el aviso;
+//   3. el orden de lectura: los bloques, después el programa, después los avisos;
+//   4. el texto fijo —que se ve también sin programa— no habla de «estas líneas» ni promete una
+//      relación regla → bloque → líneas que la página no muestra.
+// Ahora el orden se mide por los elementos que `app.js` usa (sus ids), no por el texto de un título.
+test("index.html: la sección del programa va después de los bloques y antes de los avisos, con su <pre> oculto de entrada y su aviso", () => {
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "")
+  const seccion = /<section\b[^>]*id="paso-programa"[^>]*>([\s\S]*?)<\/section>/.exec(html)
+  assert.ok(seccion, "la página no tiene la sección del programa")
+  assert.match(seccion[1], /<h2\b[^>]*>Mirá el programa<\/h2>/)
+  assert.match(seccion[1], /<pre\b[^>]*id="vista-codigo-texto"[^>]*\bhidden\b/)
+  assert.match(seccion[1], /id="vista-codigo-aviso"/)
+  const lugar = (id) => {
+    const partes = html.split(`id="${id}"`)
+    assert.equal(partes.length, 2, `#${id} tiene que estar una sola vez`)
+    return partes[0].length
+  }
+  assert.ok(lugar("vista-logica-lienzo") < lugar("vista-codigo-texto"), "el programa va después de los bloques")
+  assert.ok(lugar("vista-codigo-texto") < lugar("motivos"), "y antes de los avisos")
+  const etiqueta = /<p\b[^>]*id="vista-codigo-etiqueta"[^>]*>([^<]*)<\/p>/.exec(seccion[1])
+  assert.ok(etiqueta, "falta el texto fijo de la sección")
+  assert.match(etiqueta[1], /^Es el programa que sale del montaje y de las reglas de arriba\./)
+  assert.doesNotMatch(etiqueta[1], /líneas?|bloques?|se carga|placa/i, "el texto fijo se ve también sin programa: no puede prometer lo que la página no muestra")
 })
 
 // La primera versión miraba el cableado con UNA expresión regular: se podía no crear el panel,
@@ -535,9 +557,31 @@ test("app.js: el panel se crea, con elementos que EXISTEN en la página, y recib
 // revisión mostró que dejaba pasar un `if (false)` delante de la llamada, o un `return` escrito de
 // otra forma. Ahora la cabecera y el panel viven en `repintarCabecera`, que se prueba ejecutándola.
 const { repintarCabecera } = await import(join(REPO, "opencode/vista-fisica/web/app.js"))
-const LISTO = { listo: true, invalido: false }
+//
+// REESCRITO EL 2026-11-26 (rediseño de la ventana), y por qué. Estas tres pruebas afirmaban además
+// que la cabecera escribía «listo» / «inválido» / «incompleto», palabras que `repintarCabecera`
+// elegía con un `if` sobre `readiness`. Eso ya no lo decide el navegador: el servidor manda el
+// estado resuelto y en palabras (`vista.resumen.estado`, con su `clave` y su `texto`) y la cabecera
+// sólo lo copia. Se conserva TODO lo que estas pruebas custodiaban del panel de código (se lo
+// llama una vez, con ESE snapshot y la conexión al derecho; también sin vista; y si tira no corta
+// nada); lo que cambió es la aserción del texto del estado, que ahora mide que se copia lo que
+// vino y que no se inventa nada cuando no vino. Se sumó una cuarta: el panel se avisa ANTES de
+// pintar el estado, así que un pintado que tira no puede dejar el programa viejo a la vista.
+const estadoDe = (clave, texto) => ({ resumen: { estado: { clave, texto } } })
+function elementoFalso() {
+  return {
+    textContent: "",
+    atributos: {},
+    setAttribute(k, v) {
+      this.atributos[k] = String(v)
+    },
+    removeAttribute(k) {
+      delete this.atributos[k]
+    },
+  }
+}
 function cabecera(panelCodigo) {
-  const el = { revision: { textContent: "" }, readiness: { textContent: "" } }
+  const el = { revision: elementoFalso(), readiness: elementoFalso() }
   const pintar = (snapshot, conectado = true) => repintarCabecera({ snapshot, elementoRevision: el.revision, elementoReadiness: el.readiness, panelCodigo, conectado })
   return { el, pintar }
 }
@@ -545,10 +589,11 @@ function cabecera(panelCodigo) {
 test("cabecera: escribe la revisión y, en la misma pasada, le avisa al panel de código con ESE snapshot", () => {
   const llamadas = []
   const c = cabecera({ actualizar: (snapshot, opciones) => llamadas.push({ snapshot, opciones }) })
-  const snapshot = { revision: 14, vista: { readiness: LISTO } }
+  const snapshot = { revision: 14, vista: estadoDe("listo", "un texto que sólo puede venir del servidor") }
   c.pintar(snapshot, false)
   assert.equal(c.el.revision.textContent, "revisión: 14")
-  assert.equal(c.el.readiness.textContent, "listo")
+  assert.equal(c.el.readiness.textContent, "un texto que sólo puede venir del servidor", "la cabecera copia el texto del estado; no lo redacta")
+  assert.deepEqual(c.el.readiness.atributos, { "data-readiness": "listo" }, "la clave queda como dato, para el color")
   assert.equal(llamadas.length, 1)
   assert.equal(llamadas[0].snapshot, snapshot)
   assert.deepEqual(llamadas[0].opciones, { conectado: false })
@@ -557,18 +602,30 @@ test("cabecera: escribe la revisión y, en la misma pasada, le avisa al panel de
 test("cabecera: un snapshot SIN vista también actualiza el panel (era el camino que dejaba el programa viejo)", () => {
   const revisiones = []
   const c = cabecera({ actualizar: (snapshot) => revisiones.push(snapshot.revision) })
+  c.pintar({ revision: 14, vista: estadoDe("invalido", "Hay algo para corregir") })
   c.pintar({ revision: 15, validacion: { readiness: { listo: false, invalido: false } } })
   assert.equal(c.el.revision.textContent, "revisión: 15")
-  assert.equal(c.el.readiness.textContent, "incompleto")
-  assert.deepEqual(revisiones, [15])
+  // Sin vista no hay estado que el servidor haya dicho: no queda el de la revisión anterior, ni uno inventado.
+  assert.equal(c.el.readiness.textContent, "—")
+  assert.deepEqual(c.el.readiness.atributos, {})
+  assert.deepEqual(revisiones, [14, 15])
 })
 
 test("cabecera: si el panel de código tira, no corta el repintado (ni la cabecera)", () => {
   const c = cabecera({ actualizar: () => { throw new TypeError("Cannot set properties of null") } })
-  assert.doesNotThrow(() => c.pintar({ revision: 16, vista: { readiness: { listo: false, invalido: true } } }))
+  assert.doesNotThrow(() => c.pintar({ revision: 16, vista: estadoDe("invalido", "Hay algo para corregir") }))
   assert.equal(c.el.revision.textContent, "revisión: 16")
-  assert.equal(c.el.readiness.textContent, "inválido")
-  assert.doesNotThrow(() => cabecera(null).pintar({ revision: 1, vista: { readiness: LISTO } }), "sin panel (página sin la sección) tampoco rompe")
+  assert.equal(c.el.readiness.textContent, "Hay algo para corregir")
+  assert.equal(c.el.readiness.atributos["data-readiness"], "invalido")
+  assert.doesNotThrow(() => cabecera(null).pintar({ revision: 1, vista: estadoDe("listo", "El proyecto está completo") }), "sin panel (página sin la sección) tampoco rompe")
+})
+
+test("cabecera: al panel de código se le avisa ANTES de pintar el estado (un pintado que tira no deja el programa viejo)", () => {
+  const revisiones = []
+  const readinessRota = { set textContent(_valor) { throw new TypeError("el elemento del estado no existe") }, setAttribute() {}, removeAttribute() {} }
+  const snapshot = { revision: 17, vista: estadoDe("listo", "El proyecto está completo") }
+  assert.throws(() => repintarCabecera({ snapshot, elementoRevision: elementoFalso(), elementoReadiness: readinessRota, panelCodigo: { actualizar: (s) => revisiones.push(s.revision) }, conectado: true }), /no existe/)
+  assert.deepEqual(revisiones, [17], "el pintado del estado tiró antes de avisarle al panel: quedaría a la vista el programa de la revisión anterior")
 })
 
 // Esto SÍ es una comprobación sobre el texto, y sólo dice lo que dice: que `repintar()` empieza

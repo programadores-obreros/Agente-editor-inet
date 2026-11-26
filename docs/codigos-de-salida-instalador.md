@@ -25,8 +25,11 @@ Fuente: encabezado de `installer/tecnia-bot.iss`.
 
 Tres cosas a tener en cuenta en un despliegue:
 
-- Con **`/VERYSILENT`** el instalador no pregunta la API key ni espera a nadie
-  (le pasa `-SinPrompt` a `bootstrap.ps1`). Si ya había una key guardada, la deja.
+- El instalador **nunca** pregunta la API key ni espera a nadie, con ventana o con
+  **`/VERYSILENT`** (le pasa siempre `-SinPrompt` a `bootstrap.ps1`; hasta el
+  2026-11-26 sólo en silencioso). Si ya había una key guardada, la deja y la prueba;
+  si no, queda el modelo gratuito y la key se pone después con `/clave` o con
+  "Reparar Tecnia Bot", que sí pregunta.
 - Con **`/skipdeps=1`** se saltea `bootstrap.ps1`: sólo se copian archivos y el
   código es `0`. Ese `0` **no** dice que Tecnia Bot ande: es un modo de prueba.
 - El `20` y el `21` salen del código con que terminó `bootstrap.ps1` (tabla

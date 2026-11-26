@@ -34,12 +34,12 @@ import { valorBooleanoDeCondicion } from "../nucleo/estado-booleano.ts"
 // Component System Foundation #1 (F5): datos de render y textos salen de los ANEXOS de
 // `conocimiento/` (representación, pedagogía es-AR), no del núcleo semántico.
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA, ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO, POTENCIA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
-import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo } from "../conocimiento/anexos/pedagogia-es-AR.ts"
+import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo, TEXTOS_DE_LA_VENTANA, textoDeCantidadDeAvisos, textoDeLeyendaDePotencia } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
 import { cuantitativasParaCrear, reconocerCondicionNumerica, ROTULO_COMPARADOR, COMPLEMENTO_COMPARADOR, cantidadEnTexto, ayudaDeRango, rangoEnTexto, simboloDe, formatearNumero, type CondicionNumerica } from "./condicion-numerica.ts"
 import { COMPARADORES } from "../nucleo/ir.ts"
 import type { CapacidadCuantitativa } from "../conocimiento/cuantitativo.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista, OpcionSlotVista } from "./modelo-vista.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista, OpcionSlotVista, RolDePotencia, ResumenVista, EntradaDeLeyendaVista, TextosVista } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal de UN tipo de componente.
@@ -411,12 +411,16 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo, conocimie
   // fusionada pertenece al camino del componente que la requiere.
   const anclaDeResistencia = new Map([...fusionesSerie.values()].map((f) => [f.resistenciaId, f.componenteId] as const))
   const caminoDe = (componenteId: string): string => anclaDeResistencia.get(componenteId) ?? componenteId
-  function potenciaDe(componente: Componente, terminalId: string): { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[] } | null {
+  // El rol (tierra / alimentación) es el que la PLACA declara para ese terminal de potencia en el
+  // núcleo, leído por Component Knowledge: acá no hay tabla propia ni se mira el nombre del pin.
+  function potenciaDe(componente: Componente, terminalId: string): { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[]; readonly rol: RolDePotencia } | null {
     const terminal = catalogo.obtenerComponente(componente.tipo)?.terminales.find((t) => t.id === terminalId)
     if (placaId === null || !terminal) return null
     const destino = conocimiento.resolverDestino(placaId, terminal)
     if (destino.kind !== "potencia") return null
-    return { id: destino.id, etiqueta: ETIQUETA_DE_TERMINAL_DE_POTENCIA[destino.id] ?? destino.id, anclasWokwi: POTENCIA_WOKWI_POR_PLACA[placaId]?.[destino.id] ?? [] }
+    const declarado = conocimiento.terminalesDePotencia(placaId).find((t) => t.id === destino.id)
+    if (!declarado) return null // `resolverDestino` ya lo garantiza; sin rol declarado no se inventa uno
+    return { id: destino.id, etiqueta: ETIQUETA_DE_TERMINAL_DE_POTENCIA[destino.id] ?? destino.id, anclasWokwi: POTENCIA_WOKWI_POR_PLACA[placaId]?.[destino.id] ?? [], rol: declarado.rol }
   }
   const cables: CableVista[] = []
   const conexionesFusionadasEmitidas = new Set<string>()
@@ -501,7 +505,57 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo, conocimie
 
   const { reglas, opcionesRegla } = proyectarReglas(proyecto, catalogo, componentes, motivos, conocimiento)
 
-  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla, zonas: zonasDelEsquema(placa, componentesOrdenados) }
+  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla, zonas: zonasDelEsquema(placa, componentesOrdenados), textos: textosDeVista(), resumen: resumenDe(readiness, reglas, motivos), leyenda: leyendaDeCables(placaCatalogo, cables) }
+}
+
+/** Un objeto NUEVO por proyección: la vista nunca comparte referencias entre snapshots. */
+function textosDeVista(): TextosVista {
+  return {
+    cambioDePinNoGuardado: TEXTOS_DE_LA_VENTANA.cambioDePinNoGuardado,
+    sinAvisos: TEXTOS_DE_LA_VENTANA.sinAvisos,
+    severidad: { ...TEXTOS_DE_LA_VENTANA.severidad },
+  }
+}
+
+/**
+ * El resumen de arriba de la ventana. No decide nada nuevo: el estado es el `Readiness` del
+ * núcleo, las frases son el `texto` que ya proyectó cada regla, y la cantidad de avisos es la de
+ * `motivos`. Acá sólo se le ponen las palabras del anexo de pedagogía.
+ */
+function resumenDe(readiness: { readonly listo: boolean; readonly invalido: boolean }, reglas: readonly ReglaVista[], motivos: readonly MotivoVista[]): ResumenVista {
+  const clave = readiness.listo ? "listo" : readiness.invalido ? "invalido" : "incompleto"
+  const frases = reglas.map((r) => (r.texto === null ? { texto: TEXTOS_DE_LA_VENTANA.reglaSinTerminar, sinTerminar: true } : { texto: r.texto, sinTerminar: false }))
+  return {
+    estado: { clave, texto: TEXTOS_DE_LA_VENTANA.estado[clave] },
+    reglas: frases.length > 0 ? frases : [{ texto: TEXTOS_DE_LA_VENTANA.sinReglas, sinTerminar: true }],
+    hayReglas: frases.length > 0,
+    avisos: { cantidad: motivos.length, texto: textoDeCantidadDeAvisos(motivos.length) },
+  }
+}
+
+/**
+ * La leyenda de cables de ESTA placa. La alimentación y la tierra se nombran con los terminales
+ * de potencia a los que de verdad llegan los cables del proyecto; si todavía ninguno llega, con
+ * el terminal al que la placa manda su tensión lógica y su tierra (`destinosDeRiel`). Así un
+ * Arduino UNO dice «5 V» y un ESP32 «3,3 V», sin una tabla por placa acá. Sin placa no hay
+ * esquema que explicar: lista vacía.
+ */
+function leyendaDeCables(placa: Placa | undefined, cables: readonly CableVista[]): readonly EntradaDeLeyendaVista[] {
+  if (!placa) return []
+  const usados = new Set<string>()
+  for (const cable of cables) for (const extremo of [cable.desde, cable.hasta]) if (extremo.tipo === "rielFijo" && extremo.potencia) usados.add(extremo.potencia.id)
+  const etiquetasDe = (rol: RolDePotencia, porDefecto: string): readonly string[] => {
+    const delRol = placa.terminalesDePotencia.filter((t) => t.rol === rol)
+    const enUso = delRol.filter((t) => usados.has(t.id))
+    const elegidos = enUso.length > 0 ? enUso : delRol.filter((t) => t.id === porDefecto)
+    return elegidos.map((t) => ETIQUETA_DE_TERMINAL_DE_POTENCIA[t.id] ?? t.id)
+  }
+  const entradas: EntradaDeLeyendaVista[] = [{ rol: "senal", texto: TEXTOS_DE_LA_VENTANA.leyenda.senal }]
+  const alimentacion = etiquetasDe("alimentacion", placa.destinosDeRiel.VLOGICA)
+  if (alimentacion.length > 0) entradas.push({ rol: "alimentacion", texto: textoDeLeyendaDePotencia("alimentacion", alimentacion) })
+  const tierra = etiquetasDe("tierra", placa.destinosDeRiel.GND)
+  if (tierra.length > 0) entradas.push({ rol: "tierra", texto: textoDeLeyendaDePotencia("tierra", tierra) })
+  return entradas
 }
 
 /**

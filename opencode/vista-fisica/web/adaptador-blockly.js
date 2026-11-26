@@ -22,6 +22,15 @@ const TIPO_MIENTRAS = "tecnia_mientras"
 const TIPO_HACER = "tecnia_hacer"
 const SENTINELA = "__sin_valor__"
 const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:" }
+
+/**
+ * El color de cada bloque es el de su rol en el esquema: «mientras» es la ENTRADA (lo que se lee)
+ * y «hacer» es la SALIDA (lo que se maneja). Son los MISMOS valores que `--entrada` y `--salida`
+ * de `index.html`; Blockly no lee variables de CSS, así que van acá como literales, en un solo
+ * lugar. Que coincidan con la hoja y que el texto blanco de Blockly se lea encima (contraste
+ * ≥ 4.5) lo comprueba `tests/ventana-colores-bloques.test.mjs`.
+ */
+export const COLORES_DE_BLOQUE = Object.freeze({ mientras: "#1d4ed8", hacer: "#0f766e" })
 // Lugar de los pares en el lienzo. El alto de un par lo dice Blockly después de dibujarlo; si la
 // API no lo informa (la de prueba), se usa el estimado.
 const MARGEN = 16
@@ -55,7 +64,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         args0: [{ type: "input_dummy", name: "CAMPOS" }],
         message1: "%1",
         args1: [{ type: "input_statement", name: "ACCION" }],
-        colour: 210,
+        colour: COLORES_DE_BLOQUE.mientras,
         tooltip: "",
       },
       {
@@ -63,7 +72,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         message0: `${textos.hacer} %1`,
         args0: [{ type: "input_dummy", name: "CAMPOS" }],
         previousStatement: null,
-        colour: 120,
+        colour: COLORES_DE_BLOQUE.hacer,
         tooltip: "",
       },
     ])
@@ -75,8 +84,12 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     readOnly: false,
     trashcan: false,
     zoom: { controls: false, wheel: false, pinch: false },
-    // Con varias reglas el lienzo puede no alcanzar: barra vertical y rueda para llegar a todas.
-    move: { scrollbars: { horizontal: true, vertical: true }, drag: false, wheel: true },
+    // Con varias reglas el lienzo puede no alcanzar: barra vertical para llegar a todas.
+    // La RUEDA no: se habilitó el 2026-11-24 y en la notebook real, al bajar por la página con el
+    // cursor sobre el lienzo, la rueda movía los bloques en vez de la página y la primera regla
+    // quedaba cortada arriba, sin volver sola. Reproducido en Chromium: cuatro pasos de rueda
+    // sobre el lienzo corren los bloques. Queda la barra, que no se usa sin querer.
+    move: { scrollbars: { horizontal: true, vertical: true }, drag: false, wheel: false },
   })
 
   // Blockly mide su contenedor: tras inyectar (y tras cada pintado) hay que avisarle, o queda en tamaño 0.

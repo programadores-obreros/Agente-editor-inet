@@ -312,11 +312,13 @@ test("T3 quitar() con dos reglas no quita ninguna; con una, quita ésa", async (
   assert.deepEqual(llamadas.quitar, [{ reglaId: "beh-2" }])
 })
 
-test("T3 el lienzo admite barra vertical y rueda: con varias reglas hay que poder llegar a todas", async () => {
+// HISTORIA: este test pedía `wheel: true`. En la notebook real la rueda, al pasar el cursor por el
+// lienzo mientras se bajaba por la página, corría los bloques y dejaba la primera regla cortada.
+test("T3 el lienzo tiene barra vertical para llegar a todas las reglas, y la rueda NO mueve los bloques", async () => {
   const { reg } = await montar()
   const { move } = reg.inyecciones[0].opciones
   assert.equal(move.scrollbars.vertical, true)
-  assert.equal(move.wheel, true)
+  assert.equal(move.wheel, false, "la rueda es de la página: sobre el lienzo no puede correr los bloques")
   assert.equal(move.drag, false, "los bloques no se arrastran: el lugar lo decide el modelo")
 })
 

@@ -7,9 +7,11 @@ import assert from "node:assert/strict"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { REPO, nuevoDir, nuevoIdProyecto } from "./phase2-helpers.mjs"
+import { recursosDe } from "./ventana-helpers.mjs"
 
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { iniciarServidor } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
+const { construirRutasDeAssets } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
 const web = join(REPO, "opencode/vista-fisica/web")
 
 async function pedir(servidor, ruta) {
@@ -31,6 +33,36 @@ test("cada import relativo de web/*.js se sirve desde /assets/ con el mismo cont
       assert.equal(r.estado, 200, `/assets/${nombre} no está en la lista blanca`)
       assert.match(r.tipo, /^text\/javascript/)
       assert.ok(r.cuerpo.equals(readFileSync(join(web, nombre))), `${nombre}: contenido distinto`)
+    }
+  } finally {
+    await servidor.cerrar()
+    servicio.cerrar()
+  }
+})
+
+// AGREGADO EL 2026-11-26. El encabezado de este archivo siempre dijo que cubría también «cada
+// <script src="/assets/..."> de index.html», pero la única prueba que había miraba los `import`
+// de los JS. Los `<script src>` los miraba a medias otra prueba (sólo que dieran 200) y un
+// `<link href>` no lo miraba nadie, porque no había ninguno. Ahora la página carga una hoja de
+// estilos: si la pide con un nombre que el servidor no sirve, o el servidor la manda con el tipo
+// de contenido equivocado, el navegador la descarta y la página queda sin diseño.
+test("cada <script src> y cada <link href> de index.html se sirve desde /assets/, con su tipo y el contenido del archivo", async () => {
+  const servicio = obtenerServicioDeProyectoConVista({ directorio: nuevoDir("p3-assets-html"), idProyecto: nuevoIdProyecto("p3-assets-html") })
+  const servidor = await iniciarServidor({ servicio })
+  try {
+    const { scripts, hojas } = recursosDe(readFileSync(join(web, "index.html"), "utf8"))
+    assert.ok(scripts.length >= 5, `sólo encontré ${scripts.length} <script src>: no estoy leyendo la página`)
+    const rutas = construirRutasDeAssets()
+    for (const [recursos, tipo] of [[scripts, /^text\/javascript; charset=utf-8$/], [hojas, /^text\/css; charset=utf-8$/]]) {
+      for (const direccion of recursos) {
+        assert.ok(typeof direccion === "string" && direccion.startsWith("/assets/"), `${direccion}: la página pide algo que no es de /assets/`)
+        const nombre = direccion.slice("/assets/".length)
+        assert.ok(rutas.has(nombre), `${direccion} no está en la lista blanca: el navegador recibiría un 404`)
+        const r = await pedir(servidor, direccion)
+        assert.equal(r.estado, 200, direccion)
+        assert.match(r.tipo, tipo, `${direccion}: con nosniff, el navegador descarta un recurso con el tipo de contenido equivocado`)
+        assert.ok(r.cuerpo.equals(readFileSync(rutas.get(nombre))), `${direccion}: contenido distinto del archivo`)
+      }
     }
   } finally {
     await servidor.cerrar()

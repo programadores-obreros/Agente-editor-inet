@@ -37,9 +37,10 @@
 
 import { tool } from "@opencode-ai/plugin"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, relative, resolve, sep } from "node:path"
-import { baseDeCargas, cargarProgramaGenerado, porQueNoSePuedeCargar, type ContextoDeCarga, type HerramientasDeCarga, type OpcionesDeCarga, type ResultadoDeCarga } from "../carga/cargar-programa.ts"
+import { cargarProgramaGenerado, porQueNoSePuedeCargar, type ContextoDeCarga, type HerramientasDeCarga, type OpcionesDeCarga, type ResultadoDeCarga } from "../carga/cargar-programa.ts"
+import { raizDeProgramasDerivados } from "../carga/programas-derivados.ts"
 import type { ServicioDeProyecto, Snapshot } from "../nucleo/composicion-raiz.ts"
 import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
 import {
@@ -94,8 +95,8 @@ const sha256 = (texto: string) => createHash("sha256").update(texto).digest("hex
 /**
  * Carpeta derivada del programa de un proyecto. Descartable: se pisa en cada llamada.
  *
- * Vive FUERA de la carpeta de trabajo, en la misma base del usuario que usa `cargar` para sus
- * carpetas privadas (`~/.cache/tecnia-bot` o `%LOCALAPPDATA%\TecniaBot`), en `programas/<clave>/<id>`.
+ * Vive FUERA de la carpeta de trabajo, en una carpeta del usuario (ver
+ * `carga/programas-derivados.ts`): `<raíz de programas derivados>/<clave>/<id>`.
  * La clave sale de la carpeta de trabajo: dos proyectos en carpetas distintas no se pisan, y el
  * mismo proyecto vuelve siempre a la misma carpeta (así PlatformIO reusa su caché `.pio`).
  *
@@ -105,11 +106,10 @@ const sha256 = (texto: string) => createHash("sha256").update(texto).digest("hex
  * y la salida lo dice, en vez de darlo por protegido.
  */
 export function carpetaDelPrograma(directorioActivo: string, idProyecto: string, entorno: NodeJS.ProcessEnv = process.env): string {
-  const { base, tramos } = baseDeCargas(entorno)
   const propia = resolve(directorioActivo)
   // En Windows las rutas no distinguen mayúsculas: la misma carpeta escrita distinto es la misma clave.
   const clave = sha256(sep === "\\" ? propia.toLowerCase() : propia).slice(0, 16)
-  return join(base, tramos[0]!, "programas", clave, idProyecto)
+  return join(raizDeProgramasDerivados(entorno), clave, idProyecto)
 }
 
 /** Donde estaba la carpeta derivada antes del 2026-11-26: dentro de la carpeta de trabajo. */
@@ -119,12 +119,136 @@ export function carpetaViejaDelPrograma(directorioActivo: string, idProyecto: st
 
 /** ¿La carpeta derivada cae dentro de la carpeta de trabajo (y entonces el agente la puede leer)? */
 export function programaALaVistaDelAgente(directorioActivo: string, carpeta: string): boolean {
-  const rel = relative(resolve(directorioActivo), resolve(carpeta))
-  return rel === "" || (!rel.startsWith("..") && !/^([A-Za-z]:)?[\\/]/.test(rel))
+  // Se comparan las rutas REALES cuando existen: un enlace o un nombre corto de Windows
+  // (`ANAMAR~1`) nombran la misma carpeta con otro texto. "Afuera" es sólo `..` o `../algo`:
+  // una carpeta que se LLAMA `..cache` está adentro (la revisión del 2026-11-26 mostró que
+  // `startsWith("..")` la daba por afuera).
+  const real = (ruta: string) => {
+    try {
+      return realpathSync.native(ruta)
+    } catch {
+      return resolve(ruta)
+    }
+  }
+  const rel = relative(real(directorioActivo), real(carpeta))
+  const afuera = rel === ".." || rel.startsWith(`..${sep}`) || /^([A-Za-z]:)?[\\/]/.test(rel)
+  return !afuera
+}
+
+/**
+ * Saca de un texto la ruta de la carpeta derivada. La salida de PlatformIO y los errores de disco
+ * la nombran (`pio run -d <carpeta>`, `EACCES … <carpeta>/platformio.ini`), y lo que la tool
+ * devuelve lo lee el modelo: con la ruta en la mano puede mandar al docente a abrir el archivo,
+ * que es justo lo que este diseño evita. Lo encontró la revisión independiente del 2026-11-26.
+ */
+export function sinLaCarpeta(texto: string, carpetas: readonly string[]): string {
+  let salida = texto
+  for (const carpeta of carpetas) {
+    for (const forma of new Set([carpeta, carpeta.split("\\").join("/"), carpeta.split("/").join("\\")])) {
+      if (forma !== "") salida = salida.split(forma).join("(la carpeta del programa)")
+    }
+  }
+  return salida
+}
+
+/**
+ * De la salida del compilador, sólo los diagnósticos: se sacan los renglones donde copia el
+ * fuente y los que marcan la columna (`   12 |   codigo…` y `      |   ^~~~`). Si no, un programa
+ * que no compila le lleva al modelo líneas del código por la puerta de atrás.
+ */
+export function soloDiagnosticos(texto: string): string {
+  return texto
+    .split("\n")
+    .filter((linea) => !/^\s*\d*\s*\|/.test(linea))
+    .join("\n")
+}
+
+/**
+ * Borra el programa que una versión anterior dejó dentro de la carpeta de trabajo. Es limpieza:
+ * si no se puede, la tool sigue (antes un error acá la tiraba entera sin generar nada).
+ * No sigue enlaces: si `.tecnia-vista-fisica`, `programa` o la carpeta del proyecto son un enlace
+ * a otro lado, no se borra nada (se llevaría lo que haya del otro lado).
+ */
+function borrarProgramaViejo(directorioActivo: string, idProyecto: string): void {
+  try {
+    const vieja = carpetaViejaDelPrograma(directorioActivo, idProyecto)
+    for (const tramo of [dirname(dirname(vieja)), dirname(vieja), vieja]) {
+      const st = lstatSync(tramo, { throwIfNoEntry: false })
+      if (!st) return
+      if (st.isSymbolicLink() || !st.isDirectory()) return
+    }
+    rmSync(vieja, { recursive: true, force: true })
+  } catch {
+    /* limpieza: no frena generar ni compilar */
+  }
 }
 
 /** Dónde se ve el programa. Es lo ÚNICO que la tool dice sobre el código. */
-export const DONDE_VERLO = "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat."
+// La segunda oración se agregó el 2026-11-26. En la notebook real, cuando el docente insistió
+// («pegámelo acá, no quiero abrir la ventana»), el asistente no pegó el código, pero inventó una
+// salida: «el archivo de verdad está en la carpeta del proyecto, en src/main.cpp, abrilo con el
+// Bloc de notas». Lo que afirma esta frase es lo que se puede afirmar SIEMPRE: el programa de
+// este proyecto no está en la carpeta de trabajo. (Una primera versión decía «ahí no hay ningún
+// archivo del programa»: era falso en esa misma notebook, ver `programasDeOtroTrabajo`.)
+export const DONDE_VERLO =
+  "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat. El programa de este proyecto NO está en la carpeta de trabajo: no mandes a abrir ningún archivo; el único lugar donde se ve es esa ventana, o su dirección en cualquier navegador."
+
+/** Un programa escrito a mano que está en la carpeta de trabajo y no es el de este proyecto. */
+export interface ProgramaDeOtroTrabajo {
+  /** Ruta relativa a la carpeta de trabajo, con barras comunes. */
+  readonly archivo: string
+  /** Día de la última modificación (AAAA-MM-DD), para que se pueda decir de cuándo es. */
+  readonly modificado: string
+}
+
+/**
+ * Programas que hay en `src/` de la carpeta de trabajo. NINGUNO es el de este proyecto: el
+ * generado vive afuera. Son de otro trabajo (el camino viejo, donde el asistente escribía el
+ * código a mano y lo dejaba en `src/main.cpp`).
+ *
+ * POR QUÉ SE MIRA (notebook real, 2026-11-26). Ahí había un `src/main.cpp` de dos días antes,
+ * de OTRO circuito (un sensor de distancia que el proyecto no tiene). El asistente mandó al
+ * docente a abrirlo como si fuera «el archivo de verdad». Existía, y era otro programa: peor
+ * que mandarlo a un archivo que no está. Además, ese archivo está DENTRO de la carpeta de
+ * trabajo, donde el asistente sí puede leer: podría leerlo y mostrarlo como el de este proyecto.
+ *
+ * No se borra ni se mueve: es del docente. Se informa, y la salida dice qué no hacer con él.
+ * Sólo mira `src/` (donde PlatformIO pone el programa) y sólo los archivos de programa.
+ */
+export function programasDeOtroTrabajo(directorioActivo: string): ProgramaDeOtroTrabajo[] {
+  const src = join(directorioActivo, "src")
+  let entradas: string[]
+  try {
+    entradas = readdirSync(src)
+  } catch {
+    return []
+  }
+  const hallados: ProgramaDeOtroTrabajo[] = []
+  // Orden fijo, el mismo en cualquier sistema (readdir no garantiza ninguno).
+  for (const nombre of [...entradas].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (!/\.(cpp|ino|c)$/i.test(nombre)) continue
+    try {
+      const st = statSync(join(src, nombre))
+      if (st.isFile()) hallados.push({ archivo: `src/${nombre}`, modificado: diaLocal(st.mtime) })
+    } catch {
+      /* desapareció entre el listado y el stat: no está */
+    }
+  }
+  return hallados
+}
+
+/** El día en la hora de ESTA compu (la que ve el docente en su explorador de archivos), AAAA-MM-DD. */
+function diaLocal(fecha: Date): string {
+  const dos = (n: number) => String(n).padStart(2, "0")
+  return `${fecha.getFullYear()}-${dos(fecha.getMonth() + 1)}-${dos(fecha.getDate())}`
+}
+
+/** Lo que la salida dice cuando hay programas de otro trabajo. Los nombra: sin eso no se puede evitar. */
+export function avisoDeOtroTrabajo(hallados: readonly ProgramaDeOtroTrabajo[]): string {
+  const lista = hallados.map((h) => `\`${h.archivo}\` (modificado el ${h.modificado})`).join(", ")
+  const uno = hallados.length === 1
+  return `En la carpeta de trabajo ${uno ? "hay un programa" : "hay programas"} de OTRO trabajo: ${lista}. ${uno ? "No es" : "No son"} el programa de este proyecto. No ${uno ? "lo" : "los"} leas, no ${uno ? "lo" : "los"} muestres como el programa y no mandes al docente a abrir${uno ? "lo" : "los"}.`
+}
 
 const cuantas = (n: number, uno: string, varias: string) => (n === 1 ? `1 ${uno}` : `${n} ${varias}`)
 const lineasDe = (texto: string) => (texto === "" ? 0 : texto.replace(/\n$/, "").split("\n").length)
@@ -224,7 +348,7 @@ export async function ejecutarPrograma(
     const carpetaAbsoluta = carpetaDelPrograma(ctx.directory, idProyecto, opciones.entorno)
     // El programa que una versión anterior dejó DENTRO de la carpeta de trabajo se borra: si
     // quedara, el asistente podría leer ese (viejo) creyendo que es el actual. `cargar` no lo toca.
-    if (args.accion !== "cargar") rmSync(carpetaViejaDelPrograma(ctx.directory, idProyecto), { recursive: true, force: true })
+    if (args.accion !== "cargar") borrarProgramaViejo(ctx.directory, idProyecto)
     if (args.accion === "cargar") {
       // Paso 3: con un motivo bloqueante no se graba (el generador también lo rechazaría; esto no depende de él).
       const bloqueantes = snapshot.validacion.motivos.filter((m) => m.severidad === "blocking")
@@ -271,6 +395,7 @@ export async function ejecutarPrograma(
     // alcanzar, y se sacó).
     const reglas = ((snapshot as SnapshotConReglas).vista?.reglas ?? []).map((r) => r.texto)
     const lineas = lineasDe(archivosGenerados["src/main.cpp"] ?? "")
+    const ajenos = programasDeOtroTrabajo(ctx.directory)
     const programa = {
       reglas,
       lineas,
@@ -278,6 +403,8 @@ export async function ejecutarPrograma(
       dondeVerlo: DONDE_VERLO,
       // Sólo si la barrera no vale (Tecnia Bot abierto en la carpeta personal): se dice, no se calla.
       ...(programaALaVistaDelAgente(ctx.directory, carpetaAbsoluta) ? { aviso: "La carpeta del programa quedó dentro de la carpeta de trabajo. No la leas: el código se mira en la ventana." } : {}),
+      // Sólo si en la carpeta de trabajo hay un programa de otro trabajo que se puede confundir con éste.
+      ...(ajenos.length > 0 ? { deOtroTrabajo: ajenos, avisoDeOtroTrabajo: avisoDeOtroTrabajo(ajenos) } : {}),
     }
     const base = { idProyecto, revision, environment: generado.environment, advertencias: generado.advertencias, programa }
 
@@ -309,6 +436,22 @@ export async function ejecutarPrograma(
     }
     const codigo =
       corrida.code === CODIGO_TIMEOUT ? "COMPILACION_TIEMPO_AGOTADO" : corrida.code === CODIGO_CANCELADO ? "COMPILACION_CANCELADA" : corrida.code === 127 ? "PLATFORMIO_NO_ENCONTRADO" : "COMPILACION_FALLIDA"
+    // De lo que vuelve de PlatformIO se sacan ANTES de mirarlo los renglones donde el compilador
+    // copia el fuente. La ruta de la carpeta derivada se saca al final, sobre lo que de verdad
+    // sale (había otra pasada acá; por mutación se vio que no agregaba nada).
+    const stderr = soloDiagnosticos(corrida.stderr)
+    const stdout = soloDiagnosticos(corrida.stdout)
+    // Cuando se corta por tiempo o se cancela, lo que hay para leer es la línea de comando
+    // (con la carpeta): no dice nada del programa. Va un texto propio y ninguna salida.
+    const sinSalida = codigo === "COMPILACION_TIEMPO_AGOTADO" || codigo === "COMPILACION_CANCELADA"
+    const explicacion =
+      codigo === "PLATFORMIO_NO_ENCONTRADO"
+        ? 'PlatformIO no está instalado: usá la tool `platformio` con action "reparar".'
+        : codigo === "COMPILACION_TIEMPO_AGOTADO"
+          ? "La compilación tardó más de lo permitido y se cortó. La primera vez baja herramientas y puede demorar: volvé a pedir `compilar`."
+          : codigo === "COMPILACION_CANCELADA"
+            ? "La compilación se canceló antes de terminar."
+            : sinLaCarpeta(traducirError(stderr, stdout), [carpetaAbsoluta])
     return json({
       resultado: `NO COMPILÓ — ${codigo}`,
       etapa: "compilacion",
@@ -316,12 +459,26 @@ export async function ejecutarPrograma(
       ...sobreRevision,
       codigo,
       exitCode: corrida.code,
-      explicacion: codigo === "PLATFORMIO_NO_ENCONTRADO" ? 'PlatformIO no está instalado: usá la tool `platformio` con action "reparar".' : traducirError(corrida.stderr, corrida.stdout),
-      salida: recortarSalida(corrida.stderr.trim() ? corrida.stderr : corrida.stdout),
+      explicacion,
+      ...(sinSalida ? {} : { salida: sinLaCarpeta(recortarSalida(stderr.trim() ? stderr : stdout), [carpetaAbsoluta]) }),
     })
   } catch (error) {
-    const mensaje = error instanceof Error ? error.message : String(error)
+    // Un error de disco trae la ruta en su mensaje (`EACCES … <carpeta>/platformio.ini`): se saca.
+    const crudo = error instanceof Error ? error.message : String(error)
+    const mensaje = sinLaCarpeta(crudo, carpetasQueNoSeNombran(ctx.directory, args.idProyecto, opciones.entorno))
     return json({ resultado: `NO SE HIZO NADA — error inesperado (${mensaje})`, ok: false, codigo: "ERROR_INESPERADO", mensaje })
+  }
+}
+
+/** Las rutas que no pueden aparecer en un mensaje de error: la carpeta derivada y la base de donde cuelga. */
+function carpetasQueNoSeNombran(directorioActivo: string, idProyecto: string | undefined, entorno: NodeJS.ProcessEnv | undefined): string[] {
+  try {
+    const id = idProyecto?.trim() || ID_PROYECTO_DEFAULT
+    const carpeta = carpetaDelPrograma(directorioActivo, validarIdProyecto(id) ? id : ID_PROYECTO_DEFAULT, entorno)
+    // De la más larga a la más corta: primero la carpeta del proyecto, después `programas/<clave>` y `programas`.
+    return [carpeta, dirname(carpeta), raizDeProgramasDerivados(entorno)]
+  } catch {
+    return []
   }
 }
 

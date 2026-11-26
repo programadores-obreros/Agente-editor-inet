@@ -33,13 +33,29 @@ export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEsta
 
   /** POST de un sobre + manejo común de la respuesta. SIEMPRE se repinta desde `cuerpo.snapshot` (la
    * respuesta del servidor) — nunca desde lo que el control mostraba antes del POST. `repintarAhora:
-   * false` lo usan la frase y la vista lógica, que repintan ellas mismas al terminar. */
-  async function enviarSobre(sobre, { repintarAhora }) {
-    const respuesta = await fetch("/api/operaciones", {
-      method: "POST",
-      headers: token ? { "Content-Type": "application/json", "X-Tecnia-Token": token } : { "Content-Type": "application/json" },
-      body: JSON.stringify(sobre),
-    })
+   * false` lo usan la frase y la vista lógica, que repintan ellas mismas al terminar.
+   *
+   * Si el pedido NO LLEGA o la respuesta no se puede leer (se cayó Tecnia Bot, se cortó la red), no
+   * hay snapshot nuevo: se repinta desde el último que SÍ vino del servidor, para que ningún control
+   * quede mostrando un valor que no se guardó, y el error se relanza para que quien llamó se entere.
+   * `avisoSiFalla` es el texto que se muestra en ese caso (lo pasa quien llama: viene del servidor).
+   * Antes de este arreglo (2026-11-26) la falla de red de un cambio de pin no avisaba nada y el
+   * selector quedaba con el pin elegido, que nunca se había guardado. */
+  async function enviarSobre(sobre, { repintarAhora, avisoSiFalla = null }) {
+    let respuesta
+    let cuerpoLeido = null
+    try {
+      respuesta = await fetch("/api/operaciones", {
+        method: "POST",
+        headers: token ? { "Content-Type": "application/json", "X-Tecnia-Token": token } : { "Content-Type": "application/json" },
+        body: JSON.stringify(sobre),
+      })
+      if (respuesta.status !== 403) cuerpoLeido = await respuesta.json()
+    } catch (error) {
+      if (avisoSiFalla) mostrarEstado(avisoSiFalla)
+      repintar()
+      throw error
+    }
     if (respuesta.status === 403) {
       // El servidor rechazó el pedido antes de tocar el proyecto. El cuerpo es texto, no un
       // snapshot: no hay nada que aplicar. Se dice qué pasa y se repinta desde lo último que SÍ
@@ -51,7 +67,7 @@ export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEsta
       repintar()
       return { resultado: { ok: false, rechazadoPor: "transporte", motivos: [{ codigo: porLaLlave ? "SIN_TOKEN_DE_SESION" : "PEDIDO_RECHAZADO_POR_EL_SERVIDOR" }] }, snapshot: null }
     }
-    const cuerpo = await respuesta.json()
+    const cuerpo = cuerpoLeido
     aplicarSnapshot(cuerpo.snapshot)
 
     if (cuerpo.resultado.ok) {

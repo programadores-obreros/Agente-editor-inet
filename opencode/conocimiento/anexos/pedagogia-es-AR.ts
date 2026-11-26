@@ -87,6 +87,64 @@ export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "sa
 }
 
 /**
+ * Textos fijos de la ventana «vista física» que no dependen de una pieza ni de una placa.
+ * Viajan en el snapshot (`vista.textos`): el navegador los muestra, nunca los redacta.
+ *
+ * TEXTO PENDIENTE DE APROBACIÓN DEL DUEÑO (2026-11-26): todos los de esta tabla.
+ */
+export const TEXTOS_DE_LA_VENTANA = {
+  /** Se cambió un pin en la ventana y el pedido no llegó (Tecnia Bot cerrado, red cortada). */
+  cambioDePinNoGuardado: "No se pudo guardar el cambio: se cortó la conexión con Tecnia Bot. El pin quedó como estaba.",
+  /** Cómo está el proyecto, en palabras. Las claves son las del estado que deriva el núcleo. */
+  estado: {
+    listo: "El proyecto está completo",
+    invalido: "Hay algo para corregir",
+    incompleto: "Todavía le falta algo",
+  },
+  /** En «Qué hace tu circuito»: una regla que todavía no se puede leer como una oración. */
+  reglaSinTerminar: "Hay una regla sin terminar.",
+  /** En «Qué hace tu circuito»: el proyecto no tiene ninguna regla. */
+  sinReglas: "Todavía no hay ninguna regla: el circuito no hace nada.",
+  /** Cuántos avisos hay. `{cantidad}` se reemplaza por el número (de 2 en adelante). */
+  avisos: {
+    ninguno: "Sin avisos.",
+    uno: "Hay 1 aviso para mirar.",
+    varios: "Hay {cantidad} avisos para mirar.",
+  },
+  /** Lo que dice la sección «Avisos» cuando no hay ninguno. */
+  sinAvisos: "No hay avisos: no encontramos nada para revisar en este proyecto.",
+  /** La etiqueta que lleva cada aviso según su severidad (las claves son las del núcleo). */
+  severidad: {
+    blocking: "Hay que corregir",
+    warning: "Atención",
+    info: "Dato",
+  },
+  /**
+   * Cómo leer los cables del esquema. `{terminales}` se reemplaza por las etiquetas de los
+   * terminales de potencia de ESA placa (`ETIQUETA_DE_TERMINAL_DE_POTENCIA`): en un ESP32 la
+   * alimentación es «3,3 V» y en un Arduino UNO es «5 V».
+   */
+  leyenda: {
+    senal: "señal: un color por pieza",
+    alimentacion: "{terminales}: alimentación, siempre en rojo",
+    tierra: "{terminales}: siempre en negro y punteado",
+  },
+} as const
+
+/** «Sin avisos.» / «Hay 1 aviso para mirar.» / «Hay N avisos para mirar.»: el plural se arma acá. */
+export function textoDeCantidadDeAvisos(cantidad: number): string {
+  if (cantidad <= 0) return TEXTOS_DE_LA_VENTANA.avisos.ninguno
+  if (cantidad === 1) return TEXTOS_DE_LA_VENTANA.avisos.uno
+  return TEXTOS_DE_LA_VENTANA.avisos.varios.replace("{cantidad}", String(cantidad))
+}
+
+/** Una entrada de la leyenda de cables para los terminales de potencia dados (ya como etiquetas). */
+export function textoDeLeyendaDePotencia(rol: "alimentacion" | "tierra", etiquetas: readonly string[]): string {
+  const terminales = etiquetas.length <= 1 ? etiquetas.join("") : `${etiquetas.slice(0, -1).join(", ")} y ${etiquetas[etiquetas.length - 1]}`
+  return TEXTOS_DE_LA_VENTANA.leyenda[rol].replace("{terminales}", terminales)
+}
+
+/**
  * Para qué está una pieza que existe por un REQUISITO de otra (Physical View UX #1).
  * Clave: el tipo de requisito del núcleo; `{componente}` es el nombre de la pieza que
  * lo pide. Texto pedagógico: nunca entra al núcleo ni al hash.

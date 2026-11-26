@@ -283,14 +283,22 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
     // El atajo tiene que cubrir los DOS casos y decir qué hizo en cada uno.
     assert.match(
       codigo,
-      /TECNIA_SIN_PROMPT esta definida: no se pregunta nada y se deja la key de Google que ya estaba/,
+      /La instalacion no pregunta la key de Google: se deja la que ya estaba guardada, y abajo se prueba\./,
       `${nombre}: con TECNIA_SIN_PROMPT y una key guardada no dice que la deja (o directamente pregunta)`,
     )
     assert.match(
       codigo,
-      /TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key/,
+      /La instalacion no pregunta la key de Google: se sigue sin key, con el modelo gratuito Big Pickle\. Para poner una, escribi \/clave adentro de Tecnia Bot\./,
       `${nombre}: con TECNIA_SIN_PROMPT y sin key no dice que sigue sin key`,
     )
+    // Desde el 2026-11-26 este texto lo lee el DOCENTE en cada instalación (el .exe ya no
+    // pregunta la key): no puede nombrar una variable interna, y tiene que decir cómo poner
+    // o cambiar la key, porque el instalador ya no ofrece hacerlo.
+    assert.doesNotMatch(codigo, /TECNIA_SIN_PROMPT esta definida/, `${nombre}: el aviso al docente nombra una variable interna`)
+    // Con una key guardada NO se promete «cambiala con /clave» antes de probarla: si la prueba
+    // da cuota agotada o key inválida, el cierre dice otra cosa y las dos frases quedaban en la
+    // misma consola (revisión independiente del 2026-11-26).
+    assert.doesNotMatch(codigo, /ya estaba guardada\. Para cambiarla, escribi \/clave/, `${nombre}: promete /clave antes de probar la key`)
   }
   // Y la condición que saltea NO puede depender de que no haya key: ése era el bug.
   assert.doesNotMatch(
@@ -298,6 +306,56 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
     /if \(-not \$tieneGoogle -and \$env:TECNIA_SIN_PROMPT\)/,
     "install.ps1: TECNIA_SIN_PROMPT vuelve a saltear sólo cuando no hay key",
   )
+})
+
+// ---------------------------------------------------------------------------
+// 3b. La pantalla final dice con qué modelo quedó (2026-11-26)
+// ---------------------------------------------------------------------------
+// Desde que la instalación no pregunta la key, el docente terminaba de instalar sin saber
+// si había quedado con Gemini o con el modelo gratuito: el dueño instaló y tuvo que
+// preguntar si era lo esperado. Y el aviso de privacidad del gratuito salía sólo en la
+// consola, que Inno cierra sola. Todo esto es ESTÁTICO: el .iss sólo se ejecuta en Windows,
+// compilado; lo que se puede cuidar acá es que las piezas estén y que coincidan.
+test("la pantalla final del .exe dice el modelo que quedó, mirando el opencode.json, y avisa la privacidad del gratuito", () => {
+  const iss = leer("installer/tecnia-bot.iss").replace(/\r/g, "")
+  const ps1 = leer("install/install.ps1")
+
+  const funcion = /\nfunction ModeloQueQuedo: String;\n([\s\S]*?)\nend;\n/.exec(iss)
+  assert.ok(funcion, "el .iss no define ModeloQueQuedo")
+  // Mira el archivo que OpenCode va a leer, en la misma carpeta que usa el resto del .iss.
+  assert.match(funcion[1], /LoadStringFromFile\(AddBackslash\(CarpetaConfigOpenCode\) \+ 'opencode\.json', Crudo\)/)
+  // Si no lo puede leer no afirma nada: devuelve vacío y la pantalla no nombra un modelo.
+  assert.match(funcion[1], /Result := '';\n  if not LoadStringFromFile[^\n]*\n    Exit;/)
+
+  // Los identificadores que busca son los que ESCRIBE install.ps1. Si allá cambia el modelo
+  // y acá no, la pantalla diría el modelo equivocado, o ninguno.
+  const sinKey = /^\$ModeloSinKey = "([^"]+)"/m.exec(ps1)
+  const conKey = /^\$ModeloConKey = "([^"]+)"/m.exec(ps1)
+  assert.ok(sinKey && conKey, "install.ps1 ya no declara $ModeloSinKey / $ModeloConKey así")
+  assert.ok(funcion[1].includes(`Pos('"${sinKey[1]}"', Contenido) > 0`), `ModeloQueQuedo no busca el modelo sin key de install.ps1 (${sinKey[1]})`)
+  const proveedor = conKey[1].split("/")[0]
+  assert.ok(funcion[1].includes(`Pos('"${proveedor}/', Contenido) > 0`), `ModeloQueQuedo no busca el proveedor del modelo con key (${proveedor}/)`)
+  // El gratuito se mira PRIMERO: opencode.json nombra a Google también sin key (small_model).
+  assert.ok(funcion[1].indexOf(sinKey[1]) < funcion[1].indexOf(`"${proveedor}/`), "se mira Google antes que el gratuito: sin key diría «Gemini»")
+  assert.match(leer("install/install.ps1"), /small_model/, "el caso existe: install.ps1 escribe small_model")
+
+  // Se usa en la pantalla de ÉXITO, y sólo ahí.
+  const exito = /if EstadoBootstrap = EstadoBien then\n  begin([\s\S]*?)\n  end\n  else if EstadoBootstrap = EstadoDegradado/.exec(iss)
+  assert.ok(exito, "no encontré la rama de éxito de la pantalla final")
+  assert.match(exito[1], /if ModeloQueQuedo = 'gratuito' then/)
+  assert.match(exito[1], /else if ModeloQueQuedo = 'gemini' then/)
+  const gratuito = /if ModeloQueQuedo = 'gratuito' then([\s\S]*?)else if ModeloQueQuedo = 'gemini'/.exec(exito[1])[1]
+  assert.match(gratuito, /Big Pickle, el gratuito de OpenCode/)
+  assert.match(gratuito, /no pongas datos personales ni '\s*\+ 'nombres de alumnos/, "el aviso de privacidad tiene que estar en la pantalla, no sólo en la consola")
+  assert.match(gratuito, /escribí \/clave/)
+  assert.equal(iss.split("ModeloQueQuedo = ").length - 1, 2, "ModeloQueQuedo se consulta en otro estado además del de éxito")
+
+  // Pascal: una función se declara antes de usarse. La carpeta, antes que el modelo; el modelo,
+  // antes que la pantalla.
+  const pos = (texto) => { const i = iss.indexOf(texto); assert.ok(i >= 0, `falta: ${texto}`); return i }
+  assert.ok(pos("\nfunction CarpetaConfigOpenCode: String;") < pos("\nfunction ModeloQueQuedo: String;"))
+  assert.ok(pos("\nfunction ModeloQueQuedo: String;") < pos("\nprocedure CurPageChanged(CurPageID: Integer);"))
+  assert.equal(iss.split("\nfunction CarpetaConfigOpenCode: String;").length - 1, 1, "CarpetaConfigOpenCode quedó declarada dos veces")
 })
 
 // ---------------------------------------------------------------------------
@@ -739,17 +797,38 @@ test("la key vieja compartida se sigue rechazando TAMBIÉN en el camino nuevo", 
 // mismo.
 // ---------------------------------------------------------------------------
 
-test("en modo silencioso el instalador no espera 60s a nadie", () => {
+// HISTORIA (2026-11-26). Este test exigia que BanderaSilencio consultara WizardSilent():
+// la bandera salia solo en un despliegue silencioso, y la instalacion con ventana
+// preguntaba la key y esperaba 60 s. El dueno instalo ocho veces seguidas en su notebook
+// y pidio sacar la pregunta: ahora la instalacion NUNCA pregunta, con o sin ventana.
+// "Siempre" dejo de ser el defecto que este test cuidaba y paso a ser lo pedido.
+test("la instalacion nunca pregunta la key: el .iss pasa -SinPrompt siempre, no solo en silencioso", () => {
   const iss = leer("installer/tecnia-bot.iss")
 
-  // El .iss tiene que consultar WizardSilent() y pasar la bandera al bootstrap.
   assert.match(
     iss,
     /function BanderaSilencio/,
-    "el .iss no define BanderaSilencio: el bootstrap no se entera de que corre en silencio",
+    "el .iss no define BanderaSilencio: el bootstrap no se entera de que no tiene que preguntar",
   )
-  assert.match(iss, /WizardSilent\(\)/, "BanderaSilencio no consulta WizardSilent(): la bandera saldria siempre o nunca")
+  const cuerpo = /function BanderaSilencio\(Value: String\): String;\s*begin([\s\S]*?)\nend;/.exec(iss.replace(/\r/g, ""))
+  assert.ok(cuerpo, "no encontre el cuerpo de BanderaSilencio")
+  // Sin los comentarios Pascal: lo que queda tiene que ser UNA asignacion, sin condicion.
+  const sentencias = cuerpo[1].replace(/\{[^}]*\}/g, "").trim()
+  assert.equal(sentencias, "Result := ' -SinPrompt';", "BanderaSilencio volvio a depender de algo: la instalacion con ventana preguntaria la key de nuevo")
   assert.match(iss, /-SinPrompt/, "el .iss no pasa -SinPrompt")
+
+  // El resto de la cadena, eslabón por eslabón. La revisión mostró que con sólo mirar el .iss
+  // se podía cortar en tres lugares y la instalación volvía a preguntar con todo en verde.
+  const bootstrap = leer("install/bootstrap.ps1")
+  assert.match(bootstrap, /^if \(\$SinPrompt\) \{ \$env:TECNIA_SIN_PROMPT = "1" \}\r?$/m, "bootstrap.ps1 no traduce -SinPrompt a TECNIA_SIN_PROMPT=1")
+  const ps1 = leer("install/install.ps1")
+  const ramaPs1 = /^if \(\$env:TECNIA_SIN_PROMPT\) \{\r?\n([\s\S]*?)^\}\r?$/m.exec(ps1)
+  assert.ok(ramaPs1, "install.ps1 no tiene la rama `if ($env:TECNIA_SIN_PROMPT) {` tal cual (¿una condición de más?)")
+  assert.match(ramaPs1[1], /^\s*\$preguntar = \$false\r?$/m, "install.ps1: con TECNIA_SIN_PROMPT no apaga la pregunta")
+  const sh = leer("install/install.sh")
+  assert.match(sh, /^if \[ -n "\$\{TECNIA_SIN_PROMPT:-\}" \]; then$/m, "install.sh no mira TECNIA_SIN_PROMPT tal cual")
+  // Y la línea que lanza el bootstrap desde el .iss le pega la bandera.
+  assert.match(iss, /bootstrap\.ps1'\) \+ '"' \+ BanderaSilencio\(''\);/, "el lanzamiento del bootstrap no lleva BanderaSilencio")
 
   // Y la linea que lanza el bootstrap tiene que llevarla. Se mira ESA linea, no
   // el archivo entero: definir la funcion y olvidarse de usarla deja todo verde.

@@ -54,7 +54,9 @@ export function crearVistaLogica({ Blockly, contenedor, controlador, media, mens
   }
 }
 
-export const TEXTO_QUITAR_CON_VARIAS = "Hay más de una regla: para quitar una, usá su botón «Quitar regla» en la sección Reglas."
+/** Texto pendiente de aprobación del dueño (2026-11-26): decía «en la sección Reglas», y con el
+ * rediseño esa sección ya no se llama así: las frases quedaron bajo el subtítulo «Con palabras». */
+export const TEXTO_QUITAR_CON_VARIAS = "Hay más de una regla: para quitar una, usá su botón «Quitar regla», arriba, en «Con palabras»."
 
 const MENSAJE_SIN_BLOCKLY = "La vista lógica no está disponible en esta página. La frase editable de arriba sigue funcionando."
 

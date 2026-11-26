@@ -24,6 +24,10 @@ export const DIR_BASE = join(os.tmpdir(), "tecniabot-test-phase2")
 // no pueden escribir ahí: toda prueba que use estos ayudantes manda esa caché a un temporal. Las
 // que necesitan otra (carga) la pisan después con la suya.
 export const CACHE_DE_PRUEBA = join(os.tmpdir(), "tecniabot-test-cache-usuario")
+// Se vacía al importar: `nuevoDir` repite nombres entre corridas, así que la carpeta derivada de
+// un proyecto quedaba con lo de la corrida anterior, y una prueba podía pasar o fallar según lo
+// que hubiera dejado la otra (lo mostró la revisión independiente del 2026-11-26).
+rmSync(CACHE_DE_PRUEBA, { recursive: true, force: true })
 process.env.XDG_CACHE_HOME = CACHE_DE_PRUEBA
 process.env.LOCALAPPDATA = CACHE_DE_PRUEBA
 
