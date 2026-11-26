@@ -13,6 +13,7 @@
 //   - `find` → `findLast` (la última de la franja en vez de la primera)     → «con dos secciones en la franja…»
 //   - sacar la excepción del pie                                             → «la última sección, corta…»
 //   - sacar `desplazado > 0` de la excepción                                 → «si todo entra en la ventana…»
+//   - sacar «lo que queda por bajar no alcanza» de la excepción              → «la última sección a la vista NO es la activa…»
 //   - `abajo > desde` → `abajo > 0` (cuenta lo tapado por el header)         → «lo que tapa el header no cuenta»
 //   - `Math.max(desde + 1, …)` → sin el máximo                               → «la franja nunca se invierte»
 //   - el cableado no saca `aria-current` del enlace anterior                 → «el cableado marca un solo enlace…»
@@ -108,6 +109,18 @@ test("la última sección, corta, queda activa al llegar al pie aunque nunca alc
   const antes = pie - 120
   assert.ok(medir(antes).secciones.at(-1).abajo > ALTO, "precondición: «Avisos» todavía no entró entera")
   assert.equal(activaEn(antes), "paso-programa")
+})
+
+// AGREGADO DESPUÉS, POR MUTACIÓN (2026-11-26). La excepción del pie tiene cuatro condiciones y la
+// primera tanda de pruebas dejaba una sin cuidar: se podía borrar «lo que queda por bajar no
+// alcanza para llevarla a la franja» y seguía todo verde, porque en todos los escenarios la página
+// terminaba justo después de «Avisos». Sin esa condición, «Avisos» se marcaba apenas entraba
+// entera en la ventana, aunque faltara un buen tramo y se estuviera leyendo el programa.
+test("la última sección a la vista NO es la activa si todavía se puede bajar hasta llevarla a la franja", () => {
+  const secciones = [{ id: "paso-programa", arriba: -300, abajo: 300 }, { id: "paso-avisos", arriba: 400, abajo: 570 }]
+  const ventana = { desde: 77, hasta: 340, altoVentana: 757, desplazado: 500 }
+  assert.equal(seccionActiva(secciones, { ...ventana, resto: 400 }), "paso-programa", "quedan 400 px por bajar y «Avisos» está a 60 de la franja: todavía se lee el programa")
+  assert.equal(seccionActiva(secciones, { ...ventana, resto: 20 }), "paso-avisos", "con 20 px por bajar ya no va a llegar: es la activa")
 })
 
 test("si todo entra en la ventana y no se bajó nada, no se marca la última por estar a la vista", () => {
