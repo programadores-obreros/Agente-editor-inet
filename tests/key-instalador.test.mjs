@@ -309,6 +309,56 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
 })
 
 // ---------------------------------------------------------------------------
+// 3b. La pantalla final dice con qué modelo quedó (2026-11-26)
+// ---------------------------------------------------------------------------
+// Desde que la instalación no pregunta la key, el docente terminaba de instalar sin saber
+// si había quedado con Gemini o con el modelo gratuito: el dueño instaló y tuvo que
+// preguntar si era lo esperado. Y el aviso de privacidad del gratuito salía sólo en la
+// consola, que Inno cierra sola. Todo esto es ESTÁTICO: el .iss sólo se ejecuta en Windows,
+// compilado; lo que se puede cuidar acá es que las piezas estén y que coincidan.
+test("la pantalla final del .exe dice el modelo que quedó, mirando el opencode.json, y avisa la privacidad del gratuito", () => {
+  const iss = leer("installer/tecnia-bot.iss").replace(/\r/g, "")
+  const ps1 = leer("install/install.ps1")
+
+  const funcion = /\nfunction ModeloQueQuedo: String;\n([\s\S]*?)\nend;\n/.exec(iss)
+  assert.ok(funcion, "el .iss no define ModeloQueQuedo")
+  // Mira el archivo que OpenCode va a leer, en la misma carpeta que usa el resto del .iss.
+  assert.match(funcion[1], /LoadStringFromFile\(AddBackslash\(CarpetaConfigOpenCode\) \+ 'opencode\.json', Crudo\)/)
+  // Si no lo puede leer no afirma nada: devuelve vacío y la pantalla no nombra un modelo.
+  assert.match(funcion[1], /Result := '';\n  if not LoadStringFromFile[^\n]*\n    Exit;/)
+
+  // Los identificadores que busca son los que ESCRIBE install.ps1. Si allá cambia el modelo
+  // y acá no, la pantalla diría el modelo equivocado, o ninguno.
+  const sinKey = /^\$ModeloSinKey = "([^"]+)"/m.exec(ps1)
+  const conKey = /^\$ModeloConKey = "([^"]+)"/m.exec(ps1)
+  assert.ok(sinKey && conKey, "install.ps1 ya no declara $ModeloSinKey / $ModeloConKey así")
+  assert.ok(funcion[1].includes(`Pos('"${sinKey[1]}"', Contenido) > 0`), `ModeloQueQuedo no busca el modelo sin key de install.ps1 (${sinKey[1]})`)
+  const proveedor = conKey[1].split("/")[0]
+  assert.ok(funcion[1].includes(`Pos('"${proveedor}/', Contenido) > 0`), `ModeloQueQuedo no busca el proveedor del modelo con key (${proveedor}/)`)
+  // El gratuito se mira PRIMERO: opencode.json nombra a Google también sin key (small_model).
+  assert.ok(funcion[1].indexOf(sinKey[1]) < funcion[1].indexOf(`"${proveedor}/`), "se mira Google antes que el gratuito: sin key diría «Gemini»")
+  assert.match(leer("install/install.ps1"), /small_model/, "el caso existe: install.ps1 escribe small_model")
+
+  // Se usa en la pantalla de ÉXITO, y sólo ahí.
+  const exito = /if EstadoBootstrap = EstadoBien then\n  begin([\s\S]*?)\n  end\n  else if EstadoBootstrap = EstadoDegradado/.exec(iss)
+  assert.ok(exito, "no encontré la rama de éxito de la pantalla final")
+  assert.match(exito[1], /if ModeloQueQuedo = 'gratuito' then/)
+  assert.match(exito[1], /else if ModeloQueQuedo = 'gemini' then/)
+  const gratuito = /if ModeloQueQuedo = 'gratuito' then([\s\S]*?)else if ModeloQueQuedo = 'gemini'/.exec(exito[1])[1]
+  assert.match(gratuito, /Big Pickle, el gratuito de OpenCode/)
+  assert.match(gratuito, /no pongas datos personales ni '\s*\+ 'nombres de alumnos/, "el aviso de privacidad tiene que estar en la pantalla, no sólo en la consola")
+  assert.match(gratuito, /escribí \/clave/)
+  assert.equal(iss.split("ModeloQueQuedo = ").length - 1, 2, "ModeloQueQuedo se consulta en otro estado además del de éxito")
+
+  // Pascal: una función se declara antes de usarse. La carpeta, antes que el modelo; el modelo,
+  // antes que la pantalla.
+  const pos = (texto) => { const i = iss.indexOf(texto); assert.ok(i >= 0, `falta: ${texto}`); return i }
+  assert.ok(pos("\nfunction CarpetaConfigOpenCode: String;") < pos("\nfunction ModeloQueQuedo: String;"))
+  assert.ok(pos("\nfunction ModeloQueQuedo: String;") < pos("\nprocedure CurPageChanged(CurPageID: Integer);"))
+  assert.equal(iss.split("\nfunction CarpetaConfigOpenCode: String;").length - 1, 1, "CarpetaConfigOpenCode quedó declarada dos veces")
+})
+
+// ---------------------------------------------------------------------------
 // 4. La validación existe y clasifica los CINCO casos, en los dos lenguajes
 // ---------------------------------------------------------------------------
 
