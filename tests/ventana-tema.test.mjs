@@ -107,7 +107,14 @@ test("la página lo carga como script clásico de este servidor, en el <head> y 
   const cabeza = sinComentarios.slice(0, sinComentarios.indexOf("</head>"))
   const etiqueta = /<script\b[^>]*src="\/assets\/tema-inicial\.js"[^>]*>/.exec(cabeza)
   assert.ok(etiqueta, "tema-inicial.js tiene que cargarse en el <head>: en el <body> ya se pintó algo en claro")
-  assert.doesNotMatch(etiqueta[0], /\b(?:type="module"|defer|async)\b/, "diferido o asíncrono corre después del primer pintado: vuelve el destello")
+  // ARREGLADO POR MUTACIÓN (2026-11-26). La primera versión era `/\b(?:type="module"|defer|async)\b/`
+  // y dejaba pasar `type="module"`: el `\b` final pedía un borde de palabra DESPUÉS de la comilla de
+  // cierre, y entre una comilla y un espacio no hay ninguno. Marcaba `defer` y `async` y no el caso
+  // más probable. Ahora cada forma se busca por separado, y la expresión se prueba contra las tres.
+  const diferido = /\btype\s*=\s*["']?module\b|\bdefer\b|\basync\b/
+  for (const mala of ['<script type="module" src="/x.js">', "<script type=module src=/x.js>", '<script defer src="/x.js">', '<script src="/x.js" async>']) assert.match(mala, diferido, `el buscador tiene que marcar ${mala}`)
+  assert.doesNotMatch('<script src="/assets/tema-inicial.js">', diferido)
+  assert.doesNotMatch(etiqueta[0], diferido, "como módulo, diferido o asíncrono corre después del primer pintado: vuelve el destello")
   const { scripts } = recursosDe(HTML)
   assert.ok(scripts.indexOf("/assets/tema-inicial.js") < scripts.indexOf("/assets/app.js"))
   assert.equal([...sinComentarios.matchAll(/<script\b([^>]*)>/g)].filter((m) => !/\bsrc=/.test(m[1])).length, 0, "ningún <script> en línea: la política de seguridad lo frena")
