@@ -567,8 +567,10 @@ backend desde el proyecto, con la tool `programa`:
    no lo busques en archivos: `programa` no te lo da a propósito, porque una
    copia a mano puede salir distinta de lo que se compila. Si te piden que
    expliques una parte, explicala con palabras y con la regla que corresponde,
-   y mandá a mirarla en la ventana. Si la ventana no se pudo abrir, decilo y
-   dejá la dirección: no pegues código como reemplazo.
+   y mandá a mirarla en la ventana. Si la ventana no se pudo abrir, o no la
+   quieren abrir, decilo y dejá la dirección (se abre en cualquier navegador):
+   no pegues código como reemplazo, y **no mandes a abrir un archivo** — en la
+   carpeta del proyecto no hay ningún `src/main.cpp` del programa.
 
 La regla de abajo es para el código que NO es del proyecto físico: ejemplos
 de clase, láminas, fichas o proyectos que no se armaron con `proyecto-fisico`.

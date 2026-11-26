@@ -124,7 +124,12 @@ export function programaALaVistaDelAgente(directorioActivo: string, carpeta: str
 }
 
 /** Dónde se ve el programa. Es lo ÚNICO que la tool dice sobre el código. */
-export const DONDE_VERLO = "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat."
+// La segunda oración se agregó el 2026-11-26. En la notebook real, cuando el docente insistió
+// («pegámelo acá, no quiero abrir la ventana»), el asistente no pegó el código, pero inventó una
+// salida: «el archivo de verdad está en la carpeta del proyecto, en src/main.cpp, abrilo con el
+// Bloc de notas». Ese archivo ya no existe ahí. Si no se le dice, lo supone.
+export const DONDE_VERLO =
+  "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat. En la carpeta del proyecto NO hay ningún archivo del programa para abrir a mano: no mandes a abrir `src/main.cpp` ni ningún otro; el único lugar donde se ve es esa ventana, o su dirección en cualquier navegador."
 
 const cuantas = (n: number, uno: string, varias: string) => (n === 1 ? `1 ${uno}` : `${n} ${varias}`)
 const lineasDe = (texto: string) => (texto === "" ? 0 : texto.replace(/\n$/, "").split("\n").length)

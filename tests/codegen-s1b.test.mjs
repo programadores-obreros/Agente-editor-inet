@@ -160,6 +160,10 @@ test("la salida de generar y de compilar NO trae el código ni la carpeta: trae 
   assert.match(DONDE_VERLO, /sección «Código»/)
   assert.match(DONDE_VERLO, /`vista-fisica`/)
   assert.match(DONDE_VERLO, /No lo escribas ni lo resumas en el chat/)
+  // Notebook real, 2026-11-26: ante la insistencia, el asistente mandó a abrir «src/main.cpp en la
+  // carpeta del proyecto» con el Bloc de notas. Ese archivo no existe: hay que decírselo.
+  assert.match(DONDE_VERLO, /En la carpeta del proyecto NO hay ningún archivo del programa/)
+  assert.match(DONDE_VERLO, /no mandes a abrir `src\/main\.cpp`/)
 })
 
 test("la carpeta derivada vive FUERA de la carpeta de trabajo, en la caché del usuario, y es estable por proyecto", async () => {
@@ -319,6 +323,9 @@ test("el prompt manda a la ventana cuando piden el código, y prohíbe escribirl
   assert.match(REGLA, /\*\*Nunca escribas, copies ni resumas ese código en el chat, ni un pedazo\*\*/)
   assert.match(REGLA, /no lo busques en archivos/)
   assert.match(REGLA, /no pegues código como reemplazo/)
+  assert.match(REGLA, /o no la\s+quieren abrir/)
+  assert.match(REGLA, /\*\*no mandes a abrir un archivo\*\*/)
+  assert.match(REGLA, /no hay ningún `src\/main\.cpp` del programa/)
   // Lo que ya no puede estar: la orden de mostrar el contenido y la mención de la carpeta.
   assert.doesNotMatch(REGLA, /mostrá el `contenido`/)
   assert.doesNotMatch(REGLA, /La carpeta que devuelve `programa`/)
