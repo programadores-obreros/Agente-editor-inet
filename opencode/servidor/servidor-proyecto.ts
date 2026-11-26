@@ -101,6 +101,8 @@ export function construirRutasDeAssets(): ReadonlyMap<string, string> {
     // <head> para poner el tema antes del primer pintado; `tema.js` es el módulo del botón.
     ["tema-inicial.js", join(DIR_VISTA_FISICA_WEB, "tema-inicial.js")],
     ["tema.js", join(DIR_VISTA_FISICA_WEB, "tema.js")],
+    // Preparar la página para el papel (desplegar lo plegado y achicar el esquema entero).
+    ["impresion.js", join(DIR_VISTA_FISICA_WEB, "impresion.js")],
   ])
 }
 

@@ -22,6 +22,7 @@ import { crearPanelCodigo } from "./vista-codigo.js"
 import { dibujarCableado } from "./cableado.js"
 import { conectarNavegacion } from "./navegacion.js"
 import { conectarTema } from "./tema.js"
+import { conectarImpresion } from "./impresion.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -602,13 +603,17 @@ function repintar() {
  * a dibujar desde la MISMA instrucción (nunca se decide nada nuevo acá). */
 let ultimoCableado = null
 let cableadoProgramado = false
+/** Mientras se imprime, el esquema está achicado para el papel (`impresion.js`): no se vuelve a
+ * medir ni a dibujar hasta que termine. */
+let imprimiendo = false
 
 function programarCableado() {
-  if (!enNavegador || cableadoProgramado) return
+  if (!enNavegador || cableadoProgramado || imprimiendo) return
   cableadoProgramado = true
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       cableadoProgramado = false
+      if (imprimiendo) return // se pidió antes de empezar a imprimir: se redibuja al terminar
       const piezas = piezasDelCircuito()
       if (piezas) dibujarCableado(document, piezas, ultimoCableado)
     }),
@@ -765,6 +770,19 @@ function manejarCambioGpio({ componenteId, terminalId, valor }) {
 if (enNavegador) conectarNavegacion(document, window)
 // El botón de tema claro / oscuro (el tema inicial ya lo puso `tema-inicial.js`, antes de pintar).
 if (enNavegador) conectarTema(document, window)
+// Imprimir / guardar como PDF: se prepara el esquema para el papel y se pausa el redibujo de los
+// cables mientras dura; al terminar se vuelven a dibujar con las medidas de pantalla.
+if (enNavegador) {
+  conectarImpresion(document, window, {
+    alEmpezar: () => {
+      imprimiendo = true
+    },
+    alTerminar: () => {
+      imprimiendo = false
+      programarCableado()
+    },
+  })
+}
 
 // SSE: cualquier commit (de este navegador o de otro actor, ej. la tool) dispara un
 // refetch íntegro — nunca se aplica el `{revision}` del evento de forma optimista.

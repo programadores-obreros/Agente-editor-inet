@@ -252,6 +252,20 @@
     .tb-header--fijo { position: static; }
     #estado { padding-left: var(--e4); padding-right: var(--e4); }
   }
+
+  /* ══ Papel. La hoja compartida ya deja todo en claro, saca los botones y apaga las sombras; el
+     tamaño y la orientación los pone cada página, y esta va apaisada porque el esquema es ancho.
+     Acá queda lo propio: sin navegación ni indicador de conexión (en el papel no significan
+     nada), el esquema sin barra de desplazamiento y el programa entero. Achicar el esquema para
+     que entre lo hace `impresion.js` antes de imprimir, y contra ESTA hoja: si cambian el tamaño
+     o el margen, `tests/ventana-impresion.test.mjs` avisa. ══ */
+  @page { size: A4 landscape; margin: 1.2cm; }
+  @media print {
+    nav[data-pasos], #conexion, #estado, #contador-avisos { display: none !important; }
+    #circuito { overflow: visible; }
+    #seccion-circuito, #reglas div[data-regla-id], #vista-logica-lienzo, #motivos li, #controles label { break-inside: avoid; }
+    #vista-codigo-texto { max-height: none; }
+  }
 </style>
 </head>
 <body>
@@ -273,6 +287,7 @@
       <span id="readiness" class="tb-chip">—</span>
       <span id="conexion" class="tb-chip" data-estado-conexion="conectado">conectado</span>
       <button type="button" id="boton-tema" class="tb-boton" aria-pressed="false" data-texto-oscuro="Modo oscuro" data-texto-claro="Modo claro">Modo oscuro</button>
+      <button type="button" id="boton-imprimir" class="tb-boton">Imprimir / PDF</button>
     </div>
   </div>
   <div id="estado" role="status" aria-live="polite"></div>
