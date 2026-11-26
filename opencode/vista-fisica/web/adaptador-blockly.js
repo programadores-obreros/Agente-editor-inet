@@ -75,8 +75,12 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     readOnly: false,
     trashcan: false,
     zoom: { controls: false, wheel: false, pinch: false },
-    // Con varias reglas el lienzo puede no alcanzar: barra vertical y rueda para llegar a todas.
-    move: { scrollbars: { horizontal: true, vertical: true }, drag: false, wheel: true },
+    // Con varias reglas el lienzo puede no alcanzar: barra vertical para llegar a todas.
+    // La RUEDA no: se habilitó el 2026-11-24 y en la notebook real, al bajar por la página con el
+    // cursor sobre el lienzo, la rueda movía los bloques en vez de la página y la primera regla
+    // quedaba cortada arriba, sin volver sola. Reproducido en Chromium: cuatro pasos de rueda
+    // sobre el lienzo corren los bloques. Queda la barra, que no se usa sin querer.
+    move: { scrollbars: { horizontal: true, vertical: true }, drag: false, wheel: false },
   })
 
   // Blockly mide su contenedor: tras inyectar (y tras cada pintado) hay que avisarle, o queda en tamaño 0.
