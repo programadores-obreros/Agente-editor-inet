@@ -127,9 +127,67 @@ export function programaALaVistaDelAgente(directorioActivo: string, carpeta: str
 // La segunda oración se agregó el 2026-11-26. En la notebook real, cuando el docente insistió
 // («pegámelo acá, no quiero abrir la ventana»), el asistente no pegó el código, pero inventó una
 // salida: «el archivo de verdad está en la carpeta del proyecto, en src/main.cpp, abrilo con el
-// Bloc de notas». Ese archivo ya no existe ahí. Si no se le dice, lo supone.
+// Bloc de notas». Lo que afirma esta frase es lo que se puede afirmar SIEMPRE: el programa de
+// este proyecto no está en la carpeta de trabajo. (Una primera versión decía «ahí no hay ningún
+// archivo del programa»: era falso en esa misma notebook, ver `programasDeOtroTrabajo`.)
 export const DONDE_VERLO =
-  "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat. En la carpeta del proyecto NO hay ningún archivo del programa para abrir a mano: no mandes a abrir `src/main.cpp` ni ningún otro; el único lugar donde se ve es esa ventana, o su dirección en cualquier navegador."
+  "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat. El programa de este proyecto NO está en la carpeta de trabajo: no mandes a abrir ningún archivo; el único lugar donde se ve es esa ventana, o su dirección en cualquier navegador."
+
+/** Un programa escrito a mano que está en la carpeta de trabajo y no es el de este proyecto. */
+export interface ProgramaDeOtroTrabajo {
+  /** Ruta relativa a la carpeta de trabajo, con barras comunes. */
+  readonly archivo: string
+  /** Día de la última modificación (AAAA-MM-DD), para que se pueda decir de cuándo es. */
+  readonly modificado: string
+}
+
+/**
+ * Programas que hay en `src/` de la carpeta de trabajo. NINGUNO es el de este proyecto: el
+ * generado vive afuera. Son de otro trabajo (el camino viejo, donde el asistente escribía el
+ * código a mano y lo dejaba en `src/main.cpp`).
+ *
+ * POR QUÉ SE MIRA (notebook real, 2026-11-26). Ahí había un `src/main.cpp` de dos días antes,
+ * de OTRO circuito (un sensor de distancia que el proyecto no tiene). El asistente mandó al
+ * docente a abrirlo como si fuera «el archivo de verdad». Existía, y era otro programa: peor
+ * que mandarlo a un archivo que no está. Además, ese archivo está DENTRO de la carpeta de
+ * trabajo, donde el asistente sí puede leer: podría leerlo y mostrarlo como el de este proyecto.
+ *
+ * No se borra ni se mueve: es del docente. Se informa, y la salida dice qué no hacer con él.
+ * Sólo mira `src/` (donde PlatformIO pone el programa) y sólo los archivos de programa.
+ */
+export function programasDeOtroTrabajo(directorioActivo: string): ProgramaDeOtroTrabajo[] {
+  const src = join(directorioActivo, "src")
+  let entradas: string[]
+  try {
+    entradas = readdirSync(src)
+  } catch {
+    return []
+  }
+  const hallados: ProgramaDeOtroTrabajo[] = []
+  for (const nombre of entradas.sort()) {
+    if (!/\.(cpp|ino|c)$/i.test(nombre)) continue
+    try {
+      const st = statSync(join(src, nombre))
+      if (st.isFile()) hallados.push({ archivo: `src/${nombre}`, modificado: diaLocal(st.mtime) })
+    } catch {
+      /* desapareció entre el listado y el stat: no está */
+    }
+  }
+  return hallados
+}
+
+/** El día en la hora de ESTA compu (la que ve el docente en su explorador de archivos), AAAA-MM-DD. */
+function diaLocal(fecha: Date): string {
+  const dos = (n: number) => String(n).padStart(2, "0")
+  return `${fecha.getFullYear()}-${dos(fecha.getMonth() + 1)}-${dos(fecha.getDate())}`
+}
+
+/** Lo que la salida dice cuando hay programas de otro trabajo. Los nombra: sin eso no se puede evitar. */
+export function avisoDeOtroTrabajo(hallados: readonly ProgramaDeOtroTrabajo[]): string {
+  const lista = hallados.map((h) => `\`${h.archivo}\` (modificado el ${h.modificado})`).join(", ")
+  const uno = hallados.length === 1
+  return `En la carpeta de trabajo ${uno ? "hay un programa" : "hay programas"} de OTRO trabajo: ${lista}. ${uno ? "No es" : "No son"} el programa de este proyecto. No ${uno ? "lo" : "los"} leas, no ${uno ? "lo" : "los"} muestres como el programa y no mandes al docente a abrir${uno ? "lo" : "los"}.`
+}
 
 const cuantas = (n: number, uno: string, varias: string) => (n === 1 ? `1 ${uno}` : `${n} ${varias}`)
 const lineasDe = (texto: string) => (texto === "" ? 0 : texto.replace(/\n$/, "").split("\n").length)
@@ -276,6 +334,7 @@ export async function ejecutarPrograma(
     // alcanzar, y se sacó).
     const reglas = ((snapshot as SnapshotConReglas).vista?.reglas ?? []).map((r) => r.texto)
     const lineas = lineasDe(archivosGenerados["src/main.cpp"] ?? "")
+    const ajenos = programasDeOtroTrabajo(ctx.directory)
     const programa = {
       reglas,
       lineas,
@@ -283,6 +342,8 @@ export async function ejecutarPrograma(
       dondeVerlo: DONDE_VERLO,
       // Sólo si la barrera no vale (Tecnia Bot abierto en la carpeta personal): se dice, no se calla.
       ...(programaALaVistaDelAgente(ctx.directory, carpetaAbsoluta) ? { aviso: "La carpeta del programa quedó dentro de la carpeta de trabajo. No la leas: el código se mira en la ventana." } : {}),
+      // Sólo si en la carpeta de trabajo hay un programa de otro trabajo que se puede confundir con éste.
+      ...(ajenos.length > 0 ? { deOtroTrabajo: ajenos, avisoDeOtroTrabajo: avisoDeOtroTrabajo(ajenos) } : {}),
     }
     const base = { idProyecto, revision, environment: generado.environment, advertencias: generado.advertencias, programa }
 

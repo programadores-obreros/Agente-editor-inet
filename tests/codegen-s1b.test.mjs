@@ -10,12 +10,12 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs"
 import { join, relative, sep } from "node:path"
 import { REPO, nuevoDir } from "./phase2-helpers.mjs"
 
 const programaTool = (await import(join(REPO, "opencode/tool/programa.ts"))).default
-const { ejecutarPrograma, carpetaDelPrograma, carpetaViejaDelPrograma, programaALaVistaDelAgente, DONDE_VERLO } = await import(join(REPO, "opencode/tool/programa.ts"))
+const { ejecutarPrograma, carpetaDelPrograma, carpetaViejaDelPrograma, programaALaVistaDelAgente, programasDeOtroTrabajo, avisoDeOtroTrabajo, DONDE_VERLO } = await import(join(REPO, "opencode/tool/programa.ts"))
 const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.ts"))).default
 const platformioTool = (await import(join(REPO, "opencode/tool/platformio.ts"))).default
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
@@ -162,8 +162,12 @@ test("la salida de generar y de compilar NO trae el código ni la carpeta: trae 
   assert.match(DONDE_VERLO, /No lo escribas ni lo resumas en el chat/)
   // Notebook real, 2026-11-26: ante la insistencia, el asistente mandó a abrir «src/main.cpp en la
   // carpeta del proyecto» con el Bloc de notas. Ese archivo no existe: hay que decírselo.
-  assert.match(DONDE_VERLO, /En la carpeta del proyecto NO hay ningún archivo del programa/)
-  assert.match(DONDE_VERLO, /no mandes a abrir `src\/main\.cpp`/)
+  // (Una primera versión de este aviso decía «en la carpeta del proyecto no hay ningún archivo
+  // del programa». Era FALSO en esa notebook: había un src/main.cpp viejo. Lo que se afirma ahora
+  // vale siempre: el programa de ESTE proyecto no está en la carpeta de trabajo.)
+  assert.match(DONDE_VERLO, /El programa de este proyecto NO está en la carpeta de trabajo/)
+  assert.match(DONDE_VERLO, /no mandes a abrir ningún archivo/)
+  assert.doesNotMatch(DONDE_VERLO, /no hay ningún archivo/i, "no se afirma lo que no se comprobó")
 })
 
 test("la carpeta derivada vive FUERA de la carpeta de trabajo, en la caché del usuario, y es estable por proyecto", async () => {
@@ -194,6 +198,52 @@ test("el programa que una versión anterior dejó DENTRO de la carpeta de trabaj
     }
     assert.equal(existsSync(vieja), false, `${accion}: quedó a la vista un programa viejo`)
   }
+})
+
+// HISTORIA (notebook real, 2026-11-26). En `Documents\\Tecnia Bot\\src\\main.cpp` había un programa
+// de dos días antes, de OTRO circuito (con un sensor de distancia que el proyecto no tiene). Ante
+// «pegame el código acá», el asistente mandó al docente a abrirlo como «el archivo de verdad».
+// Y yo le había dicho al dueño que ese archivo no existía: sólo había mirado la carpeta derivada.
+test("si en la carpeta de trabajo hay un programa de OTRO trabajo, la salida lo nombra, dice de cuándo es y qué no hacer", async () => {
+  const dir = await armar()
+  const limpio = await programa(dir, { accion: "generar" })
+  assert.ok(!("deOtroTrabajo" in limpio.programa) && !("avisoDeOtroTrabajo" in limpio.programa), "sin nada en src/ no se avisa nada")
+
+  mkdirSync(join(dir, "src"), { recursive: true })
+  const viejo = join(dir, "src", "main.cpp")
+  writeFileSync(viejo, "// programa de otro trabajo\nconst int PIN_TRIG = 18;\n")
+  // Mediodía en la hora de esta compu: el día que se informa es el local, el que ve el docente.
+  utimesSync(viejo, new Date(2026, 10, 24, 12, 0, 0), new Date(2026, 10, 24, 12, 0, 0))
+  for (const accion of ["generar", "compilar"]) {
+    const bun = bunFalso()
+    let r
+    try {
+      r = await programa(dir, { accion })
+    } finally {
+      bun.restaurar()
+    }
+    assert.equal(r.ok, true, accion)
+    assert.deepEqual(r.programa.deOtroTrabajo, [{ archivo: "src/main.cpp", modificado: "2026-11-24" }], accion)
+    assert.equal(r.programa.avisoDeOtroTrabajo, "En la carpeta de trabajo hay un programa de OTRO trabajo: `src/main.cpp` (modificado el 2026-11-24). No es el programa de este proyecto. No lo leas, no lo muestres como el programa y no mandes al docente a abrirlo.")
+    assert.doesNotMatch(JSON.stringify(r), /PIN_TRIG/, "del archivo ajeno se dice que está, no lo que tiene")
+  }
+  assert.equal(readFileSync(viejo, "utf8"), "// programa de otro trabajo\nconst int PIN_TRIG = 18;\n", "el archivo del docente no se toca")
+})
+
+test("programas de otro trabajo: sólo archivos de programa en src/, ordenados; carpetas, encabezados y otras cosas no cuentan", () => {
+  const dir = nuevoDir("codegen-s1b-ajenos")
+  assert.deepEqual(programasDeOtroTrabajo(dir), [], "sin carpeta src/ no hay nada (y no tira)")
+  // Una CARPETA con nombre de programa. (La primera versión usaba «main.cpp.d», que ni siquiera
+  // termina en .cpp: por mutación se vio que no probaba nada.)
+  mkdirSync(join(dir, "src", "carpeta.cpp"), { recursive: true })
+  mkdirSync(join(dir, "otra"), { recursive: true })
+  for (const nombre of ["sketch.ino", "main.cpp", "util.C", "notas.txt", "pines.h", "main.cpp.bak"]) writeFileSync(join(dir, "src", nombre), "x")
+  writeFileSync(join(dir, "otra", "main.cpp"), "x") // fuera de src/: no es donde PlatformIO pone el programa
+  writeFileSync(join(dir, "main.cpp"), "x")
+  assert.deepEqual(programasDeOtroTrabajo(dir).map((h) => h.archivo), ["src/main.cpp", "src/sketch.ino", "src/util.C"])
+  for (const h of programasDeOtroTrabajo(dir)) assert.match(h.modificado, /^\d{4}-\d{2}-\d{2}$/)
+  const dos = avisoDeOtroTrabajo([{ archivo: "src/a.ino", modificado: "2026-01-02" }, { archivo: "src/b.cpp", modificado: "2026-03-04" }])
+  assert.equal(dos, "En la carpeta de trabajo hay programas de OTRO trabajo: `src/a.ino` (modificado el 2026-01-02), `src/b.cpp` (modificado el 2026-03-04). No son el programa de este proyecto. No los leas, no los muestres como el programa y no mandes al docente a abrirlos.")
 })
 
 test("si la carpeta derivada cae DENTRO de la carpeta de trabajo (Tecnia Bot abierto en la carpeta personal), la salida lo dice", async () => {
@@ -325,7 +375,10 @@ test("el prompt manda a la ventana cuando piden el código, y prohíbe escribirl
   assert.match(REGLA, /no pegues código como reemplazo/)
   assert.match(REGLA, /o no la\s+quieren abrir/)
   assert.match(REGLA, /\*\*no mandes a abrir un archivo\*\*/)
-  assert.match(REGLA, /no hay ningún `src\/main\.cpp` del programa/)
+  assert.match(REGLA, /el\s+programa de este proyecto no está en la carpeta de trabajo/)
+  assert.match(REGLA, /Si ahí hay un\s+`src\/main\.cpp`, es de otro trabajo/)
+  assert.match(REGLA, /`programa\.avisoDeOtroTrabajo`/)
+  assert.doesNotMatch(REGLA, /no hay ningún `src\/main\.cpp`/, "esa afirmación era falsa en la notebook real")
   // Lo que ya no puede estar: la orden de mostrar el contenido y la mención de la carpeta.
   assert.doesNotMatch(REGLA, /mostrá el `contenido`/)
   assert.doesNotMatch(REGLA, /La carpeta que devuelve `programa`/)
@@ -333,6 +386,27 @@ test("el prompt manda a la ventana cuando piden el código, y prohíbe escribirl
   // Y la descripción de la tool dice lo mismo (es lo otro que lee el modelo).
   assert.match(FUENTE_TOOL, /EL CÓDIGO NO VIENE EN LA SALIDA y no lo mostrás vos/)
   assert.doesNotMatch(FUENTE_TOOL, /los deja en una carpeta derivada/)
+})
+
+// HISTORIA (notebook real, 2026-11-24). El docente preguntó «¿sabés lo que es para nosotros
+// programación por intuición?». El asistente buscó la palabra en sus archivos, no encontró nada y
+// le pidió al docente que se lo explicara; antes había dicho «acá vamos de lleno a C++, sin
+// intermediarios» y había confundido «bloques» con Educabot. El nombre no figuraba ni una vez en
+// sus 1.038 líneas de instrucciones, y tampoco que la Vista lógica son bloques.
+test("el prompt nombra la programación por intención, sus tres pasos y que la Vista lógica son bloques", () => {
+  const i = PROMPT.indexOf("## Programación por intención: así se llama lo que hacés acá")
+  assert.ok(i >= 0, "no está la sección")
+  const s = PROMPT.slice(i, PROMPT.indexOf("\n## ", i + 5))
+  assert.match(s, /\*\*programación por intención\*\*/)
+  assert.match(s, /\*\*Vista lógica\*\* muestra esa misma regla \*\*armada con bloques\*\*/)
+  assert.match(s, /sección\s+\*\*«Código»\*\*/)
+  assert.match(s, /intención → lógica\s+→ código/)
+  assert.match(s, /Nunca digas que acá "no\s+usamos bloques" ni que "vamos directo a C\+\+"/)
+  assert.match(s, /No lo busques en archivos ni le pidas al\s+docente que te lo explique/)
+  assert.match(s, /"programación por intuición", es\s+lo mismo/)
+  assert.match(s, /Educabot\*\* son otra cosa/)
+  assert.match(s, /\*\*decilo antes de seguir por otro camino\*\*/)
+  assert.ok(i < PROMPT.indexOf("## REGLA CRÍTICA — proyecto físico"), "va antes de la regla del proyecto físico")
 })
 
 test("routing: «mientras… encendé el LED; generá y compilá» → proyecto-fisico → programa (no código a mano)", () => {
