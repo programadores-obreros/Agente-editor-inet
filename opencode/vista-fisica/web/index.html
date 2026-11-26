@@ -134,8 +134,11 @@
   svg[data-cableado] .color-2 { color: #15803d; }
   svg[data-cableado] .color-3 { color: #7e22ce; }
   svg[data-cableado] .color-4 { color: #be185d; }
+  /* El color y el trazo de un cable de potencia salen de su ROL (`data-rol-potencia`, que manda el
+     servidor), nunca del nombre del pin. La tierra además va punteada: el color no es el único canal. */
   svg[data-cableado] .cable-potencia { color: #111827; }
-  svg[data-cableado] .cable-potencia .linea { stroke-dasharray: 8 4; }
+  svg[data-cableado] .cable-potencia[data-rol-potencia="alimentacion"] { color: #b91c1c; }
+  svg[data-cableado] .cable-potencia[data-rol-potencia="tierra"] .linea { stroke-dasharray: 8 4; }
   svg[data-cableado] .atenuado { opacity: .18; }
   svg[data-cableado] .resaltado .linea { stroke-width: 5; }
 </style>

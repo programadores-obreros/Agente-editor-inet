@@ -230,18 +230,21 @@ function opcionesDelSelector(ofrecidas, terminalVista) {
   return [...opciones, { valor: terminalVista.pinSemantico, etiqueta: `${terminalVista.pinSemantico} (${rotulo})` }]
 }
 
+// `rolPotencia` (2026-11-26): el rol del terminal de potencia al que llega el cable, TAL CUAL lo
+// mandó el servidor (`potencia.rol`); `null` en un extremo que no es de potencia. Acá sólo se pasa:
+// de él depende cómo se dibuja el cable (`cableado.js` lo escribe como `data-rol-potencia`).
 function extremoDibujable(extremo, placaId) {
   if (extremo.tipo === "pinPlaca") {
     if (extremo.nombreWokwi === null) return null
-    return { entidad: { tipo: "placa", id: placaId }, anclas: [extremo.nombreWokwi], etiqueta: `${extremo.pinSemantico} (${extremo.nombreWokwi})`, potencia: false }
+    return { entidad: { tipo: "placa", id: placaId }, anclas: [extremo.nombreWokwi], etiqueta: `${extremo.pinSemantico} (${extremo.nombreWokwi})`, potencia: false, rolPotencia: null }
   }
   if (extremo.tipo === "rielFijo") {
     if (!extremo.potencia || extremo.potencia.anclasWokwi.length === 0) return null
-    return { entidad: { tipo: "placa", id: placaId }, anclas: [...extremo.potencia.anclasWokwi], etiqueta: extremo.potencia.etiqueta, potencia: true }
+    return { entidad: { tipo: "placa", id: placaId }, anclas: [...extremo.potencia.anclasWokwi], etiqueta: extremo.potencia.etiqueta, potencia: true, rolPotencia: extremo.potencia.rol ?? null }
   }
   const anclas = extremo.anclasWokwi ?? (extremo.nombreWokwi ? [extremo.nombreWokwi] : [])
   if (anclas.length === 0) return null
-  return { entidad: { tipo: "componente", id: extremo.componente }, anclas: [...anclas], etiqueta: null, potencia: false }
+  return { entidad: { tipo: "componente", id: extremo.componente }, anclas: [...anclas], etiqueta: null, potencia: false, rolPotencia: null }
 }
 
 function etiquetaDeRol(rol) {

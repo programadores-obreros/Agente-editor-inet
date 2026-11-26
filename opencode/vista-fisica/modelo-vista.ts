@@ -150,9 +150,18 @@ export type ExtremoCableVista =
       /** Physical View UX #1: a qué terminal de potencia de la placa va ese riel, resuelto
        * por `ComponentKnowledge.resolverDestino` (D-05: físicamente conectable, nunca un
        * GPIO asignable), con su etiqueta pedagógica y los pines de la pieza Wokwi de la
-       * placa que lo representan. `null` si no hay placa o no resuelve. */
-      readonly potencia: { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[] } | null
+       * placa que lo representan. `null` si no hay placa o no resuelve.
+       *
+       * `rol` (2026-11-26) es el rol SEMÁNTICO de ese terminal de potencia, tal cual lo declara
+       * la placa en el núcleo (`nucleo/placas.ts::TerminalPotencia.rol`): `tierra` o
+       * `alimentacion`. Es lo que usa la ventana para dibujar el cable (alimentación en rojo,
+       * tierra en negro y punteado). El navegador NUNCA lo deduce del nombre del pin: «GND» o
+       * «3V3» son rótulos de una placa, no una regla. */
+      readonly potencia: { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[]; readonly rol: RolDePotencia } | null
     }
+
+/** Rol de un terminal de potencia de la placa (`nucleo/placas.ts::TerminalPotencia["rol"]`). */
+export type RolDePotencia = "tierra" | "alimentacion"
 
 export interface CableVista {
   readonly id: string

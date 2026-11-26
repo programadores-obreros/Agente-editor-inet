@@ -39,7 +39,7 @@ import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicac
 import { cuantitativasParaCrear, reconocerCondicionNumerica, ROTULO_COMPARADOR, COMPLEMENTO_COMPARADOR, cantidadEnTexto, ayudaDeRango, rangoEnTexto, simboloDe, formatearNumero, type CondicionNumerica } from "./condicion-numerica.ts"
 import { COMPARADORES } from "../nucleo/ir.ts"
 import type { CapacidadCuantitativa } from "../conocimiento/cuantitativo.ts"
-import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista, OpcionSlotVista } from "./modelo-vista.ts"
+import type { ModeloDeVista, ComponenteVista, TerminalVista, CableVista, ExtremoCableVista, OpcionGpioVista, PlacaVista, MotivoVista, ReglaVista, ZonaVista, FraseReglaVista, OpcionEstadoVista, OpcionSalidaVista, TrazaReglaVista, ReferenciaVista, OpcionesReglaVista, SlotFraseVista, OpcionSlotVista, RolDePotencia } from "./modelo-vista.ts"
 
 /**
  * Candidatos de GPIO para UN terminal de UN tipo de componente.
@@ -411,12 +411,16 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo, conocimie
   // fusionada pertenece al camino del componente que la requiere.
   const anclaDeResistencia = new Map([...fusionesSerie.values()].map((f) => [f.resistenciaId, f.componenteId] as const))
   const caminoDe = (componenteId: string): string => anclaDeResistencia.get(componenteId) ?? componenteId
-  function potenciaDe(componente: Componente, terminalId: string): { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[] } | null {
+  // El rol (tierra / alimentación) es el que la PLACA declara para ese terminal de potencia en el
+  // núcleo, leído por Component Knowledge: acá no hay tabla propia ni se mira el nombre del pin.
+  function potenciaDe(componente: Componente, terminalId: string): { readonly id: string; readonly etiqueta: string; readonly anclasWokwi: readonly string[]; readonly rol: RolDePotencia } | null {
     const terminal = catalogo.obtenerComponente(componente.tipo)?.terminales.find((t) => t.id === terminalId)
     if (placaId === null || !terminal) return null
     const destino = conocimiento.resolverDestino(placaId, terminal)
     if (destino.kind !== "potencia") return null
-    return { id: destino.id, etiqueta: ETIQUETA_DE_TERMINAL_DE_POTENCIA[destino.id] ?? destino.id, anclasWokwi: POTENCIA_WOKWI_POR_PLACA[placaId]?.[destino.id] ?? [] }
+    const declarado = conocimiento.terminalesDePotencia(placaId).find((t) => t.id === destino.id)
+    if (!declarado) return null // `resolverDestino` ya lo garantiza; sin rol declarado no se inventa uno
+    return { id: destino.id, etiqueta: ETIQUETA_DE_TERMINAL_DE_POTENCIA[destino.id] ?? destino.id, anclasWokwi: POTENCIA_WOKWI_POR_PLACA[placaId]?.[destino.id] ?? [], rol: declarado.rol }
   }
   const cables: CableVista[] = []
   const conexionesFusionadasEmitidas = new Set<string>()
