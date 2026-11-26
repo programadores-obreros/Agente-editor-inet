@@ -263,6 +263,12 @@ if (process.platform === "win32") {
       for (const [nombre, estado] of Object.entries(r.estadoAssets)) {
         assert.equal(estado, 200, `GET /assets/${nombre} no dio 200`)
       }
+      // 2026-11-26: la hoja de estilos compartida llega instalada y el servidor INSTALADO la sirve
+      // como hoja (con `nosniff`, un tipo de contenido de JavaScript haría que el navegador la
+      // descarte). Se pide por nombre para que la prueba no pase si alguien la saca de la lista.
+      assert.equal(r.estadoAssets["sistema.css"], 200, "el servidor instalado no sirve la hoja de estilos compartida")
+      assert.equal(r.tipoAssets["sistema.css"], "text/css; charset=utf-8")
+      assert.match(r.tipoAssets["app.js"], /^text\/javascript/)
       assert.ok(r.tieneVistaAntes, "el snapshot servido no trae 'vista'")
       assert.equal(r.postOk, true, "el POST AsignarPin no fue aceptado")
       assert.equal(r.revisionDespuesPost, r.revisionAntes + 1, "la revisión no subió +1 tras AsignarPin")

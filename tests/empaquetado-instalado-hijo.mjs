@@ -101,11 +101,16 @@ async function modoServidorHappy() {
     const estadoIndex = rIndex.status
     await rIndex.arrayBuffer()
 
-    const ASSETS = ["wokwi-bundle.js", "componentes-extra.js", "blockly_compressed.js", "blockly-es.js", "blockly/media/sprites.svg", "app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js", "ruteo.js", "cableado.js"]
+    // 2026-11-26: se sumó `sistema.css`, la hoja de estilos compartida que la ventana carga como
+    // archivo servido. Vive en `tecniabot-web/diseno/`, una carpeta que el servidor de la vista
+    // no había leído nunca: si el instalador no la llevara, el servidor no arrancaría.
+    const ASSETS = ["wokwi-bundle.js", "componentes-extra.js", "blockly_compressed.js", "blockly-es.js", "blockly/media/sprites.svg", "app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js", "ruteo.js", "cableado.js", "sistema.css"]
     const estadoAssets = {}
+    const tipoAssets = {}
     for (const nombre of ASSETS) {
       const r = await fetch(new URL(`/assets/${nombre}`, servidor.url))
       estadoAssets[nombre] = r.status
+      tipoAssets[nombre] = r.headers.get("content-type")
       await r.arrayBuffer()
     }
 
@@ -153,6 +158,7 @@ async function modoServidorHappy() {
         ok: true,
         estadoIndex,
         estadoAssets,
+        tipoAssets,
         tieneVistaAntes,
         postOk: cuerpoPost.resultado.ok,
         revisionAntes: n,
