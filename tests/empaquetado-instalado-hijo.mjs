@@ -40,7 +40,7 @@
 //     — con codegen/ fuera de la instalación (lo mueve el test): todas las tools siguen
 //       importando y `programa` contesta con un error explícito (nunca un C++ de otro lado).
 
-import { readdirSync } from "node:fs"
+import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -203,8 +203,13 @@ async function modoCandadoHijo() {
 
 async function modoProgramaInstalado() {
   const [projectDir] = resto
+  // La carpeta derivada va a la caché del usuario: acá, a una carpeta de esta prueba (hermana del
+  // proyecto, o sea FUERA de él), nunca a la caché real de quien corre la suite.
+  process.env.XDG_CACHE_HOME = join(projectDir, "..", "cache-de-usuario")
+  process.env.LOCALAPPDATA = process.env.XDG_CACHE_HOME
   const fisico = (await import(urlDe(join(configDir, "tool", "proyecto-fisico.ts")))).default
-  const programa = (await import(urlDe(join(configDir, "tool", "programa.ts")))).default
+  const moduloPrograma = await import(urlDe(join(configDir, "tool", "programa.ts")))
+  const programa = moduloPrograma.default
   const ctx = { directory: projectDir }
   const operaciones = [
     { tipo: "SetPlaca", payload: { placa: "esp32-devkit-v1" } },
@@ -221,7 +226,9 @@ async function modoProgramaInstalado() {
   ]
   const aplicado = JSON.parse(await fisico.execute({ accion: "aplicar", baseRevision: 0, operaciones }, ctx))
   const generado = JSON.parse(await programa.execute({ accion: "generar" }, ctx))
-  console.log(JSON.stringify({ aplicado: aplicado.ok, generado }))
+  const carpeta = moduloPrograma.carpetaDelPrograma(projectDir, "activo")
+  const enDisco = Object.fromEntries(["platformio.ini", "src/main.cpp"].map((ruta) => [ruta, readFileSync(join(carpeta, ruta), "utf8")]))
+  console.log(JSON.stringify({ aplicado: aplicado.ok, generado, enDisco, fueraDelProyecto: !moduloPrograma.programaALaVistaDelAgente(projectDir, carpeta) }))
 }
 
 async function modoProgramaSinCodegen() {

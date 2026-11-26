@@ -242,6 +242,7 @@ test("servidor: una respuesta que no se puede serializar contesta 500 en vez de 
   await conServidor(proyectoDelCaso(), { programaDe: () => ciclico }, async (servidor) => {
     const r = await conLimite(pedir(servidor, "/api/programa"))
     assert.equal(r.estado, 500)
+    assert.equal(r.texto, "Error interno", "el detalle de la falla no viaja")
     assert.equal((await conLimite(pedir(servidor, "/api/proyecto"))).estado, 200, "y sigue atendiendo")
   })
 })
@@ -252,8 +253,26 @@ test("servidor: si leer el proyecto tira (servicio cerrado), contesta 500 en las
   try {
     servicio.cerrar()
     assert.throws(() => servicio.snapshot(), "el caso: snapshot() tira con el servicio cerrado")
-    assert.equal((await conLimite(pedir(servidor, "/api/programa"))).estado, 500)
-    assert.equal((await conLimite(pedir(servidor, "/api/proyecto"))).estado, 500)
+    for (const ruta of ["/api/programa", "/api/proyecto"]) {
+      const r = await conLimite(pedir(servidor, ruta))
+      assert.equal(r.estado, 500, ruta)
+      assert.equal(r.texto, "Error interno", `${ruta}: el detalle de la falla no viaja`)
+    }
+    // La otra rama de la red: en el flujo de eventos las cabeceras YA salieron cuando el servicio
+    // tira, así que no se puede contestar 500. La conexión se tiene que CORTAR (antes quedaba
+    // abierta para siempre) y el servidor seguir atendiendo.
+    const eventos = await conLimite(new Promise((resolver) => {
+      const url = new URL("/api/eventos", servidor.url)
+      const req = http.request({ hostname: url.hostname, port: url.port, path: url.pathname, method: "GET" }, (res) => {
+        res.on("data", () => {})
+        res.on("close", () => resolver({ estado: res.statusCode, cerrada: true }))
+        res.on("error", () => {})
+      })
+      req.on("error", () => resolver({ estado: null, cerrada: true }))
+      req.end()
+    }))
+    assert.equal(eventos.cerrada, true, "el flujo de eventos no queda colgado")
+    assert.equal((await conLimite(pedir(servidor, "/"))).estado, 200, "y el servidor sigue atendiendo")
   } finally {
     await servidor.cerrar()
   }
@@ -506,28 +525,68 @@ test("app.js: el panel se crea, con elementos que EXISTEN en la página, y recib
   assert.match(creacion[1], /elementoAviso: document\.getElementById\("vista-codigo-aviso"\)/)
   // Todo id que app.js busca tiene que existir en la página (vale para todas las secciones).
   for (const [, id] of app.matchAll(/getElementById\("([^"]+)"\)/g)) assert.match(html, new RegExp(`id="${id}"`), `app.js busca #${id} y index.html no lo tiene`)
-  assert.match(app, /panelCodigo\?\.actualizar\(ultimoSnapshot, \{ conectado: estadoConexion === "conectado" \}\)/)
 })
 
-// El defecto más serio que encontró la revisión: el panel se actualizaba en la ÚLTIMA línea de
-// `repintar()`. La cabecera ya decía "revisión N+1" y, si algo cortaba en el medio (el `return`
+// El defecto más serio que encontró la primera revisión: el panel se actualizaba en la ÚLTIMA línea
+// de `repintar()`. La cabecera ya decía "revisión N+1" y, si algo cortaba en el medio (el `return`
 // de un snapshot sin vista, o un pintado que tira), quedaba a la vista el programa de la N.
-test("app.js: el panel de código se actualiza pegado a la cabecera, ANTES de todo lo que puede cortar el repintado", () => {
+//
+// La primera prueba de ese arreglo comparaba POSICIONES en el texto de la fuente. La segunda
+// revisión mostró que dejaba pasar un `if (false)` delante de la llamada, o un `return` escrito de
+// otra forma. Ahora la cabecera y el panel viven en `repintarCabecera`, que se prueba ejecutándola.
+const { repintarCabecera } = await import(join(REPO, "opencode/vista-fisica/web/app.js"))
+const LISTO = { listo: true, invalido: false }
+function cabecera(panelCodigo) {
+  const el = { revision: { textContent: "" }, readiness: { textContent: "" } }
+  const pintar = (snapshot, conectado = true) => repintarCabecera({ snapshot, elementoRevision: el.revision, elementoReadiness: el.readiness, panelCodigo, conectado })
+  return { el, pintar }
+}
+
+test("cabecera: escribe la revisión y, en la misma pasada, le avisa al panel de código con ESE snapshot", () => {
+  const llamadas = []
+  const c = cabecera({ actualizar: (snapshot, opciones) => llamadas.push({ snapshot, opciones }) })
+  const snapshot = { revision: 14, vista: { readiness: LISTO } }
+  c.pintar(snapshot, false)
+  assert.equal(c.el.revision.textContent, "revisión: 14")
+  assert.equal(c.el.readiness.textContent, "listo")
+  assert.equal(llamadas.length, 1)
+  assert.equal(llamadas[0].snapshot, snapshot)
+  assert.deepEqual(llamadas[0].opciones, { conectado: false })
+})
+
+test("cabecera: un snapshot SIN vista también actualiza el panel (era el camino que dejaba el programa viejo)", () => {
+  const revisiones = []
+  const c = cabecera({ actualizar: (snapshot) => revisiones.push(snapshot.revision) })
+  c.pintar({ revision: 15, validacion: { readiness: { listo: false, invalido: false } } })
+  assert.equal(c.el.revision.textContent, "revisión: 15")
+  assert.equal(c.el.readiness.textContent, "incompleto")
+  assert.deepEqual(revisiones, [15])
+})
+
+test("cabecera: si el panel de código tira, no corta el repintado (ni la cabecera)", () => {
+  const c = cabecera({ actualizar: () => { throw new TypeError("Cannot set properties of null") } })
+  assert.doesNotThrow(() => c.pintar({ revision: 16, vista: { readiness: { listo: false, invalido: true } } }))
+  assert.equal(c.el.revision.textContent, "revisión: 16")
+  assert.equal(c.el.readiness.textContent, "inválido")
+  assert.doesNotThrow(() => cabecera(null).pintar({ revision: 1, vista: { readiness: LISTO } }), "sin panel (página sin la sección) tampoco rompe")
+})
+
+// Esto SÍ es una comprobación sobre el texto, y sólo dice lo que dice: que `repintar()` empieza
+// por la cabecera, sin nada en el medio que pueda saltearla. No reemplaza a las tres de arriba.
+test("app.js: repintar() empieza, sin nada antes, por repintarCabecera con el snapshot y el panel de la página", () => {
   const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
   const cuerpo = /\nfunction repintar\(\) \{\n([\s\S]*?)\n\}\n/.exec(app)[1]
-  const en = (texto) => { const i = cuerpo.indexOf(texto); assert.ok(i >= 0, `repintar() no tiene: ${texto}`); return i }
-  const panel = en("panelCodigo?.actualizar(")
-  assert.ok(en("elementoRevision.textContent =") < panel, "después de escribir la revisión")
-  assert.ok(panel < en("if (!ultimoSnapshot.vista) return"), "antes del return de un snapshot sin vista")
-  assert.ok(panel < en("planDePintado("), "antes del plan de pintado")
-  assert.ok(panel < en("pintar(document"), "antes de pintar")
-  assert.ok(panel < en("panelVistaLogica?.repintar("), "antes de los bloques, que pueden tirar")
-  assert.equal(cuerpo.split("panelCodigo?.actualizar(").length, 2, "una sola vez")
+  const esperado = [
+    "  if (!ultimoSnapshot) return",
+    '  repintarCabecera({ snapshot: ultimoSnapshot, elementoRevision, elementoReadiness, panelCodigo, conectado: estadoConexion === "conectado" })',
+  ]
+  assert.deepEqual(cuerpo.split("\n").slice(0, 2), esperado)
+  assert.equal(app.split("panelCodigo?.actualizar(").length, 2, "el panel se actualiza en un solo lugar: la cabecera")
 })
 
 test("app.js: el panel nunca arma ni transforma el programa", () => {
   const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
-  assert.match(app, /panelCodigo\?\.actualizar\(ultimoSnapshot,/)
+  assert.match(app, /panelCodigo\?\.actualizar\(snapshot, \{ conectado \}\)/)
   const panel = readFileSync(join(REPO, "opencode/vista-fisica/web/vista-codigo.js"), "utf8")
   assert.match(panel, /elementoCodigo\.textContent = programa\.codigo\n/, "el código se pone entero y sin transformar")
   assert.doesNotMatch(panel, /innerHTML|\.slice\(|\.substring\(|\.replace\(/, "ni HTML ni recortes sobre el programa")

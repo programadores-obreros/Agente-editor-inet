@@ -324,9 +324,16 @@ if (process.platform === "win32") {
       assert.equal(rp.generado.ok, true, `programa instalado no generó: ${JSON.stringify(rp.generado)}`)
       assert.equal(rp.generado.etapa, "generacion")
       assert.equal(rp.generado.environment, "esp32-devkit-v1")
-      assert.equal(rp.generado.carpeta, ".tecnia-vista-fisica/programa/activo")
-      assert.match(rp.generado.archivos["src/main.cpp"].contenido, /pinMode\(PIN_CMP_0_SENAL, INPUT_PULLUP\);/)
-      assert.match(rp.generado.archivos["platformio.ini"].contenido, /^\[env:esp32-devkit-v1\]$/m)
+      // Desde el 2026-11-26 la tool no devuelve el código ni la carpeta (el asistente lo reescribía
+      // en el chat): devuelve la huella de cada archivo, las reglas en palabras y dónde verlo.
+      // Que el programa instalado es el bueno se comprueba en el DISCO, que el hijo informa aparte.
+      assert.ok(!("carpeta" in rp.generado), "la tool instalada no dice dónde quedó el programa")
+      assert.doesNotMatch(JSON.stringify(rp.generado), /pinMode|#include|\[env:/, "ni devuelve el código")
+      assert.match(rp.generado.archivos["src/main.cpp"].sha256, /^[0-9a-f]{64}$/)
+      assert.match(rp.generado.programa.dondeVerlo, /sección «Código»/)
+      assert.equal(rp.fueraDelProyecto, true, "la carpeta derivada quedó fuera de la carpeta de trabajo")
+      assert.match(rp.enDisco["src/main.cpp"], /pinMode\(PIN_CMP_0_SENAL, INPUT_PULLUP\);/)
+      assert.match(rp.enDisco["platformio.ini"], /^\[env:esp32-devkit-v1\]$/m)
 
       // Sin codegen/ en la instalación: ninguna tool deja de importar (import perezoso) y
       // programa contesta con un error explícito — nunca un C++ de otro lado.

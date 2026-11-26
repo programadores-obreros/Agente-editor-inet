@@ -7,6 +7,17 @@
 //   IR (el mismo servicio y candado que `proyecto-fisico`) → generarPrograma → archivos
 //   derivados en una carpeta descartable → (compilar) el runner de PlatformIO existente.
 //
+// EL CÓDIGO NO LE LLEGA AL MODELO (2026-11-26). Antes `generar` devolvía el texto del programa y
+// las dos acciones devolvían la carpeta donde quedaba. En la notebook real el asistente leyó ese
+// archivo y lo REESCRIBIÓ en el chat con una regla menos, diciendo que era el generado; la regla
+// «mostralo tal cual» ya estaba en sus instrucciones. Ahora:
+//   - la salida no trae el C++ ni ninguna ruta: trae las reglas en palabras, cuántas líneas son y
+//     dónde se ve (la sección «Código» de la ventana, que lo pinta el servidor);
+//   - la carpeta derivada vive FUERA de la carpeta de trabajo, en una carpeta del usuario. Medido
+//     en OpenCode 1.18.18: con los permisos del agente (`"*": "deny"`), `read`, `grep` y `glob`
+//     quedan bloqueados fuera de la carpeta de trabajo; adentro, `read` y `grep` devuelven el
+//     archivo aunque se le niegue `read` por patrón.
+//
 // No es un segundo generador: no hay acá readiness, admisión, derivaciones, pines ni render.
 // No recibe código, comandos, rutas ni flags del agente: sólo la acción y, opcional, el id del
 // proyecto (validado). El environment sale del proyecto vía el codegen. `compilar` regenera
@@ -27,8 +38,8 @@
 import { tool } from "@opencode-ai/plugin"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
-import { dirname, join, relative } from "node:path"
-import { cargarProgramaGenerado, porQueNoSePuedeCargar, type ContextoDeCarga, type HerramientasDeCarga, type OpcionesDeCarga, type ResultadoDeCarga } from "../carga/cargar-programa.ts"
+import { dirname, join, relative, resolve, sep } from "node:path"
+import { baseDeCargas, cargarProgramaGenerado, porQueNoSePuedeCargar, type ContextoDeCarga, type HerramientasDeCarga, type OpcionesDeCarga, type ResultadoDeCarga } from "../carga/cargar-programa.ts"
 import type { ServicioDeProyecto, Snapshot } from "../nucleo/composicion-raiz.ts"
 import { directorioDeDatos, ID_PROYECTO_DEFAULT, validarIdProyecto } from "../vista-fisica/ubicacion-proyecto.ts"
 import {
@@ -48,6 +59,9 @@ import {
 
 // Import perezoso (criterio D13, igual que `proyecto-fisico.ts`): si falta una carpeta de la
 // instalación, sólo esta tool se entera, y recién cuando se usa.
+/** `Snapshot` no declara `vista` en su tipo; el servicio con vista la trae. De ahí sólo se usan las frases. */
+type SnapshotConReglas = Snapshot & { readonly vista?: { readonly reglas?: readonly { readonly texto?: string | null }[] } }
+
 type ModuloServicioConVista = typeof import("../servidor/servicio-con-vista.ts")
 type ModuloConocimientoActivo = typeof import("../conocimiento/conocimiento-activo.ts")
 type ModuloCodegen = typeof import("../codegen/programa.ts")
@@ -75,12 +89,45 @@ async function cargarDependencias(): Promise<DependenciasPrograma> {
   }
 }
 
-/** Carpeta derivada del programa de un proyecto: junto a los datos del proyecto, descartable. */
-export function carpetaDelPrograma(directorioActivo: string, idProyecto: string): string {
+const sha256 = (texto: string) => createHash("sha256").update(texto).digest("hex")
+
+/**
+ * Carpeta derivada del programa de un proyecto. Descartable: se pisa en cada llamada.
+ *
+ * Vive FUERA de la carpeta de trabajo, en la misma base del usuario que usa `cargar` para sus
+ * carpetas privadas (`~/.cache/tecnia-bot` o `%LOCALAPPDATA%\TecniaBot`), en `programas/<clave>/<id>`.
+ * La clave sale de la carpeta de trabajo: dos proyectos en carpetas distintas no se pisan, y el
+ * mismo proyecto vuelve siempre a la misma carpeta (así PlatformIO reusa su caché `.pio`).
+ *
+ * Por qué afuera: es lo único que impide que el asistente lea el programa y lo reescriba en el
+ * chat (ver el encabezado). Si alguien abre Tecnia Bot en su carpeta personal, esta carpeta queda
+ * ADENTRO de la carpeta de trabajo y esa barrera no vale: `programaALaVistaDelAgente` lo detecta
+ * y la salida lo dice, en vez de darlo por protegido.
+ */
+export function carpetaDelPrograma(directorioActivo: string, idProyecto: string, entorno: NodeJS.ProcessEnv = process.env): string {
+  const { base, tramos } = baseDeCargas(entorno)
+  const propia = resolve(directorioActivo)
+  // En Windows las rutas no distinguen mayúsculas: la misma carpeta escrita distinto es la misma clave.
+  const clave = sha256(sep === "\\" ? propia.toLowerCase() : propia).slice(0, 16)
+  return join(base, tramos[0]!, "programas", clave, idProyecto)
+}
+
+/** Donde estaba la carpeta derivada antes del 2026-11-26: dentro de la carpeta de trabajo. */
+export function carpetaViejaDelPrograma(directorioActivo: string, idProyecto: string): string {
   return join(directorioDeDatos(directorioActivo), "programa", idProyecto)
 }
 
-const sha256 = (texto: string) => createHash("sha256").update(texto).digest("hex")
+/** ¿La carpeta derivada cae dentro de la carpeta de trabajo (y entonces el agente la puede leer)? */
+export function programaALaVistaDelAgente(directorioActivo: string, carpeta: string): boolean {
+  const rel = relative(resolve(directorioActivo), resolve(carpeta))
+  return rel === "" || (!rel.startsWith("..") && !/^([A-Za-z]:)?[\\/]/.test(rel))
+}
+
+/** Dónde se ve el programa. Es lo ÚNICO que la tool dice sobre el código. */
+export const DONDE_VERLO = "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat."
+
+const cuantas = (n: number, uno: string, varias: string) => (n === 1 ? `1 ${uno}` : `${n} ${varias}`)
+const lineasDe = (texto: string) => (texto === "" ? 0 : texto.replace(/\n$/, "").split("\n").length)
 
 /** Vacía `carpeta` salvo la caché `.pio` de PlatformIO. */
 function vaciar(carpeta: string): void {
@@ -174,7 +221,10 @@ export async function ejecutarPrograma(
     // ── Generación: desde la IR canónica de ESTA revisión. ──
     const snapshot: Snapshot = servicio.snapshot()
     const revision = snapshot.revision
-    const carpetaAbsoluta = carpetaDelPrograma(ctx.directory, idProyecto)
+    const carpetaAbsoluta = carpetaDelPrograma(ctx.directory, idProyecto, opciones.entorno)
+    // El programa que una versión anterior dejó DENTRO de la carpeta de trabajo se borra: si
+    // quedara, el asistente podría leer ese (viejo) creyendo que es el actual. `cargar` no lo toca.
+    if (args.accion !== "cargar") rmSync(carpetaViejaDelPrograma(ctx.directory, idProyecto), { recursive: true, force: true })
     if (args.accion === "cargar") {
       // Paso 3: con un motivo bloqueante no se graba (el generador también lo rechazaría; esto no depende de él).
       const bloqueantes = snapshot.validacion.motivos.filter((m) => m.severidad === "blocking")
@@ -212,9 +262,24 @@ export async function ejecutarPrograma(
     }
 
     materializar(carpetaAbsoluta, archivosGenerados)
-    const carpeta = relative(ctx.directory, carpetaAbsoluta).split("\\").join("/")
-    const archivos = Object.fromEntries(Object.entries(archivosGenerados).map(([ruta, contenido]) => [ruta, { sha256: sha256(contenido), contenido }]))
-    const base = { idProyecto, revision, environment: generado.environment, carpeta, advertencias: generado.advertencias }
+    // Lo que se le cuenta al modelo: de cada archivo, su huella y su tamaño; del programa, sus
+    // reglas EN PALABRAS (las mismas frases que muestra la ventana) y dónde se ve. Nunca el texto
+    // del programa ni la ruta de la carpeta.
+    const archivos = Object.fromEntries(Object.entries(archivosGenerados).map(([ruta, contenido]) => [ruta, { sha256: sha256(contenido), lineas: lineasDe(contenido) }]))
+    // Un proyecto que se pudo generar tiene todas sus reglas completas, así que todas traen su
+    // frase (había acá un reemplazo para "regla incompleta": por mutación se vio que no se puede
+    // alcanzar, y se sacó).
+    const reglas = ((snapshot as SnapshotConReglas).vista?.reglas ?? []).map((r) => r.texto)
+    const lineas = lineasDe(archivosGenerados["src/main.cpp"] ?? "")
+    const programa = {
+      reglas,
+      lineas,
+      resumen: `El programa de la revisión ${revision} tiene ${cuantas(reglas.length, "regla", "reglas")} y ${cuantas(lineas, "línea", "líneas")}.`,
+      dondeVerlo: DONDE_VERLO,
+      // Sólo si la barrera no vale (Tecnia Bot abierto en la carpeta personal): se dice, no se calla.
+      ...(programaALaVistaDelAgente(ctx.directory, carpetaAbsoluta) ? { aviso: "La carpeta del programa quedó dentro de la carpeta de trabajo. No la leas: el código se mira en la ventana." } : {}),
+    }
+    const base = { idProyecto, revision, environment: generado.environment, advertencias: generado.advertencias, programa }
 
     if (args.accion === "generar") {
       return json({ resultado: `PROGRAMA GENERADO — revisión ${revision} (no se compiló)`, etapa: "generacion", ok: true, ...base, archivos })
@@ -264,9 +329,11 @@ export default tool({
   description: `Genera, compila y carga el PROGRAMA del proyecto físico actual (el de \`proyecto-fisico\`). El C++ no lo escribís vos: lo deriva el backend determinista desde el proyecto (componentes, pines y reglas), y esta tool lo entrega a PlatformIO tal cual.
 
 Tres \`accion\`:
-- \`generar\`: arma \`platformio.ini\` y \`src/main.cpp\` desde la revisión actual del proyecto y los deja en una carpeta derivada. No compila.
+- \`generar\`: arma \`platformio.ini\` y \`src/main.cpp\` desde la revisión actual del proyecto. No compila.
 - \`compilar\`: vuelve a generar desde la revisión actual y compila EXACTAMENTE esos archivos con PlatformIO (environment derivado de la placa del proyecto).
 - \`cargar\`: vuelve a generar desde la revisión actual y lo compila y graba en la placa conectada, en un solo paso. Sólo con el agente Tecnia Bot. Frena si un pin deja la placa sin arrancar. Muestra SIEMPRE un cartel de OpenCode que contesta el docente (botones en inglés: Allow once si ya revisó el circuito, Reject si todavía no): antes de llamarla, repasá con él el checklist de seguridad y avisale del cartel. Si contesta Reject, no reintentes hasta que te lo pida. Sólo decí que quedó cargado si \`resultado\` empieza con \`CARGADO\`; \`CARGA_SIN_VERIFICAR\` NO es "cargado".
+
+EL CÓDIGO NO VIENE EN LA SALIDA y no lo mostrás vos: \`programa.reglas\` trae las reglas en palabras, \`programa.resumen\` cuántas son y cuántas líneas tiene, y \`programa.dondeVerlo\` dónde se ve (la sección «Código» de la ventana de \`vista-fisica\`). Cuando pidan ver el código: contá eso y abrí la ventana. Nunca escribas, copies ni resumas código del programa en el chat.
 
 Toda salida empieza con \`resultado\` y trae \`etapa\` (generacion | compilacion | carga), \`ok\` y la \`revision\` del proyecto usada. Si la generación falla, \`codigo\` es un \`CODEGEN_*\` con sus \`datos\`: explicalo, pedí la corrección del proyecto o decí que ese caso todavía no está soportado. NUNCA escribas el programa a mano como alternativa ni edites los archivos generados (se pisan en cada llamada). Después de cambiar el proyecto, volvé a generar/compilar: el programa corresponde a una revisión.`,
   args: {
