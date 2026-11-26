@@ -423,6 +423,12 @@ if (enNavegador) {
     controles: document.getElementById("controles"),
     reglas: document.getElementById("reglas"),
     motivos: document.getElementById("motivos"),
+    // 2026-11-26: la leyenda de cables y el resumen de arriba (raíces nuevas de `pintar.js`).
+    leyenda: document.getElementById("leyenda-cables"),
+    resumen: document.getElementById("resumen-reglas"),
+    resumenEstado: document.getElementById("resumen-estado"),
+    resumenAvisos: document.getElementById("resumen-avisos"),
+    contadorAvisos: document.getElementById("contador-avisos"),
   }
   elementoRevision = document.getElementById("revision")
   elementoReadiness = document.getElementById("readiness")
@@ -543,13 +549,21 @@ function restaurarFoco(raizControles, focoAnterior) {
  */
 export function repintarCabecera({ snapshot, elementoRevision, elementoReadiness, panelCodigo, conectado }) {
   elementoRevision.textContent = `revisión: ${snapshot.revision}`
-  const readiness = snapshot.vista ? snapshot.vista.readiness : snapshot.validacion.readiness
-  elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
+  // El panel de código va ACÁ, antes de cualquier otra cosa que pueda cortar o tirar.
   try {
     void panelCodigo?.actualizar(snapshot, { conectado })
   } catch {
     /* la sección «Código» falló: el resto de la página se pinta igual */
   }
+  // El estado del proyecto (2026-11-26): el servidor lo manda ya decidido y en palabras
+  // (`vista.resumen.estado`). Acá sólo se copia el texto y se deja la clave como dato para el
+  // color. Antes este mismo lugar elegía entre «listo», «inválido» e «incompleto» con un `if`.
+  // Sin resumen (un snapshot sin vista: no debería pasar en producción) no hay estado que
+  // afirmar: se deja la raya, nunca el estado de un snapshot anterior.
+  const estado = snapshot.vista?.resumen?.estado ?? null
+  elementoReadiness.textContent = estado ? estado.texto : "—"
+  if (estado) elementoReadiness.setAttribute("data-readiness", estado.clave)
+  else elementoReadiness.removeAttribute("data-readiness")
 }
 
 function repintar() {

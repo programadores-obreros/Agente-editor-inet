@@ -23,6 +23,17 @@
 //   - compartir el objeto de textos entre proyecciones                    → «cada proyección trae sus propios textos»
 //   - borrar la etiqueta de una severidad                                 → «toda severidad tiene etiqueta»
 //
+// Y DEL LADO DEL NAVEGADOR (plan puro + pintor tonto), con un documento falso:
+//   - el plan elige el estado él mismo (p. ej. siempre «listo»)           → «el plan copia el resumen…»
+//   - el pintor no marca `data-sin-terminar`                              → «el pintor arma el resumen…»
+//   - el pintor no oculta el contador en cero                             → «el contador de avisos…»
+//   - sacar la etiqueta de severidad del pintor (o dejarla como atributo) → «cada aviso lleva su severidad como TEXTO»
+//   - el plan toma la etiqueta de una tabla propia                        → «cada aviso lleva su severidad como TEXTO»
+//   - no emitir `sinAvisos`                                               → «sin avisos, la sección lo dice»
+//   - emitir `sinAvisos` aunque haya avisos                               → «sin avisos, la sección lo dice»
+//   - la muestra de la leyenda sin `data-rol-cable`                       → «la leyenda se pinta con el rol…»
+//   - sacar una raíz nueva de las que monta `app.js`                      → «app.js monta todas las raíces…»
+//
 // Corre con: node --test tests/ventana-resumen.test.mjs
 
 import { test } from "node:test"
@@ -36,6 +47,8 @@ const { CONOCIMIENTO_ACTIVO } = await import(join(REPO, "opencode/conocimiento/c
 const { ejecutarOperacion } = await import(join(REPO, "opencode/nucleo/operaciones.ts"))
 const { crearProyecto } = await import(join(REPO, "opencode/nucleo/cargador.ts"))
 const { TEXTOS_DE_LA_VENTANA, textoDeCantidadDeAvisos, textoDeLeyendaDePotencia } = await import(join(REPO, "opencode/conocimiento/anexos/pedagogia-es-AR.ts"))
+const { planDePintado } = await import(join(REPO, "opencode/vista-fisica/web/plan-de-pintado.js"))
+const { pintar, ANCLA_DE_AVISOS } = await import(join(REPO, "opencode/vista-fisica/web/pintar.js"))
 
 const catalogo = CONOCIMIENTO_ACTIVO.catalogo
 
@@ -184,4 +197,144 @@ test("cada proyección trae sus propios textos: mutar una no toca la siguiente",
 test("el resumen y los textos son datos planos: sobreviven a viajar por JSON tal cual", () => {
   const vista = vistaDe([...PULSADOR_Y_LED, REGLA_COMPLETA])
   for (const clave of ["resumen", "textos", "leyenda"]) assert.deepEqual(JSON.parse(JSON.stringify(vista[clave])), vista[clave], clave)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// El navegador: el plan copia y el pintor escribe. Ninguno decide.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+function documentoFake() {
+  const crear = (tag) => ({
+    tagName: tag,
+    atributos: {},
+    hijos: [],
+    textContent: "",
+    setAttribute(k, v) {
+      this.atributos[k] = String(v)
+    },
+    appendChild(h) {
+      this.hijos.push(h)
+      return h
+    },
+  })
+  return { createElement: crear }
+}
+const todos = (nodo) => [nodo, ...(nodo.hijos ?? []).flatMap(todos)]
+/** El texto que se LEE de un nodo: el suyo y el de sus hijos, como `textContent` en un DOM real. */
+const textoDe = (nodo) => (nodo.hijos.length > 0 ? nodo.hijos.map(textoDe).join(" ") : nodo.textContent)
+const pintarVista = (vista) => pintar(documentoFake(), planDePintado(vista))
+
+const CON_AVISOS = [["AgregarComponente", { tipo: "pulsador" }], ["AgregarComponente", { tipo: "led" }], ["AsignarPin", { componente: "cmp-0", terminal: "senal", pin: "GPIO2" }], REGLA_A_MEDIAS]
+
+test("el plan copia el resumen del servidor tal cual: no elige el estado, no redacta, no cuenta", () => {
+  const vista = vistaDe([...PULSADOR_Y_LED, REGLA_COMPLETA, REGLA_A_MEDIAS])
+  const instrucciones = planDePintado(vista).filter((i) => i.tipo === "resumen")
+  assert.equal(instrucciones.length, 1)
+  const { tipo: _tipo, ...resumen } = instrucciones[0]
+  assert.deepEqual(resumen, vista.resumen)
+  assert.notEqual(instrucciones[0].reglas, vista.resumen.reglas, "el plan no devuelve referencias del modelo")
+
+  // Con un resumen que contradice al resto del modelo, el plan repite el RESUMEN: no recalcula.
+  const trucado = JSON.parse(JSON.stringify(vista))
+  trucado.resumen = { estado: { clave: "listo", texto: "texto de prueba" }, reglas: [{ texto: "una sola", sinTerminar: false }], avisos: { cantidad: 99, texto: "noventa y nueve" } }
+  const { tipo: _t, ...copiado } = planDePintado(trucado).find((i) => i.tipo === "resumen")
+  assert.deepEqual(copiado, trucado.resumen)
+
+  // Un modelo sin resumen (fixture viejo) no produce la instrucción: el navegador no inventa uno.
+  const { resumen: _sin, ...sinResumen } = vista
+  assert.equal(planDePintado(sinResumen).some((i) => i.tipo === "resumen"), false)
+})
+
+test("el pintor arma el resumen con el texto de la instrucción y marca la regla sin terminar", () => {
+  const vista = vistaDe([...PULSADOR_Y_LED, REGLA_COMPLETA, REGLA_A_MEDIAS])
+  const raiz = pintarVista(vista)
+  assert.equal(raiz.resumen.tagName, "ol")
+  assert.deepEqual(raiz.resumen.hijos.map((li) => [li.tagName, li.textContent, li.atributos["data-sin-terminar"] ?? null]), [
+    ["li", "Mientras el Pulsador esté presionado, el LED está encendido.", null],
+    ["li", "Hay una regla sin terminar.", "true"],
+  ])
+  assert.equal(raiz.resumenEstado.textContent, vista.resumen.estado.texto)
+  assert.equal(raiz.resumenEstado.atributos["data-readiness"], vista.resumen.estado.clave)
+  assert.equal(vista.resumen.estado.clave, "invalido", "precondición: el escenario no está listo")
+
+  const [enlace] = raiz.resumenAvisos.hijos
+  assert.equal(enlace.tagName, "a")
+  assert.equal(enlace.textContent, vista.resumen.avisos.texto)
+  assert.equal(enlace.atributos.href, `#${ANCLA_DE_AVISOS}`)
+  assert.equal(enlace.atributos["data-cantidad"], String(vista.resumen.avisos.cantidad))
+})
+
+test("el contador de avisos de la navegación muestra el número y se oculta en cero", () => {
+  const con = pintarVista(vistaDe(CON_AVISOS))
+  const cantidad = vistaDe(CON_AVISOS).motivos.length
+  assert.ok(cantidad >= 3, "precondición")
+  assert.equal(con.contadorAvisos.textContent, String(cantidad))
+  assert.ok(!("hidden" in con.contadorAvisos.atributos), "con avisos, el contador se ve")
+
+  const sin = pintarVista(vistaDe([...PULSADOR_Y_LED, REGLA_COMPLETA]))
+  assert.equal(sin.contadorAvisos.textContent, "0")
+  assert.ok("hidden" in sin.contadorAvisos.atributos, "sin avisos, el contador no muestra un cero")
+})
+
+test("cada aviso lleva su severidad como TEXTO, con la etiqueta que mandó el servidor", () => {
+  const vista = vistaDe(CON_AVISOS)
+  assert.ok(new Set(vista.motivos.map((m) => m.severidad)).size >= 2, "precondición: más de una severidad")
+  const plan = planDePintado(vista)
+  assert.deepEqual(plan.filter((i) => i.tipo === "panelMotivo").map((i) => i.etiquetaSeveridad), vista.motivos.map((m) => vista.textos.severidad[m.severidad]))
+
+  const raiz = pintar(documentoFake(), plan)
+  assert.equal(raiz.motivos.hijos.length, vista.motivos.length)
+  for (const [indice, fila] of raiz.motivos.hijos.entries()) {
+    const motivo = vista.motivos[indice]
+    const etiquetas = fila.hijos.filter((h) => "data-etiqueta-severidad" in h.atributos)
+    assert.equal(etiquetas.length, 1, "la etiqueta es un elemento con texto, no un atributo ni un `content:` de CSS")
+    assert.equal(etiquetas[0].textContent, vista.textos.severidad[motivo.severidad])
+    assert.equal(fila.hijos.indexOf(etiquetas[0]), 0, "la etiqueta va ADELANTE: es lo primero que se lee del aviso")
+    assert.equal(textoDe(fila), `${vista.textos.severidad[motivo.severidad]} ${motivo.explicacion}`)
+    assert.equal(fila.atributos["data-motivo-severidad"], motivo.severidad, "el dato de la severidad sigue estando para el color")
+  }
+
+  // El plan no tiene una tabla propia: con otra etiqueta en el modelo, sale esa otra; sin ninguna, `null`.
+  const trucado = JSON.parse(JSON.stringify(vista))
+  trucado.textos.severidad = { blocking: "ROJO", info: "AZUL" }
+  assert.deepEqual([...new Set(planDePintado(trucado).filter((i) => i.tipo === "panelMotivo").map((i) => i.etiquetaSeveridad))].sort(), ["AZUL", "ROJO"])
+  const { textos: _sin, ...sinTextos } = vista
+  const filasViejas = pintar(documentoFake(), planDePintado(sinTextos)).motivos.hijos
+  assert.deepEqual(filasViejas.map((f) => [f.hijos.length, f.textContent]), vista.motivos.map((m) => [0, m.explicacion]), "sin etiqueta del servidor la fila queda como antes: sólo el texto")
+})
+
+test("sin avisos, la sección lo dice con el texto del servidor; con avisos, no", () => {
+  const sin = pintarVista(vistaDe([...PULSADOR_Y_LED, REGLA_COMPLETA]))
+  assert.deepEqual(sin.motivos.hijos.map((li) => [li.tagName, li.atributos["data-sin-avisos"], li.textContent]), [["li", "true", "No hay avisos: no encontramos nada para revisar en este proyecto."]])
+  const con = pintarVista(vistaDe(CON_AVISOS))
+  assert.equal(todos(con.motivos).some((x) => "data-sin-avisos" in x.atributos), false)
+})
+
+test("la leyenda se pinta con el rol de cada entrada (el mismo dato que lleva el cable) y el texto del servidor", () => {
+  const vista = vistaDe([["AgregarComponente", { tipo: "dht22" }]], "arduino-uno")
+  const raiz = pintarVista(vista)
+  assert.deepEqual(
+    raiz.leyenda.hijos.map((item) => [item.atributos["data-leyenda"], item.hijos[0].atributos["data-rol-cable"], textoDe(item).trim()]),
+    vista.leyenda.map((l) => [l.rol, l.rol, l.texto]),
+  )
+  assert.match(textoDe(raiz.leyenda), /5 V: alimentación/)
+  assert.equal(pintarVista(vistaDe([], null)).leyenda.hijos.length, 0, "sin placa no hay leyenda que pintar")
+})
+
+test("app.js monta todas las raíces que devuelve el pintor, y cada una tiene su lugar en la página", () => {
+  const raices = Object.keys(pintarVista(vistaDe(PULSADOR_Y_LED))).sort()
+  const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
+  const bloque = /\n  contenedores = \{\n([\s\S]*?)\n  \}\n/.exec(app)
+  assert.ok(bloque, "no encontré el bloque `contenedores = { … }` de app.js")
+  const montadas = [...bloque[1].matchAll(/^\s*(\w+): document\.getElementById\("([^"]+)"\),$/gm)].map((m) => ({ raiz: m[1], id: m[2] }))
+  assert.deepEqual(montadas.map((m) => m.raiz).sort(), raices, "una raíz que el pintor devuelve y app.js no monta no se ve nunca; una que app.js monta y el pintor no devuelve rompe el repintado")
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
+  for (const { raiz, id } of montadas) assert.equal(html.split(`id="${id}"`).length, 2, `la raíz «${raiz}» se monta en #${id}, que tiene que estar una sola vez en index.html`)
+})
+
+test("el enlace «hay N avisos» lleva a una sección que existe, y es la que contiene la lista de avisos", () => {
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
+  const seccion = new RegExp(`<section[^>]*\\bid="${ANCLA_DE_AVISOS}"[^>]*>([\\s\\S]*?)</section>`).exec(html)
+  assert.ok(seccion, `index.html no tiene una <section id="${ANCLA_DE_AVISOS}">: el enlace del resumen no llevaría a ningún lado`)
+  assert.match(seccion[1], /id="motivos"/, "la sección a la que lleva el enlace tiene que ser la de los avisos")
 })

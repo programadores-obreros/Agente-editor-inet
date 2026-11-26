@@ -535,9 +535,31 @@ test("app.js: el panel se crea, con elementos que EXISTEN en la página, y recib
 // revisión mostró que dejaba pasar un `if (false)` delante de la llamada, o un `return` escrito de
 // otra forma. Ahora la cabecera y el panel viven en `repintarCabecera`, que se prueba ejecutándola.
 const { repintarCabecera } = await import(join(REPO, "opencode/vista-fisica/web/app.js"))
-const LISTO = { listo: true, invalido: false }
+//
+// REESCRITO EL 2026-11-26 (rediseño de la ventana), y por qué. Estas tres pruebas afirmaban además
+// que la cabecera escribía «listo» / «inválido» / «incompleto», palabras que `repintarCabecera`
+// elegía con un `if` sobre `readiness`. Eso ya no lo decide el navegador: el servidor manda el
+// estado resuelto y en palabras (`vista.resumen.estado`, con su `clave` y su `texto`) y la cabecera
+// sólo lo copia. Se conserva TODO lo que estas pruebas custodiaban del panel de código (se lo
+// llama una vez, con ESE snapshot y la conexión al derecho; también sin vista; y si tira no corta
+// nada); lo que cambió es la aserción del texto del estado, que ahora mide que se copia lo que
+// vino y que no se inventa nada cuando no vino. Se sumó una cuarta: el panel se avisa ANTES de
+// pintar el estado, así que un pintado que tira no puede dejar el programa viejo a la vista.
+const estadoDe = (clave, texto) => ({ resumen: { estado: { clave, texto } } })
+function elementoFalso() {
+  return {
+    textContent: "",
+    atributos: {},
+    setAttribute(k, v) {
+      this.atributos[k] = String(v)
+    },
+    removeAttribute(k) {
+      delete this.atributos[k]
+    },
+  }
+}
 function cabecera(panelCodigo) {
-  const el = { revision: { textContent: "" }, readiness: { textContent: "" } }
+  const el = { revision: elementoFalso(), readiness: elementoFalso() }
   const pintar = (snapshot, conectado = true) => repintarCabecera({ snapshot, elementoRevision: el.revision, elementoReadiness: el.readiness, panelCodigo, conectado })
   return { el, pintar }
 }
@@ -545,10 +567,11 @@ function cabecera(panelCodigo) {
 test("cabecera: escribe la revisión y, en la misma pasada, le avisa al panel de código con ESE snapshot", () => {
   const llamadas = []
   const c = cabecera({ actualizar: (snapshot, opciones) => llamadas.push({ snapshot, opciones }) })
-  const snapshot = { revision: 14, vista: { readiness: LISTO } }
+  const snapshot = { revision: 14, vista: estadoDe("listo", "un texto que sólo puede venir del servidor") }
   c.pintar(snapshot, false)
   assert.equal(c.el.revision.textContent, "revisión: 14")
-  assert.equal(c.el.readiness.textContent, "listo")
+  assert.equal(c.el.readiness.textContent, "un texto que sólo puede venir del servidor", "la cabecera copia el texto del estado; no lo redacta")
+  assert.deepEqual(c.el.readiness.atributos, { "data-readiness": "listo" }, "la clave queda como dato, para el color")
   assert.equal(llamadas.length, 1)
   assert.equal(llamadas[0].snapshot, snapshot)
   assert.deepEqual(llamadas[0].opciones, { conectado: false })
@@ -557,18 +580,30 @@ test("cabecera: escribe la revisión y, en la misma pasada, le avisa al panel de
 test("cabecera: un snapshot SIN vista también actualiza el panel (era el camino que dejaba el programa viejo)", () => {
   const revisiones = []
   const c = cabecera({ actualizar: (snapshot) => revisiones.push(snapshot.revision) })
+  c.pintar({ revision: 14, vista: estadoDe("invalido", "Hay algo para corregir") })
   c.pintar({ revision: 15, validacion: { readiness: { listo: false, invalido: false } } })
   assert.equal(c.el.revision.textContent, "revisión: 15")
-  assert.equal(c.el.readiness.textContent, "incompleto")
-  assert.deepEqual(revisiones, [15])
+  // Sin vista no hay estado que el servidor haya dicho: no queda el de la revisión anterior, ni uno inventado.
+  assert.equal(c.el.readiness.textContent, "—")
+  assert.deepEqual(c.el.readiness.atributos, {})
+  assert.deepEqual(revisiones, [14, 15])
 })
 
 test("cabecera: si el panel de código tira, no corta el repintado (ni la cabecera)", () => {
   const c = cabecera({ actualizar: () => { throw new TypeError("Cannot set properties of null") } })
-  assert.doesNotThrow(() => c.pintar({ revision: 16, vista: { readiness: { listo: false, invalido: true } } }))
+  assert.doesNotThrow(() => c.pintar({ revision: 16, vista: estadoDe("invalido", "Hay algo para corregir") }))
   assert.equal(c.el.revision.textContent, "revisión: 16")
-  assert.equal(c.el.readiness.textContent, "inválido")
-  assert.doesNotThrow(() => cabecera(null).pintar({ revision: 1, vista: { readiness: LISTO } }), "sin panel (página sin la sección) tampoco rompe")
+  assert.equal(c.el.readiness.textContent, "Hay algo para corregir")
+  assert.equal(c.el.readiness.atributos["data-readiness"], "invalido")
+  assert.doesNotThrow(() => cabecera(null).pintar({ revision: 1, vista: estadoDe("listo", "El proyecto está completo") }), "sin panel (página sin la sección) tampoco rompe")
+})
+
+test("cabecera: al panel de código se le avisa ANTES de pintar el estado (un pintado que tira no deja el programa viejo)", () => {
+  const revisiones = []
+  const readinessRota = { set textContent(_valor) { throw new TypeError("el elemento del estado no existe") }, setAttribute() {}, removeAttribute() {} }
+  const snapshot = { revision: 17, vista: estadoDe("listo", "El proyecto está completo") }
+  assert.throws(() => repintarCabecera({ snapshot, elementoRevision: elementoFalso(), elementoReadiness: readinessRota, panelCodigo: { actualizar: (s) => revisiones.push(s.revision) }, conectado: true }), /no existe/)
+  assert.deepEqual(revisiones, [17], "el pintado del estado tiró antes de avisarle al panel: quedaría a la vista el programa de la revisión anterior")
 })
 
 // Esto SÍ es una comprobación sobre el texto, y sólo dice lo que dice: que `repintar()` empieza

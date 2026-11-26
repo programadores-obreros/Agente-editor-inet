@@ -149,12 +149,20 @@
   <span id="revision">revisión: —</span>
   <span id="readiness">—</span>
   <span id="conexion" data-estado-conexion="conectado">conectado</span>
+  <span>avisos: <span id="contador-avisos"></span></span>
 </header>
 <div id="estado" role="status" aria-live="polite"></div>
 <main>
+  <section>
+    <h2>Resumen</h2>
+    <div id="resumen-estado"></div>
+    <div id="resumen-reglas"></div>
+    <div id="resumen-avisos"></div>
+  </section>
   <section id="seccion-circuito">
     <h2>Mi circuito</h2>
     <div id="circuito"></div>
+    <div id="leyenda-cables"></div>
   </section>
   <section>
     <h2>Conexiones</h2>
@@ -182,7 +190,7 @@
     <pre id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
     <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>
   </section>
-  <section>
+  <section id="paso-avisos">
     <h2>Motivos</h2>
     <ul id="motivos"></ul>
   </section>
