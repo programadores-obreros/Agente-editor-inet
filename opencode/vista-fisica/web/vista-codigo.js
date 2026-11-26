@@ -28,10 +28,45 @@ export function pieDelPrograma({ revision, archivo, lineas }) {
 }
 
 /**
- * @param {{ fetch: Function, elementoCodigo: { textContent: string, hidden: boolean },
- *   elementoAviso: { textContent: string } }} dependencias
+ * Qué se sabe del programa de una revisión (2026-11-26), para el renglón de «Cómo está». Son tres:
+ *   - `generado`: llegó el programa de ESA revisión y está a la vista;
+ *   - `sinPrograma`: el servidor contestó bien (200) y dijo, para ESA revisión, que no hay programa;
+ *   - `desconocido`: todo lo demás (actualizando, otra revisión, falla, 404, respuesta rara).
+ * Ante la duda es `desconocido`: el renglón no afirma ni que hay ni que no hay.
  */
-export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso }) {
+export const PROGRAMA_GENERADO = "generado"
+export const PROGRAMA_NO_HAY = "sinPrograma"
+export const PROGRAMA_DESCONOCIDO = "desconocido"
+
+/** Lo que dice una respuesta de `/api/programa` sobre la revisión pedida. Pura. `cuerpo === null` es el 404. */
+export function claveDelPrograma({ estado, cuerpo, revision }) {
+  if (cuerpo === null || cuerpo === undefined || cuerpo.revision !== revision) return PROGRAMA_DESCONOCIDO
+  const programa = cuerpo.programa
+  if (programa && programa.ok === true && typeof programa.codigo === "string") return PROGRAMA_GENERADO
+  if (estado === 200 && programa && programa.ok === false) return PROGRAMA_NO_HAY
+  return PROGRAMA_DESCONOCIDO
+}
+
+/**
+ * El renglón del programa en «Cómo está». Pura. `textos` es `vista.resumen.programa` (las frases
+ * las manda el servidor; acá no se redacta nada). Devuelve `{ texto, llevaAlPrograma }`, o `null`
+ * cuando no se sabe: sin textos, sin conexión, con lo sabido de OTRA revisión que la que se está
+ * mostrando, o con la clave en `desconocido`. Misma regla dura que el panel: nada de otra revisión.
+ */
+export function renglonDelPrograma({ textos, estadoPrograma, revision, conectado }) {
+  if (!textos || !conectado || typeof revision !== "number" || !estadoPrograma || estadoPrograma.revision !== revision) return null
+  if (estadoPrograma.clave === PROGRAMA_GENERADO && typeof textos.generado === "string") return { texto: textos.generado, llevaAlPrograma: false }
+  if (estadoPrograma.clave === PROGRAMA_NO_HAY && typeof textos.sinPrograma === "string") return { texto: textos.sinPrograma, llevaAlPrograma: true }
+  return null
+}
+
+/**
+ * @param {{ fetch: Function, elementoCodigo: { textContent: string, hidden: boolean },
+ *   elementoAviso: { textContent: string }, alCambiarElPrograma?: Function }} dependencias
+ * `alCambiarElPrograma({ clave, revision })` se llama cada vez que cambia lo que se sabe del
+ * programa (incluido el paso a `desconocido` apenas cambia la revisión). Si tira, se ataja.
+ */
+export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso, alCambiarElPrograma }) {
   /** La revisión del proyecto que la página está mostrando. */
   let revisionPedida = null
   /** La revisión del programa que está a la vista, o null si no hay código en pantalla. */
@@ -42,16 +77,27 @@ export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso }) {
   let turno = 0
   /** El último pedido no terminó en un programa ni en un "no hay programa" firme: el próximo repintado reintenta. */
   let reintentar = false
+  /** Lo que se sabe del programa, y de qué revisión (ver `claveDelPrograma`). */
+  let estadoPrograma = { clave: PROGRAMA_DESCONOCIDO, revision: null }
+  const avisarPrograma = (clave, revision) => {
+    estadoPrograma = { clave, revision }
+    try {
+      alCambiarElPrograma?.(estadoPrograma)
+    } catch {
+      /* el renglón de «Cómo está» falló: el panel sigue igual */
+    }
+  }
 
   const escribirAviso = () => {
     elementoAviso.textContent = !conectada && revisionMostrada !== null ? `${TEXTO_DESCONECTADA}\n${aviso}` : aviso
   }
-  const sinCodigo = (texto) => {
+  const sinCodigo = (texto, clave = PROGRAMA_DESCONOCIDO) => {
     revisionMostrada = null
     elementoCodigo.textContent = ""
     elementoCodigo.hidden = true
     aviso = texto
     escribirAviso()
+    avisarPrograma(clave, revisionPedida)
   }
 
   async function pedir(revision, miTurno) {
@@ -82,16 +128,19 @@ export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso }) {
     if (!programa || programa.ok !== true || typeof programa.codigo !== "string") {
       // Una falla de Tecnia Bot (no un "no hay programa" del proyecto) se vuelve a intentar.
       if (estado !== 200) reintentar = true
-      return sinCodigo(typeof programa?.porQue === "string" && programa.porQue !== "" ? programa.porQue : TEXTO_NO_SE_PUDO_PEDIR)
+      return sinCodigo(typeof programa?.porQue === "string" && programa.porQue !== "" ? programa.porQue : TEXTO_NO_SE_PUDO_PEDIR, claveDelPrograma({ estado, cuerpo, revision }))
     }
     elementoCodigo.textContent = programa.codigo
     elementoCodigo.hidden = false
     revisionMostrada = revision
     aviso = pieDelPrograma({ revision, archivo: programa.archivo, lineas: programa.lineas })
     escribirAviso()
+    avisarPrograma(claveDelPrograma({ estado, cuerpo, revision }), revision)
   }
 
   return {
+    /** Lo que se sabe del programa ahora (copia: nadie de afuera lo cambia). */
+    estadoDelPrograma: () => ({ ...estadoPrograma }),
     /** Se llama en cada repintado, con el snapshot autoritativo. Sólo pide si cambió la revisión. */
     actualizar(snapshot, { conectado = true } = {}) {
       conectada = conectado

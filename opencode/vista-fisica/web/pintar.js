@@ -165,6 +165,31 @@ export function pintar(doc, instrucciones, manejadores = {}) {
 // página (`tests/ventana-resumen.test.mjs` comprueba que exista en `index.html`).
 export const ANCLA_DE_AVISOS = "paso-avisos"
 
+/** A dónde lleva el renglón «todavía no hay programa»: el id de la sección del programa (paso 3). */
+export const ANCLA_DEL_PROGRAMA = "paso-programa"
+
+/**
+ * El renglón del programa en «Cómo está» (2026-11-26). Recibe lo que ya decidió `renglonDelPrograma`
+ * (`web/vista-codigo.js`): `null` deja el renglón vacío y oculto (no se sabe, no se afirma nada).
+ * El texto va con `textContent`; si lleva al programa, es un enlace al paso 3.
+ */
+export function pintarRenglonDelPrograma(doc, elemento, renglon) {
+  elemento.replaceChildren()
+  if (!renglon) {
+    elemento.setAttribute("hidden", "")
+    return
+  }
+  elemento.removeAttribute("hidden")
+  if (renglon.llevaAlPrograma) {
+    const enlace = doc.createElement("a")
+    enlace.setAttribute("href", `#${ANCLA_DEL_PROGRAMA}`)
+    enlace.textContent = renglon.texto
+    elemento.appendChild(enlace)
+  } else {
+    elemento.textContent = renglon.texto
+  }
+}
+
 function pintarResumen(doc, raiz, instruccion) {
   // Sin reglas, la única entrada es la frase que lo dice: sin número (un «1» se leería como la
   // regla 1). El dato lo manda el servidor; sólo un `false` explícito saca la numeración.

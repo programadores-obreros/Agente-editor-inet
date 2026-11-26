@@ -14,11 +14,11 @@ import { planDePintado, interpretarNumero, estadoDelGrupo, aplicarEleccionAlGrup
 // La interpretación del número vive con las funciones del grupo (plan-de-pintado.js); se re-exporta
 // acá porque es parte de la API de este módulo desde S1.
 export { interpretarNumero }
-import { pintar } from "./pintar.js"
-import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
+import { pintar, pintarRenglonDelPrograma } from "./pintar.js"
+import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_SIN_CONEXION } from "./estado-conexion.js"
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
-import { crearPanelCodigo } from "./vista-codigo.js"
+import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
 import { dibujarCableado } from "./cableado.js"
 import { conectarNavegacion } from "./navegacion.js"
 import { conectarTema } from "./tema.js"
@@ -418,6 +418,9 @@ let elementoConexion = null
  * `repintar()` nunca lo reemplaza; se crea una vez más abajo, con el mismo controlador de la frase. */
 let panelVistaLogica = null
 let panelCodigo = null
+/** El renglón del programa en «Cómo está» (2026-11-26): fuera de `contenedores`, porque cambia
+ * cuando contesta `/api/programa`, no sólo cuando llega un snapshot. */
+let elementoProgramaResumen = null
 
 if (enNavegador) {
   contenedores = {
@@ -437,6 +440,7 @@ if (enNavegador) {
   elementoReadiness = document.getElementById("readiness")
   elementoEstado = document.getElementById("estado")
   elementoConexion = document.getElementById("conexion")
+  elementoProgramaResumen = document.getElementById("resumen-programa")
 }
 
 /** Último snapshot AUTORITATIVO recibido (GET /api/proyecto, POST /api/operaciones,
@@ -454,12 +458,27 @@ let contadorOperacion = 0
  * conexión de TRANSPORTE. */
 let estadoConexion = ESTADO_INICIAL
 
-const MENSAJE_DESCONECTADO = "desconectado: la vista puede no estar actualizada. Si el servidor se reinició en otro puerto, volvé a abrir la vista física desde Tecnia Bot."
+/**
+ * El indicador de conexión (2026-11-26). El chip dice lo corto («Ventana al día» / «Ventana sin
+ * conexión», `estado-conexion.js`); la explicación larga, que antes iba entera en el chip, va en la
+ * franja de estado (`#estado`, `role="status"`: también la anuncia un lector de pantalla). Al
+ * reconectar se borra de la franja SÓLO si sigue siendo esa explicación: si mientras tanto la franja
+ * pasó a decir otra cosa (un pedido que falló), eso no se pisa.
+ *
+ * Exportada y con los elementos inyectados para probarla ejecutándola.
+ */
+export function pintarIndicadorConexion({ estado, elementoConexion, elementoEstado }) {
+  const { chip, detalle } = textosDelIndicador(estado)
+  elementoConexion.textContent = chip
+  elementoConexion.setAttribute("data-estado-conexion", estado)
+  if (!elementoEstado) return
+  if (detalle !== null) elementoEstado.textContent = detalle
+  else if (elementoEstado.textContent === EXPLICACION_SIN_CONEXION) elementoEstado.textContent = ""
+}
 
 function actualizarIndicadorConexion() {
   if (!elementoConexion) return
-  elementoConexion.textContent = estadoConexion === "conectado" ? "conectado" : MENSAJE_DESCONECTADO
-  elementoConexion.setAttribute("data-estado-conexion", estadoConexion)
+  pintarIndicadorConexion({ estado: estadoConexion, elementoConexion, elementoEstado })
 }
 
 /** Procesa un evento NATIVO del `EventSource` (`"error"`/`"open"`) a través del
@@ -569,9 +588,31 @@ export function repintarCabecera({ snapshot, elementoRevision, elementoReadiness
   else elementoReadiness.removeAttribute("data-readiness")
 }
 
+/**
+ * El renglón del programa en «Cómo está». Lo decide `renglonDelPrograma` (pura) con lo que el panel
+ * de código ya sabe y los textos que mandó el servidor en `vista.resumen.programa`; acá sólo se
+ * junta y se pinta. Se llama en cada repintado y cada vez que el panel cambia lo que sabe. Si tira,
+ * se ataja: el renglón no puede cortar el resto de la página.
+ */
+function repintarRenglonDelPrograma() {
+  if (!elementoProgramaResumen) return
+  try {
+    const renglon = renglonDelPrograma({
+      textos: ultimoSnapshot?.vista?.resumen?.programa ?? null,
+      estadoPrograma: panelCodigo?.estadoDelPrograma() ?? null,
+      revision: ultimoSnapshot?.revision,
+      conectado: estadoConexion === "conectado",
+    })
+    pintarRenglonDelPrograma(document, elementoProgramaResumen, renglon)
+  } catch {
+    /* sin renglón: no se afirma nada del programa */
+  }
+}
+
 function repintar() {
   if (!ultimoSnapshot) return
   repintarCabecera({ snapshot: ultimoSnapshot, elementoRevision, elementoReadiness, panelCodigo, conectado: estadoConexion === "conectado" })
+  repintarRenglonDelPrograma()
 
   if (!ultimoSnapshot.vista) return
   const focoAnterior = capturarFocoActual()
@@ -718,6 +759,7 @@ if (enNavegador) {
     fetch: (...argumentos) => fetch(...argumentos),
     elementoCodigo: document.getElementById("vista-codigo-texto"),
     elementoAviso: document.getElementById("vista-codigo-aviso"),
+    alCambiarElPrograma: () => repintarRenglonDelPrograma(),
   })
 }
 

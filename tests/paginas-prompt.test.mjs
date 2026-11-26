@@ -86,14 +86,14 @@ test("dice de dónde salen pines y conexiones, y que sin fuente la página va si
   assert.match(s, /la página va SIN conexiones y lo dice/)
 })
 
-test("el código del proyecto físico no va en la página: coherente con la sección «Código» de la ventana", () => {
+test("el código del proyecto físico no va en la página: coherente con la sección «Mirá el código» de la ventana", () => {
   const s = plano(seccionPaginas())
   assert.match(s, /El código del proyecto físico NO va en la página/)
-  assert.match(s, /sección «Código»/, "no manda a la ventana a ver el código")
+  assert.match(s, /sección «Mirá el código»/, "no manda a la ventana a ver el código")
   assert.match(s, /sólo si ya lo compilaste en esta charla/, "el código de ejemplo no queda atado a la regla de compilar antes de mostrar")
   // Y la regla del programa a la que remite sigue existiendo con ese nombre.
   assert.match(prompt, /## REGLA CRÍTICA — programa del proyecto físico/)
-  assert.match(plano(prompt), /está completo en la ventana, en la sección «Código»/)
+  assert.match(plano(prompt), /está completo en la ventana, en la sección «Mirá el código»/)
 })
 
 test("el contenido curricular sale sólo del skill diseno-curricular", () => {

@@ -27,6 +27,7 @@ const { directorioDeDatos } = await import(join(REPO, "opencode/vista-fisica/ubi
 const { generarPrograma } = await import(join(REPO, "opencode/codegen/programa.ts"))
 const { CONOCIMIENTO_ACTIVO: K } = await import(join(REPO, "opencode/conocimiento/conocimiento-activo.ts"))
 const { crearConocimiento } = await import(join(REPO, "opencode/conocimiento/conocimiento.ts"))
+const { porQueNoHayPrograma } = await import(join(REPO, "opencode/codegen/por-que-no-hay-programa.ts"))
 const { construirCatalogo } = await import(join(REPO, "opencode/nucleo/catalogo.ts"))
 const { sha256Hex } = await import(join(REPO, "opencode/nucleo/adaptadores/hash-catalogo.node.ts"))
 const { COMPONENTES_CATALOGO_MINIMO, PLACAS_CATALOGO_MINIMO, CONVERSIONES_UNIDAD_MINIMAS, VERSION_CATALOGO_MINIMO } = await import(join(REPO, "opencode/nucleo/catalogo-datos.ts"))
@@ -162,7 +163,7 @@ test("la salida de generar y de compilar NO trae el código ni la carpeta: trae 
     assert.equal(r.programa.dondeVerlo, DONDE_VERLO)
     assert.ok(!("aviso" in r.programa), "con la carpeta fuera del proyecto no hay nada que avisar")
   }
-  assert.match(DONDE_VERLO, /sección «Código»/)
+  assert.match(DONDE_VERLO, /sección «Mirá el código»/)
   assert.match(DONDE_VERLO, /`vista-fisica`/)
   assert.match(DONDE_VERLO, /No lo escribas ni lo resumas en el chat/)
   // Notebook real, 2026-11-26: ante la insistencia, el asistente mandó a abrir «src/main.cpp en la
@@ -496,7 +497,7 @@ test("9 CODEGEN_SIN_LECTURA: se propaga tal cual (conocimiento de prueba inyecta
   const componentes = COMPONENTES_CATALOGO_MINIMO.map((c) => (c.id === "pulsador" ? { ...c, terminales: c.terminales.map((t) => (t.id === "senal" ? { ...t, requierePullUpInterno: false } : t)) } : c))
   const fixture = crearConocimiento(construirCatalogo({ version: VERSION_CATALOGO_MINIMO, componentes, placas: PLACAS_CATALOGO_MINIMO, unidades: { conversiones: CONVERSIONES_UNIDAD_MINIMAS } }, sha256Hex))
   const dir = await armar()
-  const cargar = async () => ({ obtenerServicioDeProyectoConVista, conocimiento: fixture, generarPrograma })
+  const cargar = async () => ({ obtenerServicioDeProyectoConVista, conocimiento: fixture, generarPrograma, porQueNoHayPrograma })
   const r = JSON.parse(await ejecutarPrograma({ accion: "compilar" }, { directory: dir }, cargar))
   assert.equal(r.codigo, "CODEGEN_SIN_LECTURA")
   assert.deepEqual(r.datos, codegenDe(dir, fixture).error.datos)
@@ -520,10 +521,17 @@ function seccion(titulo) {
 }
 const REGLA = seccion("## REGLA CRÍTICA — programa del proyecto físico: se genera, no se escribe")
 
+/** El prompt corta los renglones a mano: para buscar una frase se lo deja en una línea. */
+const plano = (t) => t.replace(/\s+/g, " ")
+
 test("11 el prompt prohíbe el C++ manual del proyecto físico y el fallback ante CODEGEN_*", () => {
   assert.match(REGLA, /\*\*ese programa NO lo escribís vos\.\*\*/)
   assert.match(REGLA, /con la tool `programa`/)
-  assert.match(REGLA, /\*\*Si la generación falla con un `CODEGEN_\*`, no hay plan B\.\*\*/)
+  // 2026-11-26: la regla ya no manda a «explicar el `codigo` con sus `datos`» (el asistente le
+  // contestó al docente con `CODEGEN_NO_ADMITIDO`): manda a decir `explicacion` tal cual.
+  assert.match(REGLA, /\*\*Si la generación falla, no hay plan B\.\*\*/)
+  assert.match(plano(REGLA), /La salida trae `explicacion`[^.]*\. \*\*Decísela al docente tal cual\*\*/)
+  assert.match(plano(REGLA), /\*\*nunca le nombres al docente un código interno ni un identificador\*\*/)
   assert.match(REGLA, /\*\*Nunca escribas el C\+\+ ni el `platformio\.ini` a mano como\s+alternativa\*\*/)
   assert.match(REGLA, /no uses la\s+tool `platformio` para compilar ni escribas un proyecto aparte/)
   // La regla vieja (el modelo escribe y compila) queda acotada a lo que NO es el proyecto físico.
@@ -549,7 +557,7 @@ test("el prompt manda a la ventana cuando piden el código, y prohíbe escribirl
   assert.match(REGLA, /`vista-fisica` para abrir la ventana/)
   assert.match(REGLA, /`programa\.reglas`/)
   assert.match(REGLA, /`programa\.resumen`/)
-  assert.match(REGLA, /en la sección «Código»/)
+  assert.match(REGLA, /en la sección «Mirá el código»/)
   assert.match(REGLA, /\*\*Nunca escribas, copies ni resumas ese código en el chat, ni un pedazo\*\*/)
   assert.match(REGLA, /no lo busques en archivos/)
   assert.match(REGLA, /no pegues código como reemplazo/)
@@ -587,7 +595,7 @@ test("el prompt nombra la programación por intención, sus tres pasos y que la 
   const s = PROMPT.slice(i, PROMPT.indexOf("\n## ", i + 5))
   assert.match(s, /\*\*programación por intención\*\*/)
   assert.match(s, /\*\*Vista lógica\*\* muestra esa misma regla \*\*armada con bloques\*\*/)
-  assert.match(s, /sección\s+\*\*«Código»\*\*/)
+  assert.match(s, /sección\s+\*\*«Mirá el código»\*\*/)
   assert.match(s, /intención → lógica\s+→ código/)
   assert.match(s, /Nunca digas que acá "no\s+usamos bloques" ni que "vamos directo a C\+\+"/)
   assert.match(s, /No lo busques en archivos ni le pidas al\s+docente que te lo explique/)
