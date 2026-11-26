@@ -526,16 +526,35 @@ function restaurarFoco(raizControles, focoAnterior) {
  * selector equivalente — el `replaceChildren` sigue siendo "repintar TODO" (ninguna
  * actualización parcial, mismo invariante de siempre), sólo que ahora no se pierde el
  * foco en el camino. */
+/**
+ * La cabecera (revisión y estado) y, PEGADO a ella, el panel de código.
+ *
+ * Van juntos y primero, antes de todo lo que puede cortar el repintado (un snapshot sin vista, un
+ * pintado que tira): si la revisión ya cambió en pantalla, el programa de la anterior se tiene que
+ * haber ido. El código se pide al servidor por la revisión de ESTE snapshot (sólo si cambió) y
+ * nunca se arma acá.
+ *
+ * Es una función aparte, con todo inyectado, para poder probarla EJECUTÁNDOLA: la primera prueba
+ * de esto comparaba posiciones en el texto de la fuente y dejaba pasar un `if (false)` delante de
+ * la llamada (segunda revisión independiente, 2026-11-26).
+ *
+ * Si el panel tira, se ataja: una falla de la sección «Código» no puede dejar sin pintar el
+ * montaje, las reglas y los motivos.
+ */
+export function repintarCabecera({ snapshot, elementoRevision, elementoReadiness, panelCodigo, conectado }) {
+  elementoRevision.textContent = `revisión: ${snapshot.revision}`
+  const readiness = snapshot.vista ? snapshot.vista.readiness : snapshot.validacion.readiness
+  elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
+  try {
+    void panelCodigo?.actualizar(snapshot, { conectado })
+  } catch {
+    /* la sección «Código» falló: el resto de la página se pinta igual */
+  }
+}
+
 function repintar() {
   if (!ultimoSnapshot) return
-  elementoRevision.textContent = `revisión: ${ultimoSnapshot.revision}`
-  const readiness = ultimoSnapshot.vista ? ultimoSnapshot.vista.readiness : ultimoSnapshot.validacion.readiness
-  elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
-  // El código va ACÁ, pegado a la cabecera y antes de todo lo que puede cortar el repintado (el
-  // `return` de abajo, o un pintado que tira): si la revisión ya cambió en pantalla, el programa
-  // de la anterior se tiene que haber ido. Se pide al servidor por la revisión de ESTE snapshot
-  // (sólo si cambió) y nunca se arma acá. Lo marcó la revisión independiente del 2026-11-25.
-  void panelCodigo?.actualizar(ultimoSnapshot, { conectado: estadoConexion === "conectado" })
+  repintarCabecera({ snapshot: ultimoSnapshot, elementoRevision, elementoReadiness, panelCodigo, conectado: estadoConexion === "conectado" })
 
   if (!ultimoSnapshot.vista) return
   const focoAnterior = capturarFocoActual()
