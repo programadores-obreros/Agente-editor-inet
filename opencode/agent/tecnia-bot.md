@@ -17,6 +17,7 @@ permission:
   perfil: "allow"
   memoria: "allow"
   imprimible: "allow"
+  pagina: "allow"
   ficha: "allow"
   ayuda: "allow"
   actualizar: "allow"

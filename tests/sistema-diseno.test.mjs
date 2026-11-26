@@ -15,8 +15,8 @@
 // un CSS fabricado que TIENE el defecto, y tienen que marcarlo. Un chequeo que nunca puede
 // fallar da falsa tranquilidad.
 //
-// MUTACIONES que ponen rojo este archivo (probadas una por una sobre el commit de la hoja;
-// la lista con el test que cada una pone rojo está en el mensaje de ese commit):
+// MUTACIONES que ponen rojo este archivo (quince, probadas una por una con la hoja ya
+// commiteada y restaurando sólo ese archivo después de cada una; acá van las principales):
 //   - borrar un token de `:root` (p. ej. `--marca-honda`)           → «todo var() usado está definido»
 //   - poner `color: #fff` en un componente                          → «ningún color literal fuera de los tokens»
 //   - sacar `--cod-f` del bloque oscuro                             → «oscuro e impresión redefinen los mismos tokens»
