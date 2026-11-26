@@ -28,6 +28,7 @@
 //   - redefinir un token de papel en el tema oscuro                         → «el esquema queda claro en los dos temas»
 //   - sacar `[hidden] { display: none !important }`                         → «hidden gana siempre»
 //   - anidar un `:has()` dentro de otro                                     → «ningún :has() anidado»
+//   - sacar `isolation: isolate` de `#vista-logica-lienzo`                  → «las barras de Blockly no se pintan encima…»
 //
 // Corre con: node --test tests/ventana-pagina.test.mjs
 
@@ -287,4 +288,15 @@ test("hidden gana siempre: un chip oculto no se muestra por tener display propio
   const regla = reglasCss(CSS_PAGINA).find((r) => r.selector === "[hidden]")
   assert.ok(regla, "falta la regla [hidden]")
   assert.match(regla.cuerpo, /display\s*:\s*none\s*!important/, "sin !important, `.tb-chip { display: inline-flex }` deja a la vista el contador de avisos en cero")
+})
+
+test("las barras de Blockly no se pintan encima del header fijo: el lienzo es su propio contexto de apilado", () => {
+  // Precondiciones: el choque existe. Blockly pone sus barras en z-index 20 y el header fijo también.
+  const blockly = readFileSync(join(REPO, "opencode/tecniabot-web/blockly_compressed.js"), "utf8")
+  assert.match(blockly, /\.blocklyMainWorkspaceScrollbar \{\s*z-index: 20;/, "precondición: el Blockly vendorizado trae sus barras en z-index 20")
+  const header = reglasCss(CSS_HOJA).find((r) => r.selector === ".tb-header--fijo" && r.medio === "")
+  assert.match(header?.cuerpo ?? "", /z-index\s*:\s*20\b/, "precondición: el header fijo está en z-index 20")
+  // Sin aislar, las barras vienen después en la página y ganan el empate (visto en Chromium).
+  const lienzo = reglasCss(CSS_PAGINA).filter((r) => r.selector === "#vista-logica-lienzo" && r.medio === "")
+  assert.ok(lienzo.some((r) => /isolation\s*:\s*isolate/.test(r.cuerpo)), "#vista-logica-lienzo tiene que llevar `isolation: isolate`")
 })
