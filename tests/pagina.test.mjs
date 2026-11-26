@@ -27,7 +27,7 @@
 //   - pedir el navegador con abrir en false                       → «con abrir en false no llama al navegador»
 //   - seguir sin la hoja (CSS vacío)                              → «sin la hoja de estilos»
 //   - sacar el tope de 60 del nombre, o dejar pasar acentos       → «el nombre del archivo»
-//   - sacar la ruta de la respuesta                               → «arma la página»
+//   - sacar la ruta de la respuesta, o darla cruda tras file://    → «arma la página»
 //
 // LÍMITE HONESTO: nada de esto corre adentro de OpenCode ni con un modelo. El esquema de
 // argumentos se mira con el zod real (último test), pero cómo le llega a un modelo Gemini
@@ -47,7 +47,12 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = join(os.tmpdir(), "tecniabot-pagina-test")
 const HOJA = join(OUT, "tecniabot-web/diseno/sistema.css")
 const HOJA_DEL_REPO = join(REPO, "opencode/tecniabot-web/diseno/sistema.css")
-const DIR = join(OUT, "trabajo")
+// La carpeta de trabajo lleva un espacio y un numeral A PROPÓSITO. Con una carpeta sin
+// caracteres raros, la ruta cruda pegada detrás de `file://` es idéntica a la URL bien
+// armada, y el test no distinguía una de otra: la mutación «ruta cruda en vez de URL»
+// quedaba verde. Era un test hueco; así se llama la carpeta de un docente de verdad
+// («Maria Jose», «3ro B #2»).
+const DIR = join(OUT, "carpeta de trabajo #1")
 
 let P
 let tool
@@ -121,7 +126,8 @@ test("arma la página, la guarda en la carpeta de trabajo y devuelve la ruta com
   assert.equal(enDisco, P.renderizarPagina(P.validarPagina(ARGS).pagina, readFileSync(HOJA_DEL_REPO, "utf8")), "en el disco está exactamente la página, con la hoja del repo")
   assert.ok(enDisco.includes("<li>3 LEDs</li>") && enDisco.includes("void setup() {}"))
   assert.ok(r.includes(`\`${P.comoUrl(archivo)}\``), `la respuesta trae la ruta como URL: ${r}`)
-  assert.match(P.comoUrl(archivo), /^file:\/\/\//)
+  assert.match(P.comoUrl(archivo), /^file:\/\/\/.*carpeta%20de%20trabajo%20%231\/pagina-guia-del-semaforo\.html$/, "con el espacio y el numeral escapados")
+  assert.ok(!r.includes(`file://${archivo}`), "la ruta cruda detrás de file:// no abre nada en el navegador")
   assert.match(r, /2 secciones, 2 bloques de contenido/, "cuenta lo que armó")
   assert.match(r, /la volví a leer del disco/)
   const uno = await ejecutar({ titulo: "Una sola cosa", bloques: [{ tipo: "seccion", titulo: "A" }, { tipo: "texto", texto: "x" }] })
