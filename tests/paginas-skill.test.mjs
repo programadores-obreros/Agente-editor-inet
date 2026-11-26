@@ -185,7 +185,7 @@ test("las reglas de contenido: fuentes de pines y código, rioplatense, sin nomb
   assert.match(reglas, /skill `proyectos-inet`/)
   assert.match(reglas, /la página va sin conexiones/)
   assert.match(reglas, /\*\*Código del proyecto físico\*\*: no va/)
-  assert.match(reglas, /sección «Código»/)
+  assert.match(reglas, /sección «Mirá el código»/)
   assert.match(reglas, /sólo del skill `diseno-curricular`/)
   assert.match(reglas, /español rioplatense/)
   assert.match(reglas, /sin nombres de alumnos/)

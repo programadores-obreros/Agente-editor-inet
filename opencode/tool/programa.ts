@@ -12,7 +12,7 @@
 // archivo y lo REESCRIBIÓ en el chat con una regla menos, diciendo que era el generado; la regla
 // «mostralo tal cual» ya estaba en sus instrucciones. Ahora:
 //   - la salida no trae el C++ ni ninguna ruta: trae las reglas en palabras, cuántas líneas son y
-//     dónde se ve (la sección «Código» de la ventana, que lo pinta el servidor);
+//     dónde se ve (la sección «Mirá el código» de la ventana, que lo pinta el servidor);
 //   - la carpeta derivada vive FUERA de la carpeta de trabajo, en una carpeta del usuario. Medido
 //     en OpenCode 1.18.18: con los permisos del agente (`"*": "deny"`), `read`, `grep` y `glob`
 //     quedan bloqueados fuera de la carpeta de trabajo; adentro, `read` y `grep` devuelven el
@@ -66,21 +66,30 @@ type SnapshotConReglas = Snapshot & { readonly vista?: { readonly reglas?: reado
 type ModuloServicioConVista = typeof import("../servidor/servicio-con-vista.ts")
 type ModuloConocimientoActivo = typeof import("../conocimiento/conocimiento-activo.ts")
 type ModuloCodegen = typeof import("../codegen/programa.ts")
+type ModuloPorQue = typeof import("../codegen/por-que-no-hay-programa.ts")
 
 export interface DependenciasPrograma {
   readonly obtenerServicioDeProyectoConVista: ModuloServicioConVista["obtenerServicioDeProyectoConVista"]
   readonly conocimiento: ModuloConocimientoActivo["CONOCIMIENTO_ACTIVO"]
   readonly generarPrograma: ModuloCodegen["generarPrograma"]
+  /** La causa en palabras cuando no hay programa: la MISMA que muestra la ventana. */
+  readonly porQueNoHayPrograma: ModuloPorQue["porQueNoHayPrograma"]
 }
 
 async function cargarDependencias(): Promise<DependenciasPrograma> {
   try {
-    const [servicio, conocimiento, codegen] = await Promise.all([
+    const [servicio, conocimiento, codegen, porQue] = await Promise.all([
       import("../servidor/servicio-con-vista.ts"),
       import("../conocimiento/conocimiento-activo.ts"),
       import("../codegen/programa.ts"),
+      import("../codegen/por-que-no-hay-programa.ts"),
     ])
-    return { obtenerServicioDeProyectoConVista: servicio.obtenerServicioDeProyectoConVista, conocimiento: conocimiento.CONOCIMIENTO_ACTIVO, generarPrograma: codegen.generarPrograma }
+    return {
+      obtenerServicioDeProyectoConVista: servicio.obtenerServicioDeProyectoConVista,
+      conocimiento: conocimiento.CONOCIMIENTO_ACTIVO,
+      generarPrograma: codegen.generarPrograma,
+      porQueNoHayPrograma: porQue.porQueNoHayPrograma,
+    }
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
     throw new Error(
@@ -191,7 +200,7 @@ function borrarProgramaViejo(directorioActivo: string, idProyecto: string): void
 // este proyecto no está en la carpeta de trabajo. (Una primera versión decía «ahí no hay ningún
 // archivo del programa»: era falso en esa misma notebook, ver `programasDeOtroTrabajo`.)
 export const DONDE_VERLO =
-  "El código completo está en la ventana de la vista física, en la sección «Código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat. El programa de este proyecto NO está en la carpeta de trabajo: no mandes a abrir ningún archivo; el único lugar donde se ve es esa ventana, o su dirección en cualquier navegador."
+  "El código completo está en la ventana de la vista física, en la sección «Mirá el código» (abrila con la tool `vista-fisica`). No lo escribas ni lo resumas en el chat. El programa de este proyecto NO está en la carpeta de trabajo: no mandes a abrir ningún archivo; el único lugar donde se ve es esa ventana, o su dirección en cualquier navegador."
 
 /** Un programa escrito a mano que está en la carpeta de trabajo y no es el de este proyecto. */
 export interface ProgramaDeOtroTrabajo {
@@ -361,17 +370,23 @@ export async function ejecutarPrograma(
     }
     const generado = deps.generarPrograma(snapshot.proyecto, deps.conocimiento)
     if (!generado.ok) {
+      // La causa va EN PALABRAS y primera (2026-11-26): en la notebook real, con un Arduino UNO, el
+      // `resultado` decía sólo `CODEGEN_NO_ADMITIDO` y el asistente le contestó al docente con ese
+      // código y con `arduino-uno`. Es la misma explicación que muestra la ventana. `codigo` y
+      // `datos` siguen, para diagnosticar; no son para decírselos al docente.
+      const explicacion = deps.porQueNoHayPrograma(generado.error, { proyecto: snapshot.proyecto, conocimiento: deps.conocimiento })
       // `cargar` no toca la carpeta derivada: ni la lee ni la vacía.
       if (args.accion === "cargar") {
-        return json({ resultado: `NO SE CARGÓ — no se pudo generar el programa (${generado.error.codigo})`, etapa: "generacion", ok: false, idProyecto, revision, codigo: generado.error.codigo, datos: generado.error.datos })
+        return json({ resultado: `NO SE CARGÓ — ${explicacion}`, etapa: "generacion", ok: false, idProyecto, revision, explicacion, codigo: generado.error.codigo, datos: generado.error.datos })
       }
       vaciar(carpetaAbsoluta)
       return json({
-        resultado: `NO SE GENERÓ EL PROGRAMA — ${generado.error.codigo}`,
+        resultado: `NO SE GENERÓ EL PROGRAMA — ${explicacion}`,
         etapa: "generacion",
         ok: false,
         idProyecto,
         revision,
+        explicacion,
         codigo: generado.error.codigo,
         datos: generado.error.datos,
       })
@@ -490,9 +505,9 @@ Tres \`accion\`:
 - \`compilar\`: vuelve a generar desde la revisión actual y compila EXACTAMENTE esos archivos con PlatformIO (environment derivado de la placa del proyecto).
 - \`cargar\`: vuelve a generar desde la revisión actual y lo compila y graba en la placa conectada, en un solo paso. Sólo con el agente Tecnia Bot. Frena si un pin deja la placa sin arrancar. Muestra SIEMPRE un cartel de OpenCode que contesta el docente (botones en inglés: Allow once si ya revisó el circuito, Reject si todavía no): antes de llamarla, repasá con él el checklist de seguridad y avisale del cartel. Si contesta Reject, no reintentes hasta que te lo pida. Sólo decí que quedó cargado si \`resultado\` empieza con \`CARGADO\`; \`CARGA_SIN_VERIFICAR\` NO es "cargado".
 
-EL CÓDIGO NO VIENE EN LA SALIDA y no lo mostrás vos: \`programa.reglas\` trae las reglas en palabras, \`programa.resumen\` cuántas son y cuántas líneas tiene, y \`programa.dondeVerlo\` dónde se ve (la sección «Código» de la ventana de \`vista-fisica\`). Cuando pidan ver el código: contá eso y abrí la ventana. Nunca escribas, copies ni resumas código del programa en el chat.
+EL CÓDIGO NO VIENE EN LA SALIDA y no lo mostrás vos: \`programa.reglas\` trae las reglas en palabras, \`programa.resumen\` cuántas son y cuántas líneas tiene, y \`programa.dondeVerlo\` dónde se ve (la sección «Mirá el código» de la ventana de \`vista-fisica\`). Cuando pidan ver el código: contá eso y abrí la ventana. Nunca escribas, copies ni resumas código del programa en el chat.
 
-Toda salida empieza con \`resultado\` y trae \`etapa\` (generacion | compilacion | carga), \`ok\` y la \`revision\` del proyecto usada. Si la generación falla, \`codigo\` es un \`CODEGEN_*\` con sus \`datos\`: explicalo, pedí la corrección del proyecto o decí que ese caso todavía no está soportado. NUNCA escribas el programa a mano como alternativa ni edites los archivos generados (se pisan en cada llamada). Después de cambiar el proyecto, volvé a generar/compilar: el programa corresponde a una revisión.`,
+Toda salida empieza con \`resultado\` y trae \`etapa\` (generacion | compilacion | carga), \`ok\` y la \`revision\` del proyecto usada. Si la generación falla, \`explicacion\` trae la causa en palabras, la misma que muestra la ventana: decísela al docente TAL CUAL (no la cambies ni le agregues causas) y, si se arregla cambiando el proyecto, ofrecé el cambio. \`codigo\` (un \`CODEGEN_*\`) y \`datos\` son para diagnosticar: NUNCA le nombres al docente un código interno ni un identificador (\`CODEGEN_…\`, \`cmp-…\`, \`arduino-uno\`). NUNCA escribas el programa a mano como alternativa ni edites los archivos generados (se pisan en cada llamada). Después de cambiar el proyecto, volvé a generar/compilar: el programa corresponde a una revisión.`,
   args: {
     accion: tool.schema
       .enum(["generar", "compilar", "cargar"])

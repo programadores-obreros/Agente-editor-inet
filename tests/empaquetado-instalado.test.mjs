@@ -336,7 +336,7 @@ if (process.platform === "win32") {
       assert.ok(!("carpeta" in rp.generado), "la tool instalada no dice dónde quedó el programa")
       assert.doesNotMatch(JSON.stringify(rp.generado), /pinMode|#include|\[env:/, "ni devuelve el código")
       assert.match(rp.generado.archivos["src/main.cpp"].sha256, /^[0-9a-f]{64}$/)
-      assert.match(rp.generado.programa.dondeVerlo, /sección «Código»/)
+      assert.match(rp.generado.programa.dondeVerlo, /sección «Mirá el código»/)
       assert.equal(rp.fueraDelProyecto, true, "la carpeta derivada quedó fuera de la carpeta de trabajo")
       assert.match(rp.enDisco["src/main.cpp"], /pinMode\(PIN_CMP_0_SENAL, INPUT_PULLUP\);/)
       assert.match(rp.enDisco["platformio.ini"], /^\[env:esp32-devkit-v1\]$/m)

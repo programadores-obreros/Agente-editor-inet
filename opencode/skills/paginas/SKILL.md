@@ -39,7 +39,7 @@ campo de más es un error, no se ignora.
 | `lista` | `items` | `titulo` | materiales, ideas sueltas, criterios: cosas sin orden | instrucciones que se hacen en orden: eso es `pasos` |
 | `pasos` | `items` | `titulo` | un procedimiento: armar, cargar, probar, en orden | cosas sin orden |
 | `tabla` | `columnas`, `filas` | `titulo` | conexiones (pieza, pin, color de cable), comparaciones, una rúbrica | una sola columna: eso es `lista` |
-| `codigo` | `texto` | `titulo` | un ejemplo de clase que ya compilaste en esta charla, o un pedacito de tres o cuatro líneas | el programa del proyecto físico: ese se ve en la ventana, sección «Código» |
+| `codigo` | `texto` | `titulo` | un ejemplo de clase que ya compilaste en esta charla, o un pedacito de tres o cuatro líneas | el programa del proyecto físico: ese se ve en la ventana, sección «Mirá el código» |
 | `aviso` | `texto`, `severidad` | `titulo` | una advertencia, un dato a no olvidar, un «así tiene que quedar» | adornar: un aviso por tema, no uno por párrafo |
 | `plegable` | `titulo` | `texto`, `items` (al menos uno) | lo que no todos necesitan leer: «si no prende», la solución, una ayuda | lo principal de la página: plegado no se lee |
 
@@ -70,7 +70,7 @@ páginas.
   y lo dice con un aviso `info`: «Las conexiones salen del circuito del
   proyecto».
 - **Código del proyecto físico**: no va. Va un `texto` que dice que el
-  programa se ve en la ventana del proyecto, sección «Código».
+  programa se ve en la ventana del proyecto, sección «Mirá el código».
 - **Otro código**: sólo si ya compiló en esta charla, o un pedacito de tres o
   cuatro líneas que ilustra lo que explicás.
 - **Contenido curricular** (materias, saberes, ejes): sólo del skill
