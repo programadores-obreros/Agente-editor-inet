@@ -531,6 +531,11 @@ function repintar() {
   elementoRevision.textContent = `revisión: ${ultimoSnapshot.revision}`
   const readiness = ultimoSnapshot.vista ? ultimoSnapshot.vista.readiness : ultimoSnapshot.validacion.readiness
   elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
+  // El código va ACÁ, pegado a la cabecera y antes de todo lo que puede cortar el repintado (el
+  // `return` de abajo, o un pintado que tira): si la revisión ya cambió en pantalla, el programa
+  // de la anterior se tiene que haber ido. Se pide al servidor por la revisión de ESTE snapshot
+  // (sólo si cambió) y nunca se arma acá. Lo marcó la revisión independiente del 2026-11-25.
+  void panelCodigo?.actualizar(ultimoSnapshot, { conectado: estadoConexion === "conectado" })
 
   if (!ultimoSnapshot.vista) return
   const focoAnterior = capturarFocoActual()
@@ -554,8 +559,6 @@ function repintar() {
   restaurarFocoRegla(secciones.reglas)
   // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
   panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado" })
-  // El código se pide al servidor por la revisión de ESTE snapshot (sólo si cambió) y nunca se arma acá.
-  void panelCodigo?.actualizar(ultimoSnapshot, { conectado: estadoConexion === "conectado" })
 }
 
 /** Physical View UX #1: la instrucción `cableado` del último repintado y el redibujo

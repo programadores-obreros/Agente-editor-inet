@@ -11,6 +11,13 @@
 //   2. la revisión y el programa salen del mismo estado;
 //   3. la página NUNCA deja a la vista un programa de otra revisión;
 //   4. cuando no hay programa, no hay código en pantalla y sí el porqué, sin códigos internos.
+//
+// SEGUNDA VUELTA (2026-11-25). Una revisión independiente encontró que la primera versión de este
+// archivo dejaba pasar doce roturas. Las más serias: el panel se actualizaba al FINAL del
+// repintado (si algo cortaba antes, quedaba el programa viejo bajo una cabecera nueva); el caso
+// "otra revisión" sólo se probaba con una revisión MAYOR; el cableado de app.js se miraba con una
+// sola expresión regular; y dos textos prometían de más ("lo que falta está en Motivos" con
+// Motivos vacío, "es el que se carga"). Cada prueba agregada por eso lo dice.
 
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -23,7 +30,7 @@ const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/
 const { iniciarServidor, PROGRAMA_NO_DISPONIBLE } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
 const { generarPrograma } = await import(join(REPO, "opencode/codegen/programa.ts"))
 const { CONOCIMIENTO_ACTIVO: K } = await import(join(REPO, "opencode/conocimiento/conocimiento-activo.ts"))
-const { programaParaVista, TODAVIA_NO_ESTA_LISTO, TODAVIA_NO_SE_SABE_PROGRAMAR } = await import(join(REPO, "opencode/vista-fisica/programa-para-vista.ts"))
+const { programaParaVista, TODAVIA_NO_ESTA_LISTO, TODAVIA_FALTA_ARMAR, TODAVIA_NO_SE_SABE_PROGRAMAR } = await import(join(REPO, "opencode/vista-fisica/programa-para-vista.ts"))
 const web = await import(join(REPO, "opencode/vista-fisica/web/vista-codigo.js"))
 
 // ── el proyecto del caso real: pulsador → LED y DHT22 > 35 °C → LED 2 ─────────────────────────
@@ -111,12 +118,31 @@ test("programa para la vista: proyecto que todavía no cierra → sin código, m
   servicio.cerrar()
 })
 
+// Lo vio la revisión: con el proyecto recién empezado (sin placa) el generador también dice "no
+// listo", pero la sección Motivos está VACÍA. Mandar al docente ahí era mentirle.
+test("programa para la vista: no listo y sin ningún motivo que frene → NO manda a Motivos", () => {
+  const servicio = obtenerServicioDeProyectoConVista({ directorio: nuevoDir("vista-codigo-vacio"), idProyecto: nuevoIdProyecto("vista-codigo-vacio") })
+  const generado = generarPrograma(servicio.snapshot().proyecto, K)
+  assert.equal(generado.ok, false)
+  assert.equal(generado.error.codigo, "CODEGEN_PROYECTO_NO_LISTO")
+  assert.deepEqual(servicio.snapshot().vista.motivos, [], "el caso: Motivos está vacío")
+  assert.deepEqual(programaParaVista(generado), { ok: false, porQue: TODAVIA_FALTA_ARMAR })
+  assert.doesNotMatch(TODAVIA_FALTA_ARMAR, /Motivos/)
+  servicio.cerrar()
+  // Un motivo que sólo informa (no frena) tampoco alcanza para mandar a Motivos.
+  const soloInforma = { ok: false, error: { codigo: "CODEGEN_PROYECTO_NO_LISTO", datos: { motivos: [{ codigo: "PIN_STRAPPING", severidad: "info" }] } } }
+  assert.equal(programaParaVista(soloInforma).porQue, TODAVIA_FALTA_ARMAR)
+  for (const datos of [{}, { motivos: null }, { motivos: "x" }, { motivos: [null, 3] }]) {
+    assert.equal(programaParaVista({ ok: false, error: { codigo: "CODEGEN_PROYECTO_NO_LISTO", datos } }).porQue, TODAVIA_FALTA_ARMAR)
+  }
+})
+
 test("programa para la vista: cualquier otro rechazo del generador → 'todavía no se sabe programar', nunca el código interno", () => {
   for (const codigo of ["CODEGEN_NO_ADMITIDO", "CODEGEN_SIN_LECTURA", "CODEGEN_PROTOCOLO_SIN_BACKEND", "CODEGEN_DATO_NO_EMITIBLE"]) {
     const p = programaParaVista({ ok: false, error: { codigo, datos: { tipo: "ntc", cmp: "cmp-3" } } })
     assert.deepEqual(p, { ok: false, porQue: TODAVIA_NO_SE_SABE_PROGRAMAR })
   }
-  for (const texto of [TODAVIA_NO_ESTA_LISTO, TODAVIA_NO_SE_SABE_PROGRAMAR, PROGRAMA_NO_DISPONIBLE]) assert.doesNotMatch(texto, /CODEGEN|cmp-|beh-|[{}]/)
+  for (const texto of [TODAVIA_NO_ESTA_LISTO, TODAVIA_FALTA_ARMAR, TODAVIA_NO_SE_SABE_PROGRAMAR, PROGRAMA_NO_DISPONIBLE]) assert.doesNotMatch(texto, /CODEGEN|cmp-|beh-|[{}]/)
 })
 
 test("programa para la vista: cuenta líneas como quien lee (el salto final no suma una vacía)", () => {
@@ -205,6 +231,34 @@ test("/api/programa: si armar el programa tira una excepción, responde un error
   })
 })
 
+// La red general del servidor (revisión del 2026-11-25): antes, una excepción fuera del try de la
+// ruta dejaba el pedido colgado para siempre. Estos pedidos llevan su propio límite de tiempo: un
+// cuelgue tiene que dar ROJO, no trabar la corrida.
+const conLimite = (promesa, ms = 3000) => Promise.race([promesa, new Promise((_, rechazar) => setTimeout(() => rechazar(new Error("el pedido quedó colgado")), ms).unref())])
+
+test("servidor: una respuesta que no se puede serializar contesta 500 en vez de colgar el pedido", async () => {
+  const ciclico = {}
+  ciclico.yo = ciclico
+  await conServidor(proyectoDelCaso(), { programaDe: () => ciclico }, async (servidor) => {
+    const r = await conLimite(pedir(servidor, "/api/programa"))
+    assert.equal(r.estado, 500)
+    assert.equal((await conLimite(pedir(servidor, "/api/proyecto"))).estado, 200, "y sigue atendiendo")
+  })
+})
+
+test("servidor: si leer el proyecto tira (servicio cerrado), contesta 500 en las dos lecturas en vez de colgar", async () => {
+  const servicio = proyectoDelCaso()
+  const servidor = await iniciarServidor({ servicio, programaDe })
+  try {
+    servicio.cerrar()
+    assert.throws(() => servicio.snapshot(), "el caso: snapshot() tira con el servicio cerrado")
+    assert.equal((await conLimite(pedir(servidor, "/api/programa"))).estado, 500)
+    assert.equal((await conLimite(pedir(servidor, "/api/proyecto"))).estado, 500)
+  } finally {
+    await servidor.cerrar()
+  }
+})
+
 // ═══ 3. el panel de la página ═════════════════════════════════════════════════════════════════
 
 const elemento = () => ({ textContent: "", hidden: true })
@@ -236,6 +290,10 @@ test("panel: pinta el código tal cual llegó, con textContent, y dice de qué r
   assert.equal(m.el.aviso.textContent, web.pieDelPrograma({ revision: 7, archivo: "src/main.cpp", lineas: 2 }))
   assert.match(m.el.aviso.textContent, /revisión 7/)
   assert.match(m.el.aviso.textContent, /no lo escribe el asistente/)
+  // El pie afirma sólo lo que el código garantiza. "Es el que se carga" no lo garantiza nadie:
+  // la carga tiene sus propios frenos y esto no sabe qué hay en la placa.
+  assert.match(m.el.aviso.textContent, /No dice qué programa tiene hoy la placa/)
+  assert.doesNotMatch(m.el.aviso.textContent, /se carga|cargad|desde las reglas/)
 })
 
 test("panel: al cambiar la revisión, el programa anterior se BORRA antes de que llegue el nuevo", async () => {
@@ -266,6 +324,75 @@ test("panel: una respuesta de otra revisión NO se pinta, y el próximo repintad
   m.contestar(1, PROG(8))
   await b
   assert.match(m.el.codigo.textContent, /revision: 8/)
+})
+
+// La primera versión sólo probaba una respuesta con revisión MAYOR. Con `>` en vez de `!==` se
+// pintaba un programa más VIEJO con pie de la revisión nueva, y la suite seguía verde.
+test("panel: una respuesta de una revisión ANTERIOR tampoco se pinta", async () => {
+  const m = montar()
+  const a = m.panel.actualizar({ revision: 8 })
+  m.contestar(0, PROG(7))
+  await a
+  assert.equal(m.el.codigo.textContent, "")
+  assert.equal(m.el.codigo.hidden, true)
+  assert.equal(m.el.aviso.textContent, web.TEXTO_ACTUALIZANDO)
+})
+
+test("panel: la FALLA tardía de un pedido viejo no borra el programa nuevo", async () => {
+  const m = montar()
+  const a = m.panel.actualizar({ revision: 7 })
+  const b = m.panel.actualizar({ revision: 8 })
+  m.contestar(1, PROG(8))
+  await b
+  m.pedidos[0].rechazar(new Error("se cortó el pedido viejo"))
+  await a
+  assert.match(m.el.codigo.textContent, /revision: 8/)
+  assert.equal(m.el.codigo.hidden, false)
+  await m.panel.actualizar({ revision: 8 })
+  assert.equal(m.pedidos.length, 2, "y no deja marcado un reintento que no corresponde")
+})
+
+test("panel: después de un reintento que salió bien, la misma revisión no se vuelve a pedir", async () => {
+  const m = montar()
+  const a = m.panel.actualizar({ revision: 7 })
+  m.pedidos[0].rechazar(new Error("sin red"))
+  await a
+  const b = m.panel.actualizar({ revision: 7 })
+  m.contestar(1, PROG(7))
+  await b
+  await m.panel.actualizar({ revision: 7 })
+  await m.panel.actualizar({ revision: 7 })
+  assert.equal(m.pedidos.length, 2, "si no, cada repintado borraría y volvería a pedir para siempre")
+  assert.equal(m.el.codigo.hidden, false)
+})
+
+test("panel: una falla de Tecnia Bot (500) muestra el porqué del servidor, no 'esta instalación no trae…', y se reintenta", async () => {
+  const m = montar()
+  const a = m.panel.actualizar({ revision: 7 })
+  m.contestar(0, { revision: 7, programa: { ok: false, porQue: PROGRAMA_NO_DISPONIBLE } }, 500)
+  await a
+  assert.equal(m.el.aviso.textContent, PROGRAMA_NO_DISPONIBLE)
+  assert.equal(m.el.codigo.hidden, true)
+  const b = m.panel.actualizar({ revision: 7 })
+  assert.equal(m.pedidos.length, 2)
+  m.contestar(1, PROG(7))
+  await b
+  assert.equal(m.el.codigo.hidden, false)
+})
+
+test("panel: un snapshot sin revisión no pide nada ni toca lo que hay", async () => {
+  const m = montar()
+  for (const snapshot of [null, undefined, {}, { revision: "7" }]) await m.panel.actualizar(snapshot)
+  assert.equal(m.pedidos.length, 0)
+  assert.equal(m.el.aviso.textContent, "")
+})
+
+test("panel: desconectada SIN programa a la vista no dice 'este programa puede no ser el actual'", async () => {
+  const m = montar()
+  const a = m.panel.actualizar({ revision: 7 }, { conectado: false })
+  m.contestar(0, { revision: 7, programa: { ok: false, porQue: TODAVIA_FALTA_ARMAR } })
+  await a
+  assert.equal(m.el.aviso.textContent, TODAVIA_FALTA_ARMAR)
 })
 
 test("panel: una respuesta que llega tarde (de un pedido viejo) se descarta", async () => {
@@ -360,9 +487,45 @@ test("index.html: sección «Código» después de la Vista lógica, con su <pre
   assert.match(html, /id="vista-codigo-aviso"/)
   assert.ok(html.indexOf("<h2>Vista lógica</h2>") < html.indexOf("<h2>Código</h2>"))
   assert.ok(html.indexOf("<h2>Código</h2>") < html.indexOf("<h2>Motivos</h2>"))
+  // El texto fijo se ve también sin programa: no puede hablar de "estas líneas" ni prometer una
+  // relación regla → bloque → líneas que la página todavía no muestra.
+  assert.match(html, /<p id="vista-codigo-etiqueta">Es el programa que sale del montaje y de las reglas de arriba\.<\/p>/)
 })
 
-test("app.js: el panel de código se actualiza en cada repintado desde el snapshot autoritativo, y nunca arma el programa", () => {
+// La primera versión miraba el cableado con UNA expresión regular: se podía no crear el panel,
+// pedirle un elemento que no existe o pasarle la conexión al revés, y seguía verde.
+test("app.js: el panel se crea, con elementos que EXISTEN en la página, y recibe la conexión al derecho", () => {
+  const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
+  const creacion = /\n  panelCodigo = crearPanelCodigo\(\{([\s\S]*?)\n  \}\)/.exec(app)
+  assert.ok(creacion, "el panel se asigna a `panelCodigo` (no se crea y se tira)")
+  const ids = [...creacion[1].matchAll(/getElementById\("([^"]+)"\)/g)].map((x) => x[1])
+  assert.deepEqual(ids, ["vista-codigo-texto", "vista-codigo-aviso"])
+  for (const id of ids) assert.match(html, new RegExp(`id="${id}"`), `index.html no tiene #${id}`)
+  assert.match(creacion[1], /elementoCodigo: document\.getElementById\("vista-codigo-texto"\)/)
+  assert.match(creacion[1], /elementoAviso: document\.getElementById\("vista-codigo-aviso"\)/)
+  // Todo id que app.js busca tiene que existir en la página (vale para todas las secciones).
+  for (const [, id] of app.matchAll(/getElementById\("([^"]+)"\)/g)) assert.match(html, new RegExp(`id="${id}"`), `app.js busca #${id} y index.html no lo tiene`)
+  assert.match(app, /panelCodigo\?\.actualizar\(ultimoSnapshot, \{ conectado: estadoConexion === "conectado" \}\)/)
+})
+
+// El defecto más serio que encontró la revisión: el panel se actualizaba en la ÚLTIMA línea de
+// `repintar()`. La cabecera ya decía "revisión N+1" y, si algo cortaba en el medio (el `return`
+// de un snapshot sin vista, o un pintado que tira), quedaba a la vista el programa de la N.
+test("app.js: el panel de código se actualiza pegado a la cabecera, ANTES de todo lo que puede cortar el repintado", () => {
+  const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
+  const cuerpo = /\nfunction repintar\(\) \{\n([\s\S]*?)\n\}\n/.exec(app)[1]
+  const en = (texto) => { const i = cuerpo.indexOf(texto); assert.ok(i >= 0, `repintar() no tiene: ${texto}`); return i }
+  const panel = en("panelCodigo?.actualizar(")
+  assert.ok(en("elementoRevision.textContent =") < panel, "después de escribir la revisión")
+  assert.ok(panel < en("if (!ultimoSnapshot.vista) return"), "antes del return de un snapshot sin vista")
+  assert.ok(panel < en("planDePintado("), "antes del plan de pintado")
+  assert.ok(panel < en("pintar(document"), "antes de pintar")
+  assert.ok(panel < en("panelVistaLogica?.repintar("), "antes de los bloques, que pueden tirar")
+  assert.equal(cuerpo.split("panelCodigo?.actualizar(").length, 2, "una sola vez")
+})
+
+test("app.js: el panel nunca arma ni transforma el programa", () => {
   const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
   assert.match(app, /panelCodigo\?\.actualizar\(ultimoSnapshot,/)
   const panel = readFileSync(join(REPO, "opencode/vista-fisica/web/vista-codigo.js"), "utf8")
@@ -375,6 +538,10 @@ test("tool vista-fisica: el servidor que levanta sirve el programa con el genera
   assert.doesNotMatch(fuente, /^import\s+(?!type)[^\n]*codegen\//m, "codegen nunca en caliente: si falta, la tool tiene que importar igual")
   const enCargarServidor = /async function cargarServidor\(\)[\s\S]*?\n}\n/.exec(fuente)[0]
   assert.doesNotMatch(enCargarServidor, /codegen/, "fuera del Promise.all de la vista: sin codegen/ la vista abre igual, sin la sección")
+  // Instalación sin `codegen/`: el import falla y la vista tiene que abrir igual, sin la sección.
+  const { cargarProgramaDe } = await import(join(REPO, "opencode/tool/vista-fisica.ts"))
+  assert.equal(await cargarProgramaDe(K, () => Promise.reject(new Error("Cannot find module ../codegen/programa.ts"))), null)
+  assert.equal(typeof (await cargarProgramaDe(K)), "function")
   const { obtenerServidorVistaFisica, directorioDeDatos, ID_PROYECTO_DEFAULT } = await import(join(REPO, "opencode/tool/vista-fisica.ts"))
   const dir = nuevoDir("vista-codigo-tool")
   const { servidor, servicio } = await obtenerServidorVistaFisica(dir, ID_PROYECTO_DEFAULT)

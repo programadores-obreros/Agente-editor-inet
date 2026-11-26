@@ -21,7 +21,10 @@ const plural = (n) => (n === 1 ? "1 línea" : `${n} líneas`)
 
 /** Pie del programa mostrado: de qué revisión es y cuánto mide. */
 export function pieDelPrograma({ revision, archivo, lineas }) {
-  return `Programa de la revisión ${revision} · ${archivo} · ${plural(lineas)}. Lo genera Tecnia Bot desde las reglas de este proyecto: no lo escribe el asistente, y es el que se compila y se carga.`
+  // Lo que se afirma es lo que el código garantiza: es el texto que el generador da para esta
+  // revisión (el mismo que compila la tool `programa`). NO se afirma que se cargó ni que se puede
+  // cargar: la carga tiene sus propios frenos, y esto no sabe qué hay hoy en la placa.
+  return `Programa de la revisión ${revision} · ${archivo} · ${plural(lineas)}. Lo genera Tecnia Bot desde este proyecto, no lo escribe el asistente: es el texto que se compila para esta revisión. No dice qué programa tiene hoy la placa.`
 }
 
 /**
@@ -77,6 +80,8 @@ export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso }) {
       return sinCodigo(TEXTO_ACTUALIZANDO)
     }
     if (!programa || programa.ok !== true || typeof programa.codigo !== "string") {
+      // Una falla de Tecnia Bot (no un "no hay programa" del proyecto) se vuelve a intentar.
+      if (estado !== 200) reintentar = true
       return sinCodigo(typeof programa?.porQue === "string" && programa.porQue !== "" ? programa.porQue : TEXTO_NO_SE_PUDO_PEDIR)
     }
     elementoCodigo.textContent = programa.codigo

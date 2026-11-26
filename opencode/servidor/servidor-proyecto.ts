@@ -12,6 +12,9 @@
 // servicio es responsabilidad de quien llama `iniciarServidor` (el test de
 // integración, y después la tool de OpenCode, W4).
 //
+// Lo mismo vale para el programa (sección «Código», 2026-11-24): el generador llega
+// INYECTADO en `OpcionesServidor.programaDe`. Este módulo no importa `codegen/`.
+//
 // `node:http` — funciona igual en Node (tests) y en Bun (proceso real de OpenCode),
 // sin dependencias nuevas (`package.json` no gana ninguna). Vive FUERA de
 // `opencode/nucleo/**`, así que la guardia 29b (`tests/nucleo-adversarial.test.mjs`,
@@ -261,8 +264,8 @@ export const CABECERA_TOKEN = "x-tecnia-token"
  *   - NO: de un programa que corre con el MISMO usuario. Ese puede leer la dirección de
  *     la línea de comandos del lanzador o del historial del navegador, y además puede
  *     editar el archivo del proyecto directamente, sin pasar por acá.
- *   - NO protege las LECTURAS (`/api/proyecto`, `/api/eventos`): quien conoce el puerto
- *     puede ver el proyecto. Sólo se cierran los cambios.
+ *   - NO protege las LECTURAS (`/api/proyecto`, `/api/programa`, `/api/eventos`): quien
+ *     conoce el puerto puede ver el proyecto y su programa. Sólo se cierran los cambios.
  *
  * DÓNDE QUEDA EL TOKEN, además de la memoria de este proceso: en la línea de comandos del
  * lanzador, en la barra y el historial del navegador, y en el texto que devuelve la tool
@@ -415,7 +418,15 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
   const token = randomBytes(32).toString("base64url")
 
   const server = http.createServer((req, res) => {
-    void manejarRequest(req, res)
+    // Red para TODAS las rutas (2026-11-25, revisión independiente): `manejarRequest` corre
+    // suelto, así que una excepción adentro (un `snapshot()` que tira, una respuesta que no se
+    // puede serializar) dejaba el pedido colgado para siempre y una promesa rechazada en el
+    // proceso de OpenCode. Acá se contesta un 500 llano, o se corta la conexión si ya se había
+    // empezado a responder. El detalle no viaja.
+    manejarRequest(req, res).catch(() => {
+      if (res.headersSent) res.destroy()
+      else responderTexto(res, 500, "Error interno")
+    })
   })
 
   async function manejarRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -481,9 +492,9 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
       try {
         programa = programaDe(snapshot)
       } catch {
-        // El generador relanza lo que no es un rechazo suyo. Acá adentro no hay quien lo
-        // ataje (`manejarRequest` corre suelto): sin este catch quedaría un pedido colgado y
-        // una promesa rechazada en el proceso de OpenCode.
+        // El generador relanza lo que no es un rechazo suyo. Se ataja acá (y no en la red
+        // general de más arriba) para contestar con la MISMA forma que un programa: la
+        // página muestra el porqué en la sección, en vez de un error suelto.
         return responderJson(res, 500, { revision: snapshot.revision, programa: { ok: false, porQue: PROGRAMA_NO_DISPONIBLE } })
       }
       return responderJson(res, 200, { revision: snapshot.revision, programa })
