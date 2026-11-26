@@ -350,7 +350,7 @@ test("I: el destino de potencia sale de ComponentKnowledge.resolverDestino (DHT2
 //
 // MUTACIONES que ponen rojo estos tests (probadas con el cambio ya commiteado):
 //   - `rol: declarado.rol` → `rol: "tierra"` fijo en `snapshot-a-vista.ts`       → «el servidor da el rol…»
-//   - `rolPotencia: extremo.potencia.rol` → `null` en `plan-de-pintado.js`       → «el plan pasa el rol…» y «dibujarCableado…»
+//   - `rolPotencia: extremo.potencia.rol` → `null` en `plan-de-pintado.js`       → «el plan pasa el rol…»
 //   - sacar el `setAttribute("data-rol-potencia", …)` de `cableado.js`           → «dibujarCableado…»
 //   - poner el atributo también en los cables de señal                           → «dibujarCableado…»
 //   - volver a `[data-riel="3V3"]` en el CSS de la página                        → «I (estático, CSS)…»

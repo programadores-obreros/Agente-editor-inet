@@ -226,12 +226,42 @@ export interface ModeloDeVista {
   readonly zonas: readonly ZonaVista[]
   /** Textos fijos de la ventana (anexo de pedagogía). El navegador los muestra tal cual. */
   readonly textos: TextosVista
+  /** Lo primero que se lee en la ventana: qué hace el circuito y cómo está. Todo ya en palabras. */
+  readonly resumen: ResumenVista
+  /** Cómo leer los cables del esquema, armado para ESTA placa. Vacío si no hay placa. */
+  readonly leyenda: readonly EntradaDeLeyendaVista[]
 }
 
 /** Textos de la ventana que no salen de una pieza ni de una regla (anexo de pedagogía). */
 export interface TextosVista {
   /** Aviso cuando un cambio de pin no llegó al servidor (se cortó la conexión). */
   readonly cambioDePinNoGuardado: string
+  /** Lo que dice la sección «Avisos» cuando no hay ninguno. */
+  readonly sinAvisos: string
+  /** Etiqueta de texto de cada severidad (`Motivo.severidad` → «Hay que corregir», «Atención», «Dato»).
+   * El aviso se LEE por esta etiqueta; el color sólo acompaña. */
+  readonly severidad: Readonly<Record<string, string>>
+}
+
+/**
+ * El resumen de arriba de la ventana (2026-11-26). Se arma ENTERO en el servidor: el navegador no
+ * decide qué estado es, no redacta frases y no arma plurales.
+ */
+export interface ResumenVista {
+  /** `clave` es el estado que deriva el núcleo (`Readiness`), para que el CSS lo distinga; `texto`
+   * es cómo se le dice al alumno. Mismo orden de precedencia de siempre: listo, inválido, incompleto. */
+  readonly estado: { readonly clave: "listo" | "incompleto" | "invalido"; readonly texto: string }
+  /** Una entrada por regla, en el orden del proyecto. Una regla que todavía no se lee como oración
+   * lleva `sinTerminar: true` y un texto que lo dice. Sin reglas: UNA entrada que lo dice. Nunca vacío. */
+  readonly reglas: readonly { readonly texto: string; readonly sinTerminar: boolean }[]
+  /** Cuántos avisos hay (`motivos.length`) y la frase ya armada, con su singular y su plural. */
+  readonly avisos: { readonly cantidad: number; readonly texto: string }
+}
+
+/** Una línea de la leyenda de cables. `rol` es el mismo dato que lleva el cable dibujado. */
+export interface EntradaDeLeyendaVista {
+  readonly rol: "senal" | RolDePotencia
+  readonly texto: string
 }
 
 /** `id` = valor (nunca se muestra); `etiqueta` = nombre humano con ordinal estable ("LED 2"). */
