@@ -40,3 +40,74 @@ export function hojasNoPermitidas(html, nombresEnListaBlanca) {
   }
   return problemas
 }
+
+// ── La página y su CSS, leídos como texto ──────────────────────────────────────────────────────
+
+/** El CSS que la página trae escrito adentro (todos sus `<style>`), sin comentarios. */
+export function cssEmbebidoDe(html) {
+  return [...sinComentariosHtml(html).matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join("\n").replace(/\/\*[\s\S]*?\*\//g, "")
+}
+
+/** Lo que se LEE de la página tal como viene del servidor: sin comentarios, estilos, scripts ni etiquetas. */
+export function textoVisibleDe(html) {
+  return sinComentariosHtml(html)
+    .replace(/<(style|script)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+/**
+ * Reglas de un CSS: [{ medio, selector, cuerpo }]. `medio` es "" o el encabezado del `@media` (o
+ * `@page`, `@supports`) que la contiene. Mismo lector que usa `tests/sistema-diseno.test.mjs`
+ * para la hoja compartida: se repite acá, y no se comparte, para no tocar ese test.
+ */
+export function reglasCss(css, medio = "") {
+  const texto = css.replace(/\/\*[\s\S]*?\*\//g, "")
+  const reglas = []
+  let i = 0
+  while (i < texto.length) {
+    const abre = texto.indexOf("{", i)
+    if (abre === -1) break
+    const selector = texto.slice(i, abre).trim().replace(/\s+/g, " ")
+    let hondo = 1
+    let j = abre + 1
+    while (j < texto.length && hondo > 0) {
+      if (texto[j] === "{") hondo++
+      else if (texto[j] === "}") hondo--
+      j++
+    }
+    if (hondo !== 0) throw new Error(`llaves sin cerrar después de «${selector}»`)
+    const cuerpo = texto.slice(abre + 1, j - 1)
+    if (selector.startsWith("@media") || selector.startsWith("@supports")) reglas.push(...reglasCss(cuerpo, selector))
+    else reglas.push({ medio, selector, cuerpo })
+    i = j
+  }
+  return reglas
+}
+
+/** Las propiedades personalizadas declaradas en un cuerpo: { "--x": "valor" }. */
+export function tokensDe(cuerpo) {
+  const tokens = {}
+  for (const m of cuerpo.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) tokens[m[1]] = m[2].trim()
+  return tokens
+}
+
+export const COLOR_LITERAL = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(|:\s*(?:white|black|red|green|blue|yellow|orange|purple|gray|grey|silver|navy|teal)\b/gi
+
+function luminancia(hex) {
+  const limpio = hex.trim().replace(/^#/, "")
+  if (!/^(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(limpio)) throw new Error(`«${hex}» no es un color hexadecimal de 3 o 6 cifras`)
+  const largo = limpio.length === 3 ? [...limpio].map((c) => c + c).join("") : limpio
+  const [r, g, b] = [0, 2, 4].map((i) => {
+    const c = parseInt(largo.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/** Contraste WCAG 2.x entre dos colores hexadecimales. */
+export function contraste(a, b) {
+  const [clara, oscura] = [luminancia(a), luminancia(b)].sort((x, y) => y - x)
+  return (clara + 0.05) / (oscura + 0.05)
+}

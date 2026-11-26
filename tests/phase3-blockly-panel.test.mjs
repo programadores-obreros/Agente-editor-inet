@@ -147,7 +147,10 @@ test("T9 varias reglas: un par de bloques por regla, sin aviso de 'se muestra la
   assert.equal(m.reg.ws.getTopBlocks().length, 2, "dos reglas: dos pares")
   assert.doesNotMatch(m.el.texto.textContent, /Se muestra la primera regla/)
   assert.doesNotMatch(m.el.texto.textContent, /no analiza si se contradicen/, "OPEN-7: el aviso genérico se retiró")
-  assert.match(m.el.texto.textContent, /para quitar una, usá su botón «Quitar regla» en la sección Reglas/)
+  // 2026-11-26: decía «en la sección Reglas». Con el rediseño las frases quedaron bajo el subtítulo
+  // «Con palabras», así que el texto cambió; que ese lugar exista en la página lo mide
+  // tests/ventana-pagina.test.mjs. Acá sigue midiéndose lo de siempre: que el aviso aparezca.
+  assert.match(m.el.texto.textContent, /para quitar una, usá su botón «Quitar regla», arriba, en «Con palabras»/)
   assert.equal(m.el.quitar.disabled, true, "con dos reglas no hay 'la' regla que quitar")
   m.el.quitar.disparar("click")
   assert.deepEqual(m.enviadas, [], "y aunque le lleguen un click, no manda nada")
@@ -189,12 +192,23 @@ test("T9 el texto de estado del servidor (rechazo / conflicto) se muestra tal cu
   c.servicio.cerrar()
 })
 
-test("T9 index.html: sección 'Vista lógica' con encabezado y etiqueta visibles, lienzo con alto propio y botón; sin CSS externo", () => {
-  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
-  assert.match(html, /<h2>Vista lógica<\/h2>/)
-  for (const id of ["vista-logica-lienzo", "vista-logica-texto", "vista-logica-estado", "vista-logica-quitar"]) assert.match(html, new RegExp(`id="${id}"`))
-  assert.match(html, /Quitar regla/)
-  assert.match(html, /Son las mismas reglas de arriba/, "el texto fijo ya no promete 'la misma regla': puede haber varias")
+// REESCRITO EL 2026-11-26 (rediseño de la ventana). Buscaba el título literal `<h2>Vista lógica</h2>`
+// y la frase «Son las mismas reglas de arriba». En el diseño nuevo los bloques dejaron de ser una
+// sección aparte: son la segunda mitad del paso «Decidí qué hace», bajo el subtítulo «Con bloques»,
+// y el texto fijo dice «Un par … por cada regla». Lo que la prueba custodiaba se conserva, punto por
+// punto: encabezado y etiqueta visibles; los cuatro elementos que usa el panel; el botón; que el
+// texto fijo no prometa UNA sola regla (puede haber varias); un alto propio para el lienzo; nada de
+// CSS de afuera; y que los bloques vengan después de las frases.
+test("T9 index.html: los bloques tienen encabezado y etiqueta visibles, lienzo con alto propio y botón; sin CSS externo", () => {
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "")
+  const bloques = /<div id="vista-logica">([\s\S]*?)<\/div>\s*<\/section>/.exec(html)
+  assert.ok(bloques, "la página no tiene el contenedor de los bloques")
+  assert.match(bloques[1], /<h3\b[^>]*>Con bloques<\/h3>/)
+  for (const id of ["vista-logica-lienzo", "vista-logica-texto", "vista-logica-estado", "vista-logica-quitar"]) assert.match(bloques[1], new RegExp(`id="${id}"`))
+  assert.match(bloques[1], /<button\b[^>]*id="vista-logica-quitar"[^>]*>Quitar regla<\/button>/)
+  const etiqueta = /<p id="vista-logica-etiqueta">([^<]*)<\/p>/.exec(bloques[1])
+  assert.ok(etiqueta, "falta el texto fijo de los bloques")
+  assert.match(etiqueta[1], /por cada regla/, "el texto fijo ya no promete 'la misma regla': puede haber varias")
   assert.doesNotMatch(html, /Es la misma regla de arriba/)
   assert.match(html, /min-height:\s*\d+px/)
   // CAMBIADO A PROPÓSITO EL 2026-11-26. Acá decía `assert.ok(!/<link[^>]+stylesheet/i.test(html))`:
@@ -206,8 +220,9 @@ test("T9 index.html: sección 'Vista lógica' con encabezado y etiqueta visibles
   // máquina, una ruta fuera de /assets/, un nombre que el servidor no sirve, un @import) se marca.
   // El buscador se prueba contra páginas con el defecto en tests/ventana-hoja.test.mjs.
   assert.deepEqual(hojasNoPermitidas(html, [...construirRutasDeAssets().keys()]), [], "la página carga una hoja de estilos que no es de este servidor")
-  // la sección es hermana de "Reglas" dentro de <main>
-  assert.ok(html.indexOf("<h2>Reglas</h2>") < html.indexOf("<h2>Vista lógica</h2>"))
+  // los bloques van después de las frases («Con palabras»), en el mismo paso
+  assert.ok(html.indexOf('id="reglas"') !== -1 && html.indexOf('id="reglas"') < html.indexOf('id="vista-logica-lienzo"'))
+  assert.ok(html.indexOf(">Con palabras<") < html.indexOf(">Con bloques<"))
 })
 
 test("T9 app.js: el lienzo NO está entre los contenedores que repintar() reemplaza, y repintar() repinta el panel desde el snapshot", () => {
@@ -219,7 +234,12 @@ test("T9 app.js: el lienzo NO está entre los contenedores que repintar() reempl
 })
 
 test("T9c index.html: el lienzo declara un alto DEFINITIVO en px (no sólo min-height), si no Blockly mide 0 y queda recortado", () => {
-  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
-  const regla = /#vista-logica-lienzo\s*\{([^}]*)\}/.exec(html)[1]
-  assert.match(regla, /(^|[;\s])height:\s*\d+px/)
+  // 2026-11-26: tomaba la PRIMERA regla de CSS cuyo texto terminara en `#vista-logica-lienzo {`.
+  // En la página nueva la primera es la que deja el lienzo en claro en los dos temas (comparte
+  // selector con el esquema) y no habla del alto. Ahora se juntan TODAS las reglas que tienen al
+  // lienzo como selector: la intención es la misma, que en alguna haya un `height` en px.
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "")
+  const reglas = [...html.matchAll(/([^{}]*)\{([^{}]*)\}/g)].filter((m) => m[1].split(",").some((s) => s.trim() === "#vista-logica-lienzo")).map((m) => m[2])
+  assert.ok(reglas.length >= 1, "ninguna regla de CSS tiene al lienzo como selector")
+  assert.match(reglas.join(";"), /(^|[;\s])height:\s*\d+px/)
 })

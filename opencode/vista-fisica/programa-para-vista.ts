@@ -22,9 +22,11 @@ export type ProgramaParaVista =
   | { readonly ok: true; readonly archivo: string; readonly codigo: string; readonly lineas: number }
   | { readonly ok: false; readonly porQue: string }
 
-/** El proyecto tiene algo que lo frena, y eso ya está dicho en palabras en la sección Motivos. */
+/** El proyecto tiene algo que lo frena, y eso ya está dicho en palabras en la sección «Avisos».
+ * (Hasta el rediseño del 2026-11-26 la sección se llamaba «Motivos»; el nombre de acá y el título
+ * de `web/index.html` se cambiaron juntos, y `tests/ventana-pagina.test.mjs` los mantiene juntos.) */
 export const TODAVIA_NO_ESTA_LISTO =
-  "Todavía no hay programa: hay algo del proyecto que lo impide. Qué es, está en la sección «Motivos»."
+  "Todavía no hay programa: hay algo del proyecto que lo impide. Qué es, está en la sección «Avisos»."
 
 /** Al proyecto le falta armarse; no hay ningún motivo que mostrar (p. ej. recién empieza, sin placa). */
 export const TODAVIA_FALTA_ARMAR =
@@ -45,7 +47,7 @@ function hayMotivoQueFrena(datos: Readonly<Record<string, unknown>>): boolean {
 export function programaParaVista(resultado: ResultadoGeneracion): ProgramaParaVista {
   if (!resultado.ok) {
     if (resultado.error.codigo !== "CODEGEN_PROYECTO_NO_LISTO") return { ok: false, porQue: TODAVIA_NO_SE_SABE_PROGRAMAR }
-    // Se manda a «Motivos» SÓLO si ahí hay algo que frena. Un proyecto recién empezado no está
+    // Se manda a «Avisos» SÓLO si ahí hay algo que frena. Un proyecto recién empezado no está
     // listo y no tiene ningún motivo: mandar al docente a una sección vacía sería mentirle.
     return { ok: false, porQue: hayMotivoQueFrena(resultado.error.datos) ? TODAVIA_NO_ESTA_LISTO : TODAVIA_FALTA_ARMAR }
   }

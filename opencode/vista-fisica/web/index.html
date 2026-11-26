@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Tecnia Bot — vista física</title>
 <!--
+  La hoja de estilos compartida de Tecnia Bot (rediseño del 2026-11-26): tokens, tema oscuro,
+  impresión y los componentes genéricos `tb-*`. Es EL MISMO archivo que la tool `pagina` embebe
+  en sus páginas (`tecniabot-web/diseno/sistema.css`), servido por este mismo servidor desde la
+  lista blanca de `servidor-proyecto.ts`. Mismo origen: la política de seguridad de la página
+  (`style-src 'self'`) ya lo permitía. Acá abajo, en el <style>, queda SÓLO lo que es de esta
+  ventana y de ninguna otra página: el esquema y sus zonas, los cables, el lienzo de bloques y la
+  frase de las reglas.
+-->
+<link rel="stylesheet" href="/assets/sistema.css">
+<!--
   Bundle Wokwi Elements — DEFECTO detectado por el orquestador (P2-T6, cierre):
   esta página nunca cargó este script, así que <wokwi-esp32-devkit-v1>/<wokwi-led>
   (creados dinámicamente por pintar.js) quedaban como "custom elements indefinidos"
@@ -29,170 +39,308 @@
 <script src="/assets/blockly_compressed.js"></script>
 <script src="/assets/blockly-es.js"></script>
 <style>
-  :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 16px; }
-  header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; }
-  header h1 { font-size: 16px; margin: 0; }
-  #revision, #readiness, #conexion { font-size: 13px; padding: 2px 8px; border: 1px solid currentColor; border-radius: 999px; }
-  /* Revisión post red-team (B2): el indicador de conexión SIEMPRE está presente en
-     el DOM (no aparece/desaparece) — sólo cambia de color/texto vía data-estado-conexion. */
-  #conexion[data-estado-conexion="desconectado"] { border-color: #b91c1c; color: #b91c1c; }
-  #estado { min-height: 1.4em; margin-bottom: 12px; font-size: 13px; }
-  main { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
-  ul { list-style: none; padding: 0; margin: 0; }
-  li { padding: 2px 0; font-size: 13px; }
-  label { display: block; margin-bottom: 6px; font-size: 13px; }
-  select { font-size: 13px; }
-
-  /* Fase 2, Slice 2 (§3.5, HD-S2-5): sólo CSS, sin motor de layout ni tabla de
-     tamaños. `#circuito` acomoda placa+componentes con "aire" entre ellos en vez de
-     quedar pegados como texto en línea (ARCH-S2-PHYSICAL/INFORME.md §6, opción B). */
-  #circuito { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
-  /* `transform:scale()` es puramente cosmético (wokwi-render-datos.ts::ESCALA_WOKWI_POR_PLACA,
-     circuito.ts:93-99 citado ahí) — el elemento escalado NO reserva más espacio de
-     layout que su tamaño sin escalar, así que la pieza vecina puede quedar pisada.
-     Este margen fijo en la placa (única con escala != 1 hoy, ESP32 a 1.25) compensa
-     el desborde real medido en Chromium (ARCH-S2-PHYSICAL/INFORME.md §6: ~106.6px de
-     ancho reservado vs. ~133px visual, ~204px de alto reservado vs. ~255px visual) —
-     un valor fijo, cosmético, nunca una tabla de tamaños por placa. */
-  #circuito [data-entidad-tipo="placa"] { margin-right: 32px; margin-bottom: 56px; }
-
-  /* Fix post-gate (Chromium real, .../s2impl/gate-vista/v2-gpio34-blocking.png):
-     una pieza CON rol va envuelta en su propio contenedor (`<figure>`,
-     `pintar.js::pintarElemento`) junto con su rótulo — flex-wrap opera sobre ese
-     contenedor ENTERO, nunca separa la pieza de su texto. Sólo CSS/DOM mínimo, sin
-     motor de layout: se le quita el margen por defecto del navegador y se apila la
-     pieza + el rótulo en columna, con el rótulo DEBAJO. */
-  #circuito figure[data-pieza-de] { margin: 0; display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-  #circuito figure[data-pieza-de] figcaption { font-size: 12px; }
-
-  /* Fase 2, Slice 2 (§3.4, resaltado C): el elemento del componente afectado por un
-     motivo se remarca según la severidad — presentación pura, derivada del atributo
-     `data-afectado` que `pintar.js` ya calculó (nunca una decisión nueva acá). */
-  [data-afectado="blocking"] { outline: 3px solid #b91c1c; }
-  [data-afectado="warning"] { outline: 3px dashed #b45309; }
-  [data-afectado="info"] { outline: 2px dotted #1d4ed8; }
-
-  /* W0-8 (PHASE_3_WAVE_0_DESIGN.md): "Este proyecto todavía no tiene componentes..."
-     — nunca una superficie vacía sin ningún indicio (`pintar.js::pintarEstadoVacio`). */
-  /* Vista lógica (Phase 3, vertical #2): el lienzo de Blockly necesita un alto DEFINITIVO (con sólo min-height el contenedor interno mide 0 y todo queda recortado). */
-  #vista-logica.ancha { grid-column: 1 / -1; }
-  #vista-logica-lienzo { height: 260px; min-height: 260px; border: 1px solid currentColor; border-radius: 6px; position: relative; }
-  #vista-logica-texto { white-space: pre-line; font-size: 13px; margin: 6px 0; }
-  #vista-logica-estado { min-height: 1.2em; font-size: 13px; }
-  /* Sección «Código»: el programa generado, tal cual. Alto acotado con barra propia: un programa con sensor pasa las 90 líneas. */
-  #vista-codigo.ancha { grid-column: 1 / -1; }
-  #vista-codigo-texto { max-height: 420px; overflow: auto; margin: 6px 0; padding: 10px; border: 1px solid currentColor; border-radius: 6px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; tab-size: 2; }
-  #vista-codigo-aviso { white-space: pre-line; font-size: 13px; }
-  [data-estado-vacio] { font-style: italic; opacity: .8; }
-
-  /* ── Physical View UX #1: esquema por zonas (Entrada | Controlador | Salida). ──
-     Sólo presentación: QUÉ va en cada zona y QUÉ se conecta lo decide el servidor
-     (IR + ComponentKnowledge); el ruteo de los cables, `ruteo.js`. El rol se lee por
-     el título, la posición y el borde de cada zona, nunca sólo por el color. */
-  header { opacity: .85; }
-  #revision, #readiness, #conexion { font-size: 12px; }
-  #seccion-circuito { grid-column: 1 / -1; }
-  #seccion-circuito > h2 { font-size: 15px; }
-  #circuito { overflow-x: auto; }
-  #circuito > [data-esquema] {
-    flex: 1 1 100%; /* #circuito es flex (modo viejo): el esquema ocupa todo el ancho */
-    position: relative; display: grid; grid-template-columns: minmax(180px, 1fr) auto minmax(240px, 1fr);
-    align-items: stretch; min-width: 900px; max-width: 1360px; padding: 12px; border-radius: 10px;
-    background: #f6f5ef; color: #1f2937; color-scheme: light;
+  /* ══ Tokens de ESTA ventana. Los colores literales de la página viven sólo en este bloque
+     (lo custodia tests/ventana-pagina.test.mjs); el resto usa var(--token), los de acá o los de
+     la hoja compartida. ══
+     El esquema, la leyenda y el lienzo de bloques son «papel»: las piezas (dibujos de Wokwi) y
+     los bloques están pensados para fondo claro, así que quedan claros en los dos temas, a
+     propósito. Por eso tienen sus propios colores de tinta, que el tema oscuro NO redefine. */
+  :root {
+    --papel: #f6f5ef; --papel-sup: #ffffff; --papel-resalte: #ffffff;
+    --papel-tinta: #1e2330; --papel-tinta-2: #565f6e; --papel-linea: #dfe2ea; --papel-linea-control: #7b8494;
+    --papel-aviso: #8a4b00; --papel-aviso-f: #fdf3dc; --papel-error: #b91c1c; --papel-info: #6d28d9; --papel-marca: #6d28d9;
+    --entrada: #1d4ed8; --entrada-f: #eef5ff; --ctrl: #334155; --salida: #0f766e; --salida-f: #e8f6f4;
+    --cable-0: #2563eb; --cable-1: #15803d; --cable-2: #7e22ce; --cable-3: #0e7490; --cable-4: #be185d;
+    --cable-tierra: #111827; --cable-alimentacion: #b91c1c;
+    /* Alto del header fijo, para que un enlace de la navegación no deje el título tapado. */
+    --alto-cabecera: 96px;
   }
-  [data-zona] { padding: 10px 14px 18px; border-radius: 8px; display: flex; flex-direction: column; }
-  [data-zona] h3 { margin: 0; font-size: 18px; letter-spacing: .02em; }
-  [data-zona] > p { margin: 2px 0 10px; font-size: 14px; }
-  [data-zona="entrada"] { border: 2px solid #60a5fa; background: #eef5ff; }
-  [data-zona="salida"] { border: 2px dashed #f87171; background: #fff1f1; }
+  #circuito > [data-esquema], .leyenda, #vista-logica-lienzo {
+    color-scheme: light;
+    --tinta: var(--papel-tinta); --tinta-2: var(--papel-tinta-2); --linea: var(--papel-linea); --linea-control: var(--papel-linea-control);
+    --aviso: var(--papel-aviso); --aviso-f: var(--papel-aviso-f); --error: var(--papel-error); --info: var(--papel-info);
+    --marca: var(--papel-marca); --sup: var(--papel-sup);
+  }
+
+  /* `hidden` gana siempre: un componente con `display` propio (un chip, por ejemplo) no lo pisa. */
+  [hidden] { display: none !important; }
+  ul, ol { list-style: none; margin: 0; padding: 0; }
+
+  /* ══ Header fijo: marca, pasos, estado y conexión ══ */
+  .tb-header .tb-marca { flex: 0 0 auto; }
+  nav[data-pasos] { flex: 1 1 auto; }
+  nav[data-pasos] ol { display: flex; flex-wrap: wrap; gap: var(--e1); }
+  #contador-avisos .tb-chip { justify-content: center; min-width: 22px; padding: 0 var(--e2); font-size: var(--t-xs); font-weight: 700; }
+  #readiness[data-readiness="listo"] { border-color: transparent; background: var(--ok-f); color: var(--ok); }
+  #readiness[data-readiness="incompleto"] { border-color: transparent; background: var(--aviso-f); color: var(--aviso); }
+  #readiness[data-readiness="invalido"] { border-color: transparent; background: var(--error-f); color: var(--error); }
+  /* El indicador de conexión SIEMPRE está en el DOM (revisión post red-team, B2): sólo cambia
+     de texto y de color. El punto es un adorno: lo que dice si hay conexión es el texto. */
+  #conexion::before { content: ""; flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
+  #conexion[data-estado-conexion="desconectado"] { background: var(--error-f); border-color: var(--error); color: var(--error); border-radius: var(--r-m); max-width: 460px; }
+  #conexion[data-estado-conexion="desconectado"]::before { background: var(--error); }
+  /* El mensaje de estado («no se pudo guardar…») va DENTRO del header fijo: si quedara arriba
+     de la página, quien está cambiando una regla más abajo no lo vería nunca. */
+  #estado { max-width: var(--ancho); margin: 0 auto; padding: 0 var(--e5); font-size: var(--t-s); font-weight: 600; color: var(--error); }
+  #estado:not(:empty) { padding-bottom: var(--e3); }
+
+  /* ══ Página ══ */
+  .tb-pagina > section, .resumen > section { scroll-margin-top: calc(var(--alto-cabecera) + var(--e4)); }
+  .nota { font-size: var(--t-s); color: var(--tinta-2); }
+
+  /* Resumen: qué hace y cómo está */
+  .resumen { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); gap: var(--e4); }
+  .resumen .tb-tarjeta > * + * { margin-top: var(--e3); }
+  #resumen-reglas .tb-lista { max-width: none; gap: var(--e3); }
+  #resumen-reglas li { font-size: var(--t-l); line-height: 1.35; font-weight: 600; }
+  #resumen-reglas li[data-sin-terminar] { color: var(--aviso); font-weight: 400; }
+  #resumen-estado strong { display: block; font-size: var(--t-xl); line-height: 1.2; font-weight: 700; }
+  #resumen-estado [data-readiness="listo"] { color: var(--ok); }
+  #resumen-estado [data-readiness="incompleto"] { color: var(--aviso); }
+  #resumen-estado [data-readiness="invalido"] { color: var(--error); }
+  #resumen-avisos a { display: inline-block; font-size: var(--t-s); font-weight: 600; color: var(--tinta-2); }
+  #resumen-avisos a:not([data-cantidad="0"]) { padding: var(--e1) var(--e3); border-radius: var(--r-m); background: var(--aviso-f); color: var(--aviso); }
+  #revision { font-size: var(--t-xs); }
+
+  /* Avisos. La severidad se LEE en la etiqueta (texto que pone pintar.js con lo que manda el
+     servidor); el color del recuadro sólo acompaña. */
+  #motivos > ul { display: flex; flex-direction: column; gap: var(--e2); }
+  #motivos li[data-motivo-severidad="blocking"] { background: var(--error-f); border-color: var(--error); }
+  #motivos li[data-motivo-severidad="blocking"] .tb-aviso__etiqueta { background: var(--error); color: var(--error-f); }
+  #motivos li[data-motivo-severidad="warning"] { background: var(--aviso-f); border-color: var(--aviso-linea); }
+  #motivos li[data-motivo-severidad="warning"] .tb-aviso__etiqueta { background: var(--aviso); color: var(--aviso-f); }
+  #motivos li[data-motivo-severidad="info"] { background: var(--info-f); border-color: var(--marca-linea); }
+  #motivos li[data-motivo-severidad="info"] .tb-aviso__etiqueta { background: var(--info); color: var(--info-f); }
+  #motivos li[data-sin-avisos] { font-size: var(--t-s); color: var(--tinta-2); }
+
+  /* ══ Paso 1: el esquema por zonas (Entrada | Controlador | Salida). ══
+     Sólo presentación: QUÉ va en cada zona y QUÉ se conecta lo decide el servidor (IR +
+     ComponentKnowledge); el ruteo de los cables, `ruteo.js`. El rol se lee por el título, la
+     posición y el borde de cada zona, nunca sólo por el color.
+     LA GEOMETRÍA NO SE TOCA: la grilla, el `zoom` de las piezas y los márgenes de los carriles
+     son los que `ruteo.js` y `cableado.js` miden para llevar cada cable a su pin. */
+  #circuito { display: flex; flex-wrap: wrap; gap: var(--e4); align-items: flex-start; overflow-x: auto; }
+  #circuito > div { flex: 1 1 100%; }
+  /* Sin piezas no hay pines que elegir ni conexiones que listar: no se muestran un subtítulo y un
+     plegable vacíos. (Lo que sí se muestra siempre es el aviso de «todavía no tiene componentes».) */
+  #bloque-pines:not(:has(label)), .tb-plegable:not(:has(#cables li)) { display: none; }
+  #bloque-pines > * + * { margin-top: var(--e4); }
+  #circuito > [data-esquema] {
+    flex: 1 1 100%; position: relative; display: grid; grid-template-columns: minmax(180px, 1fr) auto minmax(240px, 1fr);
+    align-items: stretch; min-width: 900px; padding: 12px; border-radius: var(--r-m);
+    background: var(--papel); border: 1px solid var(--linea); color: var(--tinta);
+  }
+  [data-zona] { padding: 10px 14px 18px; border-radius: var(--r-m); display: flex; flex-direction: column; }
+  [data-zona] h3 { font-size: var(--t-l); line-height: 1.2; font-weight: 700; }
+  [data-zona] > p { margin: 2px 0 10px; font-size: var(--t-s); color: var(--tinta-2); }
+  [data-zona="entrada"] { border: 2px solid var(--entrada); background: var(--entrada-f); }
+  [data-zona="entrada"] h3 { color: var(--entrada); }
+  [data-zona="salida"] { border: 2px dashed var(--salida); background: var(--salida-f); }
+  [data-zona="salida"] h3 { color: var(--salida); }
   [data-zona="controlador"] { padding: 10px 176px 64px; text-align: center; }
-  [data-zona="otras"] { grid-column: 1 / -1; margin-top: 12px; border: 2px dotted #9ca3af; }
+  [data-zona="controlador"] h3 { color: var(--ctrl); }
+  [data-zona="otras"] { grid-column: 1 / -1; margin-top: 12px; border: 2px dotted var(--linea-control); }
   [data-zona-piezas] { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; min-height: 240px; }
-  [data-zona] figure { margin: 0; padding: 8px 10px; border-radius: 8px; display: inline-flex; flex-direction: column; align-items: center; gap: 6px; }
-  [data-zona] figure:focus-visible, [data-zona] figure:hover { outline: 3px solid #1d4ed8; outline-offset: 2px; }
+  [data-zona="controlador"] [data-zona-piezas] { padding-top: 40px; }
+  [data-zona] figure { margin: 0; padding: 8px 10px; border-radius: var(--r-m); display: inline-flex; flex-direction: column; align-items: center; gap: 6px; cursor: default; transition: background var(--mov); }
+  [data-zona] figure:hover, [data-zona] figure:focus-visible { background: var(--papel-resalte); box-shadow: 0 0 0 2px var(--marca); outline: none; }
   /* El nombre va ARRIBA de la pieza: debajo queda libre para los cables. */
   [data-pieza] { display: inline-flex; flex-direction: column-reverse; align-items: center; gap: 4px; }
-  [data-nombre-pieza] { font-size: 15px; font-weight: 600; }
+  [data-nombre-pieza] { font-size: var(--t-m); font-weight: 700; }
   [data-fila-fusion] { display: flex; align-items: flex-end; gap: 36px; padding-bottom: 40px; }
-  [data-zona="controlador"] [data-zona-piezas] { padding-top: 40px; }
-  [data-explicacion-de] { font-size: 14px; max-width: 240px; text-align: center; }
-  [data-nota-conexion] { margin: 0; font-size: 13px; max-width: 240px; text-align: center; border-left: 3px solid #b45309; padding-left: 6px; }
-  [data-zona] [data-sin-representacion] { border: 2px dashed #6b7280; border-radius: 8px; padding: 8px 10px; font-size: 14px; max-width: 240px; }
+  [data-explicacion-de] { font-size: var(--t-s); max-width: 240px; text-align: center; color: var(--tinta-2); }
+  [data-nota-conexion] { font-size: var(--t-s); max-width: 240px; text-align: center; padding: 4px 8px; border-radius: var(--r-s); background: var(--aviso-f); color: var(--aviso); }
+  [data-zona] [data-sin-representacion] { border: 2px dashed var(--linea-control); border-radius: var(--r-m); padding: 8px 10px; font-size: var(--t-s); max-width: 240px; }
+  /* W0-8: «Este proyecto todavía no tiene componentes…» — nunca una superficie vacía sin indicio. */
+  [data-estado-vacio] { flex: 1 1 100%; padding: var(--e6); border: 2px dashed var(--linea-control); border-radius: var(--r-m); text-align: center; color: var(--tinta-2); }
   [data-zona] wokwi-esp32-devkit-v1 { display: inline-block; zoom: 1.7; }
-  [data-zona] wokwi-pushbutton, [data-zona] wokwi-led, [data-zona] wokwi-resistor { display: inline-block; zoom: 1.5; }
+  [data-zona] wokwi-pushbutton, [data-zona] wokwi-led, [data-zona] wokwi-resistor, [data-zona] wokwi-dht22, [data-zona] pb-dht11 { display: inline-block; zoom: 1.5; }
+  /* La pieza (o la regla) afectada por un aviso se remarca según la severidad: presentación pura,
+     del atributo `data-afectado` que pone pintar.js. El trazo cambia con la severidad (lleno,
+     rayado, punteado), no sólo el color. */
+  [data-afectado="blocking"] { outline: 3px solid var(--error); outline-offset: 3px; }
+  [data-afectado="warning"] { outline: 3px dashed var(--aviso); outline-offset: 3px; }
+  [data-afectado="info"] { outline: 2px dotted var(--info); outline-offset: 3px; }
+
+  /* Cables. Los de señal llevan un color por pieza. Los de potencia toman color y trazo de su
+     ROL (`data-rol-potencia`, que manda el servidor), nunca del nombre del pin: alimentación en
+     rojo, tierra en negro Y punteada, para que el color no sea el único canal. */
   svg[data-cableado] { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
   svg[data-cableado] .cable polyline { fill: none; stroke-linejoin: round; stroke-linecap: round; }
-  svg[data-cableado] .cable .linea { stroke: currentColor; stroke-width: 3; }
-  svg[data-cableado] .cable .borde { stroke: #f6f5ef; stroke-width: 9; }
+  svg[data-cableado] .cable .linea { stroke: currentColor; stroke-width: 3; transition: stroke-width var(--mov); }
+  svg[data-cableado] .cable .borde { stroke: var(--papel); stroke-width: 9; }
   svg[data-cableado] .cable circle { fill: currentColor; }
-  svg[data-cableado] .cable text { font: 600 13px ui-sans-serif, system-ui, sans-serif; fill: #111827; paint-order: stroke; stroke: #f6f5ef; stroke-width: 4px; }
-  svg[data-cableado] .color-0 { color: #2563eb; }
-  svg[data-cableado] .color-1 { color: #c2410c; }
-  svg[data-cableado] .color-2 { color: #15803d; }
-  svg[data-cableado] .color-3 { color: #7e22ce; }
-  svg[data-cableado] .color-4 { color: #be185d; }
-  /* El color y el trazo de un cable de potencia salen de su ROL (`data-rol-potencia`, que manda el
-     servidor), nunca del nombre del pin. La tierra además va punteada: el color no es el único canal. */
-  svg[data-cableado] .cable-potencia { color: #111827; }
-  svg[data-cableado] .cable-potencia[data-rol-potencia="alimentacion"] { color: #b91c1c; }
+  svg[data-cableado] .cable text { font: 600 13px var(--sans); fill: var(--tinta); paint-order: stroke; stroke: var(--papel); stroke-width: 4px; }
+  svg[data-cableado] .color-0 { color: var(--cable-0); }
+  svg[data-cableado] .color-1 { color: var(--cable-1); }
+  svg[data-cableado] .color-2 { color: var(--cable-2); }
+  svg[data-cableado] .color-3 { color: var(--cable-3); }
+  svg[data-cableado] .color-4 { color: var(--cable-4); }
+  svg[data-cableado] .cable-potencia { color: var(--cable-tierra); }
+  svg[data-cableado] .cable-potencia .linea { stroke-width: 2.5; }
+  svg[data-cableado] .cable-potencia:not(.resaltado) { opacity: .6; }
+  svg[data-cableado] .cable-potencia[data-rol-potencia="alimentacion"] { color: var(--cable-alimentacion); }
   svg[data-cableado] .cable-potencia[data-rol-potencia="tierra"] .linea { stroke-dasharray: 8 4; }
-  svg[data-cableado] .atenuado { opacity: .18; }
+  svg[data-cableado] .atenuado { opacity: .12; transition: opacity var(--mov); }
   svg[data-cableado] .resaltado .linea { stroke-width: 5; }
+
+  /* La leyenda: cada muestra lleva el MISMO rol que su cable, así se dibuja igual. */
+  .leyenda { display: flex; flex-wrap: wrap; align-items: center; gap: var(--e2) var(--e5); padding: var(--e2) var(--e3); border-radius: var(--r-m); background: var(--papel); border: 1px solid var(--linea); font-size: var(--t-s); color: var(--tinta-2); }
+  .leyenda:not(:has([data-leyenda])) { display: none; }
+  .leyenda b { color: var(--tinta); }
+  #leyenda-cables > div { display: flex; flex-wrap: wrap; gap: var(--e2) var(--e5); }
+  [data-leyenda] { display: inline-flex; align-items: center; gap: var(--e2); }
+  [data-rol-cable] { display: inline-block; width: 30px; height: 0; border-top: 3px solid var(--cable-0); }
+  [data-rol-cable="alimentacion"] { border-top-color: var(--cable-alimentacion); }
+  [data-rol-cable="tierra"] { border-top: 3px dashed var(--cable-tierra); }
+
+  /* Pines y lista de conexiones. Los selectores y los campos NO usan `tb-select`: esa clase se
+     oculta al imprimir, y acá el valor elegido es parte de lo que se lee en el papel. */
+  #controles > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: var(--e3); }
+  #controles label { display: flex; flex-direction: column; gap: var(--e1); padding: var(--e3); border: 1px solid var(--linea); border-radius: var(--r-m); background: var(--sup); font-size: var(--t-s); font-weight: 600; color: var(--tinta-2); }
+  select, input[type="text"] { min-height: 40px; padding: 0 var(--e3); border: 1px solid var(--linea-control); border-radius: var(--r-s); background: var(--sup); color: var(--tinta); font: 600 var(--t-m)/1.2 var(--sans); transition: border-color var(--mov); }
+  select:hover, input[type="text"]:hover { border-color: var(--marca); }
+  select:disabled, input:disabled { opacity: .55; cursor: not-allowed; }
+  #cables > ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 0 var(--e5); }
+  #cables li { padding: var(--e2) 0; border-top: 1px solid var(--linea); font-size: var(--t-s); }
+
+  /* ══ Paso 2: las reglas, con palabras y con bloques ══ */
+  #reglas > div { display: flex; flex-direction: column; gap: var(--e3); counter-reset: regla; }
+  #reglas div[data-regla-id] { position: relative; padding: var(--e4) var(--e4) var(--e4) 60px; border: 1px solid var(--linea); border-radius: var(--r-m); background: var(--sup); }
+  #reglas div[data-regla-id]::before { counter-increment: regla; content: counter(regla); position: absolute; left: var(--e4); top: var(--e4); display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; background: var(--marca-suave); color: var(--marca-honda); font-size: var(--t-s); font-weight: 700; }
+  #reglas .tb-boton { margin-right: var(--e2); }
+  #reglas > div > .tb-boton { align-self: flex-start; }
+  #reglas [data-accion="alternar-traza"] { border-color: var(--marca); color: var(--marca-honda); }
+  [data-frase] { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 18px; margin-bottom: var(--e3); }
+  /* En la frase, la pieza que se lee lleva el color de la zona Entrada y la que se maneja el de
+     la zona Salida (y un borde más grueso): son los mismos dos colores del esquema de arriba. */
+  [data-frase] select[data-slot="sensor"] { border: 2px solid var(--entrada); background: var(--entrada-f); color: var(--entrada); }
+  [data-frase] select[data-slot="actuador"] { border: 2px solid var(--salida); background: var(--salida-f); color: var(--salida); }
+  [data-frase] input[type="text"] { width: 76px; text-align: right; }
+  [data-ayuda-regla], [data-borrador-regla] { font-size: var(--t-s); color: var(--tinta-2); margin-bottom: var(--e3); }
+  [data-aviso-condicion-avanzada], [data-aviso-borrador], [data-aviso-reglas] { font-size: var(--t-s); padding: var(--e2) var(--e3); border-radius: var(--r-s); background: var(--aviso-f); color: var(--aviso); margin-bottom: var(--e3); }
+  [data-regla-motivos] { margin-bottom: var(--e3); }
+  [data-regla-motivos] li { font-size: var(--t-s); padding: var(--e2) var(--e3); border-radius: var(--r-s); background: var(--aviso-f); color: var(--aviso); }
+  [data-traza] { margin-top: var(--e3); padding: var(--e3) var(--e4); border-radius: var(--r-m); background: var(--marca-suave); font-size: var(--t-s); }
+  [data-traza] > p:first-child { font-weight: 700; color: var(--marca-honda); margin-bottom: var(--e2); }
+  [data-traza] li { padding: var(--e1) 0; }
+  #vista-logica > * + * { margin-top: var(--e3); }
+  #vista-logica-etiqueta { font-size: var(--t-s); color: var(--tinta-2); }
+  /* El lienzo de Blockly necesita un alto DEFINITIVO (con sólo min-height el contenedor interno
+     mide 0 y todo queda recortado). Va SIEMPRE visible, nunca dentro de algo plegado: si al
+     inyectarse mide cero, Blockly no dibuja nada y no se recupera solo. */
+  #vista-logica-lienzo { height: 260px; min-height: 260px; border: 1px solid var(--linea); border-radius: var(--r-m); position: relative; overflow: hidden; background: var(--sup); }
+  #vista-logica-texto { white-space: pre-line; font-size: var(--t-s); color: var(--tinta-2); }
+  #vista-logica-texto:empty { display: none; }
+  /* El mismo mensaje ya se lee en el header fijo (#estado): acá sería decirlo dos veces. */
+  #vista-logica-estado { display: none; }
+  #vista-logica-quitar:disabled { display: none; }
+
+  /* ══ Paso 3: el programa, tal cual. Alto acotado con barra propia: un programa con sensor
+     pasa las 90 líneas. ══ */
+  #vista-codigo-texto { max-height: 420px; }
+  #vista-codigo-aviso { white-space: pre-line; padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-top: 1px solid var(--cod-linea); }
+  #vista-codigo-aviso:empty { display: none; }
+  #vista-codigo-texto[hidden] + #vista-codigo-aviso { border-top: 0; }
+
+  @media (max-width: 900px) {
+    .resumen { grid-template-columns: 1fr; }
+    .tb-header--fijo { position: static; }
+    #estado { padding-left: var(--e4); padding-right: var(--e4); }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>Tecnia Bot — vista física</h1>
-  <span id="revision">revisión: —</span>
-  <span id="readiness">—</span>
-  <span id="conexion" data-estado-conexion="conectado">conectado</span>
-  <span>avisos: <span id="contador-avisos"></span></span>
+<header class="tb-header tb-header--fijo">
+  <div class="tb-header__fila">
+    <div class="tb-marca">
+      <svg class="tb-marca__logo" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"></path></svg>
+      <div class="tb-marca__textos"><span class="tb-marca__nombre">Tecnia Bot</span><h1 class="tb-marca__titulo">Vista física</h1></div>
+    </div>
+    <nav data-pasos aria-label="Secciones">
+      <ol>
+        <li><a class="tb-nav__enlace" href="#paso-circuito"><span class="tb-nav__numero" aria-hidden="true">1</span>Mirá cómo se conecta</a></li>
+        <li><a class="tb-nav__enlace" href="#paso-reglas"><span class="tb-nav__numero" aria-hidden="true">2</span>Decidí qué hace</a></li>
+        <li><a class="tb-nav__enlace" href="#paso-programa"><span class="tb-nav__numero" aria-hidden="true">3</span>Mirá el programa</a></li>
+        <li><a class="tb-nav__enlace" href="#paso-avisos">Avisos <span id="contador-avisos"></span></a></li>
+      </ol>
+    </nav>
+    <div class="tb-acciones">
+      <span id="readiness" class="tb-chip">—</span>
+      <span id="conexion" class="tb-chip" data-estado-conexion="conectado">conectado</span>
+    </div>
+  </div>
+  <div id="estado" role="status" aria-live="polite"></div>
 </header>
-<div id="estado" role="status" aria-live="polite"></div>
-<main>
-  <section>
-    <h2>Resumen</h2>
-    <div id="resumen-estado"></div>
-    <div id="resumen-reglas"></div>
-    <div id="resumen-avisos"></div>
+<main class="tb-pagina">
+  <div class="resumen">
+    <section class="tb-tarjeta" aria-labelledby="t-resumen">
+      <h2 class="tb-rotulo" id="t-resumen">Qué hace tu circuito</h2>
+      <div id="resumen-reglas"></div>
+    </section>
+    <section class="tb-tarjeta" aria-labelledby="t-como-esta">
+      <h2 class="tb-rotulo" id="t-como-esta">Cómo está</h2>
+      <div id="resumen-estado"></div>
+      <p class="nota">Esto habla del proyecto, no de lo que hoy tiene cargado la placa.</p>
+      <div id="resumen-avisos"></div>
+      <p class="nota"><span id="revision">revisión: —</span></p>
+    </section>
+  </div>
+
+  <section class="tb-tarjeta" id="paso-circuito" aria-labelledby="t-circuito">
+    <div class="tb-paso"><span class="tb-paso__numero" aria-hidden="true">1</span><div class="tb-paso__textos">
+      <h2 class="tb-paso__titulo" id="t-circuito">Mirá cómo se conecta</h2>
+      <p class="tb-paso__bajada">Se lee de izquierda a derecha: la entrada, el controlador que decide y la salida. <span class="tb-solo-pantalla">Pasá el mouse por una pieza para seguir sus cables.</span></p>
+    </div></div>
+    <!-- El esquema va SIEMPRE visible, nunca dentro de algo plegado: los cables se dibujan midiendo
+         las piezas ya puestas en la página, y una pieza que no se ve mide cero. -->
+    <div id="seccion-circuito"><div id="circuito"></div></div>
+    <div class="leyenda" aria-label="Cómo leer los cables"><b>Los cables</b><div id="leyenda-cables"></div></div>
+    <div id="bloque-pines">
+      <h3 class="tb-subtitulo">A qué pin va cada pieza</h3>
+      <div id="controles"></div>
+    </div>
+    <details class="tb-plegable">
+      <summary>Lista completa de conexiones</summary>
+      <div class="tb-plegable__cuerpo"><div id="cables"></div></div>
+    </details>
   </section>
-  <section id="seccion-circuito">
-    <h2>Mi circuito</h2>
-    <div id="circuito"></div>
-    <div id="leyenda-cables"></div>
-  </section>
-  <section>
-    <h2>Conexiones</h2>
-    <ul id="cables"></ul>
-  </section>
-  <section>
-    <h2>Pines elegidos</h2>
-    <div id="controles"></div>
-  </section>
-  <section>
-    <h2>Reglas</h2>
+
+  <section class="tb-tarjeta" id="paso-reglas" aria-labelledby="t-reglas">
+    <div class="tb-paso"><span class="tb-paso__numero" aria-hidden="true">2</span><div class="tb-paso__textos">
+      <h2 class="tb-paso__titulo" id="t-reglas">Decidí qué hace</h2>
+      <p class="tb-paso__bajada">Cada regla es una frase. Se puede armar con palabras o con bloques: son la misma regla, y cambiar una cambia la otra.</p>
+    </div></div>
+    <h3 class="tb-subtitulo">Con palabras</h3>
     <div id="reglas"></div>
+    <!-- Los bloques van SIEMPRE visibles, nunca dentro de algo plegado: ver el comentario del lienzo en el <style>. -->
+    <div id="vista-logica">
+      <h3 class="tb-subtitulo">Con bloques</h3>
+      <p id="vista-logica-etiqueta">Un par «mientras … hacer …» por cada regla. Leé cada par de izquierda a derecha y elegí cada campo de la lista.</p>
+      <div id="vista-logica-lienzo" role="group" aria-label="Vista lógica de las reglas"></div>
+      <div id="vista-logica-estado" role="status" aria-live="polite"></div>
+      <div id="vista-logica-texto"></div>
+      <button type="button" id="vista-logica-quitar" class="tb-boton tb-boton--peligro" disabled>Quitar regla</button>
+    </div>
   </section>
-  <section id="vista-logica" class="ancha">
-    <h2>Vista lógica</h2>
-    <p id="vista-logica-etiqueta">Son las mismas reglas de arriba, armadas con bloques: un par «mientras … hacer …» por cada regla. Leé cada par de izquierda a derecha y elegí cada campo de la lista.</p>
-    <div id="vista-logica-lienzo" role="group" aria-label="Vista lógica de las reglas"></div>
-    <div id="vista-logica-estado" role="status" aria-live="polite"></div>
-    <div id="vista-logica-texto"></div>
-    <button type="button" id="vista-logica-quitar" disabled>Quitar regla</button>
+
+  <section class="tb-tarjeta" id="paso-programa" aria-labelledby="t-programa">
+    <div class="tb-paso"><span class="tb-paso__numero" aria-hidden="true">3</span><div class="tb-paso__textos">
+      <h2 class="tb-paso__titulo" id="t-programa">Mirá el programa</h2>
+      <p class="tb-paso__bajada" id="vista-codigo-etiqueta">Es el programa que sale del montaje y de las reglas de arriba. Lo genera Tecnia Bot: no hace falta escribirlo.</p>
+    </div></div>
+    <div class="tb-codigo" id="vista-codigo">
+      <pre class="tb-codigo__texto" id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
+      <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>
+    </div>
   </section>
-  <section id="vista-codigo" class="ancha">
-    <h2>Código</h2>
-    <p id="vista-codigo-etiqueta">Es el programa que sale del montaje y de las reglas de arriba.</p>
-    <pre id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
-    <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>
-  </section>
-  <section id="paso-avisos">
-    <h2>Motivos</h2>
-    <ul id="motivos"></ul>
+
+  <section class="tb-tarjeta" id="paso-avisos" aria-labelledby="t-avisos">
+    <div class="tb-paso"><span class="tb-paso__numero" aria-hidden="true">!</span><div class="tb-paso__textos">
+      <h2 class="tb-paso__titulo" id="t-avisos">Avisos</h2>
+      <p class="tb-paso__bajada">Lo que conviene revisar antes de pasar el programa a la placa.</p>
+    </div></div>
+    <div id="motivos"></div>
   </section>
 </main>
 <script type="module" src="/assets/app.js"></script>

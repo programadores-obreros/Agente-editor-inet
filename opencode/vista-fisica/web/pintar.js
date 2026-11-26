@@ -119,7 +119,7 @@ export function pintar(doc, instrucciones, manejadores = {}) {
       continue
     }
     if (instruccion.tipo === "reglaAgregar") {
-      raiz.reglas.appendChild(crearBoton(doc, "agregar-regla", instruccion.etiqueta, instruccion.deshabilitado, () => avisar(manejadores.onAgregarRegla)))
+      raiz.reglas.appendChild(crearBoton(doc, "agregar-regla", instruccion.etiqueta, instruccion.deshabilitado, () => avisar(manejadores.onAgregarRegla), "tb-boton tb-boton--primario"))
       continue
     }
     if (instruccion.tipo === "panelMotivo") {
@@ -429,6 +429,10 @@ function pintarSelectorGpio(doc, contenedor, instruccion, manejadores) {
   const selector = doc.createElement("select")
   selector.setAttribute("data-componente-id", instruccion.componenteId)
   selector.setAttribute("data-terminal-id", instruccion.terminalId)
+  // Un control de formulario sin `id` ni `name` el navegador lo marca como problema (pestaña
+  // «Issues» de las herramientas de desarrollo): no puede recordarlo ni autocompletarlo. El
+  // nombre sale de los mismos ids que ya lleva como `data-*`; no se muestra ni se manda a nadie.
+  selector.setAttribute("name", `pin-${instruccion.componenteId}-${instruccion.terminalId}`)
 
   const opcionVacia = doc.createElement("option")
   opcionVacia.setAttribute("value", "")
@@ -534,10 +538,12 @@ function avisar(manejador, evento) {
   if (typeof manejador === "function") manejador(evento)
 }
 
-function crearBoton(doc, accion, texto, deshabilitado, alClick) {
+// `clase`: las clases de la hoja compartida (`tb-boton` y su variante). Es sólo aspecto.
+function crearBoton(doc, accion, texto, deshabilitado, alClick, clase = "tb-boton") {
   const boton = doc.createElement("button")
   boton.setAttribute("type", "button")
   boton.setAttribute("data-accion", accion)
+  boton.setAttribute("class", clase)
   boton.textContent = texto
   boton.disabled = Boolean(deshabilitado)
   if (typeof boton.addEventListener === "function") boton.addEventListener("click", alClick)
@@ -571,6 +577,7 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
       campoNumero.setAttribute("inputmode", "decimal")
       campoNumero.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
       campoNumero.setAttribute("data-slot", sel.slot)
+      campoNumero.setAttribute("name", `regla-${idTexto === "" ? "nueva" : idTexto}-${sel.slot}`)
       campoNumero.value = sel.valorActual
       campoNumero.disabled = Boolean(sel.deshabilitado)
       if (typeof campoNumero.addEventListener === "function") {
@@ -586,6 +593,7 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
     const selector = doc.createElement("select")
     selector.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
     selector.setAttribute("data-slot", sel.slot)
+    selector.setAttribute("name", `regla-${idTexto === "" ? "nueva" : idTexto}-${sel.slot}`)
     if (sel.placeholder !== null) {
       const vacia = doc.createElement("option")
       vacia.setAttribute("value", "")
@@ -653,7 +661,7 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
     caja.appendChild(lista)
   }
 
-  caja.appendChild(crearBoton(doc, "quitar-regla", "Quitar regla", instruccion.deshabilitado, () => avisar(manejadores.onQuitarRegla, { reglaId: instruccion.reglaId })))
+  caja.appendChild(crearBoton(doc, "quitar-regla", "Quitar regla", instruccion.deshabilitado, () => avisar(manejadores.onQuitarRegla, { reglaId: instruccion.reglaId }), "tb-boton tb-boton--peligro"))
   if (instruccion.conTraza) {
     caja.appendChild(crearBoton(doc, "alternar-traza", instruccion.etiquetaTraza, instruccion.deshabilitado, () => avisar(manejadores.onAlternarTraza, { reglaId: instruccion.reglaId })))
   }
