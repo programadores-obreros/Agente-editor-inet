@@ -33,6 +33,10 @@
 //   - emitir `sinAvisos` aunque haya avisos                               → «sin avisos, la sección lo dice»
 //   - la muestra de la leyenda sin `data-rol-cable`                       → «la leyenda se pinta con el rol…»
 //   - sacar una raíz nueva de las que monta `app.js`                      → «app.js monta todas las raíces…»
+//   - `hayReglas: true` siempre en el servidor                            → «sin reglas, el resumen lo dice» y «el pintor numera…»
+//   - `hayReglas: frases.some((f) => !f.sinTerminar)`                      → ««hay reglas» separa…»
+//   - el plan no copia `hayReglas`                                        → «el plan copia el resumen…» y «el pintor numera…»
+//   - el pintor numera siempre                                            → «el pintor numera…»
 //
 // Corre con: node --test tests/ventana-resumen.test.mjs
 
@@ -119,7 +123,27 @@ test("sin reglas, el resumen lo dice: nunca queda la tarjeta vacía", () => {
   for (const vista of [vistaDe(PULSADOR_Y_LED), vistaDe([], null)]) {
     assert.deepEqual(vista.reglas, [], "precondición: sin reglas")
     assert.deepEqual(vista.resumen.reglas, [{ texto: "Todavía no hay ninguna regla: el circuito no hace nada.", sinTerminar: true }])
+    assert.equal(vista.resumen.hayReglas, false)
   }
+})
+
+test("«hay reglas» separa el proyecto sin reglas del que tiene UNA regla sin terminar (los dos traen una sola entrada)", () => {
+  const sola = vistaDe([...PULSADOR_Y_LED, REGLA_A_MEDIAS])
+  assert.deepEqual(sola.resumen.reglas, [{ texto: "Hay una regla sin terminar.", sinTerminar: true }], "precondición: una sola entrada, sin terminar")
+  assert.equal(sola.resumen.hayReglas, true, "una regla sin terminar es una regla: va numerada")
+  assert.equal(vistaDe([...PULSADOR_Y_LED, REGLA_COMPLETA]).resumen.hayReglas, true)
+})
+
+test("el pintor numera las reglas, pero la frase de «no hay reglas» va sin número", () => {
+  const sin = pintarVista(vistaDe(PULSADOR_Y_LED))
+  assert.equal(sin.resumen.atributos.class, "tb-lista resumen-sin-reglas")
+  const sola = pintarVista(vistaDe([...PULSADOR_Y_LED, REGLA_A_MEDIAS]))
+  assert.equal(sola.resumen.atributos.class, "tb-lista tb-lista--numerada", "una sola regla sin terminar sigue numerada")
+  // Y la página tiene con qué sacarle la viñeta a esa frase.
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
+  // La lista la crea el pintor ADENTRO de #resumen-reglas (un <ol> propio): la regla va al hijo.
+  // (La primera versión apuntaba a `#resumen-reglas.resumen-sin-reglas`, que no matchea nada; se vio en Chromium.)
+  assert.match(html, /#resumen-reglas > \.resumen-sin-reglas \{[^}]*list-style: none;[^}]*padding-left: 0;/)
 })
 
 test("el plural de los avisos lo arma el servidor", () => {
@@ -236,7 +260,7 @@ test("el plan copia el resumen del servidor tal cual: no elige el estado, no red
 
   // Con un resumen que contradice al resto del modelo, el plan repite el RESUMEN: no recalcula.
   const trucado = JSON.parse(JSON.stringify(vista))
-  trucado.resumen = { estado: { clave: "listo", texto: "texto de prueba" }, reglas: [{ texto: "una sola", sinTerminar: false }], avisos: { cantidad: 99, texto: "noventa y nueve" } }
+  trucado.resumen = { estado: { clave: "listo", texto: "texto de prueba" }, reglas: [{ texto: "una sola", sinTerminar: false }], hayReglas: true, avisos: { cantidad: 99, texto: "noventa y nueve" } }
   const { tipo: _t, ...copiado } = planDePintado(trucado).find((i) => i.tipo === "resumen")
   assert.deepEqual(copiado, trucado.resumen)
 

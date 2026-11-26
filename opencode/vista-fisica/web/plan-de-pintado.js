@@ -229,11 +229,12 @@ export function planDePintado(modeloDeVista, opciones = {}) {
   // ENTERO y en palabras (`resumen`); esta función no elige el estado, no redacta una frase y no
   // arma un plural: copia. Va al final del plan porque no depende de nada de lo anterior.
   if (modeloDeVista.resumen) {
-    const { estado, reglas, avisos } = modeloDeVista.resumen
+    const { estado, reglas, hayReglas, avisos } = modeloDeVista.resumen
     instrucciones.push({
       tipo: "resumen",
       estado: { clave: estado.clave, texto: estado.texto },
       reglas: reglas.map((regla) => ({ texto: regla.texto, sinTerminar: regla.sinTerminar })),
+      hayReglas,
       avisos: { cantidad: avisos.cantidad, texto: avisos.texto },
     })
   }

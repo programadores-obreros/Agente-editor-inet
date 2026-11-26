@@ -528,6 +528,7 @@ function resumenDe(readiness: { readonly listo: boolean; readonly invalido: bool
   return {
     estado: { clave, texto: TEXTOS_DE_LA_VENTANA.estado[clave] },
     reglas: frases.length > 0 ? frases : [{ texto: TEXTOS_DE_LA_VENTANA.sinReglas, sinTerminar: true }],
+    hayReglas: frases.length > 0,
     avisos: { cantidad: motivos.length, texto: textoDeCantidadDeAvisos(motivos.length) },
   }
 }

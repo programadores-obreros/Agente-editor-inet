@@ -103,6 +103,8 @@
   #resumen-reglas li { font-size: var(--t-l); line-height: 1.35; font-weight: 600; }
   #resumen-reglas li[data-sin-terminar] { color: var(--aviso); font-weight: 400; }
   #resumen-estado strong { display: block; font-size: var(--t-xl); line-height: 1.2; font-weight: 700; }
+  /* Sin reglas, la frase que lo dice va sin número ni viñeta (el pintor cambia la clase). */
+  #resumen-reglas > .resumen-sin-reglas { list-style: none; padding-left: 0; }
   #resumen-estado [data-readiness="listo"] { color: var(--ok); }
   #resumen-estado [data-readiness="incompleto"] { color: var(--aviso); }
   #resumen-estado [data-readiness="invalido"] { color: var(--error); }

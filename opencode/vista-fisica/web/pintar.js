@@ -166,7 +166,9 @@ export function pintar(doc, instrucciones, manejadores = {}) {
 export const ANCLA_DE_AVISOS = "paso-avisos"
 
 function pintarResumen(doc, raiz, instruccion) {
-  raiz.resumen.setAttribute("class", "tb-lista tb-lista--numerada")
+  // Sin reglas, la única entrada es la frase que lo dice: sin número (un «1» se leería como la
+  // regla 1). El dato lo manda el servidor; sólo un `false` explícito saca la numeración.
+  raiz.resumen.setAttribute("class", instruccion.hayReglas === false ? "tb-lista resumen-sin-reglas" : "tb-lista tb-lista--numerada")
   for (const regla of instruccion.reglas) {
     const fila = doc.createElement("li")
     if (regla.sinTerminar) fila.setAttribute("data-sin-terminar", "true")

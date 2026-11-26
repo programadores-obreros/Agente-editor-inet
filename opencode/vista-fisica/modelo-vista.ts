@@ -254,6 +254,10 @@ export interface ResumenVista {
   /** Una entrada por regla, en el orden del proyecto. Una regla que todavía no se lee como oración
    * lleva `sinTerminar: true` y un texto que lo dice. Sin reglas: UNA entrada que lo dice. Nunca vacío. */
   readonly reglas: readonly { readonly texto: string; readonly sinTerminar: boolean }[]
+  /** Si el proyecto tiene alguna regla. Sin reglas, la única entrada de `reglas` es la frase que lo
+   * dice y no se numera: un «1» al lado se leería como si fuera la regla 1. Una regla sin terminar
+   * SÍ es una regla (va numerada). */
+  readonly hayReglas: boolean
   /** Cuántos avisos hay (`motivos.length`) y la frase ya armada, con su singular y su plural. */
   readonly avisos: { readonly cantidad: number; readonly texto: string }
 }
