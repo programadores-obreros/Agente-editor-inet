@@ -26,6 +26,7 @@
 //   - devolver «pedida» cuando el lanzador termina con error      → «el pedido al navegador»
 //   - pedir el navegador con abrir en false                       → «con abrir en false no llama al navegador»
 //   - seguir sin la hoja (CSS vacío)                              → «sin la hoja de estilos»
+//   - leer la hoja al importar el módulo en vez de al ejecutar    → «importar la tool no lee la hoja»
 //   - sacar el tope de 60 del nombre, o dejar pasar acentos       → «el nombre del archivo»
 //   - sacar la ruta de la respuesta, o darla cruda tras file://    → «arma la página»
 //
@@ -216,6 +217,32 @@ test("sin la hoja de estilos no escribe una página sin diseño", async () => {
   }
 })
 
+test("importar la tool no lee la hoja: sin ella el módulo carga igual y el error sale al ejecutar", async () => {
+  // POR QUÉ. El registro de OpenCode importa todas las tools en un loop sin catch: si
+  // ésta leyera la hoja al importarse y la hoja faltara, no fallaría «pagina», se caerían
+  // TODAS las tools. Mismo criterio que el guard D13 de tests/arquitectura-conocimiento.
+  // MUTACIÓN que lo pone rojo: `const CSS = readFileSync(rutaDelSistemaCss(), "utf8")` suelto
+  // en el módulo.
+  const casos = [
+    ["ausente", () => rmSync(join(OUT, "tecniabot-web"), { recursive: true, force: true }), /no encontré la hoja de estilos/],
+    ["ilegible (hay una carpeta en su lugar)", () => (rmSync(HOJA), mkdirSync(HOJA)), /no encontré la hoja de estilos/],
+  ]
+  for (const [nombre, romper, esperado] of casos) {
+    cpSync(join(REPO, "opencode/tecniabot-web/diseno"), join(OUT, "tecniabot-web/diseno"), { recursive: true, force: true })
+    romper()
+    // Una copia nueva del módulo por caso: un `import()` repetido de la misma ruta devuelve
+    // el módulo ya cargado y no probaría nada.
+    const copia = join(OUT, "tool", `pagina-sin-hoja-${casos.findIndex((c) => c[0] === nombre)}.ts`)
+    cpSync(join(OUT, "tool/pagina.ts"), copia)
+    let fresca
+    await assert.doesNotReject(async () => (fresca = await import(copia)), `${nombre}: importar la tool tiró`)
+    assert.equal(fresca.rutaDelSistemaCss(), HOJA)
+    const r = await fresca.default.execute(ARGS, { directory: DIR })
+    assert.match(r, esperado, nombre)
+    assert.deepEqual(enLaCarpeta(), [], `${nombre}: no escribe nada`)
+  }
+})
+
 test("con abrir en false no llama al navegador y dice que se puede ofrecer", async () => {
   for (const args of [ARGS, { ...ARGS, abrir: false }]) {
     const r = await ejecutar(args)
@@ -255,6 +282,7 @@ test("nunca dice «abierta»: ni cuando pide, ni cuando falla, ni cuando no pide
   respuestas.push(await ejecutar({ ...ARGS, abrir: true }))
   lanzar = () => ({ exited: new Promise(() => {}), unref() {} })
   respuestas.push(await P.pedirAlNavegador("/x/pagina.html", lanzar, 5).then((como) => `resultado: ${como}`))
+  lanzar = () => ({ exited: Promise.resolve(0), unref() {} })
   writeFileSync(join(DIR, "pagina-guia-del-semaforo.html"), "ajeno")
   respuestas.push(await ejecutar({ ...ARGS, abrir: true }))
   respuestas.push(await ejecutar({ titulo: "x", bloques: [] }))

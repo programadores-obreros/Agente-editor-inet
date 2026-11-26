@@ -350,6 +350,44 @@ if (process.platform === "win32") {
       assert.match(rs.salida.mensaje, /reinstal/i)
       assert.ok(!("archivos" in rs.salida), "sin codegen no puede haber archivos generados")
 
+      // ── La tool pagina INSTALADA encuentra su hoja de estilos. `tecniabot-web/` se copia
+      // entera, pero hasta acá no tenía ninguna subcarpeta con algo que una tool leyera al
+      // ejecutar: `diseno/` es la primera, y nadie había medido que llegara. La tool la busca
+      // relativa a su propio archivo (tool/ y tecniabot-web/ son hermanas en la instalación).
+      // Sólo vale con el trabajo COMMITEADO: la fuente sale de `git archive HEAD`. ──────────
+      const hojaInstalada = join(configDir, "tecniabot-web", "diseno", "sistema.css")
+      assert.ok(existsSync(hojaInstalada), "falta tecniabot-web/diseno/sistema.css instalado")
+      const hojaDeHead = spawnSync("git", ["show", "HEAD:opencode/tecniabot-web/diseno/sistema.css"], { cwd: REPO, encoding: "utf8" })
+      assert.equal(hojaDeHead.status, 0, `no pude leer la hoja de HEAD: ${hojaDeHead.stderr}`)
+      assert.equal(readFileSync(hojaInstalada, "utf8"), hojaDeHead.stdout, "la hoja instalada no es la de HEAD")
+      assert.ok(existsSync(join(configDir, "tool", "pagina.ts")), "falta la tool pagina instalada")
+      assert.match(agenteMd, /pagina:\s*"allow"/, 'falta el permiso pagina: "allow" en el agente instalado')
+      const proyectoPagina = join(raiz, "proyecto-pagina")
+      mkdirSync(proyectoPagina, { recursive: true })
+      const { json: pg, run: runPagina } = correrHijo("pagina-instalada", [configDir, proyectoPagina], otroCwd)
+      assert.equal(runPagina.status, 0, `el hijo de pagina falló:\n${runPagina.stdout}\n${runPagina.stderr}`)
+      assert.equal(pg.ruta, hojaInstalada, "la tool instalada busca la hoja en otro lado")
+      assert.equal(pg.hojaLeida, true, `la tool instalada no pudo leer su hoja: ${JSON.stringify(pg.salida)}`)
+      assert.equal(pg.css, hojaDeHead.stdout, "lo que leyó la tool instalada no es la hoja de HEAD")
+      assert.match(pg.salida, /^Armé la página \*\*Página instalada\*\*/, `la tool instalada no armó la página: ${pg.salida}`)
+      assert.deepEqual(pg.archivos, ["pagina-pagina-instalada.html"])
+      assert.ok(pg.enDisco.includes(hojaDeHead.stdout) && pg.enDisco.includes("Hola desde la instalación."), "la página instalada no lleva la hoja embebida o el contenido")
+
+      // Sin diseno/ en la instalación: ninguna tool deja de importar (la hoja se lee al
+      // ejecutar, nunca al importar: el registro de OpenCode importa todas las tools en un
+      // loop sin catch) y pagina contesta con un error explícito, sin escribir nada.
+      renameSync(join(configDir, "tecniabot-web", "diseno"), join(raiz, "diseno-fuera"))
+      const proyectoSinHoja = join(raiz, "proyecto-sin-hoja")
+      mkdirSync(proyectoSinHoja, { recursive: true })
+      const { json: sh, run: runSinHoja } = correrHijo("pagina-sin-hoja", [configDir, proyectoSinHoja], otroCwd)
+      renameSync(join(raiz, "diseno-fuera"), join(configDir, "tecniabot-web", "diseno"))
+      assert.equal(runSinHoja.status, 0, `el hijo sin hoja falló: ${runSinHoja.stderr}`)
+      assert.deepEqual(sh.fallosImport, [], `sin la hoja dejaron de importar: ${JSON.stringify(sh.fallosImport)}`)
+      assert.ok(sh.importadas.includes("pagina.ts"), "el loop de import no pasó por pagina.ts")
+      assert.match(sh.salida, /^No armé la página: no encontré la hoja de estilos/)
+      assert.match(sh.salida, /reinstal/i)
+      assert.deepEqual(sh.archivos, [], "sin la hoja no se escribe una página sin diseño")
+
       // ── D13: con servidor/ borrado de la instalación, el RESTO de las tools
       // (incluida vista-fisica.ts, que ya no importa ../servidor/* en el
       // top-level) siguen importando, y recién al intentar levantar el servidor

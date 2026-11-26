@@ -36,11 +36,19 @@
 //     — Codegen MVP Slice 1b: arma un proyecto con la tool proyecto-fisico INSTALADA y
 //       pide el programa a la tool programa INSTALADA (que importa ../codegen/ de la
 //       instalación). Imprime UNA línea JSON con la salida de `generar`.
+//   pagina-instalada <configDir> <projectDir>
+//     — la tool pagina INSTALADA busca la hoja de estilos al lado de tool/, en
+//       tecniabot-web/diseno/sistema.css de la instalación, y arma una página en <projectDir>.
+//       Imprime UNA línea JSON con la ruta que usó, si la leyó, la respuesta y lo que quedó en disco.
+//   pagina-sin-hoja <configDir> <projectDir>
+//     — con tecniabot-web/diseno/ fuera de la instalación (lo mueve el test): todas las tools
+//       siguen importando (la hoja se lee al ejecutar, nunca al importar) y pagina contesta con
+//       un error explícito, sin escribir nada.
 //   programa-sin-codegen <configDir> <projectDir>
 //     — con codegen/ fuera de la instalación (lo mueve el test): todas las tools siguen
 //       importando y `programa` contesta con un error explícito (nunca un C++ de otro lado).
 
-import { readdirSync, readFileSync } from "node:fs"
+import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
@@ -231,6 +239,33 @@ async function modoProgramaInstalado() {
   console.log(JSON.stringify({ aplicado: aplicado.ok, generado, enDisco, fueraDelProyecto: !moduloPrograma.programaALaVistaDelAgente(projectDir, carpeta) }))
 }
 
+/** La tool pagina escribe con Bun.write; bajo Node se lo presta fs. No se abre ningún navegador. */
+function prestarBunWrite() {
+  globalThis.Bun = { write: async (ruta, contenido) => writeFileSync(ruta, contenido) }
+}
+
+const ARGS_DE_PAGINA = { titulo: "Página instalada", bloques: [{ tipo: "texto", texto: "Hola desde la instalación." }] }
+
+async function modoPaginaInstalada() {
+  const [projectDir] = resto
+  prestarBunWrite()
+  const modulo = await import(urlDe(join(configDir, "tool", "pagina.ts")))
+  const hoja = modulo.leerSistemaCss()
+  const salida = await modulo.default.execute(ARGS_DE_PAGINA, { directory: projectDir })
+  const archivos = readdirSync(projectDir)
+  const enDisco = archivos.length === 1 ? readFileSync(join(projectDir, archivos[0]), "utf8") : ""
+  console.log(JSON.stringify({ ruta: modulo.rutaDelSistemaCss(), hojaLeida: hoja.ok, css: hoja.ok ? hoja.css : null, salida, archivos, enDisco }))
+}
+
+async function modoPaginaSinHoja() {
+  const [projectDir] = resto
+  prestarBunWrite()
+  const importadas = await importarTodasLasTools(join(configDir, "tool"))
+  const pagina = (await import(urlDe(join(configDir, "tool", "pagina.ts")))).default
+  const salida = await pagina.execute(ARGS_DE_PAGINA, { directory: projectDir })
+  console.log(JSON.stringify({ fallosImport: importadas.fallos, importadas: importadas.ok, salida, archivos: readdirSync(projectDir) }))
+}
+
 async function modoProgramaSinCodegen() {
   const [projectDir] = resto
   const importadas = await importarTodasLasTools(join(configDir, "tool"))
@@ -242,6 +277,8 @@ async function modoProgramaSinCodegen() {
 async function main() {
   if (modo === "programa-instalado") return modoProgramaInstalado()
   if (modo === "programa-sin-codegen") return modoProgramaSinCodegen()
+  if (modo === "pagina-instalada") return modoPaginaInstalada()
+  if (modo === "pagina-sin-hoja") return modoPaginaSinHoja()
   if (modo === "importar-tools") return modoImportarTools()
   if (modo === "servidor-happy") return modoServidorHappy()
   if (modo === "servidor-ausente") return modoServidorAusente()
