@@ -9,9 +9,11 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { REPO, nuevoDir, nuevoIdProyecto, op, catalogo, prepararProyectoConLed, GPIO_Y } from "./phase2-helpers.mjs"
 import { fabricarBlockly } from "./phase3-blockly-fake.mjs"
+import { hojasNoPermitidas } from "./ventana-helpers.mjs"
 
 const { proyectarVista } = await import(join(REPO, "opencode/vista-fisica/snapshot-a-vista.ts"))
 const { crearControladorReglas } = await import(join(REPO, "opencode/vista-fisica/web/app.js"))
+const { construirRutasDeAssets } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
 const cargarPanel = async () => (await import(join(REPO, "opencode/vista-fisica/web/vista-logica-ui.js"))).crearPanelVistaLogica
 
 const CONDICION = { capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } }
@@ -195,7 +197,15 @@ test("T9 index.html: sección 'Vista lógica' con encabezado y etiqueta visibles
   assert.match(html, /Son las mismas reglas de arriba/, "el texto fijo ya no promete 'la misma regla': puede haber varias")
   assert.doesNotMatch(html, /Es la misma regla de arriba/)
   assert.match(html, /min-height:\s*\d+px/)
-  assert.ok(!/<link[^>]+stylesheet/i.test(html))
+  // CAMBIADO A PROPÓSITO EL 2026-11-26. Acá decía `assert.ok(!/<link[^>]+stylesheet/i.test(html))`:
+  // «sin CSS externo» se había escrito como «ningún <link>». Lo que esa línea cuidaba era que la
+  // página no dependa de nada de AFUERA (un CDN, otra máquina): tiene que andar sin internet y con
+  // la política de seguridad cerrada. Eso sigue en pie. Lo que cambió es que la ventana ahora usa
+  // la hoja compartida de Tecnia Bot, servida por ESTE MISMO servidor: un <link> de mismo origen y
+  // dentro de la lista blanca no es CSS externo. Se permite sólo eso; cualquier otra hoja (otra
+  // máquina, una ruta fuera de /assets/, un nombre que el servidor no sirve, un @import) se marca.
+  // El buscador se prueba contra páginas con el defecto en tests/ventana-hoja.test.mjs.
+  assert.deepEqual(hojasNoPermitidas(html, [...construirRutasDeAssets().keys()]), [], "la página carga una hoja de estilos que no es de este servidor")
   // la sección es hermana de "Reglas" dentro de <main>
   assert.ok(html.indexOf("<h2>Reglas</h2>") < html.indexOf("<h2>Vista lógica</h2>"))
 })
