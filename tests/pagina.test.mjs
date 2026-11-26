@@ -29,6 +29,8 @@
 //   - leer la hoja al importar el módulo en vez de al ejecutar    → «importar la tool no lee la hoja»
 //   - sacar el tope de 60 del nombre, o dejar pasar acentos       → «el nombre del archivo»
 //   - sacar la ruta de la respuesta, o darla cruda tras file://    → «arma la página»
+//   - volver a copiar `e.message` en la respuesta de una escritura fallida,
+//     o mandar todos los códigos a la frase genérica                → «si la escritura falla, explica en llano»
 //
 // LÍMITE HONESTO: nada de esto corre adentro de OpenCode ni con un modelo. El esquema de
 // argumentos se mira con el zod real (último test), pero cómo le llega a un modelo Gemini
@@ -162,13 +164,48 @@ test("relee lo escrito: si el disco no tiene la página entera, no informa éxit
   escribir = () => {}
   assert.match(await ejecutar(ARGS), /^No pude confirmar que la página quedó bien guardada/)
 
-  // La escritura tira.
+  // La escritura tira. Antes este test EXIGÍA que la respuesta trajera el texto crudo de
+  // la excepción («EACCES: sin permiso»): fijaba la fuga en vez de prevenirla. Ahora mira
+  // lo contrario, en el test de abajo.
   escribir = () => {
-    throw new Error("EACCES: sin permiso")
+    throw Object.assign(new Error("EACCES: sin permiso"), { code: "EACCES" })
   }
   const sinPermiso = await ejecutar(ARGS)
-  assert.match(sinPermiso, /^No pude guardar la página .*EACCES: sin permiso/)
+  assert.match(sinPermiso, /^No pude guardar la página en `[^`]*pagina-guia-del-semaforo\.html`\./)
   assert.doesNotMatch(sinPermiso, /Armé la página/)
+})
+
+test("si la escritura falla, explica en llano qué pasó y qué hacer, sin copiar la excepción del sistema", async () => {
+  // Todo lo que devuelve la tool lo lee el modelo. El mensaje crudo del sistema viene en
+  // inglés y con jerga («EACCES: permission denied, open '…'»): el modelo lo repite o lo
+  // traduce inventando. Cada caso tira una excepción con un texto SECRETO que no puede
+  // aparecer en la respuesta, y con su código, que es lo único que se usa.
+  const SECRETO = "permission denied, open '/etc/zzz-secreto'"
+  const casos = [
+    ["EACCES", /falta permiso[\s\S]*permiso de escritura a esa carpeta, o trabajar en otra/],
+    ["EPERM", /falta permiso/],
+    ["EROFS", /falta permiso/],
+    ["ENOSPC", /El disco está lleno[\s\S]*liberar espacio/],
+    ["EISDIR", /hay una carpeta con el mismo nombre[\s\S]*otro título/],
+    [undefined, /no dijo por qué[\s\S]*Probá una vez más/],
+  ]
+  for (const [code, esperado] of casos) {
+    escribir = () => {
+      throw Object.assign(new Error(`${code ?? "EIO"}: ${SECRETO}`), code ? { code } : {})
+    }
+    const r = await ejecutar(ARGS)
+    assert.match(r, /^No pude guardar la página en `/, `${code}: ${r}`)
+    assert.match(r, esperado, `${code}: no explica qué pasó y qué hacer: ${r}`)
+    assert.ok(!r.includes(SECRETO), `${code}: la respuesta copia el texto de la excepción: ${r}`)
+    assert.ok(!/\bE[A-Z]{3,}\b/.test(r), `${code}: la respuesta trae un código de error crudo: ${r}`)
+    assert.doesNotMatch(r, /Armé la página|file:\/\//, `${code}: no la da por hecha ni ofrece una ruta para abrir`)
+  }
+  // Un valor tirado que no es un Error tampoco rompe la respuesta.
+  escribir = () => {
+    throw "texto suelto"
+  }
+  assert.match(await ejecutar(ARGS), /no dijo por qué/)
+  assert.deepEqual(pedidos, [], "con la escritura fallida no se le pide nada al navegador")
 })
 
 test("no pisa un archivo ajeno: guarda con otro nombre y avisa", async () => {
