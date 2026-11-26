@@ -167,7 +167,7 @@ export const TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN = {
   /** Llegó el programa de la revisión que se está mostrando. */
   generado: "El programa de esta revisión está generado.",
   /** El servidor dijo, para esta revisión, que no hay programa. Va con un enlace al paso 3. */
-  sinPrograma: "Todavía no hay programa para este proyecto: mirá el paso 3.",
+  sinPrograma: "Todavía no hay programa para este proyecto: mirá el paso 3, «Mirá el código».",
 } as const
 
 /** «Sin avisos.» / «Hay 1 aviso para mirar.» / «Hay N avisos para mirar.»: el plural se arma acá. */

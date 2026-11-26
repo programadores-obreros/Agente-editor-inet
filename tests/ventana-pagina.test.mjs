@@ -72,7 +72,9 @@ test("la navegación son los tres pasos numerados, en orden, más Avisos, y cada
   assert.deepEqual(enlaces.map((e) => [e.destino, e.texto]), [
     ["paso-circuito", "1 Mirá cómo se conecta"],
     ["paso-reglas", "2 Decidí qué hace"],
-    ["paso-programa", "3 Mirá el programa"],
+    // 2026-11-26: era «Mirá el programa». El dueño lo cambió a «Mirá el código» porque el bot dice
+    // que el programa «se ve en la sección Código» y la ventana no tenía ninguna con esa palabra.
+    ["paso-programa", "3 Mirá el código"],
     ["paso-avisos", "Avisos"],
   ])
   // El título de cada sección dice lo mismo que su enlace: se llega a donde se dijo que se iba.

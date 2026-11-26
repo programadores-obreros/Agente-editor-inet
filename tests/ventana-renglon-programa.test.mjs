@@ -43,7 +43,7 @@ const { pintarRenglonDelPrograma, ANCLA_DEL_PROGRAMA } = await import(join(REPO,
 const catalogo = CONOCIMIENTO_ACTIVO.catalogo
 // Escritas a mano (no importadas): si alguien cambia el anexo, este test lo tiene que ver.
 const GENERADO = "El programa de esta revisión está generado."
-const SIN_PROGRAMA = "Todavía no hay programa para este proyecto: mirá el paso 3."
+const SIN_PROGRAMA = "Todavía no hay programa para este proyecto: mirá el paso 3, «Mirá el código»."
 
 let n = 0
 function proyecto(pasos) {
@@ -251,4 +251,26 @@ test("ningún archivo del navegador escribe las frases del renglón: vienen de v
       assert.equal(fuente.includes(pedazo), false, `${archivo} escribe «${pedazo}»`)
     }
   }
+})
+
+// ═══ 6. el nombre del paso 3 es uno solo ═════════════════════════════════════════════════════
+//
+// 2026-11-26: el paso 3 pasó de «Mirá el programa» a «Mirá el código» (decisión del dueño: el bot
+// dice que el programa «se ve en la sección Código» y la ventana no tenía ninguna con esa palabra).
+// El nombre vive en tres lugares —la navegación, el título de la sección y el renglón que manda
+// al paso 3— y esta prueba es la que no los deja separarse.
+//
+// MUTACIONES: cambiar sólo el enlace de la navegación, sólo el <h2>, o sólo el texto del anexo → rojo.
+test("el paso 3 se llama igual en la navegación, en el título de su sección y en el renglón que lleva ahí", () => {
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "")
+  const limpio = (t) => t.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+  const enlace = new RegExp(`<a\\b[^>]*href="#${ANCLA_DEL_PROGRAMA}"[^>]*>([\\s\\S]*?)</a>`).exec(/<nav\b[^>]*data-pasos[^>]*>([\s\S]*?)<\/nav>/.exec(html)?.[1] ?? "")
+  assert.ok(enlace, "la navegación no tiene el enlace al paso 3")
+  const enNavegacion = limpio(enlace[1]).replace(/^3 /, "")
+  const seccion = new RegExp(`<section\\b[^>]*id="${ANCLA_DEL_PROGRAMA}"[^>]*>([\\s\\S]*?)</section>`).exec(html)
+  const enTitulo = limpio(/<h2\b[^>]*>([\s\S]*?)<\/h2>/.exec(seccion?.[1] ?? "")?.[1] ?? "")
+  assert.equal(enNavegacion, "Mirá el código")
+  assert.equal(enTitulo, enNavegacion, "la navegación y el título de la sección dicen cosas distintas")
+  const vista = proyectarVista(proyecto([["SetPlaca", { placa: "arduino-uno" }]]), catalogo)
+  assert.ok(vista.resumen.programa.sinPrograma.includes(`«${enNavegacion}»`), `el renglón manda al paso 3 con otro nombre: ${vista.resumen.programa.sinPrograma}`)
 })

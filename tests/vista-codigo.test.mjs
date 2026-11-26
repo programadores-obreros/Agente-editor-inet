@@ -517,7 +517,10 @@ test("index.html: la sección del programa va después de los bloques y antes de
   const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8").replace(/<!--[\s\S]*?-->/g, "")
   const seccion = /<section\b[^>]*id="paso-programa"[^>]*>([\s\S]*?)<\/section>/.exec(html)
   assert.ok(seccion, "la página no tiene la sección del programa")
-  assert.match(seccion[1], /<h2\b[^>]*>Mirá el programa<\/h2>/)
+  // 2026-11-26: el título pasó de «Mirá el programa» a «Mirá el código» (decisión del dueño): el
+  // bot le dice al docente que el programa «se ve en la sección Código» y la ventana no tenía
+  // ninguna sección con esa palabra.
+  assert.match(seccion[1], /<h2\b[^>]*>Mirá el código<\/h2>/)
   assert.match(seccion[1], /<pre\b[^>]*id="vista-codigo-texto"[^>]*\bhidden\b/)
   assert.match(seccion[1], /id="vista-codigo-aviso"/)
   const lugar = (id) => {
