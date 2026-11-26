@@ -15,7 +15,7 @@ import { planDePintado, interpretarNumero, estadoDelGrupo, aplicarEleccionAlGrup
 // acá porque es parte de la API de este módulo desde S1.
 export { interpretarNumero }
 import { pintar, pintarRenglonDelPrograma } from "./pintar.js"
-import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
+import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_SIN_CONEXION } from "./estado-conexion.js"
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
@@ -458,12 +458,27 @@ let contadorOperacion = 0
  * conexión de TRANSPORTE. */
 let estadoConexion = ESTADO_INICIAL
 
-const MENSAJE_DESCONECTADO = "desconectado: la vista puede no estar actualizada. Si el servidor se reinició en otro puerto, volvé a abrir la vista física desde Tecnia Bot."
+/**
+ * El indicador de conexión (2026-11-26). El chip dice lo corto («Ventana al día» / «Ventana sin
+ * conexión», `estado-conexion.js`); la explicación larga, que antes iba entera en el chip, va en la
+ * franja de estado (`#estado`, `role="status"`: también la anuncia un lector de pantalla). Al
+ * reconectar se borra de la franja SÓLO si sigue siendo esa explicación: si mientras tanto la franja
+ * pasó a decir otra cosa (un pedido que falló), eso no se pisa.
+ *
+ * Exportada y con los elementos inyectados para probarla ejecutándola.
+ */
+export function pintarIndicadorConexion({ estado, elementoConexion, elementoEstado }) {
+  const { chip, detalle } = textosDelIndicador(estado)
+  elementoConexion.textContent = chip
+  elementoConexion.setAttribute("data-estado-conexion", estado)
+  if (!elementoEstado) return
+  if (detalle !== null) elementoEstado.textContent = detalle
+  else if (elementoEstado.textContent === EXPLICACION_SIN_CONEXION) elementoEstado.textContent = ""
+}
 
 function actualizarIndicadorConexion() {
   if (!elementoConexion) return
-  elementoConexion.textContent = estadoConexion === "conectado" ? "conectado" : MENSAJE_DESCONECTADO
-  elementoConexion.setAttribute("data-estado-conexion", estadoConexion)
+  pintarIndicadorConexion({ estado: estadoConexion, elementoConexion, elementoEstado })
 }
 
 /** Procesa un evento NATIVO del `EventSource` (`"error"`/`"open"`) a través del
