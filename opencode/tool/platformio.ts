@@ -3218,7 +3218,12 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
     // Codegen MVP, Slice 1b: la carpeta del programa de un proyecto físico es DERIVADA de su IR
     // (la escribe la tool `programa`). Compilar o cargar esa carpeta desde acá saltearía la
     // regeneración y podría compilar archivos editados a mano: el camino es `programa`.
-    if ((args.action === "compile" || args.action === "flash" || args.action === "both") && cwd.split(/[\\/]/).includes(".tecnia-vista-fisica")) {
+    // Desde el 2026-11-26 esa carpeta vive en la caché del usuario (`tecnia-bot/programas` o
+    // `TecniaBot\programas`), ya no dentro de `.tecnia-vista-fisica`: se reconocen las dos.
+    const tramosDelCwd = cwd.split(/[\\/]/)
+    const esProgramaDerivado =
+      tramosDelCwd.includes(".tecnia-vista-fisica") || tramosDelCwd.some((t, i) => (t === "tecnia-bot" || t === "TecniaBot") && tramosDelCwd[i + 1] === "programas")
+    if ((args.action === "compile" || args.action === "flash" || args.action === "both") && esProgramaDerivado) {
       return (
         "Esa carpeta es el programa DERIVADO de un proyecto físico: no se compila ni se carga desde acá.\n" +
         'Usá la tool `programa` (accion "compilar"), que lo regenera desde el proyecto y compila exactamente eso.'

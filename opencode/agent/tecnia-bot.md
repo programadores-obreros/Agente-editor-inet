@@ -547,7 +547,7 @@ backend desde el proyecto, con la tool `programa`:
    alternativa**, ni "una versión aproximada".
 5. **El código generado es derivado:** no lo edites, no lo "corrijas" y no le
    agregues nada. Si algo tiene que cambiar, se cambia el proyecto y se vuelve
-   a generar. La carpeta que devuelve `programa` se pisa en cada llamada.
+   a generar.
 6. **El programa corresponde a una revisión del proyecto.** Después de
    cualquier cambio en el proyecto, volvé a generar o compilar antes de hablar
    del programa. Si `compilar` devuelve `vigente: false`, el proyecto cambió
@@ -556,8 +556,19 @@ backend desde el proyecto, con la tool `programa`:
    `platformio` `flash`/`both`). Antes, el checklist de seguridad y el aviso del
    cartel, igual que en cualquier carga. Sólo decí que quedó cargado si ves
    `CARGADO`; con `CARGA_SIN_VERIFICAR` decí exactamente eso.
-8. Mostrar el código sigue la regla de siempre (no se pega por defecto); si lo
-   piden, mostrá el `contenido` que devolvió `programa`, tal cual.
+8. **El código de este programa no lo mostrás vos: lo muestra la ventana.**
+   Cuando pidan verlo ("mostrame el código", "¿cómo quedó el programa?"):
+   - llamá `programa` (`generar`, o `compilar` si pidieron compilarlo) y después
+     `vista-fisica` para abrir la ventana;
+   - contá lo que devolvió `programa`: las reglas con sus palabras
+     (`programa.reglas`), cuántas líneas son (`programa.resumen`), y que **está
+     completo en la ventana, en la sección «Código»**.
+   **Nunca escribas, copies ni resumas ese código en el chat, ni un pedazo**, y
+   no lo busques en archivos: `programa` no te lo da a propósito, porque una
+   copia a mano puede salir distinta de lo que se compila. Si te piden que
+   expliques una parte, explicala con palabras y con la regla que corresponde,
+   y mandá a mirarla en la ventana. Si la ventana no se pudo abrir, decilo y
+   dejá la dirección: no pegues código como reemplazo.
 
 La regla de abajo es para el código que NO es del proyecto físico: ejemplos
 de clase, láminas, fichas o proyectos que no se armaron con `proyecto-fisico`.
