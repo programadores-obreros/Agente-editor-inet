@@ -18,6 +18,15 @@
 //   - subir `ANCHO_UTIL_DE_LA_HOJA` a 1100                               → «el ancho útil entra en la hoja…»
 //   - cambiar la hoja a vertical                                         → «el ancho útil entra en la hoja…»
 //   - dejar la navegación a la vista en el papel                         → «en el papel no salen…»
+//   - sacar la guarda `if (imprimiendo) return` del cuadro diferido      → «app.js pausa el dibujo…»
+//   - agregar `margin-left: 4cm` a `@page` después del margen único      → «el ancho útil entra en la hoja…»
+//
+// HUECOS QUE TENÍA (encontrados al mutar, 2026-11-26), para que nadie lo «simplifique» de vuelta:
+//   - Sólo miraba la PRIMERA línea de `programarCableado`. Si se borraba la guarda de adentro del
+//     `requestAnimationFrame`, un dibujo pedido justo antes de imprimir medía el esquema ya achicado
+//     y el test seguía verde.
+//   - Leía el primer `margin:` de `@page` y no miraba si después venía un margen de un solo lado
+//     que lo pisaba: la cuenta del ancho útil daba bien sobre una hoja que ya no era ésa.
 //
 // LÍMITE HONESTO: esto no imprime nada. Que en el PDF los cables lleguen a sus pines se miró en
 // Chromium (`Page.printToPDF`) y a ojo; no quedó un test que lo repita.
@@ -166,6 +175,9 @@ test("el ancho útil entra en la hoja que declara la página: A4 apaisada, con s
   assert.match(paginas[0].cuerpo, /size\s*:\s*A4\s+landscape\b/, "el esquema es ancho: la hoja va apaisada")
   const margen = /margin\s*:\s*([\d.]+(?:cm|mm|in|px))\s*;/.exec(paginas[0].cuerpo)
   assert.ok(margen, "la hoja tiene que declarar un margen único")
+  // Un `margin-left` (o cualquier margen de un solo lado) después del margen único lo pisaría de
+  // ese lado, y la cuenta de abajo seguiría usando el valor viejo.
+  assert.doesNotMatch(paginas[0].cuerpo, /margin-(left|right|inline|top|bottom|block)/, "la hoja declara un margen único, sin pisarlo de un lado")
   const anchoDeLaHoja = aPx("297mm") - 2 * aPx(margen[1])
   // Adentro de la hoja, el esquema está en una tarjeta: su relleno (16 px en papel) y su borde (1 px), de cada lado.
   const disponible = anchoDeLaHoja - 2 * (16 + 1)
@@ -195,6 +207,11 @@ test("app.js pausa el dibujo de los cables mientras se imprime y lo retoma al te
   const programar = /\nfunction programarCableado\(\) \{\n([\s\S]*?)\n\}\n/.exec(app)
   assert.ok(programar, "no encontré programarCableado en app.js")
   assert.match(programar[1].split("\n")[0], /\bimprimiendo\b/, "con el esquema achicado para el papel no hay que volver a medirlo")
+  // El dibujo se hace dos cuadros después de pedirlo: si en el medio empezó la impresión, tampoco
+  // hay que medir. La guarda de entrada no alcanza para ese caso.
+  const diferido = programar[1].slice(programar[1].indexOf("cableadoProgramado = false"))
+  const guarda = diferido.search(/\n\s*if \(imprimiendo\) return\b/)
+  assert.ok(guarda >= 0 && guarda < diferido.indexOf("dibujarCableado("), "dentro del cuadro diferido, antes de dibujar, se vuelve a mirar si se está imprimiendo")
   const conexion = /conectarImpresion\(document, window, \{([\s\S]*?)\n  \}\)/.exec(app)
   assert.ok(conexion, "app.js no conecta la impresión")
   assert.match(conexion[1], /alEmpezar: \(\) => \{\s*imprimiendo = true\s*\}/)
