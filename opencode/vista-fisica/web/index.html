@@ -14,6 +14,10 @@
   frase de las reglas.
 -->
 <link rel="stylesheet" href="/assets/sistema.css">
+<!-- El tema (claro u oscuro) se pone ACÁ, antes del primer pintado: un script clásico chico, de
+     este mismo servidor. Si lo pusiera app.js (módulo, diferido), quien eligió oscuro vería un
+     destello en claro en cada carga. Nunca en línea: la política de seguridad no lo deja. -->
+<script src="/assets/tema-inicial.js"></script>
 <!--
   Bundle Wokwi Elements — DEFECTO detectado por el orquestador (P2-T6, cierre):
   esta página nunca cargó este script, así que <wokwi-esp32-devkit-v1>/<wokwi-led>
@@ -268,6 +272,7 @@
     <div class="tb-acciones">
       <span id="readiness" class="tb-chip">—</span>
       <span id="conexion" class="tb-chip" data-estado-conexion="conectado">conectado</span>
+      <button type="button" id="boton-tema" class="tb-boton" aria-pressed="false" data-texto-oscuro="Modo oscuro" data-texto-claro="Modo claro">Modo oscuro</button>
     </div>
   </div>
   <div id="estado" role="status" aria-live="polite"></div>

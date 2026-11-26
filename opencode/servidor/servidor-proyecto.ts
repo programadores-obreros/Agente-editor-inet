@@ -97,6 +97,10 @@ export function construirRutasDeAssets(): ReadonlyMap<string, string> {
     ["cableado.js", join(DIR_VISTA_FISICA_WEB, "cableado.js")],
     // Rediseño de la ventana (2026-11-26): la sección activa de la navegación.
     ["navegacion.js", join(DIR_VISTA_FISICA_WEB, "navegacion.js")],
+    // El tema claro / oscuro: `tema-inicial.js` es un script CLÁSICO que `index.html` carga en el
+    // <head> para poner el tema antes del primer pintado; `tema.js` es el módulo del botón.
+    ["tema-inicial.js", join(DIR_VISTA_FISICA_WEB, "tema-inicial.js")],
+    ["tema.js", join(DIR_VISTA_FISICA_WEB, "tema.js")],
   ])
 }
 
