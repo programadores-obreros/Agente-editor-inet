@@ -132,9 +132,14 @@ async function cargarServidor(): Promise<{
  * (`codegen/programa.ts::generarPrograma`), con el mismo conocimiento: para una revisión dada, lo
  * que se ve en la ventana son los mismos bytes que van a la placa.
  */
-async function cargarProgramaDe(conocimiento: ModuloConocimientoActivo["CONOCIMIENTO_ACTIVO"]): Promise<((snapshot: Snapshot) => unknown) | null> {
+export async function cargarProgramaDe(
+  conocimiento: ModuloConocimientoActivo["CONOCIMIENTO_ACTIVO"],
+  /** Inyectable sólo para probar la instalación sin `codegen/`: por defecto, los `import()` reales. */
+  importar: () => Promise<[typeof import("../codegen/programa.ts"), typeof import("../vista-fisica/programa-para-vista.ts")]> = () =>
+    Promise.all([import("../codegen/programa.ts"), import("../vista-fisica/programa-para-vista.ts")]),
+): Promise<((snapshot: Snapshot) => unknown) | null> {
   try {
-    const [modCodegen, modPrograma] = await Promise.all([import("../codegen/programa.ts"), import("../vista-fisica/programa-para-vista.ts")])
+    const [modCodegen, modPrograma] = await importar()
     return (snapshot) => modPrograma.programaParaVista(modCodegen.generarPrograma(snapshot.proyecto, conocimiento))
   } catch {
     return null
