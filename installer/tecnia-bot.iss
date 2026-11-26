@@ -208,7 +208,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; Work
 ; Ahora lo lanza CorrerElBootstrap (sección de código, desde CurStepChanged en
 ; ssPostInstall) con Exec, que sí devuelve el código de salida. Con ese código se
 ; arma la última pantalla y el código de salida del .exe. Lo que hacía la entrada
-; vieja se conserva todo allá: consola visible, -SinPrompt en silencioso, el
+; vieja se conserva todo allá: consola visible, -SinPrompt (hoy siempre), el
 ; salteo con /skipdeps=1, la carpeta de trabajo, y el borrado de la marca
 ; ".instalando" después del bootstrap y pase lo que pase.
 ;
@@ -352,8 +352,8 @@ begin
     que ya estaba guardada y andando no hay por qué volver a pedirla.
     Antes la bandera salía sólo con WizardSilent, o sea en un despliegue silencioso.
     Qué pasa ahora: con una key guardada, se deja y se prueba contra Google; sin
-    key, Tecnia Bot queda con el modelo gratuito y el cierre dice cómo poner una
-    con el comando /clave. El acceso directo de Reparar NO pasa por acá y sigue
+    key, Tecnia Bot queda con el modelo gratuito y la consola de la instalación
+    avisa que se pone con el comando /clave. El acceso directo de Reparar NO pasa por acá y sigue
     preguntando: ahí hay alguien que hizo clic a propósito para cambiarla.
     Se antepone un espacio porque esto se concatena pegado al -File que arma
     CorrerElBootstrap, más abajo. El parámetro no se usa: quedó de cuando esto se
@@ -406,7 +406,7 @@ end;
     - el entero: con qué código terminó el script, si se lanzó.
 
   Se conserva lo que hacía la entrada vieja: consola visible (SW_SHOWNORMAL: tarda
-  minutos y el docente tiene que ver que avanza), -SinPrompt en silencioso
+  minutos y el docente tiene que ver que avanza), -SinPrompt siempre
   (BanderaSilencio), el salteo con /skipdeps=1 (CorrerBootstrap), y la carpeta de
   instalación como carpeta de trabajo. }
 procedure CorrerElBootstrap;

@@ -283,7 +283,7 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
     // El atajo tiene que cubrir los DOS casos y decir qué hizo en cada uno.
     assert.match(
       codigo,
-      /La instalacion no pregunta la key de Google: se deja la que ya estaba guardada\. Para cambiarla, escribi \/clave adentro de Tecnia Bot\./,
+      /La instalacion no pregunta la key de Google: se deja la que ya estaba guardada, y abajo se prueba\./,
       `${nombre}: con TECNIA_SIN_PROMPT y una key guardada no dice que la deja (o directamente pregunta)`,
     )
     assert.match(
@@ -295,6 +295,10 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
     // pregunta la key): no puede nombrar una variable interna, y tiene que decir cómo poner
     // o cambiar la key, porque el instalador ya no ofrece hacerlo.
     assert.doesNotMatch(codigo, /TECNIA_SIN_PROMPT esta definida/, `${nombre}: el aviso al docente nombra una variable interna`)
+    // Con una key guardada NO se promete «cambiala con /clave» antes de probarla: si la prueba
+    // da cuota agotada o key inválida, el cierre dice otra cosa y las dos frases quedaban en la
+    // misma consola (revisión independiente del 2026-11-26).
+    assert.doesNotMatch(codigo, /ya estaba guardada\. Para cambiarla, escribi \/clave/, `${nombre}: promete /clave antes de probar la key`)
   }
   // Y la condición que saltea NO puede depender de que no haya key: ése era el bug.
   assert.doesNotMatch(
@@ -762,6 +766,19 @@ test("la instalacion nunca pregunta la key: el .iss pasa -SinPrompt siempre, no 
   const sentencias = cuerpo[1].replace(/\{[^}]*\}/g, "").trim()
   assert.equal(sentencias, "Result := ' -SinPrompt';", "BanderaSilencio volvio a depender de algo: la instalacion con ventana preguntaria la key de nuevo")
   assert.match(iss, /-SinPrompt/, "el .iss no pasa -SinPrompt")
+
+  // El resto de la cadena, eslabón por eslabón. La revisión mostró que con sólo mirar el .iss
+  // se podía cortar en tres lugares y la instalación volvía a preguntar con todo en verde.
+  const bootstrap = leer("install/bootstrap.ps1")
+  assert.match(bootstrap, /^if \(\$SinPrompt\) \{ \$env:TECNIA_SIN_PROMPT = "1" \}\r?$/m, "bootstrap.ps1 no traduce -SinPrompt a TECNIA_SIN_PROMPT=1")
+  const ps1 = leer("install/install.ps1")
+  const ramaPs1 = /^if \(\$env:TECNIA_SIN_PROMPT\) \{\r?\n([\s\S]*?)^\}\r?$/m.exec(ps1)
+  assert.ok(ramaPs1, "install.ps1 no tiene la rama `if ($env:TECNIA_SIN_PROMPT) {` tal cual (¿una condición de más?)")
+  assert.match(ramaPs1[1], /^\s*\$preguntar = \$false\r?$/m, "install.ps1: con TECNIA_SIN_PROMPT no apaga la pregunta")
+  const sh = leer("install/install.sh")
+  assert.match(sh, /^if \[ -n "\$\{TECNIA_SIN_PROMPT:-\}" \]; then$/m, "install.sh no mira TECNIA_SIN_PROMPT tal cual")
+  // Y la línea que lanza el bootstrap desde el .iss le pega la bandera.
+  assert.match(iss, /bootstrap\.ps1'\) \+ '"' \+ BanderaSilencio\(''\);/, "el lanzamiento del bootstrap no lleva BanderaSilencio")
 
   // Y la linea que lanza el bootstrap tiene que llevarla. Se mira ESA linea, no
   // el archivo entero: definir la funcion y olvidarse de usarla deja todo verde.

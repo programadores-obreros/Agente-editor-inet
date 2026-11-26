@@ -688,7 +688,7 @@ if ($env:TECNIA_SIN_PROMPT) {
     $preguntar = $false
     Write-Host ""
     if ($tieneGoogle) {
-        Write-Host "  [i] La instalacion no pregunta la key de Google: se deja la que ya estaba guardada. Para cambiarla, escribi /clave adentro de Tecnia Bot."
+        Write-Host "  [i] La instalacion no pregunta la key de Google: se deja la que ya estaba guardada, y abajo se prueba."
     }
     if (-not $tieneGoogle) {
         Write-Host "  [i] La instalacion no pregunta la key de Google: se sigue sin key, con el modelo gratuito Big Pickle. Para poner una, escribi /clave adentro de Tecnia Bot."

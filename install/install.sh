@@ -629,7 +629,7 @@ if [ -n "${TECNIA_SIN_PROMPT:-}" ]; then
   # key guardada se deja la que esta. Saltear la pregunta NUNCA borra nada.
   echo ""
   if [ "$TIENE_GOOGLE" = "1" ]; then
-    echo "  [i] La instalacion no pregunta la key de Google: se deja la que ya estaba guardada. Para cambiarla, escribi /clave adentro de Tecnia Bot."
+    echo "  [i] La instalacion no pregunta la key de Google: se deja la que ya estaba guardada, y abajo se prueba."
   else
     echo "  [i] La instalacion no pregunta la key de Google: se sigue sin key, con el modelo gratuito Big Pickle. Para poner una, escribi /clave adentro de Tecnia Bot."
   fi
