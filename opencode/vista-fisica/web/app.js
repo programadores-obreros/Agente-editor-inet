@@ -20,6 +20,7 @@ import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 import { crearPanelCodigo } from "./vista-codigo.js"
 import { dibujarCableado } from "./cableado.js"
+import { conectarNavegacion } from "./navegacion.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -758,6 +759,9 @@ const coalescerGpio = crearCoalescerCambiosGpio({ enviar: enviarCambioGpio, obte
 function manejarCambioGpio({ componenteId, terminalId, valor }) {
   coalescerGpio.registrarCambio(componenteId, terminalId, valor)
 }
+
+// La sección activa de la navegación (presentación pura: no toca el proyecto ni la red).
+if (enNavegador) conectarNavegacion(document, window)
 
 // SSE: cualquier commit (de este navegador o de otro actor, ej. la tool) dispara un
 // refetch íntegro — nunca se aplica el `{revision}` del evento de forma optimista.

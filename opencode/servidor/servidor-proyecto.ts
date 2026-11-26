@@ -95,6 +95,8 @@ export function construirRutasDeAssets(): ReadonlyMap<string, string> {
     // Physical View UX #1: cables dibujados del esquema (geometría pura + capa de DOM).
     ["ruteo.js", join(DIR_VISTA_FISICA_WEB, "ruteo.js")],
     ["cableado.js", join(DIR_VISTA_FISICA_WEB, "cableado.js")],
+    // Rediseño de la ventana (2026-11-26): la sección activa de la navegación.
+    ["navegacion.js", join(DIR_VISTA_FISICA_WEB, "navegacion.js")],
   ])
 }
 
