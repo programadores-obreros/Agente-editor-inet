@@ -136,7 +136,7 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 - **1 agente** (`tecnia-bot`) — el prompt pedagógico, en español.
 - **11 herramientas** — `proyecto-fisico` (operaciones sobre el proyecto físico, vía el Project Engine), `vista-fisica` (abre la vista física viva en el navegador), `platformio` (compilar/cargar), `circuito` (visuales), `imprimible` (hojas de aula), `ficha` (abre las fichas A4 de Tecnia Lab), `ayuda` (manual), `actualizar` (auto-update de la capa), `perfil` (modo aula/grupo/personal + género), `memoria` (progreso de la compu) y `clave` (ver, probar contra Google y cambiar la API key de esta compu).
-- **20 bases de conocimiento** (skills) — ver abajo.
+- **21 bases de conocimiento** (skills) — ver abajo.
 - **5 comandos** — `/diagnostico`, `/reparar`, `/actualizar`, `/clave`, `/ayuda`.
 - **Identidad de marca** — un plugin liviano que pone el logo de Tecnia Bot en el splash + un tema violeta.
 
@@ -144,7 +144,7 @@ Tecnia Bot es una **capa educativa** que se instala **encima de [OpenCode](https
 
 El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Digitales / INET-EDUCAR): cada uno con sus niveles, pinout exacto UNO/ESP32, cableado, código clave y *gotchas* verificados. Así el bot guía cualquiera de los 15 sin depender de internet.
 
-**Los 20 skills:** `placas` · `arduino` · `esp32` · `educabot` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `errores-del-bot` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado` · `archify`
+**Los 21 skills:** `placas` · `arduino` · `esp32` · `educabot` · `sensores` · `actuadores` · `modulos-avanzados` · `errores-comunes` · `errores-del-bot` · `gotchas-hardware` · `checklist-seguridad` · `diagramas-conexion` · `circuitos-visuales` · `paginas` · `comunicacion-serial` · `librerias` · `fichas` · `diseno-curricular` · `proyectos-inet` · `proyecto-guiado` · `archify`
 
 ---
 
@@ -157,7 +157,7 @@ El skill `proyectos-inet` tiene los **15 proyectos refactorizados** (Saberes Dig
 │   ├── nucleo/             # Project Engine: IR, catálogo, placas, operaciones, motor transaccional, persistencia
 │   ├── vista-fisica/       # Proyección de la IR a la vista física y lógica (Blockly), y su cliente web
 │   ├── servidor/           # Servidor HTTP local (127.0.0.1) de la vista física
-│   ├── skills/             # 20 bases de conocimiento
+│   ├── skills/             # 21 bases de conocimiento
 │   ├── command/            # Comandos: /diagnostico, /reparar, /actualizar, /clave, /ayuda
 │   ├── plugins/            # tecnia-logo.tsx: marca en el splash + aviso de versión nueva; tecnia-idioma.ts: saca el plan en inglés que filtra el modelo
 │   ├── themes/             # tecnia-violet.json: tema violeta de marca
