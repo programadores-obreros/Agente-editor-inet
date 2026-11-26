@@ -34,7 +34,7 @@ import { valorBooleanoDeCondicion } from "../nucleo/estado-booleano.ts"
 // Component System Foundation #1 (F5): datos de render y textos salen de los ANEXOS de
 // `conocimiento/` (representación, pedagogía es-AR), no del núcleo semántico.
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA, ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO, POTENCIA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
-import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo, TEXTOS_DE_LA_VENTANA, textoDeCantidadDeAvisos, textoDeLeyendaDePotencia } from "../conocimiento/anexos/pedagogia-es-AR.ts"
+import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, textoDeZona, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo, TEXTOS_DE_LA_VENTANA, textoDeCantidadDeAvisos, textoDeLeyendaDePotencia } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
 import { cuantitativasParaCrear, reconocerCondicionNumerica, ROTULO_COMPARADOR, COMPLEMENTO_COMPARADOR, cantidadEnTexto, ayudaDeRango, rangoEnTexto, simboloDe, formatearNumero, type CondicionNumerica } from "./condicion-numerica.ts"
 import { COMPARADORES } from "../nucleo/ir.ts"
@@ -594,12 +594,13 @@ function requisitoQueCumple(componenteId: string, proyecto: Proyecto, catalogo: 
   return requisito ? { anclaId: otro.componente, requisito: requisito.tipo } : null
 }
 
-/** Zonas en orden de lectura; `otras` sólo si alguna pieza cae ahí. */
+/** Zonas en orden de lectura; `otras` sólo si alguna pieza cae ahí. La descripción nombra la placa
+ * DEL PROYECTO (el mismo `nombre` que lleva `vista.placa`), nunca una fija. */
 function zonasDelEsquema(placa: PlacaVista | null, componentes: readonly ComponenteVista[]): readonly ZonaVista[] {
   if (placa === null && componentes.length === 0) return []
   const roles: ZonaVista["rol"][] = ["entrada", "controlador", "salida"]
   if (componentes.some((c) => c.zona === "otras")) roles.push("otras")
-  return roles.map((rol) => ({ rol, ...ZONAS_DEL_CIRCUITO[rol] }))
+  return roles.map((rol) => ({ rol, ...textoDeZona(rol, placa?.nombre ?? null) }))
 }
 
 // ════════════════════════════════════════════════════════════════════════════════════

@@ -78,12 +78,32 @@ export const ETIQUETA_DE_TERMINAL_DE_POTENCIA: Readonly<Record<string, string>> 
  * circuito, con una frase corta para el estudiante. La ASIGNACIÓN de una pieza a una
  * zona no sale de acá: sale de la `clase` del catálogo (`snapshot-a-vista.ts::rolDeClase`)
  * y del requisito que agrupa a la resistencia con su LED.
+ *
+ * 2026-11-26: la descripción decía «Lo que el ESP32 lee.» fija, y en la notebook real, con el
+ * proyecto pasado a Arduino UNO, la ventana seguía nombrando al ESP32. Ahora `{placa}` se
+ * reemplaza con la placa DEL PROYECTO (`textoDeZona`). Este anexo no guarda el artículo de cada
+ * placa, así que la frase no lo necesita: el sustantivo es «la placa» y el nombre va después
+ * («la placa Arduino UNO»). Sin placa elegida queda «la placa» sola.
+ * Las descripciones de entrada y salida son texto PENDIENTE DE APROBACIÓN del dueño (2026-11-26).
  */
 export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "salida" | "otras", { readonly titulo: string; readonly descripcion: string }>> = {
-  entrada: { titulo: "Entrada", descripcion: "Lo que el ESP32 lee." },
+  entrada: { titulo: "Entrada", descripcion: "Lo que lee {placa}." },
   controlador: { titulo: "Controlador", descripcion: "Lee la entrada y decide la salida." },
-  salida: { titulo: "Salida", descripcion: "Lo que el ESP32 maneja." },
+  salida: { titulo: "Salida", descripcion: "Lo que maneja {placa}." },
   otras: { titulo: "Otras piezas", descripcion: "Todavía no forman parte de una entrada o una salida." },
+}
+
+/** Cómo se nombra la placa adentro de la frase de una zona (pendiente de aprobación, 2026-11-26). */
+export const PLACA_EN_LA_ZONA = {
+  conNombre: "la placa {nombre}",
+  sinNombre: "la placa",
+} as const
+
+/** El título y la descripción de una zona, con la placa del proyecto (`null`: no hay placa elegida). */
+export function textoDeZona(rol: keyof typeof ZONAS_DEL_CIRCUITO, nombreDePlaca: string | null): { readonly titulo: string; readonly descripcion: string } {
+  const zona = ZONAS_DEL_CIRCUITO[rol]
+  const placa = nombreDePlaca === null ? PLACA_EN_LA_ZONA.sinNombre : PLACA_EN_LA_ZONA.conNombre.replace("{nombre}", nombreDePlaca)
+  return { titulo: zona.titulo, descripcion: zona.descripcion.replace("{placa}", placa) }
 }
 
 /**
