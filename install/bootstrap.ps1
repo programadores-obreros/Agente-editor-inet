@@ -55,8 +55,13 @@
 # No alcanza con detectar "no hay consola": corriendo por /VERYSILENT SI hay una
 # consola real (solo que vacia), asi que el sondeo de teclado no falla y espera
 # hasta el final. Quien sabe que nadie va a contestar es el instalador, y por eso
-# la sena baja desde el .iss: installer\tecnia-bot.iss agrega -SinPrompt cuando
-# WizardSilent() es verdadero.
+# la sena baja desde el .iss: installer\tecnia-bot.iss agrega -SinPrompt.
+#
+# DESDE EL 2026-11-26 EL .ISS LA PASA SIEMPRE, no solo en silencioso: la instalacion
+# con ventana tampoco pregunta la key (decision del dueno; la pregunta frenaba 60 s
+# cada instalacion). El docente pone o cambia la key con /clave adentro de Tecnia
+# Bot, o con el acceso directo "Reparar Tecnia Bot", que corre este script SIN la
+# bandera y por eso sigue preguntando.
 #
 # Se traduce a TECNIA_SIN_PROMPT, que es la variable que install.ps1 ya sabia
 # mirar, para no inventar un segundo mecanismo que diga lo mismo. Se define en

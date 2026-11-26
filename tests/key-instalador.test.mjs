@@ -283,14 +283,18 @@ test("TECNIA_SIN_PROMPT saltea la pregunta nueva igual que la vieja, y no borra 
     // El atajo tiene que cubrir los DOS casos y decir qué hizo en cada uno.
     assert.match(
       codigo,
-      /TECNIA_SIN_PROMPT esta definida: no se pregunta nada y se deja la key de Google que ya estaba/,
+      /La instalacion no pregunta la key de Google: se deja la que ya estaba guardada\. Para cambiarla, escribi \/clave adentro de Tecnia Bot\./,
       `${nombre}: con TECNIA_SIN_PROMPT y una key guardada no dice que la deja (o directamente pregunta)`,
     )
     assert.match(
       codigo,
-      /TECNIA_SIN_PROMPT esta definida: no se pregunta la key de Google, se sigue sin key/,
+      /La instalacion no pregunta la key de Google: se sigue sin key, con el modelo gratuito Big Pickle\. Para poner una, escribi \/clave adentro de Tecnia Bot\./,
       `${nombre}: con TECNIA_SIN_PROMPT y sin key no dice que sigue sin key`,
     )
+    // Desde el 2026-11-26 este texto lo lee el DOCENTE en cada instalación (el .exe ya no
+    // pregunta la key): no puede nombrar una variable interna, y tiene que decir cómo poner
+    // o cambiar la key, porque el instalador ya no ofrece hacerlo.
+    assert.doesNotMatch(codigo, /TECNIA_SIN_PROMPT esta definida/, `${nombre}: el aviso al docente nombra una variable interna`)
   }
   // Y la condición que saltea NO puede depender de que no haya key: ése era el bug.
   assert.doesNotMatch(
@@ -739,16 +743,24 @@ test("la key vieja compartida se sigue rechazando TAMBIÉN en el camino nuevo", 
 // mismo.
 // ---------------------------------------------------------------------------
 
-test("en modo silencioso el instalador no espera 60s a nadie", () => {
+// HISTORIA (2026-11-26). Este test exigia que BanderaSilencio consultara WizardSilent():
+// la bandera salia solo en un despliegue silencioso, y la instalacion con ventana
+// preguntaba la key y esperaba 60 s. El dueno instalo ocho veces seguidas en su notebook
+// y pidio sacar la pregunta: ahora la instalacion NUNCA pregunta, con o sin ventana.
+// "Siempre" dejo de ser el defecto que este test cuidaba y paso a ser lo pedido.
+test("la instalacion nunca pregunta la key: el .iss pasa -SinPrompt siempre, no solo en silencioso", () => {
   const iss = leer("installer/tecnia-bot.iss")
 
-  // El .iss tiene que consultar WizardSilent() y pasar la bandera al bootstrap.
   assert.match(
     iss,
     /function BanderaSilencio/,
-    "el .iss no define BanderaSilencio: el bootstrap no se entera de que corre en silencio",
+    "el .iss no define BanderaSilencio: el bootstrap no se entera de que no tiene que preguntar",
   )
-  assert.match(iss, /WizardSilent\(\)/, "BanderaSilencio no consulta WizardSilent(): la bandera saldria siempre o nunca")
+  const cuerpo = /function BanderaSilencio\(Value: String\): String;\s*begin([\s\S]*?)\nend;/.exec(iss.replace(/\r/g, ""))
+  assert.ok(cuerpo, "no encontre el cuerpo de BanderaSilencio")
+  // Sin los comentarios Pascal: lo que queda tiene que ser UNA asignacion, sin condicion.
+  const sentencias = cuerpo[1].replace(/\{[^}]*\}/g, "").trim()
+  assert.equal(sentencias, "Result := ' -SinPrompt';", "BanderaSilencio volvio a depender de algo: la instalacion con ventana preguntaria la key de nuevo")
   assert.match(iss, /-SinPrompt/, "el .iss no pasa -SinPrompt")
 
   // Y la linea que lanza el bootstrap tiene que llevarla. Se mira ESA linea, no

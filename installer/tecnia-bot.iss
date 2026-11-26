@@ -346,17 +346,19 @@ end;
 
 function BanderaSilencio(Value: String): String;
 begin
-  { Quien sabe que no hay nadie mirando es el instalador, no el script.
-    Corriendo por /VERYSILENT hay una consola REAL (vacía, pero real), así que
-    bootstrap.ps1 no puede deducirlo: su sondeo de teclado no falla, espera los
-    60 s completos y recién ahí sigue. Por eso la seña baja desde acá.
+  { La instalación NUNCA pregunta la key de Google: siempre le pasa -SinPrompt al
+    bootstrap. Decisión del dueño del 2026-11-26, después de instalar ocho veces
+    seguidas en su notebook: la pregunta frenaba 60 s cada instalación, y una key
+    que ya estaba guardada y andando no hay por qué volver a pedirla.
+    Antes la bandera salía sólo con WizardSilent, o sea en un despliegue silencioso.
+    Qué pasa ahora: con una key guardada, se deja y se prueba contra Google; sin
+    key, Tecnia Bot queda con el modelo gratuito y el cierre dice cómo poner una
+    con el comando /clave. El acceso directo de Reparar NO pasa por acá y sigue
+    preguntando: ahí hay alguien que hizo clic a propósito para cambiarla.
     Se antepone un espacio porque esto se concatena pegado al -File que arma
     CorrerElBootstrap, más abajo. El parámetro no se usa: quedó de cuando esto se
     llamaba desde una constante de la sección Run. }
-  if WizardSilent() then
-    Result := ' -SinPrompt'
-  else
-    Result := '';
+  Result := ' -SinPrompt';
 end;
 
 const
