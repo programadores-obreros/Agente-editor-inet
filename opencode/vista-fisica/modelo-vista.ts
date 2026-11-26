@@ -260,6 +260,10 @@ export interface ResumenVista {
   readonly hayReglas: boolean
   /** Cuántos avisos hay (`motivos.length`) y la frase ya armada, con su singular y su plural. */
   readonly avisos: { readonly cantidad: number; readonly texto: string }
+  /** Las dos frases posibles del renglón del programa (anexo, `TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN`).
+   * El servidor NO elige cuál: no sabe si la página ya recibió el programa de esta revisión. La
+   * página muestra una sólo cuando lo sabe; si no, ninguna. */
+  readonly programa: { readonly generado: string; readonly sinPrograma: string }
 }
 
 /** Una línea de la leyenda de cables. `rol` es el mismo dato que lleva el cable dibujado. */

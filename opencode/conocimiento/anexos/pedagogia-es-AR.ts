@@ -151,6 +151,25 @@ export const TEXTOS_DE_LA_VENTANA = {
   },
 } as const
 
+/**
+ * El segundo renglón de «Cómo está» (2026-11-26): qué pasa con el PROGRAMA. El estado del proyecto
+ * habla del montaje y de las reglas; en la notebook real, «El proyecto está completo» al lado de
+ * «Todavía no hay programa» se leyó como una falla. Este renglón lo dice aparte.
+ *
+ * Viaja en `vista.resumen.programa`. El servidor manda las DOS frases; cuál se muestra lo decide la
+ * página con lo que ya le contestó `/api/programa` para ESA revisión (`web/vista-codigo.js`), y si
+ * todavía no lo sabe (actualizando, falla, otra revisión, sin conexión) no muestra ninguna.
+ *
+ * Textos PENDIENTES DE APROBACIÓN del dueño (2026-11-26). Fuera de `TEXTOS_DE_LA_VENTANA` a
+ * propósito: esa tabla está aprobada entera.
+ */
+export const TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN = {
+  /** Llegó el programa de la revisión que se está mostrando. */
+  generado: "El programa de esta revisión está generado.",
+  /** El servidor dijo, para esta revisión, que no hay programa. Va con un enlace al paso 3. */
+  sinPrograma: "Todavía no hay programa para este proyecto: mirá el paso 3.",
+} as const
+
 /** «Sin avisos.» / «Hay 1 aviso para mirar.» / «Hay N avisos para mirar.»: el plural se arma acá. */
 export function textoDeCantidadDeAvisos(cantidad: number): string {
   if (cantidad <= 0) return TEXTOS_DE_LA_VENTANA.avisos.ninguno

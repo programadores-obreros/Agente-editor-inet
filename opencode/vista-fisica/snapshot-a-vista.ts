@@ -34,7 +34,7 @@ import { valorBooleanoDeCondicion } from "../nucleo/estado-booleano.ts"
 // Component System Foundation #1 (F5): datos de render y textos salen de los ANEXOS de
 // `conocimiento/` (representación, pedagogía es-AR), no del núcleo semántico.
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA, ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO, POTENCIA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
-import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, textoDeZona, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo, TEXTOS_DE_LA_VENTANA, textoDeCantidadDeAvisos, textoDeLeyendaDePotencia } from "../conocimiento/anexos/pedagogia-es-AR.ts"
+import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, textoDeZona, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo, TEXTOS_DE_LA_VENTANA, TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN, textoDeCantidadDeAvisos, textoDeLeyendaDePotencia } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
 import { cuantitativasParaCrear, reconocerCondicionNumerica, ROTULO_COMPARADOR, COMPLEMENTO_COMPARADOR, cantidadEnTexto, ayudaDeRango, rangoEnTexto, simboloDe, formatearNumero, type CondicionNumerica } from "./condicion-numerica.ts"
 import { COMPARADORES } from "../nucleo/ir.ts"
@@ -530,6 +530,7 @@ function resumenDe(readiness: { readonly listo: boolean; readonly invalido: bool
     reglas: frases.length > 0 ? frases : [{ texto: TEXTOS_DE_LA_VENTANA.sinReglas, sinTerminar: true }],
     hayReglas: frases.length > 0,
     avisos: { cantidad: motivos.length, texto: textoDeCantidadDeAvisos(motivos.length) },
+    programa: { generado: TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN.generado, sinPrograma: TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN.sinPrograma },
   }
 }
 

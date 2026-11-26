@@ -255,7 +255,11 @@ test("el plan copia el resumen del servidor tal cual: no elige el estado, no red
   const instrucciones = planDePintado(vista).filter((i) => i.tipo === "resumen")
   assert.equal(instrucciones.length, 1)
   const { tipo: _tipo, ...resumen } = instrucciones[0]
-  assert.deepEqual(resumen, vista.resumen)
+  // `resumen.programa` (2026-11-26) NO pasa por el plan: son las dos frases del renglón del
+  // programa, y cuál se muestra depende de lo que contestó `/api/programa`, que el plan no ve. Lo
+  // pinta `app.js` con `renglonDelPrograma` (tests/ventana-renglon-programa.test.mjs).
+  const { programa: _programa, ...resumenDelPlan } = vista.resumen
+  assert.deepEqual(resumen, resumenDelPlan)
   assert.notEqual(instrucciones[0].reglas, vista.resumen.reglas, "el plan no devuelve referencias del modelo")
 
   // Con un resumen que contradice al resto del modelo, el plan repite el RESUMEN: no recalcula.
