@@ -87,6 +87,17 @@ export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "sa
 }
 
 /**
+ * Textos fijos de la ventana «vista física» que no dependen de una pieza ni de una placa.
+ * Viajan en el snapshot (`vista.textos`): el navegador los muestra, nunca los redacta.
+ *
+ * TEXTO PENDIENTE DE APROBACIÓN DEL DUEÑO (2026-11-26): todos los de esta tabla.
+ */
+export const TEXTOS_DE_LA_VENTANA = {
+  /** Se cambió un pin en la ventana y el pedido no llegó (Tecnia Bot cerrado, red cortada). */
+  cambioDePinNoGuardado: "No se pudo guardar el cambio: se cortó la conexión con Tecnia Bot. El pin quedó como estaba.",
+} as const
+
+/**
  * Para qué está una pieza que existe por un REQUISITO de otra (Physical View UX #1).
  * Clave: el tipo de requisito del núcleo; `{componente}` es el nombre de la pieza que
  * lo pide. Texto pedagógico: nunca entra al núcleo ni al hash.

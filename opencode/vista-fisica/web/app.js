@@ -639,25 +639,41 @@ function valorServidorDe(componenteId, terminalId) {
  * llegó primero" sigue siendo honesto para un conflicto REAL con otro actor — F-11
  * sólo cierra los conflictos FALSOS que generaba un POST por tecla). La diferencia:
  * ahora quien decide CUÁNDO llamar a esta función es `coalescerGpio`, nunca
- * directamente el `change` del `<select>`. */
-async function enviarCambioGpio({ componenteId, terminalId, valor }) {
-  if (!ultimoSnapshot) return
-  const sobre = {
-    idOperacion: siguienteIdOperacion(),
-    actor: "navegador", // el servidor lo fuerza de todos modos (servidor-proyecto.ts)
-    baseRevision: ultimoSnapshot.revision,
-    tipo: "AsignarPin",
-    payload: { componente: componenteId, terminal: terminalId, pin: valor },
-  }
+ * directamente el `change` del `<select>`.
+ *
+ * Es una fábrica con todo inyectado para poder probarla EJECUTÁNDOLA (2026-11-26): si la red
+ * falla, el aviso que se muestra es el que mandó el servidor en el último snapshot
+ * (`vista.textos.cambioDePinNoGuardado`); el repintado desde ese snapshot lo hace
+ * `cliente-http.js::enviarSobre`. La promesa se rechaza igual: el coalescer libera su turno con
+ * éxito o con rechazo, y la frase queda desbloqueada por el `finally`. */
+export function crearEnvioDeCambioGpio({ obtenerSnapshot, enviarSobre, siguienteIdOperacion, marcarOperacionExterna }) {
+  return async function enviarCambioGpio({ componenteId, terminalId, valor }) {
+    const snapshot = obtenerSnapshot()
+    if (!snapshot) return
+    const sobre = {
+      idOperacion: siguienteIdOperacion(),
+      actor: "navegador", // el servidor lo fuerza de todos modos (servidor-proyecto.ts)
+      baseRevision: snapshot.revision,
+      tipo: "AsignarPin",
+      payload: { componente: componenteId, terminal: terminalId, pin: valor },
+    }
 
-  // Una operación de GPIO en vuelo también bloquea la frase (a lo sumo UNA operación global).
-  controladorReglas.marcarOperacionExterna(true)
-  try {
-    await enviarSobre(sobre, { repintarAhora: true })
-  } finally {
-    controladorReglas.marcarOperacionExterna(false)
+    // Una operación de GPIO en vuelo también bloquea la frase (a lo sumo UNA operación global).
+    marcarOperacionExterna(true)
+    try {
+      await enviarSobre(sobre, { repintarAhora: true, avisoSiFalla: snapshot.vista?.textos?.cambioDePinNoGuardado ?? MENSAJE_NO_SE_PUDO_GUARDAR })
+    } finally {
+      marcarOperacionExterna(false)
+    }
   }
 }
+
+const enviarCambioGpio = crearEnvioDeCambioGpio({
+  obtenerSnapshot: () => ultimoSnapshot,
+  enviarSobre: (sobre, opciones) => enviarSobre(sobre, opciones),
+  siguienteIdOperacion: () => siguienteIdOperacion(),
+  marcarOperacionExterna: (valor) => controladorReglas.marcarOperacionExterna(valor),
+})
 
 /** La frase: un `SetComportamiento`/`QuitarComportamiento` por cambio, con `baseRevision` del
  * ÚLTIMO snapshot autoritativo (nunca optimista). */

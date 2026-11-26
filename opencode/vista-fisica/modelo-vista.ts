@@ -215,6 +215,14 @@ export interface ModeloDeVista {
    * controlador → salida → otras), con sus textos del anexo de pedagogía. `otras` sólo
    * aparece si hay alguna pieza ahí. Vacío si el proyecto no tiene placa ni piezas. */
   readonly zonas: readonly ZonaVista[]
+  /** Textos fijos de la ventana (anexo de pedagogía). El navegador los muestra tal cual. */
+  readonly textos: TextosVista
+}
+
+/** Textos de la ventana que no salen de una pieza ni de una regla (anexo de pedagogía). */
+export interface TextosVista {
+  /** Aviso cuando un cambio de pin no llegó al servidor (se cortó la conexión). */
+  readonly cambioDePinNoGuardado: string
 }
 
 /** `id` = valor (nunca se muestra); `etiqueta` = nombre humano con ordinal estable ("LED 2"). */

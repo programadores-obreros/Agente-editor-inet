@@ -34,7 +34,7 @@ import { valorBooleanoDeCondicion } from "../nucleo/estado-booleano.ts"
 // Component System Foundation #1 (F5): datos de render y textos salen de los ANEXOS de
 // `conocimiento/` (representación, pedagogía es-AR), no del núcleo semántico.
 import { nombreWokwiDePin, ELEMENTO_WOKWI_POR_TIPO, ELEMENTO_WOKWI_POR_PLACA, TERMINAL_WOKWI_POR_TIPO, ATRIBUTOS_POR_TIPO, ESCALA_WOKWI_POR_PLACA, ANCLAS_EQUIVALENTES_WOKWI_POR_TIPO, POTENCIA_WOKWI_POR_PLACA } from "../conocimiento/anexos/representacion.ts"
-import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo } from "../conocimiento/anexos/pedagogia-es-AR.ts"
+import { etiquetaDeTerminal, nombreDeComponente, nombreDePlaca, ZONAS_DEL_CIRCUITO, ETIQUETA_DE_TERMINAL_DE_POTENCIA, explicacionDeRequisito, etiquetaDeEstadoObjetivo, TEXTOS_DE_LA_VENTANA } from "../conocimiento/anexos/pedagogia-es-AR.ts"
 import { explicacionDeMotivo, type ResolverNombreDeComponente } from "./explicaciones-motivos.ts"
 import { cuantitativasParaCrear, reconocerCondicionNumerica, ROTULO_COMPARADOR, COMPLEMENTO_COMPARADOR, cantidadEnTexto, ayudaDeRango, rangoEnTexto, simboloDe, formatearNumero, type CondicionNumerica } from "./condicion-numerica.ts"
 import { COMPARADORES } from "../nucleo/ir.ts"
@@ -501,7 +501,7 @@ export function proyectarVista(proyecto: Proyecto, catalogo: Catalogo, conocimie
 
   const { reglas, opcionesRegla } = proyectarReglas(proyecto, catalogo, componentes, motivos, conocimiento)
 
-  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla, zonas: zonasDelEsquema(placa, componentesOrdenados) }
+  return { placa, componentes: componentesOrdenados, cables, gpiosDisponibles, motivos, readiness, reglas, opcionesRegla, zonas: zonasDelEsquema(placa, componentesOrdenados), textos: { cambioDePinNoGuardado: TEXTOS_DE_LA_VENTANA.cambioDePinNoGuardado } }
 }
 
 /**
