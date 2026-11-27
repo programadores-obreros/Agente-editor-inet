@@ -35,6 +35,10 @@ export const DIR_BASE = join(os.tmpdir(), "tecniabot-test-phase2")
 // los tiempos y pasó a fallar 2 de cada 3 corridas completas, en distintos tests de ese archivo.
 // Sacar este ayudante de los archivos nuevos NO alcanzó (2 de 6): no importa quién vacía, importa
 // que la carpeta sea de todos.
+// CORRECCIÓN, la misma noche: no puedo afirmar que fueron mis archivos. Después supe que otra
+// sesión corría la suite en esta misma máquina a esas horas, contra la MISMA carpeta. Las fallas
+// pudieron venir de ahí, de mis archivos, o de las dos cosas: no lo separé. La causa de fondo es
+// una sola en cualquier caso, y una carpeta por proceso cubre también dos corridas a la vez.
 // Con una carpeta por proceso nadie le toca la caché a otro. Se sigue vaciando al importar (los
 // números de proceso se repiten entre corridas) y se borra al salir, para no ir dejando una por
 // cada archivo en el temporal.
