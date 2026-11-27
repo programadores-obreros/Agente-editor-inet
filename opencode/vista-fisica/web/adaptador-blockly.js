@@ -37,9 +37,10 @@ const TIPO_PASO = "tecnia_paso"
 const TIPO_POR_SIEMPRE = "tecnia_por_siempre"
 const SENTINELA = "__sin_valor__"
 /** `sinPasos` es lo que dice «al iniciar» mientras no se sabe qué prepara el programa de esta
- * revisión (no llegó, o no hay programa). Los tres textos nuevos están aprobados para la prueba por
+ * revisión (no llegó, o no hay programa). Decía «se completa cuando el programa esté listo», que se
+ * podía leer como «lo completo yo» o como «espero y se completa solo»; ahora dice dónde mirar. Los tres textos nuevos están aprobados para la prueba por
  * el dueño (2026-11-27) y pendientes de verlos en pantalla: no es la aprobación final. */
-const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", alIniciar: "al iniciar", porSiempre: "por siempre", sinPasos: "se completa cuando el programa esté listo" }
+const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", alIniciar: "al iniciar", porSiempre: "por siempre", sinPasos: "todavía sin programa: mirá el paso 3" }
 
 /**
  * El color de cada bloque es el de su rol en el esquema: «mientras» es la ENTRADA (lo que se lee)
@@ -327,7 +328,8 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
       const entrada = bloque.getInput("CAMPOS")
       for (const campo of delBloque) {
         // el texto fijo viene del servidor; una coma inicial (de la frase corrida) no se muestra suelta
-        const prefijo = campo.prefijo.replace(/^[,\s]+/, "")
+        // Si el servidor manda el texto «como va en un bloque» (en minúscula), se usa ése.
+        const prefijo = (campo.prefijoEnBloque ?? campo.prefijo).replace(/^[,\s]+/, "")
         if (prefijo !== "") entrada.appendField(new Blockly.FieldLabel(prefijo))
         if (campo.tipo === "numero") entrada.appendField(new Blockly.FieldTextInput(campo.etiquetaActual ?? ""), campo.slot)
         else entrada.appendField(new Blockly.FieldDropdown(opcionesDeCampo(campo, textos)), campo.slot)
@@ -340,7 +342,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   /** Los renglones de «al iniciar» del modelo: la lista de textos, o `null` si no se sabe. */
   const pasosDe = (modelo) => (Array.isArray(modelo.alIniciar?.pasos) ? modelo.alIniciar.pasos : null)
 
-  const firmaDeCampos = (campos) => campos.map((c) => [c.slot, c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)])
+  const firmaDeCampos = (campos) => campos.map((c) => [c.slot, c.prefijoEnBloque ?? c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)])
 
   function pintar(modelo, { deshabilitado = false } = {}) {
     if (destruido) return

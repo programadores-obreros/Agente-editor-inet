@@ -370,9 +370,10 @@
     <!-- Los bloques van SIEMPRE visibles, nunca dentro de algo plegado: ver el comentario del lienzo en el <style>. -->
     <div id="vista-logica">
       <h3 class="tb-subtitulo">Con bloques</h3>
-      <p id="vista-logica-etiqueta">«al iniciar» es lo que el programa hace una sola vez, cuando arranca la placa. «por siempre» es lo que repite sin parar: ahí va un par «mientras … hacer …» por cada regla. Elegí cada campo de la lista.</p>
+      <p id="vista-logica-etiqueta">«al iniciar» es lo que el programa hace una sola vez, cuando arranca la placa: prepara cada pin. «por siempre» es lo que repite sin parar: por cada regla hay un «mientras … hacer …», y los vuelve a mirar uno atrás de otro. Esos dos bloques no se cambian; en cada regla, elegí de las listas. Los bloques y el código del paso 3 son el mismo programa, escrito de dos maneras.</p>
+      <!-- Va ARRIBA del lienzo, pegado al párrafo que se lee: debajo quedaba después de todos los bloques y no se veía (notebook, 2026-11-27). -->
+      <p id="vista-logica-vinculo" role="status" aria-live="polite" hidden><span id="vista-logica-vinculo-texto"></span> <a id="vista-logica-vinculo-enlace" class="tb-boton" href="#paso-programa">Ir a esas líneas ↓</a></p>
       <div id="vista-logica-lienzo" role="group" aria-label="Vista lógica de las reglas"></div>
-      <p id="vista-logica-vinculo" role="status" aria-live="polite" hidden><span id="vista-logica-vinculo-texto"></span> <a id="vista-logica-vinculo-enlace" href="#paso-programa">Verlo en el código</a></p>
       <div id="vista-logica-estado" role="status" aria-live="polite"></div>
       <div id="vista-logica-texto"></div>
       <button type="button" id="vista-logica-quitar" class="tb-boton tb-boton--peligro" disabled>Quitar regla</button>
@@ -387,7 +388,7 @@
     <div class="tb-codigo" id="vista-codigo">
       <div id="vista-codigo-nombres" hidden></div>
       <pre class="tb-codigo__texto" id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
-      <p id="vista-codigo-vinculo" role="status" aria-live="polite" hidden><span id="vista-codigo-vinculo-texto"></span> <a id="vista-codigo-vinculo-enlace" href="#vista-logica">Ver el bloque</a></p>
+      <p id="vista-codigo-vinculo" role="status" aria-live="polite" hidden><span id="vista-codigo-vinculo-texto"></span> <a id="vista-codigo-vinculo-enlace" class="tb-boton" href="#vista-logica">Ir a los bloques ↑</a></p>
       <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>
     </div>
   </section>

@@ -22,6 +22,8 @@
 //   - `programa-para-vista.ts`: `continue` en vez de `return undefined` sin nombre → «si falta el nombre…»
 //   - `programa-para-vista.ts`: `id: r.regla` cambiado por el índice           → «los números…»
 //   - `pedagogia-es-AR.ts`: sacar `{pin}` de la plantilla de salida            → «cada renglón…»
+//   - `pedagogia-es-AR.ts`: volver a `{pieza} ({pin}): …`                       → «un nombre de pieza con paréntesis…»
+//   - `pedagogia-es-AR.ts`: `arranca {reposo}` sin las comillas                 → «el reposo de una salida va citado…»
 //   - `pedagogia-es-AR.ts`: devolver `base` cuando falta la etiqueta del reposo → «un paso que no se puede decir…»
 //
 // Corre con: node --test tests/programa-estructura.test.mjs
@@ -86,11 +88,11 @@ test("por el cableado real, cada renglón de «al iniciar» nombra la pieza como
   assert.ok(mapa.alIniciar.pasos.length >= 4, "precondición: un pulsador, un DHT y dos LED")
   mapa.alIniciar.pasos.forEach((paso, i) => {
     const texto = estructura.alIniciar.pasos[i].texto
-    assert.ok(texto.startsWith(`${nombreEnElEsquema(paso.componente)} (${paso.pin}): `), texto)
+    assert.ok(texto.startsWith(`${nombreEnElEsquema(paso.componente)} en ${paso.pin}: `), texto)
   })
   // El segundo LED es «LED 2» en el esquema: el renglón no puede decir «LED» a secas dos veces.
   const deSalida = estructura.alIniciar.pasos.filter((p) => p.texto.includes("salida")).map((p) => p.texto)
-  assert.deepEqual(deSalida, ["LED (GPIO4): salida, arranca apagado", "LED 2 (GPIO19): salida, arranca apagado"])
+  assert.deepEqual(deSalida, ["LED en GPIO4: salida, arranca en «apagado»", "LED 2 en GPIO19: salida, arranca en «apagado»"])
 })
 
 test("cada renglón dice la clase de paso con el texto del anexo, y nada más", () => {
@@ -144,8 +146,8 @@ test("si falta el nombre de UNA pieza no hay estructura: nunca media estructura"
 })
 
 test("un paso que no se puede decir no se inventa: clase desconocida, o una salida sin reposo con etiqueta", () => {
-  assert.equal(textoDePasoDeInicio({ papel: "entrada", pieza: "Pulsador", pin: "GPIO25" }), "Pulsador (GPIO25): entrada")
-  assert.equal(textoDePasoDeInicio({ papel: "salida", pieza: "LED", pin: "GPIO4", reposo: "encender" }), "LED (GPIO4): salida, arranca encendido")
+  assert.equal(textoDePasoDeInicio({ papel: "entrada", pieza: "Pulsador", pin: "GPIO25" }), "Pulsador en GPIO25: entrada, para mirar su estado")
+  assert.equal(textoDePasoDeInicio({ papel: "salida", pieza: "LED", pin: "GPIO4", reposo: "encender" }), "LED en GPIO4: salida, arranca en «encendido»")
   assert.equal(textoDePasoDeInicio({ papel: "motor", pieza: "X", pin: "GPIO1" }), undefined)
   assert.equal(textoDePasoDeInicio({ papel: "constructor", pieza: "X", pin: "GPIO1" }), undefined, "una clave heredada no es una clase de paso")
   assert.equal(textoDePasoDeInicio({ papel: "salida", pieza: "LED", pin: "GPIO4" }), undefined)
@@ -157,7 +159,26 @@ test("un paso que no se puede decir no se inventa: clase desconocida, o una sali
 })
 
 test("un nombre de pieza con signos de reemplazo se escribe tal cual", () => {
-  assert.equal(textoDePasoDeInicio({ papel: "entrada", pieza: "Pulsador $& $1", pin: "GPIO25" }), "Pulsador $& $1 (GPIO25): entrada")
+  assert.equal(textoDePasoDeInicio({ papel: "entrada", pieza: "Pulsador $& $1", pin: "GPIO25" }), "Pulsador $& $1 en GPIO25: entrada, para mirar su estado")
+})
+
+// 2026-11-27, notebook real: «DHT11 (módulo Gravity) (GPIO5): entrada de datos». El nombre de la
+// pieza traía sus paréntesis y el renglón le sumaba otros. Y «entrada de datos» no se distinguía de
+// «entrada» ni era del todo cierto (por ese pin el programa también escribe).
+test("un nombre de pieza con paréntesis propios no queda con dos paréntesis seguidos, y los tres renglones dicen para qué", () => {
+  const bus = textoDePasoDeInicio({ papel: "bus", pieza: "DHT11 (módulo Gravity)", pin: "GPIO5" })
+  assert.equal(bus, "DHT11 (módulo Gravity) en GPIO5: entrada, para pedirle la lectura")
+  for (const plantilla of Object.values(TEXTOS_DE_AL_INICIAR)) {
+    assert.doesNotMatch(plantilla, /\(\{pin\}\)|\{pieza\} \(/, "el pin no va entre paréntesis pegado al nombre")
+    assert.match(plantilla, /^\{pieza\} en \{pin\}: (entrada|salida), /, "pieza, pin, papel y después el detalle")
+  }
+  assert.notEqual(TEXTOS_DE_AL_INICIAR.entrada, TEXTOS_DE_AL_INICIAR.bus)
+  assert.doesNotMatch(TEXTOS_DE_AL_INICIAR.bus, /de datos/)
+})
+
+test("el reposo de una salida va citado: el renglón no depende del género del nombre de la pieza", () => {
+  assert.equal(textoDePasoDeInicio({ papel: "salida", pieza: "Bomba", pin: "GPIO5", reposo: "apagar" }), "Bomba en GPIO5: salida, arranca en «apagado»")
+  assert.match(TEXTOS_DE_AL_INICIAR.salida, /arranca en «\{reposo\}»$/)
 })
 
 test("cuando no hay programa tampoco hay estructura", () => {

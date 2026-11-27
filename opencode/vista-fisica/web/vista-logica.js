@@ -66,6 +66,7 @@ function proyectarRegla(existente, slots, borrador) {
       return {
         slot: definicion.slot,
         prefijo: definicion.prefijo,
+        ...(typeof definicion.prefijoEnBloque === "string" ? { prefijoEnBloque: definicion.prefijoEnBloque } : {}),
         valor: numero ? (valor === "" ? null : valor) : (valor ?? null),
         etiquetaActual: numero ? (valor ?? "") : (opcionesGrupo.find((o) => o.valor === valor)?.etiqueta ?? null),
         opciones: opcionesGrupo,
@@ -77,6 +78,8 @@ function proyectarRegla(existente, slots, borrador) {
     return {
       slot: definicion.slot,
       prefijo: definicion.prefijo,
+      // El texto fijo como va dentro de un bloque, si el servidor lo manda distinto (minúscula).
+      ...(typeof definicion.prefijoEnBloque === "string" ? { prefijoEnBloque: definicion.prefijoEnBloque } : {}),
       valor: actual ? actual.valor : null,
       etiquetaActual: actual ? actual.etiqueta : null,
       opciones: definicion.opciones.map((o) => ({ valor: o.valor, etiqueta: o.etiqueta })),

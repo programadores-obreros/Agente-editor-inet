@@ -63,7 +63,7 @@ const regla = (id, valores = COMPLETO) => ({ id, campos: campos(valores), comple
 /** `pasos`: la lista de renglones de «al iniciar», o `null` si no se saben. */
 const modelo = (reglas, pasos = null) => ({ reglas, regla: reglas[0] ?? null, hayVarias: reglas.length > 1, alIniciar: pasos === null ? null : { pasos } })
 const PASOS = ["Pulsador (GPIO25): entrada", "LED (GPIO4): salida, arranca apagado"]
-const SIN_PASOS = "se completa cuando el programa esté listo"
+const SIN_PASOS = "todavía sin programa: mirá el paso 3"
 
 function montar({ contenedor = { nombre: "div" }, caja = null, alto = null } = {}) {
   const { Blockly, reg } = fabricarBlockly()
@@ -478,4 +478,44 @@ test("la vista y el panel pasan hacia arriba qué bloque se tocó y hacia abajo 
   assert.deepEqual(tocadas, [{ bloque: "alIniciar" }])
   assert.equal(panel.marcar({ bloque: "porSiempre" }), true)
   assert.equal(reg.deTipo("tecnia_por_siempre")[0].resaltado, true)
+})
+
+// 2026-11-27: «Mientras» iba con mayúscula dentro de «por siempre», al lado de «al iniciar», «por
+// siempre» y «hacer:» en minúscula. El servidor manda ahora las dos formas: la de la oración
+// («Con palabras») y la del bloque. El adaptador no cambia la ortografía de nada: usa la que le dan.
+test("el servidor manda el texto de bloque en minúscula y la oración de «Con palabras» no cambia", async () => {
+  const { join } = await import("node:path")
+  const { REPO, nuevoDir, nuevoIdProyecto, prepararProyectoConLed, op, catalogo, GPIO_Y } = await import("./phase2-helpers.mjs")
+  const { proyectarVista } = await import(join(REPO, "opencode/vista-fisica/snapshot-a-vista.ts"))
+  const { servicio, idComponente: led } = prepararProyectoConLed(nuevoDir("bloque-minuscula"), nuevoIdProyecto("bloque-minuscula"))
+  const aplicar = (tipo, payload) => assert.equal(servicio.aplicar(op(tipo, payload, servicio.snapshot().revision)).ok, true, tipo)
+  aplicar("AgregarComponente", { tipo: "pulsador" })
+  const pulsador = servicio.snapshot().proyecto.componentes.find((c) => c.tipo === "pulsador").id
+  aplicar("AsignarPin", { componente: pulsador, terminal: "senal", pin: GPIO_Y })
+  aplicar("SetComportamiento", { comportamiento: { cuando: { sensor: pulsador, capacidad: "estadoBooleano", comparador: ">=", umbral: { valor: 1, unidad: "ninguna", magnitud: "estadoBooleano" } }, entonces: { actuador: led, accion: "encender" } } })
+  const vista = proyectarVista(servicio.snapshot().proyecto, catalogo)
+  const [sensor, ...resto] = vista.opcionesRegla.slots
+  assert.equal(sensor.prefijo, "Mientras el", "la oración empieza con mayúscula")
+  assert.equal(sensor.prefijoEnBloque, "mientras el")
+  assert.equal(sensor.prefijoEnBloque, sensor.prefijo.toLowerCase(), "es el mismo texto: sólo cambia la mayúscula")
+  for (const slot of resto) assert.equal(slot.prefijoEnBloque, undefined, `${slot.slot}: sólo cambia el que empieza la regla`)
+  assert.match(vista.reglas[0].texto, /^Mientras el /, "la oración entera no cambia")
+  // Y llega al lienzo: el modelo lo pasa y el bloque lo muestra.
+  const modeloReal = proyectarModeloLogico(vista)
+  assert.equal(modeloReal.reglas[0].campos[0].prefijoEnBloque, "mientras el")
+  const m = montar()
+  m.adaptador.pintar(modeloReal)
+  assert.deepEqual(m.reg.mientras()[0].etiquetas, ["mientras el", "esté"])
+})
+
+test("sin texto de bloque (un servidor anterior) el bloque muestra el de la oración, y cambiarlo redibuja", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  assert.equal(m.reg.mientras()[0].etiquetas[0], "Mientras el")
+  const creados = m.reg.bloquesCreados
+  const conMinuscula = regla("beh-1")
+  conMinuscula.campos[0] = { ...conMinuscula.campos[0], prefijoEnBloque: "mientras el" }
+  m.adaptador.pintar(modelo([conMinuscula], PASOS))
+  assert.ok(m.reg.bloquesCreados > creados, "el texto del bloque cambió: se redibuja")
+  assert.equal(m.reg.mientras()[0].etiquetas[0], "mientras el")
 })
