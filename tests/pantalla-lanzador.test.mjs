@@ -34,7 +34,8 @@
 // .ps1 → 1; un `goto` en el tramo → 2; un paréntesis en el cartel de reserva →
 // 3; sacar la pregunta `if exist` de la segunda línea → 4; cambiar la fuente aunque
 // pueda dibujar el borde → 5; cambiar aunque Consolas no pueda → 5; sacar la
-// relectura → 5; decidir por otro carácter → 5.
+// relectura → 5; decidir por otro carácter → 5; devolver `chcp 65001` a la
+// segunda línea del lanzador → 8.
 // ============================================================================
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -172,4 +173,24 @@ test("7. el cartel dice lo mismo que el splash y lleva la tilde armada por núme
   const usados = [...ps1Codigo.matchAll(/\[char\]0x([0-9A-Fa-f]+)/g)].map((m) => m[1].toUpperCase())
   // 2503 no se dibuja: es el carácter por el que se le pregunta a la fuente.
   assert.deepEqual([...new Set(usados)].sort(), ["2503", "2580", "2584", "2588", "E9"], "hay un carácter nuevo: confirmá que esté en CP437 y CP850")
+})
+
+test("8. el lanzador no pasa la consola a UTF-8 antes de llamar a PowerShell", () => {
+  // La causa de los «?» del hallazgo W33. Windows PowerShell 5.1, cuando arranca
+  // en una consola que está en UTF-8, le cambia la fuente a una de mapa de bits;
+  // y con esa fuente la consola convierte todo a la tabla OEM. El lanzador hacía
+  // `chcp 65001` en su segunda línea y después llamaba a PowerShell: le pasaba a
+  // todos. Medido en la VM win10 el 2026-11-27, fotografiando la ventana tras
+  // cada paso.
+  const codigo = lineas.filter((l) => !/^\s*rem\b/i.test(l))
+  const utf8 = codigo.map((l, n) => (/\bchcp\s+65001\b/i.test(l) ? n : -1)).filter((n) => n >= 0)
+  const ultimoPowershell = codigo.map((l, n) => (/\bpowershell\b/i.test(l) ? n : -1)).filter((n) => n >= 0).pop()
+  assert.ok(ultimoPowershell > 0, "el lanzador ya no llama a PowerShell: revisá si este test sigue teniendo sentido")
+  for (const n of utf8) {
+    assert.ok(n > ultimoPowershell, `hay un \`chcp 65001\` antes de una llamada a PowerShell: «${codigo[n]}»`)
+  }
+  // El guardián se prueba a sí mismo.
+  assert.match("chcp 65001 >nul", /\bchcp\s+65001\b/i)
+  assert.match("  CHCP  65001", /\bchcp\s+65001\b/i)
+  assert.doesNotMatch("chcp 850 >nul", /\bchcp\s+65001\b/i)
 })
