@@ -437,7 +437,7 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
       // confirmado). Se rechaza ACÁ, en el borde, ANTES de `directorioDeDatos`/
       // `obtenerServicioDeProyectoConVista`: nunca toca disco, nunca toma el candado.
       if (!validarIdProyecto(idProyecto)) {
-        return JSON.stringify({ resultado: "NO SE APLICÓ NADA — idProyecto inválido", accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "ID_PROYECTO_INVALIDO" }, null, 2)
+        return JSON.stringify({ resultado: "NO SE APLICÓ NADA — idProyecto inválido", accion: args.accion, idProyecto, ok: false, rechazadoPor: "tool", codigo: "ID_PROYECTO_INVALIDO" })
       }
 
       const directorioDatos = directorioDeDatos(ctx.directory)
@@ -482,7 +482,11 @@ Si otra sesión ya tiene este proyecto abierto, la tool te lo va a decir en vez 
         const vocabulario = deps.vocabularioDesdeCatalogo(catalogo, OPERACIONES_PERMITIDAS, deps.conocimiento)
         const condicionesNumericas = condicionesNumericasParaAgente(snapshot.proyecto, deps)
         const generabilidad = await generabilidadParaAgente(deps)
-        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, deps), vocabulario, condicionesNumericas, generabilidad }, null, 2)
+        // SIN SANGRÍA (2026-11-27). Medido en la notebook real: `leer` salía con `null, 2` y pesaba
+        // 36 mil caracteres por llamada; la mitad eran espacios. En una charla de cinco lecturas eso
+        // fue más de la mitad de todo lo que devolvieron las tools, y OpenCode tuvo que resumir la charla.
+        // El modelo lee igual el JSON compacto; las claves y su orden no cambian.
+        return JSON.stringify({ resultado: "SÓLO LECTURA — no cambió nada", ...resumenDeLectura(idProyecto, snapshot, deps), vocabulario, condicionesNumericas, generabilidad })
       }
 
       // ── 'simular' / 'aplicar': baseRevision y operaciones son obligatorios. ────────
