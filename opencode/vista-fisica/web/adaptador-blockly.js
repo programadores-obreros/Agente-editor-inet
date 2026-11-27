@@ -226,9 +226,23 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
 
   const alCambiarCampo = (evento) => {
     if (destruido) return
-    // Tocar un bloque (o el fondo: `newElementId` vacío) es un evento de la interfaz, no un cambio.
+    // Tocar un bloque es un evento de la interfaz, no un cambio.
+    //
+    // «Se deseleccionó» NO es «se tocó el fondo» (2026-11-27). Blockly avisa `selected` sin
+    // elemento nuevo en tres casos, medidos en Chromium:
+    //   - se tocó el fondo del lienzo (y además manda `click` con `targetType: "workspace"`);
+    //   - se apretó el mouse FUERA del lienzo, en cualquier lado de la página;
+    //   - se abrió la lista de un casillero: `selected` con el bloque y, enseguida, `selected` vacío.
+    // La primera versión borraba lo marcado en los tres. Resultado, visto en la notebook del dueño:
+    // el enlace «Verlo en el código» borraba las líneas que prometía mostrar (el clic en el enlace
+    // es un clic fuera del lienzo), y tocar un casillero no dejaba nada marcado. Ahora sólo el
+    // clic de verdad en el fondo avisa «ninguno»; una deselección sola no avisa nada.
     if (Blockly.Events.SELECTED !== undefined && evento.type === Blockly.Events.SELECTED) {
-      alSeleccionar(evento.newElementId ? claveDelBloque(evento.newElementId) : null)
+      if (evento.newElementId) alSeleccionar(claveDelBloque(evento.newElementId))
+      return
+    }
+    if (Blockly.Events.CLICK !== undefined && evento.type === Blockly.Events.CLICK) {
+      if (evento.targetType === "workspace") alSeleccionar(null)
       return
     }
     if (pares.length === 0) return

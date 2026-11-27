@@ -227,6 +227,40 @@ test("tocar el fondo avisa que no hay ninguno", () => {
   assert.deepEqual(m.llamadas.seleccionar, [{ bloque: "porSiempre" }, null])
 })
 
+// 2026-11-27, notebook real del dueño. Tocó un bloque, vio «…son las líneas 165 a 167. Verlo en el
+// código», tocó el enlace y las líneas ya no estaban marcadas: el clic en el enlace es un clic fuera
+// del lienzo, Blockly deselecciona el bloque, y el adaptador avisaba «ninguno» igual que si se
+// hubiera tocado el fondo. Con los casilleros pasaba lo mismo (abrir la lista deselecciona): los
+// tocó primero y no encontró el vínculo. El test de arriba, «tocar el fondo avisa que no hay
+// ninguno», pasaba igual: la API falsa no distinguía el fondo de «afuera».
+test("apretar el mouse FUERA del lienzo no avisa nada: lo marcado sigue (el enlace «Verlo en el código» es un clic afuera)", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  m.reg.ws.tocar(m.reg.mientras()[0].id)
+  m.reg.ws.tocarAfuera()
+  assert.deepEqual(m.llamadas.seleccionar, [{ bloque: "regla", reglaId: "beh-1" }])
+})
+
+test("abrir la lista de un casillero avisa la regla de ese bloque y no la desavisa enseguida", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1"), regla("beh-2")], PASOS))
+  m.reg.ws.abrirCasillero(m.reg.mientras()[1].hijo.id)
+  assert.deepEqual(m.llamadas.seleccionar, [{ bloque: "regla", reglaId: "beh-2" }])
+  assert.deepEqual(m.llamadas.editar, [], "abrir la lista no es elegir")
+})
+
+test("un clic sobre un bloque no avisa dos veces, y sólo el clic en el fondo avisa «ninguno»", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  m.reg.ws.tocar(m.porSiempre().id)
+  assert.equal(m.llamadas.seleccionar.length, 1)
+  // Un `click` que no es del fondo (los controles de zoom, si algún día se prenden) tampoco.
+  m.reg.ws.disparar({ type: "click", targetType: "zoom_controls", isUiEvent: true })
+  assert.equal(m.llamadas.seleccionar.length, 1)
+  m.reg.ws.tocar(null)
+  assert.deepEqual(m.llamadas.seleccionar, [{ bloque: "porSiempre" }, null])
+})
+
 test("tocar el renglón de «todavía no se sabe» no es tocar un paso del programa", () => {
   const m = montar()
   m.adaptador.pintar(modelo([regla("beh-1")], null))

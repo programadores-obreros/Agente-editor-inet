@@ -52,6 +52,7 @@ export function fabricarBlockly() {
     Events: {
       BLOCK_CHANGE: "change",
       SELECTED: "selected",
+      CLICK: "click",
       disable() { reg.nivelEventos++ },
       enable() { reg.nivelEventos-- },
       isEnabled() { return reg.nivelEventos === 0 },
@@ -101,8 +102,23 @@ export function fabricarBlockly() {
           return b
         },
         getTopBlocks() { return bloques.filter((b) => b.dentroDe === null) },
-        /** Lo que hace el alumno al tocar un bloque (o el fondo, con `null`). */
-        tocar(id) { ws.disparar({ type: "selected", newElementId: id ?? undefined, oldElementId: undefined, isUiEvent: true }) },
+        // Los eventos de cada gesto son los que dio el Blockly real en Chromium (2026-11-27):
+        //   tocar un bloque  → `selected` con el bloque + `click` con `targetType: "block"`
+        //   tocar el fondo   → `selected` vacío        + `click` con `targetType: "workspace"`
+        //   tocar afuera     → `selected` vacío, y nada más
+        //   abrir un casillero → `selected` con el bloque y, enseguida, `selected` vacío
+        /** Lo que hace el alumno al tocar un bloque (o el fondo del lienzo, con `null`). */
+        tocar(id) {
+          ws.disparar({ type: "selected", newElementId: id ?? undefined, oldElementId: undefined, isUiEvent: true })
+          ws.disparar({ type: "click", targetType: id ? "block" : "workspace", blockId: id ?? undefined, isUiEvent: true })
+        },
+        /** Apretar el mouse en cualquier lado de la página fuera del lienzo (un enlace, un párrafo). */
+        tocarAfuera() { ws.disparar({ type: "selected", newElementId: undefined, isUiEvent: true }) },
+        /** Abrir la lista de un casillero del bloque `id`. */
+        abrirCasillero(id) {
+          ws.disparar({ type: "selected", newElementId: id, isUiEvent: true })
+          ws.disparar({ type: "selected", newElementId: undefined, oldElementId: id, isUiEvent: true })
+        },
         getAllBlocks() { return [...bloques] },
         getBlockById(id) { return bloques.find((b) => b.id === id) ?? null },
         clear() { for (const b of bloques) b.descartado = true; bloques.length = 0 },
