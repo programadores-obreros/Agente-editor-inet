@@ -267,12 +267,21 @@ export function nombreDePlaca(id: string): string | undefined {
  * los ajusta en la notebook. No es la aprobación final.
  */
 export const TEXTOS_DE_AL_INICIAR = {
+  // Forma de los tres (2026-11-27, revisión de textos tras la prueba en la notebook):
+  //   - «{pieza} en {pin}», sin paréntesis: el nombre de una pieza puede traer los suyos, y
+  //     «DHT11 (módulo Gravity) (GPIO5)» se leía mal;
+  //   - «papel, detalle»: el detalle dice PARA QUÉ, con «para», porque debajo de «al iniciar» un
+  //     «se mira su estado» se leería como que se mira una sola vez.
   /** Un pin que el programa va a leer por su nivel (un pulsador). */
-  entrada: "{pieza} ({pin}): entrada",
-  /** Un pin por el que el programa conversa con un sensor (un DHT). */
-  bus: "{pieza} ({pin}): entrada de datos",
-  /** Un pin que el programa maneja; `{reposo}` es cómo queda hasta que una regla diga otra cosa. */
-  salida: "{pieza} ({pin}): salida, arranca {reposo}",
+  entrada: "{pieza} en {pin}: entrada, para mirar su estado",
+  /** Un pin por el que el programa conversa con un sensor (un DHT). No dice «de datos»: por ese
+   * pin el programa también escribe (le pide la lectura y después escucha). «Lectura» es la
+   * palabra que ya usa la regla («Mientras la lectura de…»). */
+  bus: "{pieza} en {pin}: entrada, para pedirle la lectura",
+  /** Un pin que el programa maneja; `{reposo}` es cómo queda hasta que una regla diga otra cosa.
+   * Va entre comillas, como palabra de la lista de la regla: así no hay que concordarla con el
+   * género de la pieza («Bomba …: salida, arranca apagado» quedaría mal). */
+  salida: "{pieza} en {pin}: salida, arranca en «{reposo}»",
 } as const
 
 /**

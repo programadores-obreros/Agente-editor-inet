@@ -31,8 +31,14 @@ const ARCHIVO = "src/main.cpp"
  * son los del mapa del generador, sin tocar; acá sólo se agregan las palabras de cada paso.
  */
 export interface EstructuraParaVista {
-  readonly alIniciar: { readonly lineas: RangoDeLineas; readonly pasos: readonly { readonly texto: string; readonly lineas: RangoDeLineas }[] }
-  readonly porSiempre: { readonly lineas: RangoDeLineas }
+  /**
+   * `enElCodigo` es cómo se llama esa parte en el programa (`setup`, `loop`), para la clave que va
+   * arriba del código. Va SÓLO si la línea donde el mapa dice que empieza es de verdad la que la
+   * nombra: el día que el generador escriba otra cosa, no se afirma nada. Se decide acá y no en el
+   * navegador, que no puede tener código de placa escrito (`tests/phase3-web-guard.test.mjs`).
+   */
+  readonly alIniciar: { readonly lineas: RangoDeLineas; readonly pasos: readonly { readonly texto: string; readonly lineas: RangoDeLineas }[]; readonly enElCodigo?: string }
+  readonly porSiempre: { readonly lineas: RangoDeLineas; readonly enElCodigo?: string }
   readonly reglas: readonly { readonly id: string; readonly lineas: RangoDeLineas }[]
   /**
    * Las piezas que el programa nombra, con el nombre que tienen en la ventana (2026-11-27,
@@ -64,8 +70,14 @@ export interface ContextoDelPrograma extends ContextoDeLaExplicacion {
  * «al iniciar» al que le faltan renglones sin avisar; sin estructura, la ventana muestra el
  * código igual y los bloques dicen que todavía no la tienen.
  */
-export function estructuraParaVista(mapa: MapaDelPrograma | undefined, nombreDePieza: ContextoDelPrograma["nombreDePieza"]): EstructuraParaVista | undefined {
+/** Cómo abre el generador cada parte (`codegen/programa.ts::renderizarMain`). El nombre es lo que va antes del paréntesis. */
+const APERTURA_EN_EL_CODIGO = { alIniciar: { linea: "void setup() {", nombre: "setup" }, porSiempre: { linea: "void loop() {", nombre: "loop" } } as const
+
+export function estructuraParaVista(mapa: MapaDelPrograma | undefined, nombreDePieza: ContextoDelPrograma["nombreDePieza"], codigo = ""): EstructuraParaVista | undefined {
   if (!mapa || !nombreDePieza) return undefined
+  const lineasDelCodigo = codigo.split("\n")
+  const enElCodigo = (parte: keyof typeof APERTURA_EN_EL_CODIGO, desde: number) =>
+    lineasDelCodigo[desde - 1] === APERTURA_EN_EL_CODIGO[parte].linea ? { enElCodigo: APERTURA_EN_EL_CODIGO[parte].nombre } : {}
   const pasos: { texto: string; lineas: RangoDeLineas }[] = []
   const piezas = new Map<string, string>()
   for (const paso of mapa.alIniciar.pasos) {
@@ -77,8 +89,8 @@ export function estructuraParaVista(mapa: MapaDelPrograma | undefined, nombreDeP
     piezas.set(paso.componente, pieza)
   }
   return {
-    alIniciar: { lineas: mapa.alIniciar.lineas, pasos },
-    porSiempre: { lineas: mapa.porSiempre.lineas },
+    alIniciar: { lineas: mapa.alIniciar.lineas, pasos, ...enElCodigo("alIniciar", mapa.alIniciar.lineas.desde) },
+    porSiempre: { lineas: mapa.porSiempre.lineas, ...enElCodigo("porSiempre", mapa.porSiempre.lineas.desde) },
     reglas: mapa.reglas.map((r) => ({ id: r.regla, lineas: r.lineas })),
     piezas: [...piezas].map(([id, nombre]) => ({ id, nombre })),
   }
@@ -96,6 +108,6 @@ export function programaParaVista(resultado: ResultadoGeneracion, contexto?: Con
   const codigo = resultado.archivos[ARCHIVO]
   // Las líneas se cuentan como las cuenta quien lee: un salto final no agrega una línea vacía.
   const lineas = codigo === "" ? 0 : codigo.replace(/\n$/, "").split("\n").length
-  const estructura = estructuraParaVista(resultado.mapa, contexto?.nombreDePieza)
+  const estructura = estructuraParaVista(resultado.mapa, contexto?.nombreDePieza, codigo)
   return { ok: true, archivo: ARCHIVO, codigo, lineas, ...(estructura ? { estructura } : {}) }
 }

@@ -83,7 +83,14 @@ test("T3 define por JSON los tipos de bloque una sola vez aunque haya dos adapta
   crear({ Blockly, contenedor: {}, alEditar() {}, alQuitar() {} })
   crear({ Blockly, contenedor: {}, alEditar() {}, alQuitar() {} })
   assert.deepEqual(reg.definiciones.map((d) => d.type).sort(), ["tecnia_al_iniciar", "tecnia_hacer", "tecnia_mientras", "tecnia_paso", "tecnia_por_siempre"])
-  assert.equal(typeof reg.definiciones.find((d) => d.type === "tecnia_hacer").previousStatement, "object")
+  // 2026-11-27: «hacer» era una sentencia (`previousStatement`) y «mientras» un bloque en C, con un
+  // hueco debajo que parecía pedir otra acción. Ahora «hacer» es un valor: tiene salida y no muesca.
+  const hacer = reg.definiciones.find((d) => d.type === "tecnia_hacer")
+  assert.equal(hacer.output, null)
+  assert.ok("output" in hacer && !("previousStatement" in hacer))
+  const mientras = reg.definiciones.find((d) => d.type === "tecnia_mientras")
+  assert.deepEqual(mientras.args0.map((a) => [a.type, a.name]), [["input_end_row", "CAMPOS"], ["input_value", "ACCION"]], "campos en la primera fila y la acción, como valor, en la segunda")
+  assert.equal(mientras.inputsInline, true)
 })
 
 test("T3 pintar(modelo completo): contenedor con la acción encastrada y un dropdown por campo con su valor", async () => {

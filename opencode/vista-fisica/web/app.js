@@ -18,6 +18,7 @@ import { pintar, pintarRenglonDelPrograma } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_SIN_CONEXION } from "./estado-conexion.js"
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
+import { TITULOS_DE_LA_ESTRUCTURA } from "./adaptador-blockly.js"
 import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
 import { crearCodigoPorLineas } from "./codigo-por-lineas.js"
 import { crearVinculoBloquesCodigo } from "./vinculo-bloques-codigo.js"
@@ -426,6 +427,8 @@ let codigoPorLineas = null
 let vinculoBloquesCodigo = null
 /** Dónde va la clave del programa (qué pieza es `cmp-12`), o `null` fuera del navegador. */
 let elementoNombresDelPrograma = null
+/** El cuadro donde el panel escribe el programa (la clave mira qué está escrito ahí). */
+let elementoDelPrograma = null
 /** El renglón del programa en «Cómo está» (2026-11-26): fuera de `contenedores`, porque cambia
  * cuando contesta `/api/programa`, no sólo cuando llega un snapshot. */
 let elementoProgramaResumen = null
@@ -627,6 +630,19 @@ export function estructuraDeLaRevision(delPanel, revision) {
   return delPanel && typeof revision === "number" && delPanel.revision === revision ? delPanel.estructura : null
 }
 
+/**
+ * Cuánto hay que desplazar la página para que una caja (`{ top, bottom }`, como
+ * `getBoundingClientRect`) quede en el medio de lo que se ve, debajo del header fijo. Pura. Si la
+ * caja ya está entera a la vista, cero: no se mueve la página sin necesidad.
+ */
+export function desplazamientoHasta(caja, { altoVentana, altoCabecera }) {
+  if (!caja || !Number.isFinite(caja.top) || !Number.isFinite(caja.bottom)) return 0
+  const desde = Math.max(0, altoCabecera)
+  if (caja.top >= desde && caja.bottom <= altoVentana) return 0
+  const centroDeLoVisible = desde + (altoVentana - desde) / 2
+  return Math.round((caja.top + caja.bottom) / 2 - centroDeLoVisible)
+}
+
 /** Texto junto a los bloques o junto al código, con su enlace al otro lado. Sin texto, no se ve nada. */
 export function pintarVinculo({ caja, texto, enlace }, dicho, { conEnlace = true } = {}) {
   texto.textContent = dicho
@@ -647,7 +663,7 @@ function sincronizarBloquesYCodigo() {
   try {
     // La clave sale de la MISMA estructura (la del programa de esta revisión) y de las reglas de
     // este snapshot: sin estructura no hay clave, y nunca queda la de otra revisión.
-    if (elementoNombresDelPrograma) pintarNombresDelPrograma(document, elementoNombresDelPrograma, nombresDelPrograma(estructura, ultimoSnapshot.vista.reglas ?? []))
+    if (elementoNombresDelPrograma) pintarNombresDelPrograma(document, elementoNombresDelPrograma, nombresDelPrograma(estructura, ultimoSnapshot.vista.reglas ?? [], elementoDelPrograma?.textContent ?? "", TITULOS_DE_LA_ESTRUCTURA))
   } catch {
     /* la clave falló: el código se sigue viendo */
   }
@@ -820,6 +836,7 @@ if (enNavegador) {
   const elementoCodigo = document.getElementById("vista-codigo-texto")
   codigoPorLineas = crearCodigoPorLineas({ doc: document, elementoCodigo })
   elementoNombresDelPrograma = document.getElementById("vista-codigo-nombres")
+  elementoDelPrograma = elementoCodigo
   const vinculoDeLosBloques = { caja: document.getElementById("vista-logica-vinculo"), texto: document.getElementById("vista-logica-vinculo-texto"), enlace: document.getElementById("vista-logica-vinculo-enlace") }
   const vinculoDelCodigo = { caja: document.getElementById("vista-codigo-vinculo"), texto: document.getElementById("vista-codigo-vinculo-texto"), enlace: document.getElementById("vista-codigo-vinculo-enlace") }
   vinculoBloquesCodigo = crearVinculoBloquesCodigo({
@@ -835,7 +852,39 @@ if (enNavegador) {
     decirJuntoALosBloques: (texto, { hayLineas }) => pintarVinculo(vinculoDeLosBloques, texto, { conEnlace: hayLineas }),
     decirJuntoAlCodigo: (texto, { hayBloque }) => pintarVinculo(vinculoDelCodigo, texto, { conEnlace: hayBloque }),
   })
-  elementoCodigo.addEventListener("click", (evento) => vinculoBloquesCodigo.alTocarLinea(codigoPorLineas.lineaDe(evento.target)))
+  elementoCodigo.addEventListener("click", (evento) => {
+    // Arrastrar para seleccionar texto (y copiarlo) no es tocar una línea.
+    if (window.getSelection && !window.getSelection().isCollapsed) return
+    vinculoBloquesCodigo.alTocarLinea(codigoPorLineas.lineaDe(evento.target))
+  })
+  // Sin mouse: con el foco en el cuadro del código, las flechas recorren las líneas de a una.
+  elementoCodigo.addEventListener("keydown", (evento) => {
+    const paso = evento.key === "ArrowDown" ? 1 : evento.key === "ArrowUp" ? -1 : 0
+    if (paso === 0 || evento.altKey || evento.ctrlKey || evento.metaKey) return
+    const numero = codigoPorLineas.vecina(paso)
+    if (numero === null) return
+    evento.preventDefault()
+    vinculoBloquesCodigo.alTocarLinea(numero)
+  })
+  // Los dos enlaces del vínculo llevan la vista hasta LO MARCADO, no hasta el título de la sección
+  // (con seis reglas, lo marcado quedaba fuera de la ventana). Y no cambian la dirección: un
+  // enlace a `#paso-programa` pisaba la llave de la sesión (`#t=…`), y después de recargar la
+  // pestaña ya no podía cambiar el proyecto. El `href` queda para quien abra la página sin esto.
+  const llevarLaVistaHasta = (caja) => {
+    const cabecera = document.querySelector("header")
+    const cuanto = desplazamientoHasta(caja, { altoVentana: window.innerHeight, altoCabecera: cabecera ? cabecera.getBoundingClientRect().bottom : 0 })
+    if (cuanto !== 0) window.scrollBy({ top: cuanto })
+  }
+  vinculoDeLosBloques.enlace?.addEventListener("click", (evento) => {
+    evento.preventDefault()
+    llevarLaVistaHasta((codigoPorLineas.primerRenglonMarcado() ?? elementoCodigo).getBoundingClientRect())
+    // El foco pasa al cuadro del código: desde ahí las flechas siguen recorriendo las líneas.
+    elementoCodigo.focus({ preventScroll: true })
+  })
+  vinculoDelCodigo.enlace?.addEventListener("click", (evento) => {
+    evento.preventDefault()
+    llevarLaVistaHasta(panelVistaLogica?.cajaDeLoMarcado() ?? document.getElementById("vista-logica-lienzo").getBoundingClientRect())
+  })
 }
 
 /** Foco de la frase: se captura al cambiar un select y se restaura cuando la operación termina

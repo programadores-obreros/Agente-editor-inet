@@ -366,6 +366,13 @@ export interface OpcionSlotVista {
 export interface SlotFraseVista {
   readonly slot: "sensor" | "estado" | "actuador" | "salida" | "capacidad" | "comparador" | "valor" | "unidad"
   readonly prefijo: string
+  /**
+   * El mismo texto fijo como va DENTRO DE UN BLOQUE, cuando difiere del de la frase (2026-11-27).
+   * En «Con palabras» la regla es una oración y empieza con mayúscula («Mientras el…»); un bloque
+   * es un fragmento que se encastra, y los demás («al iniciar», «por siempre», «hacer:») van en
+   * minúscula. Lo decide el servidor: el navegador no cambia la ortografía de un texto.
+   */
+  readonly prefijoEnBloque?: string
   readonly opciones: readonly OpcionSlotVista[]
   /** Numeric Conditions S1: parte del bloque «mientras» (`cuando`) o del «hacer» (`entonces`). */
   readonly grupo?: "cuando" | "entonces"

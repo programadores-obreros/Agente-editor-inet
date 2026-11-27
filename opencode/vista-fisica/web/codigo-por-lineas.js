@@ -32,6 +32,14 @@ export function crearCodigoPorLineas({ doc, elementoCodigo }) {
   /** El texto del que salieron: si el panel escribió otro (o lo borró), ya no valen. */
   let textoRepartido = null
   let marcado = null
+  /** La línea en la que está el cursor del teclado (la última tocada o recorrida), o `null`. */
+  let cursor = null
+
+  function ponerCursor(numero) {
+    if (cursor !== null) renglones[cursor - 1]?.removeAttribute("data-cursor")
+    cursor = numero
+    if (cursor !== null) renglones[cursor - 1]?.setAttribute("data-cursor", "")
+  }
 
   const vigentes = () => textoRepartido !== null && elementoCodigo.textContent === textoRepartido
 
@@ -55,6 +63,7 @@ export function crearCodigoPorLineas({ doc, elementoCodigo }) {
       renglones = []
       textoRepartido = null
       marcado = null
+      cursor = null
       if (textos.length === 0) return 0
       const nuevos = textos.map((texto, i) => {
         const renglon = doc.createElement("span")
@@ -116,9 +125,31 @@ export function crearCodigoPorLineas({ doc, elementoCodigo }) {
       if (!vigentes()) return null
       for (let actual = elemento; actual && actual !== elementoCodigo; actual = actual.parentNode ?? null) {
         const indice = renglones.indexOf(actual)
-        if (indice >= 0) return indice + 1
+        if (indice >= 0) {
+          ponerCursor(indice + 1)
+          return indice + 1
+        }
       }
       return null
     },
+
+    /**
+     * La línea vecina a la del cursor, para recorrer el código con las flechas (`paso`: +1 abajo,
+     * -1 arriba), o `null` si no hay renglones. Sin cursor todavía, arranca por la primera (o la
+     * última, yendo hacia arriba). No pasa de los extremos. Sin esto, sin mouse no había forma de
+     * tocar una línea: las líneas no reciben foco.
+     */
+    vecina(paso) {
+      if (!vigentes() || renglones.length === 0 || (paso !== 1 && paso !== -1)) return null
+      // Sin cursor pero con algo marcado (se llegó desde un bloque), se sigue desde lo marcado: si no,
+      // la primera flecha saltaba a la línea 1 y se perdía de vista lo que se había venido a mirar.
+      const base = cursor ?? (marcado ? (paso > 0 ? marcado.hasta : marcado.desde) : paso > 0 ? 0 : renglones.length + 1)
+      const numero = Math.min(renglones.length, Math.max(1, base + paso))
+      ponerCursor(numero)
+      return numero
+    },
+
+    /** La línea del cursor, o `null`. */
+    cursor: () => (vigentes() ? cursor : null),
   }
 }

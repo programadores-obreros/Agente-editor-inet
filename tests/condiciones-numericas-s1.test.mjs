@@ -160,7 +160,9 @@ test("6: Blockly: «Mientras la lectura de [capacidad] del [entrada] sea [compar
     crearAdaptadorBlockly({ Blockly, contenedor: {}, alEditar() {}, alQuitar() {} }).pintar(modelo)
     const [mientras, hacer] = reg.deRegla()
     assert.deepEqual(Object.keys(mientras.campos), ["capacidad", "sensor", "comparador", "valor", "unidad"])
-    assert.deepEqual(mientras.etiquetas, ["Mientras la lectura de", "del", "sea"])
+    // 2026-11-27: en el BLOQUE va en minúscula, como «al iniciar», «por siempre» y «hacer:». La
+    // oración de «Con palabras» sigue empezando con mayúscula (el `prefijo` de dos líneas arriba).
+    assert.deepEqual(mientras.etiquetas, ["mientras la lectura de", "del", "sea"])
     assert.deepEqual(Object.keys(hacer.campos), ["actuador", "salida"])
     assert.ok(mientras.campos.valor instanceof Blockly.FieldTextInput)
     assert.equal(mientras.getFieldValue("valor"), "30")

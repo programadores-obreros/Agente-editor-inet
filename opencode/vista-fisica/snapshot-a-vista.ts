@@ -648,7 +648,7 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     }
   }
 
-  const slotSensor: SlotFraseVista = { slot: "sensor", prefijo: "Mientras el", opciones: sensores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { cuando: { sensor: o.id } } })) }
+  const slotSensor: SlotFraseVista = { slot: "sensor", prefijo: "Mientras el", prefijoEnBloque: "mientras el", opciones: sensores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { cuando: { sensor: o.id } } })) }
   const slotEstado: SlotFraseVista = { slot: "estado", prefijo: "esté", opciones: estados.map((e) => ({ valor: e.clave, etiqueta: e.etiqueta, parche: { cuando: { ...e.condicion } } })) }
   const slotActuador: SlotFraseVista = { slot: "actuador", prefijo: ", el", opciones: actuadores.map((o) => ({ valor: o.id, etiqueta: o.etiqueta, parche: { entonces: { actuador: o.id } } })) }
   const slotSalida: SlotFraseVista = { slot: "salida", prefijo: "está", opciones: salidas.map((o) => ({ valor: o.clave, etiqueta: o.etiqueta, parche: { entonces: { accion: o.accion } } })) }
@@ -778,8 +778,8 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
     return [
       // Capacidad: las que se pueden crear con ESTE sensor; la guardada, aunque ya no se ofrezca,
       // sigue visible como valor actual (el navegador la agrega a las opciones).
-      { slot: "capacidad", prefijo: "Mientras la lectura de", opciones: cuantitativasParaCrear(conocimiento, tipoSensor).map((c) => ({ valor: c.capacidad, etiqueta: c.etiqueta!, parche: { cuando: { capacidad: c.capacidad, umbral: { magnitud: c.magnitud, unidad: c.unidadCanonica } } } })), grupo: "cuando" },
-      { ...sensorEnRegla, prefijo: "del" },
+      { slot: "capacidad", prefijo: "Mientras la lectura de", prefijoEnBloque: "mientras la lectura de", opciones: cuantitativasParaCrear(conocimiento, tipoSensor).map((c) => ({ valor: c.capacidad, etiqueta: c.etiqueta!, parche: { cuando: { capacidad: c.capacidad, umbral: { magnitud: c.magnitud, unidad: c.unidadCanonica } } } })), grupo: "cuando" },
+      { ...sensorEnRegla, prefijo: "del", prefijoEnBloque: "del" },
       { slot: "comparador", prefijo: "sea", opciones: COMPARADORES.map((c) => ({ valor: c, etiqueta: ROTULO_COMPARADOR[c], parche: { cuando: { comparador: c } } })), grupo: "cuando" },
       { slot: "valor", prefijo: "", opciones: [], grupo: "cuando", tipo: "numero", destino: ["cuando", "umbral", "valor"] },
       // Unidad (N-3): cambiar SÓLO la unidad conserva la cantidad física. Cada unidad que la
@@ -805,11 +805,12 @@ function proyectarReglas(proyecto: Proyecto, catalogo: Catalogo, componentes: re
       {
         slot: "capacidad",
         prefijo: "Mientras la lectura de",
+        prefijoEnBloque: "mientras la lectura de",
         opciones: cuantitativas.map((c) => ({ valor: c.capacidad, etiqueta: c.etiqueta!, parche: { cuando: { capacidad: c.capacidad, umbral: { magnitud: c.magnitud, unidad: c.unidadCanonica } } } })),
         ...grupo,
         ...(cuantitativas.length === 1 ? { predeterminado: cuantitativas[0]!.capacidad } : {}),
       },
-      { ...sensorEnRegla, prefijo: "del" },
+      { ...sensorEnRegla, prefijo: "del", prefijoEnBloque: "del" },
       { slot: "comparador", prefijo: "sea", opciones: COMPARADORES.map((c) => ({ valor: c, etiqueta: ROTULO_COMPARADOR[c], parche: { cuando: { comparador: c } } })), ...grupo },
       { slot: "valor", prefijo: "", opciones: [], tipo: "numero", destino: ["cuando", "umbral", "valor"], ...grupo },
       {

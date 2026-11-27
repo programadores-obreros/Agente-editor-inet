@@ -22,16 +22,29 @@
 export const TEXTOS_DEL_VINCULO = Object.freeze({
   // Las dos pistas se muestran SÓLO cuando hay programa con su estructura a la vista: sin eso,
   // tocar no marca nada, y un texto fijo que invite a tocar prometería lo que la página no hace.
-  pistaJuntoALosBloques: "Tocá un bloque para ver sus líneas en el código.",
-  pistaJuntoAlCodigo: "Tocá una línea para ver de qué bloque sale.",
-  bloqueUnaLinea: "En el programa, este bloque es la línea {desde}.",
-  bloqueVariasLineas: "En el programa, este bloque son las líneas {desde} a {hasta}.",
-  lineaDeAlIniciar: "Esta línea sale del bloque «al iniciar».",
-  lineaDePaso: "Esta línea sale de un renglón del bloque «al iniciar».",
-  lineaDePorSiempre: "Esta línea sale del bloque «por siempre».",
-  lineaDeLaRegla: "Esta línea sale de la regla.",
-  lineaDeUnaRegla: "Esta línea sale de la regla {numero}.",
-  lineaDeNingunBloque: "Esta línea no sale de un bloque: es parte de la preparación del programa.",
+  //
+  // REVISIÓN DEL 2026-11-27, tras la prueba en la notebook. El dueño no descubrió el vínculo solo:
+  // la pista daba la instrucción («tocá un bloque») sin la idea (el bloque y el código son lo
+  // mismo). Ahora cada texto dice la idea: la pista, y lo que se lee al tocar. Cambios puntuales:
+  //   - «código» y no «programa» para el lugar donde están las líneas: así lo llama la ventana;
+  //   - al tocar el «mientras» o el «hacer» de una regla se marcan LOS DOS y las líneas incluyen
+  //     la condición: decía «este bloque son las líneas…»; ahora dice «esta regla»;
+  //   - «…es parte de la preparación del programa» chocaba con «al iniciar», que es justamente lo
+  //     que el programa prepara, y el alumno leía que «al iniciar» no salía de ningún bloque;
+  //   - ninguno afirma «quedó marcado»: eso lo dice la pantalla, no el texto.
+  pistaJuntoALosBloques: "Cada bloque tiene sus líneas en el código. Tocá un bloque y se marcan.",
+  pistaJuntoAlCodigo: "Cada línea sale de un bloque. Tocá una línea y se marca su bloque.",
+  bloqueUnaLinea: "Este bloque es lo mismo que la línea {desde} del código.",
+  bloqueVariasLineas: "Este bloque es lo mismo que las líneas {desde} a {hasta} del código.",
+  reglaUnaLinea: "Esta regla es lo mismo que la línea {desde} del código.",
+  reglaVariasLineas: "Esta regla es lo mismo que las líneas {desde} a {hasta} del código.",
+  lineaDeAlIniciar: "Esta línea es parte de «al iniciar».",
+  lineaDePaso: "Esta línea es de un renglón de «al iniciar».",
+  // Sale en las líneas del `loop` que no son de ninguna regla (una lectura compartida, las llaves).
+  lineaDePorSiempre: "Esta línea es de «por siempre», pero no de una regla.",
+  lineaDeLaRegla: "Esta línea es parte de la regla.",
+  lineaDeUnaRegla: "Esta línea es parte de la regla {numero}.",
+  lineaDeNingunBloque: "Esta línea no sale de ningún bloque: es de lo que el código necesita tener escrito aparte, como los nombres de los pines.",
 })
 
 const esRango = (r) => r !== null && typeof r === "object" && Number.isInteger(r.desde) && Number.isInteger(r.hasta) && r.desde >= 1 && r.hasta >= r.desde
@@ -64,10 +77,15 @@ export function claveDeLaLinea(estructura, numero) {
   return null
 }
 
-/** Lo que se dice junto a los bloques cuando hay uno marcado. */
-export function textoDelBloque(rango) {
+/**
+ * Lo que se dice junto a los bloques cuando hay algo marcado. Si lo marcado es una regla (sus dos
+ * bloques), se habla de «esta regla»; si no, de «este bloque».
+ */
+export function textoDelBloque(rango, clave = null) {
   if (!esRango(rango)) return ""
-  const plantilla = rango.desde === rango.hasta ? TEXTOS_DEL_VINCULO.bloqueUnaLinea : TEXTOS_DEL_VINCULO.bloqueVariasLineas
+  const unaLinea = rango.desde === rango.hasta
+  const deRegla = clave?.bloque === "regla"
+  const plantilla = deRegla ? (unaLinea ? TEXTOS_DEL_VINCULO.reglaUnaLinea : TEXTOS_DEL_VINCULO.reglaVariasLineas) : unaLinea ? TEXTOS_DEL_VINCULO.bloqueUnaLinea : TEXTOS_DEL_VINCULO.bloqueVariasLineas
   return plantilla.replace("{desde}", String(rango.desde)).replace("{hasta}", String(rango.hasta))
 }
 
@@ -139,7 +157,7 @@ export function crearVinculoBloquesCodigo({ marcarBloques, marcarLineas, decirJu
       origen = "bloque"
       marcarBloques(clave)
       marcarLineas(rango)
-      decirJuntoALosBloques(textoDelBloque(rango), { hayLineas: true })
+      decirJuntoALosBloques(textoDelBloque(rango, clave), { hayLineas: true })
       decirJuntoAlCodigo(TEXTOS_DEL_VINCULO.pistaJuntoAlCodigo, { hayBloque: false })
     },
 
@@ -152,7 +170,7 @@ export function crearVinculoBloquesCodigo({ marcarBloques, marcarLineas, decirJu
       marcarBloques(clave)
       // Sin bloque, se marca la línea tocada sola: que se vea qué se tocó y por qué no hay bloque.
       marcarLineas(rango ?? { desde: numero, hasta: numero })
-      decirJuntoALosBloques(rango ? textoDelBloque(rango) : TEXTOS_DEL_VINCULO.pistaJuntoALosBloques, { hayLineas: rango !== null })
+      decirJuntoALosBloques(rango ? textoDelBloque(rango, clave) : TEXTOS_DEL_VINCULO.pistaJuntoALosBloques, { hayLineas: rango !== null })
       decirJuntoAlCodigo(textoDeLaLinea(clave, reglasEnElLienzo), { hayBloque: clave !== null })
     },
 

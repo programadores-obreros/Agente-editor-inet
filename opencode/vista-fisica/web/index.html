@@ -255,6 +255,17 @@
      así que lleva su propio margen para que el enlace «Ver el bloque» no la deje bajo el header. */
   #vista-logica { scroll-margin-top: calc(var(--alto-cabecera) + var(--e4)); }
   #vista-logica-vinculo { font-size: var(--t-s); color: var(--tinta-2); }
+  /* El bloque marcado (`adaptador-blockly.js::CLASE_DE_BLOQUE_MARCADO`): un borde grueso alrededor
+     del bloque, sin tocarle el color de adentro. El relieve de Blockly lo aclaraba y el texto
+     blanco dejaba de leerse (2:1). Sólo el contorno del propio bloque: los encastrados son otro <g>. */
+  .tecnia-bloque-marcado > .blocklyPath { stroke: var(--acento); stroke-width: 5px; }
+  /* El cuerpo de un bloque se toca (marca sus líneas en el código): que se note. En la notebook el
+     dueño tocó los casilleros, que eran lo único que parecía tocable. */
+  #vista-logica-lienzo .blocklyBlock > .blocklyPath { cursor: pointer; }
+  #vista-logica-lienzo .blocklyBlock > .blocklyPath:hover { filter: brightness(1.18); }
+  #vista-logica-lienzo .blocklyDropdownField { cursor: pointer; }
+  /* La lista de un casillero es HTML y no sigue la escala del lienzo: que no quede más chica que la página. */
+  #vista-logica-lienzo .blocklyMenuItem { font-size: var(--t-m); }
 
   /* ══ Paso 3: el programa, tal cual. Alto acotado con barra propia: un programa con sensor
      pasa las 90 líneas. ══ */
@@ -268,12 +279,18 @@
   #vista-codigo-texto { position: relative; counter-reset: linea; }
   .linea-de-codigo { display: block; counter-increment: linea; border-left: 4px solid transparent; padding-left: var(--e2); cursor: pointer; }
   .linea-de-codigo::before { content: counter(linea); display: inline-block; min-width: 3ch; margin-right: var(--e4); text-align: right; color: var(--cod-2); user-select: none; }
-  .linea-de-codigo[data-marcada] { background: color-mix(in srgb, var(--marca) 22%, transparent); border-left-color: var(--marca); }
+  /* La barra va con la tinta del cuadro y no con el violeta: contra el fondo del código el violeta
+     daba 2,66:1 (medido), menos de los 3:1 que pide una señal que no es texto. */
+  .linea-de-codigo[data-marcada] { background: color-mix(in srgb, var(--marca) 28%, transparent); border-left-color: var(--cod-t); }
+  /* La línea en la que está el cursor al recorrer el código con las flechas. */
+  .linea-de-codigo[data-cursor] { box-shadow: inset 0 0 0 1px var(--cod-2); }
   /* La clave del programa: qué pieza es cada `cmp-N` y qué regla es cada `beh-N`. Va arriba del
      código, dentro de su cuadro, y sólo cuando hay programa con su estructura. */
-  #vista-codigo-nombres { padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-bottom: 1px solid var(--cod-linea); }
-  #vista-codigo-nombres p { margin: 0 0 var(--e2); }
-  #vista-codigo-nombres li { padding: var(--e1) 0; }
+  #vista-codigo-nombres { font-size: var(--t-s); color: var(--cod-2); border-bottom: 1px solid var(--cod-linea); }
+  #vista-codigo-nombres summary { padding: var(--e3) var(--e4); cursor: pointer; font-weight: 600; color: var(--cod-t); }
+  #vista-codigo-nombres ul { padding: 0 var(--e4); columns: 2 18rem; column-gap: var(--e6, 32px); }
+  #vista-codigo-nombres li { padding: var(--e1) 0; break-inside: avoid; }
+  #vista-codigo-nombres p { margin: 0; padding: var(--e2) var(--e4) var(--e3); }
   #vista-codigo-nombres code { font-family: var(--mono); color: var(--cod-t); font-weight: 600; }
   #vista-codigo-vinculo { margin: 0; padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-top: 1px solid var(--cod-linea); }
   /* El cuadro del código tiene su propio fondo: el enlace toma la tinta del cuadro (el color de
@@ -298,6 +315,14 @@
     #circuito { overflow: visible; }
     #seccion-circuito, #reglas div[data-regla-id], #vista-logica-lienzo, #motivos li, #controles label { break-inside: avoid; }
     #vista-codigo-texto { max-height: none; }
+    /* En el papel no se toca nada: ni las pistas ni los enlaces del vínculo, ni lo que quedó
+       marcado en pantalla (un renglón violeta o un bloque con borde no significan nada impresos). */
+    #vista-logica-vinculo, #vista-codigo-vinculo { display: none !important; }
+    .linea-de-codigo[data-marcada] { background: none; border-left-color: transparent; }
+    .linea-de-codigo[data-cursor] { box-shadow: none; }
+    .tecnia-bloque-marcado > .blocklyPath { stroke: none; }
+    /* La clave no se parte entre dos hojas. */
+    #vista-codigo-nombres { break-inside: avoid; }
   }
 </style>
 </head>
@@ -370,9 +395,10 @@
     <!-- Los bloques van SIEMPRE visibles, nunca dentro de algo plegado: ver el comentario del lienzo en el <style>. -->
     <div id="vista-logica">
       <h3 class="tb-subtitulo">Con bloques</h3>
-      <p id="vista-logica-etiqueta">«al iniciar» es lo que el programa hace una sola vez, cuando arranca la placa. «por siempre» es lo que repite sin parar: ahí va un par «mientras … hacer …» por cada regla. Elegí cada campo de la lista.</p>
+      <p id="vista-logica-etiqueta">«al iniciar» es lo que el programa hace una sola vez, cuando arranca la placa: prepara cada pin. «por siempre» es lo que repite sin parar: por cada regla hay un «mientras … hacer …», y los vuelve a mirar uno atrás de otro. Esos dos bloques no se cambian; en cada regla, elegí de las listas. Los bloques y el código del paso 3 son el mismo programa, escrito de dos maneras.</p>
+      <!-- Va ARRIBA del lienzo, pegado al párrafo que se lee: debajo quedaba después de todos los bloques y no se veía (notebook, 2026-11-27). -->
+      <p id="vista-logica-vinculo" role="status" aria-live="polite" hidden><span id="vista-logica-vinculo-texto"></span> <a id="vista-logica-vinculo-enlace" class="tb-boton" href="#paso-programa">Ir a esas líneas ↓</a></p>
       <div id="vista-logica-lienzo" role="group" aria-label="Vista lógica de las reglas"></div>
-      <p id="vista-logica-vinculo" role="status" aria-live="polite" hidden><span id="vista-logica-vinculo-texto"></span> <a id="vista-logica-vinculo-enlace" href="#paso-programa">Verlo en el código</a></p>
       <div id="vista-logica-estado" role="status" aria-live="polite"></div>
       <div id="vista-logica-texto"></div>
       <button type="button" id="vista-logica-quitar" class="tb-boton tb-boton--peligro" disabled>Quitar regla</button>
@@ -387,7 +413,7 @@
     <div class="tb-codigo" id="vista-codigo">
       <div id="vista-codigo-nombres" hidden></div>
       <pre class="tb-codigo__texto" id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
-      <p id="vista-codigo-vinculo" role="status" aria-live="polite" hidden><span id="vista-codigo-vinculo-texto"></span> <a id="vista-codigo-vinculo-enlace" href="#vista-logica">Ver el bloque</a></p>
+      <p id="vista-codigo-vinculo" role="status" aria-live="polite" hidden><span id="vista-codigo-vinculo-texto"></span> <a id="vista-codigo-vinculo-enlace" class="tb-boton" href="#vista-logica">Ir a los bloques ↑</a></p>
       <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>
     </div>
   </section>

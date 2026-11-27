@@ -36,10 +36,14 @@ const TIPO_AL_INICIAR = "tecnia_al_iniciar"
 const TIPO_PASO = "tecnia_paso"
 const TIPO_POR_SIEMPRE = "tecnia_por_siempre"
 const SENTINELA = "__sin_valor__"
+/** Cómo se llaman los dos bloques de estructura. Los usa también la clave del programa («`setup`
+ * es «al iniciar»»): un solo lugar, para que la clave no nombre un bloque que el lienzo llama distinto. */
+export const TITULOS_DE_LA_ESTRUCTURA = Object.freeze({ alIniciar: "al iniciar", porSiempre: "por siempre" })
 /** `sinPasos` es lo que dice «al iniciar» mientras no se sabe qué prepara el programa de esta
- * revisión (no llegó, o no hay programa). Los tres textos nuevos están aprobados para la prueba por
+ * revisión (no llegó, o no hay programa). Decía «se completa cuando el programa esté listo», que se
+ * podía leer como «lo completo yo» o como «espero y se completa solo»; ahora dice dónde mirar. Los tres textos nuevos están aprobados para la prueba por
  * el dueño (2026-11-27) y pendientes de verlos en pantalla: no es la aprobación final. */
-const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", alIniciar: "al iniciar", porSiempre: "por siempre", sinPasos: "se completa cuando el programa esté listo" }
+const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", ...TITULOS_DE_LA_ESTRUCTURA, sinPasos: "todavía sin programa: mirá el paso 3" }
 
 /**
  * El color de cada bloque es el de su rol en el esquema: «mientras» es la ENTRADA (lo que se lee)
@@ -55,6 +59,13 @@ export const COLORES_DE_BLOQUE = Object.freeze({ mientras: "#1d4ed8", hacer: "#0
  * en el esquema (`--ctrl`); el mismo test los ata a la hoja y les mide el contraste.
  */
 export const COLOR_DE_ESTRUCTURA = "#334155"
+/**
+ * La clase que lleva la raíz de un bloque marcado; el borde lo pone la hoja de `index.html`.
+ * Antes se usaba `setHighlighted(true)`, que aplica el relieve de Blockly: aclaraba el bloque y el
+ * texto blanco quedaba sobre un fondo pálido (medido en Chromium: 2,05:1 y 1,91:1 de contraste,
+ * contra 6,7:1 y 5,47:1 sin marcar). Con un borde, el bloque se sigue leyendo igual.
+ */
+export const CLASE_DE_BLOQUE_MARCADO = "tecnia-bloque-marcado"
 // Lugar de los bloques en el lienzo: «al iniciar» arriba y «por siempre» debajo. El alto de un
 // bloque lo dice Blockly después de dibujarlo; si la API no lo informa (la de prueba), se usa el
 // estimado.
@@ -73,6 +84,18 @@ export const ALTO_MAXIMO_DEL_LIENZO = 1600
 /** Lo que se deja libre debajo del último bloque: el margen y el lugar de la barra horizontal de
  * Blockly, que va pegada al borde de abajo y si no tapa el cierre de «por siempre». */
 export const LIBRE_BAJO_LOS_BLOQUES = 32
+/**
+ * La escala del lienzo sale de UNA regla (2026-11-27): que el bloque más ancho entre justo en el
+ * ancho del lienzo, entre un mínimo y un máximo. En la notebook del dueño los bloques ocupaban un
+ * tercio del recuadro y él agrandó la página con el zoom del navegador para leerlos; con eso la
+ * regla más larga se le cortó por la derecha. Con lugar de sobra los bloques se agrandan (hasta
+ * el máximo); en una ventana angosta se achican (hasta el mínimo), y recién por debajo del mínimo
+ * aparece la barra horizontal. La letra de Blockly mide unos 15 px a escala 1.
+ */
+export const ESCALA_MINIMA_DEL_LIENZO = 0.75
+export const ESCALA_MAXIMA_DEL_LIENZO = 1.4
+/** Grosor de la barra de Blockly con mouse. */
+const GROSOR_DE_BARRA = 15
 
 /** Las reglas a dibujar. Un modelo viejo que sólo trae `regla` vale como lista de una. */
 const reglasDe = (modelo) => modelo.reglas ?? (modelo.regla ? [modelo.regla] : [])
@@ -100,10 +123,14 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     Blockly.defineBlocksWithJsonArray([
       {
         type: TIPO_MIENTRAS,
-        message0: "%1",
-        args0: [{ type: "input_dummy", name: "CAMPOS" }],
-        message1: "%1",
-        args1: [{ type: "input_statement", name: "ACCION" }],
+        // «hacer» va encastrado como VALOR en una segunda fila, no como sentencia (2026-11-27).
+        // Con una entrada de sentencia, «mientras» era un bloque en C: debajo del «hacer» quedaba
+        // el cierre de la C, una franja azul a todo el ancho que parecía un hueco para encastrar
+        // otra acción, y una regla tiene UNA. Así cada regla es una caja azul con su acción verde
+        // adentro, sin hueco. Se probaron otros renderers y achicar la franja: no la sacan.
+        message0: "%1 %2",
+        args0: [{ type: "input_end_row", name: "CAMPOS" }, { type: "input_value", name: "ACCION" }],
+        inputsInline: true,
         // Los pares se encastran uno debajo del otro adentro de «por siempre».
         previousStatement: null,
         nextStatement: null,
@@ -114,7 +141,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         type: TIPO_HACER,
         message0: `${textos.hacer} %1`,
         args0: [{ type: "input_dummy", name: "CAMPOS" }],
-        previousStatement: null,
+        output: null,
         colour: COLORES_DE_BLOQUE.hacer,
         tooltip: "",
       },
@@ -146,7 +173,28 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     ])
   }
 
+  // Las barras de Blockly, de fábrica, dejan correr el lienzo medio ancho y medio alto MÁS ALLÁ de
+  // los bloques, así que siempre hay «algo» para desplazar y las dos quedan a la vista aunque todo
+  // entre (medido en Chromium: con 574×320 px de bloques en un lienzo de 1251×366, el área
+  // desplazable era de 1928×686). Con estas métricas el área desplazable es la de los bloques con
+  // su margen, o la vista si es más grande. Sin `MetricsManager` (la API de prueba) no se cambia nada.
+  const Metricas =
+    typeof Blockly.MetricsManager === "function"
+      ? class extends Blockly.MetricsManager {
+          getScrollMetrics(enCoordenadasDelLienzo, vista, contenido) {
+            const v = vista || this.getViewMetrics(false)
+            const c = contenido || this.getContentMetrics(false)
+            const escala = this.workspace_.scale
+            const ancho = Math.max(v.width, c.left + c.width + MARGEN * escala)
+            const alto = Math.max(v.height, c.top + c.height + LIBRE_BAJO_LOS_BLOQUES)
+            const divisor = enCoordenadasDelLienzo ? escala : 1
+            return { top: 0, left: 0, width: ancho / divisor, height: alto / divisor }
+          }
+        }
+      : null
+
   const workspace = Blockly.inject(contenedor, {
+    ...(Metricas ? { plugins: { metricsManager: Metricas } } : {}),
     sounds: false,
     media,
     readOnly: false,
@@ -172,8 +220,36 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     if (!contenedor?.style || typeof workspace.getBlocksBoundingBox !== "function") return
     const caja = workspace.getBlocksBoundingBox()
     if (!caja || !Number.isFinite(caja.bottom)) return
-    const alto = Math.min(ALTO_MAXIMO_DEL_LIENZO, Math.max(ALTO_MINIMO_DEL_LIENZO, Math.ceil(caja.bottom + LIBRE_BAJO_LOS_BLOQUES)))
+    // Tres cosas que dependen de lo mismo (la caja de los bloques y el ancho del lienzo) y se
+    // deciden juntas: la ESCALA, el ALTO y qué BARRAS se ven.
+    const anchoDelLienzo = Number.isFinite(contenedor.clientWidth) ? contenedor.clientWidth : 0
+    const anchoDeLosBloques = Number.isFinite(caja.right) ? caja.right + MARGEN : 0
+    if (anchoDelLienzo > 0 && anchoDeLosBloques > MARGEN && typeof workspace.setScale === "function") {
+      const escalaPara = (ancho) => Math.min(ESCALA_MAXIMA_DEL_LIENZO, Math.max(ESCALA_MINIMA_DEL_LIENZO, Math.floor((ancho / anchoDeLosBloques) * 100) / 100))
+      let pedida = escalaPara(anchoDelLienzo)
+      // Si a esa escala los bloques pasan el alto máximo, va a estar la barra vertical, que ocupa
+      // su ancho: la escala se elige de nuevo contando con eso. Si no, con muchas reglas aparecía
+      // también la barra horizontal, por 15 px (lo encontró el test de las barras).
+      if (Math.ceil(caja.bottom * pedida + LIBRE_BAJO_LOS_BLOQUES) > ALTO_MAXIMO_DEL_LIENZO) pedida = escalaPara(anchoDelLienzo - GROSOR_DE_BARRA)
+      if (pedida !== workspace.scale) workspace.setScale(pedida)
+    }
+    // La caja viene en coordenadas del lienzo (sin escala): para pasarla a px se multiplica.
+    const escala = Number.isFinite(workspace.scale) && workspace.scale > 0 ? workspace.scale : 1
+    const pedido = Math.ceil(caja.bottom * escala + LIBRE_BAJO_LOS_BLOQUES)
+    const alto = Math.min(ALTO_MAXIMO_DEL_LIENZO, Math.max(ALTO_MINIMO_DEL_LIENZO, pedido))
     contenedor.style.height = `${alto}px`
+    // Una barra a la vista dice «hay más»: sólo se muestra la que hace falta. La vertical, pasado
+    // el alto máximo; la horizontal, si ni a la escala mínima entra el bloque más ancho.
+    const barras = workspace.scrollbar
+    if (!barras?.hScroll || !barras?.vScroll || anchoDelLienzo <= 0) return
+    const faltaAlto = pedido > ALTO_MAXIMO_DEL_LIENZO
+    const faltaAncho = anchoDeLosBloques * escala > anchoDelLienzo - (faltaAlto ? GROSOR_DE_BARRA : 0)
+    barras.hScroll.setContainerVisible(faltaAncho)
+    barras.vScroll.setContainerVisible(faltaAlto)
+    // Sin barra no hay cómo volver: lo que ya no se desplaza vuelve a su borde.
+    if (typeof workspace.scroll === "function" && ((!faltaAncho && workspace.scrollX !== 0) || (!faltaAlto && workspace.scrollY !== 0))) {
+      workspace.scroll(faltaAncho ? workspace.scrollX : 0, faltaAlto ? workspace.scrollY : 0)
+    }
   }
   // Blockly termina de dibujar los bloques un instante después de `render()` (los encola). Medido
   // en Chromium el 2026-11-26: tomada en el momento, la caja de los bloques daba menos que la
@@ -194,13 +270,44 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   }
 
   let destruido = false
+  // El ancho del lienzo cambia con la ventana: la escala y las barras se deciden de nuevo.
+  let anchoVisto = null
+  const observador =
+    typeof ResizeObserver === "function" && typeof contenedor?.clientWidth === "number"
+      ? new ResizeObserver(() => {
+          if (destruido || contenedor.clientWidth === anchoVisto) return
+          anchoVisto = contenedor.clientWidth
+          ajustarAlto()
+          medir()
+        })
+      : null
+  observador?.observe(contenedor)
   /** Un elemento por regla dibujada: la regla del modelo y sus dos bloques. */
   let pares = []
   /** Los bloques de la estructura que están dibujados. `pasos` sólo tiene los renglones que
    * vinieron del servidor: el renglón de «todavía no se sabe» no es un paso del programa. */
   let estructura = { alIniciar: null, porSiempre: null, pasos: [] }
-  let firmaActual = null
+  /** La forma de las reglas y la de los renglones de «al iniciar» que están dibujadas, por separado. */
+  let firmaDeReglas = null
+  let firmaDePasos = null
+  let altoDeAlIniciar = ALTO_ESTIMADO_DE_AL_INICIAR
   let marcados = []
+
+  // UN TOQUE ES DE ALGUIEN (2026-11-27). Cuando el lienzo se rearma, Blockly reubica el foco en
+  // otro bloque y avisa `selected`, igual que si lo hubieran tocado. Visto con mouse real: se
+  // cambiaba un casillero de una regla y quedaba marcado un renglón de «al iniciar» que nadie
+  // tocó. Por eso, después de cada rearmado no se atiende ningún `selected` hasta que haya un
+  // gesto de verdad sobre el lienzo (apretar el mouse o una tecla). Sin forma de escuchar gestos
+  // (el contenedor de las pruebas), no hay espera.
+  const hayGestos = typeof contenedor?.addEventListener === "function"
+  let esperandoGesto = hayGestos
+  const huboGesto = () => {
+    esperandoGesto = false
+  }
+  if (hayGestos) for (const tipo of ["pointerdown", "keydown"]) contenedor.addEventListener(tipo, huboGesto, true)
+  const rearmado = () => {
+    if (hayGestos) esperandoGesto = true
+  }
   const parDelBloque = (idBloque) => pares.find((p) => p.mientras.id === idBloque || p.hacer.id === idBloque) ?? null
 
   /** Qué bloque es, para la página; `null` si no es ninguno que tenga algo que mostrar en el código. */
@@ -238,7 +345,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     // es un clic fuera del lienzo), y tocar un casillero no dejaba nada marcado. Ahora sólo el
     // clic de verdad en el fondo avisa «ninguno»; una deselección sola no avisa nada.
     if (Blockly.Events.SELECTED !== undefined && evento.type === Blockly.Events.SELECTED) {
-      if (evento.newElementId) alSeleccionar(claveDelBloque(evento.newElementId))
+      if (evento.newElementId && !esperandoGesto) alSeleccionar(claveDelBloque(evento.newElementId))
       return
     }
     if (Blockly.Events.CLICK !== undefined && evento.type === Blockly.Events.CLICK) {
@@ -327,20 +434,48 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
       const entrada = bloque.getInput("CAMPOS")
       for (const campo of delBloque) {
         // el texto fijo viene del servidor; una coma inicial (de la frase corrida) no se muestra suelta
-        const prefijo = campo.prefijo.replace(/^[,\s]+/, "")
+        // Si el servidor manda el texto «como va en un bloque» (en minúscula), se usa ése.
+        const prefijo = (campo.prefijoEnBloque ?? campo.prefijo).replace(/^[,\s]+/, "")
         if (prefijo !== "") entrada.appendField(new Blockly.FieldLabel(prefijo))
         if (campo.tipo === "numero") entrada.appendField(new Blockly.FieldTextInput(campo.etiquetaActual ?? ""), campo.slot)
         else entrada.appendField(new Blockly.FieldDropdown(opcionesDeCampo(campo, textos)), campo.slot)
       }
     }
-    contenedorBloque.getInput("ACCION").connection.connect(accion.previousConnection)
+    contenedorBloque.getInput("ACCION").connection.connect(accion.outputConnection)
     return { mientras: contenedorBloque, hacer: accion }
+  }
+
+  const altoDe = (bloque) => {
+    const medida = typeof bloque.getHeightWidth === "function" ? bloque.getHeightWidth() : null
+    return medida && Number.isFinite(medida.height) && medida.height > 0 ? medida.height : ALTO_ESTIMADO_DE_AL_INICIAR
+  }
+
+  /**
+   * Rehace SÓLO «al iniciar» y deja las reglas como están (2026-11-27). Los renglones cambian dos
+   * veces por cada edición: al cambiar la revisión pasan a «no se sabe» y, cuando llega el programa
+   * nuevo, a la lista. Antes cada uno de esos cambios vaciaba y rearmaba el lienzo ENTERO: se
+   * cerraba el menú que estuviera abierto y se perdía un número a medio escribir en una regla, sin
+   * aviso (lo encontró la revisión independiente). Las reglas no cambiaron: no se tocan.
+   */
+  function rehacerAlIniciar(pasos) {
+    const viejo = estructura.alIniciar
+    const deAntes = [viejo, ...estructura.pasos]
+    marcados = marcados.filter((b) => !deAntes.includes(b))
+    if (viejo && typeof viejo.dispose === "function") viejo.dispose(false)
+    const nuevo = construirAlIniciar(pasos)
+    if (typeof nuevo.bloque.moveBy === "function") nuevo.bloque.moveBy(MARGEN, MARGEN)
+    const alto = altoDe(nuevo.bloque)
+    // «por siempre» sigue debajo: se corre lo que cambió el alto de «al iniciar».
+    if (estructura.porSiempre && typeof estructura.porSiempre.moveBy === "function" && alto !== altoDeAlIniciar) estructura.porSiempre.moveBy(0, alto - altoDeAlIniciar)
+    altoDeAlIniciar = alto
+    estructura = { ...estructura, alIniciar: nuevo.bloque, pasos: nuevo.pasos }
+    rearmado()
   }
 
   /** Los renglones de «al iniciar» del modelo: la lista de textos, o `null` si no se sabe. */
   const pasosDe = (modelo) => (Array.isArray(modelo.alIniciar?.pasos) ? modelo.alIniciar.pasos : null)
 
-  const firmaDeCampos = (campos) => campos.map((c) => [c.slot, c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)])
+  const firmaDeCampos = (campos) => campos.map((c) => [c.slot, c.prefijoEnBloque ?? c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)])
 
   function pintar(modelo, { deshabilitado = false } = {}) {
     if (destruido) return
@@ -352,18 +487,22 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         pares = []
         estructura = { alIniciar: null, porSiempre: null, pasos: [] }
         marcados = []
-        firmaActual = null
+        firmaDeReglas = null
+        firmaDePasos = null
+        rearmado()
         return
       }
       const pasos = pasosDe(modelo)
       // La firma es la FORMA de cada par, en orden (no el id de la regla: una regla que recién
       // nace pasa de `null` a su id sin que cambie un solo bloque). Si cambia cuántas hay o la
       // forma de alguna, se redibuja todo; si no, cada par toma los valores de la regla de su lugar.
-      // Los renglones de «al iniciar» también son forma: si cambian (o pasan de «no se sabe» a
-      // sabidos), se redibuja.
-      const firma = JSON.stringify([pasos, reglas.map((r) => firmaDeCampos(r.campos))])
-      if (firma !== firmaActual) {
-        firmaActual = null
+      // Los renglones de «al iniciar» tienen su propia firma: si cambian ellos solos (o pasan de
+      // «no se sabe» a sabidos), se rehace ese bloque y las reglas no se tocan.
+      const firma = JSON.stringify(reglas.map((r) => firmaDeCampos(r.campos)))
+      const firmaPasos = JSON.stringify(pasos)
+      if (firma !== firmaDeReglas) {
+        firmaDeReglas = null
+        firmaDePasos = null
         pares = []
         estructura = { alIniciar: null, porSiempre: null, pasos: [] }
         marcados = []
@@ -376,15 +515,20 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         for (const par of nuevos) for (const bloque of [par.mientras, par.hacer]) fijar(bloque)
         fijar(porSiempre)
         if (typeof alIniciar.bloque.moveBy === "function") alIniciar.bloque.moveBy(MARGEN, MARGEN)
-        const medida = typeof alIniciar.bloque.getHeightWidth === "function" ? alIniciar.bloque.getHeightWidth() : null
-        const alto = medida && Number.isFinite(medida.height) && medida.height > 0 ? medida.height : ALTO_ESTIMADO_DE_AL_INICIAR
-        if (typeof porSiempre.moveBy === "function") porSiempre.moveBy(MARGEN, MARGEN + alto + SEPARACION)
+        altoDeAlIniciar = altoDe(alIniciar.bloque)
+        if (typeof porSiempre.moveBy === "function") porSiempre.moveBy(MARGEN, MARGEN + altoDeAlIniciar + SEPARACION)
         pares = nuevos
         estructura = { alIniciar: alIniciar.bloque, porSiempre, pasos: alIniciar.pasos }
-        firmaActual = firma
+        firmaDeReglas = firma
+        firmaDePasos = firmaPasos
+        rearmado()
       } else {
         // Mismos bloques, modelo nuevo: cada par pasa a apuntar a la regla recién llegada.
         pares = pares.map((par, i) => ({ ...par, regla: reglas[i] }))
+        if (firmaPasos !== firmaDePasos) {
+          rehacerAlIniciar(pasos)
+          firmaDePasos = firmaPasos
+        }
       }
       for (const par of pares) {
         for (const campo of par.regla.campos) {
@@ -413,12 +557,25 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
    * foco: en la página, llevarse el foco al lienzo sube la ventana y saca de la vista el código
    * que el alumno estaba mirando. Devuelve si quedó algo marcado.
    */
+  const ponerMarca = (bloque, marcado) => {
+    const raiz = typeof bloque.getSvgRoot === "function" ? bloque.getSvgRoot() : null
+    if (raiz?.classList) raiz.classList.toggle(CLASE_DE_BLOQUE_MARCADO, marcado)
+  }
   function marcar(clave) {
     if (destruido) return false
-    for (const bloque of marcados) if (typeof bloque.setHighlighted === "function") bloque.setHighlighted(false)
+    for (const bloque of marcados) ponerMarca(bloque, false)
     marcados = bloquesDeLaClave(clave)
-    for (const bloque of marcados) if (typeof bloque.setHighlighted === "function") bloque.setHighlighted(true)
+    for (const bloque of marcados) ponerMarca(bloque, true)
     return marcados.length > 0
+  }
+
+  /**
+   * Dónde está en la ventana el primer bloque marcado (`getBoundingClientRect`), o `null`. Lo usa
+   * la página para llevar la vista hasta ahí cuando se pide «Ir a los bloques».
+   */
+  function cajaDeLoMarcado() {
+    const raiz = !destruido && marcados[0] && typeof marcados[0].getSvgRoot === "function" ? marcados[0].getSvgRoot() : null
+    return raiz && typeof raiz.getBoundingClientRect === "function" ? raiz.getBoundingClientRect() : null
   }
 
   /** Quita LA regla dibujada. Con varias no elige ninguna (no hay "la" regla): eso se hace en la sección Reglas. */
@@ -430,9 +587,11 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   function destruir() {
     if (destruido) return
     destruido = true
+    observador?.disconnect()
+    if (hayGestos && typeof contenedor.removeEventListener === "function") for (const tipo of ["pointerdown", "keydown"]) contenedor.removeEventListener(tipo, huboGesto, true)
     workspace.removeChangeListener(alCambiarCampo)
     workspace.dispose()
   }
 
-  return { pintar, quitar, marcar, destruir }
+  return { pintar, quitar, marcar, cajaDeLoMarcado, destruir }
 }
