@@ -140,7 +140,7 @@ export async function cargarProgramaDe(
 ): Promise<((snapshot: Snapshot) => unknown) | null> {
   try {
     const [modCodegen, modPrograma] = await importar()
-    return (snapshot) => modPrograma.programaParaVista(modCodegen.generarPrograma(snapshot.proyecto, conocimiento))
+    return (snapshot) => modPrograma.programaParaVista(modCodegen.generarPrograma(snapshot.proyecto, conocimiento), { proyecto: snapshot.proyecto, conocimiento })
   } catch {
     return null
   }

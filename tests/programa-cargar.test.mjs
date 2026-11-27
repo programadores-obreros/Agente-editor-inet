@@ -41,6 +41,7 @@ const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.t
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { directorioDeDatos } = await import(join(REPO, "opencode/vista-fisica/ubicacion-proyecto.ts"))
 const { generarPrograma } = await import(join(REPO, "opencode/codegen/programa.ts"))
+const { porQueNoHayPrograma, PIN_QUE_NO_SE_PUEDE_USAR } = await import(join(REPO, "opencode/codegen/por-que-no-hay-programa.ts"))
 const { CONOCIMIENTO_ACTIVO: K } = await import(join(REPO, "opencode/conocimiento/conocimiento-activo.ts"))
 const { REVISIONES_DEL_ANEXO } = await import(join(REPO, "opencode/conocimiento/admision.ts"))
 const { PREGUNTA_CHECKLIST, MARCA_SIEMPRE_PREGUNTA } = await import(join(REPO, "opencode/tool/platformio.ts"))
@@ -101,7 +102,7 @@ const REVISIONES_UNO = {
   placas: [...REVISIONES_DEL_ANEXO.placas, { placa: "arduino-uno", revisadoPor: "revisión humana de prueba (fixture de test)", evidencia: "test" }],
   componentes: [...REVISIONES_DEL_ANEXO.componentes, ...["led", "pulsador", "resistencia"].map((tipo) => ({ tipo, placa: "arduino-uno", revisadoPor: "revisión humana de prueba (fixture de test)", evidencia: "test" }))],
 }
-const depsReales = (generar = generarPrograma) => async () => ({ obtenerServicioDeProyectoConVista, conocimiento: K, generarPrograma: generar })
+const depsReales = (generar = generarPrograma) => async () => ({ obtenerServicioDeProyectoConVista, conocimiento: K, generarPrograma: generar, porQueNoHayPrograma })
 const depsUno = depsReales((p, k) => generarPrograma(p, k, { revisiones: REVISIONES_UNO }))
 
 // ── Los dobles ─────────────────────────────────────────────────────────────────────────
@@ -349,6 +350,22 @@ test("proyecto que no abre → no carga y no crea nada", async () => {
   assert.equal(lanza.listados + lanza.lanzamientos.length, 0)
   assert.deepEqual(carpetasPrivadas(), [])
   assert.equal(existsSync(carpetaDelPrograma(dir, "activo")), false)
+})
+
+// 2026-11-26: en la notebook real el asistente le contestó al docente con `CODEGEN_NO_ADMITIDO`,
+// porque era lo único que traía el `resultado`. Ahora va la causa en palabras (la misma que muestra
+// la ventana, ver `tests/por-que-no-hay-programa.test.mjs`); el código queda aparte, para diagnosticar.
+test("el generador rechaza al cargar → no carga, y el resultado dice la causa en palabras, no el código interno", async () => {
+  const dir = await armar()
+  const rechazo = { ok: false, error: { codigo: "CODEGEN_PIN_NO_DERIVABLE", datos: { componente: "cmp-1", terminal: "anodo", pin: "GPIO18", placa: "esp32-devkit-v1" } } }
+  const { r, lanza } = await cargar(dir, { deps: depsReales(() => rechazo) })
+  // Si la carga frenara antes de generar (lanzador, cartel), esta prueba no estaría mirando nada.
+  assert.equal(r.etapa, "generacion", JSON.stringify(r))
+  assert.equal(r.explicacion, PIN_QUE_NO_SE_PUEDE_USAR)
+  assert.equal(r.resultado, `NO SE CARGÓ — ${PIN_QUE_NO_SE_PUEDE_USAR}`)
+  assert.doesNotMatch(r.resultado, /CODEGEN|cmp-|esp32-devkit|[{}]/)
+  assert.equal(r.codigo, "CODEGEN_PIN_NO_DERIVABLE")
+  assert.equal(lanza.lanzamientos.length, 0)
 })
 
 test("proyecto con motivos bloqueantes → no carga, ni siquiera se genera", async () => {
