@@ -95,6 +95,8 @@ export function construirRutasDeAssets(): ReadonlyMap<string, string> {
     // Bloques ↔ código (2026-11-26): el programa repartido en renglones y el vínculo entre los dos.
     ["codigo-por-lineas.js", join(DIR_VISTA_FISICA_WEB, "codigo-por-lineas.js")],
     ["vinculo-bloques-codigo.js", join(DIR_VISTA_FISICA_WEB, "vinculo-bloques-codigo.js")],
+    // La clave del programa (2026-11-27, W38): qué pieza es `cmp-12` y qué regla es `beh-28`.
+    ["clave-del-programa.js", join(DIR_VISTA_FISICA_WEB, "clave-del-programa.js")],
     // Physical View UX #1: cables dibujados del esquema (geometría pura + capa de DOM).
     ["ruteo.js", join(DIR_VISTA_FISICA_WEB, "ruteo.js")],
     ["cableado.js", join(DIR_VISTA_FISICA_WEB, "cableado.js")],

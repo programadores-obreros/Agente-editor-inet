@@ -76,6 +76,10 @@ export function estructuraUsable(estructura, lineas) {
   if (!porSiempre || !tramo(porSiempre.lineas) || !Array.isArray(reglas)) return null
   if (!alIniciar.pasos.every((p) => p !== null && typeof p === "object" && typeof p.texto === "string" && p.texto !== "" && tramo(p.lineas))) return null
   if (!reglas.every((r) => r !== null && typeof r === "object" && typeof r.id === "string" && r.id !== "" && tramo(r.lineas))) return null
+  // Las piezas que el programa nombra (para la clave junto al código). Una instalación anterior
+  // no las manda: sin ellas la estructura vale igual y no hay clave. Si vienen, tienen que estar bien.
+  const { piezas } = estructura
+  if (piezas !== undefined && !(Array.isArray(piezas) && piezas.every((p) => p !== null && typeof p === "object" && typeof p.id === "string" && p.id !== "" && typeof p.nombre === "string" && p.nombre !== ""))) return null
   return estructura
 }
 
