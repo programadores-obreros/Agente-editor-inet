@@ -167,3 +167,56 @@ test("7. los ejemplos del cuadro de texto están en castellano y el aviso de la 
   assert.match(plugin, /puede usarse para mejorar el modelo/, "el aviso ya no dice que el chat puede usarse")
   assert.match(plugin, /aistudio\.google\.com\/apikey/, "el aviso ya no dice dónde sacar la key")
 })
+
+// ── El vigilante de la fuente ───────────────────────────────────────────────
+//
+// En Windows, OpenCode lanza PowerShell para copiar, pegar y abrir el navegador,
+// y ese PowerShell le cambia la fuente a la consola: los «?» volvían a mitad de
+// sesión. El plugin devuelve la fuente llamando a kernel32. Probado en la VM
+// win10 el 2026-11-27 con el mismo archivo, apagando y encendiendo el vigilante:
+// apagado, un Ctrl+V deja la ventana en mapa de bits con «?»; encendido, queda
+// en Consolas. Estos tests no pueden ver eso: custodian lo que se rompe en
+// silencio desde Linux.
+//
+// Verificado por mutación: sacar el `void vigilarLaFuente()` → 8; sacar el corte
+// por plataforma → 8; devolver la fuente aunque la ventana haya arrancado en mapa
+// de bits → 9; lanzar powershell desde el plugin → 10.
+const codigoPlugin = sinComentarios(plugin)
+
+test("8. el vigilante se enciende, y sólo en Windows", () => {
+  assert.match(codigoPlugin, /\n\s*void vigilarLaFuente\(\)\n/, "nadie enciende el vigilante")
+  const cuerpo = codigoPlugin.slice(codigoPlugin.indexOf("async function vigilarLaFuente()"))
+  assert.match(cuerpo.slice(0, 200), /if \(process\.platform !== "win32"\) return/, "el vigilante no corta fuera de Windows")
+  // No se espera con await: si kernel32 tarda o falla, el splash se dibuja igual.
+  assert.doesNotMatch(codigoPlugin, /await vigilarLaFuente\(\)/, "el arranque del TUI quedó esperando al vigilante")
+  // Todo dentro de un try, y el reloj no impide cerrar OpenCode.
+  assert.match(cuerpo, /try \{\s*const \{ dlopen \} = await import\("bun:ffi"\)/, "la carga de bun:ffi está fuera de un try")
+  assert.match(cuerpo, /unref\?\.\(\)/, "el reloj del vigilante puede dejar a OpenCode sin cerrar")
+})
+
+test("9. el vigilante sólo devuelve lo que había: no le impone una fuente a nadie", () => {
+  const cuerpo = codigoPlugin.slice(codigoPlugin.indexOf("async function vigilarLaFuente()"), codigoPlugin.indexOf("const tui: TuiPlugin"))
+  // Si la ventana arrancó en mapa de bits, o no se pudo leer, no hay vigilante.
+  const guarda = cuerpo.indexOf("if (!buena || !esTrueType(buena)) return")
+  const reloj = cuerpo.indexOf("setInterval(")
+  assert.ok(guarda > 0 && reloj > guarda, "el vigilante arranca aunque la ventana ya estuviera en mapa de bits")
+  // Lo que se vuelve a poner es la fuente recordada, no una escrita a mano.
+  assert.match(cuerpo, /SetCurrentConsoleFontEx\(salida, 0, buena\.slice\(\)\)/, "ya no se devuelve la fuente con que arrancó la ventana")
+  assert.equal([...cuerpo.matchAll(/k\.SetCurrentConsoleFontEx\(/g)].length, 1, "hay más de un lugar que cambia la fuente")
+  // Y sólo cuando la encuentra cambiada.
+  assert.match(cuerpo, /if \(!ahora \|\| esTrueType\(ahora\)\) \{\s*fallidos = 0\s*return\s*\}/, "el vigilante toca la fuente aunque esté bien")
+  // El assert mide el mundo, y no se insiste para siempre.
+  assert.match(cuerpo, /const despues = leer\(\)/, "después de devolver la fuente no se vuelve a leer la ventana")
+  assert.match(cuerpo, /if \(fallidos >= INTENTOS_SEGUIDOS\) clearInterval\(reloj\)/, "si la fuente no vuelve, el vigilante insiste para siempre")
+  // La estructura mide lo que mide en wincon.h.
+  assert.match(codigoPlugin, /const TAMANIO_FUENTE = 84\b/)
+  assert.match(codigoPlugin, /const DESDE_FAMILIA = 12\b/)
+  assert.match(codigoPlugin, /const BIT_TRUETYPE = 4\b/)
+})
+
+test("10. el plugin no lanza PowerShell: sería volver a romper lo que arregla", () => {
+  assert.doesNotMatch(codigoPlugin, /powershell|pwsh|child_process|Bun\.spawn|\bspawn\(|\bexec\(/i, "el plugin lanza un proceso")
+  // El guardián se prueba a sí mismo.
+  assert.match('Bun.spawn(["powershell.exe"])', /powershell|pwsh|child_process|Bun\.spawn|\bspawn\(|\bexec\(/i)
+  assert.match('import { exec } from "node:child_process"', /powershell|pwsh|child_process|Bun\.spawn|\bspawn\(|\bexec\(/i)
+})
