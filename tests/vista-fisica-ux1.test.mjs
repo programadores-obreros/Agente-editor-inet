@@ -188,7 +188,10 @@ test("D: GND se muestra como terminal de potencia (GND (masa), pines GND.1/GND.2
     const vista = servicio.snapshot().vista
     const rieles = vista.cables.filter((c) => c.hasta.tipo === "rielFijo").map((c) => c.hasta.potencia)
     assert.equal(rieles.length, 2, "cátodo del LED + GND del pulsador")
-    for (const p of rieles) assert.deepEqual(p, { id: "GND", etiqueta: "GND (masa)", anclasWokwi: ["GND.1", "GND.2"] })
+    // 2026-11-26: se sumó `rol`. Este `deepEqual` es exacto A PROPÓSITO (fija todo lo que viaja
+    // del terminal de potencia); cambió porque el servidor ahora manda además el rol que la placa
+    // declara, que es de donde sale el color y el trazo del cable. No se aflojó a «contiene».
+    for (const p of rieles) assert.deepEqual(p, { id: "GND", etiqueta: "GND (masa)", anclasWokwi: ["GND.1", "GND.2"], rol: "tierra" })
     const plan = planDePintado(vista)
     for (const selector of plan.filter((i) => i.tipo === "selectorGpio")) {
       assert.ok(!selector.opciones.some((o) => /GND|3V3|VIN|5V/.test(o.valor)), `${selector.componenteId}.${selector.terminalId}`)
@@ -334,6 +337,175 @@ test("I: el destino de potencia sale de ComponentKnowledge.resolverDestino (DHT2
   assert.equal(vcc("arduino-uno").id, CONOCIMIENTO_ACTIVO.resolverDestino("arduino-uno", terminal).id)
   assert.equal(vcc("arduino-uno").id, "5V")
   assert.deepEqual(vcc("arduino-uno").anclasWokwi, ["5V"])
+})
+
+// ── El rol del riel de potencia viaja del servidor al cable (2026-11-26) ──
+//
+// POR QUÉ. El prototipo del rediseño pintaba de rojo el cable de alimentación con un selector
+// de CSS por NOMBRE de pin (`[data-riel="3V3"]`, `"5V"`, `"VIN"`): una tabla de potencias en el
+// navegador, escrita en la hoja de estilos, que es justo donde el guard de abajo no miraba. En
+// un Arduino UNO, o en una placa nueva con otro nombre de riel, el cable salía del color
+// equivocado sin que nada lo marcara. El rol lo declara la placa en el núcleo; la ventana sólo
+// lo transporta.
+//
+// MUTACIONES que ponen rojo estos tests (probadas con el cambio ya commiteado):
+//   - `rol: declarado.rol` → `rol: "tierra"` fijo en `snapshot-a-vista.ts`       → «el servidor da el rol…»
+//   - `rolPotencia: extremo.potencia.rol` → `null` en `plan-de-pintado.js`       → «el plan pasa el rol…»
+//   - sacar el `setAttribute("data-rol-potencia", …)` de `cableado.js`           → «dibujarCableado…»
+//   - poner el atributo también en los cables de señal                           → «dibujarCableado…»
+//   - volver a `[data-riel="3V3"]` en el CSS de la página                        → «I (estático, CSS)…»
+//   - sacar la regla de la tierra punteada                                        → «la tierra se distingue…»
+
+/** DHT22 (VCC a alimentación, GND a tierra) + LED (cátodo a tierra), con pines asignados. */
+function proyectoConPotencia(placa, pinSensor, pinLed) {
+  return proyectoDirecto(
+    [
+      ["AgregarComponente", { tipo: "dht22" }], // cmp-0
+      ["AgregarComponente", { tipo: "led" }], // cmp-1
+      ["AsignarPin", { componente: "cmp-0", terminal: "senal", pin: pinSensor }],
+      ["AsignarPin", { componente: "cmp-1", terminal: "anodo", pin: pinLed }],
+    ],
+    placa,
+  )
+}
+
+test("el servidor da el rol del riel: alimentación para el VCC del sensor (3,3 V en ESP32, 5 V en UNO) y tierra para el cátodo", () => {
+  for (const [placa, idAlimentacion, pinSensor, pinLed] of [["esp32-devkit-v1", "3V3", "GPIO4", "GPIO18"], ["arduino-uno", "5V", "D4", "D7"]]) {
+    const vista = proyectarVista(proyectoConPotencia(placa, pinSensor, pinLed), catalogo)
+    const potencia = (id) => vista.cables.find((c) => c.id === id).hasta.potencia
+    assert.deepEqual([potencia("cable-riel-cmp-0-vcc").id, potencia("cable-riel-cmp-0-vcc").rol], [idAlimentacion, "alimentacion"], placa)
+    assert.equal(potencia("cable-riel-cmp-0-gnd").rol, "tierra", placa)
+    assert.equal(potencia("cable-riel-cmp-1-catodo").rol, "tierra", placa)
+    // No es una tabla de la vista: es lo que la placa declara en el núcleo para ESE terminal.
+    for (const cable of vista.cables.filter((c) => c.hasta.tipo === "rielFijo")) {
+      const declarado = CONOCIMIENTO_ACTIVO.terminalesDePotencia(placa).find((t) => t.id === cable.hasta.potencia.id)
+      assert.equal(cable.hasta.potencia.rol, declarado.rol, `${placa} ${cable.id}`)
+    }
+  }
+})
+
+test("el plan pasa el rol del servidor al extremo del cable, y sólo a los extremos de potencia", () => {
+  const vista = proyectarVista(proyectoConPotencia("esp32-devkit-v1", "GPIO4", "GPIO18"), catalogo)
+  const cables = planDePintado(vista).find((i) => i.tipo === "cableado").cables
+  const roles = Object.fromEntries(cables.map((c) => [c.id, [c.desde.rolPotencia, c.hasta.rolPotencia]]))
+  assert.deepEqual(roles["cable-riel-cmp-0-vcc"], [null, "alimentacion"])
+  assert.deepEqual(roles["cable-riel-cmp-0-gnd"], [null, "tierra"])
+  assert.deepEqual(roles["cable-riel-cmp-1-catodo"], [null, "tierra"])
+  assert.deepEqual(roles["cable-pin-cmp-0-senal"], [null, null], "un cable de señal no tiene rol de potencia")
+  // El plan no decide: con otro rol en el modelo, sale ese otro rol.
+  const trucado = JSON.parse(JSON.stringify(vista))
+  trucado.cables.find((c) => c.id === "cable-riel-cmp-0-gnd").hasta.potencia.rol = "alimentacion"
+  assert.equal(planDePintado(trucado).find((i) => i.tipo === "cableado").cables.find((c) => c.id === "cable-riel-cmp-0-gnd").hasta.rolPotencia, "alimentacion")
+})
+
+// Un documento falso con lo que `dibujarCableado` usa de verdad: medir piezas (`pinInfo`,
+// `getBoundingClientRect`), crear nodos SVG y buscar por los tres selectores que usa el módulo.
+function escenaFalsa(entidades) {
+  const nodo = (tag) => ({
+    tagName: tag,
+    atributos: {},
+    hijos: [],
+    textContent: "",
+    clases: new Set(),
+    setAttribute(k, v) {
+      this.atributos[k] = String(v)
+    },
+    getAttribute(k) {
+      return this.atributos[k] ?? null
+    },
+    appendChild(h) {
+      this.hijos.push(h)
+      return h
+    },
+    classList: { toggle() {} },
+  })
+  const piezas = Object.entries(entidades).map(([clave, e]) => {
+    const [tipo, id] = [clave.slice(0, clave.indexOf(":")), clave.slice(clave.indexOf(":") + 1)]
+    return { tipo, id, style: {}, currentCSSZoom: e.zoom, pinInfo: Object.entries(e.pines).map(([name, { x, y }]) => ({ name, x, y })), getBoundingClientRect: () => ({ left: e.rect.x, top: e.rect.y, width: e.rect.w, height: e.rect.h }) }
+  })
+  const contenedor = {
+    ...nodo("div"),
+    dataset: {},
+    clientWidth: 1300,
+    clientHeight: 520,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 1300, height: 520 }),
+    querySelectorAll(selector) {
+      if (selector === "svg[data-cableado]") return this.hijos.filter((h) => h.tagName === "svg").map((h) => ({ remove: () => this.hijos.splice(this.hijos.indexOf(h), 1) }))
+      if (selector === "svg[data-cableado] g[data-camino]") return this.hijos.filter((h) => h.tagName === "svg").flatMap((h) => h.hijos)
+      if (selector === "figure[data-camino]") return []
+      const m = /^\[data-entidad-tipo="([^"]+)"\]\[data-entidad-id="([^"]+)"\]$/.exec(selector)
+      assert.ok(m, `selector que la escena falsa no conoce: ${selector}`)
+      return piezas.filter((p) => p.tipo === m[1] && p.id === m[2])
+    },
+  }
+  return { doc: { createElementNS: (_ns, tag) => nodo(tag) }, contenedor }
+}
+
+test("dibujarCableado escribe el rol como data-rol-potencia en el grupo del cable, y nada en los de señal", async () => {
+  // `cableado.js` es capa de navegador y usa el global `CSS.escape`; Node no lo trae.
+  globalThis.CSS ??= { escape: (s) => String(s) }
+  const { dibujarCableado } = await import(join(REPO, "opencode/vista-fisica/web/cableado.js"))
+  const extremo = (clave, anclas, etiqueta = null, rolPotencia = null) => {
+    const [tipo, id] = [clave.slice(0, clave.indexOf(":")), clave.slice(clave.indexOf(":") + 1)]
+    return { entidad: { tipo, id }, anclas, etiqueta, potencia: rolPotencia !== null, rolPotencia }
+  }
+  const placa = "placa:esp32-devkit-v1"
+  const instruccion = {
+    tipo: "cableado",
+    cables: [
+      { id: "senal", camino: "cmp-0", desde: extremo(placa, ["D4"], "GPIO4 (D4)"), hasta: extremo("componente:cmp-0", ["1.l", "1.r"]) },
+      { id: "a-tierra", camino: "cmp-0", desde: extremo("componente:cmp-0", ["2.l", "2.r"]), hasta: extremo(placa, ["GND.1", "GND.2"], "GND (masa)", "tierra") },
+      // Alimentación con un rótulo cualquiera: el atributo sale del ROL, no de cómo se llama el pin.
+      { id: "a-alimentacion", camino: "cmp-1", desde: extremo("componente:cmp-1", ["A"]), hasta: extremo(placa, ["VIN"], "un riel con otro nombre", "alimentacion") },
+    ],
+  }
+  const { doc, contenedor } = escenaFalsa(ENTIDADES)
+  const resultado = dibujarCableado(doc, contenedor, instruccion)
+  assert.deepEqual(resultado.omitidos, [], "precondición: la escena falsa deja medir los tres cables")
+  const svg = contenedor.hijos.find((h) => h.tagName === "svg")
+  const grupos = Object.fromEntries(svg.hijos.map((g) => [g.atributos["data-cable-id"], g]))
+  assert.deepEqual(Object.keys(grupos).sort(), ["a-alimentacion", "a-tierra", "senal"])
+  assert.equal(grupos["a-tierra"].atributos["data-rol-potencia"], "tierra")
+  assert.equal(grupos["a-alimentacion"].atributos["data-rol-potencia"], "alimentacion")
+  assert.ok(!("data-rol-potencia" in grupos["senal"].atributos), "un cable de señal no lleva rol de potencia")
+  assert.match(grupos["a-tierra"].atributos.class, /\bcable-potencia\b/)
+  // Redibujar (cambio de tamaño) no acumula: sigue habiendo un solo <svg>.
+  dibujarCableado(doc, contenedor, instruccion)
+  assert.equal(contenedor.hijos.filter((h) => h.tagName === "svg").length, 1)
+})
+
+// ── El CSS de la página: lo que el navegador carga para dibujar (el <style> y la hoja compartida) ──
+const cssDeLaPagina = () => {
+  const html = readFileSync(join(REPO, "opencode/vista-fisica/web/index.html"), "utf8")
+  const embebido = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1]).join("\n")
+  return `${embebido}\n${readFileSync(join(REPO, "opencode/tecniabot-web/diseno/sistema.css"), "utf8")}`
+}
+
+/** Selectores de atributo del CSS que nombran un pin o un riel concreto (con o sin comillas). */
+function pinesNombradosEnCss(css) {
+  const sinComentarios = css.replace(/\/\*[\s\S]*?\*\//g, "")
+  return [...sinComentarios.matchAll(/\[[^\]=]*[~|^$*]?=\s*["']?(?:GPIO\d+|D\d+|GND(?:\.\d)?|3V3|VIN|5V)["']?\s*(?:[is]\s*)?\]/g)].map((m) => m[0])
+}
+
+test("I (estático, CSS): la hoja de la página no elige colores por nombre de pin o de riel", () => {
+  // El guard se prueba a sí mismo: tiene que marcar exactamente lo que hacía el prototipo.
+  const conDefecto = `/* [data-riel="GND"] en un comentario no cuenta */
+    svg .cable-potencia[data-riel="3V3"], svg .cable-potencia[data-riel=5V] { color: red; }
+    [data-pin^="GPIO4"] { color: blue; } [data-rol-potencia="tierra"] .linea { stroke-dasharray: 8 4; }`
+  assert.deepEqual(pinesNombradosEnCss(conDefecto), ['[data-riel="3V3"]', "[data-riel=5V]", '[data-pin^="GPIO4"]'])
+  const css = cssDeLaPagina()
+  assert.match(css, /data-cableado/, "no estoy leyendo el CSS de la página")
+  assert.deepEqual(pinesNombradosEnCss(css), [], "el CSS decide por nombre de pin: el rol lo manda el servidor en data-rol-potencia")
+})
+
+test("la tierra se distingue por el trazo además del color, y las dos reglas cuelgan del rol", () => {
+  const css = cssDeLaPagina().replace(/\/\*[\s\S]*?\*\//g, "")
+  const reglas = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selector: m[1].trim(), cuerpo: m[2] }))
+  const tierra = reglas.filter((r) => /\[data-rol-potencia="tierra"\]/.test(r.selector))
+  const alimentacion = reglas.filter((r) => /\[data-rol-potencia="alimentacion"\]/.test(r.selector))
+  assert.ok(tierra.some((r) => /stroke-dasharray\s*:/.test(r.cuerpo)), "la tierra tiene que ir punteada: el color nunca es el único canal")
+  assert.ok(alimentacion.some((r) => /(?:^|[;\s])color\s*:/.test(r.cuerpo)), "la alimentación tiene su propio color")
+  assert.ok(!alimentacion.some((r) => /stroke-dasharray\s*:/.test(r.cuerpo)), "si la alimentación también va punteada, deja de distinguirse de la tierra por el trazo")
 })
 
 test("I (estático): el código del navegador no tiene tablas de pines, potencias ni roles propias", () => {

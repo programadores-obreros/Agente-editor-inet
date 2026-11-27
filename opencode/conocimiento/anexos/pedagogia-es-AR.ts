@@ -78,12 +78,109 @@ export const ETIQUETA_DE_TERMINAL_DE_POTENCIA: Readonly<Record<string, string>> 
  * circuito, con una frase corta para el estudiante. La ASIGNACIÓN de una pieza a una
  * zona no sale de acá: sale de la `clase` del catálogo (`snapshot-a-vista.ts::rolDeClase`)
  * y del requisito que agrupa a la resistencia con su LED.
+ *
+ * 2026-11-26: la descripción decía «Lo que el ESP32 lee.» fija, y en la notebook real, con el
+ * proyecto pasado a Arduino UNO, la ventana seguía nombrando al ESP32. Ahora `{placa}` se
+ * reemplaza con la placa DEL PROYECTO (`textoDeZona`). Este anexo no guarda el artículo de cada
+ * placa, así que la frase no lo necesita: el sustantivo es «la placa» y el nombre va después
+ * («la placa Arduino UNO»). Sin placa elegida queda «la placa» sola.
+ * Las descripciones de entrada y salida las aprobó el dueño el 2026-11-26.
  */
 export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "salida" | "otras", { readonly titulo: string; readonly descripcion: string }>> = {
-  entrada: { titulo: "Entrada", descripcion: "Lo que el ESP32 lee." },
+  entrada: { titulo: "Entrada", descripcion: "Lo que lee {placa}." },
   controlador: { titulo: "Controlador", descripcion: "Lee la entrada y decide la salida." },
-  salida: { titulo: "Salida", descripcion: "Lo que el ESP32 maneja." },
+  salida: { titulo: "Salida", descripcion: "Lo que maneja {placa}." },
   otras: { titulo: "Otras piezas", descripcion: "Todavía no forman parte de una entrada o una salida." },
+}
+
+/** Cómo se nombra la placa adentro de la frase de una zona (aprobado por el dueño, 2026-11-26). */
+export const PLACA_EN_LA_ZONA = {
+  conNombre: "la placa {nombre}",
+  sinNombre: "la placa",
+} as const
+
+/** El título y la descripción de una zona, con la placa del proyecto (`null`: no hay placa elegida). */
+export function textoDeZona(rol: keyof typeof ZONAS_DEL_CIRCUITO, nombreDePlaca: string | null): { readonly titulo: string; readonly descripcion: string } {
+  const zona = ZONAS_DEL_CIRCUITO[rol]
+  const placa = nombreDePlaca === null ? PLACA_EN_LA_ZONA.sinNombre : PLACA_EN_LA_ZONA.conNombre.replace("{nombre}", nombreDePlaca)
+  return { titulo: zona.titulo, descripcion: zona.descripcion.replace("{placa}", placa) }
+}
+
+/**
+ * Textos fijos de la ventana «vista física» que no dependen de una pieza ni de una placa.
+ * Viajan en el snapshot (`vista.textos`): el navegador los muestra, nunca los redacta.
+ *
+ * Textos aprobados por el dueño el 2026-11-26, todos los de esta tabla.
+ */
+export const TEXTOS_DE_LA_VENTANA = {
+  /** Se cambió un pin en la ventana y el pedido no llegó (Tecnia Bot cerrado, red cortada). */
+  cambioDePinNoGuardado: "No se pudo guardar el cambio: se cortó la conexión con Tecnia Bot. El pin quedó como estaba.",
+  /** Cómo está el proyecto, en palabras. Las claves son las del estado que deriva el núcleo. */
+  estado: {
+    listo: "El proyecto está completo",
+    invalido: "Hay algo para corregir",
+    incompleto: "Todavía le falta algo",
+  },
+  /** En «Qué hace tu circuito»: una regla que todavía no se puede leer como una oración. */
+  reglaSinTerminar: "Hay una regla sin terminar.",
+  /** En «Qué hace tu circuito»: el proyecto no tiene ninguna regla. */
+  sinReglas: "Todavía no hay ninguna regla: el circuito no hace nada.",
+  /** Cuántos avisos hay. `{cantidad}` se reemplaza por el número (de 2 en adelante). */
+  avisos: {
+    ninguno: "Sin avisos.",
+    uno: "Hay 1 aviso para mirar.",
+    varios: "Hay {cantidad} avisos para mirar.",
+  },
+  /** Lo que dice la sección «Avisos» cuando no hay ninguno. */
+  sinAvisos: "No hay avisos: no encontramos nada para revisar en este proyecto.",
+  /** La etiqueta que lleva cada aviso según su severidad (las claves son las del núcleo). */
+  severidad: {
+    blocking: "Hay que corregir",
+    warning: "Atención",
+    info: "Dato",
+  },
+  /**
+   * Cómo leer los cables del esquema. `{terminales}` se reemplaza por las etiquetas de los
+   * terminales de potencia de ESA placa (`ETIQUETA_DE_TERMINAL_DE_POTENCIA`): en un ESP32 la
+   * alimentación es «3,3 V» y en un Arduino UNO es «5 V».
+   */
+  leyenda: {
+    senal: "señal: un color por pieza",
+    alimentacion: "{terminales}: alimentación, siempre en rojo",
+    tierra: "{terminales}: siempre en negro y punteado",
+  },
+} as const
+
+/**
+ * El segundo renglón de «Cómo está» (2026-11-26): qué pasa con el PROGRAMA. El estado del proyecto
+ * habla del montaje y de las reglas; en la notebook real, «El proyecto está completo» al lado de
+ * «Todavía no hay programa» se leyó como una falla. Este renglón lo dice aparte.
+ *
+ * Viaja en `vista.resumen.programa`. El servidor manda las DOS frases; cuál se muestra lo decide la
+ * página con lo que ya le contestó `/api/programa` para ESA revisión (`web/vista-codigo.js`), y si
+ * todavía no lo sabe (actualizando, falla, otra revisión, sin conexión) no muestra ninguna.
+ *
+ * Textos aprobados por el dueño el 2026-11-26. Viven fuera de `TEXTOS_DE_LA_VENTANA` porque los
+ * pinta `app.js` con la respuesta de `/api/programa`, no el plan de pintado.
+ */
+export const TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN = {
+  /** Llegó el programa de la revisión que se está mostrando. */
+  generado: "El programa de esta revisión está generado.",
+  /** El servidor dijo, para esta revisión, que no hay programa. Va con un enlace al paso 3. */
+  sinPrograma: "Todavía no hay programa para este proyecto: mirá el paso 3, «Mirá el código».",
+} as const
+
+/** «Sin avisos.» / «Hay 1 aviso para mirar.» / «Hay N avisos para mirar.»: el plural se arma acá. */
+export function textoDeCantidadDeAvisos(cantidad: number): string {
+  if (cantidad <= 0) return TEXTOS_DE_LA_VENTANA.avisos.ninguno
+  if (cantidad === 1) return TEXTOS_DE_LA_VENTANA.avisos.uno
+  return TEXTOS_DE_LA_VENTANA.avisos.varios.replace("{cantidad}", String(cantidad))
+}
+
+/** Una entrada de la leyenda de cables para los terminales de potencia dados (ya como etiquetas). */
+export function textoDeLeyendaDePotencia(rol: "alimentacion" | "tierra", etiquetas: readonly string[]): string {
+  const terminales = etiquetas.length <= 1 ? etiquetas.join("") : `${etiquetas.slice(0, -1).join(", ")} y ${etiquetas[etiquetas.length - 1]}`
+  return TEXTOS_DE_LA_VENTANA.leyenda[rol].replace("{terminales}", terminales)
 }
 
 /**

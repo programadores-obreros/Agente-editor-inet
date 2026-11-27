@@ -1,6 +1,6 @@
 ---
 name: fichas
-description: Las fichas didácticas A4 de Tecnia Lab, listas para imprimir y repartir en el aula. Una hoja por componente o concepto — LED, servo, relé, zumbador, LDR, potenciómetro, ultrasónico, PIR, DHT11, Arduino UNO, ESP32, corriente continua y alterna, entradas y salidas. Usala cuando alguien pida material para el aula, algo para repartir, una hoja de un componente, o cuando termines de explicar un componente y convenga dejarle algo impreso.
+description: Las fichas didácticas A4 de Tecnia Lab, listas para imprimir y repartir en el aula. Una hoja por componente o concepto — LED, servo, relé, zumbador, LDR, potenciómetro, ultrasónico, PIR, DHT11, Arduino UNO, ESP32, corriente continua y alterna, entradas y salidas. Usala cuando alguien pida la hoja de uno de esos componentes o conceptos para el aula, para repartir o imprimir, o cuando termines de explicar un componente y convenga dejarle algo impreso. Una guía de clase, un apunte o la consigna de un trabajo práctico no son fichas (eso es el skill `paginas`).
 ---
 
 # Fichas de Tecnia Lab — hojas listas para el aula
@@ -21,7 +21,7 @@ contestar. La ficha es lo que el docente **se lleva impreso**.
 
 Ofrecela cuando:
 
-- pidan material para el aula, para repartir, o algo para imprimir
+- pidan material para el aula, para repartir o para imprimir sobre un componente o concepto que tiene ficha (una guía, un apunte o una consigna no son fichas: eso es el tool `pagina`, skill `paginas`)
 - terminen de armar un circuito con un componente que tiene ficha
 - pregunten por un componente de la lista y la respuesta se haga larga
 - un docente esté preparando una clase

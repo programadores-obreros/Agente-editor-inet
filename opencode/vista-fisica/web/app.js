@@ -14,12 +14,15 @@ import { planDePintado, interpretarNumero, estadoDelGrupo, aplicarEleccionAlGrup
 // La interpretación del número vive con las funciones del grupo (plan-de-pintado.js); se re-exporta
 // acá porque es parte de la API de este módulo desde S1.
 export { interpretarNumero }
-import { pintar } from "./pintar.js"
-import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
+import { pintar, pintarRenglonDelPrograma } from "./pintar.js"
+import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_SIN_CONEXION } from "./estado-conexion.js"
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
-import { crearPanelCodigo } from "./vista-codigo.js"
+import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
 import { dibujarCableado } from "./cableado.js"
+import { conectarNavegacion } from "./navegacion.js"
+import { conectarTema } from "./tema.js"
+import { conectarImpresion } from "./impresion.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
 // importa `crearCoalescerCambiosGpio`/`elegirSelectorParaFoco` (PURAS, ver más abajo)
@@ -415,6 +418,9 @@ let elementoConexion = null
  * `repintar()` nunca lo reemplaza; se crea una vez más abajo, con el mismo controlador de la frase. */
 let panelVistaLogica = null
 let panelCodigo = null
+/** El renglón del programa en «Cómo está» (2026-11-26): fuera de `contenedores`, porque cambia
+ * cuando contesta `/api/programa`, no sólo cuando llega un snapshot. */
+let elementoProgramaResumen = null
 
 if (enNavegador) {
   contenedores = {
@@ -423,11 +429,18 @@ if (enNavegador) {
     controles: document.getElementById("controles"),
     reglas: document.getElementById("reglas"),
     motivos: document.getElementById("motivos"),
+    // 2026-11-26: la leyenda de cables y el resumen de arriba (raíces nuevas de `pintar.js`).
+    leyenda: document.getElementById("leyenda-cables"),
+    resumen: document.getElementById("resumen-reglas"),
+    resumenEstado: document.getElementById("resumen-estado"),
+    resumenAvisos: document.getElementById("resumen-avisos"),
+    contadorAvisos: document.getElementById("contador-avisos"),
   }
   elementoRevision = document.getElementById("revision")
   elementoReadiness = document.getElementById("readiness")
   elementoEstado = document.getElementById("estado")
   elementoConexion = document.getElementById("conexion")
+  elementoProgramaResumen = document.getElementById("resumen-programa")
 }
 
 /** Último snapshot AUTORITATIVO recibido (GET /api/proyecto, POST /api/operaciones,
@@ -445,12 +458,27 @@ let contadorOperacion = 0
  * conexión de TRANSPORTE. */
 let estadoConexion = ESTADO_INICIAL
 
-const MENSAJE_DESCONECTADO = "desconectado: la vista puede no estar actualizada. Si el servidor se reinició en otro puerto, volvé a abrir la vista física desde Tecnia Bot."
+/**
+ * El indicador de conexión (2026-11-26). El chip dice lo corto («Ventana al día» / «Ventana sin
+ * conexión», `estado-conexion.js`); la explicación larga, que antes iba entera en el chip, va en la
+ * franja de estado (`#estado`, `role="status"`: también la anuncia un lector de pantalla). Al
+ * reconectar se borra de la franja SÓLO si sigue siendo esa explicación: si mientras tanto la franja
+ * pasó a decir otra cosa (un pedido que falló), eso no se pisa.
+ *
+ * Exportada y con los elementos inyectados para probarla ejecutándola.
+ */
+export function pintarIndicadorConexion({ estado, elementoConexion, elementoEstado }) {
+  const { chip, detalle } = textosDelIndicador(estado)
+  elementoConexion.textContent = chip
+  elementoConexion.setAttribute("data-estado-conexion", estado)
+  if (!elementoEstado) return
+  if (detalle !== null) elementoEstado.textContent = detalle
+  else if (elementoEstado.textContent === EXPLICACION_SIN_CONEXION) elementoEstado.textContent = ""
+}
 
 function actualizarIndicadorConexion() {
   if (!elementoConexion) return
-  elementoConexion.textContent = estadoConexion === "conectado" ? "conectado" : MENSAJE_DESCONECTADO
-  elementoConexion.setAttribute("data-estado-conexion", estadoConexion)
+  pintarIndicadorConexion({ estado: estadoConexion, elementoConexion, elementoEstado })
 }
 
 /** Procesa un evento NATIVO del `EventSource` (`"error"`/`"open"`) a través del
@@ -543,18 +571,48 @@ function restaurarFoco(raizControles, focoAnterior) {
  */
 export function repintarCabecera({ snapshot, elementoRevision, elementoReadiness, panelCodigo, conectado }) {
   elementoRevision.textContent = `revisión: ${snapshot.revision}`
-  const readiness = snapshot.vista ? snapshot.vista.readiness : snapshot.validacion.readiness
-  elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
+  // El panel de código va ACÁ, antes de cualquier otra cosa que pueda cortar o tirar.
   try {
     void panelCodigo?.actualizar(snapshot, { conectado })
   } catch {
     /* la sección «Código» falló: el resto de la página se pinta igual */
+  }
+  // El estado del proyecto (2026-11-26): el servidor lo manda ya decidido y en palabras
+  // (`vista.resumen.estado`). Acá sólo se copia el texto y se deja la clave como dato para el
+  // color. Antes este mismo lugar elegía entre «listo», «inválido» e «incompleto» con un `if`.
+  // Sin resumen (un snapshot sin vista: no debería pasar en producción) no hay estado que
+  // afirmar: se deja la raya, nunca el estado de un snapshot anterior.
+  const estado = snapshot.vista?.resumen?.estado ?? null
+  elementoReadiness.textContent = estado ? estado.texto : "—"
+  if (estado) elementoReadiness.setAttribute("data-readiness", estado.clave)
+  else elementoReadiness.removeAttribute("data-readiness")
+}
+
+/**
+ * El renglón del programa en «Cómo está». Lo decide `renglonDelPrograma` (pura) con lo que el panel
+ * de código ya sabe y los textos que mandó el servidor en `vista.resumen.programa`; acá sólo se
+ * junta y se pinta. Se llama en cada repintado y cada vez que el panel cambia lo que sabe. Si tira,
+ * se ataja: el renglón no puede cortar el resto de la página.
+ */
+function repintarRenglonDelPrograma() {
+  if (!elementoProgramaResumen) return
+  try {
+    const renglon = renglonDelPrograma({
+      textos: ultimoSnapshot?.vista?.resumen?.programa ?? null,
+      estadoPrograma: panelCodigo?.estadoDelPrograma() ?? null,
+      revision: ultimoSnapshot?.revision,
+      conectado: estadoConexion === "conectado",
+    })
+    pintarRenglonDelPrograma(document, elementoProgramaResumen, renglon)
+  } catch {
+    /* sin renglón: no se afirma nada del programa */
   }
 }
 
 function repintar() {
   if (!ultimoSnapshot) return
   repintarCabecera({ snapshot: ultimoSnapshot, elementoRevision, elementoReadiness, panelCodigo, conectado: estadoConexion === "conectado" })
+  repintarRenglonDelPrograma()
 
   if (!ultimoSnapshot.vista) return
   const focoAnterior = capturarFocoActual()
@@ -586,13 +644,17 @@ function repintar() {
  * a dibujar desde la MISMA instrucción (nunca se decide nada nuevo acá). */
 let ultimoCableado = null
 let cableadoProgramado = false
+/** Mientras se imprime, el esquema está achicado para el papel (`impresion.js`): no se vuelve a
+ * medir ni a dibujar hasta que termine. */
+let imprimiendo = false
 
 function programarCableado() {
-  if (!enNavegador || cableadoProgramado) return
+  if (!enNavegador || cableadoProgramado || imprimiendo) return
   cableadoProgramado = true
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
       cableadoProgramado = false
+      if (imprimiendo) return // se pidió antes de empezar a imprimir: se redibuja al terminar
       const piezas = piezasDelCircuito()
       if (piezas) dibujarCableado(document, piezas, ultimoCableado)
     }),
@@ -639,25 +701,41 @@ function valorServidorDe(componenteId, terminalId) {
  * llegó primero" sigue siendo honesto para un conflicto REAL con otro actor — F-11
  * sólo cierra los conflictos FALSOS que generaba un POST por tecla). La diferencia:
  * ahora quien decide CUÁNDO llamar a esta función es `coalescerGpio`, nunca
- * directamente el `change` del `<select>`. */
-async function enviarCambioGpio({ componenteId, terminalId, valor }) {
-  if (!ultimoSnapshot) return
-  const sobre = {
-    idOperacion: siguienteIdOperacion(),
-    actor: "navegador", // el servidor lo fuerza de todos modos (servidor-proyecto.ts)
-    baseRevision: ultimoSnapshot.revision,
-    tipo: "AsignarPin",
-    payload: { componente: componenteId, terminal: terminalId, pin: valor },
-  }
+ * directamente el `change` del `<select>`.
+ *
+ * Es una fábrica con todo inyectado para poder probarla EJECUTÁNDOLA (2026-11-26): si la red
+ * falla, el aviso que se muestra es el que mandó el servidor en el último snapshot
+ * (`vista.textos.cambioDePinNoGuardado`); el repintado desde ese snapshot lo hace
+ * `cliente-http.js::enviarSobre`. La promesa se rechaza igual: el coalescer libera su turno con
+ * éxito o con rechazo, y la frase queda desbloqueada por el `finally`. */
+export function crearEnvioDeCambioGpio({ obtenerSnapshot, enviarSobre, siguienteIdOperacion, marcarOperacionExterna }) {
+  return async function enviarCambioGpio({ componenteId, terminalId, valor }) {
+    const snapshot = obtenerSnapshot()
+    if (!snapshot) return
+    const sobre = {
+      idOperacion: siguienteIdOperacion(),
+      actor: "navegador", // el servidor lo fuerza de todos modos (servidor-proyecto.ts)
+      baseRevision: snapshot.revision,
+      tipo: "AsignarPin",
+      payload: { componente: componenteId, terminal: terminalId, pin: valor },
+    }
 
-  // Una operación de GPIO en vuelo también bloquea la frase (a lo sumo UNA operación global).
-  controladorReglas.marcarOperacionExterna(true)
-  try {
-    await enviarSobre(sobre, { repintarAhora: true })
-  } finally {
-    controladorReglas.marcarOperacionExterna(false)
+    // Una operación de GPIO en vuelo también bloquea la frase (a lo sumo UNA operación global).
+    marcarOperacionExterna(true)
+    try {
+      await enviarSobre(sobre, { repintarAhora: true, avisoSiFalla: snapshot.vista?.textos?.cambioDePinNoGuardado ?? MENSAJE_NO_SE_PUDO_GUARDAR })
+    } finally {
+      marcarOperacionExterna(false)
+    }
   }
 }
+
+const enviarCambioGpio = crearEnvioDeCambioGpio({
+  obtenerSnapshot: () => ultimoSnapshot,
+  enviarSobre: (sobre, opciones) => enviarSobre(sobre, opciones),
+  siguienteIdOperacion: () => siguienteIdOperacion(),
+  marcarOperacionExterna: (valor) => controladorReglas.marcarOperacionExterna(valor),
+})
 
 /** La frase: un `SetComportamiento`/`QuitarComportamiento` por cambio, con `baseRevision` del
  * ÚLTIMO snapshot autoritativo (nunca optimista). */
@@ -681,6 +759,7 @@ if (enNavegador) {
     fetch: (...argumentos) => fetch(...argumentos),
     elementoCodigo: document.getElementById("vista-codigo-texto"),
     elementoAviso: document.getElementById("vista-codigo-aviso"),
+    alCambiarElPrograma: () => repintarRenglonDelPrograma(),
   })
 }
 
@@ -727,6 +806,24 @@ const coalescerGpio = crearCoalescerCambiosGpio({ enviar: enviarCambioGpio, obte
  * vuelo" + "sólo el último valor"). */
 function manejarCambioGpio({ componenteId, terminalId, valor }) {
   coalescerGpio.registrarCambio(componenteId, terminalId, valor)
+}
+
+// La sección activa de la navegación (presentación pura: no toca el proyecto ni la red).
+if (enNavegador) conectarNavegacion(document, window)
+// El botón de tema claro / oscuro (el tema inicial ya lo puso `tema-inicial.js`, antes de pintar).
+if (enNavegador) conectarTema(document, window)
+// Imprimir / guardar como PDF: se prepara el esquema para el papel y se pausa el redibujo de los
+// cables mientras dura; al terminar se vuelven a dibujar con las medidas de pantalla.
+if (enNavegador) {
+  conectarImpresion(document, window, {
+    alEmpezar: () => {
+      imprimiendo = true
+    },
+    alTerminar: () => {
+      imprimiendo = false
+      programarCableado()
+    },
+  })
 }
 
 // SSE: cualquier commit (de este navegador o de otro actor, ej. la tool) dispara un

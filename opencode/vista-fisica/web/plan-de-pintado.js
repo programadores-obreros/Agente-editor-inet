@@ -162,6 +162,12 @@ export function planDePintado(modeloDeVista, opciones = {}) {
     instrucciones.push({ tipo: "cableado", cables })
   }
 
+  // La leyenda de cables: el servidor ya la armó para ESTA placa (`leyenda`, con el mismo `rol`
+  // que lleva cada cable dibujado). Sin leyenda (proyecto sin placa, o un modelo viejo) no hay
+  // instrucción: acá no se escribe ninguna por defecto.
+  const leyenda = modeloDeVista.leyenda ?? []
+  if (leyenda.length > 0) instrucciones.push({ tipo: "leyendaCables", entradas: leyenda.map((entrada) => ({ rol: entrada.rol, texto: entrada.texto })) })
+
   for (const componente of modeloDeVista.componentes) {
     const porTerminal = modeloDeVista.gpiosDisponibles[componente.id] ?? {}
     for (const terminalId of Object.keys(porTerminal)) {
@@ -196,11 +202,15 @@ export function planDePintado(modeloDeVista, opciones = {}) {
   // Panel de motivos: tal cual `modeloDeVista.motivos` (ya proyectado 1:1 desde
   // `validarProyecto()`, orden estable de `nucleo/motivos.ts::compararMotivos`) — este
   // módulo no reordena ni filtra, sólo elige qué campos mostrar.
+  // La etiqueta de cada severidad («Hay que corregir», «Atención», «Dato») viene del servidor
+  // (`textos.severidad`): acá sólo se busca la de ESTE motivo. `null` si el modelo no la trae.
+  const etiquetasDeSeveridad = modeloDeVista.textos?.severidad ?? {}
   for (const motivo of modeloDeVista.motivos) {
     instrucciones.push({
       tipo: "panelMotivo",
       codigo: motivo.codigo,
       severidad: motivo.severidad,
+      etiquetaSeveridad: Object.hasOwn(etiquetasDeSeveridad, motivo.severidad) ? etiquetasDeSeveridad[motivo.severidad] : null,
       clasificacion: motivo.clasificacion ?? null,
       entidad: motivo.entidad ?? null,
       // Fase 2, Slice 2 (§3.4): texto llano YA resuelto del lado del servidor
@@ -208,6 +218,24 @@ export function planDePintado(modeloDeVista, opciones = {}) {
       // código no está en esa tabla; `pintar.js` muestra la fila cruda en ese caso.
       // Este módulo NUNCA calcula la explicación, sólo la pasa.
       explicacion: motivo.explicacion ?? null,
+    })
+  }
+  // Sin avisos, la sección lo dice con el texto del servidor: nunca queda una lista vacía y muda.
+  if (modeloDeVista.motivos.length === 0 && typeof modeloDeVista.textos?.sinAvisos === "string") {
+    instrucciones.push({ tipo: "sinAvisos", texto: modeloDeVista.textos.sinAvisos })
+  }
+
+  // El resumen de arriba (2026-11-26): qué hace el circuito y cómo está. El servidor lo manda
+  // ENTERO y en palabras (`resumen`); esta función no elige el estado, no redacta una frase y no
+  // arma un plural: copia. Va al final del plan porque no depende de nada de lo anterior.
+  if (modeloDeVista.resumen) {
+    const { estado, reglas, hayReglas, avisos } = modeloDeVista.resumen
+    instrucciones.push({
+      tipo: "resumen",
+      estado: { clave: estado.clave, texto: estado.texto },
+      reglas: reglas.map((regla) => ({ texto: regla.texto, sinTerminar: regla.sinTerminar })),
+      hayReglas,
+      avisos: { cantidad: avisos.cantidad, texto: avisos.texto },
     })
   }
 
@@ -230,18 +258,21 @@ function opcionesDelSelector(ofrecidas, terminalVista) {
   return [...opciones, { valor: terminalVista.pinSemantico, etiqueta: `${terminalVista.pinSemantico} (${rotulo})` }]
 }
 
+// `rolPotencia` (2026-11-26): el rol del terminal de potencia al que llega el cable, TAL CUAL lo
+// mandó el servidor (`potencia.rol`); `null` en un extremo que no es de potencia. Acá sólo se pasa:
+// de él depende cómo se dibuja el cable (`cableado.js` lo escribe como `data-rol-potencia`).
 function extremoDibujable(extremo, placaId) {
   if (extremo.tipo === "pinPlaca") {
     if (extremo.nombreWokwi === null) return null
-    return { entidad: { tipo: "placa", id: placaId }, anclas: [extremo.nombreWokwi], etiqueta: `${extremo.pinSemantico} (${extremo.nombreWokwi})`, potencia: false }
+    return { entidad: { tipo: "placa", id: placaId }, anclas: [extremo.nombreWokwi], etiqueta: `${extremo.pinSemantico} (${extremo.nombreWokwi})`, potencia: false, rolPotencia: null }
   }
   if (extremo.tipo === "rielFijo") {
     if (!extremo.potencia || extremo.potencia.anclasWokwi.length === 0) return null
-    return { entidad: { tipo: "placa", id: placaId }, anclas: [...extremo.potencia.anclasWokwi], etiqueta: extremo.potencia.etiqueta, potencia: true }
+    return { entidad: { tipo: "placa", id: placaId }, anclas: [...extremo.potencia.anclasWokwi], etiqueta: extremo.potencia.etiqueta, potencia: true, rolPotencia: extremo.potencia.rol ?? null }
   }
   const anclas = extremo.anclasWokwi ?? (extremo.nombreWokwi ? [extremo.nombreWokwi] : [])
   if (anclas.length === 0) return null
-  return { entidad: { tipo: "componente", id: extremo.componente }, anclas: [...anclas], etiqueta: null, potencia: false }
+  return { entidad: { tipo: "componente", id: extremo.componente }, anclas: [...anclas], etiqueta: null, potencia: false, rolPotencia: null }
 }
 
 function etiquetaDeRol(rol) {

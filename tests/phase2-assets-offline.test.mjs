@@ -19,7 +19,9 @@ import { join } from "node:path"
 import { REPO, nuevoDir } from "./phase2-helpers.mjs"
 import { escanearArchivo } from "../scripts/escaneo-assets-offline.mjs"
 
-const ARCHIVOS_PROPIOS_DEL_SLICE = ["opencode/vista-fisica/web/index.html", "opencode/vista-fisica/web/app.js", "opencode/vista-fisica/web/pintar.js", "opencode/vista-fisica/web/plan-de-pintado.js"]
+// 2026-11-26: se sumó la hoja de estilos compartida, que la ventana ahora carga como archivo
+// servido. Es nuestra, así que vale lo mismo que para los JS: ninguna dirección remota, ni inerte.
+const ARCHIVOS_PROPIOS_DEL_SLICE = ["opencode/vista-fisica/web/index.html", "opencode/vista-fisica/web/app.js", "opencode/vista-fisica/web/pintar.js", "opencode/vista-fisica/web/plan-de-pintado.js", "opencode/tecniabot-web/diseno/sistema.css"]
 
 test("index.html/app.js/pintar.js/plan-de-pintado.js no referencian NINGUNA URL remota (ni inerte ni de carga) — son enteramente nuestros, cero excusa para tener una", () => {
   for (const relativo of ARCHIVOS_PROPIOS_DEL_SLICE) {

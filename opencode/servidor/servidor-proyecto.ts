@@ -60,8 +60,13 @@ const LIMITE_BYTES_OPERACION = 256 * 1024
  * forzar a index.html a cargarlo si no hace falta (documentado en
  * PHASE_2_SLICE_1_PROTOCOL.md).
  */
-function construirRutasDeAssets(): ReadonlyMap<string, string> {
+export function construirRutasDeAssets(): ReadonlyMap<string, string> {
   return new Map([
+    // La hoja de estilos compartida de Tecnia Bot (2026-11-26). Es EL MISMO archivo que la tool
+    // `pagina` embebe en las páginas que arma (`tool/pagina.ts::rutaDelSistemaCss`): una sola
+    // fuente de diseño, servida acá como archivo y nunca copiada a `vista-fisica/web/`. Que sea
+    // el mismo archivo, byte a byte, lo mide `tests/ventana-hoja.test.mjs`.
+    ["sistema.css", join(DIR_TECNIABOT_WEB, "diseno", "sistema.css")],
     ["wokwi-bundle.js", join(DIR_TECNIABOT_WEB, "wokwi-bundle.js")],
     ["componentes-extra.js", join(DIR_TECNIABOT_WEB, "componentes-extra.js")],
     // CK-CG2: piezas propias con procedencia (`anexos/procedencia.ts`) para lo que el bundle
@@ -90,6 +95,14 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
     // Physical View UX #1: cables dibujados del esquema (geometría pura + capa de DOM).
     ["ruteo.js", join(DIR_VISTA_FISICA_WEB, "ruteo.js")],
     ["cableado.js", join(DIR_VISTA_FISICA_WEB, "cableado.js")],
+    // Rediseño de la ventana (2026-11-26): la sección activa de la navegación.
+    ["navegacion.js", join(DIR_VISTA_FISICA_WEB, "navegacion.js")],
+    // El tema claro / oscuro: `tema-inicial.js` es un script CLÁSICO que `index.html` carga en el
+    // <head> para poner el tema antes del primer pintado; `tema.js` es el módulo del botón.
+    ["tema-inicial.js", join(DIR_VISTA_FISICA_WEB, "tema-inicial.js")],
+    ["tema.js", join(DIR_VISTA_FISICA_WEB, "tema.js")],
+    // Preparar la página para el papel (desplegar lo plegado y achicar el esquema entero).
+    ["impresion.js", join(DIR_VISTA_FISICA_WEB, "impresion.js")],
   ])
 }
 
@@ -100,7 +113,9 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
  * así que ni siquiera hace falta `'unsafe-inline'` para script. `style-src
  * 'unsafe-inline'` sólo porque `index.html` trae un `<style>` embebido chico (sin
  * build step, JS/CSS planos) — nunca ejecuta código, no es el riesgo que la CSP
- * existe para frenar. Sin `frame-src`/`object-src` (`'none'` por herencia de
+ * existe para frenar. El `'self'` de `style-src` es el que deja cargar la hoja compartida
+ * (`/assets/sistema.css`, 2026-11-26) como archivo de este mismo servidor: para servirla no
+ * hizo falta tocar esta política, y no se tocó. Sin `frame-src`/`object-src` (`'none'` por herencia de
  * `default-src`): esta página nunca embebe nada.
  */
 function cabecerasComunes(tipoContenido: string): Record<string, string> {
@@ -113,6 +128,18 @@ function cabecerasComunes(tipoContenido: string): Record<string, string> {
     "Cross-Origin-Resource-Policy": "same-origin",
     "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'",
   }
+}
+
+/**
+ * El tipo de contenido de un asset de la lista blanca, por su extensión. Todo va con
+ * `X-Content-Type-Options: nosniff`, así que el tipo tiene que ser el verdadero: una hoja de
+ * estilos servida como JavaScript (lo que pasaba con cualquier cosa que no fuera `.svg`) el
+ * navegador la descarta sin aplicarla, y la página queda sin diseño sin decir por qué.
+ */
+export function tipoDeContenidoDe(nombre: string): string {
+  if (nombre.endsWith(".svg")) return "image/svg+xml"
+  if (nombre.endsWith(".css")) return "text/css; charset=utf-8"
+  return "text/javascript; charset=utf-8"
 }
 
 function responderBuffer(res: http.ServerResponse, estado: number, tipoContenido: string, cuerpo: Buffer, soloCabeceras: boolean): void {
@@ -469,8 +496,7 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
       const nombre = ruta.slice("/assets/".length)
       const asset = assets.get(nombre) // lista blanca — ver construirRutasDeAssets()
       if (!asset) return responderTexto(res, 404, "No encontrado")
-      const tipo = nombre.endsWith(".svg") ? "image/svg+xml" : "text/javascript; charset=utf-8"
-      return responderBuffer(res, 200, tipo, asset, req.method === "HEAD")
+      return responderBuffer(res, 200, tipoDeContenidoDe(nombre), asset, req.method === "HEAD")
     }
 
     if (ruta === "/api/proyecto") {

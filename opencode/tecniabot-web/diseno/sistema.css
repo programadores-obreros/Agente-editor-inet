@@ -1,0 +1,199 @@
+/*
+ * Sistema de diseño de Tecnia Bot: una sola hoja para todas las páginas que arma el bot.
+ *
+ * Reglas de esta hoja (las custodia tests/sistema-diseno.test.mjs, una por una):
+ *  - Los colores y las medidas literales viven SÓLO en los tres bloques de tokens:
+ *    el claro, el oscuro y el de impresión. Los componentes usan var(--token).
+ *  - El oscuro y el de impresión redefinen exactamente los mismos tokens.
+ *  - Nada de recursos externos: ni direcciones, ni hojas importadas, ni fuentes bajadas.
+ *    Las fuentes son las del sistema. La página funciona abierta desde el disco, sin red.
+ *  - El tamaño y la orientación del papel los pone cada página, no esta hoja.
+ *  - Las clases van en español con prefijo tb-. Acá no hay nada de una página en
+ *    particular (ni circuito, ni cables, ni bloques): sólo piezas reutilizables.
+ *  - Un aviso nunca se distingue sólo por el color: lleva una etiqueta de texto.
+ */
+
+/* ══ Tokens: el único lugar con colores y medidas literales ══ */
+:root {
+  color-scheme: light;
+  --marca: #6d28d9; --marca-honda: #5b21b6; --marca-suave: #f3effc; --marca-linea: #e3dcfb;
+  --sobre-marca: #ffffff; --acento: #ffc224; --sobre-acento: #3d2a00;
+  --fondo: #f4f3f9; --sup: #ffffff; --hundida: #eceaf4;
+  --tinta: #1e2330; --tinta-2: #565f6e; --linea: #dfe2ea; --linea-control: #7b8494;
+  --ok: #166534; --ok-f: #e9f7ee; --aviso: #8a4b00; --aviso-f: #fdf3dc; --aviso-linea: #e9c46a;
+  --error: #b91c1c; --error-f: #fdecec; --info: #6d28d9; --info-f: #f3effc;
+  --cod-f: #0f1117; --cod-t: #e6e8ec; --cod-2: #9aa3b4; --cod-linea: #2a2f3b;
+  --sans: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --t-xs: 12px; --t-s: 14px; --t-m: 16px; --t-l: 20px; --t-xl: 25px; --t-cod: 13px;
+  --e1: 4px; --e2: 8px; --e3: 12px; --e4: 16px; --e5: 24px; --e6: 32px; --e7: 48px;
+  --r-s: 6px; --r-m: 10px; --r-l: 14px; --r-pill: 999px;
+  --sombra-1: 0 1px 2px rgba(30, 35, 48, .08);
+  --foco: 0 0 0 2px var(--sup), 0 0 0 4px var(--marca);
+  --mov: .15s ease; --alto-nav: 56px; --ancho: 1400px; --ancho-lectura: 940px;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --fondo: #0f1117; --sup: #191c24; --hundida: #232733;
+  --tinta: #e8eaf1; --tinta-2: #9aa3b4; --linea: #2a2f3b; --linea-control: #7f899b;
+  --marca-suave: #241d3a; --marca-honda: #c4b5fd; --marca-linea: #3b2f63;
+  --ok: #86efac; --ok-f: #12261a; --aviso: #fcd34d; --aviso-f: #2a2313; --aviso-linea: #6b5518;
+  --error: #fca5a5; --error-f: #2c1516; --info: #c4b5fd; --info-f: #241d3a;
+  --cod-f: #0b0d12; --cod-t: #e6e8ec; --cod-2: #9aa3b4; --cod-linea: #2a2f3b;
+  --sombra-1: 0 1px 2px rgba(0, 0, 0, .4);
+}
+
+/* ══ Base ══ */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--fondo); color: var(--tinta); font: 400 var(--t-m)/1.5 var(--sans); }
+h1, h2, h3, h4, p { margin: 0; }
+:focus-visible { outline: none; box-shadow: var(--foco); border-radius: var(--r-s); }
+.tb-lectura { --ancho: var(--ancho-lectura); }
+
+/* ══ Header: marca, título y acciones ══ */
+.tb-header { background: var(--sup); border-bottom: 1px solid var(--linea); box-shadow: var(--sombra-1); }
+.tb-header--fijo { position: sticky; top: 0; z-index: 20; }
+.tb-header__fila { max-width: var(--ancho); margin: 0 auto; padding: var(--e3) var(--e5); display: flex; flex-wrap: wrap; align-items: center; gap: var(--e3) var(--e5); }
+.tb-marca { flex: 1 1 320px; min-width: 0; display: flex; align-items: center; gap: var(--e3); }
+.tb-marca__textos { min-width: 0; }
+.tb-marca__logo { flex: 0 0 auto; width: 40px; height: 40px; padding: var(--e2); border-radius: var(--r-m); background: var(--marca); stroke: var(--sobre-marca); }
+.tb-marca__nombre { display: block; font-size: var(--t-xs); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--tinta-2); line-height: 1.2; }
+.tb-marca__titulo { font-size: var(--t-l); line-height: 1.25; font-weight: 700; overflow-wrap: anywhere; }
+.tb-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: var(--e2); }
+
+/* ══ Navegación por pasos numerados ══ */
+.tb-nav { position: sticky; top: 0; z-index: 10; background: var(--sup); border-bottom: 1px solid var(--linea); }
+.tb-nav__lista { max-width: var(--ancho); margin: 0 auto; padding: var(--e1) var(--e5); min-height: var(--alto-nav); list-style: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--e1); }
+.tb-nav__enlace { display: flex; align-items: center; gap: var(--e2); min-height: 44px; padding: 0 var(--e3); border-radius: var(--r-m); color: var(--tinta); text-decoration: none; font-size: var(--t-s); font-weight: 600; transition: background var(--mov); }
+.tb-nav__enlace:hover { background: var(--hundida); }
+.tb-nav__enlace[aria-current="true"] { background: var(--marca-suave); color: var(--marca-honda); }
+.tb-nav__numero { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--marca-suave); color: var(--marca-honda); font-weight: 700; }
+.tb-nav__enlace[aria-current="true"] .tb-nav__numero { background: var(--marca); color: var(--sobre-marca); }
+
+/* ══ Página y tarjetas ══ */
+.tb-pagina { max-width: var(--ancho); margin: 0 auto; padding: var(--e5) var(--e5) var(--e7); display: flex; flex-direction: column; gap: var(--e5); }
+.tb-tarjeta { background: var(--sup); border: 1px solid var(--linea); border-radius: var(--r-l); padding: var(--e5); box-shadow: var(--sombra-1); scroll-margin-top: calc(var(--alto-nav) + var(--e4)); }
+.tb-tarjeta > * + * { margin-top: var(--e4); }
+.tb-paso { display: flex; align-items: flex-start; gap: var(--e3); }
+.tb-paso__numero { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; background: var(--marca); color: var(--sobre-marca); font-weight: 700; font-size: var(--t-m); }
+.tb-paso__textos { min-width: 0; }
+.tb-paso__titulo { font-size: var(--t-l); line-height: 1.25; font-weight: 700; padding-top: var(--e1); overflow-wrap: anywhere; }
+.tb-paso__bajada { font-size: var(--t-s); color: var(--tinta-2); margin-top: var(--e1); white-space: pre-line; overflow-wrap: anywhere; }
+.tb-subtitulo { font-size: var(--t-s); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--tinta-2); overflow-wrap: anywhere; }
+.tb-bloque > * + * { margin-top: var(--e2); }
+.tb-rotulo { font-size: var(--t-xs); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--tinta-2); }
+
+/* ══ Resumen: lo primero que se lee ══ */
+.tb-resumen { border-color: var(--marca-linea); background: var(--marca-suave); color: var(--tinta); }
+.tb-resumen .tb-rotulo { color: var(--marca-honda); }
+.tb-resumen .tb-texto { font-size: var(--t-l); line-height: 1.4; }
+
+/* ══ Texto, listas y tablas ══ */
+.tb-texto { white-space: pre-line; overflow-wrap: anywhere; max-width: 78ch; }
+.tb-lista { margin: 0; padding-left: var(--e5); max-width: 78ch; }
+.tb-lista > li { padding: var(--e1) 0 var(--e1) var(--e1); overflow-wrap: anywhere; }
+.tb-lista > li::marker { color: var(--marca-honda); font-weight: 700; }
+.tb-lista--numerada { list-style: none; padding-left: 0; counter-reset: tb-paso; display: flex; flex-direction: column; gap: var(--e2); }
+.tb-lista--numerada > li { counter-increment: tb-paso; display: flex; align-items: baseline; gap: var(--e3); padding: 0; }
+.tb-lista--numerada > li::before { content: counter(tb-paso); flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: var(--marca-suave); color: var(--marca-honda); font-size: var(--t-s); font-weight: 700; }
+.tb-tabla-marco { overflow-x: auto; border: 1px solid var(--linea); border-radius: var(--r-m); }
+.tb-tabla { width: 100%; border-collapse: collapse; font-size: var(--t-s); }
+.tb-tabla caption { caption-side: top; text-align: left; padding: var(--e3) var(--e4); font-weight: 700; color: var(--tinta-2); border-bottom: 1px solid var(--linea); }
+.tb-tabla th, .tb-tabla td { text-align: left; vertical-align: top; padding: var(--e3) var(--e4); border-bottom: 1px solid var(--linea); overflow-wrap: anywhere; }
+.tb-tabla th { background: var(--hundida); color: var(--tinta); font-weight: 700; }
+.tb-tabla tbody tr:last-child td { border-bottom: 0; }
+
+/* ══ Chips ══ */
+.tb-chip { display: inline-flex; align-items: center; gap: var(--e2); padding: var(--e1) var(--e3); border-radius: var(--r-pill); border: 1px solid var(--linea); background: var(--sup); color: var(--tinta); font-size: var(--t-s); font-weight: 600; overflow-wrap: anywhere; }
+.tb-chip--ok { border-color: transparent; background: var(--ok-f); color: var(--ok); }
+.tb-chip--aviso { border-color: transparent; background: var(--aviso-f); color: var(--aviso); }
+.tb-chip--error { border-color: transparent; background: var(--error-f); color: var(--error); }
+.tb-chip--info { border-color: transparent; background: var(--info-f); color: var(--info); }
+.tb-chip--acento { border-color: transparent; background: var(--acento); color: var(--sobre-acento); }
+
+/* ══ Avisos: la severidad se LEE en la etiqueta; el color sólo acompaña ══ */
+.tb-aviso { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--e2) var(--e3); padding: var(--e3) var(--e4); border: 1px solid var(--linea); border-radius: var(--r-m); background: var(--sup); color: var(--tinta); }
+.tb-aviso__etiqueta { flex: 0 0 auto; padding: 2px var(--e2); border-radius: var(--r-pill); font-size: var(--t-xs); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; background: var(--tinta); color: var(--sup); }
+.tb-aviso__cuerpo { flex: 1 1 260px; min-width: 0; }
+.tb-aviso__titulo { font-size: var(--t-m); font-weight: 700; overflow-wrap: anywhere; }
+.tb-aviso__cuerpo > * + * { margin-top: var(--e1); }
+.tb-aviso--info { background: var(--info-f); border-color: var(--marca-linea); }
+.tb-aviso--info .tb-aviso__etiqueta { background: var(--info); color: var(--info-f); }
+.tb-aviso--ok { background: var(--ok-f); border-color: var(--ok); }
+.tb-aviso--ok .tb-aviso__etiqueta { background: var(--ok); color: var(--ok-f); }
+.tb-aviso--aviso { background: var(--aviso-f); border-color: var(--aviso-linea); }
+.tb-aviso--aviso .tb-aviso__etiqueta { background: var(--aviso); color: var(--aviso-f); }
+.tb-aviso--error { background: var(--error-f); border-color: var(--error); }
+.tb-aviso--error .tb-aviso__etiqueta { background: var(--error); color: var(--error-f); }
+
+/* ══ Plegables ══ */
+.tb-plegable { border: 1px solid var(--linea); border-radius: var(--r-m); background: var(--sup); }
+.tb-plegable > summary { display: flex; align-items: center; gap: var(--e3); min-height: 48px; padding: var(--e2) var(--e4); cursor: pointer; font-size: var(--t-m); font-weight: 600; list-style: none; overflow-wrap: anywhere; border-radius: var(--r-m); }
+.tb-plegable > summary::-webkit-details-marker { display: none; }
+.tb-plegable > summary::before { content: ""; flex: 0 0 auto; width: 8px; height: 8px; border-right: 2px solid var(--tinta-2); border-bottom: 2px solid var(--tinta-2); transform: rotate(-45deg); transition: transform var(--mov); }
+.tb-plegable[open] > summary::before { transform: rotate(45deg); }
+.tb-plegable > summary:hover { background: var(--hundida); }
+.tb-plegable__cuerpo { padding: var(--e2) var(--e4) var(--e4); }
+.tb-plegable__cuerpo > * + * { margin-top: var(--e3); }
+
+/* ══ Código: bloque oscuro en pantalla, claro en papel ══ */
+.tb-codigo { border-radius: var(--r-m); overflow: hidden; background: var(--cod-f); color: var(--cod-t); border: 1px solid var(--cod-linea); }
+.tb-codigo__rotulo { padding: var(--e2) var(--e4); font: 600 var(--t-xs)/1.4 var(--mono); background: var(--cod-f); color: var(--cod-2); border-bottom: 1px solid var(--cod-linea); overflow-wrap: anywhere; }
+.tb-codigo__texto { margin: 0; padding: var(--e4); overflow: auto; background: var(--cod-f); color: var(--cod-t); font: var(--t-cod)/1.6 var(--mono); white-space: pre; tab-size: 2; }
+
+/* ══ Botones y selects ══ */
+.tb-boton { min-height: 40px; padding: 0 var(--e4); border: 1px solid var(--linea-control); border-radius: var(--r-s); background: var(--sup); color: var(--tinta); font: 600 var(--t-s)/1 var(--sans); cursor: pointer; transition: background var(--mov), border-color var(--mov); }
+.tb-boton:hover:not(:disabled) { background: var(--hundida); }
+.tb-boton--primario { background: var(--marca); border-color: var(--marca); color: var(--sobre-marca); }
+.tb-boton--primario:hover:not(:disabled) { background: var(--marca-honda); border-color: var(--marca-honda); color: var(--sup); }
+.tb-boton--peligro { background: var(--sup); color: var(--error); }
+.tb-boton--peligro:hover:not(:disabled) { background: var(--error-f); border-color: var(--error); }
+.tb-select { min-height: 40px; padding: 0 var(--e3); border: 1px solid var(--linea-control); border-radius: var(--r-s); background: var(--sup); color: var(--tinta); font: 600 var(--t-m)/1.2 var(--sans); transition: border-color var(--mov); }
+.tb-select:hover { border-color: var(--marca); }
+.tb-boton:disabled, .tb-select:disabled { opacity: .55; cursor: not-allowed; }
+
+/* ══ Pie y utilitarias ══ */
+.tb-pie { max-width: var(--ancho); margin: 0 auto; padding: 0 var(--e5) var(--e6); font-size: var(--t-xs); color: var(--tinta-2); }
+.tb-solo-impresion { display: none; }
+
+@media (max-width: 900px) {
+  .tb-header__fila, .tb-nav__lista, .tb-pagina, .tb-pie { padding-left: var(--e4); padding-right: var(--e4); }
+  .tb-tarjeta { padding: var(--e4); }
+  .tb-nav { position: static; }
+}
+
+/* ══ Papel: siempre en claro, sin controles, sin nada cortado al medio ══ */
+@media print {
+  :root, :root[data-theme="dark"] {
+    color-scheme: light;
+    --fondo: #ffffff; --sup: #ffffff; --hundida: #eceaf4;
+    --tinta: #1e2330; --tinta-2: #565f6e; --linea: #dfe2ea; --linea-control: #7b8494;
+    --marca-suave: #f3effc; --marca-honda: #5b21b6; --marca-linea: #e3dcfb;
+    --ok: #166534; --ok-f: #e9f7ee; --aviso: #8a4b00; --aviso-f: #fdf3dc; --aviso-linea: #e9c46a;
+    --error: #b91c1c; --error-f: #fdecec; --info: #6d28d9; --info-f: #f3effc;
+    --cod-f: #f4f5f7; --cod-t: #1e2330; --cod-2: #565f6e; --cod-linea: #dfe2ea;
+    --sombra-1: none;
+  }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-size: var(--t-s); }
+  .tb-header, .tb-header--fijo { position: static; box-shadow: none; }
+  .tb-header__fila { padding: 0 0 var(--e3); max-width: none; }
+  .tb-nav, .tb-boton, .tb-select, .tb-solo-pantalla { display: none !important; }
+  .tb-solo-impresion { display: block; }
+  .tb-pagina { padding: var(--e4) 0 0; gap: var(--e4); max-width: none; }
+  .tb-pie { padding: var(--e4) 0 0; max-width: none; }
+  .tb-tarjeta { box-shadow: none; padding: var(--e4); }
+  .tb-texto, .tb-lista { max-width: none; }
+  .tb-paso, .tb-subtitulo, .tb-rotulo, .tb-plegable > summary { break-after: avoid; }
+  .tb-aviso, .tb-tabla tr, .tb-lista > li { break-inside: avoid; }
+  .tb-tabla-marco { overflow: visible; }
+  .tb-codigo__texto { overflow: visible; white-space: pre-wrap; word-break: break-word; font-size: var(--t-xs); }
+  .tb-plegable > summary::before { display: none; }
+  .tb-plegable::details-content { content-visibility: visible; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; }
+}

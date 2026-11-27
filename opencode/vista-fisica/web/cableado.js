@@ -67,10 +67,16 @@ export function dibujarCableado(doc, contenedor, instruccion) {
   svg.setAttribute("width", String(Math.ceil(contenedor.clientWidth)))
   svg.setAttribute("height", String(Math.ceil(contenedor.clientHeight)))
   const caminos = [...new Set(resultado.trazos.map((t) => t.camino ?? ""))]
+  // El rol de potencia de cada cable (tierra / alimentación) viene resuelto del servidor en la
+  // instrucción; acá sólo se copia a un atributo para que el CSS lo dibuje. Nunca se deduce del
+  // nombre de un pin.
+  const rolPorCable = new Map(instruccion.cables.map((c) => [c.id, c.desde.rolPotencia ?? c.hasta.rolPotencia ?? null]))
   for (const trazo of resultado.trazos) {
     const grupo = doc.createElementNS(SVG, "g")
     grupo.setAttribute("data-cable-id", trazo.id)
     grupo.setAttribute("data-camino", trazo.camino ?? "")
+    const rolPotencia = rolPorCable.get(trazo.id) ?? null
+    if (rolPotencia !== null) grupo.setAttribute("data-rol-potencia", rolPotencia)
     grupo.setAttribute("class", trazo.potencia ? "cable cable-potencia" : `cable cable-senal color-${caminos.indexOf(trazo.camino ?? "") % 5}`)
     const puntos = trazo.puntos.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ")
     // Borde del color del fondo DEBAJO de cada cable: si dos cables se cruzan, el de

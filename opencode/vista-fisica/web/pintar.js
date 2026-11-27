@@ -31,8 +31,10 @@
  *   onQuitarRegla?: (e: { reglaId: string | null }) => void, onAgregarRegla?: () => void,
  *   onDescartarBorrador?: (e: { reglaId: string | null }) => void,
  *   onAlternarTraza?: (e: { reglaId: string }) => void }} [manejadores]
- * @returns {{ circuito: Element, cables: Element, controles: Element, reglas: Element, motivos: Element }}
- *   Cinco raíces NUEVAS (nunca reusa ni muta un elemento existente) — el llamador
+ * @returns {{ circuito: Element, cables: Element, controles: Element, reglas: Element, motivos: Element,
+ *   leyenda: Element, resumen: Element, resumenEstado: Element, resumenAvisos: Element, contadorAvisos: Element }}
+ *   Raíces NUEVAS (nunca reusa ni muta un elemento existente): las cinco de siempre más la
+ *   leyenda de cables y las cuatro del resumen (2026-11-26) — el llamador
  *   (`app.js`) las monta donde corresponda (ej. `contenedor.replaceChildren(raiz)`).
  *   Reconstruir siempre desde cero, en vez de diffear el DOM anterior, es a
  *   propósito: la misma disciplina que el resto del slice ("nunca reconstruir
@@ -46,6 +48,13 @@ export function pintar(doc, instrucciones, manejadores = {}) {
     controles: doc.createElement("div"),
     reglas: doc.createElement("div"),
     motivos: doc.createElement("ul"),
+    // 2026-11-26: la leyenda de cables y el resumen. Si el plan no trae su instrucción, quedan
+    // vacías: una raíz vacía no afirma nada.
+    leyenda: doc.createElement("div"),
+    resumen: doc.createElement("ol"),
+    resumenEstado: doc.createElement("strong"),
+    resumenAvisos: doc.createElement("div"),
+    contadorAvisos: doc.createElement("span"),
   }
 
   // Fase 2, Slice 2 (§3.4, resaltado C): `"tipo:id"` -> el elemento del circuito que
@@ -110,7 +119,7 @@ export function pintar(doc, instrucciones, manejadores = {}) {
       continue
     }
     if (instruccion.tipo === "reglaAgregar") {
-      raiz.reglas.appendChild(crearBoton(doc, "agregar-regla", instruccion.etiqueta, instruccion.deshabilitado, () => avisar(manejadores.onAgregarRegla)))
+      raiz.reglas.appendChild(crearBoton(doc, "agregar-regla", instruccion.etiqueta, instruccion.deshabilitado, () => avisar(manejadores.onAgregarRegla), "tb-boton tb-boton--primario"))
       continue
     }
     if (instruccion.tipo === "panelMotivo") {
@@ -119,6 +128,21 @@ export function pintar(doc, instrucciones, manejadores = {}) {
     }
     if (instruccion.tipo === "estadoVacio") {
       pintarEstadoVacio(doc, raiz.circuito, instruccion)
+      continue
+    }
+    if (instruccion.tipo === "sinAvisos") {
+      const fila = doc.createElement("li")
+      fila.setAttribute("data-sin-avisos", "true")
+      fila.textContent = instruccion.texto
+      raiz.motivos.appendChild(fila)
+      continue
+    }
+    if (instruccion.tipo === "leyendaCables") {
+      pintarLeyenda(doc, raiz.leyenda, instruccion)
+      continue
+    }
+    if (instruccion.tipo === "resumen") {
+      pintarResumen(doc, raiz, instruccion)
       continue
     }
     if (instruccion.tipo === "piezaSinRepresentacion") {
@@ -133,6 +157,82 @@ export function pintar(doc, instrucciones, manejadores = {}) {
   }
 
   return raiz
+}
+
+// El resumen de arriba de la ventana (2026-11-26). Todo lo que se escribe acá es el texto que
+// trajo la instrucción (que es el del servidor): este pintor no elige el estado, no cuenta y no
+// redacta. `ANCLA_DE_AVISOS` es a dónde lleva el enlace: el id de la sección «Avisos» de la
+// página (`tests/ventana-resumen.test.mjs` comprueba que exista en `index.html`).
+export const ANCLA_DE_AVISOS = "paso-avisos"
+
+/** A dónde lleva el renglón «todavía no hay programa»: el id de la sección del programa (paso 3). */
+export const ANCLA_DEL_PROGRAMA = "paso-programa"
+
+/**
+ * El renglón del programa en «Cómo está» (2026-11-26). Recibe lo que ya decidió `renglonDelPrograma`
+ * (`web/vista-codigo.js`): `null` deja el renglón vacío y oculto (no se sabe, no se afirma nada).
+ * El texto va con `textContent`; si lleva al programa, es un enlace al paso 3.
+ */
+export function pintarRenglonDelPrograma(doc, elemento, renglon) {
+  elemento.replaceChildren()
+  if (!renglon) {
+    elemento.setAttribute("hidden", "")
+    return
+  }
+  elemento.removeAttribute("hidden")
+  if (renglon.llevaAlPrograma) {
+    const enlace = doc.createElement("a")
+    enlace.setAttribute("href", `#${ANCLA_DEL_PROGRAMA}`)
+    enlace.textContent = renglon.texto
+    elemento.appendChild(enlace)
+  } else {
+    elemento.textContent = renglon.texto
+  }
+}
+
+function pintarResumen(doc, raiz, instruccion) {
+  // Sin reglas, la única entrada es la frase que lo dice: sin número (un «1» se leería como la
+  // regla 1). El dato lo manda el servidor; sólo un `false` explícito saca la numeración.
+  raiz.resumen.setAttribute("class", instruccion.hayReglas === false ? "tb-lista resumen-sin-reglas" : "tb-lista tb-lista--numerada")
+  for (const regla of instruccion.reglas) {
+    const fila = doc.createElement("li")
+    if (regla.sinTerminar) fila.setAttribute("data-sin-terminar", "true")
+    fila.textContent = regla.texto
+    raiz.resumen.appendChild(fila)
+  }
+
+  // `data-readiness` es la clave del estado (dato, para el color); lo que se LEE es el texto.
+  raiz.resumenEstado.setAttribute("data-readiness", instruccion.estado.clave)
+  raiz.resumenEstado.textContent = instruccion.estado.texto
+
+  const enlace = doc.createElement("a")
+  enlace.setAttribute("href", `#${ANCLA_DE_AVISOS}`)
+  enlace.setAttribute("data-cantidad", String(instruccion.avisos.cantidad))
+  enlace.textContent = instruccion.avisos.texto
+  raiz.resumenAvisos.appendChild(enlace)
+
+  // El contador de la navegación: el número, y oculto cuando no hay ninguno.
+  raiz.contadorAvisos.setAttribute("data-cantidad", String(instruccion.avisos.cantidad))
+  raiz.contadorAvisos.setAttribute("class", "tb-chip tb-chip--acento")
+  if (instruccion.avisos.cantidad === 0) raiz.contadorAvisos.setAttribute("hidden", "")
+  raiz.contadorAvisos.textContent = String(instruccion.avisos.cantidad)
+}
+
+// La leyenda de cables: una muestra de trazo (`data-rol-cable`, el MISMO rol que lleva cada cable
+// dibujado, así el CSS los pinta igual) y al lado el texto del servidor.
+function pintarLeyenda(doc, contenedor, instruccion) {
+  for (const entrada of instruccion.entradas) {
+    const item = doc.createElement("span")
+    item.setAttribute("data-leyenda", entrada.rol)
+    const muestra = doc.createElement("i")
+    muestra.setAttribute("data-rol-cable", entrada.rol)
+    muestra.setAttribute("aria-hidden", "true")
+    item.appendChild(muestra)
+    const texto = doc.createElement("span")
+    texto.textContent = entrada.texto
+    item.appendChild(texto)
+    contenedor.appendChild(item)
+  }
 }
 
 // W0-8 (PHASE_3_WAVE_0_DESIGN.md): "Este proyecto todavía no tiene componentes..." —
@@ -356,6 +456,10 @@ function pintarSelectorGpio(doc, contenedor, instruccion, manejadores) {
   const selector = doc.createElement("select")
   selector.setAttribute("data-componente-id", instruccion.componenteId)
   selector.setAttribute("data-terminal-id", instruccion.terminalId)
+  // Un control de formulario sin `id` ni `name` el navegador lo marca como problema (pestaña
+  // «Issues» de las herramientas de desarrollo): no puede recordarlo ni autocompletarlo. El
+  // nombre sale de los mismos ids que ya lleva como `data-*`; no se muestra ni se manda a nadie.
+  selector.setAttribute("name", `pin-${instruccion.componenteId}-${instruccion.terminalId}`)
 
   const opcionVacia = doc.createElement("option")
   opcionVacia.setAttribute("value", "")
@@ -406,11 +510,28 @@ function pintarMotivo(doc, contenedor, instruccion, elementosPorEntidad) {
   // SIN traducción (`explicacion: null`), se mantiene el fallback crudo de SIEMPRE
   // (contrato Slice 2): un código que esta tabla no conoce todavía nunca se oculta,
   // se ve tal cual.
-  if (instruccion.explicacion) {
-    fila.textContent = instruccion.explicacion
+  const clasificacion = instruccion.clasificacion ? ` (${instruccion.clasificacion})` : ""
+  const texto = instruccion.explicacion ? instruccion.explicacion : `[${instruccion.severidad}] ${instruccion.codigo}${clasificacion}`
+  // 2026-11-26: la severidad se LEE. Si el plan trae su etiqueta (texto del servidor: «Hay que
+  // corregir», «Atención», «Dato»), va escrita como TEXTO adelante del aviso, en su propio
+  // elemento. Antes del rediseño la severidad sólo se veía por el color del recuadro, y el
+  // prototipo la ponía con `content:` de CSS, que un lector de pantalla puede no leer y que no se
+  // puede seleccionar ni buscar. Sin etiqueta (un modelo que no la trae), la fila queda como
+  // siempre: sólo el texto.
+  if (instruccion.etiquetaSeveridad) {
+    fila.setAttribute("class", "tb-aviso")
+    const etiqueta = doc.createElement("span")
+    etiqueta.setAttribute("class", "tb-aviso__etiqueta")
+    etiqueta.setAttribute("data-etiqueta-severidad", instruccion.severidad)
+    etiqueta.textContent = instruccion.etiquetaSeveridad
+    fila.appendChild(etiqueta)
+    const cuerpo = doc.createElement("span")
+    cuerpo.setAttribute("class", "tb-aviso__cuerpo")
+    cuerpo.setAttribute("data-texto-motivo", "true")
+    cuerpo.textContent = texto
+    fila.appendChild(cuerpo)
   } else {
-    const clasificacion = instruccion.clasificacion ? ` (${instruccion.clasificacion})` : ""
-    fila.textContent = `[${instruccion.severidad}] ${instruccion.codigo}${clasificacion}`
+    fila.textContent = texto
   }
 
   // Fase 2, Slice 2 (§3.4, resaltado C): `data-entidad-*` en la fila — presentación
@@ -444,10 +565,12 @@ function avisar(manejador, evento) {
   if (typeof manejador === "function") manejador(evento)
 }
 
-function crearBoton(doc, accion, texto, deshabilitado, alClick) {
+// `clase`: las clases de la hoja compartida (`tb-boton` y su variante). Es sólo aspecto.
+function crearBoton(doc, accion, texto, deshabilitado, alClick, clase = "tb-boton") {
   const boton = doc.createElement("button")
   boton.setAttribute("type", "button")
   boton.setAttribute("data-accion", accion)
+  boton.setAttribute("class", clase)
   boton.textContent = texto
   boton.disabled = Boolean(deshabilitado)
   if (typeof boton.addEventListener === "function") boton.addEventListener("click", alClick)
@@ -481,6 +604,7 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
       campoNumero.setAttribute("inputmode", "decimal")
       campoNumero.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
       campoNumero.setAttribute("data-slot", sel.slot)
+      campoNumero.setAttribute("name", `regla-${idTexto === "" ? "nueva" : idTexto}-${sel.slot}`)
       campoNumero.value = sel.valorActual
       campoNumero.disabled = Boolean(sel.deshabilitado)
       if (typeof campoNumero.addEventListener === "function") {
@@ -496,6 +620,7 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
     const selector = doc.createElement("select")
     selector.setAttribute("data-regla-id", idTexto === "" ? "nueva" : idTexto)
     selector.setAttribute("data-slot", sel.slot)
+    selector.setAttribute("name", `regla-${idTexto === "" ? "nueva" : idTexto}-${sel.slot}`)
     if (sel.placeholder !== null) {
       const vacia = doc.createElement("option")
       vacia.setAttribute("value", "")
@@ -563,7 +688,7 @@ function pintarReglaFrase(doc, contenedor, instruccion, elementosPorEntidad, man
     caja.appendChild(lista)
   }
 
-  caja.appendChild(crearBoton(doc, "quitar-regla", "Quitar regla", instruccion.deshabilitado, () => avisar(manejadores.onQuitarRegla, { reglaId: instruccion.reglaId })))
+  caja.appendChild(crearBoton(doc, "quitar-regla", "Quitar regla", instruccion.deshabilitado, () => avisar(manejadores.onQuitarRegla, { reglaId: instruccion.reglaId }), "tb-boton tb-boton--peligro"))
   if (instruccion.conTraza) {
     caja.appendChild(crearBoton(doc, "alternar-traza", instruccion.etiquetaTraza, instruccion.deshabilitado, () => avisar(manejadores.onAlternarTraza, { reglaId: instruccion.reglaId })))
   }

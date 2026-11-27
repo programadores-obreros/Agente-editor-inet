@@ -32,3 +32,20 @@ export function reducirEstadoConexion(estado, evento) {
   if (evento.tipo === "open") return "conectado"
   return estado
 }
+
+// ── Lo que dice el indicador (2026-11-26) ─────────────────────────────────────────────────────
+// Decía «conectado», y el dueño lo leyó como «la placa está conectada». Lo que mide es el enlace
+// de ESTA página con Tecnia Bot. Textos aprobados por el dueño: «Ventana al día» / «Ventana sin
+// conexión». Los VALORES `conectado`/`desconectado` no cambian: son identificadores (atributo
+// `data-estado-conexion`, CSS, tests), no texto para el alumno.
+export const TEXTO_VENTANA_AL_DIA = "Ventana al día"
+export const TEXTO_VENTANA_SIN_CONEXION = "Ventana sin conexión"
+/** La explicación que antes iba entera en el chip («desconectado: la vista puede…»). Ahora el chip
+ * dice lo corto y esto va en la franja de estado (`#estado`), con el mismo contenido. */
+export const EXPLICACION_SIN_CONEXION = "La vista puede no estar actualizada. Si el servidor se reinició en otro puerto, volvé a abrir la vista física desde Tecnia Bot."
+
+/** Qué dice el indicador en cada estado. Pura. `detalle` es `null` cuando no hay nada que explicar. */
+export function textosDelIndicador(estado) {
+  if (estado === "conectado") return { chip: TEXTO_VENTANA_AL_DIA, detalle: null }
+  return { chip: TEXTO_VENTANA_SIN_CONEXION, detalle: EXPLICACION_SIN_CONEXION }
+}
