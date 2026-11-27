@@ -10,12 +10,16 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
-import { join, relative } from "node:path"
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs"
+import { join, relative, sep } from "node:path"
 import { REPO, nuevoDir } from "./phase2-helpers.mjs"
 
 const programaTool = (await import(join(REPO, "opencode/tool/programa.ts"))).default
-const { ejecutarPrograma, carpetaDelPrograma } = await import(join(REPO, "opencode/tool/programa.ts"))
+const { raizDeProgramasDerivados } = await import(join(REPO, "opencode/carga/programas-derivados.ts"))
+// Se mira ANTES de que cualquier prueba genere nada: los ayudantes tienen que haber vaciado la
+// caché de prueba al importarse. Si no, la carpeta derivada trae lo de la corrida anterior.
+const CACHE_VACIA_AL_EMPEZAR = !existsSync(raizDeProgramasDerivados())
+const { ejecutarPrograma, carpetaDelPrograma, carpetaViejaDelPrograma, programaALaVistaDelAgente, programasDeOtroTrabajo, avisoDeOtroTrabajo, sinLaCarpeta, soloDiagnosticos, DONDE_VERLO } = await import(join(REPO, "opencode/tool/programa.ts"))
 const proyectoFisico = (await import(join(REPO, "opencode/tool/proyecto-fisico.ts"))).default
 const platformioTool = (await import(join(REPO, "opencode/tool/platformio.ts"))).default
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
@@ -110,13 +114,336 @@ test("1/3/4/5/6 generar: ok, revisión actual, y platformio.ini + main.cpp idén
   assert.equal(r.revision, servicioDe(dir).snapshot().revision)
   assert.match(r.resultado, /^PROGRAMA GENERADO — revisión \d+ \(no se compiló\)$/)
   assert.equal(r.environment, esperado.environment)
-  assert.equal(r.carpeta, ".tecnia-vista-fisica/programa/activo")
   assert.deepEqual(Object.keys(r.archivos).sort(), ["platformio.ini", "src/main.cpp"])
   for (const [ruta, contenido] of Object.entries(esperado.archivos)) {
-    assert.equal(r.archivos[ruta].contenido, contenido, ruta)
+    // La huella es la del archivo generado: sirve para comparar sin que viaje el texto.
     assert.equal(r.archivos[ruta].sha256, createHash("sha256").update(contenido).digest("hex"))
+    assert.equal(r.archivos[ruta].lineas, contenido.replace(/\n$/, "").split("\n").length, ruta)
+    assert.deepEqual(Object.keys(r.archivos[ruta]).sort(), ["lineas", "sha256"], "del archivo: huella y tamaño, nada más")
   }
-  assert.deepEqual(leerCarpeta(carpetaAbs(dir)), esperado.archivos)
+  assert.deepEqual(leerCarpeta(carpetaAbs(dir)), esperado.archivos, "en disco quedó exactamente lo generado")
+})
+
+// HISTORIA (2026-11-24, notebook real). `generar` devolvía el texto del programa y las dos
+// acciones devolvían la carpeta. El asistente leyó el archivo y lo reescribió en el chat con 25
+// líneas y UNA regla (eran 94 y dos), diciendo que era el generado. Los asserts de arriba pedían
+// justamente `r.carpeta` y `r.archivos[ruta].contenido`: custodiaban el camino por el que se
+// rompió. Ahora se exige lo contrario: que el código y las rutas NO le lleguen al modelo.
+const SIN_CPP = /void setup|void loop|pinMode|digitalWrite|digitalRead|#include|\[env:|static const uint8_t/
+function sinCodigoNiRutas(r, dir) {
+  const texto = JSON.stringify(r)
+  assert.doesNotMatch(texto, SIN_CPP, "la salida no trae C++ ni el .ini")
+  assert.ok(!("carpeta" in r), "la salida no dice dónde quedó el programa")
+  assert.ok(!texto.includes(carpetaAbs(dir)), "ni la ruta absoluta")
+  assert.doesNotMatch(texto, /tecnia-bot-programas|TecniaBot-programas|\.tecnia-vista-fisica/, "ni un pedazo de la ruta")
+  assert.ok(!texto.includes(raizDeProgramasDerivados()), "ni la raíz de donde cuelga")
+  assert.doesNotMatch(texto, /"contenido"/)
+}
+
+test("la salida de generar y de compilar NO trae el código ni la carpeta: trae las reglas en palabras y dónde verlo", async () => {
+  const dir = await armar()
+  const reglasDeLaVista = servicioDe(dir).snapshot().vista.reglas.map((x) => x.texto)
+  assert.deepEqual(reglasDeLaVista, ["Mientras el Pulsador esté presionado, el LED está encendido."], "el caso: una regla, con la frase de la ventana")
+  const generado = await programa(dir, { accion: "generar" })
+  const bun = bunFalso()
+  let compilado
+  try {
+    compilado = await programa(dir, { accion: "compilar" })
+  } finally {
+    bun.restaurar()
+  }
+  assert.match(compilado.resultado, /^COMPILADO/)
+  for (const r of [generado, compilado]) {
+    sinCodigoNiRutas(r, dir)
+    assert.deepEqual(r.programa.reglas, reglasDeLaVista, "las mismas frases que muestra la ventana")
+    const lineas = codegenDe(dir).archivos["src/main.cpp"].replace(/\n$/, "").split("\n").length
+    assert.equal(r.programa.lineas, lineas)
+    assert.equal(r.programa.resumen, `El programa de la revisión ${r.revision} tiene 1 regla y ${lineas} líneas.`)
+    assert.equal(r.programa.dondeVerlo, DONDE_VERLO)
+    assert.ok(!("aviso" in r.programa), "con la carpeta fuera del proyecto no hay nada que avisar")
+  }
+  assert.match(DONDE_VERLO, /sección «Código»/)
+  assert.match(DONDE_VERLO, /`vista-fisica`/)
+  assert.match(DONDE_VERLO, /No lo escribas ni lo resumas en el chat/)
+  // Notebook real, 2026-11-26: ante la insistencia, el asistente mandó a abrir «src/main.cpp en la
+  // carpeta del proyecto» con el Bloc de notas. Ese archivo no existe: hay que decírselo.
+  // (Una primera versión de este aviso decía «en la carpeta del proyecto no hay ningún archivo
+  // del programa». Era FALSO en esa notebook: había un src/main.cpp viejo. Lo que se afirma ahora
+  // vale siempre: el programa de ESTE proyecto no está en la carpeta de trabajo.)
+  assert.match(DONDE_VERLO, /El programa de este proyecto NO está en la carpeta de trabajo/)
+  assert.match(DONDE_VERLO, /no mandes a abrir ningún archivo/)
+  assert.doesNotMatch(DONDE_VERLO, /no hay ningún archivo/i, "no se afirma lo que no se comprobó")
+})
+
+test("la carpeta derivada vive FUERA de la carpeta de trabajo, en la caché del usuario, y es estable por proyecto", async () => {
+  const dir = await armar()
+  await programa(dir, { accion: "generar" })
+  const carpeta = carpetaAbs(dir)
+  assert.ok(existsSync(join(carpeta, "src", "main.cpp")))
+  assert.equal(programaALaVistaDelAgente(dir, carpeta), false, "el agente no puede leer fuera de su carpeta de trabajo")
+  assert.ok(carpeta.startsWith(join(process.env.XDG_CACHE_HOME, "tecnia-bot-programas") + sep), carpeta)
+  assert.equal(raizDeProgramasDerivados(), join(process.env.XDG_CACHE_HOME, "tecnia-bot-programas"))
+  // En Windows NO va dentro de `TecniaBot\\`, que es la carpeta donde se instala el programa: el
+  // desinstalador avisa de «cosas que el instalador no puso» y hablaría de carpetas nuestras.
+  const enWindows = raizDeProgramasDerivados({ LOCALAPPDATA: "C:\\Users\\ana\\AppData\\Local" })
+  if (sep === "\\") assert.equal(enWindows, "C:\\Users\\ana\\AppData\\Local\\TecniaBot-programas")
+  assert.equal(carpetaDelPrograma(dir, "activo"), carpeta, "misma carpeta de trabajo → misma carpeta (PlatformIO reusa su caché)")
+  assert.notEqual(carpetaDelPrograma(dir + "-otro", "activo"), carpeta, "otra carpeta de trabajo → otra carpeta")
+  assert.notEqual(carpetaDelPrograma(dir, "otro"), carpeta, "otro proyecto → otra carpeta")
+  assert.equal(existsSync(join(directorioDeDatos(dir), "programa")), false, "dentro de la carpeta de trabajo no queda ningún programa")
+})
+
+test("el programa que una versión anterior dejó DENTRO de la carpeta de trabajo se borra al generar o compilar", async () => {
+  for (const accion of ["generar", "compilar"]) {
+    const dir = await armar()
+    const vieja = carpetaViejaDelPrograma(dir, "activo")
+    assert.equal(vieja, join(directorioDeDatos(dir), "programa", "activo"))
+    mkdirSync(join(vieja, "src"), { recursive: true })
+    writeFileSync(join(vieja, "src", "main.cpp"), "// programa viejo, de otra revisión\n")
+    const bun = bunFalso()
+    try {
+      await programa(dir, { accion })
+    } finally {
+      bun.restaurar()
+    }
+    assert.equal(existsSync(vieja), false, `${accion}: quedó a la vista un programa viejo`)
+  }
+})
+
+// HISTORIA (notebook real, 2026-11-26). En `Documents\\Tecnia Bot\\src\\main.cpp` había un programa
+// de dos días antes, de OTRO circuito (con un sensor de distancia que el proyecto no tiene). Ante
+// «pegame el código acá», el asistente mandó al docente a abrirlo como «el archivo de verdad».
+// Y yo le había dicho al dueño que ese archivo no existía: sólo había mirado la carpeta derivada.
+test("si en la carpeta de trabajo hay un programa de OTRO trabajo, la salida lo nombra, dice de cuándo es y qué no hacer", async () => {
+  const dir = await armar()
+  const limpio = await programa(dir, { accion: "generar" })
+  assert.ok(!("deOtroTrabajo" in limpio.programa) && !("avisoDeOtroTrabajo" in limpio.programa), "sin nada en src/ no se avisa nada")
+
+  mkdirSync(join(dir, "src"), { recursive: true })
+  const viejo = join(dir, "src", "main.cpp")
+  writeFileSync(viejo, "// programa de otro trabajo\nconst int PIN_TRIG = 18;\n")
+  // Mediodía en la hora de esta compu: el día que se informa es el local, el que ve el docente.
+  utimesSync(viejo, new Date(2026, 10, 24, 12, 0, 0), new Date(2026, 10, 24, 12, 0, 0))
+  for (const accion of ["generar", "compilar"]) {
+    const bun = bunFalso()
+    let r
+    try {
+      r = await programa(dir, { accion })
+    } finally {
+      bun.restaurar()
+    }
+    assert.equal(r.ok, true, accion)
+    assert.deepEqual(r.programa.deOtroTrabajo, [{ archivo: "src/main.cpp", modificado: "2026-11-24" }], accion)
+    assert.equal(r.programa.avisoDeOtroTrabajo, "En la carpeta de trabajo hay un programa de OTRO trabajo: `src/main.cpp` (modificado el 2026-11-24). No es el programa de este proyecto. No lo leas, no lo muestres como el programa y no mandes al docente a abrirlo.")
+    assert.doesNotMatch(JSON.stringify(r), /PIN_TRIG/, "del archivo ajeno se dice que está, no lo que tiene")
+  }
+  assert.equal(readFileSync(viejo, "utf8"), "// programa de otro trabajo\nconst int PIN_TRIG = 18;\n", "el archivo del docente no se toca")
+})
+
+test("programas de otro trabajo: sólo archivos de programa en src/, ordenados; carpetas, encabezados y otras cosas no cuentan", () => {
+  const dir = nuevoDir("codegen-s1b-ajenos")
+  assert.deepEqual(programasDeOtroTrabajo(dir), [], "sin carpeta src/ no hay nada (y no tira)")
+  // Una CARPETA con nombre de programa. (La primera versión usaba «main.cpp.d», que ni siquiera
+  // termina en .cpp: por mutación se vio que no probaba nada.)
+  mkdirSync(join(dir, "src", "carpeta.cpp"), { recursive: true })
+  mkdirSync(join(dir, "otra"), { recursive: true })
+  for (const nombre of ["sketch.ino", "main.cpp", "util.C", "notas.txt", "pines.h", "main.cpp.bak"]) writeFileSync(join(dir, "src", nombre), "x")
+  writeFileSync(join(dir, "otra", "main.cpp"), "x") // fuera de src/: no es donde PlatformIO pone el programa
+  writeFileSync(join(dir, "main.cpp"), "x")
+  assert.deepEqual(programasDeOtroTrabajo(dir).map((h) => h.archivo), ["src/main.cpp", "src/sketch.ino", "src/util.C"])
+  for (const h of programasDeOtroTrabajo(dir)) assert.match(h.modificado, /^\d{4}-\d{2}-\d{2}$/)
+  const dos = avisoDeOtroTrabajo([{ archivo: "src/a.ino", modificado: "2026-01-02" }, { archivo: "src/b.cpp", modificado: "2026-03-04" }])
+  assert.equal(dos, "En la carpeta de trabajo hay programas de OTRO trabajo: `src/a.ino` (modificado el 2026-01-02), `src/b.cpp` (modificado el 2026-03-04). No son el programa de este proyecto. No los leas, no los muestres como el programa y no mandes al docente a abrirlos.")
+})
+
+// ── Lo que encontró la revisión independiente del 2026-11-26 ───────────────────────────────────
+// `sinCodigoNiRutas` sólo se aplicaba a las salidas CON ÉXITO. En las de error la ruta de la
+// carpeta derivada y líneas del programa le llegaban al modelo, y la suite no lo veía.
+
+test("NO COMPILÓ: la salida no trae la ruta de la carpeta ni las líneas del programa que copia el compilador", async () => {
+  const dir = await armar()
+  const carpeta = carpetaAbs(dir)
+  const stderr = [
+    `Processing esp32-devkit-v1 in ${carpeta}`,
+    `${carpeta}/src/main.cpp: In function 'void loop()':`,
+    "src/main.cpp:27:34: error: 'foo' was not declared in this scope",
+    "   27 |   digitalWrite(PIN_CMP_1_ANODO, foo);",
+    "      |                                  ^~~",
+    "*** [.pio/build/esp32-devkit-v1/src/main.cpp.o] Error 1",
+  ].join("\n")
+  const bun = bunFalso({ codigo: 1, stderr })
+  let r
+  try {
+    r = await programa(dir, { accion: "compilar" })
+  } finally {
+    bun.restaurar()
+  }
+  assert.equal(r.codigo, "COMPILACION_FALLIDA")
+  // Acá no sirve `sinCodigoNiRutas` entero: el compilador NOMBRA la función («In function 'void
+  // loop()'»), y eso es un diagnóstico, no código del programa. Se mira lo que no puede viajar.
+  const texto = JSON.stringify(r)
+  assert.ok(!texto.includes(carpeta) && !texto.includes(raizDeProgramasDerivados()), "la ruta de la carpeta derivada viajó")
+  assert.ok(!("carpeta" in r))
+  assert.doesNotMatch(texto, /digitalWrite|PIN_CMP_1_ANODO, foo/, "viajó el renglón del programa que copia el compilador")
+  assert.match(r.salida, /error: 'foo' was not declared in this scope/, "el diagnóstico sí llega: sin eso no se puede explicar")
+  assert.match(r.salida, /In function 'void loop\(\)'/)
+  assert.match(r.salida, /\(la carpeta del programa\)/)
+  assert.doesNotMatch(r.salida, /\^~~/)
+})
+
+test("NO COMPILÓ con un error que no se reconoce: la explicación repite la salida, y va sin la ruta", async () => {
+  const dir = await armar()
+  const carpeta = carpetaAbs(dir)
+  // `traducirError`, cuando no reconoce el error, devuelve «Error de compilacion: <la salida>».
+  const bun = bunFalso({ codigo: 1, stderr: `algo que nadie tradujo en ${carpeta}/src/main.cpp: boom` })
+  let r
+  try {
+    r = await programa(dir, { accion: "compilar" })
+  } finally {
+    bun.restaurar()
+  }
+  assert.equal(r.codigo, "COMPILACION_FALLIDA")
+  assert.match(r.explicacion, /algo que nadie tradujo en \(la carpeta del programa\)/, "el caso: la explicación cita la salida")
+  assert.ok(!r.explicacion.includes(carpeta) && !JSON.stringify(r).includes(raizDeProgramasDerivados()))
+})
+
+test("compilación cortada por tiempo: texto propio, sin la línea de comando (que trae la carpeta)", async () => {
+  const dir = await armar()
+  const anterior = { bun: globalThis.Bun, tope: process.env.TECNIA_PIO_TIMEOUT_MS }
+  process.env.TECNIA_PIO_TIMEOUT_MS = "300"
+  const cuerpo = (t) => new Response(t).body
+  globalThis.Bun = { spawn: () => ({ stdout: cuerpo(""), stderr: cuerpo(""), exited: new Promise(() => {}), kill() {} }), which: () => null }
+  let r
+  try {
+    r = await programa(dir, { accion: "compilar" })
+  } finally {
+    globalThis.Bun = anterior.bun
+    if (anterior.tope === undefined) delete process.env.TECNIA_PIO_TIMEOUT_MS
+    else process.env.TECNIA_PIO_TIMEOUT_MS = anterior.tope
+  }
+  assert.equal(r.codigo, "COMPILACION_TIEMPO_AGOTADO")
+  sinCodigoNiRutas(r, dir)
+  assert.ok(!("salida" in r), "no hay salida que mostrar: lo único que había era la línea de comando")
+  assert.match(r.explicacion, /tardó más de lo permitido y se cortó/)
+  assert.doesNotMatch(JSON.stringify(r), /pio run|-d /)
+})
+
+test("un error de disco en la carpeta derivada no le cuenta al modelo dónde está", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+  const dir = await armar()
+  await programa(dir, { accion: "generar" })
+  const carpeta = carpetaAbs(dir)
+  chmodSync(carpeta, 0o500)
+  let r
+  try {
+    r = await programa(dir, { accion: "generar" })
+  } finally {
+    chmodSync(carpeta, 0o700)
+  }
+  assert.equal(r.codigo, "ERROR_INESPERADO")
+  sinCodigoNiRutas(r, dir)
+  assert.match(r.mensaje, /\(la carpeta del programa\)/, "el error se cuenta, sin la ruta")
+})
+
+test("sinLaCarpeta y soloDiagnosticos: las dos formas de barra, y sólo se sacan los renglones de fuente", () => {
+  assert.equal(sinLaCarpeta("a C:\\x\\y\\z b C:/x/y/z c", ["C:\\x\\y\\z"]), "a (la carpeta del programa) b (la carpeta del programa) c")
+  assert.equal(sinLaCarpeta("nada que sacar", ["/tmp/x"]), "nada que sacar")
+  assert.equal(sinLaCarpeta("/tmp/x/a /tmp/x", ["/tmp/x/a", "/tmp/x"]), "(la carpeta del programa) (la carpeta del programa)", "de la más larga a la más corta")
+  assert.equal(soloDiagnosticos("a.cpp:1:2: error: x\n    1 | int y = z;\n      |         ^\nfin"), "a.cpp:1:2: error: x\nfin")
+  assert.equal(soloDiagnosticos("una línea | con barra en el medio"), "una línea | con barra en el medio")
+})
+
+test("las pruebas arrancan con la caché de programas vacía (no heredan la carpeta derivada de otra corrida)", () => {
+  assert.equal(CACHE_VACIA_AL_EMPEZAR, true, "tests/phase2-helpers.mjs no vació la caché de prueba al importarse")
+})
+
+test("si el programa viejo de adentro no se puede borrar, la tool genera igual (es limpieza, no un requisito)", { skip: process.platform === "win32" || process.getuid?.() === 0 }, async () => {
+  const dir = await armar()
+  const padre = join(directorioDeDatos(dir), "programa")
+  mkdirSync(join(padre, "activo", "src"), { recursive: true })
+  writeFileSync(join(padre, "activo", "src", "main.cpp"), "// viejo\n")
+  chmodSync(join(padre, "activo", "src"), 0o500) // no se puede borrar lo de adentro
+  let r
+  try {
+    r = await programa(dir, { accion: "generar" })
+  } finally {
+    chmodSync(join(padre, "activo", "src"), 0o700)
+  }
+  assert.equal(r.ok, true, JSON.stringify(r))
+  assert.match(r.resultado, /^PROGRAMA GENERADO/)
+})
+
+test("el borrado del programa viejo no sigue enlaces: si `programa` apunta a otra carpeta, lo de allá no se toca", { skip: process.platform === "win32" }, async () => {
+  const dir = await armar()
+  const otra = nuevoDir("codegen-s1b-ajena")
+  mkdirSync(join(otra, "activo"), { recursive: true })
+  writeFileSync(join(otra, "activo", "tesis.txt"), "algo del docente")
+  symlinkSync(otra, join(directorioDeDatos(dir), "programa"))
+  const r = await programa(dir, { accion: "generar" })
+  assert.equal(r.ok, true, "y la tool genera igual")
+  assert.equal(readFileSync(join(otra, "activo", "tesis.txt"), "utf8"), "algo del docente")
+})
+
+test("la fecha del programa de otro trabajo es la del reloj de esta compu, no la de Greenwich", () => {
+  const dir = nuevoDir("codegen-s1b-fecha")
+  mkdirSync(join(dir, "src"), { recursive: true })
+  const f = join(dir, "src", "main.cpp")
+  writeFileSync(f, "x")
+  // 23:30 y 00:30 locales: en cualquier huso distinto de UTC, una de las dos cambia de día en UTC.
+  for (const [hora, minuto] of [[23, 30], [0, 30]]) {
+    const cuando = new Date(2026, 10, 24, hora, minuto, 0)
+    utimesSync(f, cuando, cuando)
+    assert.equal(programasDeOtroTrabajo(dir)[0].modificado, "2026-11-24", `${hora}:${minuto}`)
+  }
+})
+
+test("la barrera de platformio y la tool programa miran la MISMA carpeta, y un proyecto del docente con nombres parecidos no queda bloqueado", async () => {
+  const { dentroDeLosProgramasDerivados } = await import(join(REPO, "opencode/tool/platformio.ts"))
+  const dir = await armar()
+  assert.equal(dentroDeLosProgramasDerivados(carpetaAbs(dir)), true)
+  assert.equal(dentroDeLosProgramasDerivados(raizDeProgramasDerivados()), true)
+  assert.equal(dentroDeLosProgramasDerivados(dir), false, "la carpeta de trabajo no es un derivado")
+  assert.equal(dentroDeLosProgramasDerivados(join(dir, "tecnia-bot", "programas", "semaforo")), false, "un proyecto legítimo con esos nombres en la ruta")
+  assert.equal(dentroDeLosProgramasDerivados(raizDeProgramasDerivados() + "-otra"), false, "un prefijo de nombre no es estar adentro")
+  for (const tool of ["programa.ts", "platformio.ts"]) {
+    const fuente = readFileSync(join(REPO, "opencode/tool", tool), "utf8")
+    assert.match(fuente, /raizDeProgramasDerivados\(/, `${tool} no usa la raíz compartida`)
+    assert.doesNotMatch(fuente, /baseDeCargas\(/, `${tool} volvió a armar la ruta por su cuenta`)
+  }
+  // La barrera vieja (programas que quedaron dentro de `.tecnia-vista-fisica`) sigue valiendo.
+  const vieja = carpetaViejaDelPrograma(dir, "activo")
+  mkdirSync(vieja, { recursive: true })
+  writeFileSync(join(vieja, "platformio.ini"), "; de una versión anterior\n")
+  const bun = bunFalso()
+  try {
+    const salida = await platformioTool.execute({ action: "compile", project_path: vieja }, { directory: dir })
+    assert.match(salida, /DERIVADO de un proyecto físico/)
+    assert.equal(bun.llamadas.length, 0)
+  } finally {
+    bun.restaurar()
+  }
+})
+
+test("si la carpeta derivada cae DENTRO de la carpeta de trabajo (Tecnia Bot abierto en la carpeta personal), la salida lo dice", async () => {
+  assert.equal(programaALaVistaDelAgente("/home/ana", "/home/ana/.cache/tecnia-bot/programas/abc/activo"), true)
+  assert.equal(programaALaVistaDelAgente("/home/ana/proyecto", "/home/ana/.cache/tecnia-bot/programas/abc/activo"), false)
+  assert.equal(programaALaVistaDelAgente("/home/ana/pro", "/home/ana/proyecto/x"), false, "un prefijo de nombre no es estar adentro")
+  assert.equal(programaALaVistaDelAgente("/home/ana", "/home/ana"), true)
+  // Una carpeta que se LLAMA `..cache` está adentro: `startsWith("..")` la daba por afuera.
+  assert.equal(programaALaVistaDelAgente("/home/ana", "/home/ana/..cache/tecnia-bot-programas/abc/activo"), true)
+  assert.equal(programaALaVistaDelAgente("/home/ana/proyecto", "/home/ana"), false, "el padre está afuera")
+  // de punta a punta: la caché del usuario puesta adentro de la carpeta de trabajo
+  const dir = await armar()
+  const antes = process.env.XDG_CACHE_HOME
+  process.env.XDG_CACHE_HOME = join(dir, "cache-adentro")
+  try {
+    const r = await programa(dir, { accion: "generar" })
+    assert.equal(r.ok, true)
+    assert.match(r.programa.aviso, /quedó dentro de la carpeta de trabajo/)
+    assert.match(r.programa.aviso, /No la leas/)
+    assert.doesNotMatch(JSON.stringify(r), /cache-adentro/, "aun así no se dice dónde está")
+  } finally {
+    process.env.XDG_CACHE_HOME = antes
+  }
 })
 
 test("2 no hay un segundo renderer: la tool sólo orquesta el codegen", () => {
@@ -214,6 +541,62 @@ test("12/13 el prompt prohíbe editar el derivado y obliga a regenerar por revis
   assert.match(REGLA, /Nunca digas que compiló si no ves\s+`COMPILADO`/)
 })
 
+// HISTORIA (2026-11-24). El punto 8 de esta regla decía «mostrá el `contenido` que devolvió
+// `programa`, tal cual». El asistente lo leyó y aun así reescribió el código con una regla menos.
+// Ahora el código no pasa por él, y la regla lo dice sin dejar un camino para "un pedacito".
+test("el prompt manda a la ventana cuando piden el código, y prohíbe escribirlo en el chat", () => {
+  assert.match(REGLA, /\*\*El código de este programa no lo mostrás vos: lo muestra la ventana\.\*\*/)
+  assert.match(REGLA, /`vista-fisica` para abrir la ventana/)
+  assert.match(REGLA, /`programa\.reglas`/)
+  assert.match(REGLA, /`programa\.resumen`/)
+  assert.match(REGLA, /en la sección «Código»/)
+  assert.match(REGLA, /\*\*Nunca escribas, copies ni resumas ese código en el chat, ni un pedazo\*\*/)
+  assert.match(REGLA, /no lo busques en archivos/)
+  assert.match(REGLA, /no pegues código como reemplazo/)
+  assert.match(REGLA, /o no la\s+quieren abrir/)
+  assert.match(REGLA, /\*\*no mandes a abrir un archivo\*\*/)
+  assert.match(REGLA, /el\s+programa de este proyecto no está en la carpeta de trabajo/)
+  assert.match(REGLA, /Si ahí hay un\s+`src\/main\.cpp`, es de otro trabajo/)
+  assert.match(REGLA, /`programa\.avisoDeOtroTrabajo`/)
+  assert.doesNotMatch(REGLA, /no hay ningún `src\/main\.cpp`/, "esa afirmación era falsa en la notebook real")
+  // Lo que ya no puede estar: la orden de mostrar el contenido y la mención de la carpeta.
+  assert.doesNotMatch(REGLA, /mostrá el `contenido`/)
+  assert.doesNotMatch(REGLA, /La carpeta que devuelve `programa`/)
+  assert.doesNotMatch(PROMPT, /`contenido` que devolvió `programa`/)
+  // Y la descripción de la tool dice lo mismo (es lo otro que lee el modelo).
+  assert.match(FUENTE_TOOL, /EL CÓDIGO NO VIENE EN LA SALIDA y no lo mostrás vos/)
+  assert.match(FUENTE_TOOL, /Nunca escribas, copies ni resumas código del programa en el chat\./)
+  // Las reglas VIEJAS de mostrar código (son para lo que escribe el asistente) exceptúan al
+  // proyecto físico. Sin eso chocaban con el punto 8: «Te lo pidieron: mostrame el código → pegalo».
+  const vieja = PROMPT.slice(PROMPT.indexOf("### NUNCA PEGUES EL CÓDIGO POR DEFECTO"), PROMPT.indexOf("### Y lo mismo con los circuitos"))
+  assert.match(vieja, /\*\*Esta sección es para el código que escribís vos\*\*/)
+  assert.match(vieja, /\*\*El programa de un\s+proyecto físico no se pega NUNCA, ni aunque lo pidan, ni aunque no compile:\*\*/)
+  assert.ok(vieja.indexOf("no se pega NUNCA") < vieja.indexOf("Cuándo SÍ pegás el código"), "la excepción va ANTES de la lista de cuándo sí")
+  assert.match(PROMPT, /\*\*y se ve en la ventana, no en el chat\*\* \(punto 8 de esa regla\)/)
+  assert.doesNotMatch(FUENTE_TOOL, /los deja en una carpeta derivada/)
+})
+
+// HISTORIA (notebook real, 2026-11-24). El docente preguntó «¿sabés lo que es para nosotros
+// programación por intuición?». El asistente buscó la palabra en sus archivos, no encontró nada y
+// le pidió al docente que se lo explicara; antes había dicho «acá vamos de lleno a C++, sin
+// intermediarios» y había confundido «bloques» con Educabot. El nombre no figuraba ni una vez en
+// sus 1.038 líneas de instrucciones, y tampoco que la Vista lógica son bloques.
+test("el prompt nombra la programación por intención, sus tres pasos y que la Vista lógica son bloques", () => {
+  const i = PROMPT.indexOf("## Programación por intención: así se llama lo que hacés acá")
+  assert.ok(i >= 0, "no está la sección")
+  const s = PROMPT.slice(i, PROMPT.indexOf("\n## ", i + 5))
+  assert.match(s, /\*\*programación por intención\*\*/)
+  assert.match(s, /\*\*Vista lógica\*\* muestra esa misma regla \*\*armada con bloques\*\*/)
+  assert.match(s, /sección\s+\*\*«Código»\*\*/)
+  assert.match(s, /intención → lógica\s+→ código/)
+  assert.match(s, /Nunca digas que acá "no\s+usamos bloques" ni que "vamos directo a C\+\+"/)
+  assert.match(s, /No lo busques en archivos ni le pidas al\s+docente que te lo explique/)
+  assert.match(s, /"programación por intuición", es\s+lo mismo/)
+  assert.match(s, /Educabot\*\* son otra cosa/)
+  assert.match(s, /\*\*decilo antes de seguir por otro camino\*\*/)
+  assert.ok(i < PROMPT.indexOf("## REGLA CRÍTICA — proyecto físico"), "va antes de la regla del proyecto físico")
+})
+
 test("routing: «mientras… encendé el LED; generá y compilá» → proyecto-fisico → programa (no código a mano)", () => {
   // El pedido de nivel se arma con proyecto-fisico (sección de comportamiento) y el pedido explícito
   // de programa va a la tool `programa`, no al procedimiento de escribir código.
@@ -250,12 +633,14 @@ test("routing ejecutado: leer → aplicar SetComportamiento → programa compila
 test("13 después de cambiar el proyecto, generar da la revisión nueva y el programa nuevo", async () => {
   const dir = await armar()
   const a = await programa(dir, { accion: "generar" })
-  assert.match(a.archivos["src/main.cpp"].contenido, /PIN_CMP_0_SENAL = 4;/)
+  const enDisco = () => readFileSync(join(carpetaAbs(dir), "src", "main.cpp"), "utf8")
+  assert.match(enDisco(), /PIN_CMP_0_SENAL = 4;/)
   await aplicar(dir, [{ tipo: "AsignarPin", payload: { componente: "cmp-0", terminal: "senal", pin: "GPIO27" } }])
   const b = await programa(dir, { accion: "generar" })
   assert.equal(b.revision, a.revision + 1)
-  assert.match(b.archivos["src/main.cpp"].contenido, /PIN_CMP_0_SENAL = 27;/)
-  assert.match(readFileSync(join(carpetaAbs(dir), "src", "main.cpp"), "utf8"), /PIN_CMP_0_SENAL = 27;/)
+  assert.match(enDisco(), /PIN_CMP_0_SENAL = 27;/)
+  assert.notEqual(b.archivos["src/main.cpp"].sha256, a.archivos["src/main.cpp"].sha256, "la huella que ve el modelo también cambió")
+  assert.equal(b.archivos["src/main.cpp"].sha256, createHash("sha256").update(enDisco()).digest("hex"))
 })
 
 test("14/24/25 compilar: environment derivado, y PlatformIO recibe EXACTAMENTE lo generado aunque alguien haya editado la carpeta", async () => {
@@ -351,7 +736,8 @@ test("16 no acepta rutas del agente: idProyecto inválido se rechaza y la carpet
     assert.equal(r.codigo, "ID_PROYECTO_INVALIDO", id)
   }
   assert.ok(!existsSync(join(dir, "..", "fuera")))
-  assert.equal(carpetaDelPrograma(dir, "activo"), join(directorioDeDatos(dir), "programa", "activo"))
+  // La carpeta no la elige el agente: sale de la carpeta de trabajo y del id ya validado.
+  assert.equal(programaALaVistaDelAgente(dir, carpetaDelPrograma(dir, "activo")), false)
 })
 
 test("barrera: la tool platformio no compila ni carga la carpeta derivada (no se saltea la regeneración)", async () => {

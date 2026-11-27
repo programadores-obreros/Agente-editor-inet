@@ -1,9 +1,10 @@
 /// <reference path="../env.d.ts" />
 import { tool } from "@opencode-ai/plugin"
 import { createHash, randomBytes } from "node:crypto"
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
-import { isAbsolute, join, resolve, win32 } from "node:path"
+import { isAbsolute, join, relative, resolve, sep, win32 } from "node:path"
+import { raizDeProgramasDerivados } from "../carga/programas-derivados.ts"
 import { argvDeCargaHeredada, lanzarCarga } from "../carga/ejecutar.ts"
 import { identificar, PUERTO_WINDOWS, puertoValido } from "../carga/identidad.ts"
 import {
@@ -200,6 +201,28 @@ const HERRAMIENTAS_POR_PLATAFORMA: Array<{
 ]
 
 /** Lo mismo que el `os.path.isdir` con que PlatformIO decide: un ARCHIVO con ese nombre no cuenta. */
+/**
+ * ¿`ruta` es (o está dentro de) la carpeta donde la tool `programa` deja los programas derivados?
+ *
+ * Se compara contra la base REAL (la misma función que usa `programa`), no contra nombres de
+ * carpeta sueltos. La primera versión buscaba dos tramos con ese nombre y mayúsculas exactas: en
+ * Windows se salteaba cambiando una mayúscula, y bloqueaba un proyecto legítimo del docente que
+ * tuviera esos nombres en su ruta (revisión independiente del 2026-11-26).
+ */
+export function dentroDeLosProgramasDerivados(ruta: string, entorno: NodeJS.ProcessEnv = process.env): boolean {
+  const real = (r: string) => {
+    try {
+      return realpathSync.native(r)
+    } catch {
+      return resolve(r)
+    }
+  }
+  // En Windows las rutas no distinguen mayúsculas.
+  const igualar = (r: string) => (sep === "\\" ? r.toLowerCase() : r)
+  const rel = relative(igualar(real(raizDeProgramasDerivados(entorno))), igualar(real(ruta)))
+  return !(rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+}
+
 export function esCarpeta(ruta: string): boolean {
   try {
     return statSync(ruta, { throwIfNoEntry: false })?.isDirectory() ?? false
@@ -3218,7 +3241,10 @@ Pines y checklist: compile avisa de pines problematicos; en ESP32, un pin de la 
     // Codegen MVP, Slice 1b: la carpeta del programa de un proyecto físico es DERIVADA de su IR
     // (la escribe la tool `programa`). Compilar o cargar esa carpeta desde acá saltearía la
     // regeneración y podría compilar archivos editados a mano: el camino es `programa`.
-    if ((args.action === "compile" || args.action === "flash" || args.action === "both") && cwd.split(/[\\/]/).includes(".tecnia-vista-fisica")) {
+    // Desde el 2026-11-26 esa carpeta vive en la caché del usuario, ya no dentro de
+    // `.tecnia-vista-fisica`: se reconocen las dos.
+    const esProgramaDerivado = cwd.split(/[\\/]/).includes(".tecnia-vista-fisica") || dentroDeLosProgramasDerivados(cwd)
+    if ((args.action === "compile" || args.action === "flash" || args.action === "both") && esProgramaDerivado) {
       return (
         "Esa carpeta es el programa DERIVADO de un proyecto físico: no se compila ni se carga desde acá.\n" +
         'Usá la tool `programa` (accion "compilar"), que lo regenera desde el proyecto y compila exactamente eso.'

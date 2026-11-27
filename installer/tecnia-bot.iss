@@ -208,7 +208,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\abrir-tecnia-bot.cmd"; Work
 ; Ahora lo lanza CorrerElBootstrap (sección de código, desde CurStepChanged en
 ; ssPostInstall) con Exec, que sí devuelve el código de salida. Con ese código se
 ; arma la última pantalla y el código de salida del .exe. Lo que hacía la entrada
-; vieja se conserva todo allá: consola visible, -SinPrompt en silencioso, el
+; vieja se conserva todo allá: consola visible, -SinPrompt (hoy siempre), el
 ; salteo con /skipdeps=1, la carpeta de trabajo, y el borrado de la marca
 ; ".instalando" después del bootstrap y pase lo que pase.
 ;
@@ -346,17 +346,19 @@ end;
 
 function BanderaSilencio(Value: String): String;
 begin
-  { Quien sabe que no hay nadie mirando es el instalador, no el script.
-    Corriendo por /VERYSILENT hay una consola REAL (vacía, pero real), así que
-    bootstrap.ps1 no puede deducirlo: su sondeo de teclado no falla, espera los
-    60 s completos y recién ahí sigue. Por eso la seña baja desde acá.
+  { La instalación NUNCA pregunta la key de Google: siempre le pasa -SinPrompt al
+    bootstrap. Decisión del dueño del 2026-11-26, después de instalar ocho veces
+    seguidas en su notebook: la pregunta frenaba 60 s cada instalación, y una key
+    que ya estaba guardada y andando no hay por qué volver a pedirla.
+    Antes la bandera salía sólo con WizardSilent, o sea en un despliegue silencioso.
+    Qué pasa ahora: con una key guardada, se deja y se prueba contra Google; sin
+    key, Tecnia Bot queda con el modelo gratuito y la consola de la instalación
+    avisa que se pone con el comando /clave. El acceso directo de Reparar NO pasa por acá y sigue
+    preguntando: ahí hay alguien que hizo clic a propósito para cambiarla.
     Se antepone un espacio porque esto se concatena pegado al -File que arma
     CorrerElBootstrap, más abajo. El parámetro no se usa: quedó de cuando esto se
     llamaba desde una constante de la sección Run. }
-  if WizardSilent() then
-    Result := ' -SinPrompt'
-  else
-    Result := '';
+  Result := ' -SinPrompt';
 end;
 
 const
@@ -404,7 +406,7 @@ end;
     - el entero: con qué código terminó el script, si se lanzó.
 
   Se conserva lo que hacía la entrada vieja: consola visible (SW_SHOWNORMAL: tarda
-  minutos y el docente tiene que ver que avanza), -SinPrompt en silencioso
+  minutos y el docente tiene que ver que avanza), -SinPrompt siempre
   (BanderaSilencio), el salteo con /skipdeps=1 (CorrerBootstrap), y la carpeta de
   instalación como carpeta de trabajo. }
 procedure CorrerElBootstrap;
@@ -530,6 +532,48 @@ begin
   end;
 end;
 
+{ Las dos carpetas de OpenCode, resueltas con el MISMO criterio que
+  install\uninstall.ps1 (XDG_CONFIG_HOME / XDG_DATA_HOME si están puestas, y si no
+  las del perfil). Antes el cartel las nombraba relativas ("de estas dos carpetas
+  de tu usuario"); con la ruta entera el docente no tiene que adivinar cuál es. }
+function CarpetaConfigOpenCode: String;
+begin
+  if GetEnv('XDG_CONFIG_HOME') <> '' then
+    Result := AddBackslash(GetEnv('XDG_CONFIG_HOME')) + 'opencode'
+  else
+    Result := AddBackslash(GetEnv('USERPROFILE')) + '.config\opencode';
+end;
+
+{ Qué modelo quedó configurado, mirando el opencode.json que acaba de escribir
+  install.ps1 -el archivo que OpenCode va a leer-, no lo que el script dijo que hizo.
+
+  POR QUÉ EXISTE (2026-11-26). Desde que la instalación no pregunta la key, el
+  docente termina de instalar sin saber con qué modelo quedó: con una key guardada
+  es Gemini, sin key es el gratuito. El dueño instaló y tuvo que preguntar si era
+  lo esperado. Y el aviso de privacidad del modelo gratuito salía sólo en la
+  consola, que se cierra sola.
+
+  Devuelve 'gratuito', 'gemini' o vacío. Vacío es "no lo pude saber": en ese caso
+  la pantalla no dice nada del modelo, en vez de adivinar.
+  Los dos textos que se buscan son los identificadores que escribe install.ps1
+  -ModeloSinKey y el comienzo de ModeloConKey-; un test compara los dos archivos.
+  Se mira primero el gratuito: el opencode.json nombra a Google también cuando no
+  hay key, en small_model. }
+function ModeloQueQuedo: String;
+var
+  Crudo: AnsiString;
+  Contenido: String;
+begin
+  Result := '';
+  if not LoadStringFromFile(AddBackslash(CarpetaConfigOpenCode) + 'opencode.json', Crudo) then
+    Exit;
+  Contenido := String(Crudo);
+  if Pos('"opencode/big-pickle"', Contenido) > 0 then
+    Result := 'gratuito'
+  else if Pos('"google/', Contenido) > 0 then
+    Result := 'gemini';
+end;
+
 { ── La última pantalla dice lo que el bootstrap COMPROBÓ ──────────────────────
 
   El título fijo "¡Tecnia Bot quedó instalado!" se mostraba siempre. Ahora hay un
@@ -564,6 +608,19 @@ begin
       '¡Listo! Arrancá por la web de Tecnia Bot (tecnialab.net.ar/tecnia-bot) para ver '
       + 'los primeros pasos, y abrilo desde el menú inicio o el escritorio. Recordá '
       + 'instalar los drivers USB de tu placa si todavía no lo hiciste.';
+    { Con qué modelo quedó, y si es el gratuito, el aviso de privacidad y cómo pasar a
+      Gemini. Los saltos de línea van a mitad de renglón: un renglón no puede empezar
+      con el signo de numeral. }
+    if ModeloQueQuedo = 'gratuito' then
+      Texto := Texto + #13#10 + #13#10
+        + 'Modelo: Big Pickle, el gratuito de OpenCode. OpenCode puede usar lo que se '
+        + 'escribe en el chat para mejorar el modelo: no pongas datos personales ni '
+        + 'nombres de alumnos. Para usar Gemini con una key de Google, escribí /clave '
+        + 'adentro de Tecnia Bot.'
+    else if ModeloQueQuedo = 'gemini' then
+      Texto := Texto + #13#10 + #13#10
+        + 'Modelo: Gemini, con la key de Google que está guardada en esta compu. Para '
+        + 'cambiarla, escribí /clave adentro de Tecnia Bot.';
   end
   else if EstadoBootstrap = EstadoDegradado then
   begin
@@ -662,18 +719,6 @@ const
 
 var
   PurgarDatosPersonales: Boolean;
-
-{ Las dos carpetas de OpenCode, resueltas con el MISMO criterio que
-  install\uninstall.ps1 (XDG_CONFIG_HOME / XDG_DATA_HOME si están puestas, y si no
-  las del perfil). Antes el cartel las nombraba relativas ("de estas dos carpetas
-  de tu usuario"); con la ruta entera el docente no tiene que adivinar cuál es. }
-function CarpetaConfigOpenCode: String;
-begin
-  if GetEnv('XDG_CONFIG_HOME') <> '' then
-    Result := AddBackslash(GetEnv('XDG_CONFIG_HOME')) + 'opencode'
-  else
-    Result := AddBackslash(GetEnv('USERPROFILE')) + '.config\opencode';
-end;
 
 function CarpetaDatosOpenCode: String;
 begin
