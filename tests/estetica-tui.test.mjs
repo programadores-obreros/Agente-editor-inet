@@ -99,9 +99,12 @@ test("3. el robot es un mapa de píxeles bien formado", () => {
   assert.equal(robot.length % 2, 0, "el robot tiene una cantidad impar de filas de píxeles")
   const anchos = new Set(robot.map((f) => f.length))
   assert.equal(anchos.size, 1, `las filas del robot no miden lo mismo: ${[...anchos].join(", ")}`)
-  for (const fila of robot) assert.match(fila, /^[.HEMG]+$/, `tinta desconocida en «${fila}»`)
-  // Las cuatro partes del ícono están: cabeza, ojos, boca y antena.
-  for (const tinta of "HEMG") assert.ok(robot.some((f) => f.includes(tinta)), `al robot le falta la tinta ${tinta}`)
+  for (const fila of robot) assert.match(fila, /^[.VHEMG]+$/, `tinta desconocida en «${fila}»`)
+  // Las cinco partes del ícono están: baldosa, cabeza, ojos, boca y antena.
+  for (const tinta of "VHEMG") assert.ok(robot.some((f) => f.includes(tinta)), `al robot le falta la tinta ${tinta}`)
+  // El degradé de la baldosa tiene un color por fila: si se cuenta a mano y el
+  // robot cambia de alto, las filas de más quedan sin color y nadie avisa.
+  assert.match(plugin, /const FILAS_ROBOT = ROBOT_PX\.length\b/, "las filas del degradé no salen del alto del robot")
   // Simétrico: el del ícono lo es, y un píxel corrido se nota enseguida.
   for (const fila of robot) assert.equal(fila, [...fila].reverse().join(""), `fila no simétrica: «${fila}»`)
 })
