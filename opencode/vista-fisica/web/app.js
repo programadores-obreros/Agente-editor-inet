@@ -656,10 +656,22 @@ export function pintarVinculo({ caja, texto, enlace }, dicho, { conEnlace = true
  * programa (que llega un instante después que el proyecto, por otro pedido).
  */
 function sincronizarBloquesYCodigo() {
-  if (!ultimoSnapshot?.vista) return
+  if (!ultimoSnapshot?.vista) {
+    // Un snapshot sin vista (no debería pasar en producción): la cabecera ya borró el programa. La
+    // clave y lo marcado eran de la revisión anterior: tampoco quedan (revisión a ciegas, 2026-11-27).
+    try {
+      if (elementoNombresDelPrograma) pintarNombresDelPrograma(document, elementoNombresDelPrograma, null)
+      vinculoBloquesCodigo?.actualizar(null, [], { hayBloques: false })
+    } catch {
+      /* no se pudo limpiar: el resto de la página sigue */
+    }
+    return
+  }
   const estructura = estructuraDeLaRevision(panelCodigo?.estructuraDelPrograma?.() ?? null, ultimoSnapshot.revision)
   // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
-  panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado", estructura })
+  const modeloDeLosBloques = panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado", estructura }) ?? null
+  // Sin Blockly, o sin nada que armar, no hay bloques dibujados: no se invita a tocarlos.
+  const hayBloques = (modeloDeLosBloques?.reglas?.length ?? 0) > 0
   try {
     // La clave sale de la MISMA estructura (la del programa de esta revisión) y de las reglas de
     // este snapshot: sin estructura no hay clave, y nunca queda la de otra revisión.
@@ -669,7 +681,7 @@ function sincronizarBloquesYCodigo() {
   }
   try {
     codigoPorLineas?.repartir()
-    vinculoBloquesCodigo?.actualizar(estructura, (ultimoSnapshot.vista.reglas ?? []).map((regla) => regla.id).filter((id) => typeof id === "string"))
+    vinculoBloquesCodigo?.actualizar(estructura, (ultimoSnapshot.vista.reglas ?? []).map((regla) => regla.id).filter((id) => typeof id === "string"), { hayBloques })
   } catch {
     /* el marcado falló: los bloques y el código se siguen viendo */
   }
@@ -819,7 +831,12 @@ if (enNavegador) {
     elementoEstado: document.getElementById("vista-logica-estado"),
     botonQuitar: document.getElementById("vista-logica-quitar"),
     controlador: controladorReglas,
-    alSeleccionar: (clave) => vinculoBloquesCodigo?.alTocarBloque(clave),
+    alSeleccionar: (clave) => {
+      // Viniendo de un bloque, las flechas del código siguen desde lo que quedó marcado, no desde
+      // la última línea que se había tocado antes.
+      if (clave) codigoPorLineas?.soltarCursor()
+      vinculoBloquesCodigo?.alTocarBloque(clave)
+    },
   })
   panelCodigo = crearPanelCodigo({
     fetch: (...argumentos) => fetch(...argumentos),
@@ -860,7 +877,11 @@ if (enNavegador) {
   // Sin mouse: con el foco en el cuadro del código, las flechas recorren las líneas de a una.
   elementoCodigo.addEventListener("keydown", (evento) => {
     const paso = evento.key === "ArrowDown" ? 1 : evento.key === "ArrowUp" ? -1 : 0
-    if (paso === 0 || evento.altKey || evento.ctrlKey || evento.metaKey) return
+    // Con Mayúsculas, las flechas extienden la selección de texto (copiar con el teclado): no se tocan.
+    if (paso === 0 || evento.altKey || evento.ctrlKey || evento.metaKey || evento.shiftKey) return
+    // Sin estructura, tocar una línea no marca nada: las flechas quedan para lo de siempre,
+    // desplazar el cuadro. Si no, el programa no se podía recorrer con el teclado.
+    if (!vinculoBloquesCodigo.hayEstructura()) return
     const numero = codigoPorLineas.vecina(paso)
     if (numero === null) return
     evento.preventDefault()

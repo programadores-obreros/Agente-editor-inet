@@ -41,9 +41,12 @@ const SENTINELA = "__sin_valor__"
 export const TITULOS_DE_LA_ESTRUCTURA = Object.freeze({ alIniciar: "al iniciar", porSiempre: "por siempre" })
 /** `sinPasos` es lo que dice «al iniciar» mientras no se sabe qué prepara el programa de esta
  * revisión (no llegó, o no hay programa). Decía «se completa cuando el programa esté listo», que se
- * podía leer como «lo completo yo» o como «espero y se completa solo»; ahora dice dónde mirar. Los tres textos nuevos están aprobados para la prueba por
+ * podía leer como «lo completo yo» o como «espero y se completa solo». Después dijo «todavía sin
+ * programa: mirá el paso 3», y tampoco: este renglón sale también cuando el programa SÍ está en el
+ * paso 3 pero llegó sin su estructura (falta el nombre de una pieza, o una instalación anterior).
+ * Ahora dice sólo lo que es cierto en todos los casos. Los tres textos nuevos están aprobados para la prueba por
  * el dueño (2026-11-27) y pendientes de verlos en pantalla: no es la aprobación final. */
-const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", ...TITULOS_DE_LA_ESTRUCTURA, sinPasos: "todavía sin programa: mirá el paso 3" }
+const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", ...TITULOS_DE_LA_ESTRUCTURA, sinPasos: "todavía no hay datos del programa" }
 
 /**
  * El color de cada bloque es el de su rol en el esquema: «mientras» es la ENTRADA (lo que se lee)
@@ -96,6 +99,15 @@ export const ESCALA_MINIMA_DEL_LIENZO = 0.75
 export const ESCALA_MAXIMA_DEL_LIENZO = 1.4
 /** Grosor de la barra de Blockly con mouse. */
 const GROSOR_DE_BARRA = 15
+
+/** El tema se define UNA vez por cada Blockly (definirlo dos veces con el mismo nombre es pisar un registro). */
+const NOMBRE_DEL_TEMA = "tecnia"
+const temas = new WeakMap()
+function temaDelLienzo(Blockly) {
+  if (typeof Blockly.Theme?.defineTheme !== "function" || !Blockly.Themes?.Classic) return null
+  if (!temas.has(Blockly)) temas.set(Blockly, Blockly.Theme.defineTheme(NOMBRE_DEL_TEMA, { base: Blockly.Themes.Classic, componentStyles: { workspaceBackgroundColour: "transparent" } }))
+  return temas.get(Blockly)
+}
 
 /** Las reglas a dibujar. Un modelo viejo que sólo trae `regla` vale como lista de una. */
 const reglasDe = (modelo) => modelo.reglas ?? (modelo.regla ? [modelo.regla] : [])
@@ -193,8 +205,15 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         }
       : null
 
+  // Un solo tema de Blockly, con el fondo transparente: el color del recuadro lo pone la página,
+  // que es la que sabe de tema claro y oscuro (y de papel al imprimir). Un tema de Blockly sólo
+  // cambia el fondo y las barras; los bloques y los casilleros tienen su color propio. Por eso no
+  // hacen falta dos temas ni avisarle a Blockly cuando cambia el de la página.
+  const tema = temaDelLienzo(Blockly)
+
   const workspace = Blockly.inject(contenedor, {
     ...(Metricas ? { plugins: { metricsManager: Metricas } } : {}),
+    ...(tema ? { theme: tema } : {}),
     sounds: false,
     media,
     readOnly: false,
@@ -490,6 +509,9 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         firmaDeReglas = null
         firmaDePasos = null
         rearmado()
+        // Lienzo vacío: el alto y las barras vuelven a lo suyo, no quedan los del dibujo anterior.
+        ajustarAltoAlTerminarDeDibujar()
+        medir()
         return
       }
       const pasos = pasosDe(modelo)
@@ -557,15 +579,19 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
    * foco: en la página, llevarse el foco al lienzo sube la ventana y saca de la vista el código
    * que el alumno estaba mirando. Devuelve si quedó algo marcado.
    */
+  /** Pone o saca la marca de un bloque; devuelve si pudo (un bloque sin dibujo no se puede marcar). */
   const ponerMarca = (bloque, marcado) => {
     const raiz = typeof bloque.getSvgRoot === "function" ? bloque.getSvgRoot() : null
-    if (raiz?.classList) raiz.classList.toggle(CLASE_DE_BLOQUE_MARCADO, marcado)
+    if (!raiz?.classList) return false
+    raiz.classList.toggle(CLASE_DE_BLOQUE_MARCADO, marcado)
+    return true
   }
   function marcar(clave) {
     if (destruido) return false
     for (const bloque of marcados) ponerMarca(bloque, false)
-    marcados = bloquesDeLaClave(clave)
-    for (const bloque of marcados) ponerMarca(bloque, true)
+    // Sólo cuentan los bloques a los que de verdad se les pudo poner la marca: quien llama usa la
+    // respuesta para decidir si ofrece «Ir a los bloques».
+    marcados = bloquesDeLaClave(clave).filter((bloque) => ponerMarca(bloque, true))
     return marcados.length > 0
   }
 

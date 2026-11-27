@@ -1634,3 +1634,28 @@ títulos de los dos bloques, las pistas y los avisos del vínculo quedan pendien
 los ajusta en la notebook. No es la aprobación final.
 
 **Pendiente:** la prueba en la notebook real.
+
+## Vista lógica: el recuadro de los bloques sigue el tema de la página (2026-11-27)
+
+**Reabre:** la regla de la ventana rediseñada (2026-11-26) de que el esquema, la leyenda y el lienzo
+de bloques son «papel» claro en los dos temas.
+
+**Qué pasó:** el dueño vio los bloques en su notebook, en tema oscuro: el recuadro blanco en medio
+de la página oscura encandilaba.
+
+**Decisión (dueño, 2026-11-27):** el lienzo de bloques deja de ser papel y toma el fondo de la
+página, como cualquier tarjeta. El esquema y la leyenda siguen siendo papel: las piezas dibujadas
+están pensadas para fondo claro.
+
+**Cómo:** un solo tema de Blockly con el fondo transparente; el color lo pone la página. No hacen
+falta dos temas ni avisarle a Blockly cuando cambia el de la página: un tema de Blockly sólo cambia
+el fondo y las barras, y los bloques tienen su color propio.
+
+**Medido en Chromium:** texto blanco sobre «mientras», «hacer» y la estructura: 6,70, 5,47 y 10,35 de
+contraste, igual en los dos temas. Borde de cada bloque contra el fondo oscuro: 4,77, 5,54 y 3,92.
+Al cambiar de tema con la ventana abierta los bloques no se rearman. En impresión, con el oscuro
+puesto, el lienzo sale blanco.
+
+**Consecuencia aceptada:** el relleno de los bloques de estructura contra el fondo oscuro da 1,64; lo
+que los recorta es su borde. La lista de un casillero sigue saliendo blanca en oscuro (es chica y se
+lee); no se tocó.

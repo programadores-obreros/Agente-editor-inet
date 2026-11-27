@@ -136,7 +136,7 @@ export function pintarNombresDelPrograma(doc, elemento, nombres) {
 
   const plegable = crear("details")
   plegable.open = estabaAbierto
-  plegable.appendChild(crear("summary", nombres.ejemplo ? TEXTOS_DE_LOS_NOMBRES.titulo.replace("{ejemplo}", nombres.ejemplo) : TEXTOS_DE_LOS_NOMBRES.tituloSinEjemplo))
+  plegable.appendChild(crear("summary", nombres.ejemplo ? TEXTOS_DE_LOS_NOMBRES.titulo.replace("{ejemplo}", () => nombres.ejemplo) : TEXTOS_DE_LOS_NOMBRES.tituloSinEjemplo))
   plegable.appendChild(lista)
   if (nombres.formas.length > 0) plegable.appendChild(crear("p", TEXTOS_DE_LOS_NOMBRES.formas.replace("{ejemplos}", () => enumerar(nombres.formas))))
   elemento.replaceChildren(plegable)

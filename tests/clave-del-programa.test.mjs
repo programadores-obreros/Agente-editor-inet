@@ -333,7 +333,9 @@ test("app.js: la clave se pinta con la estructura de la revisión que se muestra
   assert.ok(funcion)
   assert.match(funcion[1], /const estructura = estructuraDeLaRevision\(/)
   assert.match(funcion[1], /pintarNombresDelPrograma\(document, elementoNombresDelPrograma, nombresDelPrograma\(estructura, ultimoSnapshot\.vista\.reglas \?\? \[\], elementoDelPrograma\?\.textContent \?\? "", TITULOS_DE_LA_ESTRUCTURA\)\)/)
-  assert.equal([...app.matchAll(/pintarNombresDelPrograma\(/g)].length, 1, "un solo lugar pinta la clave")
+  // Dos llamadas: la que pinta, y la que la borra cuando llega un snapshot sin vista (con `null`).
+  assert.equal([...app.matchAll(/pintarNombresDelPrograma\(/g)].length, 2)
+  assert.equal([...app.matchAll(/pintarNombresDelPrograma\(document, elementoNombresDelPrograma, null\)/g)].length, 1, "la otra sólo borra")
   // El código que mira la clave es el del MISMO cuadro en el que el panel escribe el programa.
   assert.match(app, /elementoDelPrograma = elementoCodigo/)
 })

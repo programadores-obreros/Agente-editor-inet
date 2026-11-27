@@ -32,8 +32,12 @@ export const TEXTOS_DEL_VINCULO = Object.freeze({
   //   - «…es parte de la preparación del programa» chocaba con «al iniciar», que es justamente lo
   //     que el programa prepara, y el alumno leía que «al iniciar» no salía de ningún bloque;
   //   - ninguno afirma «quedó marcado»: eso lo dice la pantalla, no el texto.
-  pistaJuntoALosBloques: "Cada bloque tiene sus líneas en el código. Tocá un bloque y se marcan.",
-  pistaJuntoAlCodigo: "Cada línea sale de un bloque. Tocá una línea y se marca su bloque.",
+  // No dicen «cada bloque» ni «cada línea» (lo decían, y la revisión a ciegas lo marcó): una regla
+  // a medio armar no tiene líneas, y un `#include` no sale de ningún bloque. La idea general está
+  // en el párrafo fijo de «Con bloques»; acá va sólo lo que pasa al tocar.
+  pistaJuntoALosBloques: "Tocá un bloque y se marcan sus líneas en el código.",
+  pistaJuntoAlCodigo: "Tocá una línea y se marca el bloque del que sale.",
+  bloqueSinLineas: "Este bloque todavía no está en el programa.",
   bloqueUnaLinea: "Este bloque es lo mismo que la línea {desde} del código.",
   bloqueVariasLineas: "Este bloque es lo mismo que las líneas {desde} a {hasta} del código.",
   reglaUnaLinea: "Esta regla es lo mismo que la línea {desde} del código.",
@@ -110,6 +114,11 @@ export function textoDeLaLinea(clave, reglasEnElLienzo = []) {
  * El coordinador. Recibe lo que pasa (se tocó un bloque, se tocó una línea, cambió el programa) y
  * dice qué marcar y qué escribir. No guarda nada del programa: sólo qué está marcado.
  *
+ * `marcarBloques` y `marcarLineas` devuelven si de verdad quedó algo marcado, y eso se USA
+ * (revisión a ciegas, 2026-11-27): la primera versión armaba el texto y ofrecía el enlace sólo con
+ * el dato de la estructura. Sin Blockly, o con una regla del programa que no está dibujada, decía
+ * «Ir a los bloques» sin ningún bloque marcado.
+ *
  * @param {{
  *   marcarBloques: (clave: object | null) => unknown,
  *   marcarLineas: (rango: { desde: number, hasta: number } | null) => unknown,
@@ -120,29 +129,48 @@ export function textoDeLaLinea(clave, reglasEnElLienzo = []) {
 export function crearVinculoBloquesCodigo({ marcarBloques, marcarLineas, decirJuntoALosBloques, decirJuntoAlCodigo }) {
   let estructura = null
   let reglasEnElLienzo = []
+  /** ¿Hay bloques dibujados? Sin ellos (sin Blockly, o sin nada que armar) no se invita a tocarlos. */
+  let hayBloques = true
   /** De dónde vino lo que está marcado: `"bloque"`, `"linea"` o `null` (nada). */
   let origen = null
+  /** El bloque marcado, para volver a marcarlo si el lienzo se rearma (los bloques nuevos nacen sin marca). */
+  let claveMarcada = null
 
-  /** Nada marcado. Si hay estructura queda la pista de qué se puede tocar; si no, no se dice nada. */
-  function borrar() {
+  const sePuedeTocar = () => estructura !== null && hayBloques
+
+  /** Nada marcado. Si se puede tocar algo, queda la pista; si no, no se dice nada. */
+  function borrar(juntoALosBloques = null) {
     origen = null
+    claveMarcada = null
     marcarBloques(null)
     marcarLineas(null)
-    decirJuntoALosBloques(estructura ? TEXTOS_DEL_VINCULO.pistaJuntoALosBloques : "", { hayLineas: false })
-    decirJuntoAlCodigo(estructura ? TEXTOS_DEL_VINCULO.pistaJuntoAlCodigo : "", { hayBloque: false })
+    decirJuntoALosBloques(juntoALosBloques ?? (sePuedeTocar() ? TEXTOS_DEL_VINCULO.pistaJuntoALosBloques : ""), { hayLineas: false })
+    decirJuntoAlCodigo(sePuedeTocar() ? TEXTOS_DEL_VINCULO.pistaJuntoAlCodigo : "", { hayBloque: false })
   }
 
   return {
     /**
-     * La estructura del programa que se está mostrando (o `null`) y las reglas dibujadas. Si la
-     * estructura es OTRA que la que había, lo marcado ya no vale y se borra. Si es la misma (un
-     * repintado sin cambios), se deja como está.
+     * La estructura del programa que se está mostrando (o `null`), las reglas dibujadas y si hay
+     * bloques en el lienzo. Si la estructura es OTRA que la que había, lo marcado ya no vale y se
+     * borra. Si es la misma (un repintado), lo marcado sigue, y el bloque se vuelve a marcar: el
+     * lienzo pudo haberse rearmado entero sin que cambie el programa (cambian las opciones de un
+     * casillero al armar una condición), y los bloques nuevos nacen sin marca mientras el código
+     * seguía diciendo «Esta regla es lo mismo que las líneas…».
      */
-    actualizar(nueva, idsDeReglas = []) {
+    actualizar(nueva, idsDeReglas = [], { hayBloques: ahoraHayBloques = true } = {}) {
       reglasEnElLienzo = [...idsDeReglas]
-      if (nueva === estructura) return
-      estructura = nueva ?? null
-      borrar()
+      const cambiaronLosBloques = ahoraHayBloques !== hayBloques
+      hayBloques = ahoraHayBloques
+      if ((nueva ?? null) !== estructura) {
+        estructura = nueva ?? null
+        return borrar()
+      }
+      if (origen === null) {
+        if (cambiaronLosBloques) borrar()
+        return
+      }
+      // Si el bloque marcado ya no se puede marcar (no está dibujado), lo marcado desde él no vale.
+      if (claveMarcada && marcarBloques(claveMarcada) !== true && origen === "bloque") borrar()
     },
 
     /** Se tocó un bloque (`null`: se tocó el fondo del lienzo). */
@@ -153,12 +181,15 @@ export function crearVinculoBloquesCodigo({ marcarBloques, marcarLineas, decirJu
         return
       }
       const rango = rangoDeLaClave(estructura, clave)
-      if (!rango) return borrar()
+      // Un bloque que el programa no tiene (una regla a medio armar): se dice eso, no la pista
+      // general, que justo ahí sería falsa.
+      if (!rango) return borrar(estructura ? TEXTOS_DEL_VINCULO.bloqueSinLineas : "")
       origen = "bloque"
+      claveMarcada = clave
       marcarBloques(clave)
-      marcarLineas(rango)
-      decirJuntoALosBloques(textoDelBloque(rango, clave), { hayLineas: true })
-      decirJuntoAlCodigo(TEXTOS_DEL_VINCULO.pistaJuntoAlCodigo, { hayBloque: false })
+      const hayLineas = marcarLineas(rango) === true
+      decirJuntoALosBloques(hayLineas ? textoDelBloque(rango, clave) : "", { hayLineas })
+      decirJuntoAlCodigo(sePuedeTocar() ? TEXTOS_DEL_VINCULO.pistaJuntoAlCodigo : "", { hayBloque: false })
     },
 
     /** Se tocó una línea del código (`null`: se tocó el código fuera de una línea). */
@@ -167,13 +198,17 @@ export function crearVinculoBloquesCodigo({ marcarBloques, marcarLineas, decirJu
       const clave = claveDeLaLinea(estructura, numero)
       const rango = clave ? rangoDeLaClave(estructura, clave) : null
       origen = "linea"
-      marcarBloques(clave)
+      claveMarcada = clave
+      const hayBloque = clave !== null && marcarBloques(clave) === true
+      if (clave === null) marcarBloques(null)
       // Sin bloque, se marca la línea tocada sola: que se vea qué se tocó y por qué no hay bloque.
       marcarLineas(rango ?? { desde: numero, hasta: numero })
-      decirJuntoALosBloques(rango ? textoDelBloque(rango, clave) : TEXTOS_DEL_VINCULO.pistaJuntoALosBloques, { hayLineas: rango !== null })
-      decirJuntoAlCodigo(textoDeLaLinea(clave, reglasEnElLienzo), { hayBloque: clave !== null })
+      decirJuntoALosBloques(rango && hayBloque ? textoDelBloque(rango, clave) : sePuedeTocar() ? TEXTOS_DEL_VINCULO.pistaJuntoALosBloques : "", { hayLineas: rango !== null && hayBloque })
+      decirJuntoAlCodigo(textoDeLaLinea(clave, reglasEnElLienzo), { hayBloque })
     },
 
+    /** ¿Hay estructura? Sin ella, tocar una línea no marca nada (y las flechas no se usan para eso). */
+    hayEstructura: () => estructura !== null,
     /** Qué hay marcado ahora (para las pruebas y para quien quiera saber si hay algo). */
     origen: () => origen,
   }
