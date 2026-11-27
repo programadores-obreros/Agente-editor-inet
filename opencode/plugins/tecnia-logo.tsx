@@ -1,7 +1,8 @@
 /** @jsxImportSource @opentui/solid */
 // ============================================================================
 // Tecnia Bot — plugin de TUI que reemplaza el logo del splash de OpenCode
-// por la identidad de marca (robot + wordmark "TECNIA BOT", en violeta).
+// por la identidad de marca (el robot del ícono + wordmark "TECNIA BOT"), y pone
+// en castellano los ejemplos del cuadro de texto.
 //
 // Se declara en ~/.config/opencode/tui.json ("plugin": ["./plugins/tecnia-logo.tsx"]).
 // Bun transpila este .tsx en runtime: NO hay que compilar ni empaquetar nada.
@@ -19,28 +20,142 @@ import { join } from "node:path"
 import { existsSync, readFileSync } from "node:fs"
 import { createHash } from "node:crypto"
 
-// Robot en arte Unicode. Solo caracteres presentes en la fuente de consola de
-// Windows (Consolas): bloques █ y box-drawing ━┃┏┓┗┛┻╻. Nada de ◕/‿ (salen □).
-const ROBOT = [
-  "   ╻     ╻",
-  " ┏━┻━━━━━┻━┓",
-  " ┃ █     █ ┃",
-  " ┃  ━━━━━  ┃",
-  " ┗━━━━━━━━━┛",
+// ----------------------------------------------------------------------------
+// EL LOGO SE DIBUJA CON PÍXELES, Y SÓLO CON CARACTERES QUE CUALQUIER CONSOLA TIENE
+//
+// Por qué: en una notebook real con Windows 10 el robot anterior salía hecho de
+// signos de pregunta. Estaba dibujado con box-drawing de trazo grueso (┏━┓┃┗┛┻╻)
+// y la viñeta del tip era ●. Ninguno de esos existe en las tablas OEM de Windows
+// (CP437/CP850), y esa consola mostraba «?» por cada uno. El wordmark, hecho con
+// █, salía perfecto: █ sí está en las dos tablas. El comentario viejo afirmaba que
+// los caracteres estaban en Consolas; nadie lo había mirado en la consola real.
+//
+// La regla ahora: fuera de los comentarios, este archivo sólo usa caracteres que
+// están en CP437 Y en CP850. La lista y el guardián viven en
+// tests/estetica-tui.test.mjs.
+//
+// NO VERIFICADO: por qué esa consola convierte a la tabla OEM (la hipótesis es una
+// fuente de mapa de bits). El dibujo nuevo no depende de la respuesta: con estos
+// caracteres sale bien en los dos casos.
+//
+// Cada celda de la terminal son dos píxeles, uno arriba del otro: ▀ pinta el de
+// arriba, ▄ el de abajo, █ los dos. Con color de frente y de fondo, una celda
+// puede llevar dos colores. Así el logo es el ícono del escritorio (la baldosa
+// violeta con su degradé, el robot blanco, la antena dorada) y no un dibujo de
+// palitos.
+// ----------------------------------------------------------------------------
+
+// Tintas: V baldosa · H cabeza · E ojos · M boca · G antena · T «TECNIA» · B «BOT»
+// · . vacío. Es el ícono del escritorio (installer/branding/icono.svg) llevado a
+// 14x14 píxeles: la baldosa violeta redondeada con el robot adentro.
+const ROBOT_PX = [
+  "..VVVVVVVVVV..",
+  ".VVVVVGGVVVVV.",
+  "VVVVVVGGVVVVVV",
+  "VVVVVVHHVVVVVV",
+  "VVVHHHHHHHHVVV",
+  "VVHHHHHHHHHHVV",
+  "VVHHEEHHEEHHVV",
+  "VVHHEEHHEEHHVV",
+  "VVHHHHHHHHHHVV",
+  "VVHHHMMMMHHHVV",
+  "VVVHHHHHHHHVVV",
+  "VVVVVVVVVVVVVV",
+  ".VVVVVVVVVVVV.",
+  "..VVVVVVVVVV..",
 ]
 
-// Wordmark "TECNIA BOT" en bloques (generado, filas alineadas).
-const WORDMARK = [
-  "█████  █████   ████  █   █  ███   ███     ████    ███   █████",
-  "  █    █      █      ██  █   █   █   █    █   █  █   █    █",
-  "  █    ████   █      █ █ █   █   █████    ████   █   █    █",
-  "  █    █      █      █  ██   █   █   █    █   █  █   █    █",
-  "  █    █████   ████  █   █  ███  █   █    ████    ███     █",
-]
+// Letras de 6 píxeles de alto (3 renglones), de trazo grueso: los palos miden dos
+// columnas. Con palos de una sola columna el wordmark quedaba flaco al lado del
+// robot.
+const LETRAS: Record<string, string[]> = {
+  T: ["######", "..##..", "..##..", "..##..", "..##..", "..##.."],
+  E: ["######", "##....", "#####.", "##....", "##....", "######"],
+  C: [".#####", "##....", "##....", "##....", "##....", ".#####"],
+  N: ["##...##", "###..##", "####.##", "##.####", "##..###", "##...##"],
+  I: ["##", "##", "##", "##", "##", "##"],
+  A: [".####.", "##..##", "##..##", "######", "##..##", "##..##"],
+  B: ["#####.", "##..##", "#####.", "##..##", "##..##", "#####."],
+  O: [".####.", "##..##", "##..##", "##..##", "##..##", ".####."],
+}
+
+// Arma el mapa de píxeles de «TECNIA BOT»: cada palabra con su tinta.
+function wordmarkPx(): string[] {
+  const filas = ["", "", "", "", "", ""]
+  const palabras: Array<[string, string]> = [
+    ["TECNIA", "T"],
+    ["BOT", "B"],
+  ]
+  palabras.forEach(([palabra, tinta], p) => {
+    if (p > 0) for (let f = 0; f < 6; f++) filas[f] += "...."
+    palabra.split("").forEach((letra, i) => {
+      const forma = LETRAS[letra] ?? []
+      for (let f = 0; f < 6; f++) {
+        filas[f] += (i > 0 ? ".." : "") + (forma[f] ?? "").replace(/#/g, tinta)
+      }
+    })
+  })
+  return filas
+}
+
+type Tramo = { texto: string; fg?: RGBA; bg?: RGBA }
+
+// Convierte un mapa de píxeles en renglones de tramos del mismo color. Dos filas
+// de píxeles hacen un renglón de terminal.
+function pintar(mapa: string[], tinta: (c: string, fila: number) => RGBA | undefined): Tramo[][] {
+  const renglones: Tramo[][] = []
+  for (let f = 0; f < mapa.length; f += 2) {
+    const arriba = mapa[f] ?? ""
+    const abajo = mapa[f + 1] ?? ""
+    const tramos: Tramo[] = []
+    const ancho = Math.max(arriba.length, abajo.length)
+    for (let x = 0; x < ancho; x++) {
+      const a = arriba[x] ?? "."
+      const b = abajo[x] ?? "."
+      let celda: Tramo
+      if (a === "." && b === ".") celda = { texto: " " }
+      else if (b === ".") celda = { texto: "▀", fg: tinta(a, f) }
+      else if (a === ".") celda = { texto: "▄", fg: tinta(b, f + 1) }
+      else if (tinta(a, f) === tinta(b, f + 1)) celda = { texto: "█", fg: tinta(a, f) }
+      else celda = { texto: "▀", fg: tinta(a, f), bg: tinta(b, f + 1) }
+      const ultimo = tramos[tramos.length - 1]
+      if (ultimo && ultimo.fg === celda.fg && ultimo.bg === celda.bg) ultimo.texto += celda.texto
+      else tramos.push(celda)
+    }
+    renglones.push(tramos)
+  }
+  return renglones
+}
 
 const FALLBACK_VIOLET = RGBA.fromInts(167, 139, 250) // #a78bfa
 const FALLBACK_VIOLET_DEEP = RGBA.fromInts(139, 92, 246) // #8b5cf6
 const FALLBACK_GOLD = RGBA.fromInts(255, 194, 36) // #ffc224
+const FALLBACK_CLARO = RGBA.fromInts(236, 231, 245) // #ece7f5
+
+// Ejemplos que rotan en el cuadro de texto vacío. Cosas que el bot sabe hacer hoy.
+const EJEMPLOS = [
+  "¿Cómo prendo un LED con Arduino?",
+  "Armame el circuito de un semáforo",
+  "¿Para qué sirve una resistencia?",
+  "Quiero medir la temperatura con un DHT11",
+]
+
+// Los colores del ícono no salen del theme: son la marca, y tienen que ser los
+// mismos con tema oscuro o claro (igual que el .ico del escritorio).
+const MARCA_BLANCO = RGBA.fromInts(255, 255, 255)
+const MARCA_VIOLETA_ARRIBA = [139, 92, 246] // #8b5cf6
+const MARCA_VIOLETA_ABAJO_RGB = [109, 40, 217] // #6d28d9
+const MARCA_VIOLETA_ABAJO = RGBA.fromInts(109, 40, 217)
+const MARCA_BOCA = RGBA.fromInts(139, 92, 246) // #8b5cf6
+const FILAS_ROBOT = ROBOT_PX.length
+const DEGRADE: RGBA[] = Array.from({ length: FILAS_ROBOT }, (_, i) => {
+  const k = i / (FILAS_ROBOT - 1)
+  const mezcla = (j: number) =>
+    Math.round((MARCA_VIOLETA_ARRIBA[j] ?? 0) + ((MARCA_VIOLETA_ABAJO_RGB[j] ?? 0) - (MARCA_VIOLETA_ARRIBA[j] ?? 0)) * k)
+  return RGBA.fromInts(mezcla(0), mezcla(1), mezcla(2))
+})
+
+const LEMA = "Arduino y ESP32 para la escuela técnica"
 
 // Tips propios de Tecnia Bot: en español, pensados para un docente que recién
 // arranca. Reemplazan al tip por defecto de OpenCode ("Run /connect...") que
@@ -51,6 +166,7 @@ const TIPS: string[] = [
   'Probá: "¿cómo prendo un LED con Arduino?"',
   'Pedí "armame el circuito de riego" y te lo dibuja',
   'Escribí "mostrame cómo funciona el protoboard"',
+  'Escribí /ayuda para abrir el manual con ejemplos',
   'Escribí /diagnostico para revisar que todo esté listo',
   'Escribí /actualizar para traer la última versión',
 ]
@@ -137,33 +253,75 @@ async function hayVersionNueva(): Promise<string | null> {
   }
 }
 
+function Pixeles(props: { renglones: Tramo[][] }) {
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      {props.renglones.map((tramos) => (
+        <box flexDirection="row" flexShrink={0}>
+          {tramos.map((t) => (
+            <text fg={t.fg} bg={t.bg} selectable={false}>
+              {t.texto}
+            </text>
+          ))}
+        </box>
+      ))}
+    </box>
+  )
+}
+
 function Art(props: { api: TuiPluginApi; nueva: string | null; version: string | null }) {
   const api = props.api
+  const cabeza = pick(api, "text", FALLBACK_CLARO)
+  const violeta = pick(api, "primary", FALLBACK_VIOLET)
+  const colores: Record<string, RGBA> = {
+    H: MARCA_BLANCO,
+    E: MARCA_VIOLETA_ABAJO,
+    M: MARCA_BOCA,
+    G: FALLBACK_GOLD,
+    T: cabeza,
+    B: violeta,
+  }
+  // La baldosa lleva el degradé del ícono: un violeta por fila de píxeles.
+  const tinta = (c: string, fila: number) => (c === "V" ? DEGRADE[fila] : colores[c])
+  const apagado = pick(api, "textMuted", FALLBACK_VIOLET)
   // La versión va SIEMPRE presente bajo la marca: ayuda al docente y al soporte
   // ("¿qué versión tenés?" se ve de una). Fallback a la firma sola si no se pudo leer.
   const firma = props.version
     ? `un proyecto de Tecnia Lab · tecnialab.net.ar · v${props.version}`
     : "un proyecto de Tecnia Lab · tecnialab.net.ar"
+  // Ícono y wordmark van lado a lado, como un logo horizontal: ocupan 7 renglones
+  // en vez de los 11 del logo anterior, y eso es lo que le deja lugar al aviso de
+  // abajo (en una ventana de 26 renglones el aviso de la key salía cortado).
+  // Lado a lado mide 87 columnas: en una ventana más angosta que eso se apilan.
+  // El ancho se mira una sola vez, al cargar (acá no hay reactividad de solid-js).
+  let ancho = 120
+  try {
+    ancho = api.renderer?.width ?? 120
+  } catch {
+    // sin drama: se asume una ventana normal
+  }
+  const apilado = ancho < 94
   return (
     <box flexDirection="column" alignItems="center">
-      {ROBOT.map((line) => (
-        <text fg={pick(api, "accent", FALLBACK_VIOLET_DEEP)} selectable={false}>
-          {line}
-        </text>
-      ))}
+      <box flexDirection={apilado ? "column" : "row"} alignItems={apilado ? "center" : "flex-start"} flexShrink={0}>
+        <Pixeles renglones={pintar(ROBOT_PX, tinta)} />
+        <box width={4} flexShrink={0} />
+        <box flexDirection="column" alignItems={apilado ? "center" : "flex-start"} flexShrink={0}>
+          <box height={1} />
+          <Pixeles renglones={pintar(wordmarkPx(), tinta)} />
+          <box height={1} />
+          <text fg={apagado} selectable={false}>
+            {LEMA}
+          </text>
+        </box>
+      </box>
       <box height={1} />
-      {WORDMARK.map((line) => (
-        <text fg={pick(api, "primary", FALLBACK_VIOLET)} attributes={TextAttributes.BOLD} selectable={false}>
-          {line}
-        </text>
-      ))}
-      <box height={1} />
-      <text fg={pick(api, "textMuted", FALLBACK_GOLD)} selectable={false}>
+      <text fg={apagado} selectable={false}>
         {firma}
       </text>
       {props.nueva ? (
         <text fg={pick(api, "warning", FALLBACK_GOLD)} attributes={TextAttributes.BOLD} selectable={false}>
-          {`Hay una version nueva (v${props.nueva}) - escribi /actualizar`}
+          {`Hay una versión nueva (v${props.nueva}) · escribí /actualizar`}
         </text>
       ) : null}
     </box>
@@ -171,21 +329,16 @@ function Art(props: { api: TuiPluginApi; nueva: string | null; version: string |
 }
 
 // Un solo tip propio (elegido al azar al cargar, o el aviso de la key si
-// corresponde), con el mismo look que el tip nativo de OpenCode: viñeta en
-// color de acento + texto legible. `label` cambia de "Tip" a algo mas
-// urgente cuando el mensaje es sobre la API key faltante/compartida.
+// corresponde). La viñeta es ■ y no ●: ● no está en las tablas OEM de Windows
+// y en la consola de una notebook real salía «?».
 function TipLine(props: { api: TuiPluginApi; tip: string; label?: string }) {
   const api = props.api
   return (
-    <box width="100%" maxWidth={75} alignItems="center" paddingTop={3}>
-      <box flexDirection="row" maxWidth="100%">
-        <text flexShrink={0} fg={pick(api, "warning", FALLBACK_GOLD)} selectable={false}>
-          {`● ${props.label ?? "Tip"} `}
-        </text>
-        <text flexShrink={1} wrapMode="word" fg={pick(api, "textMuted", FALLBACK_VIOLET)} selectable={false}>
-          {props.tip}
-        </text>
-      </box>
+    <box width="100%" maxWidth={75} paddingTop={1}>
+      <text wrapMode="word" fg={pick(api, "textMuted", FALLBACK_VIOLET)} selectable={false}>
+        <span style={{ fg: pick(api, "warning", FALLBACK_GOLD), bold: true }}>{`■ ${props.label ?? "Tip"}  `}</span>
+        {props.tip}
+      </text>
     </box>
   )
 }
@@ -282,6 +435,19 @@ const tui: TuiPlugin = async (api) => {
     slots: {
       home_logo() {
         return <Art api={api} nueva={nueva} version={version} />
+      },
+      // El cuadro de texto es EL MISMO que arma OpenCode por defecto (mismo `ref`,
+      // mismo slot `home_prompt_right`): lo único que cambia son los ejemplos que
+      // muestra vacío. Los de fábrica ("Fix broken tests", "What is the tech stack
+      // of this project?") están en inglés y hablan de otro oficio.
+      home_prompt(_ctx, props) {
+        return (
+          <api.ui.Prompt
+            ref={props.ref}
+            right={<api.ui.Slot name="home_prompt_right" />}
+            placeholders={{ normal: EJEMPLOS, shell: ["dir", "pio --version", "cd .."] }}
+          />
+        )
       },
       home_bottom() {
         return <TipLine api={api} tip={tip} label={label} />
