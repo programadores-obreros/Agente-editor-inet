@@ -158,8 +158,9 @@ test("T1 sin reglas y con slots: UNA regla vacía para armar la primera; con una
 
 test("T1 sin opcionesRegla ni reglas: regla null, nada que pintar, sin crash", async () => {
   const proyectar = await cargar()
-  assert.deepEqual(proyectar({}), { reglas: [], regla: null, hayVarias: false })
-  assert.deepEqual(proyectar({ reglas: [], opcionesRegla: { slots: [] } }), { reglas: [], regla: null, hayVarias: false })
+  // `alIniciar: null` (2026-11-26): sin estructura del programa, los renglones de «al iniciar» no se saben.
+  assert.deepEqual(proyectar({}), { reglas: [], regla: null, hayVarias: false, alIniciar: null })
+  assert.deepEqual(proyectar({ reglas: [], opcionesRegla: { slots: [] } }), { reglas: [], regla: null, hayVarias: false, alIniciar: null })
 })
 
 test("T1 pura y estable: misma entrada, misma salida; no muta la entrada; sin parche en las opciones", async () => {

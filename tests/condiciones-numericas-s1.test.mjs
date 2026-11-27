@@ -158,7 +158,7 @@ test("6: Blockly: «Mientras la lectura de [capacidad] del [entrada] sea [compar
     ])
     const { Blockly, reg } = fabricarBlockly()
     crearAdaptadorBlockly({ Blockly, contenedor: {}, alEditar() {}, alQuitar() {} }).pintar(modelo)
-    const [mientras, hacer] = reg.ws.bloques
+    const [mientras, hacer] = reg.deRegla()
     assert.deepEqual(Object.keys(mientras.campos), ["capacidad", "sensor", "comparador", "valor", "unidad"])
     assert.deepEqual(mientras.etiquetas, ["Mientras la lectura de", "del", "sea"])
     assert.deepEqual(Object.keys(hacer.campos), ["actuador", "salida"])
@@ -195,7 +195,7 @@ test("7: editar el número desde Blockly → UN SetComportamiento (mismo id) →
     const promesas = []
     const adaptador = crearAdaptadorBlockly({ Blockly, contenedor: {}, alEditar: (e) => promesas.push(controlador.cambiar(e)), alQuitar() {} })
     adaptador.pintar(proyectarModeloLogico(obtenerSnapshot().vista))
-    reg.ws.bloques[0].campos.valor.setValue("25,5")
+    reg.deRegla()[0].campos.valor.setValue("25,5")
     await Promise.all(promesas)
     assert.equal(enviados.length, 1)
     const despues = ctx.servicio.snapshot()
@@ -203,7 +203,7 @@ test("7: editar el número desde Blockly → UN SetComportamiento (mismo id) →
     assert.equal(despues.proyecto.comportamientos[0].id, antes.proyecto.comportamientos[0].id, "se edita la regla dueña")
     assert.deepEqual(cuandoDe(ctx), numerica("cmp-5", ">", umbral(25.5)), "sólo cambió el número")
     adaptador.pintar(proyectarModeloLogico(obtenerSnapshot().vista))
-    assert.equal(reg.ws.bloques[0].getFieldValue("valor"), "25,5")
+    assert.equal(reg.deRegla()[0].getFieldValue("valor"), "25,5")
     assert.equal(reglaDe(ctx.servicio).texto, "Mientras la lectura de temperatura del DHT22 sea mayor a 25,5 °C, el LED está encendido.")
   } finally {
     ctx.servicio.cerrar()

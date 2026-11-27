@@ -13,6 +13,18 @@
 // por nombre recorriendo todos los bloques escribiría el valor de una regla en la otra: un OK
 // falso en pantalla.
 //
+// LA ESTRUCTURA DEL PROGRAMA (2026-11-26). Los pares ya no van sueltos: van adentro de un bloque
+// «por siempre», y arriba hay un bloque «al iniciar» con un renglón por cada cosa que el programa
+// prepara al arrancar. Es la forma de todo programa de microcontrolador (lo que se hace una vez y
+// lo que se repite), y antes sólo se veía en el código. Además, «mientras» suelto se puede leer
+// como una espera que frena el programa; adentro de «por siempre» se ve que es una condición que
+// se vuelve a mirar en cada vuelta.
+//   - Los dos bloques nuevos son de SÓLO LECTURA: no tienen campos, no se mueven ni se borran.
+//   - Los renglones de «al iniciar» son texto que manda el servidor (salen del programa generado
+//     para ESTA revisión). Si todavía no llegaron, el bloque lo dice; no se muestran los de antes.
+//   - Tocar un bloque avisa cuál es (`alSeleccionar`) para que la página marque sus líneas en el
+//     código; `marcar` hace el camino inverso. Acá no se sabe nada de líneas.
+//
 // Forma fija de cada par: un bloque contenedor «mientras» con UN bloque de acción encastrado, y un dropdown
 // por campo del modelo (los campos se reparten por índice: la primera mitad en el contenedor y el
 // resto en la acción; la forma fija de 4 campos queda 2+2). Los nombres de campo, los textos fijos y las opciones los dicta el
@@ -20,8 +32,13 @@
 
 const TIPO_MIENTRAS = "tecnia_mientras"
 const TIPO_HACER = "tecnia_hacer"
+const TIPO_AL_INICIAR = "tecnia_al_iniciar"
+const TIPO_PASO = "tecnia_paso"
+const TIPO_POR_SIEMPRE = "tecnia_por_siempre"
 const SENTINELA = "__sin_valor__"
-const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:" }
+/** `sinPasos` es lo que dice «al iniciar» mientras no se sabe qué prepara el programa de esta
+ * revisión (no llegó, o no hay programa). Los tres textos nuevos están pendientes de aprobación del dueño. */
+const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", alIniciar: "al iniciar", porSiempre: "por siempre", sinPasos: "se completa cuando el programa esté listo" }
 
 /**
  * El color de cada bloque es el de su rol en el esquema: «mientras» es la ENTRADA (lo que se lee)
@@ -31,11 +48,24 @@ const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:" }
  * ≥ 4.5) lo comprueba `tests/ventana-colores-bloques.test.mjs`.
  */
 export const COLORES_DE_BLOQUE = Object.freeze({ mientras: "#1d4ed8", hacer: "#0f766e" })
-// Lugar de los pares en el lienzo. El alto de un par lo dice Blockly después de dibujarlo; si la
-// API no lo informa (la de prueba), se usa el estimado.
+/**
+ * Los bloques de la estructura («al iniciar», «por siempre» y los renglones) son del controlador:
+ * no leen ni manejan nada, dicen cuándo pasa cada cosa. Llevan el color de la zona del controlador
+ * en el esquema (`--ctrl`); el mismo test los ata a la hoja y les mide el contraste.
+ */
+export const COLOR_DE_ESTRUCTURA = "#334155"
+// Lugar de los bloques en el lienzo: «al iniciar» arriba y «por siempre» debajo. El alto de un
+// bloque lo dice Blockly después de dibujarlo; si la API no lo informa (la de prueba), se usa el
+// estimado.
 const MARGEN = 16
 const SEPARACION = 16
-const ALTO_ESTIMADO_DEL_PAR = 96
+const ALTO_ESTIMADO_DE_AL_INICIAR = 96
+/** El lienzo crece con lo que tiene adentro, entre estos dos altos; pasado el máximo, queda la barra. */
+export const ALTO_MINIMO_DEL_LIENZO = 260
+export const ALTO_MAXIMO_DEL_LIENZO = 640
+/** Lo que se deja libre debajo del último bloque: el margen y el lugar de la barra horizontal de
+ * Blockly, que va pegada al borde de abajo y si no tapa el cierre de «por siempre». */
+export const LIBRE_BAJO_LOS_BLOQUES = 32
 
 /** Las reglas a dibujar. Un modelo viejo que sólo trae `regla` vale como lista de una. */
 const reglasDe = (modelo) => modelo.reglas ?? (modelo.regla ? [modelo.regla] : [])
@@ -50,9 +80,12 @@ function opcionesDeCampo(campo, mensajes) {
 
 /**
  * @param {{ Blockly: object, contenedor: Element, alEditar: (e: { reglaId: string | null, slot: string, valor: string }) => void,
- *   alQuitar: (e: { reglaId: string }) => void, media?: string, mensajes?: Partial<typeof MENSAJES> }} config
+ *   alQuitar: (e: { reglaId: string }) => void, alSeleccionar?: (clave: ClaveDeBloque | null) => void,
+ *   media?: string, mensajes?: Partial<typeof MENSAJES> }} config
+ * @typedef {{ bloque: "alIniciar" } | { bloque: "porSiempre" } | { bloque: "paso", indice: number } | { bloque: "regla", reglaId: string }} ClaveDeBloque
+ *   Qué bloque es, sin ids de Blockly: es lo único que sale de acá hacia la página.
  */
-export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar, media = "/assets/blockly/media/", mensajes = {} }) {
+export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar, alSeleccionar = () => {}, media = "/assets/blockly/media/", mensajes = {} }) {
   if (!Blockly) throw new Error("crearAdaptadorBlockly: hay que inyectar la API de Blockly")
   const textos = { ...MENSAJES, ...mensajes }
 
@@ -64,6 +97,9 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         args0: [{ type: "input_dummy", name: "CAMPOS" }],
         message1: "%1",
         args1: [{ type: "input_statement", name: "ACCION" }],
+        // Los pares se encastran uno debajo del otro adentro de «por siempre».
+        previousStatement: null,
+        nextStatement: null,
         colour: COLORES_DE_BLOQUE.mientras,
         tooltip: "",
       },
@@ -73,6 +109,31 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         args0: [{ type: "input_dummy", name: "CAMPOS" }],
         previousStatement: null,
         colour: COLORES_DE_BLOQUE.hacer,
+        tooltip: "",
+      },
+      {
+        type: TIPO_AL_INICIAR,
+        message0: textos.alIniciar,
+        message1: "%1",
+        args1: [{ type: "input_statement", name: "PASOS" }],
+        colour: COLOR_DE_ESTRUCTURA,
+        tooltip: "",
+      },
+      {
+        type: TIPO_PASO,
+        message0: "%1",
+        args0: [{ type: "input_dummy", name: "CAMPOS" }],
+        previousStatement: null,
+        nextStatement: null,
+        colour: COLOR_DE_ESTRUCTURA,
+        tooltip: "",
+      },
+      {
+        type: TIPO_POR_SIEMPRE,
+        message0: textos.porSiempre,
+        message1: "%1",
+        args1: [{ type: "input_statement", name: "REGLAS" }],
+        colour: COLOR_DE_ESTRUCTURA,
         tooltip: "",
       },
     ])
@@ -98,14 +159,72 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   }
   medir()
 
+  // El lienzo crece con sus bloques (dentro de un mínimo y un máximo): con «al iniciar», «por
+  // siempre» y dos reglas, los 260 px fijos de antes dejaban la mitad detrás de la barra.
+  const ajustarAlto = () => {
+    if (!contenedor?.style || typeof workspace.getBlocksBoundingBox !== "function") return
+    const caja = workspace.getBlocksBoundingBox()
+    if (!caja || !Number.isFinite(caja.bottom)) return
+    const alto = Math.min(ALTO_MAXIMO_DEL_LIENZO, Math.max(ALTO_MINIMO_DEL_LIENZO, Math.ceil(caja.bottom + LIBRE_BAJO_LOS_BLOQUES)))
+    contenedor.style.height = `${alto}px`
+  }
+  // Blockly termina de dibujar los bloques un instante después de `render()` (los encola). Medido
+  // en Chromium el 2026-11-26: tomada en el momento, la caja de los bloques daba menos que la
+  // final y el lienzo quedaba corto, con el cierre de «por siempre» detrás de la barra. Por eso se
+  // mide en el momento y OTRA VEZ cuando Blockly avisa que terminó.
+  const ajustarAltoAlTerminarDeDibujar = () => {
+    ajustarAlto()
+    const terminar = Blockly.renderManagement?.finishQueuedRenders
+    if (typeof terminar !== "function") return
+    Promise.resolve(terminar()).then(
+      () => {
+        if (destruido) return
+        ajustarAlto()
+        medir()
+      },
+      () => {},
+    )
+  }
+
   let destruido = false
   /** Un elemento por regla dibujada: la regla del modelo y sus dos bloques. */
   let pares = []
+  /** Los bloques de la estructura que están dibujados. `pasos` sólo tiene los renglones que
+   * vinieron del servidor: el renglón de «todavía no se sabe» no es un paso del programa. */
+  let estructura = { alIniciar: null, porSiempre: null, pasos: [] }
   let firmaActual = null
+  let marcados = []
   const parDelBloque = (idBloque) => pares.find((p) => p.mientras.id === idBloque || p.hacer.id === idBloque) ?? null
 
+  /** Qué bloque es, para la página; `null` si no es ninguno que tenga algo que mostrar en el código. */
+  function claveDelBloque(idBloque) {
+    if (estructura.alIniciar?.id === idBloque) return { bloque: "alIniciar" }
+    if (estructura.porSiempre?.id === idBloque) return { bloque: "porSiempre" }
+    const indice = estructura.pasos.findIndex((b) => b.id === idBloque)
+    if (indice >= 0) return { bloque: "paso", indice }
+    const par = parDelBloque(idBloque)
+    // Una regla que todavía no nació (sin id) no está en el programa.
+    return par && par.regla.id !== null ? { bloque: "regla", reglaId: par.regla.id } : null
+  }
+
+  /** Los bloques de una clave (una regla son dos: su «mientras» y su «hacer»). */
+  function bloquesDeLaClave(clave) {
+    if (!clave) return []
+    if (clave.bloque === "alIniciar") return estructura.alIniciar ? [estructura.alIniciar] : []
+    if (clave.bloque === "porSiempre") return estructura.porSiempre ? [estructura.porSiempre] : []
+    if (clave.bloque === "paso") return estructura.pasos[clave.indice] ? [estructura.pasos[clave.indice]] : []
+    const par = clave.bloque === "regla" ? pares.find((p) => p.regla.id !== null && p.regla.id === clave.reglaId) : null
+    return par ? [par.mientras, par.hacer] : []
+  }
+
   const alCambiarCampo = (evento) => {
-    if (destruido || pares.length === 0) return
+    if (destruido) return
+    // Tocar un bloque (o el fondo: `newElementId` vacío) es un evento de la interfaz, no un cambio.
+    if (Blockly.Events.SELECTED !== undefined && evento.type === Blockly.Events.SELECTED) {
+      alSeleccionar(evento.newElementId ? claveDelBloque(evento.newElementId) : null)
+      return
+    }
+    if (pares.length === 0) return
     if (evento.type !== Blockly.Events.BLOCK_CHANGE || evento.isUiEvent || evento.element !== "field") return
     // La regla sale del BLOQUE que cambió, nunca del nombre del campo (se repite entre reglas).
     const par = parDelBloque(evento.blockId)
@@ -141,8 +260,39 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     }
   }
 
-  /** Dibuja el par de UNA regla con su borde superior en `y`; devuelve sus bloques y su alto. */
-  function construir(campos, y) {
+  const fijar = (bloque) => {
+    bloque.setDeletable(false)
+    bloque.setMovable(false)
+    bloque.initSvg()
+    bloque.render()
+  }
+  /** Encastra `bloques` uno debajo del otro adentro de la entrada `nombre` de `contenedorBloque`. */
+  function encastrar(contenedorBloque, nombre, bloques) {
+    let conexion = contenedorBloque.getInput(nombre).connection
+    for (const bloque of bloques) {
+      conexion.connect(bloque.previousConnection)
+      conexion = bloque.nextConnection
+    }
+  }
+
+  /**
+   * Dibuja «al iniciar» con sus renglones. `pasos` es la lista de textos del servidor, o `null`
+   * si no se sabe (ahí va un solo renglón que lo dice, y no cuenta como paso).
+   */
+  function construirAlIniciar(pasos) {
+    const bloque = workspace.newBlock(TIPO_AL_INICIAR)
+    const renglones = (pasos ?? [textos.sinPasos]).map((texto) => {
+      const renglon = workspace.newBlock(TIPO_PASO)
+      renglon.getInput("CAMPOS").appendField(new Blockly.FieldLabel(texto))
+      return renglon
+    })
+    encastrar(bloque, "PASOS", renglones)
+    for (const b of [bloque, ...renglones]) fijar(b)
+    return { bloque, pasos: pasos === null ? [] : renglones }
+  }
+
+  /** Dibuja el par de UNA regla; devuelve sus dos bloques. */
+  function construir(campos) {
     const contenedorBloque = workspace.newBlock(TIPO_MIENTRAS)
     const accion = workspace.newBlock(TIPO_HACER)
     // Si el servidor dice en qué bloque va cada campo (`grupo`), se respeta; si no, la forma fija
@@ -163,17 +313,11 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
       }
     }
     contenedorBloque.getInput("ACCION").connection.connect(accion.previousConnection)
-    for (const bloque of [contenedorBloque, accion]) {
-      bloque.setDeletable(false)
-      bloque.setMovable(false)
-      bloque.initSvg()
-      bloque.render()
-    }
-    if (typeof contenedorBloque.moveBy === "function") contenedorBloque.moveBy(MARGEN, y)
-    const medida = typeof contenedorBloque.getHeightWidth === "function" ? contenedorBloque.getHeightWidth() : null
-    const alto = medida && Number.isFinite(medida.height) && medida.height > 0 ? medida.height : ALTO_ESTIMADO_DEL_PAR
-    return { mientras: contenedorBloque, hacer: accion, alto }
+    return { mientras: contenedorBloque, hacer: accion }
   }
+
+  /** Los renglones de «al iniciar» del modelo: la lista de textos, o `null` si no se sabe. */
+  const pasosDe = (modelo) => (Array.isArray(modelo.alIniciar?.pasos) ? modelo.alIniciar.pasos : null)
 
   const firmaDeCampos = (campos) => campos.map((c) => [c.slot, c.prefijo, c.tipo ?? "opciones", c.grupo ?? null, c.tipo === "numero" ? [] : opcionesDeCampo(c, textos)])
 
@@ -185,25 +329,37 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
       if (reglas.length === 0) {
         workspace.clear()
         pares = []
+        estructura = { alIniciar: null, porSiempre: null, pasos: [] }
+        marcados = []
         firmaActual = null
         return
       }
+      const pasos = pasosDe(modelo)
       // La firma es la FORMA de cada par, en orden (no el id de la regla: una regla que recién
       // nace pasa de `null` a su id sin que cambie un solo bloque). Si cambia cuántas hay o la
       // forma de alguna, se redibuja todo; si no, cada par toma los valores de la regla de su lugar.
-      const firma = JSON.stringify(reglas.map((r) => firmaDeCampos(r.campos)))
+      // Los renglones de «al iniciar» también son forma: si cambian (o pasan de «no se sabe» a
+      // sabidos), se redibuja.
+      const firma = JSON.stringify([pasos, reglas.map((r) => firmaDeCampos(r.campos))])
       if (firma !== firmaActual) {
         firmaActual = null
         pares = []
+        estructura = { alIniciar: null, porSiempre: null, pasos: [] }
+        marcados = []
         workspace.clear()
-        let y = MARGEN
-        const nuevos = []
-        for (const regla of reglas) {
-          const par = construir(regla.campos, y)
-          nuevos.push({ regla, mientras: par.mientras, hacer: par.hacer })
-          y += par.alto + SEPARACION
-        }
+        const alIniciar = construirAlIniciar(pasos)
+        const porSiempre = workspace.newBlock(TIPO_POR_SIEMPRE)
+        const nuevos = reglas.map((regla) => ({ regla, ...construir(regla.campos) }))
+        encastrar(porSiempre, "REGLAS", nuevos.map((par) => par.mientras))
+        // De afuera hacia adentro no: un bloque se dibuja bien cuando sus encastrados ya existen.
+        for (const par of nuevos) for (const bloque of [par.mientras, par.hacer]) fijar(bloque)
+        fijar(porSiempre)
+        if (typeof alIniciar.bloque.moveBy === "function") alIniciar.bloque.moveBy(MARGEN, MARGEN)
+        const medida = typeof alIniciar.bloque.getHeightWidth === "function" ? alIniciar.bloque.getHeightWidth() : null
+        const alto = medida && Number.isFinite(medida.height) && medida.height > 0 ? medida.height : ALTO_ESTIMADO_DE_AL_INICIAR
+        if (typeof porSiempre.moveBy === "function") porSiempre.moveBy(MARGEN, MARGEN + alto + SEPARACION)
         pares = nuevos
+        estructura = { alIniciar: alIniciar.bloque, porSiempre, pasos: alIniciar.pasos }
         firmaActual = firma
       } else {
         // Mismos bloques, modelo nuevo: cada par pasa a apuntar a la regla recién llegada.
@@ -221,10 +377,27 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         }
       }
       if (typeof workspace.resize === "function") workspace.resize()
+      // Al final, con los valores ya puestos en los campos: un campo con otro texto cambia el
+      // tamaño de su bloque.
+      ajustarAltoAlTerminarDeDibujar()
       medir()
     } finally {
       Blockly.Events.enable()
     }
+  }
+
+  /**
+   * Marca los bloques de una clave (los de una regla son dos) y desmarca los que estaban; con
+   * `null` no queda ninguno. Es el camino del código hacia los bloques. No selecciona ni mueve el
+   * foco: en la página, llevarse el foco al lienzo sube la ventana y saca de la vista el código
+   * que el alumno estaba mirando. Devuelve si quedó algo marcado.
+   */
+  function marcar(clave) {
+    if (destruido) return false
+    for (const bloque of marcados) if (typeof bloque.setHighlighted === "function") bloque.setHighlighted(false)
+    marcados = bloquesDeLaClave(clave)
+    for (const bloque of marcados) if (typeof bloque.setHighlighted === "function") bloque.setHighlighted(true)
+    return marcados.length > 0
   }
 
   /** Quita LA regla dibujada. Con varias no elige ninguna (no hay "la" regla): eso se hace en la sección Reglas. */
@@ -240,5 +413,5 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     workspace.dispose()
   }
 
-  return { pintar, quitar, destruir }
+  return { pintar, quitar, marcar, destruir }
 }
