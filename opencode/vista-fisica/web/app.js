@@ -18,6 +18,7 @@ import { pintar, pintarRenglonDelPrograma } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_SIN_CONEXION } from "./estado-conexion.js"
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
+import { TITULOS_DE_LA_ESTRUCTURA } from "./adaptador-blockly.js"
 import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
 import { crearCodigoPorLineas } from "./codigo-por-lineas.js"
 import { crearVinculoBloquesCodigo } from "./vinculo-bloques-codigo.js"
@@ -426,6 +427,8 @@ let codigoPorLineas = null
 let vinculoBloquesCodigo = null
 /** Dónde va la clave del programa (qué pieza es `cmp-12`), o `null` fuera del navegador. */
 let elementoNombresDelPrograma = null
+/** El cuadro donde el panel escribe el programa (la clave mira qué está escrito ahí). */
+let elementoDelPrograma = null
 /** El renglón del programa en «Cómo está» (2026-11-26): fuera de `contenedores`, porque cambia
  * cuando contesta `/api/programa`, no sólo cuando llega un snapshot. */
 let elementoProgramaResumen = null
@@ -660,7 +663,7 @@ function sincronizarBloquesYCodigo() {
   try {
     // La clave sale de la MISMA estructura (la del programa de esta revisión) y de las reglas de
     // este snapshot: sin estructura no hay clave, y nunca queda la de otra revisión.
-    if (elementoNombresDelPrograma) pintarNombresDelPrograma(document, elementoNombresDelPrograma, nombresDelPrograma(estructura, ultimoSnapshot.vista.reglas ?? []))
+    if (elementoNombresDelPrograma) pintarNombresDelPrograma(document, elementoNombresDelPrograma, nombresDelPrograma(estructura, ultimoSnapshot.vista.reglas ?? [], elementoDelPrograma?.textContent ?? "", TITULOS_DE_LA_ESTRUCTURA))
   } catch {
     /* la clave falló: el código se sigue viendo */
   }
@@ -833,6 +836,7 @@ if (enNavegador) {
   const elementoCodigo = document.getElementById("vista-codigo-texto")
   codigoPorLineas = crearCodigoPorLineas({ doc: document, elementoCodigo })
   elementoNombresDelPrograma = document.getElementById("vista-codigo-nombres")
+  elementoDelPrograma = elementoCodigo
   const vinculoDeLosBloques = { caja: document.getElementById("vista-logica-vinculo"), texto: document.getElementById("vista-logica-vinculo-texto"), enlace: document.getElementById("vista-logica-vinculo-enlace") }
   const vinculoDelCodigo = { caja: document.getElementById("vista-codigo-vinculo"), texto: document.getElementById("vista-codigo-vinculo-texto"), enlace: document.getElementById("vista-codigo-vinculo-enlace") }
   vinculoBloquesCodigo = crearVinculoBloquesCodigo({

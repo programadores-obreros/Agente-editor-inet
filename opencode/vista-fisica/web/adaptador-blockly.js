@@ -36,11 +36,14 @@ const TIPO_AL_INICIAR = "tecnia_al_iniciar"
 const TIPO_PASO = "tecnia_paso"
 const TIPO_POR_SIEMPRE = "tecnia_por_siempre"
 const SENTINELA = "__sin_valor__"
+/** Cómo se llaman los dos bloques de estructura. Los usa también la clave del programa («`setup`
+ * es «al iniciar»»): un solo lugar, para que la clave no nombre un bloque que el lienzo llama distinto. */
+export const TITULOS_DE_LA_ESTRUCTURA = Object.freeze({ alIniciar: "al iniciar", porSiempre: "por siempre" })
 /** `sinPasos` es lo que dice «al iniciar» mientras no se sabe qué prepara el programa de esta
  * revisión (no llegó, o no hay programa). Decía «se completa cuando el programa esté listo», que se
  * podía leer como «lo completo yo» o como «espero y se completa solo»; ahora dice dónde mirar. Los tres textos nuevos están aprobados para la prueba por
  * el dueño (2026-11-27) y pendientes de verlos en pantalla: no es la aprobación final. */
-const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", alIniciar: "al iniciar", porSiempre: "por siempre", sinPasos: "todavía sin programa: mirá el paso 3" }
+const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", ...TITULOS_DE_LA_ESTRUCTURA, sinPasos: "todavía sin programa: mirá el paso 3" }
 
 /**
  * El color de cada bloque es el de su rol en el esquema: «mientras» es la ENTRADA (lo que se lee)

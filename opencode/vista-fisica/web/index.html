@@ -286,9 +286,11 @@
   .linea-de-codigo[data-cursor] { box-shadow: inset 0 0 0 1px var(--cod-2); }
   /* La clave del programa: qué pieza es cada `cmp-N` y qué regla es cada `beh-N`. Va arriba del
      código, dentro de su cuadro, y sólo cuando hay programa con su estructura. */
-  #vista-codigo-nombres { padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-bottom: 1px solid var(--cod-linea); }
-  #vista-codigo-nombres p { margin: 0 0 var(--e2); }
-  #vista-codigo-nombres li { padding: var(--e1) 0; }
+  #vista-codigo-nombres { font-size: var(--t-s); color: var(--cod-2); border-bottom: 1px solid var(--cod-linea); }
+  #vista-codigo-nombres summary { padding: var(--e3) var(--e4); cursor: pointer; font-weight: 600; color: var(--cod-t); }
+  #vista-codigo-nombres ul { padding: 0 var(--e4); columns: 2 18rem; column-gap: var(--e6, 32px); }
+  #vista-codigo-nombres li { padding: var(--e1) 0; break-inside: avoid; }
+  #vista-codigo-nombres p { margin: 0; padding: var(--e2) var(--e4) var(--e3); }
   #vista-codigo-nombres code { font-family: var(--mono); color: var(--cod-t); font-weight: 600; }
   #vista-codigo-vinculo { margin: 0; padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-top: 1px solid var(--cod-linea); }
   /* El cuadro del código tiene su propio fondo: el enlace toma la tinta del cuadro (el color de
