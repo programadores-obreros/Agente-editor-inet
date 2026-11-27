@@ -81,6 +81,18 @@ export const ALTO_MAXIMO_DEL_LIENZO = 1600
 /** Lo que se deja libre debajo del último bloque: el margen y el lugar de la barra horizontal de
  * Blockly, que va pegada al borde de abajo y si no tapa el cierre de «por siempre». */
 export const LIBRE_BAJO_LOS_BLOQUES = 32
+/**
+ * La escala del lienzo sale de UNA regla (2026-11-27): que el bloque más ancho entre justo en el
+ * ancho del lienzo, entre un mínimo y un máximo. En la notebook del dueño los bloques ocupaban un
+ * tercio del recuadro y él agrandó la página con el zoom del navegador para leerlos; con eso la
+ * regla más larga se le cortó por la derecha. Con lugar de sobra los bloques se agrandan (hasta
+ * el máximo); en una ventana angosta se achican (hasta el mínimo), y recién por debajo del mínimo
+ * aparece la barra horizontal. La letra de Blockly mide unos 15 px a escala 1.
+ */
+export const ESCALA_MINIMA_DEL_LIENZO = 0.75
+export const ESCALA_MAXIMA_DEL_LIENZO = 1.4
+/** Grosor de la barra de Blockly con mouse. */
+const GROSOR_DE_BARRA = 15
 
 /** Las reglas a dibujar. Un modelo viejo que sólo trae `regla` vale como lista de una. */
 const reglasDe = (modelo) => modelo.reglas ?? (modelo.regla ? [modelo.regla] : [])
@@ -108,10 +120,14 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     Blockly.defineBlocksWithJsonArray([
       {
         type: TIPO_MIENTRAS,
-        message0: "%1",
-        args0: [{ type: "input_dummy", name: "CAMPOS" }],
-        message1: "%1",
-        args1: [{ type: "input_statement", name: "ACCION" }],
+        // «hacer» va encastrado como VALOR en una segunda fila, no como sentencia (2026-11-27).
+        // Con una entrada de sentencia, «mientras» era un bloque en C: debajo del «hacer» quedaba
+        // el cierre de la C, una franja azul a todo el ancho que parecía un hueco para encastrar
+        // otra acción, y una regla tiene UNA. Así cada regla es una caja azul con su acción verde
+        // adentro, sin hueco. Se probaron otros renderers y achicar la franja: no la sacan.
+        message0: "%1 %2",
+        args0: [{ type: "input_end_row", name: "CAMPOS" }, { type: "input_value", name: "ACCION" }],
+        inputsInline: true,
         // Los pares se encastran uno debajo del otro adentro de «por siempre».
         previousStatement: null,
         nextStatement: null,
@@ -122,7 +138,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         type: TIPO_HACER,
         message0: `${textos.hacer} %1`,
         args0: [{ type: "input_dummy", name: "CAMPOS" }],
-        previousStatement: null,
+        output: null,
         colour: COLORES_DE_BLOQUE.hacer,
         tooltip: "",
       },
@@ -154,7 +170,28 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     ])
   }
 
+  // Las barras de Blockly, de fábrica, dejan correr el lienzo medio ancho y medio alto MÁS ALLÁ de
+  // los bloques, así que siempre hay «algo» para desplazar y las dos quedan a la vista aunque todo
+  // entre (medido en Chromium: con 574×320 px de bloques en un lienzo de 1251×366, el área
+  // desplazable era de 1928×686). Con estas métricas el área desplazable es la de los bloques con
+  // su margen, o la vista si es más grande. Sin `MetricsManager` (la API de prueba) no se cambia nada.
+  const Metricas =
+    typeof Blockly.MetricsManager === "function"
+      ? class extends Blockly.MetricsManager {
+          getScrollMetrics(enCoordenadasDelLienzo, vista, contenido) {
+            const v = vista || this.getViewMetrics(false)
+            const c = contenido || this.getContentMetrics(false)
+            const escala = this.workspace_.scale
+            const ancho = Math.max(v.width, c.left + c.width + MARGEN * escala)
+            const alto = Math.max(v.height, c.top + c.height + LIBRE_BAJO_LOS_BLOQUES)
+            const divisor = enCoordenadasDelLienzo ? escala : 1
+            return { top: 0, left: 0, width: ancho / divisor, height: alto / divisor }
+          }
+        }
+      : null
+
   const workspace = Blockly.inject(contenedor, {
+    ...(Metricas ? { plugins: { metricsManager: Metricas } } : {}),
     sounds: false,
     media,
     readOnly: false,
@@ -180,8 +217,36 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     if (!contenedor?.style || typeof workspace.getBlocksBoundingBox !== "function") return
     const caja = workspace.getBlocksBoundingBox()
     if (!caja || !Number.isFinite(caja.bottom)) return
-    const alto = Math.min(ALTO_MAXIMO_DEL_LIENZO, Math.max(ALTO_MINIMO_DEL_LIENZO, Math.ceil(caja.bottom + LIBRE_BAJO_LOS_BLOQUES)))
+    // Tres cosas que dependen de lo mismo (la caja de los bloques y el ancho del lienzo) y se
+    // deciden juntas: la ESCALA, el ALTO y qué BARRAS se ven.
+    const anchoDelLienzo = Number.isFinite(contenedor.clientWidth) ? contenedor.clientWidth : 0
+    const anchoDeLosBloques = Number.isFinite(caja.right) ? caja.right + MARGEN : 0
+    if (anchoDelLienzo > 0 && anchoDeLosBloques > MARGEN && typeof workspace.setScale === "function") {
+      const escalaPara = (ancho) => Math.min(ESCALA_MAXIMA_DEL_LIENZO, Math.max(ESCALA_MINIMA_DEL_LIENZO, Math.floor((ancho / anchoDeLosBloques) * 100) / 100))
+      let pedida = escalaPara(anchoDelLienzo)
+      // Si a esa escala los bloques pasan el alto máximo, va a estar la barra vertical, que ocupa
+      // su ancho: la escala se elige de nuevo contando con eso. Si no, con muchas reglas aparecía
+      // también la barra horizontal, por 15 px (lo encontró el test de las barras).
+      if (Math.ceil(caja.bottom * pedida + LIBRE_BAJO_LOS_BLOQUES) > ALTO_MAXIMO_DEL_LIENZO) pedida = escalaPara(anchoDelLienzo - GROSOR_DE_BARRA)
+      if (pedida !== workspace.scale) workspace.setScale(pedida)
+    }
+    // La caja viene en coordenadas del lienzo (sin escala): para pasarla a px se multiplica.
+    const escala = Number.isFinite(workspace.scale) && workspace.scale > 0 ? workspace.scale : 1
+    const pedido = Math.ceil(caja.bottom * escala + LIBRE_BAJO_LOS_BLOQUES)
+    const alto = Math.min(ALTO_MAXIMO_DEL_LIENZO, Math.max(ALTO_MINIMO_DEL_LIENZO, pedido))
     contenedor.style.height = `${alto}px`
+    // Una barra a la vista dice «hay más»: sólo se muestra la que hace falta. La vertical, pasado
+    // el alto máximo; la horizontal, si ni a la escala mínima entra el bloque más ancho.
+    const barras = workspace.scrollbar
+    if (!barras?.hScroll || !barras?.vScroll || anchoDelLienzo <= 0) return
+    const faltaAlto = pedido > ALTO_MAXIMO_DEL_LIENZO
+    const faltaAncho = anchoDeLosBloques * escala > anchoDelLienzo - (faltaAlto ? GROSOR_DE_BARRA : 0)
+    barras.hScroll.setContainerVisible(faltaAncho)
+    barras.vScroll.setContainerVisible(faltaAlto)
+    // Sin barra no hay cómo volver: lo que ya no se desplaza vuelve a su borde.
+    if (typeof workspace.scroll === "function" && ((!faltaAncho && workspace.scrollX !== 0) || (!faltaAlto && workspace.scrollY !== 0))) {
+      workspace.scroll(faltaAncho ? workspace.scrollX : 0, faltaAlto ? workspace.scrollY : 0)
+    }
   }
   // Blockly termina de dibujar los bloques un instante después de `render()` (los encola). Medido
   // en Chromium el 2026-11-26: tomada en el momento, la caja de los bloques daba menos que la
@@ -202,6 +267,18 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   }
 
   let destruido = false
+  // El ancho del lienzo cambia con la ventana: la escala y las barras se deciden de nuevo.
+  let anchoVisto = null
+  const observador =
+    typeof ResizeObserver === "function" && typeof contenedor?.clientWidth === "number"
+      ? new ResizeObserver(() => {
+          if (destruido || contenedor.clientWidth === anchoVisto) return
+          anchoVisto = contenedor.clientWidth
+          ajustarAlto()
+          medir()
+        })
+      : null
+  observador?.observe(contenedor)
   /** Un elemento por regla dibujada: la regla del modelo y sus dos bloques. */
   let pares = []
   /** Los bloques de la estructura que están dibujados. `pasos` sólo tiene los renglones que
@@ -361,7 +438,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         else entrada.appendField(new Blockly.FieldDropdown(opcionesDeCampo(campo, textos)), campo.slot)
       }
     }
-    contenedorBloque.getInput("ACCION").connection.connect(accion.previousConnection)
+    contenedorBloque.getInput("ACCION").connection.connect(accion.outputConnection)
     return { mientras: contenedorBloque, hacer: accion }
   }
 
@@ -507,6 +584,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   function destruir() {
     if (destruido) return
     destruido = true
+    observador?.disconnect()
     if (hayGestos && typeof contenedor.removeEventListener === "function") for (const tipo of ["pointerdown", "keydown"]) contenedor.removeEventListener(tipo, huboGesto, true)
     workspace.removeChangeListener(alCambiarCampo)
     workspace.dispose()

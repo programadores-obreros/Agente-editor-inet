@@ -41,7 +41,7 @@ import { fabricarBlockly } from "./phase3-blockly-fake.mjs"
 import { cssEmbebidoDe, reglasCss, tokensDe, contraste } from "./ventana-helpers.mjs"
 
 const WEB = join(REPO, "opencode/vista-fisica/web")
-const { crearAdaptadorBlockly, CLASE_DE_BLOQUE_MARCADO, COLOR_DE_ESTRUCTURA, ALTO_MINIMO_DEL_LIENZO, ALTO_MAXIMO_DEL_LIENZO, LIBRE_BAJO_LOS_BLOQUES } = await import(join(WEB, "adaptador-blockly.js"))
+const { crearAdaptadorBlockly, CLASE_DE_BLOQUE_MARCADO, ESCALA_MINIMA_DEL_LIENZO, ESCALA_MAXIMA_DEL_LIENZO, COLOR_DE_ESTRUCTURA, ALTO_MINIMO_DEL_LIENZO, ALTO_MAXIMO_DEL_LIENZO, LIBRE_BAJO_LOS_BLOQUES } = await import(join(WEB, "adaptador-blockly.js"))
 const { proyectarModeloLogico } = await import(join(WEB, "vista-logica.js"))
 const { crearVistaLogica, crearPanelVistaLogica } = await import(join(WEB, "vista-logica-ui.js"))
 
@@ -65,10 +65,11 @@ const modelo = (reglas, pasos = null) => ({ reglas, regla: reglas[0] ?? null, ha
 const PASOS = ["Pulsador (GPIO25): entrada", "LED (GPIO4): salida, arranca apagado"]
 const SIN_PASOS = "todavía sin programa: mirá el paso 3"
 
-function montar({ contenedor = { nombre: "div" }, caja = null, alto = null } = {}) {
+function montar({ contenedor = { nombre: "div" }, caja = null, alto = null, conEscala = false } = {}) {
   const { Blockly, reg } = fabricarBlockly()
   reg.cajaDeBloques = caja
   reg.altoDeBloque = alto
+  reg.conEscala = conEscala
   const llamadas = { editar: [], quitar: [], seleccionar: [] }
   const adaptador = crearAdaptadorBlockly({ Blockly, contenedor, alEditar: (x) => llamadas.editar.push(x), alQuitar: (x) => llamadas.quitar.push(x), alSeleccionar: (x) => llamadas.seleccionar.push(x) })
   const uno = (tipo) => {
@@ -505,6 +506,68 @@ test("si Blockly no informa medidas, o el contenedor no tiene estilo, el alto no
     assert.equal(contenedor.style.height, undefined)
   }
   assert.doesNotThrow(() => montar({ contenedor: {}, caja: { top: 0, bottom: 400, left: 0, right: 0 } }).adaptador.pintar(modelo([regla("beh-1")], PASOS)))
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// La escala del lienzo y las barras (2026-11-27)
+//
+// En la notebook del dueño los bloques ocupaban un tercio del recuadro y él agrandó la página con
+// el zoom; con eso la regla más larga se cortó por la derecha y quedaron las dos barras a la vista
+// aunque (sin el zoom) entraba todo. Una sola regla decide la escala: que el bloque más ancho entre
+// en el lienzo, entre un mínimo y un máximo. Y cada barra se muestra sólo si hace falta.
+// Los números de abajo son cuentas; que en el navegador quede así se vio en Chromium (seis reglas,
+// 1366 px: escala 1,4, 66 % del ancho, sin barras; 600 px: escala 0,85, 97 %, sin barras).
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** Pinta en un lienzo de `ancho` px con bloques que miden `derecha` × `abajo` (sin escala). */
+function conLienzo({ ancho, derecha, abajo = 300 }) {
+  const contenedor = { style: {}, clientWidth: ancho }
+  const m = montar({ contenedor, caja: { top: 16, bottom: abajo, left: 16, right: derecha }, conEscala: true })
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  return { escala: m.reg.ws.scale, alto: contenedor.style.height, barras: { ...m.reg.barras }, m, contenedor }
+}
+
+test("la escala hace entrar el bloque más ancho en el lienzo, entre el mínimo y el máximo", () => {
+  // bloques de 584 + 16 de margen = 600
+  assert.equal(conLienzo({ ancho: 600, derecha: 584 }).escala, 1, "entra justo: escala 1")
+  assert.equal(conLienzo({ ancho: 720, derecha: 584 }).escala, 1.2, "sobra lugar: se agranda")
+  assert.equal(conLienzo({ ancho: 2000, derecha: 584 }).escala, ESCALA_MAXIMA_DEL_LIENZO, "con mucho lugar, hasta el máximo")
+  assert.equal(conLienzo({ ancho: 510, derecha: 584 }).escala, 0.85, "falta lugar: se achica")
+  assert.equal(conLienzo({ ancho: 300, derecha: 584 }).escala, ESCALA_MINIMA_DEL_LIENZO, "muy angosto, hasta el mínimo")
+  assert.ok(ESCALA_MINIMA_DEL_LIENZO < 1 && 1 < ESCALA_MAXIMA_DEL_LIENZO)
+  // Hacia abajo: una escala redondeada hacia arriba dejaría el bloque un pelo afuera.
+  assert.equal(conLienzo({ ancho: 599, derecha: 584 }).escala, 0.99)
+})
+
+test("el alto del lienzo es el de los bloques YA ESCALADOS, no el que tienen a escala 1", () => {
+  assert.equal(conLienzo({ ancho: 2000, derecha: 584, abajo: 500 }).alto, `${Math.ceil(500 * ESCALA_MAXIMA_DEL_LIENZO + LIBRE_BAJO_LOS_BLOQUES)}px`)
+  assert.equal(conLienzo({ ancho: 600, derecha: 584, abajo: 500 }).alto, `${500 + LIBRE_BAJO_LOS_BLOQUES}px`)
+})
+
+test("cada barra se muestra sólo si hace falta: ninguna cuando entra todo", () => {
+  assert.deepEqual(conLienzo({ ancho: 1250, derecha: 584 }).barras, { h: false, v: false })
+  // Ni a la escala mínima entra el bloque más ancho: la horizontal.
+  assert.deepEqual(conLienzo({ ancho: 300, derecha: 584 }).barras, { h: true, v: false })
+  // Pasado el alto máximo: la vertical (y la horizontal no, si de ancho entra).
+  assert.deepEqual(conLienzo({ ancho: 600, derecha: 560, abajo: ALTO_MAXIMO_DEL_LIENZO + 100 }).barras, { h: false, v: true })
+})
+
+test("cuando una barra deja de hacer falta, el lienzo vuelve a su borde (sin barra no hay cómo volver)", () => {
+  const { m, contenedor } = conLienzo({ ancho: 300, derecha: 584 })
+  m.reg.ws.scroll(-120, 0) // el alumno corrió el lienzo de costado
+  contenedor.clientWidth = 1250
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  assert.deepEqual(m.reg.barras, { h: false, v: false })
+  assert.deepEqual([m.reg.ws.scrollX, m.reg.ws.scrollY], [0, 0])
+})
+
+test("sin ancho medible, o sin escala en la API, no se decide escala ni barras y el alto se calcula a escala 1", () => {
+  const sinAncho = { style: {} }
+  const m = montar({ contenedor: sinAncho, caja: { top: 16, bottom: 400, left: 16, right: 584 }, conEscala: true })
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  assert.equal(m.reg.ws.scale, 1)
+  assert.deepEqual(m.reg.barras, { h: null, v: null })
+  assert.equal(sinAncho.style.height, "432px")
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════

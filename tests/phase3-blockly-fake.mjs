@@ -15,7 +15,7 @@
 //     `reg.cajaDeBloques`, igual que `getHeightWidth` con `reg.altoDeBloque`.
 
 export function fabricarBlockly() {
-  const reg = { svgResizes: [], inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false, altoDeBloque: null, cajaDeBloques: null, usosDeDescartados: 0 }
+  const reg = { svgResizes: [], inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false, altoDeBloque: null, cajaDeBloques: null, usosDeDescartados: 0, conEscala: false, barras: { h: null, v: null } }
   const TIPOS_DE_REGLA = ["tecnia_mientras", "tecnia_hacer"]
   /** Los bloques de las reglas, en el orden en que se crearon (sin los de la estructura). */
   reg.deRegla = () => (reg.ws ? reg.ws.bloques.filter((b) => TIPOS_DE_REGLA.includes(b.type)) : [])
@@ -80,6 +80,8 @@ export function fabricarBlockly() {
           const entradas = {}
           b.getInput = (n) => (entradas[n] ??= entrada(n))
           b.previousConnection = { bloque: b }
+          // «hacer» se encastra como VALOR en «mientras» (2026-11-27): la conexión es la de salida.
+          b.outputConnection = { bloque: b }
           b.nextConnection = { connect: (otra) => { b.siguiente = otra.bloque; otra.bloque.dentroDe = b; return true } }
           // La raíz del dibujo del bloque: lo único que se usa de ella es `classList` (la marca) y
           // `getBoundingClientRect`. Un bloque que `clear()` o `dispose()` ya sacó del lienzo no se
@@ -148,6 +150,17 @@ export function fabricarBlockly() {
         dispose() { reg.disposes++; bloques.length = 0 },
       }
       if (reg.cajaDeBloques !== null) ws.getBlocksBoundingBox = () => reg.cajaDeBloques
+      // La escala y las barras del lienzo (2026-11-27), como la API real: `scale`/`setScale`,
+      // `scrollbar.hScroll|vScroll.setContainerVisible`, y `scroll(x, y)`. Sólo si el test pide
+      // `reg.conEscala`; sin eso no existen, y el adaptador no decide escala ni barras.
+      if (reg.conEscala) {
+        ws.scale = 1
+        ws.setScale = (v) => { ws.scale = v }
+        ws.scrollX = 0
+        ws.scrollY = 0
+        ws.scroll = (x, y) => { ws.scrollX = x; ws.scrollY = y }
+        ws.scrollbar = { hScroll: { setContainerVisible: (v) => { reg.barras.h = v } }, vScroll: { setContainerVisible: (v) => { reg.barras.v = v } } }
+      }
       reg.ws = ws
       return ws
     },

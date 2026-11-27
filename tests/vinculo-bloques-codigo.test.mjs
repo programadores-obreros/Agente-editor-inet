@@ -58,7 +58,7 @@ const WEB = join(REPO, "opencode/vista-fisica/web")
 const { renglonesDe, crearCodigoPorLineas } = await import(join(WEB, "codigo-por-lineas.js"))
 const { rangoDeLaClave, claveDeLaLinea, textoDelBloque, textoDeLaLinea, crearVinculoBloquesCodigo, TEXTOS_DEL_VINCULO: T } = await import(join(WEB, "vinculo-bloques-codigo.js"))
 const { crearPanelCodigo, estructuraUsable } = await import(join(WEB, "vista-codigo.js"))
-const { estructuraDeLaRevision, pintarVinculo } = await import(join(WEB, "app.js"))
+const { estructuraDeLaRevision, pintarVinculo, desplazamientoHasta } = await import(join(WEB, "app.js"))
 const { construirRutasDeAssets } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
 
 // ── un programa chico y su estructura (los números son los de ESTE texto) ─────────────────────
@@ -547,7 +547,19 @@ test("app.js: los módulos nuevos se sirven, y la página une el lienzo, el cód
   // El MISMO elemento que el panel: si fueran dos, se repartiría un cuadro vacío.
   assert.match(APP, /const elementoCodigo = document\.getElementById\("vista-codigo-texto"\)\n\s+codigoPorLineas = crearCodigoPorLineas\(\{ doc: document, elementoCodigo \}\)/)
   assert.match(APP, /alSeleccionar: \(clave\) => vinculoBloquesCodigo\?\.alTocarBloque\(clave\)/)
-  assert.match(APP, /elementoCodigo\.addEventListener\("click", \(evento\) => vinculoBloquesCodigo\.alTocarLinea\(codigoPorLineas\.lineaDe\(evento\.target\)\)\)/)
+  assert.match(APP, /elementoCodigo\.addEventListener\("click", \(evento\) => \{[\s\S]{0,260}?vinculoBloquesCodigo\.alTocarLinea\(codigoPorLineas\.lineaDe\(evento\.target\)\)\n  \}\)/)
+  // Arrastrar para seleccionar texto no es tocar una línea (lo encontró el especialista de calidad).
+  assert.match(APP, /if \(window\.getSelection && !window\.getSelection\(\)\.isCollapsed\) return\n\s+vinculoBloquesCodigo\.alTocarLinea/)
+  // Sin mouse: las flechas recorren las líneas (sin esto no había cómo tocar una línea).
+  assert.match(APP, /elementoCodigo\.addEventListener\("keydown", /)
+  assert.match(APP, /const numero = codigoPorLineas\.vecina\(paso\)\n\s+if \(numero === null\) return\n\s+evento\.preventDefault\(\)\n\s+vinculoBloquesCodigo\.alTocarLinea\(numero\)/)
+  // El vínculo recibe la MISMA estructura filtrada por revisión que los bloques y la clave. La
+  // revisión independiente mostró que pasarle la del panel sin filtrar dejaba todo en verde.
+  assert.match(APP, /vinculoBloquesCodigo\?\.actualizar\(estructura, /)
+  assert.equal([...APP.matchAll(/vinculoBloquesCodigo\?\.actualizar\(/g)].length, 1)
+  // Los enlaces no cambian la dirección de la página: ahí vive la llave de la sesión (`#t=…`).
+  for (const enlace of ["vinculoDeLosBloques", "vinculoDelCodigo"]) assert.match(APP, new RegExp(`${enlace}\\.enlace\\?\\.addEventListener\\("click", \\(evento\\) => \\{\\n\\s+evento\\.preventDefault\\(\\)`), enlace)
+  assert.doesNotMatch(APP, /location\.hash\s*=/)
   // Los bloques reciben la estructura SÓLO por la función que compara la revisión.
   assert.match(APP, /const estructura = estructuraDeLaRevision\(panelCodigo\?\.estructuraDelPrograma\?\.\(\) \?\? null, ultimoSnapshot\.revision\)/)
   assert.equal([...APP.matchAll(/panelVistaLogica\?\.repintar\(/g)].length, 1, "un solo lugar repinta los bloques")
@@ -557,4 +569,72 @@ test("app.js: los módulos nuevos se sirven, y la página une el lienzo, el cód
   assert.match(APP, /alCambiarElPrograma: \(\) => \{\n\s+repintarRenglonDelPrograma\(\)\n\s+sincronizarBloquesYCodigo\(\)\n\s+\}/)
   // Acercar la línea marcada no mueve la página: sólo el cuadro del código.
   assert.doesNotMatch(APP, /scrollIntoView/)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 6. Lo que encontró el especialista de calidad (2026-11-27)
+// ════════════════════════════════════════════════════════════════════════════════════
+
+// Sin mouse no se podía marcar una línea: las líneas no reciben foco y el cuadro del código no
+// atendía ninguna tecla. Y como «Ir a los bloques» sólo aparece tras tocar una línea, tampoco se
+// llegaba a ese enlace.
+test("recorrer el código con las flechas: de a una línea, sin pasarse de los extremos, y deja el cursor a la vista", () => {
+  const m = montarLineas()
+  m.lineas.repartir()
+  const conCursor = () => m.pre.hijos.filter((h) => h.getAttribute("data-cursor") !== null).map((h) => Number(h.getAttribute("data-linea")))
+  assert.equal(m.lineas.cursor(), null)
+  assert.equal(m.lineas.vecina(1), 1, "sin cursor, hacia abajo arranca por la primera")
+  assert.equal(m.lineas.vecina(1), 2)
+  assert.deepEqual(conCursor(), [2], "una sola línea lleva el cursor")
+  assert.equal(m.lineas.vecina(-1), 1)
+  assert.equal(m.lineas.vecina(-1), 1, "no pasa del principio")
+  // Tocar una línea con el mouse mueve el cursor ahí: las flechas siguen desde donde se tocó.
+  assert.equal(m.lineas.lineaDe(m.pre.hijos[14]), 15)
+  assert.equal(m.lineas.vecina(1), 16)
+  assert.equal(m.lineas.vecina(1), 16, "no pasa del final")
+  assert.deepEqual(conCursor(), [16])
+  for (const malo of [0, 2, "1", null]) assert.equal(m.lineas.vecina(malo), null, String(malo))
+  // Viniendo de un bloque hay un tramo marcado y todavía no hay cursor: se sigue desde el tramo
+  // (visto en Chromium: la primera flecha saltaba a la línea 1).
+  const desdeBloque = montarLineas()
+  desdeBloque.lineas.repartir()
+  desdeBloque.lineas.marcar({ desde: 12, hasta: 13 })
+  assert.equal(desdeBloque.lineas.vecina(1), 14, "hacia abajo, la que sigue al tramo")
+  const haciaArriba = montarLineas()
+  haciaArriba.lineas.repartir()
+  haciaArriba.lineas.marcar({ desde: 12, hasta: 13 })
+  assert.equal(haciaArriba.lineas.vecina(-1), 11, "hacia arriba, la anterior al tramo")
+  // Hacia arriba sin cursor arranca por la última.
+  const otro = montarLineas()
+  otro.lineas.repartir()
+  assert.equal(otro.lineas.vecina(-1), LINEAS)
+  // Con otro programa el cursor de antes no vale.
+  m.pre.textContent = "otro\nprograma\n"
+  assert.equal(m.lineas.vecina(1), null, "todavía no se repartió")
+  m.lineas.repartir()
+  assert.equal(m.lineas.cursor(), null)
+  assert.equal(m.lineas.vecina(1), 1)
+})
+
+// Con seis reglas, «Ir a esas líneas» dejaba a la vista el título y la clave, con el código marcado
+// debajo del borde de la ventana; e «Ir a los bloques» dejaba la regla 6 fuera en una notebook.
+test("desplazamientoHasta: lleva lo marcado al medio de lo que se ve, y si ya se ve entero no mueve nada", () => {
+  const ventana = { altoVentana: 800, altoCabecera: 100 }
+  assert.equal(desplazamientoHasta({ top: 300, bottom: 360 }, ventana), 0, "ya está a la vista")
+  assert.equal(desplazamientoHasta({ top: 100, bottom: 800 }, ventana), 0, "justo en los bordes")
+  // Debajo del borde: el centro de lo visible está en 100 + 700/2 = 450.
+  assert.equal(desplazamientoHasta({ top: 900, bottom: 960 }, ventana), 930 - 450)
+  // Tapado por el header fijo: hay que subir.
+  assert.equal(desplazamientoHasta({ top: 40, bottom: 100 }, ventana), 70 - 450)
+  assert.ok(desplazamientoHasta({ top: 40, bottom: 100 }, ventana) < 0)
+  for (const mala of [null, {}, { top: Number.NaN, bottom: 3 }]) assert.equal(desplazamientoHasta(mala, ventana), 0)
+})
+
+test("en el papel no salen las pistas, los enlaces ni lo marcado, y la clave no se parte", () => {
+  const impresion = /@media print \{([\s\S]*?)\n  \}\n/.exec(HTML)
+  assert.ok(impresion)
+  assert.match(impresion[1], /#vista-logica-vinculo, #vista-codigo-vinculo \{ display: none !important; \}/)
+  assert.match(impresion[1], /\.linea-de-codigo\[data-marcada\] \{ background: none; border-left-color: transparent; \}/)
+  assert.match(impresion[1], /\.tecnia-bloque-marcado > \.blocklyPath \{ stroke: none; \}/)
+  assert.match(impresion[1], /#vista-codigo-nombres \{ break-inside: avoid; \}/)
 })
