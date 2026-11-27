@@ -16,7 +16,8 @@
 // dice), y un coordinador chico que guarda qué está marcado. Sin DOM ni red: lo que toca el mundo
 // se inyecta.
 //
-// TEXTOS PENDIENTES DE APROBACIÓN DEL DUEÑO: todos los de `TEXTOS_DEL_VINCULO`.
+// TEXTOS (todos los de `TEXTOS_DEL_VINCULO`): aprobados para la prueba por el dueño el 2026-11-27,
+// pendientes de verlos en pantalla. Los ajusta en la notebook; no es la aprobación final.
 
 export const TEXTOS_DEL_VINCULO = Object.freeze({
   // Las dos pistas se muestran SÓLO cuando hay programa con su estructura a la vista: sin eso,

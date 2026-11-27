@@ -263,7 +263,8 @@ export function nombreDePlaca(id: string): string | undefined {
  * programa con cada pin apenas arranca la placa. Uno por clase de paso del mapa del generador
  * (`codegen/programa.ts::PasoDeInicio`).
  *
- * TEXTOS PENDIENTES DE APROBACIÓN DEL DUEÑO.
+ * Textos aprobados PARA LA PRUEBA por el dueño el 2026-11-27, pendientes de verlos en pantalla:
+ * los ajusta en la notebook. No es la aprobación final.
  */
 export const TEXTOS_DE_AL_INICIAR = {
   /** Un pin que el programa va a leer por su nivel (un pulsador). */

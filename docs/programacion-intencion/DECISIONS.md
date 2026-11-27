@@ -1629,5 +1629,8 @@ a ser la fuente del programa y se perdería la garantía de que proyecto, bloque
 completa cuando el programa esté listo", hasta que llega el programa de la revisión nueva. Es el costo
 de no dejar a la vista los renglones de la anterior.
 
-**Pendiente del dueño:** aprobar los textos nuevos (los renglones de «al iniciar», los títulos de los
-dos bloques, las pistas y los avisos del vínculo) y la prueba en la notebook real.
+**Textos nuevos (dueño, 2026-11-27):** aprobados para la prueba. Los renglones de «al iniciar», los
+títulos de los dos bloques, las pistas y los avisos del vínculo quedan pendientes de verlos en pantalla:
+los ajusta en la notebook. No es la aprobación final.
+
+**Pendiente:** la prueba en la notebook real.

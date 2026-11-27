@@ -37,7 +37,8 @@ const TIPO_PASO = "tecnia_paso"
 const TIPO_POR_SIEMPRE = "tecnia_por_siempre"
 const SENTINELA = "__sin_valor__"
 /** `sinPasos` es lo que dice «al iniciar» mientras no se sabe qué prepara el programa de esta
- * revisión (no llegó, o no hay programa). Los tres textos nuevos están pendientes de aprobación del dueño. */
+ * revisión (no llegó, o no hay programa). Los tres textos nuevos están aprobados para la prueba por
+ * el dueño (2026-11-27) y pendientes de verlos en pantalla: no es la aprobación final. */
 const MENSAJES = { sentinela: "— elegí —", hacer: "hacer:", alIniciar: "al iniciar", porSiempre: "por siempre", sinPasos: "se completa cuando el programa esté listo" }
 
 /**
