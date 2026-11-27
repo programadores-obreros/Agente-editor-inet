@@ -34,13 +34,22 @@ export const CLAVE_DE_LA_LLAVE = "tecnia-llave-de-la-sesion"
  * Lo encontró el especialista de calidad al revisar los enlaces nuevos del vínculo; los del menú
  * lo tenían desde el rediseño de la ventana.
  *
- * `almacen` es el `sessionStorage` de la pestaña (se inyecta): dura lo que dura la pestaña, no se
- * comparte con otras y no sale de esta máquina. No amplía quién puede leer la llave: ya estaba a
- * la vista en la dirección. Si el almacén no está o tira (modo privado estricto), vale lo de antes:
- * la llave de la dirección, o ninguna.
+ * `almacen` es el `sessionStorage` de la pestaña (se inyecta). Si no está o tira (modo privado
+ * estricto), vale lo de antes: la llave de la dirección, o ninguna.
+ *
+ * QUÉ CAMBIA PARA QUIEN PUEDE LEER LA LLAVE (corregido tras la revisión independiente; la primera
+ * versión de este comentario decía «no amplía quién puede leerla», y no es exacto):
+ *   - antes, después de un enlace del menú, la llave quedaba sólo en la memoria de la página y en
+ *     el historial del navegador;
+ *   - ahora, además, la puede leer cualquier script de este MISMO origen mientras viva la pestaña;
+ *     una pestaña duplicada hereda una copia, y el navegador puede conservarla para restaurar la
+ *     sesión (esto último no se comprobó).
+ * El riesgo es bajo, no nulo: este origen (`127.0.0.1:<puerto>`) sólo sirve esta página, archivos
+ * de una lista blanca y JSON con `nosniff`, y la política de la página es `script-src 'self'`.
  *
  * La de la dirección GANA siempre y pisa la guardada: Tecnia Bot abre la vista con la llave de la
- * sesión nueva, y una guardada de una sesión anterior no tiene que taparla.
+ * sesión nueva, y una guardada de una sesión anterior no tiene que taparla. Si no se la puede
+ * guardar, se intenta al menos sacar la que había: que no quede una vieja para la próxima recarga.
  */
 export function llaveDeLaSesion(fragmento, almacen) {
   const deLaDireccion = tokenDeLaDireccion(fragmento)
@@ -48,26 +57,57 @@ export function llaveDeLaSesion(fragmento, almacen) {
     try {
       almacen?.setItem(CLAVE_DE_LA_LLAVE, deLaDireccion)
     } catch {
-      /* no se pudo guardar: la llave de la dirección vale igual */
+      try {
+        almacen?.removeItem?.(CLAVE_DE_LA_LLAVE)
+      } catch {
+        /* tampoco se pudo sacar: la llave de la dirección vale igual para esta carga */
+      }
     }
     return deLaDireccion
   }
   try {
     const guardada = almacen?.getItem(CLAVE_DE_LA_LLAVE)
-    // Misma forma que en la dirección: lo guardado es un dato, no se manda cualquier cosa en un header.
-    return typeof guardada === "string" && /^[A-Za-z0-9_-]+$/.test(guardada) ? guardada : null
+    // Lo guardado es un dato, no se manda cualquier cosa en un header: misma forma que en la
+    // dirección, tal cual (sin recortarle espacios) y con un tope de largo (una llave mide unos 43).
+    return typeof guardada === "string" && FORMA_DE_LLAVE_GUARDADA.test(guardada) ? guardada : null
   } catch {
     return null
   }
 }
+const FORMA_DE_LLAVE_GUARDADA = /^[A-Za-z0-9_-]{1,200}$/
+
+/**
+ * La llave de esta pestaña, desde la ventana real: su dirección y su almacén. Existe para que el
+ * camino ENTERO se pueda ejecutar en una prueba con una ventana de mentira; antes vivía repartido
+ * en `app.js` y sólo se lo miraba como texto. El almacén se pide con cuidado: hay navegadores que
+ * tiran con sólo nombrarlo.
+ */
+export function llaveDeEstaPestana(ventana) {
+  let almacen = null
+  try {
+    almacen = ventana?.sessionStorage ?? null
+  } catch {
+    almacen = null
+  }
+  return llaveDeLaSesion(ventana?.location?.hash, almacen)
+}
 
 export const SIN_PERMISO = "Esta pestaña no puede cambiar el proyecto: se abrió sin la llave de la sesión. Pedile a Tecnia Bot que abra la vista de nuevo."
+/** Se mandó una llave y el servidor dijo que no vale: casi siempre, Tecnia Bot se reinició y la
+ * pestaña quedó con la de la sesión anterior. Antes decía «se abrió sin la llave», que acá es
+ * falso. No afirma POR QUÉ no vale (eso el navegador no lo sabe): dice lo que pasó y lo más
+ * probable, como posibilidad. TEXTO PENDIENTE DE QUE EL DUEÑO LO VEA. */
+export const LLAVE_QUE_YA_NO_VALE = "Esta pestaña no puede cambiar el proyecto: Tecnia Bot no reconoce su llave (puede ser de una sesión anterior). Pedile a Tecnia Bot que abra la vista de nuevo."
 
 /**
  * @param {{ fetch: Function, aplicarSnapshot: (snapshot: object) => void, repintar: () => void,
- *   mostrarEstado: (texto: string | null) => void, token?: string | null }} dependencias
+ *   mostrarEstado: (texto: string | null) => void, token?: string | null | (() => string | null) }} dependencias
+ *   `token` puede ser la llave o una función que la da: la página la puede cambiar con la ventana
+ *   abierta (alguien pega la dirección con la llave), y cada pedido usa la del momento.
  */
 export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEstado, token = null }) {
+  const llaveDeAhora = () => (typeof token === "function" ? token() : token)
+
   async function cargarSnapshot() {
     const respuesta = await fetch("/api/proyecto")
     aplicarSnapshot(await respuesta.json())
@@ -87,10 +127,11 @@ export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEsta
   async function enviarSobre(sobre, { repintarAhora, avisoSiFalla = null }) {
     let respuesta
     let cuerpoLeido = null
+    const llave = llaveDeAhora()
     try {
       respuesta = await fetch("/api/operaciones", {
         method: "POST",
-        headers: token ? { "Content-Type": "application/json", "X-Tecnia-Token": token } : { "Content-Type": "application/json" },
+        headers: llave ? { "Content-Type": "application/json", "X-Tecnia-Token": llave } : { "Content-Type": "application/json" },
         body: JSON.stringify(sobre),
       })
       if (respuesta.status !== 403) cuerpoLeido = await respuesta.json()
@@ -106,7 +147,7 @@ export function crearClienteHttp({ fetch, aplicarSnapshot, repintar, mostrarEsta
       // El 403 puede ser por la llave o por otro chequeo (Origin, Host): sólo se nombra la llave
       // si el servidor dijo que fue la llave.
       const porLaLlave = /token/i.test(await respuesta.text())
-      mostrarEstado(porLaLlave ? SIN_PERMISO : "El servidor no aceptó el cambio (403). Pedile a Tecnia Bot que abra la vista de nuevo.")
+      mostrarEstado(porLaLlave ? (llave ? LLAVE_QUE_YA_NO_VALE : SIN_PERMISO) : "El servidor no aceptó el cambio (403). Pedile a Tecnia Bot que abra la vista de nuevo.")
       repintar()
       return { resultado: { ok: false, rechazadoPor: "transporte", motivos: [{ codigo: porLaLlave ? "SIN_TOKEN_DE_SESION" : "PEDIDO_RECHAZADO_POR_EL_SERVIDOR" }] }, snapshot: null }
     }
