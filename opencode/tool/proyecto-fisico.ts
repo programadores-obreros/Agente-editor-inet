@@ -235,14 +235,15 @@ function proyectarMotivoParaAgente(motivo: MotivoVista) {
  * cambió desde que se creó el componente (gap heredado, documentado): el fallback usa
  * el `tipo` crudo como nombre, nunca explota.
  */
-function resumenDeComponente(componente: Componente, deps: DependenciasProyectoFisico) {
+function resumenDeComponente(componente: Componente, proyecto: Snapshot["proyecto"], deps: DependenciasProyectoFisico) {
   const catalogo: Catalogo = deps.conocimiento.catalogo
   return {
     id: componente.id,
     tipo: componente.tipo,
     nombre: (catalogo.obtenerComponente(componente.tipo) ? deps.conocimiento.nombre("componente", componente.tipo) : undefined) ?? componente.tipo,
     pines: componente.pines,
-    descripcionPines: deps.descripcionPinesDeComponente(componente, catalogo),
+    // Con el proyecto: así la descripción dice también a qué está CONECTADO cada terminal.
+    descripcionPines: deps.descripcionPinesDeComponente(componente, catalogo, proyecto),
   }
 }
 
@@ -332,7 +333,7 @@ function resumenDeLectura(idProyecto: string, snapshot: SnapshotConVista, deps: 
   const vista = snapshot.vista
   const rolPorId = new Map((vista?.componentes ?? []).map((c) => [c.id, c.rol] as const))
   const componentes = snapshot.proyecto.componentes.map((componente) => ({
-    ...resumenDeComponente(componente, deps),
+    ...resumenDeComponente(componente, snapshot.proyecto, deps),
     rol: rolPorId.get(componente.id) ?? null,
   }))
   const motivos = (vista?.motivos ?? []).map(proyectarMotivoParaAgente)

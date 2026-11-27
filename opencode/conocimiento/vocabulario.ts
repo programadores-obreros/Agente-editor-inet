@@ -276,7 +276,32 @@ function destinoLegible(destinoFijo: string | { readonly externo: string }): str
   return typeof destinoFijo === "string" ? destinoFijo : destinoFijo.externo
 }
 
-function descripcionDeUnTerminal(idTerminal: string, catalogoComponente: ComponenteCatalogo | undefined, pinAsignado: string | null): string {
+/**
+ * A qué está conectado un terminal, según las conexiones de la IR (2026-11-27).
+ *
+ * POR QUÉ EXISTE. En la notebook real el asistente dijo «las cuatro resistencias están
+ * agregadas, todavía sin conectar» de un proyecto que las tenía conectadas, cada una al ánodo
+ * de su LED. No inventó: `leer` le describía la resistencia como «a → puente (sin destino
+ * fijo), b → puente (sin destino fijo)» y no le informaba las conexiones en ningún lado. La
+ * conexión es un dato de la IR (`Proyecto.conexiones`) y acá se dice tal cual.
+ */
+function conectadoA(idComponente: string, idTerminal: string, proyecto: Pick<Proyecto, "componentes" | "conexiones"> | undefined): string {
+  if (!proyecto) return ""
+  const otros: string[] = []
+  for (const conexion of proyecto.conexiones) {
+    const esDesde = conexion.desde.componente === idComponente && conexion.desde.terminal === idTerminal
+    const esHasta = conexion.hasta.componente === idComponente && conexion.hasta.terminal === idTerminal
+    if (!esDesde && !esHasta) continue
+    const otro = esDesde ? conexion.hasta : conexion.desde
+    const tipo = proyecto.componentes.find((c) => c.id === otro.componente)?.tipo
+    const nombre = tipo === undefined ? undefined : nombreDeComponente(tipo)
+    otros.push(`${otro.terminal} de ${otro.componente}${nombre === undefined ? "" : ` (${nombre})`}`)
+  }
+  return otros.length === 0 ? "" : `conectado a ${otros.join(" y a ")}`
+}
+
+function descripcionDeUnTerminal(idTerminal: string, catalogoComponente: ComponenteCatalogo | undefined, pinAsignado: string | null, conexion: string): string {
+  const yConectado = conexion === "" ? "" : `, ${conexion}`
   const terminal = catalogoComponente?.terminales.find((t) => t.id === idTerminal)
   if (terminal && !terminal.asignable) {
     // FX-6(b) (F-TRUTH-1, ronda de fixes). PFX-3 (RED-PHT-INVARIANTS H2): desde
@@ -288,18 +313,22 @@ function descripcionDeUnTerminal(idTerminal: string, catalogoComponente: Compone
     // migra ni limpia ese dato (PERSISTIBLE ⇒ RECARGABLE, `pht-engine.test.mjs` A9),
     // así que `descripcionPines` tiene que seguir diciendo la verdad sobre lo que el
     // IR YA tiene, nunca ocultarlo detrás de "puente (sin destino fijo)".
-    if (pinAsignado !== null) return `${idTerminal} → ${pinAsignado} (asignado directo — fuera del patrón esperado para este terminal)`
-    return terminal.destinoFijo !== undefined ? `${idTerminal} → ${destinoLegible(terminal.destinoFijo)} (fijo)` : `${idTerminal} → puente (sin destino fijo)`
+    if (pinAsignado !== null) return `${idTerminal} → ${pinAsignado} (asignado directo — fuera del patrón esperado para este terminal)${yConectado}`
+    if (terminal.destinoFijo !== undefined) return `${idTerminal} → ${destinoLegible(terminal.destinoFijo)} (fijo)${yConectado}`
+    // Un puente CONECTADO se dice conectado: «sin destino fijo» solo se leía como «suelto».
+    return conexion === "" ? `${idTerminal} → puente (sin destino fijo)` : `${idTerminal} → ${conexion}`
   }
-  return `${idTerminal} → ${pinAsignado ?? "sin asignar"}`
+  return `${idTerminal} → ${pinAsignado ?? "sin asignar"}${yConectado}`
 }
 
 /** Un componente con un `tipo` que el catálogo vigente ya no reconoce (no debería
  * pasar para un `Proyecto` ya validado por el Engine, pero esta función es pura y no
  * asume eso) describe sus terminales por las claves que YA tiene `Componente.pines`
  * — nunca explota por catálogo ausente. */
-export function descripcionPinesDeComponente(componente: Componente, catalogo: Catalogo): string {
+export function descripcionPinesDeComponente(componente: Componente, catalogo: Catalogo, proyecto?: Pick<Proyecto, "componentes" | "conexiones">): string {
   const catalogoComponente = catalogo.obtenerComponente(componente.tipo)
   const idsTerminales = catalogoComponente ? catalogoComponente.terminales.map((t) => t.id) : Object.keys(componente.pines)
-  return idsTerminales.map((idTerminal) => descripcionDeUnTerminal(idTerminal, catalogoComponente, componente.pines[idTerminal] ?? null)).join(", ")
+  return idsTerminales
+    .map((idTerminal) => descripcionDeUnTerminal(idTerminal, catalogoComponente, componente.pines[idTerminal] ?? null, conectadoA(componente.id, idTerminal, proyecto)))
+    .join(", ")
 }
