@@ -15,7 +15,7 @@
 //     `reg.cajaDeBloques`, igual que `getHeightWidth` con `reg.altoDeBloque`.
 
 export function fabricarBlockly() {
-  const reg = { svgResizes: [], inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false, altoDeBloque: null, cajaDeBloques: null }
+  const reg = { svgResizes: [], inyecciones: [], definiciones: [], bloquesCreados: 0, disposes: 0, nivelEventos: 0, ws: null, fallarNewBlock: false, altoDeBloque: null, cajaDeBloques: null, usosDeDescartados: 0 }
   const TIPOS_DE_REGLA = ["tecnia_mientras", "tecnia_hacer"]
   /** Los bloques de las reglas, en el orden en que se crearon (sin los de la estructura). */
   reg.deRegla = () => (reg.ws ? reg.ws.bloques.filter((b) => TIPOS_DE_REGLA.includes(b.type)) : [])
@@ -80,7 +80,9 @@ export function fabricarBlockly() {
           b.getInput = (n) => (entradas[n] ??= entrada(n))
           b.previousConnection = { bloque: b }
           b.nextConnection = { connect: (otra) => { b.siguiente = otra.bloque; otra.bloque.dentroDe = b; return true } }
-          b.setHighlighted = (v) => { b.resaltado = v }
+          // Un bloque que `clear()` ya sacó del lienzo no se debería volver a tocar: acá no rompe
+          // (no se midió qué hace el Blockly real), pero queda contado en `reg.usosDeDescartados`.
+          b.setHighlighted = (v) => { if (b.descartado) reg.usosDeDescartados++; b.resaltado = v }
           /** Los bloques encastrados en una entrada, de arriba abajo. */
           b.pila = (nombre) => { const fila = []; for (let x = b.encastrados[nombre] ?? null; x; x = x.siguiente) fila.push(x); return fila }
           b.getField = (n) => b.campos[n] ?? null
@@ -103,7 +105,7 @@ export function fabricarBlockly() {
         tocar(id) { ws.disparar({ type: "selected", newElementId: id ?? undefined, oldElementId: undefined, isUiEvent: true }) },
         getAllBlocks() { return [...bloques] },
         getBlockById(id) { return bloques.find((b) => b.id === id) ?? null },
-        clear() { bloques.length = 0 },
+        clear() { for (const b of bloques) b.descartado = true; bloques.length = 0 },
         addChangeListener(f) { oyentes.push(f); return f },
         removeChangeListener(f) { const i = oyentes.indexOf(f); if (i >= 0) oyentes.splice(i, 1) },
         disparar(e) { if (!Blockly.Events.isEnabled()) return; for (const f of [...oyentes]) f(e) },

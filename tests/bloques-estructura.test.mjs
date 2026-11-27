@@ -304,6 +304,7 @@ test("después de redibujar no queda nada marcado, y marcar de nuevo funciona so
   // Y desmarcar llega a esos bloques (no a los que ya no existen).
   m.adaptador.marcar(null)
   assert.deepEqual(marcadosDe(m), [])
+  assert.equal(m.reg.usosDeDescartados, 0, "nunca se toca un bloque que el redibujo ya sacó del lienzo")
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
