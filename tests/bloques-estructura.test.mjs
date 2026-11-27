@@ -681,3 +681,33 @@ test("sin texto de bloque (un servidor anterior) el bloque muestra el de la orac
   assert.ok(m.reg.bloquesCreados > creados, "el texto del bloque cambió: se redibuja")
   assert.equal(m.reg.mientras()[0].etiquetas[0], "mientras el")
 })
+
+// Lo encontró la mutación (2026-11-27): el sensor de una regla numérica reutiliza el slot del sensor
+// con otro texto («del»), y lo hace en DOS lugares del servidor: la regla numérica completa y la que
+// está a medio armar (sensor elegido, condición sin terminar). El primero tenía test; el segundo no,
+// y sin pisarle el texto de bloque el lienzo decía «mientras la lectura de [temperatura] mientras el
+// [DHT22]».
+test("una regla numérica a medio armar también dice «del» antes del sensor en el bloque, no «mientras el»", async () => {
+  const { join } = await import("node:path")
+  const { REPO, nuevoDir, nuevoIdProyecto, prepararProyectoConLed, op, catalogo, GPIO_Y } = await import("./phase2-helpers.mjs")
+  const { proyectarVista } = await import(join(REPO, "opencode/vista-fisica/snapshot-a-vista.ts"))
+  const { servicio } = prepararProyectoConLed(nuevoDir("bloque-numerica-a-medias"), nuevoIdProyecto("bloque-numerica-a-medias"))
+  const aplicar = (tipo, payload) => assert.equal(servicio.aplicar(op(tipo, payload, servicio.snapshot().revision)).ok, true, tipo)
+  aplicar("AgregarComponente", { tipo: "dht22" })
+  const dht = servicio.snapshot().proyecto.componentes.find((c) => c.tipo === "dht22").id
+  aplicar("AsignarPin", { componente: dht, terminal: "senal", pin: GPIO_Y })
+  aplicar("SetComportamiento", { comportamiento: { cuando: { sensor: dht } } })
+  const vista = proyectarVista(servicio.snapshot().proyecto, catalogo)
+  const slots = vista.reglas[0].slots
+  assert.ok(Array.isArray(slots), "precondición: la regla a medio armar trae sus propios slots")
+  const deSensor = slots.find((s) => s.slot === "sensor")
+  assert.equal(slots[0].prefijoEnBloque, "mientras la lectura de")
+  assert.equal(deSensor.prefijo, "del")
+  assert.equal(deSensor.prefijoEnBloque, "del")
+  // Y en el lienzo: una sola vez «mientras», al principio.
+  const m = montar()
+  m.adaptador.pintar(proyectarModeloLogico(vista))
+  const etiquetas = m.reg.deRegla().flatMap((b) => b.etiquetas)
+  assert.equal(etiquetas[0], "mientras la lectura de")
+  assert.equal(etiquetas.filter((e) => /^mientras/i.test(e)).length, 1, etiquetas.join(" | "))
+})
