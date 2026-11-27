@@ -381,12 +381,24 @@ test("J: un ntc en el proyecto produce una instrucción visible y un aviso pinta
 // Guardias estáticas de las tools
 // ════════════════════════════════════════════════════════════════════════════════════
 
+// UNA sola expresión para el guard y para la prueba del guard. Antes la prueba validaba una copia
+// literal: sacar `codegen/` del guard de verdad dejaba las dos en verde (revisión del 2026-11-25).
+const D13 = /^import\s+(?!type)[^\n]*from\s+["']\.\.\/(conocimiento\/|servidor\/|codegen\/|vista-fisica\/vista-real)/m
+
+test("guard D13 se prueba a sí mismo: marca un import en caliente de codegen/ y deja pasar el de tipo y el perezoso", () => {
+  assert.match('import { generarPrograma } from "../codegen/programa.ts"', D13)
+  assert.doesNotMatch('import type { ResultadoGeneracion } from "../codegen/programa.ts"', D13)
+  assert.doesNotMatch('const m = await import("../codegen/programa.ts")', D13)
+})
+
 test("tools: ningún hecho de componente sale de la vista — de vista-real sólo se usa el texto de motivos", () => {
   for (const f of ARCHIVOS_PRODUCCION.filter((f) => relative(REPO, f).startsWith("opencode/tool/"))) {
     const fuente = codigo(f)
     assert.doesNotMatch(fuente, /\bcatalogoReal\b|vistaDeProyectoConCatalogoReal|CATALOGO_REAL/, `${relative(REPO, f)} saca el catálogo de la vista`)
     for (const [, miembro] of fuente.matchAll(/modVistaReal\.(\w+)/g)) assert.equal(miembro, "explicarMotivosConCatalogoReal", relative(REPO, f))
     // D13: las piezas pesadas (conocimiento, servidor, vista-real) sólo con import() perezoso.
-    assert.doesNotMatch(fuente, /^import\s+(?!type)[^\n]*from\s+["']\.\.\/(conocimiento\/|servidor\/|vista-fisica\/vista-real)/m, `${relative(REPO, f)} importa en caliente (D13: tiene que ser perezoso)`)
+    // `codegen/` se sumó el 2026-11-24: dos tools lo cargan (programa y vista-fisica) y nada
+    // custodiaba que fuera perezoso; un import en caliente tira abajo TODAS las tools si falta.
+    assert.doesNotMatch(fuente, D13, `${relative(REPO, f)} importa en caliente (D13: tiene que ser perezoso)`)
   }
 })

@@ -188,10 +188,11 @@ if (process.platform === "win32") {
       assert.ok(existsSync(join(configDir, "servidor", "servidor-proyecto.ts")), "falta servidor-proyecto.ts instalado")
       assert.ok(existsSync(join(configDir, "vista-fisica", "vista-real.ts")), "falta opencode/vista-fisica instalado")
       assert.ok(existsSync(join(configDir, "vista-fisica", "web", "index.html")), "falta vista-fisica/web instalado")
+      assert.ok(existsSync(join(configDir, "vista-fisica", "programa-para-vista.ts")), "falta programa-para-vista.ts (sección «Código»)")
       // Component System Foundation #1: la fachada de conocimiento y sus anexos.
       assert.ok(existsSync(join(configDir, "conocimiento", "conocimiento-activo.ts")), "falta opencode/conocimiento instalado")
       assert.ok(existsSync(join(configDir, "conocimiento", "anexos", "representacion.ts")), "falta conocimiento/anexos instalado")
-      for (const asset of ["app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js", "ruteo.js", "cableado.js"]) {
+      for (const asset of ["app.js", "pintar.js", "plan-de-pintado.js", "estado-conexion.js", "cliente-http.js", "vista-logica.js", "adaptador-blockly.js", "vista-logica-ui.js", "vista-codigo.js", "ruteo.js", "cableado.js"]) {
         assert.ok(existsSync(join(configDir, "vista-fisica", "web", asset)), `falta vista-fisica/web/${asset}`)
       }
       assert.ok(existsSync(join(configDir, "tool", "vista-fisica.ts")), "falta el tool en sí")

@@ -82,6 +82,10 @@
   #vista-logica-lienzo { height: 260px; min-height: 260px; border: 1px solid currentColor; border-radius: 6px; position: relative; }
   #vista-logica-texto { white-space: pre-line; font-size: 13px; margin: 6px 0; }
   #vista-logica-estado { min-height: 1.2em; font-size: 13px; }
+  /* Sección «Código»: el programa generado, tal cual. Alto acotado con barra propia: un programa con sensor pasa las 90 líneas. */
+  #vista-codigo.ancha { grid-column: 1 / -1; }
+  #vista-codigo-texto { max-height: 420px; overflow: auto; margin: 6px 0; padding: 10px; border: 1px solid currentColor; border-radius: 6px; font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; tab-size: 2; }
+  #vista-codigo-aviso { white-space: pre-line; font-size: 13px; }
   [data-estado-vacio] { font-style: italic; opacity: .8; }
 
   /* ── Physical View UX #1: esquema por zonas (Entrada | Controlador | Salida). ──
@@ -168,6 +172,12 @@
     <div id="vista-logica-estado" role="status" aria-live="polite"></div>
     <div id="vista-logica-texto"></div>
     <button type="button" id="vista-logica-quitar" disabled>Quitar regla</button>
+  </section>
+  <section id="vista-codigo" class="ancha">
+    <h2>Código</h2>
+    <p id="vista-codigo-etiqueta">Es el programa que sale del montaje y de las reglas de arriba.</p>
+    <pre id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
+    <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>
   </section>
   <section>
     <h2>Motivos</h2>

@@ -18,6 +18,7 @@ import { pintar } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL } from "./estado-conexion.js"
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
+import { crearPanelCodigo } from "./vista-codigo.js"
 import { dibujarCableado } from "./cableado.js"
 
 // Fase 3, Wave 0 (F-11, PHASE_3_WAVE_0_DESIGN.md): `tests/wave0-view.test.mjs`
@@ -413,6 +414,7 @@ let elementoConexion = null
 /** Panel "Vista lógica" (Phase 3, vertical #2): su contenedor NO está en `contenedores`, así que
  * `repintar()` nunca lo reemplaza; se crea una vez más abajo, con el mismo controlador de la frase. */
 let panelVistaLogica = null
+let panelCodigo = null
 
 if (enNavegador) {
   contenedores = {
@@ -524,11 +526,35 @@ function restaurarFoco(raizControles, focoAnterior) {
  * selector equivalente — el `replaceChildren` sigue siendo "repintar TODO" (ninguna
  * actualización parcial, mismo invariante de siempre), sólo que ahora no se pierde el
  * foco en el camino. */
+/**
+ * La cabecera (revisión y estado) y, PEGADO a ella, el panel de código.
+ *
+ * Van juntos y primero, antes de todo lo que puede cortar el repintado (un snapshot sin vista, un
+ * pintado que tira): si la revisión ya cambió en pantalla, el programa de la anterior se tiene que
+ * haber ido. El código se pide al servidor por la revisión de ESTE snapshot (sólo si cambió) y
+ * nunca se arma acá.
+ *
+ * Es una función aparte, con todo inyectado, para poder probarla EJECUTÁNDOLA: la primera prueba
+ * de esto comparaba posiciones en el texto de la fuente y dejaba pasar un `if (false)` delante de
+ * la llamada (segunda revisión independiente, 2026-11-26).
+ *
+ * Si el panel tira, se ataja: una falla de la sección «Código» no puede dejar sin pintar el
+ * montaje, las reglas y los motivos.
+ */
+export function repintarCabecera({ snapshot, elementoRevision, elementoReadiness, panelCodigo, conectado }) {
+  elementoRevision.textContent = `revisión: ${snapshot.revision}`
+  const readiness = snapshot.vista ? snapshot.vista.readiness : snapshot.validacion.readiness
+  elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
+  try {
+    void panelCodigo?.actualizar(snapshot, { conectado })
+  } catch {
+    /* la sección «Código» falló: el resto de la página se pinta igual */
+  }
+}
+
 function repintar() {
   if (!ultimoSnapshot) return
-  elementoRevision.textContent = `revisión: ${ultimoSnapshot.revision}`
-  const readiness = ultimoSnapshot.vista ? ultimoSnapshot.vista.readiness : ultimoSnapshot.validacion.readiness
-  elementoReadiness.textContent = readiness.listo ? "listo" : readiness.invalido ? "inválido" : "incompleto"
+  repintarCabecera({ snapshot: ultimoSnapshot, elementoRevision, elementoReadiness, panelCodigo, conectado: estadoConexion === "conectado" })
 
   if (!ultimoSnapshot.vista) return
   const focoAnterior = capturarFocoActual()
@@ -650,6 +676,11 @@ if (enNavegador) {
     elementoEstado: document.getElementById("vista-logica-estado"),
     botonQuitar: document.getElementById("vista-logica-quitar"),
     controlador: controladorReglas,
+  })
+  panelCodigo = crearPanelCodigo({
+    fetch: (...argumentos) => fetch(...argumentos),
+    elementoCodigo: document.getElementById("vista-codigo-texto"),
+    elementoAviso: document.getElementById("vista-codigo-aviso"),
   })
 }
 

@@ -12,6 +12,9 @@
 // servicio es responsabilidad de quien llama `iniciarServidor` (el test de
 // integración, y después la tool de OpenCode, W4).
 //
+// Lo mismo vale para el programa (sección «Código», 2026-11-24): el generador llega
+// INYECTADO en `OpcionesServidor.programaDe`. Este módulo no importa `codegen/`.
+//
 // `node:http` — funciona igual en Node (tests) y en Bun (proceso real de OpenCode),
 // sin dependencias nuevas (`package.json` no gana ninguna). Vive FUERA de
 // `opencode/nucleo/**`, así que la guardia 29b (`tests/nucleo-adversarial.test.mjs`,
@@ -23,7 +26,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
-import type { ServicioDeProyecto } from "../nucleo/composicion-raiz.ts"
+import type { ServicioDeProyecto, Snapshot } from "../nucleo/composicion-raiz.ts"
 
 const AQUI = dirname(fileURLToPath(import.meta.url))
 const DIR_VISTA_FISICA_WEB = join(AQUI, "..", "vista-fisica", "web")
@@ -82,6 +85,8 @@ function construirRutasDeAssets(): ReadonlyMap<string, string> {
     ["vista-logica.js", join(DIR_VISTA_FISICA_WEB, "vista-logica.js")],
     ["adaptador-blockly.js", join(DIR_VISTA_FISICA_WEB, "adaptador-blockly.js")],
     ["vista-logica-ui.js", join(DIR_VISTA_FISICA_WEB, "vista-logica-ui.js")],
+    // Sección «Código» (2026-11-24): el panel que muestra el programa generado.
+    ["vista-codigo.js", join(DIR_VISTA_FISICA_WEB, "vista-codigo.js")],
     // Physical View UX #1: cables dibujados del esquema (geometría pura + capa de DOM).
     ["ruteo.js", join(DIR_VISTA_FISICA_WEB, "ruteo.js")],
     ["cableado.js", join(DIR_VISTA_FISICA_WEB, "cableado.js")],
@@ -259,8 +264,8 @@ export const CABECERA_TOKEN = "x-tecnia-token"
  *   - NO: de un programa que corre con el MISMO usuario. Ese puede leer la dirección de
  *     la línea de comandos del lanzador o del historial del navegador, y además puede
  *     editar el archivo del proyecto directamente, sin pasar por acá.
- *   - NO protege las LECTURAS (`/api/proyecto`, `/api/eventos`): quien conoce el puerto
- *     puede ver el proyecto. Sólo se cierran los cambios.
+ *   - NO protege las LECTURAS (`/api/proyecto`, `/api/programa`, `/api/eventos`): quien
+ *     conoce el puerto puede ver el proyecto y su programa. Sólo se cierran los cambios.
  *
  * DÓNDE QUEDA EL TOKEN, además de la memoria de este proceso: en la línea de comandos del
  * lanzador, en la barra y el historial del navegador, y en el texto que devuelve la tool
@@ -361,7 +366,17 @@ export interface OpcionesServidor {
    * preview.mjs:320-324, sin colisión posible entre dos instancias corriendo a la
    * vez). */
   readonly puerto?: number
+  /**
+   * Sección «Código» (2026-11-24). Arma, para UN snapshot, lo que la página muestra como
+   * programa. Llega INYECTADA: este módulo sigue siendo un adaptador y no importa el generador
+   * (quien llama decide cuál es; en producción, `tool/vista-fisica.ts` pasa el mismo
+   * `generarPrograma` de la tool `programa`). Si no se pasa, la ruta `/api/programa` no existe.
+   */
+  readonly programaDe?: (snapshot: Snapshot) => unknown
 }
+
+/** Lo que responde `/api/programa` si armar el programa tira una excepción. */
+export const PROGRAMA_NO_DISPONIBLE = "No se pudo generar el programa por una falla de Tecnia Bot. El proyecto no cambió."
 
 export interface ServidorProyecto {
   /** La base del servidor (`http://127.0.0.1:<puerto>/`), SIN el token. */
@@ -403,7 +418,15 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
   const token = randomBytes(32).toString("base64url")
 
   const server = http.createServer((req, res) => {
-    void manejarRequest(req, res)
+    // Red para TODAS las rutas (2026-11-25, revisión independiente): `manejarRequest` corre
+    // suelto, así que una excepción adentro (un `snapshot()` que tira, una respuesta que no se
+    // puede serializar) dejaba el pedido colgado para siempre y una promesa rechazada en el
+    // proceso de OpenCode. Acá se contesta un 500 llano, o se corta la conexión si ya se había
+    // empezado a responder. El detalle no viaja.
+    manejarRequest(req, res).catch(() => {
+      if (res.headersSent) res.destroy()
+      else responderTexto(res, 500, "Error interno")
+    })
   })
 
   async function manejarRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -454,6 +477,27 @@ export function iniciarServidor(opciones: OpcionesServidor): Promise<ServidorPro
       if (req.method !== "GET" && req.method !== "HEAD") return responderMetodoNoPermitido(res, ["GET", "HEAD"])
       if (req.method === "HEAD") return responderBuffer(res, 200, "application/json; charset=utf-8", Buffer.alloc(0), true)
       return responderJson(res, 200, servicio.snapshot())
+    }
+
+    // Sección «Código». Sólo lectura, como `/api/proyecto` (mismo límite: no pide la llave).
+    // La revisión y el programa salen de UN MISMO `snapshot()`: tomar dos, o guardar el
+    // programa de un pedido anterior, dejaría un programa viejo con una revisión nueva.
+    if (ruta === "/api/programa") {
+      const programaDe = opciones.programaDe
+      if (!programaDe) return responderTexto(res, 404, "No encontrado")
+      if (req.method !== "GET" && req.method !== "HEAD") return responderMetodoNoPermitido(res, ["GET", "HEAD"])
+      if (req.method === "HEAD") return responderBuffer(res, 200, "application/json; charset=utf-8", Buffer.alloc(0), true)
+      const snapshot = servicio.snapshot()
+      let programa: unknown
+      try {
+        programa = programaDe(snapshot)
+      } catch {
+        // El generador relanza lo que no es un rechazo suyo. Se ataja acá (y no en la red
+        // general de más arriba) para contestar con la MISMA forma que un programa: la
+        // página muestra el porqué en la sección, en vez de un error suelto.
+        return responderJson(res, 500, { revision: snapshot.revision, programa: { ok: false, porQue: PROGRAMA_NO_DISPONIBLE } })
+      }
+      return responderJson(res, 200, { revision: snapshot.revision, programa })
     }
 
     if (ruta === "/api/operaciones") {
