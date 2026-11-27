@@ -12,10 +12,12 @@
 //
 // Todo lo que toca el mundo (fetch y los elementos) se inyecta: se prueba en Node, sin navegador.
 
+// Los dos textos que hablan del corte usan las palabras del indicador («Ventana sin conexión»,
+// `estado-conexion.js`), no «la vista desconectada»: aprobados por el dueño el 2026-11-26.
 export const TEXTO_ACTUALIZANDO = "Actualizando el programa…"
 export const TEXTO_SIN_SECCION = "Esta instalación de Tecnia Bot no trae la parte que genera el programa, así que acá no se puede mostrar. El montaje y las reglas siguen funcionando."
-export const TEXTO_NO_SE_PUDO_PEDIR = "No se pudo pedir el programa a Tecnia Bot. Si la vista quedó desconectada, volvé a abrirla desde Tecnia Bot."
-export const TEXTO_DESCONECTADA = "La vista está desconectada: este programa puede no ser el actual."
+export const TEXTO_NO_SE_PUDO_PEDIR = "No se pudo pedir el programa a Tecnia Bot. Si la ventana quedó sin conexión, volvé a abrirla desde Tecnia Bot."
+export const TEXTO_DESCONECTADA = "La ventana está sin conexión: este programa puede no ser el actual."
 
 const plural = (n) => (n === 1 ? "1 línea" : `${n} líneas`)
 
