@@ -140,7 +140,13 @@ export async function cargarProgramaDe(
 ): Promise<((snapshot: Snapshot) => unknown) | null> {
   try {
     const [modCodegen, modPrograma] = await importar()
-    return (snapshot) => modPrograma.programaParaVista(modCodegen.generarPrograma(snapshot.proyecto, conocimiento), { proyecto: snapshot.proyecto, conocimiento })
+    return (snapshot) =>
+      modPrograma.programaParaVista(modCodegen.generarPrograma(snapshot.proyecto, conocimiento), {
+        proyecto: snapshot.proyecto,
+        conocimiento,
+        // Los nombres de las piezas son los del modelo de la vista: los mismos del esquema.
+        nombreDePieza: (id) => (snapshot as SnapshotConVista).vista?.componentes.find((c) => c.id === id)?.nombre,
+      })
   } catch {
     return null
   }

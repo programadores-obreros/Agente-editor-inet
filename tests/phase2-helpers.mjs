@@ -23,11 +23,37 @@ export const DIR_BASE = join(os.tmpdir(), "tecniabot-test-phase2")
 // (`~/.cache/tecnia-bot` o `%LOCALAPPDATA%\TecniaBot`), fuera de la carpeta de trabajo. Las pruebas
 // no pueden escribir ahí: toda prueba que use estos ayudantes manda esa caché a un temporal. Las
 // que necesitan otra (carga) la pisan después con la suya.
-export const CACHE_DE_PRUEBA = join(os.tmpdir(), "tecniabot-test-cache-usuario")
+//
+// UNA CARPETA POR PROCESO (2026-11-26, a la noche). Era una sola para todos
+// (`tecniabot-test-cache-usuario`) y se vaciaba acá, al importar. `node --test` corre cada archivo
+// en su propio proceso y varios a la vez, y este ayudante lo importan 95 archivos: cada uno que
+// arrancaba le vaciaba la caché a los que ya estaban corriendo. `codegen-s1b` escribe ahí el
+// programa y lo vuelve a leer; si otro archivo arrancaba en el medio, leía una carpeta vacía
+// («en disco quedó exactamente lo generado»: `{}`).
+// Estaba latente desde que se agregó el vaciado y no se había visto: en `fix/instalador-10`, 0
+// fallas en 6 corridas. Agregar tres archivos de test (los de los bloques de estructura) corrió
+// los tiempos y pasó a fallar 2 de cada 3 corridas completas, en distintos tests de ese archivo.
+// Sacar este ayudante de los archivos nuevos NO alcanzó (2 de 6): no importa quién vacía, importa
+// que la carpeta sea de todos.
+// CORRECCIÓN, la misma noche: no puedo afirmar que fueron mis archivos. Después supe que otra
+// sesión corría la suite en esta misma máquina a esas horas, contra la MISMA carpeta. Las fallas
+// pudieron venir de ahí, de mis archivos, o de las dos cosas: no lo separé. La causa de fondo es
+// una sola en cualquier caso, y una carpeta por proceso cubre también dos corridas a la vez.
+// Con una carpeta por proceso nadie le toca la caché a otro. Se sigue vaciando al importar (los
+// números de proceso se repiten entre corridas) y se borra al salir, para no ir dejando una por
+// cada archivo en el temporal.
+export const CACHE_DE_PRUEBA = join(os.tmpdir(), "tecniabot-test-cache-usuario", String(process.pid))
 // Se vacía al importar: `nuevoDir` repite nombres entre corridas, así que la carpeta derivada de
 // un proyecto quedaba con lo de la corrida anterior, y una prueba podía pasar o fallar según lo
 // que hubiera dejado la otra (lo mostró la revisión independiente del 2026-11-26).
 rmSync(CACHE_DE_PRUEBA, { recursive: true, force: true })
+process.on("exit", () => {
+  try {
+    rmSync(CACHE_DE_PRUEBA, { recursive: true, force: true })
+  } catch {
+    /* quedó una carpeta en el temporal: no es motivo para cambiar el resultado de las pruebas */
+  }
+})
 process.env.XDG_CACHE_HOME = CACHE_DE_PRUEBA
 process.env.LOCALAPPDATA = CACHE_DE_PRUEBA
 

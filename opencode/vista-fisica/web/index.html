@@ -250,6 +250,11 @@
   /* El mismo mensaje ya se lee en el header fijo (#estado): acá sería decirlo dos veces. */
   #vista-logica-estado { display: none; }
   #vista-logica-quitar:disabled { display: none; }
+  /* Bloques ↔ código: el renglón que dice en qué líneas está el bloque marcado (y, junto al
+     código, de qué bloque sale la línea tocada). «Con bloques» no es una sección de la página,
+     así que lleva su propio margen para que el enlace «Ver el bloque» no la deje bajo el header. */
+  #vista-logica { scroll-margin-top: calc(var(--alto-cabecera) + var(--e4)); }
+  #vista-logica-vinculo { font-size: var(--t-s); color: var(--tinta-2); }
 
   /* ══ Paso 3: el programa, tal cual. Alto acotado con barra propia: un programa con sensor
      pasa las 90 líneas. ══ */
@@ -257,6 +262,17 @@
   #vista-codigo-aviso { white-space: pre-line; padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-top: 1px solid var(--cod-linea); }
   #vista-codigo-aviso:empty { display: none; }
   #vista-codigo-texto[hidden] + #vista-codigo-aviso { border-top: 0; }
+  /* El programa repartido en renglones (`codigo-por-lineas.js`). El número de línea lo pone la
+     hoja (no es texto: no se selecciona ni se copia con el programa). El renglón marcado se
+     distingue por el fondo Y por la barra del costado, no sólo por el color. */
+  #vista-codigo-texto { position: relative; counter-reset: linea; }
+  .linea-de-codigo { display: block; counter-increment: linea; border-left: 4px solid transparent; padding-left: var(--e2); cursor: pointer; }
+  .linea-de-codigo::before { content: counter(linea); display: inline-block; min-width: 3ch; margin-right: var(--e4); text-align: right; color: var(--cod-2); user-select: none; }
+  .linea-de-codigo[data-marcada] { background: color-mix(in srgb, var(--marca) 22%, transparent); border-left-color: var(--marca); }
+  #vista-codigo-vinculo { margin: 0; padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-top: 1px solid var(--cod-linea); }
+  /* El cuadro del código tiene su propio fondo: el enlace toma la tinta del cuadro (el color de
+     enlace de la página no se leía ahí, visto en Chromium) y se distingue por el subrayado. */
+  #vista-codigo-vinculo a { color: var(--cod-t); text-decoration: underline; }
 
   @media (max-width: 900px) {
     .resumen { grid-template-columns: 1fr; }
@@ -348,8 +364,9 @@
     <!-- Los bloques van SIEMPRE visibles, nunca dentro de algo plegado: ver el comentario del lienzo en el <style>. -->
     <div id="vista-logica">
       <h3 class="tb-subtitulo">Con bloques</h3>
-      <p id="vista-logica-etiqueta">Un par «mientras … hacer …» por cada regla. Leé cada par de izquierda a derecha y elegí cada campo de la lista.</p>
+      <p id="vista-logica-etiqueta">«al iniciar» es lo que el programa hace una sola vez, cuando arranca la placa. «por siempre» es lo que repite sin parar: ahí va un par «mientras … hacer …» por cada regla. Elegí cada campo de la lista.</p>
       <div id="vista-logica-lienzo" role="group" aria-label="Vista lógica de las reglas"></div>
+      <p id="vista-logica-vinculo" role="status" aria-live="polite" hidden><span id="vista-logica-vinculo-texto"></span> <a id="vista-logica-vinculo-enlace" href="#paso-programa">Verlo en el código</a></p>
       <div id="vista-logica-estado" role="status" aria-live="polite"></div>
       <div id="vista-logica-texto"></div>
       <button type="button" id="vista-logica-quitar" class="tb-boton tb-boton--peligro" disabled>Quitar regla</button>
@@ -363,6 +380,7 @@
     </div></div>
     <div class="tb-codigo" id="vista-codigo">
       <pre class="tb-codigo__texto" id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
+      <p id="vista-codigo-vinculo" role="status" aria-live="polite" hidden><span id="vista-codigo-vinculo-texto"></span> <a id="vista-codigo-vinculo-enlace" href="#vista-logica">Ver el bloque</a></p>
       <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>
     </div>
   </section>

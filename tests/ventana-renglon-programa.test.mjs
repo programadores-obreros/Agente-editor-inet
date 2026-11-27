@@ -236,7 +236,10 @@ test("index.html: el renglón existe dentro de «Cómo está», oculto de entrad
 
 test("app.js: el renglón se repinta en cada repintado y cada vez que el panel cambia lo que sabe", () => {
   const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
-  assert.match(app, /alCambiarElPrograma: \(\) => repintarRenglonDelPrograma\(\)/)
+  // 2026-11-26: el aviso del panel pasó de una flecha de una línea a un bloque, porque cuando
+  // cambia el programa además se ponen al día los bloques y los renglones del código. Lo que se
+  // cuida es lo mismo: lo PRIMERO que hace ese aviso es repintar el renglón.
+  assert.match(app, /alCambiarElPrograma: \(\) => \{\n\s+repintarRenglonDelPrograma\(\)\n/)
   assert.match(app, /panelCodigo, conectado: estadoConexion === "conectado" \}\)\n  repintarRenglonDelPrograma\(\)\n/)
   assert.match(app, /textos: ultimoSnapshot\?\.vista\?\.resumen\?\.programa/)
   assert.match(app, /getElementById\("resumen-programa"\)/)

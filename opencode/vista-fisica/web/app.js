@@ -19,6 +19,8 @@ import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_
 import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
+import { crearCodigoPorLineas } from "./codigo-por-lineas.js"
+import { crearVinculoBloquesCodigo } from "./vinculo-bloques-codigo.js"
 import { dibujarCableado } from "./cableado.js"
 import { conectarNavegacion } from "./navegacion.js"
 import { conectarTema } from "./tema.js"
@@ -418,6 +420,9 @@ let elementoConexion = null
  * `repintar()` nunca lo reemplaza; se crea una vez más abajo, con el mismo controlador de la frase. */
 let panelVistaLogica = null
 let panelCodigo = null
+/** Bloques ↔ código (2026-11-26): el programa repartido en renglones y quién marca qué. */
+let codigoPorLineas = null
+let vinculoBloquesCodigo = null
 /** El renglón del programa en «Cómo está» (2026-11-26): fuera de `contenedores`, porque cambia
  * cuando contesta `/api/programa`, no sólo cuando llega un snapshot. */
 let elementoProgramaResumen = null
@@ -609,6 +614,41 @@ function repintarRenglonDelPrograma() {
   }
 }
 
+/**
+ * La estructura del programa, SÓLO si es la del proyecto que se está mostrando. Pura. El panel de
+ * código puede tener a la vista el programa de otra revisión por un instante (o por un corte): con
+ * esa estructura los bloques dirían lo que preparaba otro programa.
+ * @param {{ revision: number, estructura: object } | null | undefined} delPanel lo que dice `panelCodigo.estructuraDelPrograma()`.
+ */
+export function estructuraDeLaRevision(delPanel, revision) {
+  return delPanel && typeof revision === "number" && delPanel.revision === revision ? delPanel.estructura : null
+}
+
+/** Texto junto a los bloques o junto al código, con su enlace al otro lado. Sin texto, no se ve nada. */
+export function pintarVinculo({ caja, texto, enlace }, dicho, { conEnlace = true } = {}) {
+  texto.textContent = dicho
+  caja.hidden = dicho === ""
+  if (enlace) enlace.hidden = dicho === "" || !conEnlace
+}
+
+/**
+ * Los bloques, los renglones del código y lo marcado, puestos de acuerdo con el último snapshot y
+ * con lo que el panel de código sabe AHORA. Se llama en cada repintado y cada vez que cambia el
+ * programa (que llega un instante después que el proyecto, por otro pedido).
+ */
+function sincronizarBloquesYCodigo() {
+  if (!ultimoSnapshot?.vista) return
+  const estructura = estructuraDeLaRevision(panelCodigo?.estructuraDelPrograma?.() ?? null, ultimoSnapshot.revision)
+  // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
+  panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado", estructura })
+  try {
+    codigoPorLineas?.repartir()
+    vinculoBloquesCodigo?.actualizar(estructura, (ultimoSnapshot.vista.reglas ?? []).map((regla) => regla.id).filter((id) => typeof id === "string"))
+  } catch {
+    /* el marcado falló: los bloques y el código se siguen viendo */
+  }
+}
+
 function repintar() {
   if (!ultimoSnapshot) return
   repintarCabecera({ snapshot: ultimoSnapshot, elementoRevision, elementoReadiness, panelCodigo, conectado: estadoConexion === "conectado" })
@@ -634,8 +674,7 @@ function repintar() {
   programarCableado()
   restaurarFoco(secciones.controles, focoAnterior)
   restaurarFocoRegla(secciones.reglas)
-  // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
-  panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado" })
+  sincronizarBloquesYCodigo()
 }
 
 /** Physical View UX #1: la instrucción `cableado` del último repintado y el redibujo
@@ -754,13 +793,38 @@ if (enNavegador) {
     elementoEstado: document.getElementById("vista-logica-estado"),
     botonQuitar: document.getElementById("vista-logica-quitar"),
     controlador: controladorReglas,
+    alSeleccionar: (clave) => vinculoBloquesCodigo?.alTocarBloque(clave),
   })
   panelCodigo = crearPanelCodigo({
     fetch: (...argumentos) => fetch(...argumentos),
     elementoCodigo: document.getElementById("vista-codigo-texto"),
     elementoAviso: document.getElementById("vista-codigo-aviso"),
-    alCambiarElPrograma: () => repintarRenglonDelPrograma(),
+    // El programa llega después que el proyecto: cuando llega (o se va), los bloques de «al
+    // iniciar» y los renglones del código se ponen al día.
+    alCambiarElPrograma: () => {
+      repintarRenglonDelPrograma()
+      sincronizarBloquesYCodigo()
+    },
   })
+  // El MISMO elemento en el que el panel escribe el programa: acá se reparte en renglones.
+  const elementoCodigo = document.getElementById("vista-codigo-texto")
+  codigoPorLineas = crearCodigoPorLineas({ doc: document, elementoCodigo })
+  const vinculoDeLosBloques = { caja: document.getElementById("vista-logica-vinculo"), texto: document.getElementById("vista-logica-vinculo-texto"), enlace: document.getElementById("vista-logica-vinculo-enlace") }
+  const vinculoDelCodigo = { caja: document.getElementById("vista-codigo-vinculo"), texto: document.getElementById("vista-codigo-vinculo-texto"), enlace: document.getElementById("vista-codigo-vinculo-enlace") }
+  vinculoBloquesCodigo = crearVinculoBloquesCodigo({
+    marcarBloques: (clave) => panelVistaLogica?.marcar(clave),
+    marcarLineas: (rango) => {
+      const marco = codigoPorLineas.marcar(rango)
+      // Se acerca la línea marcada DENTRO del cuadro del código (que tiene su propia barra). No
+      // se mueve la página: el alumno está mirando los bloques y decide él si baja.
+      const renglon = codigoPorLineas.primerRenglonMarcado()
+      if (marco && renglon && typeof renglon.offsetTop === "number") elementoCodigo.scrollTop = Math.max(0, renglon.offsetTop - elementoCodigo.clientHeight / 3)
+      return marco
+    },
+    decirJuntoALosBloques: (texto, { hayLineas }) => pintarVinculo(vinculoDeLosBloques, texto, { conEnlace: hayLineas }),
+    decirJuntoAlCodigo: (texto, { hayBloque }) => pintarVinculo(vinculoDelCodigo, texto, { conEnlace: hayBloque }),
+  })
+  elementoCodigo.addEventListener("click", (evento) => vinculoBloquesCodigo.alTocarLinea(codigoPorLineas.lineaDe(evento.target)))
 }
 
 /** Foco de la frase: se captura al cambiar un select y se restaura cuando la operación termina

@@ -92,6 +92,9 @@ export function construirRutasDeAssets(): ReadonlyMap<string, string> {
     ["vista-logica-ui.js", join(DIR_VISTA_FISICA_WEB, "vista-logica-ui.js")],
     // Sección «Código» (2026-11-24): el panel que muestra el programa generado.
     ["vista-codigo.js", join(DIR_VISTA_FISICA_WEB, "vista-codigo.js")],
+    // Bloques ↔ código (2026-11-26): el programa repartido en renglones y el vínculo entre los dos.
+    ["codigo-por-lineas.js", join(DIR_VISTA_FISICA_WEB, "codigo-por-lineas.js")],
+    ["vinculo-bloques-codigo.js", join(DIR_VISTA_FISICA_WEB, "vinculo-bloques-codigo.js")],
     // Physical View UX #1: cables dibujados del esquema (geometría pura + capa de DOM).
     ["ruteo.js", join(DIR_VISTA_FISICA_WEB, "ruteo.js")],
     ["cableado.js", join(DIR_VISTA_FISICA_WEB, "cableado.js")],

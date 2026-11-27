@@ -14,24 +14,40 @@
 // D4 / OD-3, ver DECISIONS.md). `regla` queda como la PRIMERA de `reglas`, para quien mira una
 // sola (proyecto sin reglas o con una); el adaptador y el panel recorren `reglas`.
 
+// LA ESTRUCTURA (2026-11-26). `alIniciar` son los renglones del bloque «al iniciar»: los textos
+// que el servidor mandó con el programa de ESTA revisión, o `null` si no los hay (no llegó el
+// programa, no hay programa, o lo que se tiene es de otra revisión). Acá no se decide cuál es el
+// caso: quien llama pasa la estructura sólo cuando es la de la revisión que se está pintando.
+
 import { valorActualDe, estadoDelGrupo } from "./plan-de-pintado.js"
+
+/** Los renglones de «al iniciar», o `null` si la estructura no los trae como una lista de textos. */
+function proyectarAlIniciar(estructura) {
+  const pasos = estructura?.alIniciar?.pasos
+  if (!Array.isArray(pasos)) return null
+  const textos = pasos.map((paso) => paso?.texto)
+  return textos.every((texto) => typeof texto === "string" && texto !== "") ? { pasos: textos } : null
+}
 
 /**
  * @param {{ reglas?: readonly object[], opcionesRegla?: { slots?: readonly object[] } }} vista
  *   el campo `vista` del snapshot, tal cual llega serializado.
- * @returns {{ reglas: readonly ReglaLogica[], regla: null | ReglaLogica, hayVarias: boolean }}
+ * @param {object | null} [estructura] la estructura del programa de esta revisión, o `null`.
+ * @returns {{ reglas: readonly ReglaLogica[], regla: null | ReglaLogica, hayVarias: boolean,
+ *   alIniciar: null | { pasos: readonly string[] } }}
  *   `reglas`: una por regla del proyecto, en su orden; sin ninguna, UNA vacía (`id: null`) para
  *   armar la primera. `regla` es `reglas[0] ?? null`.
  * @typedef {{ id: string | null, campos: readonly object[], completa: boolean,
  *   faltan: readonly string[], avanzada: boolean, aviso: string | null, motivos: readonly string[] }} ReglaLogica
  */
-export function proyectarModeloLogico(vista, borrador = null) {
+export function proyectarModeloLogico(vista, borrador = null, estructura = null) {
   const existentes = vista?.reglas ?? []
   const slots = vista?.opcionesRegla?.slots ?? []
   const hayVarias = existentes.length > 1
-  if (slots.length === 0) return { reglas: [], regla: null, hayVarias }
+  const alIniciar = proyectarAlIniciar(estructura)
+  if (slots.length === 0) return { reglas: [], regla: null, hayVarias, alIniciar }
   const reglas = existentes.length > 0 ? existentes.map((existente) => proyectarRegla(existente, slots, borrador)) : [proyectarRegla(null, slots, borrador)]
-  return { reglas, regla: reglas[0], hayVarias }
+  return { reglas, regla: reglas[0], hayVarias, alIniciar }
 }
 
 function proyectarRegla(existente, slots, borrador) {

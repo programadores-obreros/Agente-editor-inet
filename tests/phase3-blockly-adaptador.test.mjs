@@ -74,23 +74,26 @@ test("T3 `media` configurable por quien llama (ruta local)", async () => {
   assert.equal(reg.inyecciones[0].opciones.media, "/otra/ruta/")
 })
 
-test("T3 define por JSON UN tipo contenedor y UN tipo de acción, una sola vez aunque haya dos adaptadores", async () => {
+// 2026-11-26: eran dos tipos (el par de la regla). Con la estructura del programa son cinco: se
+// suman «al iniciar», su renglón y «por siempre». El detalle de esos tres está en
+// `tests/bloques-estructura.test.mjs`; acá queda lo de siempre: se definen una sola vez.
+test("T3 define por JSON los tipos de bloque una sola vez aunque haya dos adaptadores", async () => {
   const crear = await cargar()
   const { Blockly, reg } = fabricarBlockly()
   crear({ Blockly, contenedor: {}, alEditar() {}, alQuitar() {} })
   crear({ Blockly, contenedor: {}, alEditar() {}, alQuitar() {} })
-  assert.deepEqual(reg.definiciones.map((d) => d.type).sort(), ["tecnia_hacer", "tecnia_mientras"])
+  assert.deepEqual(reg.definiciones.map((d) => d.type).sort(), ["tecnia_al_iniciar", "tecnia_hacer", "tecnia_mientras", "tecnia_paso", "tecnia_por_siempre"])
   assert.equal(typeof reg.definiciones.find((d) => d.type === "tecnia_hacer").previousStatement, "object")
 })
 
 test("T3 pintar(modelo completo): contenedor con la acción encastrada y un dropdown por campo con su valor", async () => {
   const { adaptador, reg } = await montar()
   adaptador.pintar(modelo(COMPLETO, { etiquetas: ["Pulsador", "presionado", "LED", "encendido"] }))
-  const [mientras] = reg.ws.getTopBlocks()
+  const [mientras] = reg.mientras()
   assert.equal(mientras.type, "tecnia_mientras")
   assert.equal(mientras.hijo.type, "tecnia_hacer")
   assert.deepEqual(valoresDe(reg), COMPLETO)
-  assert.deepEqual(reg.ws.bloques.map((b) => b.etiquetas), [["Mientras el", "esté"], ["el", "está"]])
+  assert.deepEqual(reg.deRegla().map((b) => b.etiquetas), [["Mientras el", "esté"], ["el", "está"]])
   const f = campoDe(reg, "s0")
   assert.deepEqual(f.opciones.map((o) => o[1]).slice(1), ["cmp-1"])
   assert.deepEqual(f.opciones.map((o) => o[0]).slice(1), ["Pulsador"])
@@ -142,13 +145,13 @@ test("T3 repintar con el workspace ya poblado: cambia valores sin acumular bloqu
   adaptador.pintar(modelo(COMPLETO, { etiquetas: ["Pulsador", "presionado", "LED", "encendido"] }))
   const creados = reg.bloquesCreados
   adaptador.pintar(modelo(VACIO, { id: null }))
-  assert.equal(reg.ws.bloques.length, 2)
+  assert.equal(reg.deRegla().length, 2)
   assert.equal(reg.bloquesCreados, creados, "misma estructura: sólo se actualizan los valores")
   assert.deepEqual(valoresDe(reg).map((v, i) => v === SENT(campoDe(reg, ["s0", "s1", "s2", "s3"][i]))), [true, true, true, true])
   const otro = modelo(COMPLETO, { etiquetas: ["Pulsador", "presionado", "LED", "encendido"] })
   otro.regla.campos[0].opciones = [{ valor: "cmp-9", etiqueta: "Otro" }, ...OPC.entrada]
   adaptador.pintar(otro)
-  assert.equal(reg.ws.bloques.length, 2, "reconstruido, no duplicado")
+  assert.equal(reg.deRegla().length, 2, "reconstruido, no duplicado")
   assert.equal(campoDe(reg, "s0").opciones.length, 3)
 })
 
@@ -192,7 +195,7 @@ test("T3 elegir el centinela NO llama a alEditar", async () => {
 test("T3 eventos de UI, de otros elementos y de otros tipos se ignoran", async () => {
   const { adaptador, reg, llamadas } = await montar()
   adaptador.pintar(modelo(["cmp-1", null, null, null]))
-  const b = reg.ws.bloques[0]
+  const b = reg.deRegla()[0]
   for (const e of [
     { type: "change", element: "field", name: "s1", newValue: "presionado", blockId: b.id, isUiEvent: true },
     { type: "change", element: "disabled", name: "s1", newValue: "presionado", blockId: b.id, isUiEvent: false },
@@ -213,7 +216,7 @@ test("T3 un 'cambio' al mismo valor que el modelo no genera operación", async (
 test("T3 los bloques no son borrables ni movibles", async () => {
   const { adaptador, reg } = await montar()
   adaptador.pintar(modelo(COMPLETO, { etiquetas: ["Pulsador", "presionado", "LED", "encendido"] }))
-  assert.equal(reg.ws.bloques.length, 2)
+  assert.equal(reg.deRegla().length, 2)
   for (const b of reg.ws.bloques) { assert.equal(b.deletable, false); assert.equal(b.movable, false) }
 })
 
@@ -247,35 +250,35 @@ const valoresDelPar = (mientras) => ["s0", "s1", "s2", "s3"].map((s) => (mientra
 test("T3 dos reglas: dos pares, cada uno con los valores de SU regla (no los de la otra)", async () => {
   const { adaptador, reg } = await montar()
   adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
-  const tops = reg.ws.getTopBlocks()
+  const tops = reg.mientras()
   assert.equal(tops.length, 2)
-  assert.equal(reg.ws.bloques.length, 4)
+  assert.equal(reg.deRegla().length, 4)
   assert.deepEqual(valoresDelPar(tops[0]), COMPLETO)
   const S = SENT(tops[1].campos.s0)
   assert.deepEqual(valoresDelPar(tops[1]), ["cmp-1", S, "cmp-0", S])
 })
 
-test("T3 dos reglas: van apiladas, la segunda debajo de la primera según el alto que informa Blockly", async () => {
+// 2026-11-26: estos dos tests medían DÓNDE se ubicaba cada par (`moveBy`), porque los pares iban
+// sueltos en el lienzo y el adaptador calculaba el lugar de cada uno. Ahora van encastrados adentro
+// de «por siempre» y el lugar lo resuelve Blockly: lo que hay que cuidar es que queden en el orden
+// del modelo y que ningún par se mueva por su cuenta. El apilado que sigue siendo cuenta del
+// adaptador («por siempre» debajo de «al iniciar») está en `tests/bloques-estructura.test.mjs`.
+test("T3 dos reglas: van encastradas una debajo de la otra, en el orden del modelo, y ningún par se ubica por su cuenta", async () => {
   const { adaptador, reg } = await montar()
   reg.altoDeBloque = 120
   adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
-  const [a, b] = reg.ws.getTopBlocks()
-  assert.deepEqual(a.movimientos, [[16, 16]])
-  assert.deepEqual(b.movimientos, [[16, 16 + 120 + 16]], "debajo del primero: su borde + su alto + la separación")
-})
-
-test("T3 dos reglas: sin alto informado no se enciman (se usa un alto estimado)", async () => {
-  const { adaptador, reg } = await montar()
-  adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
-  const [a, b] = reg.ws.getTopBlocks()
-  assert.equal(a.movimientos[0][1], 16)
-  assert.ok(b.movimientos[0][1] > 16 + 60, `la segunda quedó en y=${b.movimientos[0][1]}`)
+  const [a, b] = reg.mientras()
+  const [porSiempre] = reg.deTipo("tecnia_por_siempre")
+  assert.deepEqual(porSiempre.pila("REGLAS"), [a, b])
+  assert.deepEqual(valoresDelPar(a), COMPLETO)
+  assert.deepEqual(valoresDelPar(b).map((v, i) => (OTRA[i] === null ? null : v)), OTRA)
+  assert.deepEqual([a.movimientos, b.movimientos], [[], []])
 })
 
 test("T3 dos reglas: editar un campo de la SEGUNDA manda el id de la segunda (y el de la primera, el de la primera)", async () => {
   const { adaptador, reg, llamadas } = await montar()
   adaptador.pintar(varias(regla("beh-1", ["cmp-1", null, "cmp-0", null]), regla("beh-2", ["cmp-1", null, "cmp-0", null])))
-  const [a, b] = reg.ws.getTopBlocks()
+  const [a, b] = reg.mientras()
   b.campos.s1.setValue("presionado")
   assert.deepEqual(llamadas.editar, [{ reglaId: "beh-2", slot: "s1", valor: "presionado" }])
   a.hijo.campos.s3.setValue("encendido")
@@ -288,7 +291,7 @@ test("T3 dos reglas: repintar con valores nuevos no reconstruye y cada par toma 
   const creados = reg.bloquesCreados
   adaptador.pintar(varias(regla("beh-1", OTRA), regla("beh-2", COMPLETO)))
   assert.equal(reg.bloquesCreados, creados)
-  const tops = reg.ws.getTopBlocks()
+  const tops = reg.mientras()
   assert.deepEqual(valoresDelPar(tops[1]), COMPLETO)
   assert.equal(valoresDelPar(tops[0])[1], SENT(tops[0].campos.s0))
 })
@@ -297,8 +300,8 @@ test("T3 de dos reglas a una: se reconstruye y queda un solo par (no quedan bloq
   const { adaptador, reg, llamadas } = await montar()
   adaptador.pintar(varias(regla("beh-1", COMPLETO), regla("beh-2", OTRA)))
   adaptador.pintar(varias(regla("beh-2", OTRA)))
-  assert.equal(reg.ws.bloques.length, 2)
-  reg.ws.getTopBlocks()[0].campos.s1.setValue("presionado")
+  assert.equal(reg.deRegla().length, 2)
+  reg.mientras()[0].campos.s1.setValue("presionado")
   assert.deepEqual(llamadas.editar, [{ reglaId: "beh-2", slot: "s1", valor: "presionado" }])
 })
 

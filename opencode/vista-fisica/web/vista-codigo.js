@@ -63,6 +63,23 @@ export function renglonDelPrograma({ textos, estadoPrograma, revision, conectado
 }
 
 /**
+ * La estructura que vino con el programa (2026-11-26), si se puede usar ENTERA contra ese
+ * programa; si no, `null`. Pura. La usan los bloques («al iniciar») y el marcado de líneas, y los
+ * dos confían en los números: un tramo que se sale del programa, o al revés, marcaría líneas que
+ * no son. Ante cualquier cosa rara no hay estructura (el programa se muestra igual).
+ */
+export function estructuraUsable(estructura, lineas) {
+  if (estructura === null || typeof estructura !== "object" || !Number.isInteger(lineas) || lineas < 1) return null
+  const tramo = (r) => r !== null && typeof r === "object" && Number.isInteger(r.desde) && Number.isInteger(r.hasta) && r.desde >= 1 && r.hasta >= r.desde && r.hasta <= lineas
+  const { alIniciar, porSiempre, reglas } = estructura
+  if (!alIniciar || !tramo(alIniciar.lineas) || !Array.isArray(alIniciar.pasos)) return null
+  if (!porSiempre || !tramo(porSiempre.lineas) || !Array.isArray(reglas)) return null
+  if (!alIniciar.pasos.every((p) => p !== null && typeof p === "object" && typeof p.texto === "string" && p.texto !== "" && tramo(p.lineas))) return null
+  if (!reglas.every((r) => r !== null && typeof r === "object" && typeof r.id === "string" && r.id !== "" && tramo(r.lineas))) return null
+  return estructura
+}
+
+/**
  * @param {{ fetch: Function, elementoCodigo: { textContent: string, hidden: boolean },
  *   elementoAviso: { textContent: string }, alCambiarElPrograma?: Function }} dependencias
  * `alCambiarElPrograma({ clave, revision })` se llama cada vez que cambia lo que se sabe del
@@ -81,6 +98,8 @@ export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso, alCambi
   let reintentar = false
   /** Lo que se sabe del programa, y de qué revisión (ver `claveDelPrograma`). */
   let estadoPrograma = { clave: PROGRAMA_DESCONOCIDO, revision: null }
+  /** La estructura del programa que está a la vista, o `null`. Se va con el código: nunca queda una sin su programa. */
+  let estructuraMostrada = null
   const avisarPrograma = (clave, revision) => {
     estadoPrograma = { clave, revision }
     try {
@@ -95,6 +114,7 @@ export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso, alCambi
   }
   const sinCodigo = (texto, clave = PROGRAMA_DESCONOCIDO) => {
     revisionMostrada = null
+    estructuraMostrada = null
     elementoCodigo.textContent = ""
     elementoCodigo.hidden = true
     aviso = texto
@@ -135,6 +155,8 @@ export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso, alCambi
     elementoCodigo.textContent = programa.codigo
     elementoCodigo.hidden = false
     revisionMostrada = revision
+    // Antes de avisar que cambió el programa: quien escucha el aviso ya pregunta por la estructura.
+    estructuraMostrada = estructuraUsable(programa.estructura ?? null, programa.lineas)
     aviso = pieDelPrograma({ revision, archivo: programa.archivo, lineas: programa.lineas })
     escribirAviso()
     avisarPrograma(claveDelPrograma({ estado, cuerpo, revision }), revision)
@@ -143,6 +165,12 @@ export function crearPanelCodigo({ fetch, elementoCodigo, elementoAviso, alCambi
   return {
     /** Lo que se sabe del programa ahora (copia: nadie de afuera lo cambia). */
     estadoDelPrograma: () => ({ ...estadoPrograma }),
+    /**
+     * La estructura del programa que está a la vista y de qué revisión es, o `null` si no hay
+     * programa a la vista o vino sin estructura. Para un mismo programa devuelve siempre EL MISMO
+     * objeto `estructura`: quien la usa se da cuenta de que cambió comparándola con la anterior.
+     */
+    estructuraDelPrograma: () => (revisionMostrada !== null && estructuraMostrada ? { revision: revisionMostrada, estructura: estructuraMostrada } : null),
     /** Se llama en cada repintado, con el snapshot autoritativo. Sólo pide si cambió la revisión. */
     actualizar(snapshot, { conectado = true } = {}) {
       conectada = conectado

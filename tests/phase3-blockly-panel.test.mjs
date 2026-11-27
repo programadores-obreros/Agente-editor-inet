@@ -144,7 +144,7 @@ test("T9 varias reglas: un par de bloques por regla, sin aviso de 'se muestra la
   set(c, { entonces: { actuador: c.led, accion: "encender" } })
   const m = await montar(c)
   m.panel.repintar(m.estado.snapshot, { deshabilitado: false })
-  assert.equal(m.reg.ws.getTopBlocks().length, 2, "dos reglas: dos pares")
+  assert.equal(m.reg.mientras().length, 2, "dos reglas: dos pares")
   assert.doesNotMatch(m.el.texto.textContent, /Se muestra la primera regla/)
   assert.doesNotMatch(m.el.texto.textContent, /no analiza si se contradicen/, "OPEN-7: el aviso genérico se retiró")
   // 2026-11-26: decía «en la sección Reglas». Con el rediseño las frases quedaron bajo el subtítulo
