@@ -21,8 +21,15 @@
 # marca de cada herramienta salen como "?". OpenCode dibuja ese borde con U+2503,
 # una linea vertical gruesa.
 #
-# QUE FUENTE TIENE ESA VENTANA NO SE SABE: nadie la midio. Hubo dos hipotesis y
-# este script no elige ninguna:
+# LA CAUSA SE ENCONTRO DESPUES DE ESCRIBIR ESTE SCRIPT, y no era la fuente que
+# trae la maquina: el lanzador pasaba la consola a UTF-8 (`chcp 65001`) y Windows
+# PowerShell 5.1, al arrancar en una consola en UTF-8, le cambia la fuente a una
+# de mapa de bits. Eso se arreglo en el .cmd, sacando el chcp. Este script queda
+# como segunda red: para la maquina que SI tiene configurada una fuente que no
+# dibuja el borde.
+#
+# Mientras se buscaba la causa hubo dos hipotesis sobre la fuente, y este script
+# no elige ninguna:
 #
 #   a) una fuente de mapa de bits ("Terminal"), que no tiene ese caracter;
 #   b) Lucida Console, que es TrueType y tampoco lo tiene.

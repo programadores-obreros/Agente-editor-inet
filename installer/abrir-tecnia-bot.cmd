@@ -5,7 +5,29 @@ rem escritorio que crea el instalador .exe. Abre una terminal ya lista con
 rem OpenCode corriendo, para que el docente no tenga que tipear nada.
 rem ============================================================================
 title Tecnia Bot
-chcp 65001 >nul
+
+rem -- ACA NO VA `chcp 65001`. ESTABA, Y ERA LA CAUSA DE LOS SIGNOS DE PREGUNTA --
+rem
+rem Este archivo pasaba la consola a UTF-8 en su segunda linea, desde el primer
+rem instalador. Y mas abajo llama a PowerShell, siempre: para saber donde estan
+rem los Documentos, para chequear la key.
+rem
+rem Windows PowerShell 5.1, cuando arranca en una consola que esta en UTF-8, le
+rem cambia la fuente a una de mapa de bits. Y con esa fuente la consola convierte
+rem todo a la tabla vieja: el borde del cuadro de texto de OpenCode, el spinner y
+rem la marca de cada herramienta salian como signos de pregunta. Le pasaba a
+rem TODOS los Windows, no a una notebook rara.
+rem
+rem Medido en la VM win10 el 2026-11-27, fotografiando la ventana tras cada paso:
+rem   consola en Consolas, despues de chcp 65001: sigue en Consolas;
+rem   despues de arrancar powershell: fuente de mapa de bits.
+rem Con la salida de PowerShell redirigida a nul pasa igual.
+rem
+rem Y el chcp no hacia falta: OpenCode dibuja bien sin el (probado, misma VM), y
+rem los comandos que OpenCode lanza no heredan esta consola.
+rem
+rem Si alguna vez hace falta UTF-8 aca, que sea DESPUES de la ultima llamada a
+rem PowerShell. Lo custodia tests/pantalla-lanzador.test.mjs.
 
 rem La version se muestra en TODAS las pantallas de este lanzador, incluida la de
 rem error. En una sesion de soporte real hubo que averiguar que version tenia un
