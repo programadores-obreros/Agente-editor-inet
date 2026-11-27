@@ -44,7 +44,7 @@ import { REPO, nuevoDir, nuevoIdProyecto, GPIO_X, GPIO_Y } from "./phase2-helper
 
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { iniciarServidor, CABECERA_TOKEN } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
-const { crearClienteHttp, tokenDeLaDireccion, llaveDeLaSesion, CLAVE_DE_LA_LLAVE, SIN_PERMISO } = await import(join(REPO, "opencode/vista-fisica/web/cliente-http.js"))
+const { crearClienteHttp, tokenDeLaDireccion, llaveDeLaSesion, llaveDeEstaPestana, CLAVE_DE_LA_LLAVE, SIN_PERMISO, LLAVE_QUE_YA_NO_VALE } = await import(join(REPO, "opencode/vista-fisica/web/cliente-http.js"))
 
 let n = 0
 const op = (tipo, payload, baseRevision) => ({ idOperacion: `tok-${n++}`, actor: "navegador", baseRevision, tipo, payload })
@@ -255,9 +255,11 @@ test("sin llave, el cliente lo dice con palabras y no rompe la página", async (
       const repintadasAntes = p.repintadas()
       const cuerpo = await p.cliente.enviarSobre(cambiarPin(servicio, led), { repintarAhora: true })
       assert.equal(cuerpo.resultado.ok, false)
-      assert.deepEqual(p.estados, [SIN_PERMISO])
+      // 2026-11-27: con una llave equivocada el aviso ya no es «se abrió sin la llave» (la tenía):
+      // dice que Tecnia Bot no la reconoce. Sin llave, el de siempre.
+      assert.deepEqual(p.estados, [token === null ? SIN_PERMISO : LLAVE_QUE_YA_NO_VALE])
       assert.equal(cuerpo.resultado.motivos[0].codigo, "SIN_TOKEN_DE_SESION")
-      assert.match(SIN_PERMISO, /Tecnia Bot/, "el texto tiene que decir cómo seguir")
+      for (const texto of [SIN_PERMISO, LLAVE_QUE_YA_NO_VALE]) assert.match(texto, /Tecnia Bot/, "el texto tiene que decir cómo seguir")
       assert.equal(p.snapshot(), antes, "el cliente pisó el último snapshot bueno con el cuerpo de un 403")
       assert.equal(p.repintadas(), repintadasAntes + 1, "tiene que repintar: el control no puede quedar mostrando un cambio que no se hizo")
       assert.equal(pinDelLed(servicio, led), GPIO_X)
@@ -278,8 +280,24 @@ test("sin llave, el cliente lo dice con palabras y no rompe la página", async (
 //   - no guardar la llave de la dirección                         → «un enlace del menú…»
 //   - leer primero la guardada y después la de la dirección       → «la de la dirección gana…»
 //   - devolver lo guardado sin mirar su forma                     → «lo guardado es un dato…»
+//   - recortarle los espacios a lo guardado antes de mirarlo      → «lo guardado es un dato…»
+//   - sin tope de largo                                           → «lo guardado es un dato…»
 //   - sin `try` al guardar o al leer                              → «si el almacén tira…»
-//   - `app.js` de vuelta a `tokenDeLaDireccion(location.hash)`    → «app.js toma la llave…»
+//   - no sacar la guardada vieja cuando no se puede guardar       → «si no se puede guardar la nueva…»
+//   - `llaveDeEstaPestana` sin `try` al pedir el almacén          → «desde la ventana…»
+//   - `llaveDeEstaPestana` pasando `null` como almacén            → «desde la ventana…»
+//   - el aviso de «sin llave» cuando se mandó una vencida         → «una llave vencida…»
+//   - el cliente leyendo la llave una sola vez                    → «la llave se puede cambiar…»
+//
+// LO QUE ESTOS TESTS NO VEN, y por qué (revisión independiente, 2026-11-27). La primera versión
+// tenía un test, «app.js toma la llave por `llaveDeLaSesion`…», que era una expresión regular sobre
+// el texto de `app.js`. El revisor lo dejó verde con dos roturas ejecutadas: forzar `enNavegador`
+// a `false`, y vaciar el almacén justo después de crear el cliente. El test miraba cómo estaba
+// escrito, no qué hacía. Lo que se podía ejecutar se movió a `llaveDeEstaPestana(ventana)`, que
+// ahora se prueba con una ventana de mentira. Lo que queda en `app.js` (una línea que la llama,
+// y el oyente de `hashchange`) sigue sin ejecutarse acá: `app.js` no corre en Node como en el
+// navegador. Esa parte se comprobó en Chromium headless contra el servidor real (abrir, enlace
+// del menú, recargar, cambiar una regla), y hay que repetirlo a mano si se toca.
 // ════════════════════════════════════════════════════════════════════════════════════
 
 /** Un `sessionStorage` de mentira: lo que la pestaña recuerda mientras está abierta. */
@@ -315,37 +333,93 @@ test("una pestaña que nunca recibió la llave sigue sin tenerla", () => {
   }
 })
 
-test("lo guardado es un dato: si no tiene forma de llave, no se manda", () => {
-  for (const raro of ["", "con espacio", "a\nX-Otro: 1", "<script>", "ñ", "a;b"]) {
-    assert.equal(llaveDeLaSesion("#paso-reglas", pestana({ [CLAVE_DE_LA_LLAVE]: raro })), null, JSON.stringify(raro))
+test("lo guardado es un dato: si no tiene forma de llave, no se manda (ni recortado, ni si es larguísimo)", () => {
+  for (const raro of ["", "con espacio", " abc ", "abc\n", "a\nX-Otro: 1", "<script>", "ñ", "a;b", "x".repeat(201)]) {
+    assert.equal(llaveDeLaSesion("#paso-reglas", pestana({ [CLAVE_DE_LA_LLAVE]: raro })), null, JSON.stringify(raro.slice(0, 20)))
   }
+  assert.equal(llaveDeLaSesion("#paso-reglas", pestana({ [CLAVE_DE_LA_LLAVE]: "x".repeat(200) })), "x".repeat(200), "el tope deja pasar una llave de verdad con mucho margen")
   assert.equal(llaveDeLaSesion("#paso-reglas", { getItem: () => 7, setItem() {} }), null)
 })
 
 test("si el almacén tira (modo privado estricto), la llave de la dirección vale igual y sin ella no hay ninguna", () => {
-  const roto = { getItem() { throw new Error("SecurityError") }, setItem() { throw new Error("QuotaExceededError") } }
+  const roto = { getItem() { throw new Error("SecurityError") }, setItem() { throw new Error("QuotaExceededError") }, removeItem() { throw new Error("SecurityError") } }
   assert.equal(llaveDeLaSesion("#t=abc", roto), "abc")
   assert.equal(llaveDeLaSesion("#paso-reglas", roto), null)
 })
 
-test("con la llave recordada, el cambio sale con su header aunque la dirección ya no la traiga", async () => {
-  const almacen = pestana()
-  llaveDeLaSesion("#t=llave-1", almacen)
-  const pedidos = []
-  const cliente = crearClienteHttp({
-    fetch: async (ruta, opciones) => { pedidos.push(opciones); return { status: 200, json: async () => ({ resultado: { ok: true }, snapshot: { revision: 2 } }) } },
-    aplicarSnapshot() {}, repintar() {}, mostrarEstado() {},
-    token: llaveDeLaSesion("#paso-reglas", almacen),
-  })
-  await cliente.enviarSobre({ tipo: "AsignarPin" }, { repintarAhora: false })
-  assert.equal(pedidos[0].headers["X-Tecnia-Token"], "llave-1")
+// Revisión independiente: si no se podía guardar la llave nueva y había una vieja guardada, la
+// vieja quedaba, y la próxima recarga sin llave en la dirección mandaba ésa.
+test("si no se puede guardar la nueva, se saca la que había: no queda una vieja para la próxima recarga", () => {
+  const almacen = pestana({ [CLAVE_DE_LA_LLAVE]: "vieja" })
+  almacen.setItem = () => { throw new Error("QuotaExceededError") }
+  almacen.removeItem = (k) => void almacen.datos.delete(k)
+  assert.equal(llaveDeLaSesion("#t=nueva", almacen), "nueva")
+  assert.equal(almacen.datos.has(CLAVE_DE_LA_LLAVE), false)
+  assert.equal(llaveDeLaSesion("#paso-reglas", almacen), null)
 })
 
-test("app.js toma la llave por `llaveDeLaSesion`, con el almacén de la pestaña, y ya no sólo de la dirección", () => {
+test("desde la ventana: dirección + almacén de la pestaña, y un navegador que tira al nombrar el almacén no rompe", () => {
+  const almacen = pestana()
+  const ventana = { location: { hash: "#t=llave-1" }, sessionStorage: almacen }
+  assert.equal(llaveDeEstaPestana(ventana), "llave-1")
+  // Un enlace del menú y recargar: la MISMA pestaña, la dirección sin llave.
+  ventana.location.hash = "#paso-reglas"
+  assert.equal(llaveDeEstaPestana(ventana), "llave-1", "es el recorrido que fallaba: enlace, recargar")
+  // Otra pestaña (otro almacén) con esa dirección no la tiene.
+  assert.equal(llaveDeEstaPestana({ location: { hash: "#paso-reglas" }, sessionStorage: pestana() }), null)
+  // Hay navegadores que tiran con sólo leer `sessionStorage`.
+  const queTira = { location: { hash: "#t=abc" }, get sessionStorage() { throw new Error("SecurityError") } }
+  assert.equal(llaveDeEstaPestana(queTira), "abc")
+  queTira.location.hash = "#paso-reglas"
+  assert.equal(llaveDeEstaPestana(queTira), null)
+  for (const rara of [null, undefined, {}, { location: null }]) assert.equal(llaveDeEstaPestana(rara), null)
+})
+
+function clienteCon(token, respuesta) {
+  const pedidos = []
+  const estados = []
+  const cliente = crearClienteHttp({ fetch: async (ruta, opciones) => { pedidos.push(opciones); return respuesta }, aplicarSnapshot() {}, repintar() {}, mostrarEstado: (t) => estados.push(t), token })
+  return { cliente, pedidos, estados }
+}
+const ACEPTADO = { status: 200, json: async () => ({ resultado: { ok: true }, snapshot: { revision: 2 } }) }
+const RECHAZADO_POR_LA_LLAVE = { status: 403, text: async () => "token de sesión inválido" }
+
+test("la llave se puede cambiar con la ventana abierta: cada pedido usa la del momento", async () => {
+  let llave = null
+  const m = clienteCon(() => llave, ACEPTADO)
+  await m.cliente.enviarSobre({ tipo: "AsignarPin" }, { repintarAhora: false })
+  assert.equal("X-Tecnia-Token" in m.pedidos[0].headers, false, "sin llave no se manda el header")
+  llave = "pegada-despues" // alguien pegó la dirección con la llave en esta pestaña
+  await m.cliente.enviarSobre({ tipo: "AsignarPin" }, { repintarAhora: false })
+  assert.equal(m.pedidos[1].headers["X-Tecnia-Token"], "pegada-despues")
+  // Y la forma de siempre (la llave como valor) sigue andando.
+  const fijo = clienteCon("fija", ACEPTADO)
+  await fijo.cliente.enviarSobre({ tipo: "AsignarPin" }, { repintarAhora: false })
+  assert.equal(fijo.pedidos[0].headers["X-Tecnia-Token"], "fija")
+})
+
+// Revisión independiente: tras reiniciar Tecnia Bot en el mismo puerto, la pestaña manda la llave
+// de la sesión anterior, el servidor la rechaza y el aviso decía «se abrió sin la llave». Falso:
+// la tenía, vencida.
+test("una llave vencida no se avisa como «sin llave»: se dice que es de una sesión anterior", async () => {
+  const vencida = clienteCon("de-la-sesion-anterior", RECHAZADO_POR_LA_LLAVE)
+  await vencida.cliente.enviarSobre({ tipo: "AsignarPin" }, { repintarAhora: false })
+  assert.deepEqual(vencida.estados, [LLAVE_QUE_YA_NO_VALE])
+  const sinLlave = clienteCon(null, RECHAZADO_POR_LA_LLAVE)
+  await sinLlave.cliente.enviarSobre({ tipo: "AsignarPin" }, { repintarAhora: false })
+  assert.deepEqual(sinLlave.estados, [SIN_PERMISO])
+  assert.notEqual(LLAVE_QUE_YA_NO_VALE, SIN_PERMISO)
+  assert.match(LLAVE_QUE_YA_NO_VALE, /no reconoce su llave \(puede ser de una sesión anterior\)/, "dice lo que pasó y lo probable, sin afirmar la causa")
+  assert.match(LLAVE_QUE_YA_NO_VALE, /Pedile a Tecnia Bot que abra la vista de nuevo/, "dice cómo seguir")
+  assert.doesNotMatch(LLAVE_QUE_YA_NO_VALE, /sin la llave/)
+})
+
+// Lo único que sigue siendo texto: que `app.js` use el camino probado arriba y no otro. No prueba
+// que funcione (ver el encabezado de esta sección).
+test("app.js toma la llave por `llaveDeEstaPestana(window)` y la vuelve a tomar si cambia el fragmento", () => {
   const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
-  assert.match(app, /token: enNavegador \? llaveDeLaSesion\(location\.hash, almacenDeLaPestana\(\)\) : null,/)
-  assert.doesNotMatch(app, /tokenDeLaDireccion\(/)
-  assert.match(app, /function almacenDeLaPestana\(\) \{\n  try \{\n    return window\.sessionStorage \?\? null\n  \} catch \{\n    return null/)
-  // No en `localStorage`: eso lo compartirían todas las pestañas y quedaría después de cerrarlas.
-  assert.doesNotMatch(app, /localStorage/)
+  assert.match(app, /let llaveDeLaPestana = enNavegador \? llaveDeEstaPestana\(window\) : null/)
+  assert.match(app, /token: \(\) => llaveDeLaPestana,/)
+  assert.match(app, /window\.addEventListener\("hashchange", \(\) => \{\n\s+const nueva = llaveDeEstaPestana\(window\)\n\s+if \(nueva !== null\) llaveDeLaPestana = nueva/)
+  assert.doesNotMatch(app, /tokenDeLaDireccion\(|localStorage/)
 })

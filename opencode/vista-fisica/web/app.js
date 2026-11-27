@@ -16,7 +16,7 @@ import { planDePintado, interpretarNumero, estadoDelGrupo, aplicarEleccionAlGrup
 export { interpretarNumero }
 import { pintar, pintarRenglonDelPrograma } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_SIN_CONEXION } from "./estado-conexion.js"
-import { crearClienteHttp, llaveDeLaSesion } from "./cliente-http.js"
+import { crearClienteHttp, llaveDeEstaPestana } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 import { TITULOS_DE_LA_ESTRUCTURA } from "./adaptador-blockly.js"
 import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
@@ -747,13 +747,17 @@ if (enNavegador && typeof ResizeObserver === "function") {
   customElements.whenDefined("wokwi-esp32-devkit-v1").then(() => programarCableado())
 }
 
-/** El `sessionStorage` de la pestaña, o `null` si el navegador no lo deja ni nombrar (tira al leerlo). */
-function almacenDeLaPestana() {
-  try {
-    return window.sessionStorage ?? null
-  } catch {
-    return null
-  }
+/** La llave de la sesión de esta pestaña (`cliente-http.js::llaveDeEstaPestana`), o `null`. */
+let llaveDeLaPestana = enNavegador ? llaveDeEstaPestana(window) : null
+// Si alguien pega en esta misma pestaña la dirección con la llave (Tecnia Bot le dice al docente
+// «abrí esa dirección a mano»), sólo cambia el fragmento y la página NO se recarga: la llave se
+// toma en ese momento. Un enlace del menú también cambia el fragmento, pero sin llave: ahí queda
+// la que había. Antes hacía falta recargar para que la llave nueva valiera.
+if (enNavegador) {
+  window.addEventListener("hashchange", () => {
+    const nueva = llaveDeEstaPestana(window)
+    if (nueva !== null) llaveDeLaPestana = nueva
+  })
 }
 
 /** Cliente HTTP compartido (GPIO, frase): ver `cliente-http.js`. `fetch` se resuelve en cada llamada. */
@@ -766,7 +770,7 @@ const cliente = crearClienteHttp({
   mostrarEstado: (texto) => mostrarEstado(texto),
   // La llave de la sesión viene en el fragmento de la dirección y además la recuerda la pestaña:
   // un enlace del menú cambia el fragmento, y al recargar la dirección ya no la trae.
-  token: enNavegador ? llaveDeLaSesion(location.hash, almacenDeLaPestana()) : null,
+  token: () => llaveDeLaPestana,
 })
 const cargarSnapshot = () => cliente.cargarSnapshot()
 const enviarSobre = (sobre, opciones) => cliente.enviarSobre(sobre, opciones)
