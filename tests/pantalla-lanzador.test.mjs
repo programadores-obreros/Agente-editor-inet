@@ -35,7 +35,7 @@
 // 3; sacar la pregunta `if exist` de la segunda línea → 4; cambiar la fuente aunque
 // pueda dibujar el borde → 5; cambiar aunque Consolas no pueda → 5; sacar la
 // relectura → 5; decidir por otro carácter → 5; devolver `chcp 65001` a la
-// segunda línea del lanzador → 8.
+// segunda línea del lanzador → 8; cambiar una fila del robot del cartel → 9.
 // ============================================================================
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -193,4 +193,33 @@ test("8. el lanzador no pasa la consola a UTF-8 antes de llamar a PowerShell", (
   assert.match("chcp 65001 >nul", /\bchcp\s+65001\b/i)
   assert.match("  CHCP  65001", /\bchcp\s+65001\b/i)
   assert.doesNotMatch("chcp 850 >nul", /\bchcp\s+65001\b/i)
+})
+
+test("9. el robot del cartel es el MISMO del splash: los dos mapas de píxeles son idénticos", () => {
+  // El primer robot del cartel era propio, de tres renglones, y en la notebook se
+  // leía como «una E acostada». Ahora el cartel dibuja el mapa del splash. Si
+  // alguien retoca uno y se olvida del otro, el docente vería dos robots.
+  const plugin = readFileSync(join(raiz, "opencode", "plugins", "tecnia-logo.tsx"), "utf8")
+  const mapa = (texto, re, nombre) => {
+    const m = texto.match(re)
+    assert.ok(m, `no encuentro el mapa de píxeles en ${nombre}`)
+    return [...m[1].matchAll(/"([.VHEMG]+)"/g)].map((x) => x[1])
+  }
+  const delSplash = mapa(plugin, /const ROBOT_PX = \[([\s\S]*?)\n\]/, "el plugin")
+  const delCartel = mapa(ps1Codigo, /\$RobotPx = @\(([\s\S]*?)\n\s*\)/, "el .ps1")
+  assert.ok(delSplash.length >= 8, "el mapa del splash quedó vacío")
+  assert.deepEqual(delCartel, delSplash, "el robot del cartel y el del splash ya no son el mismo")
+  // Dos filas de píxeles hacen un renglón: con una cantidad impar el bucle lee una fila que no existe.
+  assert.equal(delCartel.length % 2, 0)
+  // Cada tinta del mapa tiene su color de consola, y es uno de los 16 que existen.
+  const tintas = ps1Codigo.match(/\$Tinta = @\{([^}]*)\}/)
+  assert.ok(tintas, "no encuentro la tabla de tintas")
+  const pares = Object.fromEntries([...tintas[1].matchAll(/"([A-Z])" = "([A-Za-z]+)"/g)].map((x) => [x[1], x[2]]))
+  const COLORES = ["Black", "DarkBlue", "DarkGreen", "DarkCyan", "DarkRed", "DarkMagenta", "DarkYellow", "Gray", "DarkGray", "Blue", "Green", "Cyan", "Red", "Magenta", "Yellow", "White"]
+  for (const letra of new Set(delCartel.join("").replace(/\./g, ""))) {
+    assert.ok(pares[letra], `la tinta ${letra} del mapa no tiene color`)
+    assert.ok(COLORES.includes(pares[letra]), `«${pares[letra]}» no es un color de la consola`)
+  }
+  // La cabeza y la baldosa no pueden ser del mismo color: el robot desaparecería.
+  assert.notEqual(pares.H, pares.V)
 })
