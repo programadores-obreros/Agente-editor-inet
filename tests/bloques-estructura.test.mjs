@@ -324,6 +324,10 @@ test("el lienzo crece con sus bloques, entre un mínimo y un máximo", () => {
   assert.equal(alto(5000), `${ALTO_MAXIMO_DEL_LIENZO}px`)
   assert.ok(ALTO_MINIMO_DEL_LIENZO < 432 && 432 < ALTO_MAXIMO_DEL_LIENZO, "precondición: 432 cae entre los dos")
   assert.ok(LIBRE_BAJO_LOS_BLOQUES >= 24, "debajo entra la barra horizontal de Blockly")
+  // Medido en Chromium (2026-11-27): seis reglas con sus ocho renglones de «al iniciar» piden 716 px.
+  // Con el tope en 640 la última regla quedaba cortada, que es lo que se vio en la notebook real
+  // con cuatro (hallazgo W37, cuando el lienzo medía 260 fijos).
+  assert.ok(ALTO_MAXIMO_DEL_LIENZO >= 716 * 2, "el tope deja entrar, con margen, el caso de seis reglas")
 })
 
 // Visto en Chromium (2026-11-26): Blockly termina de dibujar un instante después, y la medida

@@ -37,7 +37,12 @@
 //   - `textoDeLaLinea` numerando por el orden del programa             → «la regla 2 es la segunda del lienzo…»
 //   vista-codigo.js
 //   - `estructuraUsable` sin el tope `r.hasta <= lineas`               → «una estructura con un tramo…»
-//   - `sinCodigo` sin `estructuraMostrada = null`                      → «la estructura se va con el código…»
+//   - guardar la estructura DESPUÉS de avisar que cambió el programa   → «el panel guarda la estructura…»
+//   SOBREVIVE, y está bien que sobreviva: `sinCodigo` sin `estructuraMostrada = null`. La estructura
+//   igual no sale, porque `estructuraDelPrograma` además exige que haya un programa a la vista
+//   (`revisionMostrada`). Son dos cierres para lo mismo; sacar los DOS sí pone rojo «la estructura
+//   se va con el código…». Lo anoto porque la primera versión de esta lista decía que ése solo
+//   alcanzaba, y lo probé y no.
 //   app.js
 //   - `estructuraDeLaRevision` sin comparar la revisión                → «la estructura de otra revisión…»
 //

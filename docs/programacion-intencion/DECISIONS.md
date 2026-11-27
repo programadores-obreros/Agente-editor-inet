@@ -1587,3 +1587,47 @@ antigua. Los bloques decían una cosa y el proyecto otra.
 **Consecuencia aceptada:** el botón "Quitar regla" de la Vista Lógica sólo actúa cuando hay UNA regla.
 Con varias queda deshabilitado y un renglón manda al botón de cada regla en la sección "Reglas": antes
 quitaba la primera, que podía no ser la que el docente estaba mirando.
+
+## Vista lógica: estructura del programa y vínculo con el código (2026-11-26)
+
+**Reabre, en parte:** §1 del contrato `PHASE_3_VERTICAL_2_BLOCKLY_CONTRACT.md`, que dejaba el lienzo
+en "un workspace fijo que muestra una regla" (ampliado a todas las reglas el 2026-11-24).
+
+**Qué pasó:** el dueño pidió una auditoría de cómo la programación por intención trabaja los bloques.
+Tres hallazgos: los bloques no mostraban las dos estructuras de un programa de microcontrolador (lo
+que se hace una vez al arrancar y lo que se repite); un «mientras» suelto se puede leer como una
+espera que frena el programa, cuando en el programa generado es una condición que se vuelve a mirar en
+cada vuelta; y no había nada que uniera un bloque con sus líneas en «Mirá el código».
+
+**Decisión (dueño, 2026-11-26):** de las tres opciones presentadas, A y B, en un slice.
+
+- **A.** El lienzo muestra la estructura: un bloque «al iniciar», con un renglón por cada cosa que el
+  programa prepara, y un bloque «por siempre» con los pares de las reglas adentro. Los dos, de sólo
+  lectura.
+- **B.** Tocar un bloque marca sus líneas en el código; tocar una línea marca su bloque.
+
+**Descartada (C):** Blockly libre, con caja de herramientas y generadores de código. El bloque pasaría
+a ser la fuente del programa y se perdería la garantía de que proyecto, bloques y código dicen lo mismo.
+
+**Lo que NO cambia:**
+
+- La IR, `schemaVersion`, el catálogo y el Project Engine. El Engine sigue sin conocer el codegen.
+- `src/main.cpp`: ni un byte. El generador sólo agrega, al lado, en qué líneas quedó cada parte.
+- Blockly sigue siendo capa de presentación descartable: nada se serializa, sin caja de herramientas,
+  sin arrastre, sin generadores. Los bloques nuevos no tienen campos.
+- "Agregar regla" desde el navegador sigue saliendo sólo sin reglas.
+
+**Cómo se sostiene que no mienta:**
+
+- Los números de línea los anota el generador al escribir cada línea; nadie los busca después en el texto.
+- La estructura viaja con el programa de su revisión (`/api/programa`) y se va con él. A los bloques
+  sólo les llega la de la revisión que se está mostrando; si no la hay, «al iniciar» lo dice.
+- Los nombres de las piezas son los del modelo de la vista: los mismos del esquema.
+- Si la estructura no se puede decir entera, no se dice.
+
+**Consecuencia aceptada:** al editar una regla, «al iniciar» muestra por un instante el renglón de "se
+completa cuando el programa esté listo", hasta que llega el programa de la revisión nueva. Es el costo
+de no dejar a la vista los renglones de la anterior.
+
+**Pendiente del dueño:** aprobar los textos nuevos (los renglones de «al iniciar», los títulos de los
+dos bloques, las pistas y los avisos del vínculo) y la prueba en la notebook real.

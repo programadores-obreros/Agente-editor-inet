@@ -60,9 +60,15 @@ export const COLOR_DE_ESTRUCTURA = "#334155"
 const MARGEN = 16
 const SEPARACION = 16
 const ALTO_ESTIMADO_DE_AL_INICIAR = 96
-/** El lienzo crece con lo que tiene adentro, entre estos dos altos; pasado el máximo, queda la barra. */
+/**
+ * El lienzo crece con lo que tiene adentro, entre estos dos altos; pasado el máximo, queda la barra.
+ * El máximo es alto a propósito. Con 640 px, seis reglas ya no entraban (medido en Chromium: los
+ * bloques pedían 716 px y la última regla quedaba cortada), y adentro del lienzo la rueda está
+ * apagada: lo que no entra sólo se alcanza con la barra. Un lienzo largo no molesta, porque la
+ * página se desplaza sola; uno corto esconde reglas. 1600 px son unas veinte reglas.
+ */
 export const ALTO_MINIMO_DEL_LIENZO = 260
-export const ALTO_MAXIMO_DEL_LIENZO = 640
+export const ALTO_MAXIMO_DEL_LIENZO = 1600
 /** Lo que se deja libre debajo del último bloque: el margen y el lugar de la barra horizontal de
  * Blockly, que va pegada al borde de abajo y si no tapa el cierre de «por siempre». */
 export const LIBRE_BAJO_LOS_BLOQUES = 32
