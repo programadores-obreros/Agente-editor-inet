@@ -288,7 +288,8 @@ function coincideConLoGenerado(carpeta: string, archivos: Readonly<Record<string
   return esperados.every((ruta) => readFileSync(join(carpeta, ruta), "utf8") === archivos[ruta])
 }
 
-const json = (valor: unknown) => JSON.stringify(valor, null, 2)
+// Sin sangría: la salida la lee el modelo, y los espacios ocupan contexto (ver `proyecto-fisico.ts`, acción `leer`).
+const json = (valor: unknown) => JSON.stringify(valor)
 
 /**
  * Las piezas de `platformio.ts` (y el `run` real) que usa `cargar`. Son las MISMAS funciones que
