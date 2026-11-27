@@ -614,7 +614,7 @@ if "%TECNIA_SIN_MARCA%"=="carpeta" echo   Aviso: en esta carpeta la carga a la p
 if "%TECNIA_SIN_MARCA%"=="sin-revision" echo   Aviso: falta un archivo de Tecnia Bot y la carga a la placa queda deshabilitada. Abri "Reparar Tecnia Bot" en el menu inicio.
 if "%TECNIA_SIN_MARCA%"=="sin-node" echo   Aviso: no se encontro Node y la carga a la placa queda deshabilitada. Abri "Reparar Tecnia Bot" en el menu inicio.
 
-echo   Abriendo... Si al cargar no aparece el agente 'tecnia-bot', cambialo con Tab.
+echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
 echo.
 "%OC%"
 rem Sin este pause, si OpenCode se cae la ventana desaparece y no queda rastro.
