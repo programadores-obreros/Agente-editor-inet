@@ -273,15 +273,16 @@ test("la regla 2 es la segunda del lienzo, no la segunda del programa; con una s
 // 3. El coordinador
 // ════════════════════════════════════════════════════════════════════════════════════
 
-function montarVinculo() {
-  const visto = { bloques: undefined, lineas: undefined, juntoALosBloques: undefined, juntoAlCodigo: undefined }
+/** `seMarcan`: lo que contestan los que marcan (por defecto, que sí quedó marcado lo que se pidió). */
+function montarVinculo(seMarcan = { bloques: true, lineas: true }) {
+  const visto = { bloques: undefined, lineas: undefined, juntoALosBloques: undefined, juntoAlCodigo: undefined, vecesBloques: 0 }
   const vinculo = crearVinculoBloquesCodigo({
-    marcarBloques: (clave) => { visto.bloques = clave },
-    marcarLineas: (rango) => { visto.lineas = rango },
+    marcarBloques: (clave) => { visto.bloques = clave; visto.vecesBloques++; return clave !== null && seMarcan.bloques },
+    marcarLineas: (rango) => { visto.lineas = rango; return rango !== null && seMarcan.lineas },
     decirJuntoALosBloques: (texto, opciones) => { visto.juntoALosBloques = { texto, ...opciones } },
     decirJuntoAlCodigo: (texto, opciones) => { visto.juntoAlCodigo = { texto, ...opciones } },
   })
-  return { vinculo, visto }
+  return { vinculo, visto, seMarcan }
 }
 const NADA = { bloques: null, lineas: null }
 const conPrograma = () => {
@@ -323,6 +324,10 @@ test("tocar un bloque que el programa no tiene (una regla recién armada) no dej
   m.vinculo.alTocarBloque({ bloque: "regla", reglaId: "beh-77" })
   assert.deepEqual({ bloques: m.visto.bloques, lineas: m.visto.lineas }, NADA)
   assert.equal(m.vinculo.origen(), null)
+  // Y se dice ESO, no la pista general: «tocá un bloque y se marcan sus líneas» sería falso justo
+  // después de tocar uno que no tiene (lo marcó la revisión a ciegas).
+  assert.deepEqual(m.visto.juntoALosBloques, { texto: T.bloqueSinLineas, hayLineas: false })
+  assert.equal(T.bloqueSinLineas, "Este bloque todavía no está en el programa.")
 })
 
 test("tocar una línea marca su bloque y el tramo ENTERO de ese bloque, y dice de dónde sale", () => {
@@ -546,7 +551,7 @@ test("app.js: los módulos nuevos se sirven, y la página une el lienzo, el cód
   }
   // El MISMO elemento que el panel: si fueran dos, se repartiría un cuadro vacío.
   assert.match(APP, /const elementoCodigo = document\.getElementById\("vista-codigo-texto"\)\n\s+codigoPorLineas = crearCodigoPorLineas\(\{ doc: document, elementoCodigo \}\)/)
-  assert.match(APP, /alSeleccionar: \(clave\) => vinculoBloquesCodigo\?\.alTocarBloque\(clave\)/)
+  assert.match(APP, /alSeleccionar: \(clave\) => \{[\s\S]{0,360}?vinculoBloquesCodigo\?\.alTocarBloque\(clave\)\n    \},/)
   assert.match(APP, /elementoCodigo\.addEventListener\("click", \(evento\) => \{[\s\S]{0,260}?vinculoBloquesCodigo\.alTocarLinea\(codigoPorLineas\.lineaDe\(evento\.target\)\)\n  \}\)/)
   // Arrastrar para seleccionar texto no es tocar una línea (lo encontró el especialista de calidad).
   assert.match(APP, /if \(window\.getSelection && !window\.getSelection\(\)\.isCollapsed\) return\n\s+vinculoBloquesCodigo\.alTocarLinea/)
@@ -556,7 +561,9 @@ test("app.js: los módulos nuevos se sirven, y la página une el lienzo, el cód
   // El vínculo recibe la MISMA estructura filtrada por revisión que los bloques y la clave. La
   // revisión independiente mostró que pasarle la del panel sin filtrar dejaba todo en verde.
   assert.match(APP, /vinculoBloquesCodigo\?\.actualizar\(estructura, /)
-  assert.equal([...APP.matchAll(/vinculoBloquesCodigo\?\.actualizar\(/g)].length, 1)
+  // Dos llamadas: ésa, y la que lo deja sin estructura cuando llega un snapshot sin vista.
+  assert.equal([...APP.matchAll(/vinculoBloquesCodigo\?\.actualizar\(/g)].length, 2)
+  assert.equal([...APP.matchAll(/vinculoBloquesCodigo\?\.actualizar\(null, /g)].length, 1)
   // Los enlaces no cambian la dirección de la página: ahí vive la llave de la sesión (`#t=…`).
   for (const enlace of ["vinculoDeLosBloques", "vinculoDelCodigo"]) assert.match(APP, new RegExp(`${enlace}\\.enlace\\?\\.addEventListener\\("click", \\(evento\\) => \\{\\n\\s+evento\\.preventDefault\\(\\)`), enlace)
   assert.doesNotMatch(APP, /location\.hash\s*=/)
@@ -637,4 +644,103 @@ test("en el papel no salen las pistas, los enlaces ni lo marcado, y la clave no 
   assert.match(impresion[1], /\.linea-de-codigo\[data-marcada\] \{ background: none; border-left-color: transparent; \}/)
   assert.match(impresion[1], /\.tecnia-bloque-marcado > \.blocklyPath \{ stroke: none; \}/)
   assert.match(impresion[1], /#vista-codigo-nombres \{ break-inside: avoid; \}/)
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// 7. Lo que encontró la revisión a ciegas del pulido (2026-11-27)
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("las pistas no dicen «cada bloque» ni «cada línea»: hay bloques sin líneas y líneas sin bloque", () => {
+  for (const pista of [T.pistaJuntoALosBloques, T.pistaJuntoAlCodigo]) assert.doesNotMatch(pista, /\b[Cc]ada\b|\b[Tt]od[oa]s?\b/, pista)
+})
+
+// El coordinador ofrecía «Ir a los bloques» o «Ir a esas líneas» mirando sólo la estructura, sin
+// preguntar si algo había quedado marcado. Sin Blockly, o con una regla del programa que no está
+// dibujada, el enlace llevaba a nada.
+test("el enlace se ofrece sólo si de verdad quedó marcado adónde ir", () => {
+  const sinBloque = montarVinculo({ bloques: false, lineas: true })
+  sinBloque.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO)
+  sinBloque.vinculo.alTocarLinea(13)
+  assert.equal(sinBloque.visto.juntoAlCodigo.texto, "Esta línea es parte de la regla 2.", "de dónde sale se dice igual: es cierto")
+  assert.equal(sinBloque.visto.juntoAlCodigo.hayBloque, false, "pero no se ofrece ir a un bloque que no se marcó")
+  assert.equal(sinBloque.visto.juntoALosBloques.hayLineas, false)
+  const sinLineas = montarVinculo({ bloques: true, lineas: false })
+  sinLineas.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO)
+  sinLineas.vinculo.alTocarBloque({ bloque: "regla", reglaId: "beh-4" })
+  assert.deepEqual(sinLineas.visto.juntoALosBloques, { texto: "", hayLineas: false }, "sin líneas marcadas no se afirma en qué líneas está")
+})
+
+test("sin bloques dibujados (sin Blockly, o sin nada que armar) no se invita a tocarlos ni se promete marcar uno", () => {
+  const m = montarVinculo({ bloques: false, lineas: true })
+  m.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO, { hayBloques: false })
+  assert.deepEqual(m.visto.juntoALosBloques, { texto: "", hayLineas: false })
+  assert.deepEqual(m.visto.juntoAlCodigo, { texto: "", hayBloque: false })
+  // Aparecen los bloques (mismo programa): vuelven las pistas.
+  m.seMarcan.bloques = true
+  m.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO, { hayBloques: true })
+  assert.equal(m.visto.juntoALosBloques.texto, T.pistaJuntoALosBloques)
+  assert.equal(m.visto.juntoAlCodigo.texto, T.pistaJuntoAlCodigo)
+})
+
+// El lienzo se puede rearmar entero sin que cambie el programa (cambian las opciones de un
+// casillero al armar una condición). Los bloques nuevos nacen sin marca, y el código seguía
+// diciendo «Esta regla es lo mismo que las líneas…».
+test("en cada repintado con el mismo programa, el bloque marcado se vuelve a marcar", () => {
+  const m = conPrograma()
+  m.vinculo.alTocarBloque({ bloque: "regla", reglaId: "beh-4" })
+  const veces = m.visto.vecesBloques
+  m.visto.bloques = "rearmado: los bloques nuevos no tienen marca"
+  m.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO)
+  assert.deepEqual(m.visto.bloques, { bloque: "regla", reglaId: "beh-4" })
+  assert.equal(m.visto.vecesBloques, veces + 1)
+  assert.deepEqual(m.visto.lineas, { desde: 14, hasta: 15 }, "las líneas no se tocan")
+  // Marcado desde una línea, también.
+  m.vinculo.alTocarLinea(13)
+  m.visto.bloques = "rearmado"
+  m.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO)
+  assert.deepEqual(m.visto.bloques, { bloque: "regla", reglaId: "beh-9" })
+  // Sin nada marcado, un repintado no marca nada.
+  m.vinculo.alTocarLinea(null)
+  const antes = m.visto.vecesBloques
+  m.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO)
+  assert.equal(m.visto.vecesBloques, antes)
+})
+
+test("si el bloque marcado ya no está dibujado tras rearmar, lo que se marcó tocándolo se borra entero", () => {
+  const m = conPrograma()
+  m.vinculo.alTocarBloque({ bloque: "regla", reglaId: "beh-4" })
+  m.seMarcan.bloques = false // la regla ya no está en el lienzo
+  m.vinculo.actualizar(ESTRUCTURA, ["beh-9"])
+  assert.deepEqual({ bloques: m.visto.bloques, lineas: m.visto.lineas }, NADA)
+  assert.equal(m.vinculo.origen(), null)
+})
+
+test("hayEstructura dice si tocar una línea puede marcar algo", () => {
+  const m = montarVinculo()
+  assert.equal(m.vinculo.hayEstructura(), false)
+  m.vinculo.actualizar(ESTRUCTURA, EN_EL_LIENZO)
+  assert.equal(m.vinculo.hayEstructura(), true)
+  m.vinculo.actualizar(null, [])
+  assert.equal(m.vinculo.hayEstructura(), false)
+})
+
+// Las flechas se tragaban aunque no hubiera estructura: con un programa sin ella, el cuadro del
+// código dejaba de desplazarse con el teclado. Y el cursor quedaba en la última línea tocada
+// aunque después se hubiera marcado otro tramo desde un bloque.
+test("app.js: sin estructura las flechas no se tocan, y al venir de un bloque el cursor se suelta", () => {
+  assert.match(APP, /if \(!vinculoBloquesCodigo\.hayEstructura\(\)\) return\n\s+const numero = codigoPorLineas\.vecina\(paso\)/)
+  // Mayúsculas + flecha extiende la selección de texto: tampoco se toca.
+  assert.match(APP, /evento\.metaKey \|\| evento\.shiftKey\) return/)
+  // Un snapshot sin vista no deja la clave ni lo marcado de la revisión anterior.
+  assert.match(APP, /if \(!ultimoSnapshot\?\.vista\) \{[\s\S]{0,420}?pintarNombresDelPrograma\(document, elementoNombresDelPrograma, null\)\n\s+vinculoBloquesCodigo\?\.actualizar\(null, \[\], \{ hayBloques: false \}\)/)
+  assert.match(APP, /if \(clave\) codigoPorLineas\?\.soltarCursor\(\)\n\s+vinculoBloquesCodigo\?\.alTocarBloque\(clave\)/)
+  assert.match(APP, /vinculoBloquesCodigo\?\.actualizar\(estructura, [^\n]*\{ hayBloques \}\)/)
+  const m = montarLineas()
+  m.lineas.repartir()
+  m.lineas.lineaDe(m.pre.hijos[2]) // se tocó la línea 3
+  m.lineas.marcar({ desde: 12, hasta: 13 }) // después, un bloque marcó otro tramo
+  m.lineas.soltarCursor()
+  assert.equal(m.lineas.cursor(), null)
+  assert.equal(m.pre.hijos.some((h) => h.getAttribute("data-cursor") !== null), false)
+  assert.equal(m.lineas.vecina(1), 14, "sigue desde lo marcado, no desde la línea 3")
 })

@@ -46,9 +46,15 @@
   /* ══ Tokens de ESTA ventana. Los colores literales de la página viven sólo en este bloque
      (lo custodia tests/ventana-pagina.test.mjs); el resto usa var(--token), los de acá o los de
      la hoja compartida. ══
-     El esquema, la leyenda y el lienzo de bloques son «papel»: las piezas (dibujos de Wokwi) y
-     los bloques están pensados para fondo claro, así que quedan claros en los dos temas, a
-     propósito. Por eso tienen sus propios colores de tinta, que el tema oscuro NO redefine. */
+     El esquema y la leyenda son «papel»: las piezas (dibujos de Wokwi) están pensadas para fondo
+     claro, así que quedan claras en los dos temas, a propósito. Por eso tienen sus propios colores
+     de tinta, que el tema oscuro NO redefine.
+     El lienzo de bloques YA NO es papel (decisión del dueño, 2026-11-27): en tema oscuro el
+     recuadro blanco encandilaba. Toma el fondo de la página, como cualquier tarjeta; los bloques
+     tienen su color propio y se leen igual en los dos temas (texto blanco sobre «mientras»,
+     «hacer» y la estructura: 6,70, 5,47 y 10,35 de contraste; el borde de cada bloque contra el
+     fondo oscuro: 4,77, 5,54 y 3,92; medido en Chromium). Al imprimir sale claro solo, porque la
+     hoja compartida vuelve los tokens a claro. */
   :root {
     --papel: #f6f5ef; --papel-sup: #ffffff; --papel-resalte: #ffffff;
     --papel-tinta: #1e2330; --papel-tinta-2: #565f6e; --papel-linea: #dfe2ea; --papel-linea-control: #7b8494;
@@ -59,7 +65,7 @@
     /* Alto del header fijo, para que un enlace de la navegación no deje el título tapado. */
     --alto-cabecera: 96px;
   }
-  #circuito > [data-esquema], .leyenda, #vista-logica-lienzo {
+  #circuito > [data-esquema], .leyenda {
     color-scheme: light;
     --tinta: var(--papel-tinta); --tinta-2: var(--papel-tinta-2); --linea: var(--papel-linea); --linea-control: var(--papel-linea-control);
     --aviso: var(--papel-aviso); --aviso-f: var(--papel-aviso-f); --error: var(--papel-error); --info: var(--papel-info);
@@ -261,6 +267,9 @@
   .tecnia-bloque-marcado > .blocklyPath { stroke: var(--acento); stroke-width: 5px; }
   /* El cuerpo de un bloque se toca (marca sus líneas en el código): que se note. En la notebook el
      dueño tocó los casilleros, que eran lo único que parecía tocable. */
+  /* El fondo lo pone la página (el tema de Blockly lo deja transparente). Blockly le dibuja a su
+     fondo un filete gris propio: sobre oscuro se ve como un segundo marco; el marco es el del lienzo. */
+  #vista-logica-lienzo .blocklyMainBackground { stroke: none; }
   #vista-logica-lienzo .blocklyBlock > .blocklyPath { cursor: pointer; }
   #vista-logica-lienzo .blocklyBlock > .blocklyPath:hover { filter: brightness(1.18); }
   #vista-logica-lienzo .blocklyDropdownField { cursor: pointer; }

@@ -10,7 +10,11 @@
 //   - `getTopBlocks()` son los que no están encastrados en nada (antes este falso devolvía los
 //     «mientras»: con los pares adentro de «por siempre» eso dejó de ser cierto; para los pares
 //     están `reg.mientras()` y `reg.deRegla()`);
-//   - `setHighlighted(bool)` marca un bloque sin seleccionarlo ni mover el foco;
+//   - la marca de un bloque es una clase en `getSvgRoot().classList` (el adaptador ya no usa
+//     `setHighlighted`, que aclaraba el bloque; acá no existe);
+//   - `getInput(nombre)` devuelve `null` si el bloque no tiene esa entrada. Hasta la revisión a
+//     ciegas del 2026-11-27 este falso inventaba cualquier entrada que le pidieran: un nombre mal
+//     escrito en el adaptador pasaba todos los tests y rompía sólo en el navegador;
 //   - `getBlocksBoundingBox()` da `{ top, bottom, left, right }`. Acá existe sólo si el test pone
 //     `reg.cajaDeBloques`, igual que `getHeightWidth` con `reg.altoDeBloque`.
 
@@ -57,6 +61,10 @@ export function fabricarBlockly() {
       enable() { reg.nivelEventos-- },
       isEnabled() { return reg.nivelEventos === 0 },
     },
+    // El tema del lienzo (2026-11-27): `Theme.defineTheme(nombre, opciones)` y `Themes.Classic`,
+    // como la API real. Se anota cada definición para ver que no se repite.
+    Theme: { defineTheme(nombre, opciones) { const tema = { nombre, ...opciones }; (reg.temas ??= []).push(tema); return tema } },
+    Themes: { Classic: { nombre: "classic" } },
     svgResize(ws) { reg.svgResizes.push(ws) },
     defineBlocksWithJsonArray(arr) { for (const d of arr) { reg.definiciones.push(d); Blockly.Blocks[d.type] = d } },
     inject(contenedor, opciones) {
@@ -78,7 +86,10 @@ export function fabricarBlockly() {
             return this
           } })
           const entradas = {}
-          b.getInput = (n) => (entradas[n] ??= entrada(n))
+          // Sólo las entradas que declara la definición del tipo (`args0`, `args1`…), como el real.
+          const definicion = Blockly.Blocks[tipo] ?? {}
+          const declaradas = new Set(Object.keys(definicion).filter((k) => /^args\d+$/.test(k)).flatMap((k) => definicion[k]).filter((a) => typeof a?.type === "string" && a.type.startsWith("input_")).map((a) => a.name))
+          b.getInput = (n) => (declaradas.has(n) ? (entradas[n] ??= entrada(n)) : null)
           b.previousConnection = { bloque: b }
           // «hacer» se encastra como VALOR en «mientras» (2026-11-27): la conexión es la de salida.
           b.outputConnection = { bloque: b }

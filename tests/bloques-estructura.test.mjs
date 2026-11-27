@@ -63,7 +63,7 @@ const regla = (id, valores = COMPLETO) => ({ id, campos: campos(valores), comple
 /** `pasos`: la lista de renglones de «al iniciar», o `null` si no se saben. */
 const modelo = (reglas, pasos = null) => ({ reglas, regla: reglas[0] ?? null, hayVarias: reglas.length > 1, alIniciar: pasos === null ? null : { pasos } })
 const PASOS = ["Pulsador (GPIO25): entrada", "LED (GPIO4): salida, arranca apagado"]
-const SIN_PASOS = "todavía sin programa: mirá el paso 3"
+const SIN_PASOS = "todavía no hay datos del programa"
 
 function montar({ contenedor = { nombre: "div" }, caja = null, alto = null, conEscala = false } = {}) {
   const { Blockly, reg } = fabricarBlockly()
@@ -571,6 +571,37 @@ test("sin ancho medible, o sin escala en la API, no se decide escala ni barras y
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
+// El tema del lienzo (2026-11-27)
+//
+// El recuadro de los bloques era «papel» blanco en los dos temas. En la notebook del dueño, en
+// oscuro, encandilaba, y decidió que siga el tema de la página. Blockly sólo necesita NO pintar su
+// fondo: el color lo pone la página. Que se lee bien en oscuro se midió en Chromium (está en el
+// comentario de los tokens de `index.html`); acá se cuida que el fondo quede transparente.
+// ════════════════════════════════════════════════════════════════════════════════════
+
+test("el lienzo se inyecta con un tema de fondo transparente: el color del recuadro lo pone la página", () => {
+  const m = montar()
+  const { theme } = m.reg.inyecciones[0].opciones
+  assert.ok(theme, "se inyecta con un tema")
+  assert.equal(theme.componentStyles.workspaceBackgroundColour, "transparent")
+  assert.equal(theme.base, m.Blockly.Themes.Classic, "sobre el tema de siempre: los bloques no cambian de color")
+  // Un segundo lienzo con el mismo Blockly usa el MISMO tema: no se define dos veces.
+  const otro = crearAdaptadorBlockly({ Blockly: m.Blockly, contenedor: { nombre: "div" }, alEditar() {}, alQuitar() {} })
+  assert.equal(m.reg.temas.length, 1)
+  assert.equal(m.reg.inyecciones[1].opciones.theme, theme)
+  otro.destruir()
+})
+
+test("con un Blockly sin temas (o sin el tema base) el lienzo se inyecta igual, sin tema", () => {
+  for (const quitar of ["Theme", "Themes"]) {
+    const { Blockly, reg } = fabricarBlockly()
+    delete Blockly[quitar]
+    assert.doesNotThrow(() => crearAdaptadorBlockly({ Blockly, contenedor: { nombre: "div" }, alEditar() {}, alQuitar() {} }))
+    assert.equal("theme" in reg.inyecciones[0].opciones, false, quitar)
+  }
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
 // El modelo y el panel
 // ════════════════════════════════════════════════════════════════════════════════════
 
@@ -710,4 +741,48 @@ test("una regla numérica a medio armar también dice «del» antes del sensor e
   const etiquetas = m.reg.deRegla().flatMap((b) => b.etiquetas)
   assert.equal(etiquetas[0], "mientras la lectura de")
   assert.equal(etiquetas.filter((e) => /^mientras/i.test(e)).length, 1, etiquetas.join(" | "))
+})
+
+// Revisión a ciegas (2026-11-27): `marcar` contestaba «quedó marcado» contando los bloques de la
+// clave, aunque a ninguno se le hubiera podido poner la marca. Quien llama usa esa respuesta para
+// ofrecer «Ir a los bloques».
+test("marcar contesta que quedó marcado sólo si de verdad le puso la marca a algún bloque", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  assert.equal(m.adaptador.marcar({ bloque: "porSiempre" }), true)
+  m.adaptador.marcar(null)
+  // Un bloque sin dibujo (sin raíz) no se puede marcar.
+  m.porSiempre().getSvgRoot = () => null
+  assert.equal(m.adaptador.marcar({ bloque: "porSiempre" }), false)
+  assert.equal(m.adaptador.cajaDeLoMarcado(), null)
+  // De una regla, si sólo uno de sus dos bloques tiene dibujo, ése queda marcado y cuenta.
+  const [mientras] = m.reg.mientras()
+  mientras.hijo.getSvgRoot = () => null
+  assert.equal(m.adaptador.marcar({ bloque: "regla", reglaId: "beh-1" }), true)
+  assert.deepEqual(marcadosDe(m), [mientras])
+})
+
+// La API falsa inventaba cualquier entrada que le pidieran (`getInput`): un nombre mal escrito en
+// el adaptador pasaba todos los tests y rompía sólo en el navegador. Ahora, como la real, devuelve
+// `null` si el bloque no declara esa entrada. Este test es el guard del guard.
+test("la API falsa no inventa entradas: sólo las que declara la definición de cada bloque", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  const [mientras] = m.reg.mientras()
+  assert.ok(mientras.getInput("CAMPOS") && mientras.getInput("ACCION"))
+  assert.equal(mientras.getInput("ACCIONES"), null)
+  assert.equal(m.alIniciar().getInput("REGLAS"), null, "«al iniciar» no tiene la entrada de «por siempre»")
+  assert.ok(m.alIniciar().getInput("PASOS") && m.porSiempre().getInput("REGLAS"))
+  assert.equal(m.reg.deTipo("tecnia_paso")[0].getInput("PASOS"), null)
+})
+
+test("con el lienzo vacío el alto y las barras vuelven a lo suyo, no quedan los del dibujo anterior", () => {
+  const contenedor = { style: {}, clientWidth: 300 }
+  const m = montar({ contenedor, caja: { top: 16, bottom: 900, left: 16, right: 584 }, conEscala: true })
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  assert.deepEqual([contenedor.style.height, m.reg.barras.h], [`${Math.ceil(900 * ESCALA_MINIMA_DEL_LIENZO + LIBRE_BAJO_LOS_BLOQUES)}px`, true])
+  m.reg.cajaDeBloques = { top: 0, bottom: 0, left: 0, right: 0 } // lo que mide Blockly sin bloques
+  m.adaptador.pintar({ reglas: [], regla: null, hayVarias: false, alIniciar: null })
+  assert.equal(contenedor.style.height, `${ALTO_MINIMO_DEL_LIENZO}px`)
+  assert.deepEqual(m.reg.barras, { h: false, v: false })
 })

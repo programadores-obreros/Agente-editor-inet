@@ -149,6 +149,12 @@ export function crearCodigoPorLineas({ doc, elementoCodigo }) {
       return numero
     },
 
+    /** Deja de haber cursor: la próxima flecha arranca desde lo marcado. */
+    soltarCursor() {
+      if (vigentes()) ponerCursor(null)
+      else cursor = null
+    },
+
     /** La línea del cursor, o `null`. */
     cursor: () => (vigentes() ? cursor : null),
   }

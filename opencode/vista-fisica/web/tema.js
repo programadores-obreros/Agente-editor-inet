@@ -5,8 +5,9 @@
 //   - `conectarTema` es el cableado del botón; sólo corre en el navegador.
 //
 // El tema es un atributo de la raíz: `data-theme="dark"` para el oscuro, y SIN atributo para el
-// claro (así lo espera la hoja compartida, `sistema.css`). El esquema, la leyenda y el lienzo de
-// bloques quedan claros en los dos temas: eso es de `index.html`, no de acá.
+// claro (así lo espera la hoja compartida, `sistema.css`). El esquema y la leyenda quedan
+// claros en los dos temas: eso es de `index.html`, no de acá. El lienzo de bloques sí sigue el
+// tema desde el 2026-11-27: toma el fondo de la página y no hay que avisarle nada a Blockly.
 //
 // QUIÉN LO APLICA PRIMERO. Este módulo se carga diferido (`type="module"`), cuando la página ya
 // se pintó una vez: si el tema lo pusiera él, quien eligió oscuro vería un destello en claro en

@@ -230,11 +230,21 @@ test("ningún color literal en la página fuera de su bloque de tokens", () => {
   assert.doesNotMatch(CUERPO, /\bstyle="/, "y tampoco como estilo en línea en una etiqueta")
 })
 
+// CAMBIADO A PROPÓSITO EL 2026-11-27. Este test exigía que el lienzo de bloques estuviera en la
+// regla de papel junto al esquema. El dueño lo vio en su notebook en tema oscuro (el recuadro
+// blanco encandilaba) y decidió que el lienzo siga el tema de la página. El esquema y la leyenda
+// siguen siendo papel; el lienzo no, y eso también se cuida acá para que no vuelva solo.
 test("el esquema queda claro en los dos temas: sus colores no los redefine nadie, y la zona de papel los usa", () => {
   const redefinidos = reglasCss(CSS_PAGINA).filter((r) => /data-theme/.test(r.selector) || /prefers-color-scheme/.test(r.medio))
   assert.deepEqual(redefinidos.map((r) => r.selector), [], "la página no cambia nada propio según el tema: lo que es papel es papel siempre")
-  const papel = reglasCss(CSS_PAGINA).find((r) => r.selector.includes("#circuito > [data-esquema]") && r.selector.includes("#vista-logica-lienzo") && /color-scheme\s*:\s*light/.test(r.cuerpo))
-  assert.ok(papel, "falta la regla que deja en claro el esquema y el lienzo de bloques")
+  const papel = reglasCss(CSS_PAGINA).find((r) => r.selector.includes("#circuito > [data-esquema]") && r.selector.includes(".leyenda") && /color-scheme\s*:\s*light/.test(r.cuerpo))
+  assert.ok(papel, "falta la regla que deja en claro el esquema y la leyenda")
+  assert.equal(papel.selector.includes("#vista-logica-lienzo"), false, "el lienzo de bloques ya no es papel: sigue el tema de la página")
+  // Y ninguna otra regla le fuerza el claro al lienzo ni le pone un fondo que no sea el de la página.
+  const delLienzo = reglasCss(CSS_PAGINA).filter((r) => r.medio === "" && r.selector.split(",").some((s) => s.trim() === "#vista-logica-lienzo"))
+  assert.ok(delLienzo.length > 0, "precondición: el lienzo tiene su regla")
+  for (const r of delLienzo) assert.doesNotMatch(r.cuerpo, /color-scheme|--papel/, r.selector)
+  assert.ok(delLienzo.some((r) => /background:\s*var\(--sup\)/.test(r.cuerpo)), "el fondo del lienzo es el de una tarjeta de la página")
   const reasignados = tokensDe(papel.cuerpo)
   for (const token of ["--tinta", "--tinta-2", "--linea", "--sup"]) assert.match(reasignados[token] ?? "", /^var\(--papel-[a-z0-9-]+\)$/, `${token} tiene que tomar su valor de papel dentro del esquema`)
   for (const valor of Object.values(reasignados)) assert.ok(valor.slice(4, -1) in tokensDeLaPagina, `${valor} no está entre los tokens de la ventana`)
