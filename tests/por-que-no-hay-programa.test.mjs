@@ -130,3 +130,78 @@ test("lo que no tiene explicación propia cae a la general; ningún texto trae n
   assert.match(porQueNoHayPrograma({ codigo: "CODEGEN_SIN_ESCRITURA", datos }, contexto), /no sabe manejar «/)
   for (const texto of textos) assert.doesNotMatch(texto, /CODEGEN|cmp-|beh-|undefined|null|[{}[\]]/)
 })
+
+// ── agregadas por la revisión independiente del 2026-11-26 ──────────────────────────────────
+// La revisión mutó y encontró que la prueba de arriba sólo exigía el prefijo «Todavía no hay
+// programa: »: cinco códigos podían devolver la causa de OTRO (p. ej. la del pin) y seguía verde.
+// Tampoco se probaban los «sin nombre no se inventa» (con el catálogo real toda placa tiene
+// nombre, así que hace falta un conocimiento al que le falte), ni los textos que le dicen al
+// asistente qué hacer con la explicación.
+
+test("cada causa tiene SU texto: lectura, número de la regla, escritura y pin no se confunden", async () => {
+  const dir = await armar("esp32-devkit-v1", ["GPIO4", "GPIO18"])
+  const contexto = { proyecto: snapshotDe(dir).proyecto, conocimiento: K }
+  const pulsador = K.nombre("componente", "pulsador")
+  const led = K.nombre("componente", "led")
+  const de = (codigo, componente) => porQueNoHayPrograma({ codigo, datos: { componente } }, contexto)
+  const LEER = `Todavía no hay programa: esta versión de Tecnia Bot todavía no sabe leer «${pulsador}» para la regla que la usa. El montaje y las reglas siguen valiendo.`
+  const NUMERO = `Todavía no hay programa: esta versión de Tecnia Bot no sabe comparar el número de la regla con lo que mide «${pulsador}». Probá escribir la regla con otra unidad. El montaje y las reglas siguen valiendo.`
+  const MANEJAR = `Todavía no hay programa: esta versión de Tecnia Bot todavía no sabe manejar «${led}» como lo pide la regla. El montaje y las reglas siguen valiendo.`
+  for (const codigo of ["CODEGEN_SIN_LECTURA", "CODEGEN_PROTOCOLO_SIN_BACKEND", "CODEGEN_LECTURA_INCOHERENTE"]) assert.equal(de(codigo, "cmp-0"), LEER, codigo)
+  for (const codigo of ["CODEGEN_UMBRAL_NO_CONVERTIBLE", "CODEGEN_CONVERSION_NO_MONOTONA"]) assert.equal(de(codigo, "cmp-0"), NUMERO, codigo)
+  for (const codigo of ["CODEGEN_SIN_ESCRITURA", "CODEGEN_REPOSO_NO_DECLARADO"]) assert.equal(de(codigo, "cmp-1"), MANEJAR, codigo)
+  assert.equal(de("CODEGEN_PIN_NO_DERIVABLE", "cmp-1"), PIN_QUE_NO_SE_PUEDE_USAR)
+  // El generador da este error con el pin sin elegir Y con uno que no sirve: el texto no afirma cuál.
+  assert.match(PIN_QUE_NO_SE_PUEDE_USAR, /falta elegir o que no se puede usar/)
+  assert.equal(new Set([LEER, NUMERO, MANEJAR, PIN_QUE_NO_SE_PUEDE_USAR, TODAVIA_NO_SE_SABE_PROGRAMAR]).size, 5)
+})
+
+test("sin nombre no se inventa: una placa sin nombre nunca sale como «undefined» ni por su id", async () => {
+  const dir = await armar("esp32-devkit-v1", ["GPIO4", "GPIO18"])
+  const proyecto = snapshotDe(dir).proyecto
+  const sinNombreDePlaca = { ...K, nombre: (kind, id) => (kind === "placa" ? undefined : K.nombre(kind, id)) }
+  const contexto = { proyecto, conocimiento: sinNombreDePlaca }
+  const con = (noAdmitidos) => porQueNoHayPrograma({ codigo: "CODEGEN_NO_ADMITIDO", datos: { noAdmitidos } }, contexto)
+  assert.equal(con([{ kind: "placa", id: proyecto.placa, problemas: [] }]), TODAVIA_NO_SE_SABE_PROGRAMAR)
+  assert.equal(con([{ kind: "componente", id: "led", problemas: [] }]), TODAVIA_NO_SE_SABE_PROGRAMAR)
+  // El control: con el conocimiento entero esos mismos datos SÍ dan una causa con nombre.
+  const entero = { proyecto, conocimiento: K }
+  assert.match(porQueNoHayPrograma({ codigo: "CODEGEN_NO_ADMITIDO", datos: { noAdmitidos: [{ kind: "placa", id: proyecto.placa, problemas: [] }] } }, entero), /la placa «ESP32 DevKit»/)
+})
+
+test("una pieza que no se programa con NINGUNA placa: no se nombra la placa (sugeriría que con otra anda)", async () => {
+  const { generabilidad } = await import(join(REPO, "opencode/codegen/generabilidad.ts"))
+  const enNinguna = generabilidad(K).componentes.find((c) => c.generableEn.length === 0 && K.nombre("componente", c.tipo) !== undefined)
+  assert.ok(enNinguna, "la precondición: el catálogo tiene una pieza que hoy no llega a programa en ninguna placa")
+  const dir = await armar("esp32-devkit-v1", ["GPIO4", "GPIO18"])
+  const contexto = { proyecto: snapshotDe(dir).proyecto, conocimiento: K }
+  const texto = porQueNoHayPrograma({ codigo: "CODEGEN_NO_ADMITIDO", datos: { noAdmitidos: [{ kind: "componente", id: enNinguna.tipo, problemas: [] }] } }, contexto)
+  assert.equal(texto, `Todavía no hay programa: esta versión de Tecnia Bot todavía no programa «${K.nombre("componente", enNinguna.tipo)}». El montaje y las reglas siguen valiendo.`)
+  // El control: una pieza que con esta placa sí se programa conserva «con la placa».
+  assert.match(porQueNoHayPrograma({ codigo: "CODEGEN_NO_ADMITIDO", datos: { noAdmitidos: [{ kind: "componente", id: "led", problemas: [] }] } }, contexto), /» con la placa «ESP32 DevKit»\./)
+})
+
+test("los textos valen también dichos en el chat: nombran la ventana y ninguno dice «acá»", async () => {
+  // El caso que encontró la revisión, por la tool real: proyecto vacío → `generar`.
+  const dir = nuevoDir("por-que-no-vacio")
+  const r = JSON.parse(await programaTool.execute({ accion: "generar" }, { directory: dir }))
+  assert.equal(r.explicacion, TODAVIA_FALTA_ARMAR)
+  assert.equal(r.resultado, `NO SE GENERÓ EL PROGRAMA — ${TODAVIA_FALTA_ARMAR}`)
+  assert.match(TODAVIA_FALTA_ARMAR, /se ve en la ventana del proyecto\.$/)
+  assert.match(TODAVIA_NO_ESTA_LISTO, /en la sección «Avisos» de la ventana del proyecto\.$/)
+  for (const texto of [TODAVIA_FALTA_ARMAR, TODAVIA_NO_ESTA_LISTO, TODAVIA_NO_SE_SABE_PROGRAMAR, PIN_QUE_NO_SE_PUEDE_USAR]) assert.doesNotMatch(texto, /\bacá\b|\baquí\b/i)
+})
+
+test("lo que se le dice al asistente: la explicación va tal cual, sin códigos, y los motivos se cuentan", async () => {
+  const { readFileSync } = await import("node:fs")
+  const plano = (t) => t.replace(/\s+/g, " ")
+  const descripcion = plano(programaTool.description)
+  assert.match(descripcion, /`explicacion` trae la causa en palabras, la misma que muestra la ventana: decísela al docente TAL CUAL \(no la cambies ni le agregues causas\)/)
+  assert.match(descripcion, /NUNCA le nombres al docente un código interno ni un identificador/)
+  const agente = plano(readFileSync(join(REPO, "opencode/agent/tecnia-bot.md"), "utf8"))
+  assert.match(agente, /\*\*Decísela al docente tal cual\*\*, sin cambiarla ni agregarle causas tuyas/)
+  assert.match(agente, /contá además QUÉ le falta: son los motivos que da `proyecto-fisico`/)
+  // La regla de generabilidad mandaba a decir «el `codigo` o los `problemas`»: justo lo que la otra prohíbe.
+  assert.match(agente, /el `codigo` y los `problemas` que trae son para vos, no se los leas/)
+  assert.doesNotMatch(agente, /por qué \(el `codigo` o los `problemas` que trae\)/)
+})
