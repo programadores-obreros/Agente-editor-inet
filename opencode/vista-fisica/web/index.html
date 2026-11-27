@@ -255,6 +255,10 @@
      así que lleva su propio margen para que el enlace «Ver el bloque» no la deje bajo el header. */
   #vista-logica { scroll-margin-top: calc(var(--alto-cabecera) + var(--e4)); }
   #vista-logica-vinculo { font-size: var(--t-s); color: var(--tinta-2); }
+  /* El bloque marcado (`adaptador-blockly.js::CLASE_DE_BLOQUE_MARCADO`): un borde grueso alrededor
+     del bloque, sin tocarle el color de adentro. El relieve de Blockly lo aclaraba y el texto
+     blanco dejaba de leerse (2:1). Sólo el contorno del propio bloque: los encastrados son otro <g>. */
+  .tecnia-bloque-marcado > .blocklyPath { stroke: var(--acento); stroke-width: 5px; }
 
   /* ══ Paso 3: el programa, tal cual. Alto acotado con barra propia: un programa con sensor
      pasa las 90 líneas. ══ */

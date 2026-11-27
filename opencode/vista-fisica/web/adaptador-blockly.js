@@ -56,6 +56,13 @@ export const COLORES_DE_BLOQUE = Object.freeze({ mientras: "#1d4ed8", hacer: "#0
  * en el esquema (`--ctrl`); el mismo test los ata a la hoja y les mide el contraste.
  */
 export const COLOR_DE_ESTRUCTURA = "#334155"
+/**
+ * La clase que lleva la raíz de un bloque marcado; el borde lo pone la hoja de `index.html`.
+ * Antes se usaba `setHighlighted(true)`, que aplica el relieve de Blockly: aclaraba el bloque y el
+ * texto blanco quedaba sobre un fondo pálido (medido en Chromium: 2,05:1 y 1,91:1 de contraste,
+ * contra 6,7:1 y 5,47:1 sin marcar). Con un borde, el bloque se sigue leyendo igual.
+ */
+export const CLASE_DE_BLOQUE_MARCADO = "tecnia-bloque-marcado"
 // Lugar de los bloques en el lienzo: «al iniciar» arriba y «por siempre» debajo. El alto de un
 // bloque lo dice Blockly después de dibujarlo; si la API no lo informa (la de prueba), se usa el
 // estimado.
@@ -200,8 +207,27 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   /** Los bloques de la estructura que están dibujados. `pasos` sólo tiene los renglones que
    * vinieron del servidor: el renglón de «todavía no se sabe» no es un paso del programa. */
   let estructura = { alIniciar: null, porSiempre: null, pasos: [] }
-  let firmaActual = null
+  /** La forma de las reglas y la de los renglones de «al iniciar» que están dibujadas, por separado. */
+  let firmaDeReglas = null
+  let firmaDePasos = null
+  let altoDeAlIniciar = ALTO_ESTIMADO_DE_AL_INICIAR
   let marcados = []
+
+  // UN TOQUE ES DE ALGUIEN (2026-11-27). Cuando el lienzo se rearma, Blockly reubica el foco en
+  // otro bloque y avisa `selected`, igual que si lo hubieran tocado. Visto con mouse real: se
+  // cambiaba un casillero de una regla y quedaba marcado un renglón de «al iniciar» que nadie
+  // tocó. Por eso, después de cada rearmado no se atiende ningún `selected` hasta que haya un
+  // gesto de verdad sobre el lienzo (apretar el mouse o una tecla). Sin forma de escuchar gestos
+  // (el contenedor de las pruebas), no hay espera.
+  const hayGestos = typeof contenedor?.addEventListener === "function"
+  let esperandoGesto = hayGestos
+  const huboGesto = () => {
+    esperandoGesto = false
+  }
+  if (hayGestos) for (const tipo of ["pointerdown", "keydown"]) contenedor.addEventListener(tipo, huboGesto, true)
+  const rearmado = () => {
+    if (hayGestos) esperandoGesto = true
+  }
   const parDelBloque = (idBloque) => pares.find((p) => p.mientras.id === idBloque || p.hacer.id === idBloque) ?? null
 
   /** Qué bloque es, para la página; `null` si no es ninguno que tenga algo que mostrar en el código. */
@@ -239,7 +265,7 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     // es un clic fuera del lienzo), y tocar un casillero no dejaba nada marcado. Ahora sólo el
     // clic de verdad en el fondo avisa «ninguno»; una deselección sola no avisa nada.
     if (Blockly.Events.SELECTED !== undefined && evento.type === Blockly.Events.SELECTED) {
-      if (evento.newElementId) alSeleccionar(claveDelBloque(evento.newElementId))
+      if (evento.newElementId && !esperandoGesto) alSeleccionar(claveDelBloque(evento.newElementId))
       return
     }
     if (Blockly.Events.CLICK !== undefined && evento.type === Blockly.Events.CLICK) {
@@ -339,6 +365,33 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
     return { mientras: contenedorBloque, hacer: accion }
   }
 
+  const altoDe = (bloque) => {
+    const medida = typeof bloque.getHeightWidth === "function" ? bloque.getHeightWidth() : null
+    return medida && Number.isFinite(medida.height) && medida.height > 0 ? medida.height : ALTO_ESTIMADO_DE_AL_INICIAR
+  }
+
+  /**
+   * Rehace SÓLO «al iniciar» y deja las reglas como están (2026-11-27). Los renglones cambian dos
+   * veces por cada edición: al cambiar la revisión pasan a «no se sabe» y, cuando llega el programa
+   * nuevo, a la lista. Antes cada uno de esos cambios vaciaba y rearmaba el lienzo ENTERO: se
+   * cerraba el menú que estuviera abierto y se perdía un número a medio escribir en una regla, sin
+   * aviso (lo encontró la revisión independiente). Las reglas no cambiaron: no se tocan.
+   */
+  function rehacerAlIniciar(pasos) {
+    const viejo = estructura.alIniciar
+    const deAntes = [viejo, ...estructura.pasos]
+    marcados = marcados.filter((b) => !deAntes.includes(b))
+    if (viejo && typeof viejo.dispose === "function") viejo.dispose(false)
+    const nuevo = construirAlIniciar(pasos)
+    if (typeof nuevo.bloque.moveBy === "function") nuevo.bloque.moveBy(MARGEN, MARGEN)
+    const alto = altoDe(nuevo.bloque)
+    // «por siempre» sigue debajo: se corre lo que cambió el alto de «al iniciar».
+    if (estructura.porSiempre && typeof estructura.porSiempre.moveBy === "function" && alto !== altoDeAlIniciar) estructura.porSiempre.moveBy(0, alto - altoDeAlIniciar)
+    altoDeAlIniciar = alto
+    estructura = { ...estructura, alIniciar: nuevo.bloque, pasos: nuevo.pasos }
+    rearmado()
+  }
+
   /** Los renglones de «al iniciar» del modelo: la lista de textos, o `null` si no se sabe. */
   const pasosDe = (modelo) => (Array.isArray(modelo.alIniciar?.pasos) ? modelo.alIniciar.pasos : null)
 
@@ -354,18 +407,22 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         pares = []
         estructura = { alIniciar: null, porSiempre: null, pasos: [] }
         marcados = []
-        firmaActual = null
+        firmaDeReglas = null
+        firmaDePasos = null
+        rearmado()
         return
       }
       const pasos = pasosDe(modelo)
       // La firma es la FORMA de cada par, en orden (no el id de la regla: una regla que recién
       // nace pasa de `null` a su id sin que cambie un solo bloque). Si cambia cuántas hay o la
       // forma de alguna, se redibuja todo; si no, cada par toma los valores de la regla de su lugar.
-      // Los renglones de «al iniciar» también son forma: si cambian (o pasan de «no se sabe» a
-      // sabidos), se redibuja.
-      const firma = JSON.stringify([pasos, reglas.map((r) => firmaDeCampos(r.campos))])
-      if (firma !== firmaActual) {
-        firmaActual = null
+      // Los renglones de «al iniciar» tienen su propia firma: si cambian ellos solos (o pasan de
+      // «no se sabe» a sabidos), se rehace ese bloque y las reglas no se tocan.
+      const firma = JSON.stringify(reglas.map((r) => firmaDeCampos(r.campos)))
+      const firmaPasos = JSON.stringify(pasos)
+      if (firma !== firmaDeReglas) {
+        firmaDeReglas = null
+        firmaDePasos = null
         pares = []
         estructura = { alIniciar: null, porSiempre: null, pasos: [] }
         marcados = []
@@ -378,15 +435,20 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
         for (const par of nuevos) for (const bloque of [par.mientras, par.hacer]) fijar(bloque)
         fijar(porSiempre)
         if (typeof alIniciar.bloque.moveBy === "function") alIniciar.bloque.moveBy(MARGEN, MARGEN)
-        const medida = typeof alIniciar.bloque.getHeightWidth === "function" ? alIniciar.bloque.getHeightWidth() : null
-        const alto = medida && Number.isFinite(medida.height) && medida.height > 0 ? medida.height : ALTO_ESTIMADO_DE_AL_INICIAR
-        if (typeof porSiempre.moveBy === "function") porSiempre.moveBy(MARGEN, MARGEN + alto + SEPARACION)
+        altoDeAlIniciar = altoDe(alIniciar.bloque)
+        if (typeof porSiempre.moveBy === "function") porSiempre.moveBy(MARGEN, MARGEN + altoDeAlIniciar + SEPARACION)
         pares = nuevos
         estructura = { alIniciar: alIniciar.bloque, porSiempre, pasos: alIniciar.pasos }
-        firmaActual = firma
+        firmaDeReglas = firma
+        firmaDePasos = firmaPasos
+        rearmado()
       } else {
         // Mismos bloques, modelo nuevo: cada par pasa a apuntar a la regla recién llegada.
         pares = pares.map((par, i) => ({ ...par, regla: reglas[i] }))
+        if (firmaPasos !== firmaDePasos) {
+          rehacerAlIniciar(pasos)
+          firmaDePasos = firmaPasos
+        }
       }
       for (const par of pares) {
         for (const campo of par.regla.campos) {
@@ -415,12 +477,25 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
    * foco: en la página, llevarse el foco al lienzo sube la ventana y saca de la vista el código
    * que el alumno estaba mirando. Devuelve si quedó algo marcado.
    */
+  const ponerMarca = (bloque, marcado) => {
+    const raiz = typeof bloque.getSvgRoot === "function" ? bloque.getSvgRoot() : null
+    if (raiz?.classList) raiz.classList.toggle(CLASE_DE_BLOQUE_MARCADO, marcado)
+  }
   function marcar(clave) {
     if (destruido) return false
-    for (const bloque of marcados) if (typeof bloque.setHighlighted === "function") bloque.setHighlighted(false)
+    for (const bloque of marcados) ponerMarca(bloque, false)
     marcados = bloquesDeLaClave(clave)
-    for (const bloque of marcados) if (typeof bloque.setHighlighted === "function") bloque.setHighlighted(true)
+    for (const bloque of marcados) ponerMarca(bloque, true)
     return marcados.length > 0
+  }
+
+  /**
+   * Dónde está en la ventana el primer bloque marcado (`getBoundingClientRect`), o `null`. Lo usa
+   * la página para llevar la vista hasta ahí cuando se pide «Ir a los bloques».
+   */
+  function cajaDeLoMarcado() {
+    const raiz = !destruido && marcados[0] && typeof marcados[0].getSvgRoot === "function" ? marcados[0].getSvgRoot() : null
+    return raiz && typeof raiz.getBoundingClientRect === "function" ? raiz.getBoundingClientRect() : null
   }
 
   /** Quita LA regla dibujada. Con varias no elige ninguna (no hay "la" regla): eso se hace en la sección Reglas. */
@@ -432,9 +507,10 @@ export function crearAdaptadorBlockly({ Blockly, contenedor, alEditar, alQuitar,
   function destruir() {
     if (destruido) return
     destruido = true
+    if (hayGestos && typeof contenedor.removeEventListener === "function") for (const tipo of ["pointerdown", "keydown"]) contenedor.removeEventListener(tipo, huboGesto, true)
     workspace.removeChangeListener(alCambiarCampo)
     workspace.dispose()
   }
 
-  return { pintar, quitar, marcar, destruir }
+  return { pintar, quitar, marcar, cajaDeLoMarcado, destruir }
 }

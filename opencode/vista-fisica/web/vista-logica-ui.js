@@ -56,6 +56,7 @@ export function crearVistaLogica({ Blockly, contenedor, controlador, media, mens
     },
     quitar: () => adaptador.quitar(),
     marcar: (clave) => adaptador.marcar(clave),
+    cajaDeLoMarcado: () => adaptador.cajaDeLoMarcado(),
     destruir: () => adaptador.destruir(),
   }
 }
@@ -104,6 +105,8 @@ export function crearPanelVistaLogica({ Blockly, lienzo, elementoTexto, elemento
     mostrarEstado,
     /** Marca en el lienzo los bloques de una clave (`null` desmarca). Sin lienzo todavía, no hay nada que marcar. */
     marcar: (clave) => (vista ? vista.marcar(clave) : false),
+    /** Dónde está el primer bloque marcado, o `null` (sin lienzo, o sin nada marcado). */
+    cajaDeLoMarcado: () => (vista ? vista.cajaDeLoMarcado() : null),
     destruir() {
       vista?.destruir()
       vista = null

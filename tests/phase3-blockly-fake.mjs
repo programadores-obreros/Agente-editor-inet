@@ -70,7 +70,7 @@ export function fabricarBlockly() {
         newBlock(tipo) {
           if (reg.fallarNewBlock) throw new Error("falla simulada")
           reg.bloquesCreados++
-          const b = { id: `b${reg.bloquesCreados}`, type: tipo, workspace: ws, campos: {}, etiquetas: [], deletable: true, movable: true, hijo: null, svg: false, renderizado: false, encastrados: {}, siguiente: null, dentroDe: null, resaltado: false }
+          const b = { id: `b${reg.bloquesCreados}`, type: tipo, workspace: ws, campos: {}, etiquetas: [], deletable: true, movable: true, hijo: null, svg: false, renderizado: false, encastrados: {}, siguiente: null, dentroDe: null }
           // Encastrar: el primero de una entrada queda en `encastrados[nombre]`; los que siguen, en `siguiente`.
           const entrada = (nombre) => ({ nombre, connection: { connect: (otra) => { b.encastrados[nombre] = otra.bloque; otra.bloque.dentroDe = b; if (nombre === "ACCION") b.hijo = otra.bloque; return true } }, appendField(campo, nombreCampo) {
             if (campo instanceof FieldLabel) b.etiquetas.push(campo.texto)
@@ -81,9 +81,28 @@ export function fabricarBlockly() {
           b.getInput = (n) => (entradas[n] ??= entrada(n))
           b.previousConnection = { bloque: b }
           b.nextConnection = { connect: (otra) => { b.siguiente = otra.bloque; otra.bloque.dentroDe = b; return true } }
-          // Un bloque que `clear()` ya sacó del lienzo no se debería volver a tocar: acá no rompe
-          // (no se midió qué hace el Blockly real), pero queda contado en `reg.usosDeDescartados`.
-          b.setHighlighted = (v) => { if (b.descartado) reg.usosDeDescartados++; b.resaltado = v }
+          // La raíz del dibujo del bloque: lo único que se usa de ella es `classList` (la marca) y
+          // `getBoundingClientRect`. Un bloque que `clear()` o `dispose()` ya sacó del lienzo no se
+          // debería volver a tocar: acá no rompe (no se midió qué hace el Blockly real), pero queda
+          // contado en `reg.usosDeDescartados`. `b.resaltado` dice si tiene alguna clase puesta.
+          const clases = new Set()
+          const raiz = {
+            classList: {
+              toggle(c, v) { if (b.descartado) reg.usosDeDescartados++; if (v) clases.add(c); else clases.delete(c) },
+              contains: (c) => clases.has(c),
+            },
+            getBoundingClientRect: () => ({ top: 100, bottom: 160, left: 16, right: 300, height: 60, width: 284 }),
+          }
+          b.getSvgRoot = () => raiz
+          b.clases = clases
+          Object.defineProperty(b, "resaltado", { get: () => clases.size > 0 })
+          // Como el real: descartar un bloque se lleva lo que tiene encastrado adentro y debajo.
+          b.dispose = () => {
+            const fuera = []
+            const juntar = (x) => { if (!x) return; fuera.push(x); for (const n of Object.keys(x.encastrados)) juntar(x.encastrados[n]); juntar(x.siguiente) }
+            fuera.push(b); for (const n of Object.keys(b.encastrados)) juntar(b.encastrados[n])
+            for (const x of fuera) { x.descartado = true; const i = bloques.indexOf(x); if (i >= 0) bloques.splice(i, 1) }
+          }
           /** Los bloques encastrados en una entrada, de arriba abajo. */
           b.pila = (nombre) => { const fila = []; for (let x = b.encastrados[nombre] ?? null; x; x = x.siguiente) fila.push(x); return fila }
           b.getField = (n) => b.campos[n] ?? null

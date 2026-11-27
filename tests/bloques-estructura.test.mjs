@@ -41,7 +41,7 @@ import { fabricarBlockly } from "./phase3-blockly-fake.mjs"
 import { cssEmbebidoDe, reglasCss, tokensDe, contraste } from "./ventana-helpers.mjs"
 
 const WEB = join(REPO, "opencode/vista-fisica/web")
-const { crearAdaptadorBlockly, COLOR_DE_ESTRUCTURA, ALTO_MINIMO_DEL_LIENZO, ALTO_MAXIMO_DEL_LIENZO, LIBRE_BAJO_LOS_BLOQUES } = await import(join(WEB, "adaptador-blockly.js"))
+const { crearAdaptadorBlockly, CLASE_DE_BLOQUE_MARCADO, COLOR_DE_ESTRUCTURA, ALTO_MINIMO_DEL_LIENZO, ALTO_MAXIMO_DEL_LIENZO, LIBRE_BAJO_LOS_BLOQUES } = await import(join(WEB, "adaptador-blockly.js"))
 const { proyectarModeloLogico } = await import(join(WEB, "vista-logica.js"))
 const { crearVistaLogica, crearPanelVistaLogica } = await import(join(WEB, "vista-logica-ui.js"))
 
@@ -327,18 +327,117 @@ test("marcar no selecciona ni avisa: no hace eco hacia la página", () => {
   assert.deepEqual(m.llamadas.seleccionar, [])
 })
 
-test("después de redibujar no queda nada marcado, y marcar de nuevo funciona sobre los bloques nuevos", () => {
+// 2026-11-27. Este test decía «después de redibujar no queda nada marcado» y marcaba una regla
+// antes de que llegaran los renglones de «al iniciar». Describía un defecto: cada vez que cambiaban
+// esos renglones (dos veces por edición) se vaciaba el lienzo ENTERO, reglas incluidas. Ahora, si
+// sólo cambian los renglones, las reglas no se tocan, y lo que estaba marcado en ellas sigue.
+test("cuando sólo cambian los renglones de «al iniciar», las reglas NO se rearman: mismos bloques, misma marca", () => {
   const m = montar()
-  m.adaptador.pintar(modelo([regla("beh-1")], null))
-  m.adaptador.marcar({ bloque: "regla", reglaId: "beh-1" })
+  m.adaptador.pintar(modelo([regla("beh-1"), regla("beh-2")], null))
+  const reglasAntes = [...m.reg.deRegla()]
+  const porSiempreAntes = m.porSiempre()
+  m.adaptador.marcar({ bloque: "regla", reglaId: "beh-2" })
+  // llega el programa: «no se sabe» → renglones
+  m.adaptador.pintar(modelo([regla("beh-1"), regla("beh-2")], PASOS))
+  assert.deepEqual(m.reg.deRegla(), reglasAntes, "los MISMOS bloques de regla, no otros iguales")
+  assert.equal(m.porSiempre(), porSiempreAntes)
+  assert.deepEqual(marcadosDe(m), [reglasAntes[2], reglasAntes[3]], "la regla 2 sigue marcada")
+  assert.deepEqual(textosDe(m.alIniciar().pila("PASOS")), PASOS)
+  // cambia la revisión: renglones → «no se sabe» → renglones nuevos. Tampoco.
+  m.adaptador.pintar(modelo([regla("beh-1"), regla("beh-2")], null))
+  m.adaptador.pintar(modelo([regla("beh-1"), regla("beh-2")], [PASOS[0]]))
+  assert.deepEqual(m.reg.deRegla(), reglasAntes)
+  assert.deepEqual(m.reg.ws.getTopBlocks().map((b) => b.type).sort(), ["tecnia_al_iniciar", "tecnia_por_siempre"], "y no quedó ningún «al iniciar» viejo")
+  assert.equal(m.reg.deTipo("tecnia_paso").length, 1)
+  assert.deepEqual(m.llamadas.editar, [])
+  assert.equal(m.reg.usosDeDescartados, 0)
+})
+
+test("un renglón de «al iniciar» marcado se va con su renglón, y desmarcar después no toca un bloque descartado", () => {
+  const m = montar()
   m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  m.adaptador.marcar({ bloque: "paso", indice: 1 })
+  m.adaptador.pintar(modelo([regla("beh-1")], null))
+  assert.deepEqual(marcadosDe(m), [])
+  assert.equal(m.adaptador.cajaDeLoMarcado(), null)
+  m.adaptador.marcar(null)
+  m.adaptador.marcar({ bloque: "alIniciar" })
+  assert.deepEqual(marcadosDe(m), [m.alIniciar()], "y se puede marcar el «al iniciar» nuevo")
+  assert.equal(m.reg.usosDeDescartados, 0, "nunca se toca un bloque que ya no está en el lienzo")
+})
+
+test("«por siempre» acompaña el alto de «al iniciar» cuando cambian sus renglones", () => {
+  const m = montar({ alto: 120 })
+  m.adaptador.pintar(modelo([regla("beh-1")], null))
+  assert.deepEqual(m.porSiempre().movimientos, [[16, 16 + 120 + 16]])
+  m.reg.altoDeBloque = 200 // con más renglones, «al iniciar» mide más
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  assert.deepEqual(m.alIniciar().movimientos, [[16, 16]])
+  assert.deepEqual(m.porSiempre().movimientos, [[16, 16 + 120 + 16], [0, 80]], "se corre lo que creció, no se reubica de cero")
+})
+
+test("si cambia la forma de una regla, ahí sí se rearma todo y no queda nada marcado", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  m.adaptador.marcar({ bloque: "regla", reglaId: "beh-1" })
+  const antes = [...m.reg.deRegla()]
+  m.adaptador.pintar(modelo([regla("beh-1"), regla("beh-2")], PASOS))
+  assert.equal(m.reg.deRegla().some((b) => antes.includes(b)), false, "bloques nuevos")
   assert.deepEqual(marcadosDe(m), [])
   assert.equal(m.adaptador.marcar({ bloque: "regla", reglaId: "beh-1" }), true)
   assert.deepEqual(marcadosDe(m), [m.reg.mientras()[0], m.reg.mientras()[0].hijo])
-  // Y desmarcar llega a esos bloques (no a los que ya no existen).
   m.adaptador.marcar(null)
   assert.deepEqual(marcadosDe(m), [])
-  assert.equal(m.reg.usosDeDescartados, 0, "nunca se toca un bloque que el redibujo ya sacó del lienzo")
+  assert.equal(m.reg.usosDeDescartados, 0)
+})
+
+// Medido en Chromium: `setHighlighted(true)` aclaraba el bloque y el texto blanco quedaba con 2:1 de
+// contraste. La marca es ahora una clase en la raíz del bloque; el borde lo pone la hoja.
+test("marcar pone una clase en el bloque (el borde es de la hoja) y no usa el relieve de Blockly", () => {
+  const m = montar()
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  const relieves = []
+  for (const b of m.reg.ws.bloques) b.setHighlighted = (v) => relieves.push(v)
+  m.adaptador.marcar({ bloque: "porSiempre" })
+  assert.deepEqual([...m.porSiempre().clases], [CLASE_DE_BLOQUE_MARCADO])
+  assert.deepEqual(relieves, [])
+  assert.deepEqual(m.adaptador.cajaDeLoMarcado(), m.porSiempre().getSvgRoot().getBoundingClientRect())
+  m.adaptador.marcar(null)
+  assert.deepEqual([...m.porSiempre().clases], [])
+  assert.equal(m.adaptador.cajaDeLoMarcado(), null)
+  const html = readFileSync(join(WEB, "index.html"), "utf8")
+  assert.match(html, new RegExp(`\\.${CLASE_DE_BLOQUE_MARCADO} > \\.blocklyPath \\{[^}]*stroke:`), "la hoja le pone el borde a esa clase")
+})
+
+// 2026-11-27, con mouse real: se cambiaba un casillero de una regla y, al rearmarse el lienzo,
+// quedaba marcado un renglón de «al iniciar» que nadie tocó. Blockly reubica el foco en otro bloque
+// cuando se le saca el que lo tenía, y avisa `selected` igual que con un toque.
+test("después de un rearmado, un `selected` sin gesto del alumno no cuenta como toque", () => {
+  const oyentes = {}
+  const contenedor = { style: {}, addEventListener: (tipo, f) => { oyentes[tipo] = f }, removeEventListener: (tipo) => { delete oyentes[tipo] } }
+  const m = montar({ contenedor })
+  m.adaptador.pintar(modelo([regla("beh-1")], null))
+  assert.deepEqual(Object.keys(oyentes).sort(), ["keydown", "pointerdown"])
+  // Recién pintado: Blockly le da el foco a un bloque por su cuenta.
+  m.reg.ws.disparar({ type: "selected", newElementId: m.porSiempre().id, isUiEvent: true })
+  assert.deepEqual(m.llamadas.seleccionar, [], "nadie tocó nada todavía")
+  oyentes.pointerdown()
+  m.reg.ws.tocar(m.porSiempre().id)
+  assert.deepEqual(m.llamadas.seleccionar, [{ bloque: "porSiempre" }])
+  // Llegan los renglones (se rehace «al iniciar») y Blockly reubica el foco: no es un toque.
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  m.reg.ws.disparar({ type: "selected", newElementId: m.alIniciar().pila("PASOS")[0].id, isUiEvent: true })
+  assert.equal(m.llamadas.seleccionar.length, 1)
+  // Con el teclado también vale como gesto.
+  oyentes.keydown()
+  m.reg.ws.disparar({ type: "selected", newElementId: m.alIniciar().id, isUiEvent: true })
+  assert.deepEqual(m.llamadas.seleccionar.at(-1), { bloque: "alIniciar" })
+  // Un repintado que no rearma nada no vuelve a pedir un gesto.
+  m.adaptador.pintar(modelo([regla("beh-1")], PASOS))
+  m.reg.ws.tocar(m.porSiempre().id)
+  assert.deepEqual(m.llamadas.seleccionar.at(-1), { bloque: "porSiempre" })
+  m.adaptador.destruir()
+  assert.deepEqual(Object.keys(oyentes), [], "al destruir se sueltan los oyentes del contenedor")
 })
 
 // ════════════════════════════════════════════════════════════════════════════════════
