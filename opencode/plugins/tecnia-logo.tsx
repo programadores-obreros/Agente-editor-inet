@@ -40,36 +40,43 @@ import { createHash } from "node:crypto"
 //
 // Cada celda de la terminal son dos píxeles, uno arriba del otro: ▀ pinta el de
 // arriba, ▄ el de abajo, █ los dos. Con color de frente y de fondo, una celda
-// puede llevar dos colores. Así el robot es el mismo del ícono del escritorio
-// (cabeza clara, ojos violetas, antena dorada) y no un dibujo de palitos.
+// puede llevar dos colores. Así el logo es el ícono del escritorio (la baldosa
+// violeta con su degradé, el robot blanco, la antena dorada) y no un dibujo de
+// palitos.
 // ----------------------------------------------------------------------------
 
-// Tintas: H cabeza · E ojos · M boca · G antena · T «TECNIA» · B «BOT» · . vacío
+// Tintas: V baldosa · H cabeza · E ojos · M boca · G antena · T «TECNIA» · B «BOT»
+// · . vacío. Es el ícono del escritorio (installer/branding/icono.svg) llevado a
+// 14x14 píxeles: la baldosa violeta redondeada con el robot adentro.
 const ROBOT_PX = [
-  "......GGG......",
-  ".......H.......",
-  "..HHHHHHHHHHH..",
-  ".HHHHHHHHHHHHH.",
-  ".HHHHHHHHHHHHH.",
-  "HHHEEEHHHEEEHHH",
-  "HHHEEEHHHEEEHHH",
-  "HHHEEEHHHEEEHHH",
-  "HHHHHHHHHHHHHHH",
-  ".HHHHMMMMMHHHH.",
-  ".HHHHHHHHHHHHH.",
-  "..HHHHHHHHHHH..",
+  "..VVVVVVVVVV..",
+  ".VVVVVGGVVVVV.",
+  "VVVVVVGGVVVVVV",
+  "VVVVVVHHVVVVVV",
+  "VVVHHHHHHHHVVV",
+  "VVHHHHHHHHHHVV",
+  "VVHHEEHHEEHHVV",
+  "VVHHEEHHEEHHVV",
+  "VVHHHHHHHHHHVV",
+  "VVHHHMMMMHHHVV",
+  "VVVHHHHHHHHVVV",
+  "VVVVVVVVVVVVVV",
+  ".VVVVVVVVVVVV.",
+  "..VVVVVVVVVV..",
 ]
 
-// Letras de 6 píxeles de alto (3 renglones). El trazo es de un píxel.
+// Letras de 6 píxeles de alto (3 renglones), de trazo grueso: los palos miden dos
+// columnas. Con palos de una sola columna el wordmark quedaba flaco al lado del
+// robot.
 const LETRAS: Record<string, string[]> = {
-  T: ["#####", "..#..", "..#..", "..#..", "..#..", "..#.."],
-  E: ["#####", "#....", "####.", "#....", "#....", "#####"],
-  C: [".####", "#....", "#....", "#....", "#....", ".####"],
-  N: ["#...#", "##..#", "#.#.#", "#.#.#", "#..##", "#...#"],
-  I: ["#", "#", "#", "#", "#", "#"],
-  A: [".###.", "#...#", "#...#", "#####", "#...#", "#...#"],
-  B: ["####.", "#...#", "####.", "#...#", "#...#", "####."],
-  O: [".###.", "#...#", "#...#", "#...#", "#...#", ".###."],
+  T: ["######", "..##..", "..##..", "..##..", "..##..", "..##.."],
+  E: ["######", "##....", "#####.", "##....", "##....", "######"],
+  C: [".#####", "##....", "##....", "##....", "##....", ".#####"],
+  N: ["##...##", "###..##", "####.##", "##.####", "##..###", "##...##"],
+  I: ["##", "##", "##", "##", "##", "##"],
+  A: [".####.", "##..##", "##..##", "######", "##..##", "##..##"],
+  B: ["#####.", "##..##", "#####.", "##..##", "##..##", "#####."],
+  O: [".####.", "##..##", "##..##", "##..##", "##..##", ".####."],
 }
 
 // Arma el mapa de píxeles de «TECNIA BOT»: cada palabra con su tinta.
@@ -95,7 +102,7 @@ type Tramo = { texto: string; fg?: RGBA; bg?: RGBA }
 
 // Convierte un mapa de píxeles en renglones de tramos del mismo color. Dos filas
 // de píxeles hacen un renglón de terminal.
-function pintar(mapa: string[], tinta: (c: string) => RGBA | undefined): Tramo[][] {
+function pintar(mapa: string[], tinta: (c: string, fila: number) => RGBA | undefined): Tramo[][] {
   const renglones: Tramo[][] = []
   for (let f = 0; f < mapa.length; f += 2) {
     const arriba = mapa[f] ?? ""
@@ -107,10 +114,10 @@ function pintar(mapa: string[], tinta: (c: string) => RGBA | undefined): Tramo[]
       const b = abajo[x] ?? "."
       let celda: Tramo
       if (a === "." && b === ".") celda = { texto: " " }
-      else if (a === b) celda = { texto: "█", fg: tinta(a) }
-      else if (b === ".") celda = { texto: "▀", fg: tinta(a) }
-      else if (a === ".") celda = { texto: "▄", fg: tinta(b) }
-      else celda = { texto: "▀", fg: tinta(a), bg: tinta(b) }
+      else if (b === ".") celda = { texto: "▀", fg: tinta(a, f) }
+      else if (a === ".") celda = { texto: "▄", fg: tinta(b, f + 1) }
+      else if (tinta(a, f) === tinta(b, f + 1)) celda = { texto: "█", fg: tinta(a, f) }
+      else celda = { texto: "▀", fg: tinta(a, f), bg: tinta(b, f + 1) }
       const ultimo = tramos[tramos.length - 1]
       if (ultimo && ultimo.fg === celda.fg && ultimo.bg === celda.bg) ultimo.texto += celda.texto
       else tramos.push(celda)
@@ -132,6 +139,21 @@ const EJEMPLOS = [
   "¿Para qué sirve una resistencia?",
   "Quiero medir la temperatura con un DHT11",
 ]
+
+// Los colores del ícono no salen del theme: son la marca, y tienen que ser los
+// mismos con tema oscuro o claro (igual que el .ico del escritorio).
+const MARCA_BLANCO = RGBA.fromInts(255, 255, 255)
+const MARCA_VIOLETA_ARRIBA = [139, 92, 246] // #8b5cf6
+const MARCA_VIOLETA_ABAJO_RGB = [109, 40, 217] // #6d28d9
+const MARCA_VIOLETA_ABAJO = RGBA.fromInts(109, 40, 217)
+const MARCA_BOCA = RGBA.fromInts(139, 92, 246) // #8b5cf6
+const FILAS_ROBOT = ROBOT_PX.length
+const DEGRADE: RGBA[] = Array.from({ length: FILAS_ROBOT }, (_, i) => {
+  const k = i / (FILAS_ROBOT - 1)
+  const mezcla = (j: number) =>
+    Math.round((MARCA_VIOLETA_ARRIBA[j] ?? 0) + ((MARCA_VIOLETA_ABAJO_RGB[j] ?? 0) - (MARCA_VIOLETA_ARRIBA[j] ?? 0)) * k)
+  return RGBA.fromInts(mezcla(0), mezcla(1), mezcla(2))
+})
 
 const LEMA = "Arduino y ESP32 para la escuela técnica"
 
@@ -252,24 +274,25 @@ function Art(props: { api: TuiPluginApi; nueva: string | null; version: string |
   const cabeza = pick(api, "text", FALLBACK_CLARO)
   const violeta = pick(api, "primary", FALLBACK_VIOLET)
   const colores: Record<string, RGBA> = {
-    H: cabeza,
-    E: pick(api, "secondary", FALLBACK_VIOLET_DEEP),
-    M: violeta,
+    H: MARCA_BLANCO,
+    E: MARCA_VIOLETA_ABAJO,
+    M: MARCA_BOCA,
     G: FALLBACK_GOLD,
     T: cabeza,
     B: violeta,
   }
-  const tinta = (c: string) => colores[c]
+  // La baldosa lleva el degradé del ícono: un violeta por fila de píxeles.
+  const tinta = (c: string, fila: number) => (c === "V" ? DEGRADE[fila] : colores[c])
   const apagado = pick(api, "textMuted", FALLBACK_VIOLET)
   // La versión va SIEMPRE presente bajo la marca: ayuda al docente y al soporte
   // ("¿qué versión tenés?" se ve de una). Fallback a la firma sola si no se pudo leer.
   const firma = props.version
     ? `un proyecto de Tecnia Lab · tecnialab.net.ar · v${props.version}`
     : "un proyecto de Tecnia Lab · tecnialab.net.ar"
-  // Robot y wordmark van lado a lado, como un logo horizontal: ocupan 6 renglones
+  // Ícono y wordmark van lado a lado, como un logo horizontal: ocupan 7 renglones
   // en vez de los 11 del logo anterior, y eso es lo que le deja lugar al aviso de
   // abajo (en una ventana de 26 renglones el aviso de la key salía cortado).
-  // Lado a lado mide 74 columnas: en una ventana más angosta que eso se apilan.
+  // Lado a lado mide 87 columnas: en una ventana más angosta que eso se apilan.
   // El ancho se mira una sola vez, al cargar (acá no hay reactividad de solid-js).
   let ancho = 120
   try {
@@ -277,7 +300,7 @@ function Art(props: { api: TuiPluginApi; nueva: string | null; version: string |
   } catch {
     // sin drama: se asume una ventana normal
   }
-  const apilado = ancho < 80
+  const apilado = ancho < 94
   return (
     <box flexDirection="column" alignItems="center">
       <box flexDirection={apilado ? "column" : "row"} alignItems={apilado ? "center" : "flex-start"} flexShrink={0}>
@@ -286,6 +309,7 @@ function Art(props: { api: TuiPluginApi; nueva: string | null; version: string |
         <box flexDirection="column" alignItems={apilado ? "center" : "flex-start"} flexShrink={0}>
           <box height={1} />
           <Pixeles renglones={pintar(wordmarkPx(), tinta)} />
+          <box height={1} />
           <text fg={apagado} selectable={false}>
             {LEMA}
           </text>
