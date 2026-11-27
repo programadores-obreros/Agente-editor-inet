@@ -92,8 +92,42 @@ export interface ArchivosGenerados {
   readonly "src/main.cpp": string
 }
 
+/** Un tramo de `src/main.cpp`: números de línea desde 1, los dos extremos incluidos. */
+export interface RangoDeLineas {
+  readonly desde: number
+  readonly hasta: number
+}
+
+/** Una cosa que `setup` hace con UN pin. `reposo` (la acción en que arranca) sólo va en una salida. */
+export interface PasoDeInicio {
+  readonly papel: "entrada" | "bus" | "salida"
+  readonly componente: string
+  readonly pin: string
+  readonly reposo?: string
+  readonly lineas: RangoDeLineas
+}
+
+/**
+ * Dónde quedó cada parte en `src/main.cpp` (2026-11-26). Lo usa la ventana para mostrar la
+ * estructura del programa en los bloques («al iniciar» / «por siempre») y para marcar qué líneas
+ * salen de qué regla.
+ *
+ * Los números se anotan EN LA MISMA PASADA que escribe cada línea (`renderizarMain`): no se
+ * buscan después en el texto. Buscarlos sería un segundo lector del programa, que puede
+ * equivocarse sin que el programa cambie (un comentario que contenga «void loop», por ejemplo).
+ * Sólo trae ids y números: las palabras las pone quien lo muestra.
+ */
+export interface MapaDelPrograma {
+  /** `void setup() {` … `}`, y lo que hace adentro, en el orden en que lo hace. */
+  readonly alIniciar: { readonly lineas: RangoDeLineas; readonly pasos: readonly PasoDeInicio[] }
+  /** `void loop() {` … `}`. */
+  readonly porSiempre: { readonly lineas: RangoDeLineas }
+  /** Por regla, las líneas de `loop` que deciden y escriben su salida (las lecturas son compartidas y no van). */
+  readonly reglas: readonly { readonly regla: string; readonly lineas: RangoDeLineas }[]
+}
+
 export type ResultadoGeneracion =
-  | { readonly ok: true; readonly archivos: ArchivosGenerados; readonly environment: string; readonly advertencias: readonly Motivo[] }
+  | { readonly ok: true; readonly archivos: ArchivosGenerados; readonly environment: string; readonly advertencias: readonly Motivo[]; readonly mapa: MapaDelPrograma }
   | { readonly ok: false; readonly error: ErrorCodegen }
 
 export interface OpcionesGeneracion {
@@ -429,12 +463,13 @@ function generar(proyecto: Proyecto, conocimiento: ComponentKnowledge, opciones:
   }
 
   const ini = renderizarPlatformioIni(placa)
-  const mainCpp = renderizarMain(proyecto, catalogo.hash, placa, [...lecturas.values()], [...buses.values()], salidas)
+  const main = renderizarMain(proyecto, catalogo.hash, placa, [...lecturas.values()], [...buses.values()], salidas)
   return Object.freeze({
     ok: true as const,
-    archivos: Object.freeze({ "platformio.ini": ini.contenido, "src/main.cpp": mainCpp }),
+    archivos: Object.freeze({ "platformio.ini": ini.contenido, "src/main.cpp": main.texto }),
     environment: ini.environment,
     advertencias: Object.freeze(motivos.filter((m) => m.severidad === "warning")),
+    mapa: main.mapa,
   })
 }
 
@@ -467,7 +502,7 @@ function renderizarMain(
   lecturasSinOrden: readonly LecturaPlan[],
   busesSinOrden: readonly BusPlan[],
   salidasSinOrden: readonly SalidaPlan[],
-): string {
+): { readonly texto: string; readonly mapa: MapaDelPrograma } {
   const lecturas = [...lecturasSinOrden].sort((a, b) => compararIdsLocales(a.sensor, b.sensor) || (a.capacidad < b.capacidad ? -1 : a.capacidad > b.capacidad ? 1 : 0))
   const nivel = lecturas.filter((x): x is LecturaNivelPlan => x.kind === "nivel")
   const buses = [...busesSinOrden].sort(compararBuses)
@@ -560,17 +595,31 @@ function renderizarMain(
     l.push(cpp`  return digitalRead(${constanteDePin(lectura.pin)}) == ${nivelDe(lectura.lectura.nivelVerdadero, "lectura.nivelVerdadero")} ? 1.0f : 0.0f;`)
     l.push(cpp`}`)
   }
+  // ── Mapa: el número de cada línea se anota al escribirla (`l.length` es el de la última). ──
+  const pasos: PasoDeInicio[] = []
+  const reglasEnElLoop: { regla: string; lineas: RangoDeLineas }[] = []
   l.push(cpp``)
   l.push(cpp`void setup() {`)
-  for (const lectura of nivel) l.push(cpp`  pinMode(${constanteDePin(lectura.pin)}, ${palabra(lectura.lectura.modo, MODOS_DE_PIN, "lectura.modo")});`)
-  for (const b of buses) l.push(cpp`  pinMode(${constanteDePin(b.pin)}, INPUT_PULLUP);  ${comentario`${texto(b.protocolo, "protocolo")}: bus suelto (en reposo queda en alto)`}`)
+  const setupDesde = l.length
+  for (const lectura of nivel) {
+    l.push(cpp`  pinMode(${constanteDePin(lectura.pin)}, ${palabra(lectura.lectura.modo, MODOS_DE_PIN, "lectura.modo")});`)
+    pasos.push({ papel: "entrada", componente: lectura.pin.componente, pin: lectura.pin.pin, lineas: { desde: l.length, hasta: l.length } })
+  }
+  for (const b of buses) {
+    l.push(cpp`  pinMode(${constanteDePin(b.pin)}, INPUT_PULLUP);  ${comentario`${texto(b.protocolo, "protocolo")}: bus suelto (en reposo queda en alto)`}`)
+    pasos.push({ papel: "bus", componente: b.pin.componente, pin: b.pin.pin, lineas: { desde: l.length, hasta: l.length } })
+  }
   for (const s of salidas) {
     l.push(cpp`  pinMode(${constanteDePin(s.pin)}, OUTPUT);`)
+    const desde = l.length
     l.push(cpp`  digitalWrite(${constanteDePin(s.pin)}, ${nivelDe(s.nivelReposo, "nivelReposo")});  ${comentario`${componente(s.actuador).dato} arranca en reposo (${texto(s.reposo, "reposo")})`}`)
+    pasos.push({ papel: "salida", componente: s.pin.componente, pin: s.pin.pin, reposo: s.reposo, lineas: { desde, hasta: l.length } })
   }
   l.push(cpp`}`)
+  const setupHasta = l.length
   l.push(cpp``)
   l.push(cpp`void loop() {`)
+  const loopDesde = l.length
   if (buses.length > 0) l.push(cpp`  const uint32_t ahora = millis();`)
   for (const b of buses) {
     l.push(cpp`  ${comentario`${componente(b.componente).dato}.${texto(b.terminal, "terminal")}: el primer intento despues de la espera tras el encendido; despues, uno por periodo.`}`)
@@ -593,11 +642,20 @@ function renderizarMain(
     const umbral = flotante(s.umbral, "umbral")
     l.push(cpp``)
     l.push(cpp`  ${comentario`${regla(s.regla).dato} -> ${componente(s.actuador).dato}`}`)
+    const reglaDesde = l.length
     if (s.lectura.kind === "protocolo") l.push(cpp`  const bool ${activa} = ${validezDeLectura(s.lectura)} && ${variableDeLectura(s.lectura)} ${operador(s)} ${umbral};`)
     else l.push(cpp`  const bool ${activa} = ${variableDeLectura(s.lectura)} ${operador(s)} ${umbral};`)
     l.push(cpp`  digitalWrite(${constanteDePin(s.pin)}, ${activa} ? ${nivelDe(s.nivelObjetivo, "nivelObjetivo")} : ${nivelDe(s.nivelReposo, "nivelReposo")});`)
+    reglasEnElLoop.push({ regla: s.regla, lineas: { desde: reglaDesde, hasta: l.length } })
   }
   l.push(cpp`}`)
+  const loopHasta = l.length
   l.push(cpp``)
-  return unirLineas(l)
+  const congelar = (r: RangoDeLineas): RangoDeLineas => Object.freeze({ desde: r.desde, hasta: r.hasta })
+  const mapa: MapaDelPrograma = Object.freeze({
+    alIniciar: Object.freeze({ lineas: congelar({ desde: setupDesde, hasta: setupHasta }), pasos: Object.freeze(pasos.map((p) => Object.freeze({ ...p, lineas: congelar(p.lineas) }))) }),
+    porSiempre: Object.freeze({ lineas: congelar({ desde: loopDesde, hasta: loopHasta }) }),
+    reglas: Object.freeze(reglasEnElLoop.map((r) => Object.freeze({ regla: r.regla, lineas: congelar(r.lineas) }))),
+  })
+  return { texto: unirLineas(l), mapa }
 }
