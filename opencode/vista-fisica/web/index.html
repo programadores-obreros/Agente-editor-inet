@@ -269,6 +269,12 @@
   .linea-de-codigo { display: block; counter-increment: linea; border-left: 4px solid transparent; padding-left: var(--e2); cursor: pointer; }
   .linea-de-codigo::before { content: counter(linea); display: inline-block; min-width: 3ch; margin-right: var(--e4); text-align: right; color: var(--cod-2); user-select: none; }
   .linea-de-codigo[data-marcada] { background: color-mix(in srgb, var(--marca) 22%, transparent); border-left-color: var(--marca); }
+  /* La clave del programa: qué pieza es cada `cmp-N` y qué regla es cada `beh-N`. Va arriba del
+     código, dentro de su cuadro, y sólo cuando hay programa con su estructura. */
+  #vista-codigo-nombres { padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-bottom: 1px solid var(--cod-linea); }
+  #vista-codigo-nombres p { margin: 0 0 var(--e2); }
+  #vista-codigo-nombres li { padding: var(--e1) 0; }
+  #vista-codigo-nombres code { font-family: var(--mono); color: var(--cod-t); font-weight: 600; }
   #vista-codigo-vinculo { margin: 0; padding: var(--e3) var(--e4); font-size: var(--t-s); color: var(--cod-2); border-top: 1px solid var(--cod-linea); }
   /* El cuadro del código tiene su propio fondo: el enlace toma la tinta del cuadro (el color de
      enlace de la página no se leía ahí, visto en Chromium) y se distingue por el subrayado. */
@@ -379,6 +385,7 @@
       <p class="tb-paso__bajada" id="vista-codigo-etiqueta">Es el programa que sale del montaje y de las reglas de arriba. Lo genera Tecnia Bot: no hace falta escribirlo.</p>
     </div></div>
     <div class="tb-codigo" id="vista-codigo">
+      <div id="vista-codigo-nombres" hidden></div>
       <pre class="tb-codigo__texto" id="vista-codigo-texto" tabindex="0" aria-label="Programa generado" hidden></pre>
       <p id="vista-codigo-vinculo" role="status" aria-live="polite" hidden><span id="vista-codigo-vinculo-texto"></span> <a id="vista-codigo-vinculo-enlace" href="#vista-logica">Ver el bloque</a></p>
       <div id="vista-codigo-aviso" role="status" aria-live="polite"></div>

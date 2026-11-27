@@ -21,6 +21,7 @@ import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logic
 import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
 import { crearCodigoPorLineas } from "./codigo-por-lineas.js"
 import { crearVinculoBloquesCodigo } from "./vinculo-bloques-codigo.js"
+import { nombresDelPrograma, pintarNombresDelPrograma } from "./clave-del-programa.js"
 import { dibujarCableado } from "./cableado.js"
 import { conectarNavegacion } from "./navegacion.js"
 import { conectarTema } from "./tema.js"
@@ -423,6 +424,8 @@ let panelCodigo = null
 /** Bloques ↔ código (2026-11-26): el programa repartido en renglones y quién marca qué. */
 let codigoPorLineas = null
 let vinculoBloquesCodigo = null
+/** Dónde va la clave del programa (qué pieza es `cmp-12`), o `null` fuera del navegador. */
+let elementoNombresDelPrograma = null
 /** El renglón del programa en «Cómo está» (2026-11-26): fuera de `contenedores`, porque cambia
  * cuando contesta `/api/programa`, no sólo cuando llega un snapshot. */
 let elementoProgramaResumen = null
@@ -642,6 +645,13 @@ function sincronizarBloquesYCodigo() {
   // La vista lógica se repinta SIEMPRE desde el snapshot autoritativo, sin tocar el DOM de arriba.
   panelVistaLogica?.repintar(ultimoSnapshot, { deshabilitado: controladorReglas.opciones().operacionPendiente || estadoConexion !== "conectado", estructura })
   try {
+    // La clave sale de la MISMA estructura (la del programa de esta revisión) y de las reglas de
+    // este snapshot: sin estructura no hay clave, y nunca queda la de otra revisión.
+    if (elementoNombresDelPrograma) pintarNombresDelPrograma(document, elementoNombresDelPrograma, nombresDelPrograma(estructura, ultimoSnapshot.vista.reglas ?? []))
+  } catch {
+    /* la clave falló: el código se sigue viendo */
+  }
+  try {
     codigoPorLineas?.repartir()
     vinculoBloquesCodigo?.actualizar(estructura, (ultimoSnapshot.vista.reglas ?? []).map((regla) => regla.id).filter((id) => typeof id === "string"))
   } catch {
@@ -809,6 +819,7 @@ if (enNavegador) {
   // El MISMO elemento en el que el panel escribe el programa: acá se reparte en renglones.
   const elementoCodigo = document.getElementById("vista-codigo-texto")
   codigoPorLineas = crearCodigoPorLineas({ doc: document, elementoCodigo })
+  elementoNombresDelPrograma = document.getElementById("vista-codigo-nombres")
   const vinculoDeLosBloques = { caja: document.getElementById("vista-logica-vinculo"), texto: document.getElementById("vista-logica-vinculo-texto"), enlace: document.getElementById("vista-logica-vinculo-enlace") }
   const vinculoDelCodigo = { caja: document.getElementById("vista-codigo-vinculo"), texto: document.getElementById("vista-codigo-vinculo-texto"), enlace: document.getElementById("vista-codigo-vinculo-enlace") }
   vinculoBloquesCodigo = crearVinculoBloquesCodigo({

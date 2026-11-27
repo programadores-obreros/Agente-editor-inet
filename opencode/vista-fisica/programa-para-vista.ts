@@ -34,6 +34,14 @@ export interface EstructuraParaVista {
   readonly alIniciar: { readonly lineas: RangoDeLineas; readonly pasos: readonly { readonly texto: string; readonly lineas: RangoDeLineas }[] }
   readonly porSiempre: { readonly lineas: RangoDeLineas }
   readonly reglas: readonly { readonly id: string; readonly lineas: RangoDeLineas }[]
+  /**
+   * Las piezas que el programa nombra, con el nombre que tienen en la ventana (2026-11-27,
+   * hallazgo W38 de la notebook real). El programa las llama por su id (`cmp-12`, `PIN_CMP_12_…`)
+   * y el alumno no tenía cómo saber cuál de los cuatro LED era. Con esto la ventana arma una
+   * clave al lado del código. Son las piezas de los pasos de «al iniciar» (las que el programa
+   * lee o maneja), una vez cada una, en ese orden. El programa no cambia: sigue siendo ASCII.
+   */
+  readonly piezas: readonly { readonly id: string; readonly nombre: string }[]
 }
 
 export type ProgramaParaVista =
@@ -59,17 +67,20 @@ export interface ContextoDelPrograma extends ContextoDeLaExplicacion {
 export function estructuraParaVista(mapa: MapaDelPrograma | undefined, nombreDePieza: ContextoDelPrograma["nombreDePieza"]): EstructuraParaVista | undefined {
   if (!mapa || !nombreDePieza) return undefined
   const pasos: { texto: string; lineas: RangoDeLineas }[] = []
+  const piezas = new Map<string, string>()
   for (const paso of mapa.alIniciar.pasos) {
     const pieza = nombreDePieza(paso.componente)
     if (typeof pieza !== "string" || pieza === "") return undefined
     const texto = textoDePasoDeInicio({ papel: paso.papel, pieza, pin: paso.pin, ...(paso.reposo === undefined ? {} : { reposo: paso.reposo }) })
     if (texto === undefined) return undefined
     pasos.push({ texto, lineas: paso.lineas })
+    piezas.set(paso.componente, pieza)
   }
   return {
     alIniciar: { lineas: mapa.alIniciar.lineas, pasos },
     porSiempre: { lineas: mapa.porSiempre.lineas },
     reglas: mapa.reglas.map((r) => ({ id: r.regla, lineas: r.lineas })),
+    piezas: [...piezas].map(([id, nombre]) => ({ id, nombre })),
   }
 }
 
