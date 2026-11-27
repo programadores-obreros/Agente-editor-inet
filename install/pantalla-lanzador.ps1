@@ -4,8 +4,9 @@
 # Lo llama installer\abrir-tecnia-bot.cmd justo antes de abrir OpenCode. Hace dos
 # cosas, y ninguna de las dos puede impedir que el bot abra:
 #
-#   1. MIDE la fuente de ESTA ventana y, solo si es de mapa de bits, la cambia a
-#      Consolas para esta ventana. No toca el registro ni el acceso directo.
+#   1. MIDE la fuente de ESTA ventana y, solo si esa fuente no puede dibujar el
+#      borde del cuadro de texto de OpenCode, la cambia a Consolas para esta
+#      ventana. No toca el registro ni el acceso directo.
 #   2. Dibuja el cartel de bienvenida, con tildes y con el robot.
 #
 # POR QUE EXISTE (hallazgos W33 y W34 de la prueba en la notebook, 2026-11-26).
@@ -17,17 +18,28 @@
 # la consola: no dependen de ninguna tabla.
 #
 # W33: en esa notebook el borde del cuadro de texto de OpenCode, el spinner y la
-# marca de cada herramienta salen como "?". Se ve bien todo lo que esta en la
-# tabla OEM de Windows y sale "?" todo lo que no, y el texto mide 10x18 pixeles
-# por celda, que es un tamanio de la fuente de mapa de bits "Terminal". De ahi la
-# hipotesis: esa ventana usa una fuente de mapa de bits.
+# marca de cada herramienta salen como "?". OpenCode dibuja ese borde con U+2503,
+# una linea vertical gruesa.
 #
-# LA HIPOTESIS NO ESTA CONFIRMADA, Y HAY UN DATO EN CONTRA: en el registro de esa
-# notebook (HKCU\Console) la fuente por defecto es la TrueType. Lo que nadie
-# midio es la fuente EFECTIVA de la ventana del lanzador, que puede venir del
-# acceso directo. Por eso este script no supone: mide, y deja escrito lo que
-# midio en %TEMP%\tecnia-bot-consola.txt (antes y despues). Si la fuente ya era
-# TrueType no cambia nada, y ese archivo dice cual era: es el dato que falta.
+# QUE FUENTE TIENE ESA VENTANA NO SE SABE: nadie la midio. Hubo dos hipotesis y
+# este script no elige ninguna:
+#
+#   a) una fuente de mapa de bits ("Terminal"), que no tiene ese caracter;
+#   b) Lucida Console, que es TrueType y tampoco lo tiene.
+#
+# Medido en la VM win10 el 2026-11-27, leyendo los archivos de fuente: Consolas
+# trae U+2503 y Lucida Console y Courier New no. La primera version de este
+# script cambiaba la fuente "solo si no es TrueType": con la hipotesis (b) no
+# hubiera hecho nada, y la hipotesis (b) es la que mejor calza con las capturas.
+#
+# Por eso la pregunta que se hace ahora no es "de que tipo es la fuente" sino
+# "esta fuente, PUEDE dibujar el borde?", y se le pregunta a Windows
+# (GetGlyphIndices). Vale para las dos hipotesis y para las que no se nos
+# ocurrieron. Lo medido queda en %TEMP%\tecnia-bot-consola.txt, antes y despues.
+#
+# LO QUE CONSOLAS NO ARREGLA (medido igual): no trae U+25A3, la marca que
+# OpenCode pone al lado del nombre del agente, ni los caracteres braille. Esos
+# van a seguir saliendo mal con cualquier fuente que venga con Windows 10.
 #
 # Este archivo va SOLO EN ASCII, como los demas .ps1 del repo: Windows PowerShell
 # 5.1 lee un .ps1 sin BOM en la tabla ANSI de la maquina, y una tilde escrita aca
@@ -45,6 +57,8 @@ $ErrorActionPreference = "Stop"
 $BitTrueType = 4
 # FF_MODERN (0x30) + TMPF_TRUETYPE (0x04) + TMPF_VECTOR (0x02).
 $FamiliaConsolas = 54
+# U+2503: el borde del cuadro de texto de OpenCode. Es el caracter que decide.
+$Borde = [char]0x2503
 $Registro = Join-Path $env:TEMP "tecnia-bot-consola.txt"
 $Renglones = New-Object System.Collections.Generic.List[string]
 
@@ -86,6 +100,42 @@ public static class TecniaConsola {
   public static extern bool GetCurrentConsoleFontEx(IntPtr h, bool maxima, ref Fuente f);
   [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
   public static extern bool SetCurrentConsoleFontEx(IntPtr h, bool maxima, ref Fuente f);
+
+  [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+  [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
+  [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+  [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+  static extern IntPtr CreateFontW(int alto, int ancho, int esc, int ori, int peso, uint cursiva, uint subrayada,
+    uint tachada, uint juego, uint precision, uint recorte, uint calidad, uint familia, string nombre);
+  [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+  static extern int GetTextFaceW(IntPtr dc, int n, System.Text.StringBuilder nombre);
+  [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+  static extern uint GetGlyphIndicesW(IntPtr dc, string texto, int n, ushort[] indices, uint marcas);
+
+  // 1 = la fuente tiene el caracter; 0 = no lo tiene; -1 = no se pudo preguntar
+  // (la fuente no esta instalada y Windows ofrecio otra, o fallo la llamada).
+  public static int TieneGlifo(string fuente, char c) {
+    IntPtr dc = CreateCompatibleDC(IntPtr.Zero);
+    if (dc == IntPtr.Zero) return -1;
+    // 1 = DEFAULT_CHARSET.
+    IntPtr f = CreateFontW(16, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, fuente);
+    if (f == IntPtr.Zero) { DeleteDC(dc); return -1; }
+    IntPtr anterior = SelectObject(dc, f);
+    int r = -1;
+    System.Text.StringBuilder real = new System.Text.StringBuilder(64);
+    GetTextFaceW(dc, 64, real);
+    if (String.Equals(real.ToString(), fuente, StringComparison.OrdinalIgnoreCase)) {
+      ushort[] indices = new ushort[1];
+      // 1 = GGI_MARK_NONEXISTING_GLYPHS: lo que falta vuelve como 0xFFFF.
+      uint n = GetGlyphIndicesW(dc, c.ToString(), 1, indices, 1);
+      if (n == 1) r = (indices[0] == 0xFFFF) ? 0 : 1;
+    }
+    SelectObject(dc, anterior);
+    DeleteObject(f);
+    DeleteDC(dc);
+    return r;
+  }
 }
 "@
 
@@ -99,9 +149,22 @@ public static class TecniaConsola {
   }
   Anotar ("antes: " + (Describir $antes))
 
-  if (($antes.FontFamily -band $BitTrueType) -ne 0) {
-    # Ya es TrueType: la eligio Windows o la eligio el docente. No se toca.
-    Anotar "accion: ninguna, la fuente ya era TrueType"
+  # La pregunta que decide: esta fuente, puede dibujar el borde de OpenCode?
+  # Una fuente de mapa de bits no puede, y no hace falta preguntarle.
+  $esTrueType = (($antes.FontFamily -band $BitTrueType) -ne 0)
+  $puede = 0
+  if ($esTrueType) { $puede = [TecniaConsola]::TieneGlifo($antes.FaceName, $Borde) }
+  Anotar ("borde-con-la-fuente-actual=" + $puede + " (1 si, 0 no, -1 no se pudo preguntar)")
+  $consolas = [TecniaConsola]::TieneGlifo("Consolas", $Borde)
+  Anotar ("borde-con-consolas=" + $consolas)
+
+  if ($puede -ne 0) {
+    # Lo dibuja, o no se pudo averiguar: ante la duda no se le cambia la fuente
+    # a nadie. La que hay la eligio Windows o la eligio el docente.
+    Anotar "accion: ninguna"
+  } elseif ($consolas -ne 1) {
+    # Cambiar a una fuente que tampoco lo dibuja no arregla nada.
+    Anotar "accion: ninguna, Consolas no esta o tampoco trae el borde"
   } else {
     $nueva = New-Object TecniaConsola+Fuente
     $nueva.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($nueva)
@@ -120,10 +183,10 @@ public static class TecniaConsola {
     $despues.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($despues)
     [void][TecniaConsola]::GetCurrentConsoleFontEx($salida, $false, [ref]$despues)
     Anotar ("despues: " + (Describir $despues))
-    if (($despues.FontFamily -band $BitTrueType) -ne 0) {
-      Anotar "accion: cambiada a TrueType"
+    if ($despues.FaceName -eq "Consolas") {
+      Anotar "accion: cambiada a Consolas"
     } else {
-      Anotar "accion: se pidio el cambio y la ventana sigue en mapa de bits"
+      Anotar "accion: se pidio el cambio y la ventana no quedo en Consolas"
     }
   }
 } catch {

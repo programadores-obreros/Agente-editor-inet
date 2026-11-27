@@ -5,7 +5,13 @@
 // se ve mientras abre el bot salió desarmado y sin tildes, y dentro de OpenCode
 // el borde del cuadro de texto y el spinner salían como «?». El cartel pasó a
 // dibujarlo `install/pantalla-lanzador.ps1`, que además mide la fuente de la
-// ventana y la cambia sólo si es de mapa de bits.
+// ventana y la cambia a Consolas sólo si la que hay no puede dibujar el borde
+// del cuadro de texto de OpenCode (U+2503).
+//
+// La primera versión cambiaba la fuente «sólo si no es TrueType». Medido después
+// en la VM win10: Lucida Console es TrueType y tampoco trae U+2503, así que con
+// esa fuente el script no hubiera hecho nada. Por eso ahora decide por el
+// carácter y no por el tipo, y el test 5 custodia eso.
 //
 // Qué custodia este archivo, y qué NO.
 //
@@ -17,16 +23,18 @@
 //   - que el cartel de reserva no tenga un carácter que cmd lea como otra cosa
 //     (va dentro de un bloque: un paréntesis sin escapar corta el bloque y el
 //     lanzador muere antes de abrir);
-//   - que el script sólo cambie la fuente cuando la que hay NO es TrueType, y que
-//     relea la ventana después de cambiarla.
+//   - que el script sólo cambie la fuente cuando la que hay NO puede dibujar el
+//     borde, que no cambie a Consolas si Consolas tampoco puede, y que relea la
+//     ventana después de cambiarla.
 //
 // Lo que no: que funcione. Ningún test de Node ejecuta PowerShell ni cmd. Eso se
 // prueba en Windows, y hasta que no se pruebe este cambio queda retenido.
 //
 // Verificado por mutación (cada una pone rojo el test que dice): una tilde en el
 // .ps1 → 1; un `goto` en el tramo → 2; un paréntesis en el cartel de reserva →
-// 3; sacar la pregunta `if exist` de la segunda línea → 4; sacar la condición
-// TrueType → 5; sacar la relectura → 5.
+// 3; sacar la pregunta `if exist` de la segunda línea → 4; cambiar la fuente aunque
+// pueda dibujar el borde → 5; cambiar aunque Consolas no pueda → 5; sacar la
+// relectura → 5; decidir por otro carácter → 5.
 // ============================================================================
 import { test } from "node:test"
 import assert from "node:assert/strict"
@@ -116,19 +124,34 @@ test("4. un .ps1 que no está no se lee como «ya dibujé el cartel»", () => {
   assert.ok(antes.includes('set "CARTEL=no"'), "CARTEL no arranca en «no»")
 })
 
-test("5. la fuente sólo se cambia si NO es TrueType, y después se vuelve a leer la ventana", () => {
-  // La condición: el bit TMPF_TRUETYPE del campo FontFamily.
-  assert.match(ps1Codigo, /\$BitTrueType = 4\b/)
+test("5. la fuente sólo se cambia si la que hay no puede dibujar el borde, y después se relee la ventana", () => {
+  // El carácter que decide es el borde del cuadro de texto de OpenCode.
+  assert.match(ps1Codigo, /\$Borde = \[char\]0x2503\b/, "el carácter que decide ya no es U+2503")
+  // A una fuente de mapa de bits no se le pregunta: no puede. A una TrueType sí.
+  assert.match(
+    ps1Codigo,
+    /\$puede = 0\n\s*if \(\$esTrueType\) \{ \$puede = \[TecniaConsola\]::TieneGlifo\(\$antes\.FaceName, \$Borde\) \}/,
+    "ya no se le pregunta a Windows si la fuente actual tiene el borde",
+  )
+  assert.match(ps1Codigo, /\$consolas = \[TecniaConsola\]::TieneGlifo\("Consolas", \$Borde\)/, "ya no se comprueba que Consolas tenga el borde")
+
+  // Las tres ramas, en orden: no tocar / no tocar / cambiar.
+  const r1 = ps1Codigo.indexOf("if ($puede -ne 0) {")
+  const r2 = ps1Codigo.indexOf("} elseif ($consolas -ne 1) {")
+  const r3 = ps1Codigo.indexOf("} else {", r2)
   const cambio = ps1Codigo.indexOf("SetCurrentConsoleFontEx($salida")
-  assert.ok(cambio > 0, "el script ya no cambia la fuente")
-  const guarda = ps1Codigo.indexOf("if (($antes.FontFamily -band $BitTrueType) -ne 0) {")
-  const sino = ps1Codigo.indexOf("} else {", guarda)
-  assert.ok(guarda > 0 && sino > guarda && cambio > sino, "el cambio de fuente no está en la rama «no es TrueType»")
-  // Entre la guarda y el else no se toca nada: la fuente que eligió el docente se respeta.
-  assert.doesNotMatch(ps1Codigo.slice(guarda, sino), /SetCurrentConsoleFontEx/, "se cambia la fuente aunque ya sea TrueType")
+  assert.ok(r1 > 0 && r2 > r1 && r3 > r2 && cambio > r3, "el cambio de fuente no está en la última rama")
+  // «-ne 0» y no «-eq 1»: si no se pudo preguntar (-1), tampoco se toca.
+  assert.doesNotMatch(ps1Codigo.slice(r1, r3), /SetCurrentConsoleFontEx/, "se cambia la fuente en una rama donde no corresponde")
+  assert.equal([...ps1Codigo.matchAll(/SetCurrentConsoleFontEx\(\$salida/g)].length, 1, "hay más de un lugar que cambia la fuente")
+
   // El assert mide el mundo: después de pedir el cambio, se relee.
   const relectura = ps1Codigo.indexOf("GetCurrentConsoleFontEx($salida, $false, [ref]$despues)")
   assert.ok(relectura > cambio, "después de cambiar la fuente no se vuelve a leer la ventana")
+  // Lo que falta vuelve como 0xFFFF sólo si se pide esa marca.
+  assert.match(ps1Codigo, /GetGlyphIndicesW\(dc, c\.ToString\(\), 1, indices, 1\)/, "se pregunta por el glifo sin pedir la marca de «no existe»")
+  // Si Windows ofreció otra fuente en lugar de la pedida, la respuesta no vale.
+  assert.match(ps1Codigo, /String\.Equals\(real\.ToString\(\), fuente, StringComparison\.OrdinalIgnoreCase\)/, "no se comprueba qué fuente respondió")
   // No se toca el registro ni el acceso directo: el cambio es de esta ventana.
   assert.doesNotMatch(ps1Codigo, /HKCU:|HKLM:|Set-ItemProperty|New-ItemProperty|\.lnk/i, "el script escribe fuera de la ventana")
 })
@@ -147,5 +170,6 @@ test("7. el cartel dice lo mismo que el splash y lleva la tilde armada por núme
   // Los tres bloques del dibujo son de los que están en CP437 y CP850.
   for (const cp of ["0x2588", "0x2580", "0x2584"]) assert.ok(ps1Codigo.includes(`[char]${cp}`), `falta el bloque ${cp}`)
   const usados = [...ps1Codigo.matchAll(/\[char\]0x([0-9A-Fa-f]+)/g)].map((m) => m[1].toUpperCase())
-  assert.deepEqual([...new Set(usados)].sort(), ["2580", "2584", "2588", "E9"], "hay un carácter nuevo: confirmá que esté en CP437 y CP850")
+  // 2503 no se dibuja: es el carácter por el que se le pregunta a la fuente.
+  assert.deepEqual([...new Set(usados)].sort(), ["2503", "2580", "2584", "2588", "E9"], "hay un carácter nuevo: confirmá que esté en CP437 y CP850")
 })
