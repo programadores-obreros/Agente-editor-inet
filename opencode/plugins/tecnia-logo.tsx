@@ -399,7 +399,102 @@ function leyendaDelCartel(api: TuiPluginApi): string | null {
   }
 }
 
+// ----------------------------------------------------------------------------
+// EL VIGILANTE DE LA FUENTE (sólo Windows)
+//
+// Por qué existe. En Windows, OpenCode lanza PowerShell para cosas de todos los
+// días: copiar al portapapeles, pegar, abrir el navegador. Ese PowerShell queda
+// pegado a la consola del bot, y Windows PowerShell 5.1, cuando arranca en una
+// consola que está en UTF-8, le cambia la fuente a una de mapa de bits. Con esa
+// fuente la consola convierte todo a la tabla vieja: el borde del cuadro de
+// texto y las marcas de las herramientas pasan a ser signos de pregunta, el
+// título de la ventana queda en «Windows PowerShell» y el dibujo se achica.
+//
+// Sacar el `chcp 65001` del lanzador arregló el ARRANQUE (hallazgo W33), pero en
+// la notebook real los «?» volvieron a mitad de sesión, después de copiar un
+// texto. Reproducido en la VM win10 el 2026-11-27: alcanza con un Ctrl+V.
+//
+// No se puede evitar que OpenCode lance PowerShell, así que se repara después:
+// este plugin corre DENTRO de OpenCode, recuerda la fuente con que arrancó la
+// ventana y, si la encuentra cambiada a una de mapa de bits, la vuelve a poner.
+// Llama a kernel32 directamente (bun:ffi). Lanzar PowerShell para arreglar lo
+// que rompe PowerShell sería volver a romperlo.
+//
+// Sólo devuelve lo que había: si la ventana arrancó en mapa de bits, no toca
+// nada. Y no puede romper el bot: cualquier error apaga el vigilante y listo.
+// ----------------------------------------------------------------------------
+
+// CONSOLE_FONT_INFOEX (wincon.h), 84 bytes:
+//   0 cbSize u32 · 4 nFont u32 · 8 ancho i16 · 10 alto i16 · 12 FontFamily u32 ·
+//   16 FontWeight u32 · 20 FaceName, 32 caracteres UTF-16.
+const TAMANIO_FUENTE = 84
+const DESDE_FAMILIA = 12
+// TMPF_TRUETYPE: el bit de FontFamily que distingue TrueType de mapa de bits.
+const BIT_TRUETYPE = 4
+const CADA_MS = 300
+// Si la fuente no vuelve después de pedirlo tantas veces seguidas, no se insiste.
+const INTENTOS_SEGUIDOS = 5
+
+async function vigilarLaFuente(): Promise<void> {
+  if (process.platform !== "win32") return
+  try {
+    const { dlopen } = await import("bun:ffi")
+    const { symbols: k } = dlopen("kernel32.dll", {
+      GetStdHandle: { args: ["i32"], returns: "ptr" },
+      GetCurrentConsoleFontEx: { args: ["ptr", "i32", "ptr"], returns: "i32" },
+      SetCurrentConsoleFontEx: { args: ["ptr", "i32", "ptr"], returns: "i32" },
+      SetConsoleTitleW: { args: ["ptr"], returns: "i32" },
+    })
+    // -11 = STD_OUTPUT_HANDLE.
+    const salida = k.GetStdHandle(-11)
+    if (!salida) return
+
+    const leer = (): Uint8Array | null => {
+      const b = new Uint8Array(TAMANIO_FUENTE)
+      new DataView(b.buffer).setUint32(0, TAMANIO_FUENTE, true)
+      return k.GetCurrentConsoleFontEx(salida, 0, b) ? b : null
+    }
+    const esTrueType = (b: Uint8Array) => (new DataView(b.buffer).getUint32(DESDE_FAMILIA, true) & BIT_TRUETYPE) !== 0
+
+    const buena = leer()
+    // Si no se pudo leer, o la ventana ya arrancó en mapa de bits, no hay nada
+    // que devolver: esa fuente la eligió alguien.
+    if (!buena || !esTrueType(buena)) return
+
+    // "Tecnia Bot" en UTF-16 terminado en cero, que es lo que pide la API.
+    const TITULO = Buffer.from("Tecnia Bot\0", "utf16le")
+    let fallidos = 0
+    const reloj = setInterval(() => {
+      try {
+        const ahora = leer()
+        if (!ahora || esTrueType(ahora)) {
+          fallidos = 0
+          return
+        }
+        k.SetCurrentConsoleFontEx(salida, 0, buena.slice())
+        // Que la llamada conteste «ok» no alcanza: se vuelve a leer la ventana.
+        const despues = leer()
+        fallidos = despues && esTrueType(despues) ? 0 : fallidos + 1
+        // El mismo PowerShell deja el título en «Windows PowerShell». OpenCode lo
+        // vuelve a escribir cuando cambia de pantalla; mientras tanto, que diga
+        // de quién es la ventana.
+        k.SetConsoleTitleW(TITULO)
+        if (fallidos >= INTENTOS_SEGUIDOS) clearInterval(reloj)
+      } catch {
+        clearInterval(reloj)
+      }
+    }, CADA_MS)
+    // Que el reloj no impida cerrar OpenCode.
+    ;(reloj as { unref?: () => void }).unref?.()
+  } catch {
+    // Sin bun:ffi o sin consola: el bot anda igual, sólo que sin vigilante.
+  }
+}
+
 const tui: TuiPlugin = async (api) => {
+  // No se espera: si tarda o falla, el splash se dibuja igual.
+  void vigilarLaFuente()
+
   // Desactivamos el tip por defecto de OpenCode (`internal:home-tips`): con el
   // modelo gratis de Zen queda clavado en "Run /connect..." y confunde al docente.
   // Defensivo: si la API cambia entre versiones, no rompemos el arranque.
