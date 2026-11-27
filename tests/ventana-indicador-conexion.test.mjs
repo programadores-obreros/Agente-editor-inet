@@ -80,3 +80,13 @@ test("app.js: el indicador se pinta con `pintarIndicadorConexion`, con el chip y
   assert.match(app, /elementoConexion = document\.getElementById\("conexion"\)/)
   assert.doesNotMatch(app, /textContent = [^\n]*"conectado"/, "app.js vuelve a escribir «conectado» como texto")
 })
+
+// Los dos avisos del panel de código hablaban de «la vista desconectada» mientras el indicador de
+// arriba decía «Ventana sin conexión»: dos nombres para lo mismo. Los demás tests del panel comparan
+// contra la constante, así que cambiarle las palabras no ponía nada en rojo. Este mira las palabras.
+test("el panel de código habla del corte con las palabras del indicador", async () => {
+  const codigo = await import(join(REPO, "opencode/vista-fisica/web/vista-codigo.js"))
+  assert.equal(codigo.TEXTO_DESCONECTADA, "La ventana está sin conexión: este programa puede no ser el actual.")
+  assert.equal(codigo.TEXTO_NO_SE_PUDO_PEDIR, "No se pudo pedir el programa a Tecnia Bot. Si la ventana quedó sin conexión, volvé a abrirla desde Tecnia Bot.")
+  for (const texto of [codigo.TEXTO_DESCONECTADA, codigo.TEXTO_NO_SE_PUDO_PEDIR]) assert.doesNotMatch(texto, /desconectad/)
+})

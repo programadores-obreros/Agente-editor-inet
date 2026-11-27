@@ -84,7 +84,7 @@ export const ETIQUETA_DE_TERMINAL_DE_POTENCIA: Readonly<Record<string, string>> 
  * reemplaza con la placa DEL PROYECTO (`textoDeZona`). Este anexo no guarda el artículo de cada
  * placa, así que la frase no lo necesita: el sustantivo es «la placa» y el nombre va después
  * («la placa Arduino UNO»). Sin placa elegida queda «la placa» sola.
- * Las descripciones de entrada y salida son texto PENDIENTE DE APROBACIÓN del dueño (2026-11-26).
+ * Las descripciones de entrada y salida las aprobó el dueño el 2026-11-26.
  */
 export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "salida" | "otras", { readonly titulo: string; readonly descripcion: string }>> = {
   entrada: { titulo: "Entrada", descripcion: "Lo que lee {placa}." },
@@ -93,7 +93,7 @@ export const ZONAS_DEL_CIRCUITO: Readonly<Record<"entrada" | "controlador" | "sa
   otras: { titulo: "Otras piezas", descripcion: "Todavía no forman parte de una entrada o una salida." },
 }
 
-/** Cómo se nombra la placa adentro de la frase de una zona (pendiente de aprobación, 2026-11-26). */
+/** Cómo se nombra la placa adentro de la frase de una zona (aprobado por el dueño, 2026-11-26). */
 export const PLACA_EN_LA_ZONA = {
   conNombre: "la placa {nombre}",
   sinNombre: "la placa",
@@ -160,8 +160,8 @@ export const TEXTOS_DE_LA_VENTANA = {
  * página con lo que ya le contestó `/api/programa` para ESA revisión (`web/vista-codigo.js`), y si
  * todavía no lo sabe (actualizando, falla, otra revisión, sin conexión) no muestra ninguna.
  *
- * Textos PENDIENTES DE APROBACIÓN del dueño (2026-11-26). Fuera de `TEXTOS_DE_LA_VENTANA` a
- * propósito: esa tabla está aprobada entera.
+ * Textos aprobados por el dueño el 2026-11-26. Viven fuera de `TEXTOS_DE_LA_VENTANA` porque los
+ * pinta `app.js` con la respuesta de `/api/programa`, no el plan de pintado.
  */
 export const TEXTOS_DEL_PROGRAMA_EN_EL_RESUMEN = {
   /** Llegó el programa de la revisión que se está mostrando. */

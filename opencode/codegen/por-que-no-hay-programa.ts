@@ -27,17 +27,21 @@ const SIGUE_VALIENDO = "El montaje y las reglas siguen valiendo."
 /** El proyecto tiene algo que lo frena, y eso ya está dicho en palabras en la sección «Avisos».
  * (Hasta el rediseño del 2026-11-26 la sección se llamaba «Motivos»; el nombre de acá y el título
  * de `web/index.html` se cambiaron juntos, y `tests/ventana-pagina.test.mjs` los mantiene juntos.) */
-export const TODAVIA_NO_ESTA_LISTO = `${INICIO} hay algo del proyecto que lo impide. Qué es, está en la sección «Avisos».`
+// Estos textos se leen en DOS lugares: en la ventana y en el chat (el asistente los dice tal cual).
+// Por eso nombran la ventana y no dicen «acá»: la revisión del 2026-11-26 encontró que «el programa
+// aparece acá», dicho en el chat, era falso (en el chat el programa no aparece nunca).
+export const TODAVIA_NO_ESTA_LISTO = `${INICIO} hay algo del proyecto que lo impide. Qué es, está en la sección «Avisos» de la ventana del proyecto.`
 
 /** Al proyecto le falta armarse; no hay ningún motivo que mostrar (p. ej. recién empieza, sin placa). */
-export const TODAVIA_FALTA_ARMAR = `${INICIO} al proyecto le falta completarse (la placa, las piezas o algún pin). Cuando esté completo, el programa aparece acá.`
+export const TODAVIA_FALTA_ARMAR = `${INICIO} al proyecto le falta completarse (la placa, las piezas o algún pin). Cuando esté completo, el programa se ve en la ventana del proyecto.`
 
 /** El proyecto cierra, pero el generador de esta versión no lo sabe programar, y la causa no es
  * ninguna de las que acá tienen explicación propia. */
 export const TODAVIA_NO_SE_SABE_PROGRAMAR = `${INICIO} esta versión de Tecnia Bot no sabe programar este proyecto tal como está armado. ${SIGUE_VALIENDO}`
 
-/** Un pin elegido no se puede manejar desde el programa en esa placa. */
-export const PIN_QUE_NO_SE_PUEDE_USAR = `${INICIO} hay un pin elegido que no se puede usar desde el programa en esta placa. Probá con otro pin. ${SIGUE_VALIENDO}`
+/** Un pin que la regla necesita no está elegido, o no se puede manejar desde el programa en esa
+ * placa: el generador no distingue los dos casos, así que el texto tampoco afirma cuál es. */
+export const PIN_QUE_NO_SE_PUEDE_USAR = `${INICIO} hay un pin que falta elegir o que no se puede usar desde el programa en esta placa. Revisá los pines de las piezas. ${SIGUE_VALIENDO}`
 
 export interface ContextoDeLaExplicacion {
   readonly proyecto: Proyecto
@@ -81,7 +85,12 @@ function explicarNoAdmitido(datos: Readonly<Record<string, unknown>>, { proyecto
   }
   const piezas = noAdmitidos.map((x) => conocimiento.nombre("componente", x.id))
   if (piezas.length === 0 || piezas.some((n) => n === undefined) || placaDelProyecto === undefined) return TODAVIA_NO_SE_SABE_PROGRAMAR
-  return `${INICIO} esta versión de Tecnia Bot todavía no programa ${entreComillas(piezas as string[])} con la placa «${placaDelProyecto}». ${SIGUE_VALIENDO}`
+  // «con la placa …» se dice SÓLO si alguna de esas piezas se programa con otra placa. Si no se
+  // programa con ninguna, nombrar la placa sugiere que cambiándola anda, y es falso.
+  const tipos = new Set(noAdmitidos.map((x) => x.id))
+  const conOtraPlacaSi = generabilidad(conocimiento).componentes.some((c) => tipos.has(c.tipo) && c.generableEn.length > 0)
+  const conEstaPlaca = conOtraPlacaSi ? ` con la placa «${placaDelProyecto}»` : ""
+  return `${INICIO} esta versión de Tecnia Bot todavía no programa ${entreComillas(piezas as string[])}${conEstaPlaca}. ${SIGUE_VALIENDO}`
 }
 
 /** El nombre de la pieza que el error señala (`datos.componente` es el id de la pieza en el
@@ -107,11 +116,15 @@ export function porQueNoHayPrograma(error: ErrorCodegen, contexto?: ContextoDeLa
       return explicarNoAdmitido(datos, contexto)
     case "CODEGEN_SIN_LECTURA":
     case "CODEGEN_PROTOCOLO_SIN_BACKEND":
-    case "CODEGEN_LECTURA_INCOHERENTE":
+    case "CODEGEN_LECTURA_INCOHERENTE": {
+      const pieza = piezaSenalada(datos, contexto)
+      return pieza === undefined ? TODAVIA_NO_SE_SABE_PROGRAMAR : `${INICIO} esta versión de Tecnia Bot todavía no sabe leer «${pieza}» para la regla que la usa. ${SIGUE_VALIENDO}`
+    }
+    // Acá la pieza se sabe leer: lo que no se puede es llevar el número de la regla a lo que la pieza mide.
     case "CODEGEN_UMBRAL_NO_CONVERTIBLE":
     case "CODEGEN_CONVERSION_NO_MONOTONA": {
       const pieza = piezaSenalada(datos, contexto)
-      return pieza === undefined ? TODAVIA_NO_SE_SABE_PROGRAMAR : `${INICIO} esta versión de Tecnia Bot todavía no sabe leer «${pieza}» para la regla que la usa. ${SIGUE_VALIENDO}`
+      return pieza === undefined ? TODAVIA_NO_SE_SABE_PROGRAMAR : `${INICIO} esta versión de Tecnia Bot no sabe comparar el número de la regla con lo que mide «${pieza}». Probá escribir la regla con otra unidad. ${SIGUE_VALIENDO}`
     }
     case "CODEGEN_SIN_ESCRITURA":
     case "CODEGEN_REPOSO_NO_DECLARADO": {
