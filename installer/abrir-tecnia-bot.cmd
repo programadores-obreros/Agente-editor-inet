@@ -437,12 +437,42 @@ if /i "%CD%\"=="%~dp0" goto sinproyectos
 :listo2
 
 cls
-echo.
-echo    ___         [o_o]   TECNIA BOT v%VER%  -  un proyecto de Tecnia Lab
-echo   ^| ^|_^|        /^|_^|\   Arduino y ESP32 para escuelas tecnicas
-echo.
-echo   Primeros pasos y ayuda:  https://tecnialab.net.ar/tecnia-bot/
-echo.
+
+rem -- EL CARTEL Y LA FUENTE DE LA CONSOLA -------------------------------------
+rem
+rem El cartel se dibujaba aca, con `echo`. En una notebook real salio desarmado
+rem (un dibujo ASCII que no cerraba) y sin tildes: "escuelas tecnicas". Un .cmd
+rem no puede llevar tildes sin depender de la tabla de caracteres con que cmd lo
+rem lea, y este archivo va solo en ASCII a proposito.
+rem
+rem Ahora lo dibuja install\pantalla-lanzador.ps1, que escribe por la API Unicode
+rem de la consola. Ese mismo script mira la fuente de esta ventana y, solo si es
+rem de mapa de bits, la pasa a Consolas: con mapa de bits, el borde del cuadro de
+rem texto de OpenCode y el spinner salen como signos de pregunta.
+rem
+rem ESTO TAMBIEN ES UN AVISO Y NO UN PORTERO. Si PowerShell no arranca, si la
+rem escuela lo bloquea o si el archivo no esta, se dibuja el cartel de abajo, mas
+rem pobre, y el bot abre igual. En este tramo no hay ni un `exit /b` ni un `goto`.
+rem
+rem El script sale con 0 SOLO si dibujo el cartel. `set` deja ERRORLEVEL en 0, y
+rem por eso la segunda linea vuelve a preguntar si el archivo existe: sin esa
+rem pregunta, un .ps1 que no esta se leeria como "ya lo dibuje".
+set "PANTALLA=%~dp0install\pantalla-lanzador.ps1"
+set "CARTEL=no"
+if exist "%PANTALLA%" powershell -ExecutionPolicy Bypass -NoProfile -File "%PANTALLA%" "%VER%"
+if not errorlevel 1 if exist "%PANTALLA%" set "CARTEL=si"
+
+rem El cartel de reserva. Sin parentesis, sin barras verticales y sin signos que
+rem cmd lea como otra cosa: va adentro de un bloque.
+if "%CARTEL%"=="no" (
+  echo.
+  echo    [o_o]   TECNIA BOT v%VER%
+  echo            Arduino y ESP32 para la escuela tecnica
+  echo            un proyecto de Tecnia Lab
+  echo.
+  echo   Primeros pasos y ayuda:  https://tecnialab.net.ar/tecnia-bot/
+  echo.
+)
 
 rem -- EL AVISO DE LA KEY VIVE ACA, Y NO ADENTRO DEL BOT ----------------------
 rem
@@ -490,7 +520,7 @@ if errorlevel 9 if not errorlevel 10 (
   echo.
 )
 
-echo   Abriendo... (cuando cargue, elegi el agente 'tecnia-bot' con Tab si no aparece solo)
+echo   Abriendo... Si al cargar no aparece el agente 'tecnia-bot', cambialo con Tab.
 echo.
 "%OC%"
 rem Sin este pause, si OpenCode se cae la ventana desaparece y no queda rastro.
