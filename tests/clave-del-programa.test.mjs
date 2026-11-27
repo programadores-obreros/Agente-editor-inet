@@ -18,14 +18,15 @@
 //
 // MUTACIONES que ponen rojo este archivo (una por vez, con el cambio ya commiteado):
 //   - `programa-para-vista.ts`: `piezas.set(paso.componente, paso.componente)`      → «por el cableado real…»
-//   - `programa-para-vista.ts`: `piezas` armado con todos los componentes del proyecto → «por el cableado real…»
+//   - `programa-para-vista.ts`: `piezas: []`                                         → «por el cableado real…»
 //   - `clave-del-programa.js`: sin `.filter((regla) => enElPrograma.has(regla.id))` → «sólo las reglas que el programa tiene…»
-//   - `clave-del-programa.js`: numerar después de filtrar                            → «sólo las reglas que el programa tiene…»
 //   - `clave-del-programa.js`: `numero: i + 1` siempre                               → «con una sola regla…»
+//   - `clave-del-programa.js`: sin el chequeo de piezas mal formadas                 → «sin estructura, sin piezas…»
 //   - `clave-del-programa.js`: `pintar` sin `elemento.hidden = true` cuando no hay   → «sin nombres…»
 //   - `clave-del-programa.js`: `pintar` sin `replaceChildren()` cuando no hay        → «sin nombres…»
+//   - `clave-del-programa.js`: el ejemplo de las otras formas tomado de una regla    → «una sola regla va sin número…»
 //   - `vista-codigo.js`: aceptar `piezas` con un nombre vacío                        → «unas piezas mal formadas…»
-//   - `app.js`: pasar `panelCodigo.estructuraDelPrograma()?.estructura` en vez de `estructura` → «app.js…»
+//   - `app.js`: la clave con la estructura del panel SIN comparar la revisión        → «app.js…»
 //
 // Corre con: node --test tests/clave-del-programa.test.mjs
 
