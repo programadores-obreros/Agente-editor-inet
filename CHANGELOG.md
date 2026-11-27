@@ -18,6 +18,7 @@ Todas las versiones importantes de Tecnia Bot. Formato basado en [Keep a Changel
 
 ### Arreglado
 
+- **La ventana del circuito ya no pierde el permiso para cambiar el proyecto.** Si tocabas un enlace del menú de arriba ("Decidí qué hace", por ejemplo) y después recargabas la página, la ventana se seguía viendo bien pero ya no dejaba cambiar un pin ni una regla: decía que se había abierto "sin la llave de la sesión". Ahora la pestaña recuerda la llave mientras está abierta. Lo vimos en un navegador de escritorio; falta la notebook.
 - **Con muchas reglas, el recuadro de los bloques ya no las corta.** Medía siempre lo mismo y, con cuatro reglas, mostraba dos y media. Ahora crece con lo que tiene adentro. Lo medimos con cuatro y con seis reglas en un navegador de escritorio; falta verlo en la notebook.
 - **Cuando no hay programa, Tecnia Bot dice por qué.** Si el proyecto está armado con una placa o una pieza que esta versión todavía no programa, la ventana lo dice con su nombre ("todavía no programa la placa «Arduino UNO». Por ahora programa: «ESP32 DevKit»"), y el bot te dice lo mismo. Antes la ventana decía sólo que "no sabe programar este proyecto" y el bot contestaba con un código interno.
 - **El bot ya puede leer las guías de los proyectos.** Al pedirle la guía de un proyecto (el semáforo, por ejemplo), el bot no podía abrir la ficha y contestaba sin ella. Pasaba en todas las versiones anteriores.
