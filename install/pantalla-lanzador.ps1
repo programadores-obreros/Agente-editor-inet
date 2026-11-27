@@ -208,29 +208,83 @@ try {
 
 # -- 2. El cartel ------------------------------------------------------------
 #
-# Solo caracteres que estan en las tablas OEM de Windows (CP437 y CP850): si la
-# fuente quedo en mapa de bits, igual salen. Los tres bloques son los mismos del
-# splash del bot.
+# EL ROBOT ES EL DEL SPLASH Y EL DEL ICONO DEL ESCRITORIO, y no uno propio.
+#
+# La primera version de este cartel traia un robot de tres renglones. En la
+# notebook real el duenio lo vio y dijo: "una E acostada, horrible". Tenia razon:
+# en tres renglones no entran ni ojos ni cara, y lo que quedaba era una caja con
+# tres dientes. Yo lo habia visto en la VM y lo deje pasar.
+#
+# Ahora se dibuja el MISMO mapa de pixeles que usa el splash (ROBOT_PX, en
+# opencode/plugins/tecnia-logo.tsx): la baldosa violeta con la cabeza blanca, los
+# dos ojos, la boca y la antena. Un test compara los dos mapas: si alguien cambia
+# uno y no el otro, se pone rojo.
+#
+# Cada celda de la consola son dos pixeles, uno arriba del otro. El bloque de
+# arriba pinta el pixel de arriba con el color de frente, y el de abajo queda con
+# el color de fondo: asi una celda lleva dos colores. Aca hay solo los 16 colores
+# de la consola (el splash, que corre dentro de OpenCode, tiene todos): el violeta
+# sale mas purpura y sin degrade.
+#
+# Solo caracteres que estan en las tablas OEM de Windows (CP437 y CP850).
 try {
   $lleno = [string][char]0x2588
   $arriba = [string][char]0x2580
   $abajo = [string][char]0x2584
   $e = [string][char]0xE9
 
-  $antena = "      " + $abajo
-  $cabeza1 = "   " + ($abajo * 3) + $lleno + ($abajo * 3)
-  $cabeza2 = "   " + $lleno + " " + $arriba + " " + $arriba + " " + $lleno
-  $cabeza3 = "   " + ($arriba * 7)
+  # V baldosa, H cabeza, E ojos, M boca, G antena, punto = vacio.
+  $RobotPx = @(
+    "..VVVVVVVVVV..",
+    ".VVVVVGGVVVVV.",
+    "VVVVVVGGVVVVVV",
+    "VVVVVVHHVVVVVV",
+    "VVVHHHHHHHHVVV",
+    "VVHHHHHHHHHHVV",
+    "VVHHEEHHEEHHVV",
+    "VVHHEEHHEEHHVV",
+    "VVHHHHHHHHHHVV",
+    "VVHHHMMMMHHHVV",
+    "VVVHHHHHHHHVVV",
+    "VVVVVVVVVVVVVV",
+    ".VVVVVVVVVVVV.",
+    "..VVVVVVVVVV.."
+  )
+  $Tinta = @{ "V" = "DarkMagenta"; "H" = "White"; "E" = "DarkMagenta"; "M" = "Magenta"; "G" = "Yellow" }
 
   Write-Host ""
-  Write-Host $antena -ForegroundColor Yellow
-  Write-Host $cabeza1 -ForegroundColor Magenta -NoNewline
-  Write-Host "    TECNIA BOT" -ForegroundColor White -NoNewline
-  Write-Host ("  v" + $Version) -ForegroundColor DarkGray
-  Write-Host $cabeza2 -ForegroundColor Magenta -NoNewline
-  Write-Host ("    Arduino y ESP32 para la escuela t" + $e + "cnica") -ForegroundColor Gray
-  Write-Host $cabeza3 -ForegroundColor Magenta -NoNewline
-  Write-Host "    un proyecto de Tecnia Lab" -ForegroundColor DarkGray
+  for ($f = 0; $f -lt $RobotPx.Count; $f += 2) {
+    $filaArriba = $RobotPx[$f]
+    $filaAbajo = $RobotPx[$f + 1]
+    Write-Host "   " -NoNewline
+    for ($x = 0; $x -lt $filaArriba.Length; $x++) {
+      $p = [string]$filaArriba[$x]
+      $q = [string]$filaAbajo[$x]
+      if ($p -eq "." -and $q -eq ".") {
+        Write-Host " " -NoNewline
+      } elseif ($q -eq ".") {
+        Write-Host $arriba -NoNewline -ForegroundColor $Tinta[$p]
+      } elseif ($p -eq ".") {
+        Write-Host $abajo -NoNewline -ForegroundColor $Tinta[$q]
+      } elseif ($Tinta[$p] -eq $Tinta[$q]) {
+        Write-Host $lleno -NoNewline -ForegroundColor $Tinta[$p]
+      } else {
+        Write-Host $arriba -NoNewline -ForegroundColor $Tinta[$p] -BackgroundColor $Tinta[$q]
+      }
+    }
+    # El texto va a la derecha, en los tres renglones del medio.
+    $renglon = [int]($f / 2)
+    if ($renglon -eq 2) {
+      Write-Host "    TECNIA BOT" -ForegroundColor White -NoNewline
+      Write-Host ("  v" + $Version) -ForegroundColor DarkGray
+    } elseif ($renglon -eq 3) {
+      Write-Host ("    Arduino y ESP32 para la escuela t" + $e + "cnica") -ForegroundColor Gray
+    } elseif ($renglon -eq 4) {
+      Write-Host "    un proyecto de Tecnia Lab" -ForegroundColor DarkGray
+    } else {
+      Write-Host ""
+    }
+  }
   Write-Host ""
   Write-Host "   Primeros pasos y ayuda:  " -ForegroundColor Gray -NoNewline
   Write-Host "https://tecnialab.net.ar/tecnia-bot/" -ForegroundColor White
