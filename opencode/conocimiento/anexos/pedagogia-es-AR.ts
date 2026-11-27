@@ -257,3 +257,34 @@ export function nombreDeComponente(tipo: string): string | undefined {
 export function nombreDePlaca(id: string): string | undefined {
   return NOMBRE_DE_PLACA[id]
 }
+
+/**
+ * Lo que dice cada renglón del bloque «al iniciar» de la ventana (2026-11-26): qué hace el
+ * programa con cada pin apenas arranca la placa. Uno por clase de paso del mapa del generador
+ * (`codegen/programa.ts::PasoDeInicio`).
+ *
+ * TEXTOS PENDIENTES DE APROBACIÓN DEL DUEÑO.
+ */
+export const TEXTOS_DE_AL_INICIAR = {
+  /** Un pin que el programa va a leer por su nivel (un pulsador). */
+  entrada: "{pieza} ({pin}): entrada",
+  /** Un pin por el que el programa conversa con un sensor (un DHT). */
+  bus: "{pieza} ({pin}): entrada de datos",
+  /** Un pin que el programa maneja; `{reposo}` es cómo queda hasta que una regla diga otra cosa. */
+  salida: "{pieza} ({pin}): salida, arranca {reposo}",
+} as const
+
+/**
+ * El renglón de UN paso de «al iniciar», o `undefined` si falta algo para decirlo (una clase de
+ * paso que acá no tiene texto, o el reposo de una salida sin etiqueta). No inventa: quien llama
+ * decide qué hacer sin el texto.
+ */
+export function textoDePasoDeInicio(paso: { readonly papel: string; readonly pieza: string; readonly pin: string; readonly reposo?: string }): string | undefined {
+  if (!Object.hasOwn(TEXTOS_DE_AL_INICIAR, paso.papel)) return undefined
+  const plantilla: string = TEXTOS_DE_AL_INICIAR[paso.papel as keyof typeof TEXTOS_DE_AL_INICIAR]
+  // Con función: un nombre de pieza con `$` no se interpreta como patrón de reemplazo.
+  const base = plantilla.replace("{pieza}", () => paso.pieza).replace("{pin}", () => paso.pin)
+  if (!plantilla.includes("{reposo}")) return base
+  const reposo = paso.reposo === undefined ? undefined : etiquetaDeEstadoObjetivo(paso.reposo)
+  return reposo === undefined ? undefined : base.replace("{reposo}", () => reposo)
+}
