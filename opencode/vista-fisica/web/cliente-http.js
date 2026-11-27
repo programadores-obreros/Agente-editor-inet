@@ -18,6 +18,49 @@ export function tokenDeLaDireccion(fragmento) {
   return hallado ? hallado[1] : null
 }
 
+/** Con qué nombre se guarda la llave en la pestaña. */
+export const CLAVE_DE_LA_LLAVE = "tecnia-llave-de-la-sesion"
+
+/**
+ * La llave de la sesión de ESTA pestaña: la de la dirección si la trae y, si no, la que la pestaña
+ * ya había recibido antes.
+ *
+ * POR QUÉ (2026-11-27). La llave vivía sólo en el fragmento de la dirección (`#t=…`), «para que
+ * recargar no la pierda». Pero los enlaces de la propia página (el menú de arriba: «Mirá cómo se
+ * conecta», «Decidí qué hace»…) también son fragmentos: un clic deja la dirección en
+ * `#paso-reglas` y la llave ya no está. Mientras no se recarga, todo sigue andando (se leyó al
+ * cargar); después de F5, cambiar una regla da 403 y la página dice que «se abrió sin la llave».
+ * Reproducido en Chromium: abrir, tocar «Decidí qué hace», recargar, cambiar una regla → 403.
+ * Lo encontró el especialista de calidad al revisar los enlaces nuevos del vínculo; los del menú
+ * lo tenían desde el rediseño de la ventana.
+ *
+ * `almacen` es el `sessionStorage` de la pestaña (se inyecta): dura lo que dura la pestaña, no se
+ * comparte con otras y no sale de esta máquina. No amplía quién puede leer la llave: ya estaba a
+ * la vista en la dirección. Si el almacén no está o tira (modo privado estricto), vale lo de antes:
+ * la llave de la dirección, o ninguna.
+ *
+ * La de la dirección GANA siempre y pisa la guardada: Tecnia Bot abre la vista con la llave de la
+ * sesión nueva, y una guardada de una sesión anterior no tiene que taparla.
+ */
+export function llaveDeLaSesion(fragmento, almacen) {
+  const deLaDireccion = tokenDeLaDireccion(fragmento)
+  if (deLaDireccion !== null) {
+    try {
+      almacen?.setItem(CLAVE_DE_LA_LLAVE, deLaDireccion)
+    } catch {
+      /* no se pudo guardar: la llave de la dirección vale igual */
+    }
+    return deLaDireccion
+  }
+  try {
+    const guardada = almacen?.getItem(CLAVE_DE_LA_LLAVE)
+    // Misma forma que en la dirección: lo guardado es un dato, no se manda cualquier cosa en un header.
+    return typeof guardada === "string" && /^[A-Za-z0-9_-]+$/.test(guardada) ? guardada : null
+  } catch {
+    return null
+  }
+}
+
 export const SIN_PERMISO = "Esta pestaña no puede cambiar el proyecto: se abrió sin la llave de la sesión. Pedile a Tecnia Bot que abra la vista de nuevo."
 
 /**

@@ -38,12 +38,13 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import http from "node:http"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { REPO, nuevoDir, nuevoIdProyecto, GPIO_X, GPIO_Y } from "./phase2-helpers.mjs"
 
 const { obtenerServicioDeProyectoConVista } = await import(join(REPO, "opencode/servidor/servicio-con-vista.ts"))
 const { iniciarServidor, CABECERA_TOKEN } = await import(join(REPO, "opencode/servidor/servidor-proyecto.ts"))
-const { crearClienteHttp, tokenDeLaDireccion, SIN_PERMISO } = await import(join(REPO, "opencode/vista-fisica/web/cliente-http.js"))
+const { crearClienteHttp, tokenDeLaDireccion, llaveDeLaSesion, CLAVE_DE_LA_LLAVE, SIN_PERMISO } = await import(join(REPO, "opencode/vista-fisica/web/cliente-http.js"))
 
 let n = 0
 const op = (tipo, payload, baseRevision) => ({ idOperacion: `tok-${n++}`, actor: "navegador", baseRevision, tipo, payload })
@@ -262,4 +263,89 @@ test("sin llave, el cliente lo dice con palabras y no rompe la página", async (
       assert.equal(pinDelLed(servicio, led), GPIO_X)
     }
   })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════
+// La llave sobrevive a los enlaces de la propia página (2026-11-27)
+//
+// La llave vivía sólo en el fragmento de la dirección. Los enlaces del menú de arriba también son
+// fragmentos (`#paso-reglas`): un clic la sacaba de la dirección y, tras recargar, cambiar una
+// regla daba 403 con «se abrió sin la llave de la sesión». Reproducido en Chromium antes del
+// arreglo: abrir (revisión 15→16 al editar), tocar «Decidí qué hace» (16→17, todavía anda: la
+// llave se leyó al cargar), recargar, editar: 17→17 y 403.
+//
+// MUTACIONES que ponen rojo lo de abajo (una por vez, con el cambio ya commiteado):
+//   - no guardar la llave de la dirección                         → «un enlace del menú…»
+//   - leer primero la guardada y después la de la dirección       → «la de la dirección gana…»
+//   - devolver lo guardado sin mirar su forma                     → «lo guardado es un dato…»
+//   - sin `try` al guardar o al leer                              → «si el almacén tira…»
+//   - `app.js` de vuelta a `tokenDeLaDireccion(location.hash)`    → «app.js toma la llave…»
+// ════════════════════════════════════════════════════════════════════════════════════
+
+/** Un `sessionStorage` de mentira: lo que la pestaña recuerda mientras está abierta. */
+function pestana(inicial = {}) {
+  const datos = new Map(Object.entries(inicial))
+  return { getItem: (k) => (datos.has(k) ? datos.get(k) : null), setItem: (k, v) => void datos.set(k, String(v)), datos }
+}
+
+test("un enlace del menú saca la llave de la dirección; la pestaña la recuerda y sigue valiendo tras recargar", () => {
+  const almacen = pestana()
+  // 1. Tecnia Bot abre la vista con la llave en la dirección.
+  assert.equal(llaveDeLaSesion("#t=abc-DEF_123", almacen), "abc-DEF_123")
+  assert.equal(almacen.datos.get(CLAVE_DE_LA_LLAVE), "abc-DEF_123")
+  // 2. Un clic en «Decidí qué hace» deja la dirección en `#paso-reglas`, y después se recarga.
+  assert.equal(tokenDeLaDireccion("#paso-reglas"), null, "precondición: la dirección ya no trae la llave")
+  assert.equal(llaveDeLaSesion("#paso-reglas", almacen), "abc-DEF_123")
+  assert.equal(llaveDeLaSesion("", almacen), "abc-DEF_123")
+})
+
+test("la de la dirección gana y pisa la guardada: una sesión nueva no queda tapada por la anterior", () => {
+  const almacen = pestana({ [CLAVE_DE_LA_LLAVE]: "vieja" })
+  assert.equal(llaveDeLaSesion("#t=nueva", almacen), "nueva")
+  assert.equal(almacen.datos.get(CLAVE_DE_LA_LLAVE), "nueva")
+  assert.equal(llaveDeLaSesion("#paso-avisos", almacen), "nueva")
+})
+
+test("una pestaña que nunca recibió la llave sigue sin tenerla", () => {
+  assert.equal(llaveDeLaSesion("#paso-reglas", pestana()), null)
+  assert.equal(llaveDeLaSesion("", pestana()), null)
+  for (const sinAlmacen of [null, undefined]) {
+    assert.equal(llaveDeLaSesion("#paso-reglas", sinAlmacen), null)
+    assert.equal(llaveDeLaSesion("#t=abc", sinAlmacen), "abc", "sin almacén vale lo de antes: la de la dirección")
+  }
+})
+
+test("lo guardado es un dato: si no tiene forma de llave, no se manda", () => {
+  for (const raro of ["", "con espacio", "a\nX-Otro: 1", "<script>", "ñ", "a;b"]) {
+    assert.equal(llaveDeLaSesion("#paso-reglas", pestana({ [CLAVE_DE_LA_LLAVE]: raro })), null, JSON.stringify(raro))
+  }
+  assert.equal(llaveDeLaSesion("#paso-reglas", { getItem: () => 7, setItem() {} }), null)
+})
+
+test("si el almacén tira (modo privado estricto), la llave de la dirección vale igual y sin ella no hay ninguna", () => {
+  const roto = { getItem() { throw new Error("SecurityError") }, setItem() { throw new Error("QuotaExceededError") } }
+  assert.equal(llaveDeLaSesion("#t=abc", roto), "abc")
+  assert.equal(llaveDeLaSesion("#paso-reglas", roto), null)
+})
+
+test("con la llave recordada, el cambio sale con su header aunque la dirección ya no la traiga", async () => {
+  const almacen = pestana()
+  llaveDeLaSesion("#t=llave-1", almacen)
+  const pedidos = []
+  const cliente = crearClienteHttp({
+    fetch: async (ruta, opciones) => { pedidos.push(opciones); return { status: 200, json: async () => ({ resultado: { ok: true }, snapshot: { revision: 2 } }) } },
+    aplicarSnapshot() {}, repintar() {}, mostrarEstado() {},
+    token: llaveDeLaSesion("#paso-reglas", almacen),
+  })
+  await cliente.enviarSobre({ tipo: "AsignarPin" }, { repintarAhora: false })
+  assert.equal(pedidos[0].headers["X-Tecnia-Token"], "llave-1")
+})
+
+test("app.js toma la llave por `llaveDeLaSesion`, con el almacén de la pestaña, y ya no sólo de la dirección", () => {
+  const app = readFileSync(join(REPO, "opencode/vista-fisica/web/app.js"), "utf8")
+  assert.match(app, /token: enNavegador \? llaveDeLaSesion\(location\.hash, almacenDeLaPestana\(\)\) : null,/)
+  assert.doesNotMatch(app, /tokenDeLaDireccion\(/)
+  assert.match(app, /function almacenDeLaPestana\(\) \{\n  try \{\n    return window\.sessionStorage \?\? null\n  \} catch \{\n    return null/)
+  // No en `localStorage`: eso lo compartirían todas las pestañas y quedaría después de cerrarlas.
+  assert.doesNotMatch(app, /localStorage/)
 })

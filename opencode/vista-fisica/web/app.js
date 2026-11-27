@@ -16,7 +16,7 @@ import { planDePintado, interpretarNumero, estadoDelGrupo, aplicarEleccionAlGrup
 export { interpretarNumero }
 import { pintar, pintarRenglonDelPrograma } from "./pintar.js"
 import { reducirEstadoConexion, ESTADO_INICIAL, textosDelIndicador, EXPLICACION_SIN_CONEXION } from "./estado-conexion.js"
-import { crearClienteHttp, tokenDeLaDireccion } from "./cliente-http.js"
+import { crearClienteHttp, llaveDeLaSesion } from "./cliente-http.js"
 import { crearPanelVistaLogica, MENSAJE_NO_SE_PUDO_GUARDAR } from "./vista-logica-ui.js"
 import { TITULOS_DE_LA_ESTRUCTURA } from "./adaptador-blockly.js"
 import { crearPanelCodigo, renglonDelPrograma } from "./vista-codigo.js"
@@ -747,6 +747,15 @@ if (enNavegador && typeof ResizeObserver === "function") {
   customElements.whenDefined("wokwi-esp32-devkit-v1").then(() => programarCableado())
 }
 
+/** El `sessionStorage` de la pestaña, o `null` si el navegador no lo deja ni nombrar (tira al leerlo). */
+function almacenDeLaPestana() {
+  try {
+    return window.sessionStorage ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Cliente HTTP compartido (GPIO, frase): ver `cliente-http.js`. `fetch` se resuelve en cada llamada. */
 const cliente = crearClienteHttp({
   fetch: (...argumentos) => fetch(...argumentos),
@@ -755,9 +764,9 @@ const cliente = crearClienteHttp({
   },
   repintar: () => repintar(),
   mostrarEstado: (texto) => mostrarEstado(texto),
-  // La llave de la sesión viene en el fragmento de la dirección; se deja ahí para que recargar
-  // la página (F5) no la pierda.
-  token: enNavegador ? tokenDeLaDireccion(location.hash) : null,
+  // La llave de la sesión viene en el fragmento de la dirección y además la recuerda la pestaña:
+  // un enlace del menú cambia el fragmento, y al recargar la dirección ya no la trae.
+  token: enNavegador ? llaveDeLaSesion(location.hash, almacenDeLaPestana()) : null,
 })
 const cargarSnapshot = () => cliente.cargarSnapshot()
 const enviarSobre = (sobre, opciones) => cliente.enviarSobre(sobre, opciones)
