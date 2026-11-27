@@ -68,3 +68,35 @@ test("leer: lo que NO está conectado no se dice conectado (el control)", async 
   assert.equal(despues["cmp-1"], "anodo → GPIO22, catodo → GND (fijo)")
   assert.match(despues["cmp-2"], /^a → conectado a anodo de cmp-0 /)
 })
+
+// ── agregadas por la revisión independiente del 2026-11-27 ──────────────────────────────────
+// La revisión mutó tres ramas y las tres pruebas de arriba siguieron en verde: el terminal FIJO
+// conectado (el cátodo del LED), dos cables al MISMO terminal, y el terminal de un documento
+// histórico con un pin puesto a mano. Si alguna se rompe vuelve el incidente original: el
+// asistente diciendo «sin conectar» de algo conectado.
+
+test("leer: un terminal fijo conectado lo dice, y dos cables al mismo terminal se dicen los DOS", async () => {
+  const dir = nuevoDir("leer-conexiones-fijo")
+  await aplicar(dir, [
+    ...BASE,
+    { tipo: "Conectar", payload: { desde: { componente: "cmp-2", terminal: "a" }, hasta: { componente: "cmp-0", terminal: "anodo" } } },
+    { tipo: "Conectar", payload: { desde: { componente: "cmp-3", terminal: "a" }, hasta: { componente: "cmp-0", terminal: "anodo" } } },
+    { tipo: "Conectar", payload: { desde: { componente: "cmp-2", terminal: "b" }, hasta: { componente: "cmp-0", terminal: "catodo" } } },
+  ])
+  const porId = Object.fromEntries((await leer(dir)).componentes.map((c) => [c.id, c.descripcionPines]))
+  assert.equal(porId["cmp-0"], `anodo → GPIO21, conectado a a de cmp-2 (${RESISTENCIA}) y a a de cmp-3 (${RESISTENCIA}), catodo → GND (fijo), conectado a b de cmp-2 (${RESISTENCIA})`)
+  assert.equal(porId["cmp-2"], `a → conectado a anodo de cmp-0 (${LED}), b → conectado a catodo de cmp-0 (${LED})`)
+})
+
+test("descripción pura: un terminal no asignable con un pin histórico Y una conexión dice las dos cosas", async () => {
+  const { descripcionPinesDeComponente } = await import(join(REPO, "opencode/conocimiento/vocabulario.ts"))
+  const led = { id: "cmp-0", tipo: "led", pines: { anodo: "GPIO21" } }
+  const historica = { id: "cmp-2", tipo: "resistencia", pines: { a: "GPIO18" } }
+  const proyecto = { componentes: [led, historica], conexiones: [{ id: "conn-9", desde: { componente: "cmp-2", terminal: "a" }, hasta: { componente: "cmp-0", terminal: "anodo" } }] }
+  assert.equal(
+    descripcionPinesDeComponente(historica, K.catalogo, proyecto),
+    `a → GPIO18 (asignado directo — fuera del patrón esperado para este terminal), conectado a anodo de cmp-0 (${LED}), b → puente (sin destino fijo)`,
+  )
+  // Sin el proyecto (quien llame sin él) la descripción es la de antes: no inventa una conexión.
+  assert.equal(descripcionPinesDeComponente(historica, K.catalogo), "a → GPIO18 (asignado directo — fuera del patrón esperado para este terminal), b → puente (sin destino fijo)")
+})
